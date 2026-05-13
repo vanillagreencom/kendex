@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { resolveProjectRoot, loadDotEnvIntoProcess } from "../shared/project.ts";
 import { lockedJqUpdate, lockedRename } from "./locking.ts";
+import { FLIGHTDECK_SCHEMA_VERSION } from "./types.ts";
 
 export interface FlightdeckOwner {
 	harness: string;
@@ -190,12 +191,15 @@ export function initState(file: string): void {
 	const startedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 	const owner = resolveOwnerMetadata();
 	const ownerJson = JSON.stringify(owner);
+	const schemaVersionJson = JSON.stringify(FLIGHTDECK_SCHEMA_VERSION);
 	const initJson = JSON.stringify({
 		conflict_graph: { computed_at: null, edges: [] },
+		entries: {},
 		issues: {},
 		merge_queue: [],
 		owner,
 		paused_for_user: null,
+		schema_version: FLIGHTDECK_SCHEMA_VERSION,
 		session_id: session,
 		started_at: startedAt,
 		terminated: false,
@@ -205,14 +209,14 @@ export function initState(file: string): void {
 			const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
 			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 				const raw = parsed as Record<string, unknown>;
-				if (raw.owner !== null && raw.owner !== undefined) return;
+				if (raw.owner !== null && raw.owner !== undefined && raw.schema_version !== null && raw.schema_version !== undefined && raw.entries !== null && raw.entries !== undefined) return;
 			}
 		} catch {
 			// Preserve legacy idempotence for corrupt/partial existing files:
 			// init must not clobber them.
 			return;
 		}
-		const backfillFilter = `if ((. // {}) | type == "object") then (if .owner? == null then . + {owner: ${ownerJson}} else . end) else . end`;
+		const backfillFilter = `if ((. // {}) | type == "object") then (if .owner? == null then . + {owner: ${ownerJson}} else . end) | (if .schema_version? == null then . + {schema_version: ${schemaVersionJson}} else . end) | (if .entries? == null then . + {entries: {}} else . end) else . end`;
 		const backfill = lockedJqUpdate(lock, file, backfillFilter);
 		if (backfill.status !== 0) {
 			process.stderr.write(backfill.stderr || "");
@@ -221,8 +225,8 @@ export function initState(file: string): void {
 		return;
 	}
 	// jq filter that prefers an existing object over the synthesized init.
-	// Existing pre-owner state is preserved and backfilled with the additive owner block.
-	const initFilter = `if ((. // {}) | type == "object" and (.issues // null) != null) then (if .owner? == null then . + {owner: ${ownerJson}} else . end) else ${initJson} end`;
+	// Existing pre-owner/schema state is preserved and backfilled with the additive owner/schema blocks.
+	const initFilter = `if ((. // {}) | type == "object" and (.issues // null) != null) then (if .owner? == null then . + {owner: ${ownerJson}} else . end) | (if .schema_version? == null then . + {schema_version: ${schemaVersionJson}} else . end) | (if .entries? == null then . + {entries: {}} else . end) else ${initJson} end`;
 	const r = lockedJqUpdate(lock, file, initFilter);
 	if (r.status !== 0) {
 		process.stderr.write(r.stderr || "");

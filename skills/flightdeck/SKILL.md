@@ -128,7 +128,7 @@ complete. Parity tests for every port live under
 |--------|---------|
 | `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll tmux/terminal commands — use this for every spawn.** |
 | `parallel-groups` | Read/manage parallel issue groups. |
-| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`archive`) and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/watch.md` § 1 for lock semantics. |
+| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`tracked-entries`/`write-entry`/`archive`) and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/watch.md` § 1 for lock semantics. |
 | `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. See `patterns/tmux-monitoring.md` for adapter freshness + tmux-fallback semantics; the script's own header comment for daemon internals. |
 | `codex-app-server-spawn` / `-stop` | Idempotent bring-up/teardown of the per-session codex `app-server --listen ws://...` shared by all `codex --remote` panes. |
 | `pane-registry` | Issue↔pane mapping CRUD. `init` stores immutable `pane_id` (`%N`) alongside `pane_target`. `list --format json\|inner-panes\|inner-harnesses` feeds `pane-poll --batch -` and `flightdeck-daemon start`. |
@@ -150,8 +150,11 @@ The daemon (`scripts/flightdeck-daemon.bash` + `lib/flightdeck-core/src/daemon/l
 
 Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 5`). The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. pi-flightdeck's `buildSnapshot` falls back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view in the dashboard / popup keeps rendering until a new `flightdeck start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
+Schema `1.1` is additive. `flightdeck-state init` writes `schema_version: 1.1`, keeps the v1 `.issues`, `.merge_queue`, and `.conflict_graph` fields, and adds `.entries` for the neutral `TrackedEntry` model. Older v1 readers ignore `schema_version` and `.entries`; issue-mode readers continue using `.issues`. New core readers must call `readTrackedEntries(state)` instead of touching `.issues` directly: it returns `.entries` when non-empty, otherwise projects legacy `.issues` records into `TrackedEntry` shape. `writeTrackedEntry(state, id, entry)` writes `.entries[id]` and projects `kind: "issue"` entries back to `.issues[issueId]` for compatibility. This mirrors the pi-flightdeck render seam; do not fork renderer-only `.issues` reads back into core logic.
+
 ```json
 {
+  "schema_version": 1.1,
   "session_id": "<TMUX_SESSION_NAME>",
   "started_at": "<ISO8601>",
   "terminated": false,
@@ -164,6 +167,42 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
     "pi_session_id": "<pi-session-id-or-null>",
     "pi_bridge_socket": "<pi-bridge-socket-or-null>",
     "discovery_error": "<warning-or-null>"
+  },
+  "entries": {
+    "<ENTRY_ID>": {
+      "id": "<ENTRY_ID>",
+      "title": "<human label>",
+      "kind": "adhoc|issue|workflow",
+      "state": "waiting|prompting|submitting|ready|complete|cancelled|dead",
+      "substate": null,
+      "harness": "claude|opencode|codex|pi|unknown",
+      "cwd": "<absolute cwd>",
+      "window": "<window-name-or-index>",
+      "pane_target": "<TMUX_SESSION>:<window>.<pane>",
+      "pane_id": "%403",
+      "launch": { "model": "<model-or-null>", "effort": "<effort-or-null>", "cmd": "<command-or-null>" },
+      "adapter": {
+        "pi_bridge_pid": 0, "pi_bridge_socket": "<path-or-null>", "pi_session_id": "<id-or-null>",
+        "oc_url": "<server-url-or-null>", "oc_session_id": "<id-or-null>",
+        "cc_url": "<server-url-or-null>", "cc_transcript": "<path-or-null>",
+        "cx_ws": "<ws-url-or-null>", "cx_thread_id": "<id-or-null>"
+      },
+      "domain": {
+        "issue": {
+          "id": "<ISSUE_ID>",
+          "worktree": "<absolute path>",
+          "pr_number": 0,
+          "scope_files_declared": 5,
+          "scope_files_actual": 27,
+          "orchestration_started": true
+        }
+      },
+      "last_capture_hash": "sha256:...",
+      "last_response_at": "<ISO8601>",
+      "spawned_at": "<ISO8601>",
+      "last_polled_at": "<ISO8601>",
+      "decisions_log": []
+    }
   },
   "issues": {
     "<ISSUE_ID>": {
@@ -203,7 +242,7 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
 }
 ```
 
-State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, aborted, dead}`. `owner` is additive v1 metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. pi-flightdeck uses `owner.pane_id` to keep the persistent dashboard owner-scoped by default, while older readers ignore the field. `paused_for_user` carries `{issue_id, reason, prompt_text}` when an aggressive-mode pause fires.
+Legacy issue state enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, aborted, dead}`. `TrackedEntry.state` keeps those values for issue-mode compatibility and also allows generic session states (`ready`, `complete`, `cancelled`) for future non-issue entries. `entryIdForIssue(issueId)` currently returns the issue id unchanged; `issueIdForEntry(entry)` reads `entry.domain.issue.id` or, for `kind: "issue"`, `entry.id`. `owner` is additive metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. pi-flightdeck uses `owner.pane_id` to keep the persistent dashboard owner-scoped by default, while older readers ignore the field. `paused_for_user` carries `{issue_id, reason, prompt_text}` when an aggressive-mode pause fires.
 
 ## Configuration
 

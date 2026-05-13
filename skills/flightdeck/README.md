@@ -102,7 +102,7 @@ The `patterns/` directory documents the decisions the master agent makes — *wh
 You don't run any of these by hand in normal use — the skill calls them.
 
 - `open-terminal` — launches a tmux window with the chosen harness on the chosen worktree.
-- `flightdeck-state` — reads/writes the session's master state file.
+- `flightdeck-state` — reads/writes the session's master state file, including schema `1.1` tracked-entry normalization (`tracked-entries`, `write-entry`).
 - `flightdeck-daemon` — background poller; wakes the master.
 - `pane-registry`, `pane-poll`, `pane-respond` — pane tracking and IO.
 - `prompt-classify` — pattern-matches agent output against known prompt shapes.

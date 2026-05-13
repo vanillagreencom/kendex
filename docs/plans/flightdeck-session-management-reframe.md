@@ -20,9 +20,12 @@ Merged baseline on `origin/main` now includes the following relevant work:
 - **PR #23 / issue #17 / commit `1fbed75`** — Terminated-state preservation and Pi render seams are delivered. `flightdeck-state archive` is implemented in `skills/flightdeck/scripts/flightdeck-state.bash` and `skills/flightdeck/lib/flightdeck-core/src/state/master-state.ts::archiveState`; `pi-extensions/pi-flightdeck/extensions/state.ts::buildSnapshotFromInputs` falls back to the newest valid terminated archive through `readArchiveStrict`; `pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries` is now the render normalization seam. `pi-extensions/pi-flightdeck/extensions/state-archive.ts`, `state-normalizers.ts`, and `render-terminated.ts` were split out, and destructive `pane-registry remove-merged` was removed from `skills/flightdeck/workflows/terminate.md`. PR #23 explicitly deferred Phase 0 owner gating.
 - **PR #24 / issue #15 / commit `41ef1a5`** — Canonical Pi background-task wake routing is delivered. Bash and TS daemons emit `pi-bg-task-exit` via `skills/flightdeck/scripts/lib/daemon-bg-task-events.sh`, `skills/flightdeck/scripts/flightdeck-daemon.bash`, `skills/flightdeck/lib/flightdeck-core/src/daemon/loop.ts`, and the shared contract in `skills/flightdeck/lib/flightdeck-core/src/events/bg-task-exit.ts` (`BG_TASK_EVENT_CUSTOM_TYPE`, `BG_TASK_EXIT_EVENT_TYPE`, `BG_TASK_EXIT_CLASSIFIER_TAG`, `BgTaskExitWakeRow`). `pi-extensions/pi-background-tasks/extensions/persistence.ts`, `lifecycle.ts`, `registrations.ts`, and `orphan-watcher.ts` persist `exitNotified`/`procIdent` and recover restored running tasks with PID-reuse safety. `skills/flightdeck/workflows/watch.md` and `handle-prompt.md` route the new tag.
 
+### In `fd-reframe-p1`
+
+- **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, and issue compatibility projection back to `.issues`, with bash/TS parity coverage.
+
 ### Partially delivered
 
-- **Phase 1** has a Pi render-side `readTrackedEntries` seam from PR #23 and additive v1 `owner` metadata from PR #25, but the core `skills/flightdeck/lib/flightdeck-core/src/state/` helpers, `entryIdForIssue`, dual-write/projection helpers, `.entries`, and `schema_version` remain.
 - **Phase 2** has the `teardown-entry` alias from PR #22 and the `FLIGHTDECK_MANAGED=1`/`flightdeck-mode` managed-session signal from PR #21, but generic `init-entry`, `--kind adhoc`, `session-terminal`/`flightdeck-session`, and manual attach behavior remain.
 - **Phase 3** has canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 in both daemon paths, but the `session-watch.md` vs issue `watch.md` split remains.
 - **Phase 5** has render normalization, terminated archive fallback, and extracted terminated render helpers from PR #23 plus owner-aware persistent-widget behavior from PR #25, but type renames, sessions-first UI copy, and kind badges remain.
@@ -30,7 +33,7 @@ Merged baseline on `origin/main` now includes the following relevant work:
 ### Remaining unchanged in scope
 
 - **Phase 0 follow-up remains**: short repo guidance in `AGENTS.md` is still pending because the Phase 0 implementation change only touched `skills/flightdeck/`, `pi-extensions/pi-flightdeck/`, and this plan doc.
-- Official ad-hoc session start/attach, schema v2 generic entries, generic watch split, issue-mode isolation, and full docs refresh remain in this plan.
+- Official ad-hoc session start/attach, full schema-v2 registry/launcher migration, generic watch split, issue-mode isolation, and full docs refresh remain in this plan.
 
 ## Why this is needed
 
@@ -182,19 +185,20 @@ Validation:
 
 Purpose: introduce generic entries without breaking issue workflows.
 
-Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered a Pi render-side normalization seam in `pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`, but the core state model and schema migration remain.
+Status (2026-05-13): **DONE in `fd-reframe-p1`**. PR #23 / commit `1fbed75` delivered the Pi render-side normalization seam; this phase adds the core state helpers, `schema_version: 1.1`, additive `.entries`, compatibility projection back to `.issues`, and bash/TS parity coverage.
 
-1. **[PARTIAL]** Add state normalization helpers in `skills/flightdeck/lib/flightdeck-core/src/state/`:
-   - **[PARTIAL]** `readTrackedEntries(state)` reads `.entries` if present, else maps `.issues` to entries. Delivered in PR #23 for the Pi extension render path only (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`); remaining work is to add/own the core helper under `skills/flightdeck/lib/flightdeck-core/src/state/` for daemon/CLI/workflow consumers.
-   - **[REMAINING]** `writeTrackedEntry(...)` writes `.entries[id]` and optionally updates `.issues[id]` for compatibility.
-   - **[REMAINING]** `entryIdForIssue(issueId)` and `issueIdForEntry(entry)` helpers.
-2. **[PARTIAL]** Add `schema_version` and `owner` to `flightdeck-state init`. `owner` is delivered additively in PR #25; `schema_version` remains deferred until the schema-v2 entries migration needs it.
-3. **[REMAINING]** Keep existing `.issues`, `.merge_queue`, `.conflict_graph` in v1 compatibility path.
-4. **[PARTIAL]** Add tests for:
-   - **[REMAINING]** v1 `.issues` read compatibility in the core state helpers.
-   - **[REMAINING]** v2 `.entries` read path.
-   - **[REMAINING]** dual-write/projection behavior if used.
-   - **[PARTIAL]** archives and stale state parsing. Delivered in PR #23 for terminated archive fallback and render normalization (`pi-extensions/pi-flightdeck/tests/terminated-state.test.ts`, `render-terminated.test.ts`); remaining work is schema-v2/core-state coverage.
+1. **[DONE]** Add state normalization helpers in `skills/flightdeck/lib/flightdeck-core/src/state/`:
+   - **[DONE]** `readTrackedEntries(state)` reads `.entries` if present and non-empty, else maps `.issues` to `TrackedEntry` records.
+   - **[DONE]** `writeTrackedEntry(...)` writes `.entries[id]` and projects `kind: "issue"` entries to `.issues[issueId]` for compatibility.
+   - **[DONE]** `entryIdForIssue(issueId)` and `issueIdForEntry(entry)` helpers.
+   - **[DONE]** Core helper mirrors the pi-flightdeck render seam contract instead of reintroducing direct renderer/core `.issues` reads; pi-flightdeck remains read-only and package-local.
+2. **[DONE]** Add `schema_version` and `owner` to `flightdeck-state init`. `owner` was delivered additively in PR #25; `schema_version: 1.1` and `.entries: {}` are now backfilled additively by init.
+3. **[DONE]** Keep existing `.issues`, `.merge_queue`, `.conflict_graph` in v1 compatibility path.
+4. **[DONE]** Add tests for:
+   - **[DONE]** v1 `.issues` read compatibility in the core state helpers.
+   - **[DONE]** v2 `.entries` read path.
+   - **[DONE]** dual-write/projection behavior.
+   - **[DONE]** bash/TS parity for `tracked-entries` plus `write-entry` round trip. Archive/stale-state parsing remains covered by PR #23's pi-flightdeck tests and existing `flightdeck-state archive` parity coverage.
 
 Validation:
 
