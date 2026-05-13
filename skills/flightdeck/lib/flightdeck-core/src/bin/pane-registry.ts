@@ -350,6 +350,22 @@ function trackedEntries(): Record<string, Record<string, unknown>> {
 	}
 }
 
+function registryMapHas(map: "entries" | "issues", id: string): boolean {
+	const idJson = JSON.stringify(id);
+	const r = fdState(["get", `has(${JSON.stringify(map)}) and .${map}[${idJson}] != null`]);
+	return r.status === 0 && r.stdout.trim() === "true";
+}
+
+function setRegistryFieldBoth(id: string, field: string, value: string): void {
+	const hasEntry = registryMapHas("entries", id);
+	const hasIssue = registryMapHas("issues", id);
+	if (!hasEntry && !hasIssue) {
+		die(`pane-registry: entry '${id}' not found in .entries or .issues`);
+	}
+	if (hasEntry) fdStateOrDie(["set", `.entries[${JSON.stringify(id)}].${field}`, value]);
+	if (hasIssue) fdStateOrDie(["set", `.issues[${JSON.stringify(id)}].${field}`, value]);
+}
+
 function nestedRecord(obj: Record<string, unknown>, key: string): Record<string, unknown> {
 	const value = obj[key];
 	return isRecord(value) ? value : {};
@@ -425,17 +441,17 @@ const VALID_STATES = new Set(["waiting", "prompting", "submitting", "merge-ready
 function cmdSetState(issue: string, state: string): void {
 	if (!issue || !state) die("Usage: set-state <ISSUE> <state>");
 	if (!VALID_STATES.has(state)) die(`Unknown state: ${state}`);
-	fdStateOrDie(["set", `.issues["${issue}"].state`, JSON.stringify(state)]);
+	setRegistryFieldBoth(issue, "state", JSON.stringify(state));
 }
 
 function cmdSetSubstate(issue: string, sub: string): void {
 	if (!issue || !sub) die("Usage: set-substate <ISSUE> <substate>");
-	fdStateOrDie(["set", `.issues["${issue}"].substate`, JSON.stringify(sub)]);
+	setRegistryFieldBoth(issue, "substate", JSON.stringify(sub));
 }
 
 function cmdSetField(issue: string, field: string, value: string): void {
 	if (!issue || !field || !value) die("Usage: set <ISSUE> <field> <json-value>");
-	fdStateOrDie(["set", `.issues["${issue}"].${field}`, value]);
+	setRegistryFieldBoth(issue, field, value);
 }
 
 function cmdLogDecision(issue: string, tag: string, answer: string): void {
@@ -698,7 +714,7 @@ function cmdTeardownWindow(args: string[]): void {
 	//   exit >= 2             — usage error or genuine read failure
 	// Treat 0+empty and 1 as "not found" (exit 1); only exit >= 2 escalates
 	// to exit 6 (registry read failure) per BLOCK #2.
-	const r = fdState(["get", `.issues["${issue}"] // .entries["${issue}"] // empty`]);
+	const r = fdState(["get", `.entries["${issue}"] // .issues["${issue}"] // empty`]);
 	const status = r.status ?? 0;
 	if (status >= 2) {
 		process.stderr.write(

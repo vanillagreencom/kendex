@@ -109,6 +109,45 @@ describe("pane-registry parity", () => {
 		expect(normalize(readIssues(tsRepo))).toEqual(normalize(readIssues(bashRepo)));
 	});
 
+	test("set-state updates adhoc-only .entries row", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init-entry", "adhoc-state", "--title", "Adhoc", "--kind", "adhoc", "--cwd", "/tmp/a", "--window", "1", "--harness", "pi", "--pane-id", "%301"]);
+			const r = run(useTs, repo, ["set-state", "adhoc-state", "dead"]);
+			expect(r.status).toBe(0);
+		}
+		const bEntries = readEntries(bashRepo) as Record<string, Record<string, unknown>>;
+		const tEntries = readEntries(tsRepo) as Record<string, Record<string, unknown>>;
+		expect(tEntries["adhoc-state"]!.state).toBe("dead");
+		expect(tEntries["adhoc-state"]!.pane_id).toBe("%301");
+		expect(normalize(tEntries)).toEqual(normalize(bEntries));
+		expect(readIssues(tsRepo)).toEqual({});
+	});
+
+	test("set-state, set-substate, and set update both .entries and .issues for issue rows", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init-entry", "ISSUE-DUAL", "--title", "Issue Dual", "--kind", "issue", "--cwd", "/tmp/wt", "--window", "2", "--harness", "pi", "--pane-id", "%302", "--worktree", "/tmp/wt"]);
+			expect(run(useTs, repo, ["set-state", "ISSUE-DUAL", "prompting"]).status).toBe(0);
+			expect(run(useTs, repo, ["set-substate", "ISSUE-DUAL", "needs-human"]).status).toBe(0);
+			expect(run(useTs, repo, ["set", "ISSUE-DUAL", "pane_target", JSON.stringify("test:2.0")]).status).toBe(0);
+		}
+		const tEntries = readEntries(tsRepo) as Record<string, Record<string, unknown>>;
+		const tIssues = readIssues(tsRepo) as Record<string, Record<string, unknown>>;
+		const bEntries = readEntries(bashRepo) as Record<string, Record<string, unknown>>;
+		const bIssues = readIssues(bashRepo) as Record<string, Record<string, unknown>>;
+		expect(tEntries["ISSUE-DUAL"]!.state).toBe("prompting");
+		expect(tIssues["ISSUE-DUAL"]!.state).toBe("prompting");
+		expect(tEntries["ISSUE-DUAL"]!.substate).toBe("needs-human");
+		expect(tIssues["ISSUE-DUAL"]!.substate).toBe("needs-human");
+		expect(tEntries["ISSUE-DUAL"]!.pane_id).toBe("%302");
+		expect(tIssues["ISSUE-DUAL"]!.pane_id).toBe("%302");
+		expect(tEntries["ISSUE-DUAL"]!.pane_target).toBe("test:2.0");
+		expect(tIssues["ISSUE-DUAL"]!.pane_target).toBe("test:2.0");
+		expect(normalize(tEntries)).toEqual(normalize(bEntries));
+		expect(normalize(tIssues)).toEqual(normalize(bIssues));
+	});
+
 	test("set-state rejects invalid state", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
@@ -492,6 +531,31 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 			const r = runShim(useTs, repo, statePath, ["teardown-entry", "TD-ALIAS"]);
 			expect(r.status).toBe(0);
 			expect(r.stdout).toContain("already closed");
+		}
+	});
+
+	test("teardown-entry prefers .entries pane_id when legacy .issues row is nulled", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%310": { pane_index: 0, path: "/tmp/wt-a", window_id: "@31", window_index: 31, window_name: "issue-entry" },
+				},
+				session: "test-session",
+				windows: { "@31": { index: 31, name: "issue-entry" } },
+			});
+			runShim(useTs, repo, statePath, ["init-entry", "TD-ENTRY-FIRST", "--title", "Entry First", "--kind", "issue", "--cwd", "/tmp/wt-a", "--window", "31", "--harness", "pi", "--worktree", "/tmp/wt-a", "--pane-id", "%310", "--pane-target", "test-session:31.0"]);
+			// Simulate stale legacy projection damage from pre-fix set-state.
+			runShim(useTs, repo, statePath, ["set", "TD-ENTRY-FIRST", "state", JSON.stringify("dead")]);
+			const fs = require("node:fs") as typeof import("node:fs");
+			const registryPath = stateFilePath(repo, "test-session");
+			const stateJson = JSON.parse(fs.readFileSync(registryPath, "utf8")) as { issues: Record<string, Record<string, unknown>> };
+			stateJson.issues["TD-ENTRY-FIRST"]!.pane_id = null;
+			stateJson.issues["TD-ENTRY-FIRST"]!.pane_target = null;
+			fs.writeFileSync(registryPath, JSON.stringify(stateJson, null, 2));
+			const r = runShim(useTs, repo, statePath, ["teardown-entry", "TD-ENTRY-FIRST"]);
+			expect(r.status).toBe(0);
+			expect(readShimState(statePath).panes["%310"]).toBeUndefined();
 		}
 	});
 

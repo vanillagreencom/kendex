@@ -98,6 +98,29 @@ read_registry_field() {
   "$FD_STATE" get "(.issues[$id_json].$field // .entries[$id_json].adapter.$field // .entries[$id_json].$field // empty)" 2>/dev/null | tr -d '"'
 }
 
+registry_map_has() {
+  local map="$1" id="$2" id_json out
+  id_json=$(jq -Rn --arg v "$id" '$v')
+  out=$("$FD_STATE" get "has(\"$map\") and .$map[$id_json] != null" 2>/dev/null || echo "false")
+  [[ "$out" == "true" ]]
+}
+
+set_registry_field_both() {
+  local id="$1" field="$2" value="$3" entry_has=0 issue_has=0
+  registry_map_has entries "$id" && entry_has=1
+  registry_map_has issues "$id" && issue_has=1
+  if (( entry_has == 0 && issue_has == 0 )); then
+    echo "pane-registry: entry '$id' not found in .entries or .issues" >&2
+    exit 2
+  fi
+  if (( entry_has == 1 )); then
+    "$FD_STATE" set ".entries[\"$id\"].$field" "$value"
+  fi
+  if (( issue_has == 1 )); then
+    "$FD_STATE" set ".issues[\"$id\"].$field" "$value"
+  fi
+}
+
 pane_match_is_live() {
   local pane_id="$1" pane_target="$2" lookup="${pane_id:-$pane_target}"
   [[ -n "$lookup" ]] || return 1
@@ -350,20 +373,20 @@ case "$ACTION" in
       waiting|prompting|submitting|merge-ready|merged|aborted|dead) ;;
       *) echo "Unknown state: $STATE" >&2; exit 2 ;;
     esac
-    "$FD_STATE" set ".issues[\"$ISSUE\"].state" "\"$STATE\""
+    set_registry_field_both "$ISSUE" state "\"$STATE\""
     ;;
 
   set-substate)
     ISSUE="${1:-}"; SUB="${2:-}"
     [[ -z "$ISSUE" || -z "$SUB" ]] && { echo "Usage: set-substate <ISSUE> <substate>" >&2; exit 2; }
-    "$FD_STATE" set ".issues[\"$ISSUE\"].substate" "\"$SUB\""
+    set_registry_field_both "$ISSUE" substate "\"$SUB\""
     ;;
 
   set)
     ISSUE="${1:-}"; FIELD="${2:-}"; VALUE="${3:-}"
     [[ -z "$ISSUE" || -z "$FIELD" || -z "$VALUE" ]] && {
       echo "Usage: set <ISSUE> <field> <json-value>" >&2; exit 2; }
-    "$FD_STATE" set ".issues[\"$ISSUE\"].$FIELD" "$VALUE"
+    set_registry_field_both "$ISSUE" "$FIELD" "$VALUE"
     ;;
 
   log-decision)
@@ -770,7 +793,7 @@ case "$ACTION" in
     #   exit >= 2             — usage error or genuine read failure
     # Treat 0+empty and 1 as "not found"; only exit >= 2 escalates to
     # exit 6 (registry read failure) per BLOCK #2.
-    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // .entries[\"$ISSUE\"] // empty" 2>"$fd_stderr_file")
+    entry=$("$FD_STATE" get ".entries[\"$ISSUE\"] // .issues[\"$ISSUE\"] // empty" 2>"$fd_stderr_file")
     fd_status=$?
     if (( fd_status >= 2 )); then
       printf 'teardown-window: registry read failed (flightdeck-state exit=%s): ' "$fd_status" >&2
