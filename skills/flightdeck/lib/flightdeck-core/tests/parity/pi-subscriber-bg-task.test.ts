@@ -7,6 +7,14 @@
 // canned JSONL exit event, run scripts/lib/subscribers.bash pi against
 // it, and assert the canonical wake event appears.
 //
+// Env isolation (vstack#15 round 4 reviewer-test #2): the spawned
+// subscriber inherits a filtered process.env that explicitly drops
+// PI_BRIDGE_BIN (otherwise pi_resolve_bridge_bin in the bash subscriber
+// would honor the host's PI_BRIDGE_BIN and bypass the stub) and places
+// the stub bridge dir first on PATH. The drift test below the
+// canonical-cases verifies the isolation holds under a polluted host
+// env by setting PI_BRIDGE_BIN=/bin/true on the spawn call.
+//
 // Toolchain requirements (Linux/macOS): bash, jq, flock, sha256sum,
 // awk, sleep. The subscriber loop is a shared bash body (used by both
 // the bash and TS daemons), so testing its jq filter without spawning
@@ -26,6 +34,35 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
 
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
+
+// Build a subscriber env that:
+//   - explicitly removes PI_BRIDGE_BIN (pi_resolve_bridge_bin in the
+//     bash subscriber prefers this env var over PATH; an inherited
+//     value from the host shell would bypass the stub bridge),
+//   - places the stub bridge directory first on PATH,
+//   - inherits only the small handful of vars actually needed (HOME,
+//     SHELL, TMPDIR, LANG, LC_*).
+function subscriberEnv(stubBin: string, stateDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {
+		PATH: `${stubBin}:/usr/bin:/bin`,
+		HOME: process.env.HOME ?? "/tmp",
+		SHELL: "/bin/bash",
+		TMPDIR: process.env.TMPDIR ?? "/tmp",
+		LANG: process.env.LANG ?? "C.UTF-8",
+		FD_STATE_DIR: stateDir,
+		SESSION_LOCK: `${stateDir}/session.lock`,
+		WAKE_EVENTS_LOG: `${stateDir}/wake-events.log`,
+		LOG: `${stateDir}/daemon.log`,
+		CLASSIFIER: "",
+		PI_LAST_ASSISTANT_JQ: ".message.content // []",
+		...extra,
+	};
+	// Belt-and-suspenders: even if `extra` later picks up PI_BRIDGE_BIN
+	// via spread, drop it. The pi-bridge stub must come from PATH only.
+	delete env.PI_BRIDGE_BIN;
+	return env;
+}
+
 function pidAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
 	try { process.kill(pid, 0); return true; }
@@ -37,6 +74,30 @@ afterAll(() => {
 	for (const d of stateDirs) {
 		if (d && existsSync(d)) rmSync(d, { recursive: true, force: true });
 	}
+});
+
+describe("subscriber env isolation (vstack#15 round 4)", () => {
+	test("subscriberEnv drops PI_BRIDGE_BIN even when passed via extras", () => {
+		// Belt-and-suspenders guarantee for reviewer-test #2: a caller can
+		// not accidentally smuggle PI_BRIDGE_BIN into the spawned env.
+		const env = subscriberEnv("/tmp/bin", "/tmp/state", { PI_BRIDGE_BIN: "/bin/true" } as Record<string, string>);
+		expect(env.PI_BRIDGE_BIN).toBeUndefined();
+		expect(env.PATH).toContain("/tmp/bin");
+	});
+
+	test("subscriberEnv does not inherit PI_BRIDGE_BIN from process.env", () => {
+		// Even with a polluted host env, the spawned subscriber sees the
+		// stub bridge first on PATH and no PI_BRIDGE_BIN override.
+		const saved = process.env.PI_BRIDGE_BIN;
+		try {
+			process.env.PI_BRIDGE_BIN = "/bin/true";
+			const env = subscriberEnv("/tmp/bin", "/tmp/state");
+			expect(env.PI_BRIDGE_BIN).toBeUndefined();
+		} finally {
+			if (saved === undefined) delete process.env.PI_BRIDGE_BIN;
+			else process.env.PI_BRIDGE_BIN = saved;
+		}
+	});
 });
 
 describe("Pi subscriber bg-task exit translation (vstack#15)", () => {
@@ -66,16 +127,7 @@ sleep 30
 		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
 		const parentPid = fakeParent.pid!;
 		try {
-			const env: NodeJS.ProcessEnv = {
-				...(process.env as NodeJS.ProcessEnv),
-				PATH: `${bridgeDir}:${process.env.PATH ?? ""}`,
-				FD_STATE_DIR: stateDir,
-				SESSION_LOCK: sessionLock,
-				WAKE_EVENTS_LOG: wakeLog,
-				LOG: log,
-				CLASSIFIER: "",
-				PI_LAST_ASSISTANT_JQ: ".message.content // []",
-			};
+			const env = subscriberEnv(bridgeDir, stateDir);
 			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%18", "1184234", "", String(parentPid)], {
 				env,
 				stdio: "ignore",
@@ -133,16 +185,7 @@ sleep 30
 		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
 		const parentPid = fakeParent.pid!;
 		try {
-			const env: NodeJS.ProcessEnv = {
-				...(process.env as NodeJS.ProcessEnv),
-				PATH: `${bridgeDir}:${process.env.PATH ?? ""}`,
-				FD_STATE_DIR: stateDir,
-				SESSION_LOCK: sessionLock,
-				WAKE_EVENTS_LOG: wakeLog,
-				LOG: log,
-				CLASSIFIER: "",
-				PI_LAST_ASSISTANT_JQ: ".message.content // []",
-			};
+			const env = subscriberEnv(bridgeDir, stateDir);
 			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%18", "1184234", "", String(parentPid)], {
 				env,
 				stdio: "ignore",

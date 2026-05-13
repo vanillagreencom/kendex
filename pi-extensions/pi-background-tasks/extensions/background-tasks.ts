@@ -63,6 +63,7 @@ import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import {
+	defaultReadProcessIdentity,
 	forgetSnapshot,
 	rememberSnapshot,
 	resolveTaskByToken,
@@ -460,6 +461,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
+		const spawnedPid = child.pid ?? 0;
+		const procIdent = spawnedPid > 0 ? (defaultReadProcessIdentity(spawnedPid) ?? undefined) : undefined;
 		const task: ManagedTask = {
 			child,
 			closed: false,
@@ -467,6 +470,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			cwd,
 			exitCode: null,
 			exitNotified: false,
+			procIdent,
 			sessionId: activeSessionId ?? undefined,
 			expiresAt,
 			forceKillTimer: null,
@@ -481,7 +485,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			output: "",
 			outputBytes: 0,
 			outputTimer: null,
-			pid: child.pid ?? 0,
+			pid: spawnedPid,
 			startedAt: now,
 			status: "running",
 			stopReason: null,

@@ -125,7 +125,7 @@ Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shel
 
 Exit wakeups are durable across session restarts. Each task carries an `exitNotified` flag in its persisted snapshot; if a task hits a terminal state without ever firing its `notifyOnExit` event (session shutdown, mid-session restore that coerced `running` → `stopped`), the next `session_start` replays the missed `exit` wakeup so the agent never silently stalls on a finished background task.
 
-Orphan-running tasks (Pi died while the detached child kept running) are detected on restore via `kill -0 <pid>`. They are rehydrated as `running` rather than synthetically stopped, and a periodic liveness watcher (default 30s) polls until the PID disappears, then finalizes the task and fires the canonical exit wake. This means kill -9 / OOM that takes Pi down but leaves the bg_task alive will still produce a clean exit event when the orphan eventually finishes.
+Orphan-running tasks (Pi died while the detached child kept running) are detected on restore via an identity probe that combines `kill -0 <pid>` with the process start time (`/proc/<pid>/stat` field 22 on Linux, `ps -o lstart=` elsewhere) and the kernel comm name captured at spawn. They are rehydrated as `running` rather than synthetically stopped, and a periodic liveness watcher (default 30s) polls until the identity tuple disappears or stops matching, then finalizes the task and fires the canonical exit wake. This protects against both the kill -9 / OOM scenario (Pi gone, orphan still alive) and PID reuse: if the kernel hands the same PID to an unrelated process after the original orphan exits, the start-time / comm mismatch is treated as `pid-reused` and the canonical exit wake fires anyway.
 
 ## Attribution
 

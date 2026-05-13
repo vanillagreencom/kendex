@@ -23,6 +23,7 @@ import { isCanonicalTag } from "../../src/daemon/events.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BG_TASK_EVENTS_SH = resolve(HERE, "../../../../scripts/lib/daemon-bg-task-events.sh");
 const DAEMON_BASH = resolve(HERE, "../../../../scripts/flightdeck-daemon.bash");
+const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
 
 function extractExportValue(source: string, name: string): string | null {
 	const match = source.match(new RegExp(`(?:^|\\n)\\s*export\\s+${name}=\"([^\"]+)\"`));
@@ -53,9 +54,33 @@ describe("pi-bg-task-exit canonical contract parity", () => {
 
 	test("classifier tag is canonical in the bash daemon allowlist", () => {
 		const daemonBash = readFileSync(DAEMON_BASH, "utf8");
-		// CANONICAL_TAGS=(\n   tag1\n   tag2\n   ...\n) — match a line
-		// containing only the tag (whitespace + optional comment OK).
 		const tagLine = new RegExp(`^\\s*${BG_TASK_EXIT_CLASSIFIER_TAG}\\s*(#.*)?$`, "m");
 		expect(daemonBash).toMatch(tagLine);
+	});
+
+	// vstack#15 round 4 reviewer-error MINOR: each bash subscriber
+	// callsite (the inline daemon copy AND the shared subscribers.bash
+	// body) hardcodes the jq filter for vstack-background-tasks:event.
+	// If the customType or eventType drifts in one place but not the
+	// other, pi-bg-task-exit rows go silently missing. Assert both
+	// callers reference the canonical strings exported from the shared
+	// helper so a typo in either file fails CI here.
+	test("flightdeck-daemon.bash subscriber filter references the canonical customType + eventType", () => {
+		const daemonBash = readFileSync(DAEMON_BASH, "utf8");
+		expect(daemonBash).toContain(BG_TASK_EVENT_CUSTOM_TYPE);
+		expect(daemonBash).toContain(BG_TASK_EXIT_EVENT_TYPE);
+	});
+
+	test("scripts/lib/subscribers.bash subscriber filter references the canonical customType + eventType", () => {
+		const subscribersBash = readFileSync(SUBSCRIBERS_BASH, "utf8");
+		expect(subscribersBash).toContain(BG_TASK_EVENT_CUSTOM_TYPE);
+		expect(subscribersBash).toContain(BG_TASK_EXIT_EVENT_TYPE);
+	});
+
+	test("both bash callers source the shared daemon-bg-task-events.sh helper", () => {
+		const daemonBash = readFileSync(DAEMON_BASH, "utf8");
+		const subscribersBash = readFileSync(SUBSCRIBERS_BASH, "utf8");
+		expect(daemonBash).toContain("daemon-bg-task-events.sh");
+		expect(subscribersBash).toContain("daemon-bg-task-events.sh");
 	});
 });

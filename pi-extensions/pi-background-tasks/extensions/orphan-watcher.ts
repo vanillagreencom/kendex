@@ -12,17 +12,22 @@
 // Pure logic; tests inject deterministic `isProcessAlive` + clock.
 
 import { finalizeTaskLifecycle, type LifecycleHooks } from "./lifecycle.js";
-import { defaultProcessAlive } from "./snapshot.js";
-import type { ManagedTask } from "./types.js";
+import { defaultReadProcessIdentity, identityMatches } from "./snapshot.js";
+import type { ManagedTask, ProcessIdentity } from "./types.js";
 
 export interface OrphanWatcherDeps {
 	getTasks: () => Iterable<ManagedTask>;
 	hooks: LifecycleHooks;
 	pollMs?: number;
-	isProcessAlive?: (pid: number) => boolean;
+	// PID-reuse-safe identity probe. Returns null when the pid is gone
+	// (orphan exited cleanly) and a ProcessIdentity when it is alive.
+	// The watcher compares against task.procIdent so a recycled PID
+	// hitting an unrelated process is detected as a mismatch and treated
+	// like the pid is gone (reviewer-error MAJOR, vstack#15 round 4).
+	identityProbe?: (pid: number) => ProcessIdentity | null;
 	setIntervalFn?: (cb: () => void, ms: number) => NodeJS.Timeout;
 	clearIntervalFn?: (handle: NodeJS.Timeout) => void;
-	onFinalize?: (task: ManagedTask) => void;
+	onFinalize?: (task: ManagedTask, reason: "pid-gone" | "pid-reused") => void;
 }
 
 export interface OrphanWatcher {
@@ -47,7 +52,7 @@ export function isOrphanRunning(task: ManagedTask): boolean {
 
 export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 	const pollMs = deps.pollMs ?? DEFAULT_ORPHAN_POLL_MS;
-	const isAlive = deps.isProcessAlive ?? defaultProcessAlive;
+	const probe = deps.identityProbe ?? defaultReadProcessIdentity;
 	const startTimer = deps.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
 	const stopTimer = deps.clearIntervalFn ?? ((h) => clearInterval(h));
 	let timer: NodeJS.Timeout | null = null;
@@ -56,15 +61,22 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 		let finalized = 0;
 		for (const task of deps.getTasks()) {
 			if (!isOrphanRunning(task)) continue;
-			if (isAlive(task.pid)) continue;
-			// PID disappeared. We can't recover the real exit code; the
-			// orphan exited while Pi was down. Use exitCode=null and let
-			// finalizeTaskLifecycle classify as 'failed' (no stopReason,
-			// non-zero exit). The canonical exit event fires here, and
-			// the subscriber/daemon routes the resulting pi-bg-task-exit
-			// wake to master.
+			const current = probe(task.pid);
+			let reason: "pid-gone" | "pid-reused" | null = null;
+			if (current === null) {
+				reason = "pid-gone";
+			} else if (!identityMatches(task.procIdent, current)) {
+				reason = "pid-reused";
+			}
+			if (reason === null) continue;
+			// PID disappeared or was recycled by an unrelated process. We
+			// can't recover the real exit code; the orphan is gone. Use
+			// exitCode=null and let finalizeTaskLifecycle classify as
+			// 'failed' (no stopReason, non-zero exit). The canonical exit
+			// event fires here, and the subscriber/daemon routes the
+			// resulting pi-bg-task-exit wake to master.
 			finalizeTaskLifecycle(task, null, deps.hooks);
-			deps.onFinalize?.(task);
+			deps.onFinalize?.(task, reason);
 			finalized += 1;
 		}
 		return { finalized };

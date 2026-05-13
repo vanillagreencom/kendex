@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { restoredTaskFromSnapshot, selectMissedExits, taskSnapshot } from "../extensions/snapshot.js";
-import type { BackgroundTaskSnapshot, ManagedTask } from "../extensions/types.js";
+import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "../extensions/types.js";
+
+function fakeIdent(pid: number, overrides: Partial<ProcessIdentity> = {}): ProcessIdentity {
+	return { pid, startToken: `start-${pid}`, comm: "bot-review-wait", ...overrides };
+}
 
 function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	return {
@@ -43,8 +47,10 @@ function fakeTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
 	};
 }
 
-const isDead = () => false;
-const isAlive = () => true;
+// Identity-probe stubs: null = pid gone, returning an identity = pid alive.
+const probeDead = (): null => null;
+const probeAlive = (pid: number): ProcessIdentity => fakeIdent(pid);
+const probeReused = (pid: number): ProcessIdentity => fakeIdent(pid, { startToken: "start-RECYCLED", comm: "unrelated" });
 
 describe("taskSnapshot", () => {
 	test("preserves exitNotified flag through serialization", () => {
@@ -67,8 +73,8 @@ describe("taskSnapshot", () => {
 
 describe("restoredTaskFromSnapshot", () => {
 	test("coerces running -> stopped and clears exitNotified when child pid is dead", () => {
-		const snapshot = fakeSnapshot({ status: "running", exitNotified: true });
-		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_100_000, isProcessAlive: isDead, sessionId: "sess-1" });
+		const snapshot = fakeSnapshot({ status: "running", exitNotified: true, procIdent: fakeIdent(2409160) });
+		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_100_000, identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.status).toBe("stopped");
 		expect(restored.stopReason).toBe("shutdown");
 		expect(restored.closed).toBe(true);
@@ -77,60 +83,71 @@ describe("restoredTaskFromSnapshot", () => {
 		expect(restored.updatedAt).toBe(1_700_000_100_000);
 	});
 
-	test("running task with still-alive pid stays running (no fake exit)", () => {
-		const snapshot = fakeSnapshot({ status: "running", pid: 4242 });
-		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_200_000, isProcessAlive: isAlive, sessionId: "sess-1" });
+	test("running task with still-alive pid AND identity match stays running (no fake exit)", () => {
+		const snapshot = fakeSnapshot({ status: "running", pid: 4242, procIdent: fakeIdent(4242) });
+		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_200_000, identityProbe: probeAlive, sessionId: "sess-1" });
 		expect(restored.status).toBe("running");
 		expect(restored.stopReason).toBeNull();
 		expect(restored.closed).toBe(false);
 		expect(restored.restored).toBe(true);
-		// Updated-at is preserved (no fake transition), so the dashboard
-		// doesn't show a spurious "just now" timestamp.
 		expect(restored.updatedAt).toBe(snapshot.updatedAt);
 		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
+	test("PID-reuse safe: alive pid with mismatched identity coerces to stopped", () => {
+		// vstack#15 round 4 reviewer-error MAJOR: the original orphan
+		// died, the OS reused the PID for an unrelated process, and a
+		// bare kill -0 would treat the task as still running. Identity
+		// comparison (startToken/comm) detects the reuse and coerces the
+		// restored task to stopped so the canonical exit wake fires.
+		const snapshot = fakeSnapshot({ status: "running", pid: 12345, exitNotified: false, procIdent: fakeIdent(12345) });
+		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_300_000, identityProbe: probeReused, sessionId: "sess-1" });
+		expect(restored.status).toBe("stopped");
+		expect(restored.exitNotified).toBe(false);
+		expect(selectMissedExits([restored])).toHaveLength(1);
+	});
+
+	test("pre-1.2.2 snapshot with no procIdent degrades to PID-only liveness", () => {
+		const snapshot = fakeSnapshot({ status: "running", pid: 4242 });
+		delete (snapshot as Partial<BackgroundTaskSnapshot>).procIdent;
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeAlive, sessionId: "sess-1" });
+		expect(restored.status).toBe("running");
+	});
+
 	test("preserves already-terminal status and exitNotified=true", () => {
 		const snapshot = fakeSnapshot({ status: "completed", exitNotified: true, exitCode: 0 });
-		const restored = restoredTaskFromSnapshot(snapshot, { isProcessAlive: isDead });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });
 		expect(restored.status).toBe("completed");
 		expect(restored.exitNotified).toBe(true);
 		expect(restored.stopReason).toBeNull();
 	});
 
 	test("backward-compat: terminal snapshot without exitNotified is treated as notified", () => {
-		// vstack#15 (reviewer-arch #6): old snapshots persisted by 1.2.0
-		// have no exitNotified field. Upgrade must not replay every
-		// historical task. Only running->stopped coercion sets false.
 		const snapshot = fakeSnapshot({ status: "completed", exitCode: 0 });
 		delete (snapshot as Partial<BackgroundTaskSnapshot>).exitNotified;
-		const restored = restoredTaskFromSnapshot(snapshot, { isProcessAlive: isDead });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });
 		expect(restored.exitNotified).toBe(true);
 		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
 	test("terminal-but-explicitly-never-notified task replays exit", () => {
 		const snapshot = fakeSnapshot({ status: "stopped", exitNotified: false });
-		const restored = restoredTaskFromSnapshot(snapshot, { isProcessAlive: isDead });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });
 		expect(restored.exitNotified).toBe(false);
 		expect(selectMissedExits([restored])).toHaveLength(1);
 	});
 
 	test("cross-session snapshot is pinned to notified=true (no leak)", () => {
-		// vstack#15 (reviewer-arch #7): replay must not fire for snapshots
-		// that belong to a different Pi session.
-		const snapshot = fakeSnapshot({ status: "running", sessionId: "sess-OTHER", exitNotified: false });
-		const restored = restoredTaskFromSnapshot(snapshot, { isProcessAlive: isDead, sessionId: "sess-1" });
+		const snapshot = fakeSnapshot({ status: "running", sessionId: "sess-OTHER", exitNotified: false, procIdent: fakeIdent(2409160) });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.exitNotified).toBe(true);
 		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
 	test("orphaned running snapshot with no sessionId is treated as same-session", () => {
-		// Pre-1.2.1 snapshots have no sessionId. Don't refuse to replay
-		// them just because we can't compare.
 		const snapshot = fakeSnapshot({ status: "running" });
 		delete (snapshot as Partial<BackgroundTaskSnapshot>).sessionId;
-		const restored = restoredTaskFromSnapshot(snapshot, { isProcessAlive: isDead, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.status).toBe("stopped");
 		expect(restored.exitNotified).toBe(false);
 	});
@@ -166,9 +183,6 @@ describe("selectMissedExits", () => {
 });
 
 describe("incident replay", () => {
-	// Mirrors the hyprtrade CC-503 incident: bg-3 transitioned running -> stopped
-	// with exitCode: null and outputBytes: 89 (gh-auth warning) but no exit wake
-	// fired. After restore + replay, the task must be selectable for replay.
 	test("CC-503-style stalled bg_task is replayed on restore (dead pid)", () => {
 		const persisted = fakeSnapshot({
 			id: "bg-3",
@@ -177,8 +191,9 @@ describe("incident replay", () => {
 			outputBytes: 89,
 			exitNotified: false,
 			notifyOnExit: true,
+			procIdent: fakeIdent(2409160),
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: isDead, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.status).toBe("stopped");
 		expect(restored.exitNotified).toBe(false);
 		const missed = selectMissedExits([restored]);
@@ -186,17 +201,15 @@ describe("incident replay", () => {
 		expect(missed[0]?.id).toBe("bg-3");
 	});
 
-	test("restoring a snapshot whose pid is still alive does NOT announce exit", () => {
-		// kill -9 / OOM defense: the parent Pi may have died but the
-		// detached process group can still be alive. Replay would
-		// announce a fake terminal state and lose the live process handle.
+	test("restoring a snapshot whose pid is still alive (matching identity) does NOT announce exit", () => {
 		const persisted = fakeSnapshot({
 			id: "bg-3",
 			status: "running",
 			pid: 4242,
 			notifyOnExit: true,
+			procIdent: fakeIdent(4242),
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: isAlive, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeAlive, sessionId: "sess-1" });
 		expect(restored.status).toBe("running");
 		expect(restored.closed).toBe(false);
 		expect(selectMissedExits([restored])).toHaveLength(0);

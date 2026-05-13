@@ -1,5 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
 import { parseOutputMatcher } from "./format.js";
-import type { BackgroundTaskSnapshot, ManagedTask } from "./types.js";
+import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "./types.js";
 
 const liveSnapshots = new Map<string, BackgroundTaskSnapshot>();
 
@@ -18,6 +21,7 @@ export function taskSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
 		notifyPattern: task.notifyPattern,
 		outputBytes: task.outputBytes,
 		pid: task.pid,
+		procIdent: task.procIdent,
 		sessionId: task.sessionId,
 		startedAt: task.startedAt,
 		status: task.status,
@@ -59,8 +63,10 @@ export function resolveTaskByToken<T extends Pick<BackgroundTaskSnapshot, "id" |
 }
 
 // Default pid-liveness probe. Returns true iff the kernel reports the
-// pid as alive (or EPERM, which means alive-but-foreign). Tests inject a
-// deterministic stub via the second arg of restoredTaskFromSnapshot.
+// pid as alive (or EPERM, which means alive-but-foreign). Used as a
+// pre-filter before the more expensive identity probe; the watcher /
+// restore paths use identityProbe directly so PID reuse cannot pass
+// as "still running".
 export function defaultProcessAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
 	try {
@@ -71,13 +77,67 @@ export function defaultProcessAlive(pid: number): boolean {
 	}
 }
 
+// Read kernel-stable process identity. Linux fast path: /proc/<pid>/stat
+// field 22 (starttime in jiffies since boot) + /proc/<pid>/comm. Other
+// platforms: `ps -o lstart=,comm= -p <pid>` returns an absolute start
+// time string + comm. Returns null when the pid is gone or the probe
+// failed. Used to detect PID reuse: the kernel may recycle a PID for
+// an unrelated process, but the start token cannot collide for the
+// same recycled pid within the same boot.
+export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null {
+	if (!Number.isFinite(pid) || pid <= 0) return null;
+	if (process.platform === "linux") {
+		try {
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+			const lastParen = stat.lastIndexOf(")");
+			if (lastParen < 0) return null;
+			// stat fields after the closing paren of comm are space-separated.
+			// starttime is field 22 globally, which is index 22-3=19 inside the
+			// post-paren slice (fields 1, 2 (parenthesized comm), 3..N).
+			const after = stat.slice(lastParen + 1).trim().split(/\s+/);
+			const starttime = after[19];
+			if (!starttime) return null;
+			const comm = stat.slice(stat.indexOf("(") + 1, lastParen);
+			return { pid, startToken: starttime, comm };
+		} catch {
+			// Fall through to the portable ps path.
+		}
+	}
+	const r = spawnSync("ps", ["-o", "lstart=,comm=", "-p", String(pid)], { encoding: "utf8" });
+	if (r.status !== 0) return null;
+	const line = (r.stdout ?? "").trim();
+	if (!line) return null;
+	// lstart format: "Day Mon DD HH:MM:SS YYYY" (5 whitespace-separated tokens),
+	// then comm. Split on whitespace and reassemble.
+	const parts = line.split(/\s+/);
+	if (parts.length < 6) return null;
+	return { pid, startToken: parts.slice(0, 5).join(" "), comm: parts.slice(5).join(" ") };
+}
+
+// True iff both identities are present and every field matches. Absent
+// identity on the snapshot (pre-1.2.2 upgrade) is treated as a match
+// because we have no pre-recorded token to compare against and PID-only
+// liveness is the documented degraded path.
+export function identityMatches(
+	recorded: ProcessIdentity | undefined,
+	current: ProcessIdentity | null,
+): boolean {
+	if (!current) return false;
+	if (!recorded) return true;
+	return recorded.pid === current.pid
+		&& recorded.startToken === current.startToken
+		&& recorded.comm === current.comm;
+}
+
 export interface RestoreOptions {
 	now?: number;
-	// Hook for tests + production. Default uses process.kill(pid, 0). Return
-	// true when the original child process group is still alive; restore
-	// then keeps the task as `running` (with `restored: true`) and skips the
-	// replay rather than synthesizing a fake terminal transition.
-	isProcessAlive?: (pid: number) => boolean;
+	// Identity probe. Default uses /proc + ps. Return null when the pid
+	// is gone or the probe failed; the watcher / restore paths then
+	// treat the task as terminal and replay the missed exit. Return a
+	// ProcessIdentity when the pid is alive; identityMatches against
+	// the snapshot's procIdent decides whether the original task is
+	// still that process or PID reuse hit.
+	identityProbe?: (pid: number) => ProcessIdentity | null;
 	// Current Pi session id. Snapshots whose sessionId disagrees with this
 	// value are still rehydrated (so the dashboard can show their final
 	// state) but are not eligible for missed-exit replay; replay is scoped
@@ -106,12 +166,21 @@ export interface RestoreOptions {
 // states; only fresh running->stopped coercion produces exitNotified=false.
 export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, options: RestoreOptions = {}): ManagedTask {
 	const now = options.now ?? Date.now();
-	const isAlive = options.isProcessAlive ?? defaultProcessAlive;
+	const probe = options.identityProbe ?? defaultReadProcessIdentity;
 	const wasRunning = snapshot.status === "running";
 	const foreignSession = typeof options.sessionId === "string"
 		&& typeof snapshot.sessionId === "string"
 		&& snapshot.sessionId !== options.sessionId;
-	const pidStillAlive = wasRunning && !foreignSession && isAlive(snapshot.pid);
+	// PID-reuse safe: a non-null identity is required AND must match the
+	// snapshot's recorded procIdent (when present). Pre-1.2.2 snapshots
+	// with no procIdent degrade to PID-only liveness via identityMatches.
+	let pidStillAlive = false;
+	if (wasRunning && !foreignSession) {
+		const current = probe(snapshot.pid);
+		if (current !== null && identityMatches(snapshot.procIdent, current)) {
+			pidStillAlive = true;
+		}
+	}
 	const coercedFromRunning = wasRunning && !pidStillAlive;
 
 	// Backward-compat: snapshots from <=1.2.0 have no `exitNotified` field.

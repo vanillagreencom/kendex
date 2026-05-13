@@ -7,7 +7,13 @@
 import { describe, expect, test } from "bun:test";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "../extensions/lifecycle.js";
 import { restoredTaskFromSnapshot, selectMissedExits } from "../extensions/snapshot.js";
-import type { BackgroundTaskSnapshot, ManagedTask, TaskEventType } from "../extensions/types.js";
+import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../extensions/types.js";
+
+function fakeIdent(pid: number): ProcessIdentity {
+	return { pid, startToken: `start-${pid}`, comm: "bot-review-wait" };
+}
+const probeDead = () => null;
+const probeAlive = (pid: number) => fakeIdent(pid);
 
 function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	return {
@@ -230,9 +236,6 @@ describe("replayMissedExitsLifecycle", () => {
 });
 
 describe("session_start E2E (restore + replay)", () => {
-	// Reviewer-test #12: drive restoreSnapshots-equivalent + replay end
-	// to end. Persisted running snapshot whose pid is dead -> coerce to
-	// stopped, replay missed exit, observe the wake event delivered.
 	test("CC-503-style restore: persisted running snapshot triggers exit wake", () => {
 		const hooks = recordingHooks();
 		const persisted = fakeSnapshot({
@@ -242,8 +245,9 @@ describe("session_start E2E (restore + replay)", () => {
 			outputBytes: 89,
 			exitNotified: false,
 			notifyOnExit: true,
+			procIdent: fakeIdent(2409160),
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: () => false, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.status).toBe("stopped");
 		expect(restored.exitNotified).toBe(false);
 		const replayed = replayMissedExitsLifecycle([restored], hooks);
@@ -254,15 +258,16 @@ describe("session_start E2E (restore + replay)", () => {
 		expect(restored.exitNotified).toBe(true);
 	});
 
-	test("orphan-running restore: pid alive -> no fake exit, dashboard sees running", () => {
+	test("orphan-running restore: pid alive + identity match -> no fake exit", () => {
 		const hooks = recordingHooks();
 		const persisted = fakeSnapshot({
 			id: "bg-3",
 			status: "running",
 			pid: 4242,
 			notifyOnExit: true,
+			procIdent: fakeIdent(4242),
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: () => true, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeAlive, sessionId: "sess-1" });
 		expect(restored.status).toBe("running");
 		expect(restored.closed).toBe(false);
 		const replayed = replayMissedExitsLifecycle([restored], hooks);
@@ -280,7 +285,7 @@ describe("session_start E2E (restore + replay)", () => {
 		});
 		delete (persisted as Partial<BackgroundTaskSnapshot>).exitNotified;
 		delete (persisted as Partial<BackgroundTaskSnapshot>).sessionId;
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: () => false, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(selectMissedExits([restored])).toHaveLength(0);
 		const replayed = replayMissedExitsLifecycle([restored], hooks);
 		expect(replayed).toBe(0);
@@ -295,7 +300,7 @@ describe("session_start E2E (restore + replay)", () => {
 			notifyOnExit: true,
 			sessionId: "sess-OTHER",
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { isProcessAlive: () => false, sessionId: "sess-1" });
+		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
 		expect(restored.exitNotified).toBe(true);
 		expect(replayMissedExitsLifecycle([restored], hooks)).toBe(0);
 	});

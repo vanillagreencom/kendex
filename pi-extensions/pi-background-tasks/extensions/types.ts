@@ -3,6 +3,21 @@ import type { ChildProcess } from "node:child_process";
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "timed_out";
 export type TaskEventType = "output" | "exit";
 
+// Identity tuple used to detect PID reuse on restore/poll. The kernel
+// may recycle a PID for an unrelated process; a bare `kill -0` check
+// would then return alive and the bg_task would be considered still
+// running against a foreign process. startToken is the process start
+// time (jiffies-since-boot on Linux via /proc/<pid>/stat field 22, or
+// the absolute `ps -o lstart=` string everywhere else), which is
+// unique per PID lifetime. comm is the kernel comm name, a defensive
+// secondary signal. Mismatch on either field treats the original task
+// as gone (reviewer-error MAJOR, vstack#15 round 4).
+export interface ProcessIdentity {
+	pid: number;
+	startToken: string;
+	comm: string;
+}
+
 export interface VstackModalLock {
 	depth: number;
 }
@@ -41,6 +56,10 @@ export interface BackgroundTaskSnapshot {
 	// to gate replay ("this snapshot belongs to a different session"
 	// short-circuits cross-session leaks) and to make audit logs explicit.
 	sessionId?: string;
+	// Process identity captured at spawn for PID-reuse-safe liveness
+	// checks on restore + orphan polls. Absent on pre-1.2.2 snapshots;
+	// identity check degrades to PID-only for those.
+	procIdent?: ProcessIdentity;
 }
 
 export type ManagedTask = BackgroundTaskSnapshot & {
