@@ -356,7 +356,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			wakeDrain = drainOcWakeEvents(sessionLock, wakeEventsLog);
 		}
 		for (const line of wakeDrain.lines) {
-			let ev: { pane_id?: string; hash?: string; classifier_tag?: string; event_type?: string; request_id?: string; question?: unknown; harness?: string; completion?: unknown };
+			let ev: { pane_id?: string; hash?: string; classifier_tag?: string; event_type?: string; request_id?: string; question?: unknown; harness?: string; completion?: unknown; task?: unknown };
 			try { ev = JSON.parse(line); } catch { continue; }
 			const evPid = ev.pane_id ?? "";
 			const evHash = ev.hash ?? "";
@@ -370,6 +370,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (evTag === "oc-question") src = "oc-question-event";
 			else if (evTag === "pi-question") src = "pi-question-event";
 			else if (evTag === "pi-subagent-completion") src = "pi-subagent-completion-event";
+			else if (evTag === "pi-bg-task-exit") src = "pi-bg-task-exit-event";
 
 			if (isCanonicalTag(evTag)) {
 				let extraJson = "null";
@@ -377,6 +378,8 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					extraJson = JSON.stringify({ event_type: ev.event_type, request_id: ev.request_id, question: ev.question, harness: ev.harness });
 				} else if (evTag === "pi-subagent-completion") {
 					extraJson = JSON.stringify({ event_type: ev.event_type, completion: ev.completion, harness: ev.harness });
+				} else if (evTag === "pi-bg-task-exit") {
+					extraJson = JSON.stringify({ event_type: ev.event_type, task: ev.task, harness: ev.harness });
 				}
 				// Round-4 #6: only record a wake reason when the event is
 				// actually durable. appendEvent returns false on dedup (no

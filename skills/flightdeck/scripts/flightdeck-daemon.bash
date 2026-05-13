@@ -135,6 +135,7 @@ CANONICAL_TAGS=(
   oc-question
   pi-question
   pi-subagent-completion
+  pi-bg-task-exit
 )
 
 is_canonical_tag() {
@@ -1925,6 +1926,8 @@ run_loop() {
           _src="pi-question-event"
         elif [[ "$ev_tag" == "pi-subagent-completion" ]]; then
           _src="pi-subagent-completion-event"
+        elif [[ "$ev_tag" == "pi-bg-task-exit" ]]; then
+          _src="pi-bg-task-exit-event"
         else
           _src="adapter-event"
         fi
@@ -1939,6 +1942,8 @@ run_loop() {
             _extra=$(jq -c '{event_type, request_id, question, harness}' <<< "$_line" 2>/dev/null || echo 'null')
           elif [[ "$ev_tag" == "pi-subagent-completion" ]]; then
             _extra=$(jq -c '{event_type, completion, harness}' <<< "$_line" 2>/dev/null || echo 'null')
+          elif [[ "$ev_tag" == "pi-bg-task-exit" ]]; then
+            _extra=$(jq -c '{event_type, task, harness}' <<< "$_line" 2>/dev/null || echo 'null')
           fi
           append_event "$ev_pid" "$ev_hash" "$ev_tag" "$_src" 0 false "$_extra"
         else

@@ -71,6 +71,8 @@ import {
 	forgetSnapshot,
 	rememberSnapshot,
 	resolveTaskByToken,
+	restoredTaskFromSnapshot,
+	selectMissedExits,
 	taskSnapshot,
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
@@ -132,22 +134,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const match = id.match(/^bg-(\d+)$/);
 		return match ? Number(match[1]) : 0;
 	};
-
-	const restoredTaskFromSnapshot = (snapshot: BackgroundTaskSnapshot): ManagedTask => ({
-		...snapshot,
-		child: null,
-		closed: true,
-		forceKillTimer: null,
-		lastAnnouncedLength: snapshot.outputBytes,
-		matcher: parseOutputMatcher(snapshot.notifyPattern),
-		output: "",
-		outputTimer: null,
-		status: snapshot.status === "running" ? "stopped" : snapshot.status,
-		stopReason: snapshot.status === "running" ? "shutdown" : null,
-		timeoutTimer: null,
-		restored: true,
-		updatedAt: snapshot.status === "running" ? Date.now() : snapshot.updatedAt,
-	});
 
 	const rememberRestoredSnapshot = (snapshot: BackgroundTaskSnapshot) => {
 		if (!snapshot?.id || !snapshot.command) return;
@@ -306,10 +292,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		eventType: TaskEventType,
 		task: ManagedTask,
 		options: { matchedPattern?: string; newOutputTail?: string } = {},
-	) => {
-		if (shuttingDown) return;
-		if (eventType === "output" && !task.notifyOnOutput) return;
-		if (eventType === "exit" && !task.notifyOnExit) return;
+	): boolean => {
+		if (shuttingDown) return false;
+		if (eventType === "output" && !task.notifyOnOutput) return false;
+		if (eventType === "exit" && !task.notifyOnExit) return false;
 
 		const details: BackgroundTaskEventDetails = {
 			eventAt: Date.now(),
@@ -332,6 +318,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			},
 			eventType === "exit" ? { deliverAs: "followUp", triggerTurn: true } : { deliverAs: "steer", triggerTurn: true },
 		);
+		return true;
 	};
 
 	const scheduleOutputReaction = (task: ManagedTask) => {
@@ -375,9 +362,31 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		rememberSnapshot(task);
 		persistSnapshots();
 
-		sendTaskEvent("exit", task);
+		const notified = sendTaskEvent("exit", task);
+		if (notified) {
+			task.exitNotified = true;
+			rememberSnapshot(task);
+			persistSnapshots();
+		}
 		refreshUi();
 		return task;
+	};
+
+	// Replay 'exit' wakeups for any task we restored in a terminal state
+	// without ever notifying the agent. The canonical failure path: a long-
+	// running session_shutdown or a mid-session restore coerced status
+	// running->stopped (restoredTaskFromSnapshot) and the agent never saw
+	// the exit. Without this replay the bg_task silently stalls.
+	const replayMissedExits = () => {
+		let replayed = 0;
+		for (const task of selectMissedExits(tasks.values())) {
+			const notified = sendTaskEvent("exit", task);
+			if (!notified) continue;
+			task.exitNotified = true;
+			rememberSnapshot(task);
+			replayed += 1;
+		}
+		if (replayed > 0) persistSnapshots();
 	};
 
 	const appendLogLine = (task: ManagedTask, text: string) => {
@@ -465,6 +474,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			command,
 			cwd,
 			exitCode: null,
+			exitNotified: false,
 			expiresAt,
 			forceKillTimer: null,
 			id,
@@ -593,6 +603,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		shuttingDown = false;
 		activeCtx = ctx;
 		restoreSnapshots(ctx);
+		replayMissedExits();
 		syncWidget(ctx);
 	});
 	pi.on("before_agent_start", (_event, ctx) => {

@@ -26,6 +26,11 @@ export interface BackgroundTaskSnapshot {
 	notifyOnOutput: boolean;
 	notifyPattern?: string;
 	outputBytes: number;
+	// True after sendTaskEvent('exit') has fired for this task. Persisted so
+	// a session restart can replay missed exit wakeups for tasks that hit
+	// terminal state (notably the running->stopped coercion in
+	// restoredTaskFromSnapshot) without ever notifying the agent.
+	exitNotified?: boolean;
 }
 
 export type ManagedTask = BackgroundTaskSnapshot & {

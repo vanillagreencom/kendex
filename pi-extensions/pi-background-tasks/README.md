@@ -123,6 +123,8 @@ All settings live in the extension manager under **Background Tasks**.
 
 Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory.
 
+Exit wakeups are durable across session restarts. Each task carries an `exitNotified` flag in its persisted snapshot; if a task hits a terminal state without ever firing its `notifyOnExit` event (session shutdown, mid-session restore that coerced `running` → `stopped`), the next `session_start` replays the missed `exit` wakeup so the agent never silently stalls on a finished background task.
+
 ## Attribution
 
 Locally owned by vstack, based on the MIT-licensed `@ifi/pi-background-tasks` from `ifiokjr/oh-pi`. See `THIRD_PARTY_NOTICES.md`.

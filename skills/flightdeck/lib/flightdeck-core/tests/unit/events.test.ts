@@ -129,4 +129,11 @@ describe("isCanonicalTag", () => {
 	test("stale-orphan-worktree is canonical (issue #18)", () => {
 		expect(isCanonicalTag("stale-orphan-worktree")).toBe(true);
 	});
+
+	// vstack#15: bg_task terminal events surface through the Pi subscriber
+	// as a canonical wake tag so master gets notified even when the agent's
+	// own follow-up turn doesn't fire.
+	test("pi-bg-task-exit is canonical", () => {
+		expect(isCanonicalTag("pi-bg-task-exit")).toBe(true);
+	});
 });

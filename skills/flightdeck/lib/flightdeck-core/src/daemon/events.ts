@@ -119,6 +119,7 @@ const CANONICAL_TAGS = new Set<string>([
 	"oc-question",
 	"pi-question",
 	"pi-subagent-completion",
+	"pi-bg-task-exit",
 ]);
 
 export function isCanonicalTag(tag: string): boolean {
