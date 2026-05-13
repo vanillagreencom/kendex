@@ -2,15 +2,39 @@ import { readTrackedEntries } from "../state/tracked-entry.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
 
 export interface TerminationPartition {
+	entryCount: number;
 	genericEntries: TrackedEntry[];
 	issueEntries: TrackedEntry[];
+	warnings: string[];
 }
 
-export interface TerminationSummaryOptions {
+export interface TerminationPartitionOptions {
+	warn?: (message: string) => void;
+}
+
+export interface TerminationSummaryOptions extends TerminationPartitionOptions {
 	session?: string;
 	timestamp?: string;
 	summaryPath?: string;
 }
+
+const ISSUE_STATES = new Set(["merge-ready", "merged", "aborted"]);
+const ISSUE_SUBSTATES = new Set([
+	"audit-relation-prompt",
+	"bot-review-wait-stuck",
+	"cleanup-prompt",
+	"cycle-fix-suggestions",
+	"descope-related",
+	"external-fix-suggestions",
+	"force-merge-confirm",
+	"force-push-prompt",
+	"merge-now",
+	"merge-ready-but-unknown",
+	"rebase-multi-choice",
+	"scope-creep-detected",
+	"stale-no-pr-branch",
+	"stale-orphan-worktree",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -22,15 +46,55 @@ function issueDomain(entry: TrackedEntry): Record<string, unknown> | undefined {
 	return issue;
 }
 
-function isIssueEntry(entry: TrackedEntry): boolean {
-	return entry.kind === "issue" || typeof issueDomain(entry)?.id === "string";
+function hasNonEmptyString(value: unknown): boolean {
+	return typeof value === "string" && value.trim().length > 0;
 }
 
-export function partitionTerminationEntries(state: FlightdeckStateLike): TerminationPartition {
-	const entries = Object.values(readTrackedEntries(state));
-	const issueEntries = entries.filter(isIssueEntry);
-	const genericEntries = entries.filter((entry) => !isIssueEntry(entry));
-	return { genericEntries, issueEntries };
+function hasFiniteNumber(value: unknown): boolean {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+function issueMarkers(entry: TrackedEntry): string[] {
+	const markers: string[] = [];
+	const issue = issueDomain(entry);
+	if (hasNonEmptyString(issue?.id)) markers.push("domain.issue.id");
+	if (hasFiniteNumber(issue?.pr_number) || hasFiniteNumber(entry.pr_number)) markers.push("pr_number");
+	if (hasNonEmptyString(issue?.worktree) || hasNonEmptyString(entry.worktree)) markers.push("worktree");
+	if (hasNonEmptyString(issue?.merge_commit) || hasNonEmptyString(entry.merge_commit)) markers.push("merge_commit");
+	if (hasFiniteNumber(issue?.scope_files_declared) || hasFiniteNumber(issue?.scope_files_actual)) markers.push("scope_files");
+	if (typeof issue?.orchestration_started === "boolean" || typeof entry.orchestration_started === "boolean") markers.push("orchestration_started");
+	if (typeof entry.state === "string" && ISSUE_STATES.has(entry.state)) markers.push(`state:${entry.state}`);
+	if (typeof entry.substate === "string" && ISSUE_SUBSTATES.has(entry.substate)) markers.push(`substate:${entry.substate}`);
+	return [...new Set(markers)];
+}
+
+function warn(message: string, opts: TerminationPartitionOptions, warnings: string[]): void {
+	warnings.push(message);
+	if (opts.warn) opts.warn(message);
+	else process.stderr.write(`${message}\n`);
+}
+
+function classifyEntry(entry: TrackedEntry, opts: TerminationPartitionOptions, warnings: string[]): "generic" | "issue" {
+	if (entry.kind === "issue") return "issue";
+	if (hasNonEmptyString(issueDomain(entry)?.id)) return "issue";
+	const markers = issueMarkers(entry).filter((marker) => marker !== "domain.issue.id");
+	if (markers.length > 0) {
+		warn(`Warning: issue-shaped tracked entry ${JSON.stringify(entry.id)} missing kind=issue/domain.issue.id; routing through issue termination path (${markers.join(", ")}).`, opts, warnings);
+		return "issue";
+	}
+	return "generic";
+}
+
+export function partitionTerminationEntries(state: FlightdeckStateLike, opts: TerminationPartitionOptions = {}): TerminationPartition {
+	const warnings: string[] = [];
+	const entries = Object.values(readTrackedEntries(state, { warn: (message) => warn(message, opts, warnings) }));
+	const issueEntries: TrackedEntry[] = [];
+	const genericEntries: TrackedEntry[] = [];
+	for (const entry of entries) {
+		if (classifyEntry(entry, opts, warnings) === "issue") issueEntries.push(entry);
+		else genericEntries.push(entry);
+	}
+	return { entryCount: entries.length, genericEntries, issueEntries, warnings };
 }
 
 function decisionCount(entry: TrackedEntry): number {
@@ -41,30 +105,6 @@ function stringField(value: unknown, fallback = "—"): string {
 	return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
-function issueId(entry: TrackedEntry): string {
-	const issue = issueDomain(entry);
-	return stringField(issue?.id, entry.id);
-}
-
-function issuePr(entry: TrackedEntry): string {
-	const issue = issueDomain(entry);
-	const pr = typeof issue?.pr_number === "number" ? issue.pr_number : (typeof entry.pr_number === "number" ? entry.pr_number : null);
-	return pr === null ? "—" : `#${pr}`;
-}
-
-function issueMergeCommit(entry: TrackedEntry): string {
-	const issue = issueDomain(entry);
-	const raw = typeof entry.merge_commit === "string" ? entry.merge_commit : typeof issue?.merge_commit === "string" ? issue.merge_commit : "";
-	return raw ? raw.slice(0, 12) : "—";
-}
-
-function issueState(entry: TrackedEntry): string {
-	const issue = issueDomain(entry);
-	const outcome = issue && typeof issue.outcome === "string" ? issue.outcome : "";
-	if (outcome) return outcome;
-	return stringField(entry.state, "unknown");
-}
-
 function summaryPath(opts: TerminationSummaryOptions): string {
 	if (opts.summaryPath) return opts.summaryPath;
 	const session = opts.session ?? "SESSION";
@@ -72,7 +112,20 @@ function summaryPath(opts: TerminationSummaryOptions): string {
 	return `tmp/flightdeck-summary-${session}-${ts}.md`;
 }
 
+export function renderEmptyTerminationSummary(opts: TerminationSummaryOptions = {}): string {
+	return [
+		"### ✈️ Flightdeck session complete",
+		"",
+		"Session terminated with no tracked entries.",
+		"",
+		"**Counts**: 0 sessions · 0 complete · 0 cancelled · 0 dead",
+		"",
+		`Summary file: \`${summaryPath(opts)}\``,
+	].join("\n");
+}
+
 export function renderGenericTerminationSummary(entries: TrackedEntry[], opts: TerminationSummaryOptions = {}): string {
+	if (entries.length === 0) return renderEmptyTerminationSummary(opts);
 	const rows = entries.map((entry) => `| ${entry.id} | ${stringField(entry.kind)} | ${stringField(entry.state, "unknown")} | ${stringField(entry.harness)} | ${decisionCount(entry)} |`);
 	const complete = entries.filter((entry) => entry.state === "complete").length;
 	const cancelled = entries.filter((entry) => entry.state === "cancelled").length;
@@ -84,7 +137,7 @@ export function renderGenericTerminationSummary(entries: TrackedEntry[], opts: T
 		"",
 		"| Entry | Kind | State | Harness | Decisions |",
 		"|-------|------|-------|---------|-----------|",
-		...(rows.length ? rows : ["| — | — | — | — | 0 |"]),
+		...rows,
 		"",
 		`**Counts**: ${entries.length} sessions · ${complete} complete · ${cancelled} cancelled · ${dead} dead`,
 		"",
@@ -92,33 +145,9 @@ export function renderGenericTerminationSummary(entries: TrackedEntry[], opts: T
 	].join("\n");
 }
 
-export function renderIssueTerminationSummary(entries: TrackedEntry[], opts: TerminationSummaryOptions = {}): string {
-	const rows = entries.map((entry) => `| ${issueId(entry)} | ${issueState(entry)} | ${issuePr(entry)} | ${issueMergeCommit(entry)} | ${decisionCount(entry)} |`);
-	const merged = entries.filter((entry) => issueState(entry) === "merged").length;
-	const aborted = entries.filter((entry) => issueState(entry) === "aborted").length;
-	return [
-		"### ✈️ Flightdeck session complete",
-		"",
-		"**Outcomes**",
-		"",
-		"| Issue | State | PR | Merge commit | Decisions |",
-		"|-------|-------|----|--------------|-----------|",
-		...(rows.length ? rows : ["| — | — | — | — | 0 |"]),
-		"",
-		"**Next-cycle recommendation**",
-		"",
-		"- Stick with planned cycle — no created issues warrant precedence.",
-		"",
-		`**Counts**: ${merged} merged · ${aborted} aborted · 0 children · 0 follow-ups · 0 recommended next`,
-		"",
-		`Summary file: \`${summaryPath(opts)}\``,
-	].join("\n");
-}
-
-export function renderTerminationSummary(state: FlightdeckStateLike, opts: TerminationSummaryOptions = {}): string {
-	const { genericEntries, issueEntries } = partitionTerminationEntries(state);
-	const sections: string[] = [];
-	if (genericEntries.length > 0) sections.push(renderGenericTerminationSummary(genericEntries, opts));
-	if (issueEntries.length > 0) sections.push(renderIssueTerminationSummary(issueEntries, opts));
-	return sections.join("\n\n");
+export function renderGenericTerminationSummaryFromState(state: FlightdeckStateLike, opts: TerminationSummaryOptions = {}): string {
+	const { entryCount, genericEntries } = partitionTerminationEntries(state, opts);
+	if (entryCount === 0) return renderEmptyTerminationSummary(opts);
+	if (genericEntries.length === 0) return "";
+	return renderGenericTerminationSummary(genericEntries, opts);
 }

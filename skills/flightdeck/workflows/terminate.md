@@ -1,6 +1,6 @@
 # Workflow: `terminate` — Final Summary + Mode-Aware Unwind
 
-End-of-session unwind. Routes by tracked-entry kind, writes the summary file, marks master state terminated, archives state, and returns control to flightdeck's dashboard. Issue entries keep the existing issue/PR/new-issue recommendation behavior; ad-hoc/workflow entries get a generic session summary with no issue-system side effects.
+End-of-session unwind. Routes by tracked-entry kind, writes the summary file, marks master state terminated, archives state, and returns control to flightdeck's dashboard. Issue entries keep the existing issue/PR/new-issue recommendation behavior from this markdown workflow; ad-hoc/workflow entries get a generic session summary with no issue-system side effects. Any TS helper under `lib/flightdeck-core/src/terminate/` owns the generic/empty summary path only — never replace the issue/PR/new-issue recommendation path with hard-coded TS output.
 
 **Inputs**: master state after debounce confirms every tracked entry is terminal enough to end the session.
 
@@ -22,21 +22,23 @@ ENTRIES_JSON=$(flightdeck-state tracked-entries)
 
 Partition tracked entries by kind:
 
-- `ISSUE_ENTRIES`: entries with `kind == "issue"` or `domain.issue.id`.
-- `GENERIC_ENTRIES`: entries with `kind == "adhoc"`, `kind == "workflow"`, or any non-issue kind.
+- `ISSUE_ENTRIES`: entries with `kind == "issue"`, `domain.issue.id`, or issue-shaped markers.
+- `GENERIC_ENTRIES`: entries with `kind == "adhoc"`, `kind == "workflow"`, or a future non-issue kind and **no** issue-shaped markers.
+
+Issue-shaped markers are: legacy/top-level `pr_number`, `worktree`, `merge_commit`, issue-domain `pr_number`, `worktree`, `merge_commit`, `scope_files_declared`, `scope_files_actual`, `orchestration_started`, issue-only states (`merge-ready`, `merged`, `aborted`), or issue-only substates (`merge-now`, `audit-relation-prompt`, `bot-review-wait-stuck`, `rebase-multi-choice`, `force-push-prompt`, `cleanup-prompt`, `stale-no-pr-branch`, `stale-orphan-worktree`, `descope-related`, `scope-creep-detected`, fix-suggestion tags). If any marker appears without `kind == "issue"` / `domain.issue.id`, emit a warning naming the entry id and markers, then route through `ISSUE_ENTRIES`. This fails closed so malformed issue-shaped entries cannot silently skip merge/new-issue history.
 
 Routing rules:
 
 1. If `ISSUE_ENTRIES` is non-empty, run the issue summary path (§§ 2-4) and preserve the current issue/PR/new-issue recommendation summary behavior.
 2. If `ISSUE_ENTRIES` is empty and `GENERIC_ENTRIES` is non-empty, run only the generic session summary path (§ 1). Do not call `gh`, `linear`, worktree helpers, merge planning, or `project-management`.
-3. For mixed sessions, run both paths: generic session summary for `GENERIC_ENTRIES`, then issue/PR/new-issue recommendation summary for `ISSUE_ENTRIES`.
-4. Unknown or malformed kinds fail safe as generic unless `domain.issue.id` is present.
+3. If both partitions are empty, write the empty-session summary in § 1 and continue finalization. This is an explicit diagnostic, not a silent success.
+4. For mixed sessions, run both paths: generic session summary for `GENERIC_ENTRIES`, then issue/PR/new-issue recommendation summary for `ISSUE_ENTRIES`.
 
 ---
 
 ## § 1: Compose Generic Session Outcomes
 
-**Skip this section** when `GENERIC_ENTRIES` is empty.
+**Skip this section** when `GENERIC_ENTRIES` is empty and `ISSUE_ENTRIES` is non-empty. **Run this section** for an empty tracked-entry set to emit the explicit empty-session diagnostic.
 
 For each generic entry, gather only local state:
 
@@ -52,7 +54,7 @@ For each generic entry, gather only local state:
 | `last_prompt` | latest `decisions_log[-1].prompt_tag`, if any |
 | `last_answer` | latest `decisions_log[-1].answer`, if any |
 
-Generic sessions must not query GitHub, Linear, PR state, worktree metadata, or project-management workflows. They do not produce merge ordering, issue cleanup, new issue reports, or next-cycle recommendations.
+Generic sessions must not query GitHub, Linear, PR state, worktree metadata, or project-management workflows. They do not produce merge ordering, issue cleanup, new issue reports, or next-cycle recommendations. If there are zero tracked entries, write `Session terminated with no tracked entries.` plus zero counts.
 
 ---
 
@@ -124,7 +126,7 @@ If no follow-ups warrant precedence, the recommendation is "stick with planned c
 
 Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons).
 
-For generic-only sessions, write:
+For generic-only sessions or empty sessions, write:
 
 ```markdown
 # Flightdeck Session Summary — <SESSION> — <ISO8601>
@@ -133,6 +135,10 @@ For generic-only sessions, write:
 | Entry | Kind | State | Harness | Elapsed | Decisions | Last prompt | Answer |
 |-------|------|-------|---------|---------|-----------|-------------|--------|
 | ...
+
+If no tracked entries exist, write this instead of the table rows:
+
+Session terminated with no tracked entries.
 
 ## Counts
 - Sessions: <N>
@@ -195,7 +201,7 @@ Do NOT call `pane-registry remove-merged` here. Earlier revisions did, but `clos
 
 Emit the full applicable summary block(s) inline. Do not collapse to a single line. Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty sections, add nothing else.
 
-For generic entries, emit this block only when `GENERIC_ENTRIES` is non-empty:
+For generic entries, emit this block when `GENERIC_ENTRIES` is non-empty:
 
 <generic_output_format>
 ### ✈️ Flightdeck sessions complete
@@ -210,6 +216,18 @@ For generic entries, emit this block only when `GENERIC_ENTRIES` is non-empty:
 
 Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
 </generic_output_format>
+
+If no tracked entries exist, emit this explicit diagnostic block:
+
+<empty_output_format>
+### ✈️ Flightdeck session complete
+
+Session terminated with no tracked entries.
+
+**Counts**: 0 sessions · 0 complete · 0 cancelled · 0 dead
+
+Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+</empty_output_format>
 
 For issue entries, emit the existing issue summary block only when `ISSUE_ENTRIES` is non-empty:
 
@@ -247,7 +265,7 @@ Standalone follow-ups:
 Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
 </issue_output_format>
 
-For mixed sessions, emit `<generic_output_format>` first, then `<issue_output_format>`. Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.
+For mixed sessions, emit `<generic_output_format>` first, then `<issue_output_format>`. For empty sessions, emit only `<empty_output_format>`. Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.
 
 ---
 

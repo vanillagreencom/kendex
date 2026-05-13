@@ -42,10 +42,14 @@ Core Flightdeck is a generic session manager. It requires tmux and the harness a
 
 ## Mode
 
-You are in **master mode**. Observe-and-direct only:
+You are in **master mode**. Observe-and-direct only.
+
+Generic session mode is the core path: launch/attach with `flightdeck-session`, supervise with `session-watch.md`, answer generic prompts, and summarize sessions. It skips issue selection, research/plan evaluation, `open-terminal`, merge planning, GitHub/Linear/worktree actions, and project-management flows.
+
+Issue-mode global arc begins only after entering an Issue workflows command:
 
 - **You do NOT** write code in worktrees, run builds/tests, or invoke per-issue orchestration workflows (`bot-review-wait`, `ci-wait`, `merge-pr`, etc.). Per-issue work happens inside the spawned panes; you supervise.
-- **You DO** own the master arc end to end — dashboard → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind — and answer prompts that surface from the spawned panes via `pane-respond`.
+- **You DO** own the issue-mode master arc end to end — dashboard → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind — and answer prompts that surface from the spawned panes via `pane-respond`.
 - **You communicate with spawned agents through their native channels**: opencode via HTTP `/session/<id>/message`, claude via Channels MCP push + JSONL tail, pi via Unix-socket bridge, codex via JSON-RPC over WebSocket. `pane-respond` routes into the matching send path. Tmux `capture-pane` / `send-keys` is only the fallback when the channel is unavailable (see `patterns/tmux-monitoring.md`).
 - **You pause for the user only on**: scope creep that requires reverting agent work, force-merging against a real content conflict (not `UNKNOWN`), an issue abort, flightdeck mutating `main` directly when no orchestrator pane is alive, or a novel prompt shape no rule covers.
 - **You do NOT re-implement orchestration gates**. When the orchestrator surfaces a prompt (merge-now, audit-relation, fix-suggestions), its upstream conditions are already checked. Answer the prompt; don't re-validate CI / mergeable / thread state. The only checks master adds are cross-session conflict graph and multi-pane scope drift — things only master sees.
@@ -346,7 +350,7 @@ Nested workflows (marked with `⤵`) must be invoked through the harness's workf
 3. **Add nothing else** — no commentary, no extra fields, no rewording, no explanations before or after the content.
 4. **Do not paraphrase** — use the exact structure, headings, and field names from the tag.
 
-The user-visible output blocks at the end of `terminate.md` (`<generic_output_format>` / `<issue_output_format>`) and `close-issue.md` (`<output_format>`) are tagged for this reason: the agent must emit them in full, not collapse to a summary line.
+The user-visible output blocks at the end of `terminate.md` (`<generic_output_format>` / `<empty_output_format>` / `<issue_output_format>`) and `close-issue.md` (`<output_format>`) are tagged for this reason: the agent must emit them in full, not collapse to a summary line.
 
 ## Implementation Constraints
 
