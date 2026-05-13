@@ -13,7 +13,8 @@
 #   pane-registry remove <ISSUE>                         # also releases oc port + deletes spawn file
 #   pane-registry remove-merged                          # drop terminal-state issues with closed windows
 #   pane-registry reconcile                              # drop entries whose windows no longer exist
-#   pane-registry teardown-window <ISSUE>                # safely kill the issue's window/pane using stable pane_id
+#   pane-registry teardown-window <ISSUE> [--force]      # safely kill the issue's window/pane using stable pane_id
+#   pane-registry teardown-entry <ENTRY_ID> [--force]    # alias for teardown-window (TrackedEntry alignment)
 #   pane-registry oc-attach-args <ISSUE>                # prints '--url U --session S' or empty
 #   pane-registry find-by-pane <pane-target>             # prints issue id matching pane_target
 #
@@ -480,24 +481,44 @@ case "$ACTION" in
     ;;
 
   reconcile)
-    # Drop entries whose tmux panes no longer exist. Called by watch.md § 1
-    # at startup to clean up stale registry state from prior sessions.
-    # Same pane_id-first logic as remove-merged: the previous
-    # window_name-only check silently dropped live entries when pi/codex
-    # auto-renamed their window post-spawn (#3 finding 3).
+    # Reconcile registry against live tmux. Three things happen per entry:
     #
-    # Opportunistic backfill: for legacy entries with a pane_target but
-    # no pane_id, try to resolve it now so future reconciles use the
-    # stable key. CRITICAL (#16): tmux reuses window indices after
-    # windows are destroyed, so a stale pane_target like `HT:2.1` may
-    # now point to a completely different window (e.g. the daemon).
-    # Resolving pane_id from such a stale target would adopt the
-    # WRONG pane id into the registry and turn future teardowns into
-    # a kill of the unrelated window. The window-name guard rejects
-    # any pane_target whose current window name no longer matches the
-    # registered window — that mismatch means the original window was
-    # destroyed and the index recycled. Such entries get dropped
-    # outright (no backfill, no pane_target fallback).
+    #   1. Liveness check. If `pane_id` is recorded and tmux still lists
+    #      it, the entry survives. If `pane_id` is recorded but tmux no
+    #      longer lists it, the original pane is definitively gone and
+    #      the entry is dropped — this is the only deterministic case.
+    #
+    #   2. Opportunistic backfill (legacy entries: pane_target but no
+    #      pane_id). Backfilling from a stale pane_target is the #16
+    #      footgun: tmux reuses indices after windows are destroyed, so
+    #      session:idx.pidx may now point to an unrelated window. The
+    #      backfill needs a proof-of-identity strong enough to survive
+    #      window-name collisions (tmux allows duplicate names) and
+    #      rename races (pi/codex auto-rename their window post-spawn).
+    #
+    #      The invariant is the AND of two checks:
+    #        a. `#{window_name}` at the current pane_target == recorded
+    #           `window`.
+    #        b. `#{pane_current_path}` at the current pane_target is
+    #           prefixed by the recorded `worktree` (cwd-anchor proof).
+    #
+    #      If both checks pass with non-empty data: adopt pane_id.
+    #      If either check fails with non-empty data: emit drift and
+    #      LEAVE the entry untouched (no backfill, no drop) so a human
+    #      can investigate. The previous round-1 fix used window_name
+    #      alone and could (i) be defeated by name collision and (ii)
+    #      drop live entries silently when only the name mismatched.
+    #      If neither check has enough data to disprove identity, fall
+    #      through to backfill (conservative — a window-name collision
+    #      with an identical worktree path is vanishingly unlikely; a
+    #      cwd-changed-by-user pane will fail check (b) and route to
+    #      drift instead of adoption).
+    #
+    #   3. pane_target-only entries that survived (2): the window_name
+    #      liveness fallback used to drop them on rename mismatch. With
+    #      the drift gate in place that pathway is no longer reachable
+    #      without explicit operator intent; we keep the entry untouched
+    #      and let a future reconcile try again once pane_id is resolved.
     LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
@@ -507,26 +528,38 @@ case "$ACTION" in
     REGISTERED=$(jq -r 'keys[]?' <<< "$ISSUES_JSON")
     DROPPED=()
     BACKFILLED=()
+    DRIFT=()
     while IFS= read -r issue; do
       [[ -z "$issue" ]] && continue
       fields=$(jq -r --arg k "$issue" '
-        .[$k] // {} | [(.pane_id // ""), (.pane_target // ""), (.window // "")] | @tsv
+        .[$k] // {} | [(.pane_id // ""), (.pane_target // ""), (.window // ""), (.worktree // "")] | @tsv
       ' <<< "$ISSUES_JSON")
       pane_id=$(awk -F'\t' '{print $1}' <<< "$fields")
       pane_target=$(awk -F'\t' '{print $2}' <<< "$fields")
       window=$(awk -F'\t' '{print $3}' <<< "$fields")
+      worktree=$(awk -F'\t' '{print $4}' <<< "$fields")
+      drift_this=0
       if [[ -z "$pane_id" && -n "$pane_target" ]]; then
-        # Same list-panes gate as init: avoid tmux's silent fallback to
-        # the active pane when the recorded pane_target no longer exists.
         if tmux list-panes -t "$pane_target" >/dev/null 2>&1; then
           current_window=$(tmux display-message -t "$pane_target" -p '#{window_name}' 2>/dev/null || echo "")
-          # Guard against index reuse (#16): if the window name at the
-          # recorded pane_target no longer matches the issue's window,
-          # the original window was destroyed and tmux has reassigned
-          # the index to an unrelated window. Do not backfill — the
-          # original pane is gone.
+          current_path=$(tmux display-message -t "$pane_target" -p '#{pane_current_path}' 2>/dev/null || echo "")
+          window_mismatch=0
+          path_mismatch=0
           if [[ -n "$window" && -n "$current_window" && "$current_window" != "$window" ]]; then
-            : # mismatched window name → leave pane_id empty so liveness check below drops this entry
+            window_mismatch=1
+          fi
+          if [[ -n "$worktree" && -n "$current_path" ]]; then
+            case "$current_path" in
+              "$worktree"|"$worktree"/*) ;;
+              *) path_mismatch=1 ;;
+            esac
+          fi
+          if (( window_mismatch == 1 || path_mismatch == 1 )); then
+            # Strong evidence of identity mismatch. Do NOT adopt; do NOT
+            # drop. Leave the entry untouched and emit drift so a human
+            # can decide. This is the #16 safety net.
+            DRIFT+=("$issue (window:'$window'→'$current_window' worktree:'$worktree'→'$current_path')")
+            drift_this=1
           else
             resolved=$(tmux display-message -t "$pane_target" -p '#{pane_id}' 2>/dev/null || echo "")
             if [[ -n "$resolved" ]]; then
@@ -536,6 +569,9 @@ case "$ACTION" in
             fi
           fi
         fi
+      fi
+      if (( drift_this == 1 )); then
+        continue
       fi
       alive=1
       if [[ -n "$pane_id" ]]; then
@@ -565,9 +601,15 @@ case "$ACTION" in
         "$([ ${#BACKFILLED[@]} -eq 1 ] && echo y || echo ies)" \
         "$(IFS=,; echo "${BACKFILLED[*]}")"
     fi
+    if [[ ${#DRIFT[@]} -gt 0 ]]; then
+      printf 'reconciled: drift detected for %d entr%s, left untouched (%s)\n' \
+        "${#DRIFT[@]}" \
+        "$([ ${#DRIFT[@]} -eq 1 ] && echo y || echo ies)" \
+        "$(IFS='|'; echo "${DRIFT[*]}")" >&2
+    fi
     ;;
 
-  teardown-window)
+  teardown-window|teardown-entry)
     # Safely tear down the tmux window/pane for an issue using the
     # stable `pane_id` (`%N`) recorded at init time. Never derives a
     # kill target from the human-readable `pane_target`
@@ -576,28 +618,76 @@ case "$ACTION" in
     # point to an unrelated window (the daemon, the user's editor,
     # etc.). Killing that would destroy the wrong workload (#16).
     #
+    # `teardown-entry` is an alias anticipating the TrackedEntry schema
+    # in docs/plans/flightdeck-session-management-reframe.md; both names
+    # call the same code path so callers can migrate gradually.
+    #
     # Behavior:
-    #   1. If `pane_id` is alive in `tmux list-panes -a`, kill the
-    #      window when it has exactly one pane, otherwise kill only
-    #      the pane. Single-pane-window kill matches the historical
+    #   1. pane_id alive + state ∈ {merged,aborted,dead}: kill the
+    #      window when it has exactly one pane, otherwise kill only the
+    #      pane. Single-pane-window kill matches the historical
     #      contract from close-issue.md § 4.
-    #   2. If `pane_id` is gone AND the issue is already in a terminal
-    #      state (`merged|aborted|dead`), treat the window as already
-    #      closed and exit success. No fallback to `pane_target`.
-    #   3. If `pane_id` is gone AND the issue is NOT terminal, exit 3
-    #      with an error: the registry has drifted from tmux reality
-    #      and the caller must escalate. Silently deriving a kill
-    #      target from `pane_target` is exactly the #16 footgun.
+    #   2. pane_id alive + state NOT terminal:
+    #        - default: refuse with exit 4 (policy guard — callers must
+    #          set the issue to a terminal state before tearing down).
+    #        - with --force: kill anyway. close-issue.md's normal path
+    #          sets state before invoking, so --force is the explicit
+    #          escape hatch for operator-driven cleanup.
+    #   3. pane_id gone + state terminal: treat as already closed and
+    #      exit success. No fallback to pane_target.
+    #   4. pane_id gone + state non-terminal: exit 3 (registry drift).
+    #
+    # Every destructive tmux call captures exit status and stderr; if
+    # the kill exits non-zero AND the pane is still listed afterwards,
+    # the helper exits 5 with the captured diagnostic instead of
+    # falsely reporting success.
+    #
+    # Registry-read errors (flightdeck-state failure) propagate as exit
+    # 6 with stderr forwarded — close-issue.md must not confuse them
+    # with an idempotent "already removed" outcome (exit 1).
     #
     # Exit codes:
     #   0 - window/pane killed, or already closed (terminal + dead pane)
-    #   1 - issue not found in registry
+    #   1 - issue not registered (caller may treat as idempotent no-op)
     #   2 - bad arguments
-    #   3 - registry drift: pane_id is gone but state is not terminal
-    ISSUE="${1:-}"
-    [[ -z "$ISSUE" ]] && { echo "Usage: teardown-window <ISSUE>" >&2; exit 2; }
-    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // empty" 2>/dev/null || echo "")
-    if [[ -z "$entry" || "$entry" == "null" ]]; then
+    #   3 - registry drift: pane_id gone but state not terminal
+    #   4 - policy: pane_id alive but state non-terminal (rerun with --force)
+    #   5 - tmux kill failed: pane still alive after kill attempt
+    #   6 - registry read failure
+    ISSUE=""
+    FORCE=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --force) FORCE=1; shift ;;
+        --) shift; break ;;
+        -*) echo "teardown-window: unknown flag: $1" >&2; exit 2 ;;
+        *) [[ -z "$ISSUE" ]] && ISSUE="$1" || { echo "teardown-window: extra argument: $1" >&2; exit 2; }; shift ;;
+      esac
+    done
+    [[ -z "$ISSUE" ]] && { echo "Usage: $ACTION <ISSUE> [--force]" >&2; exit 2; }
+    # Separate stdout / stderr / status from flightdeck-state so we can
+    # distinguish read-failures (→ exit 6) from a successful empty
+    # lookup (→ exit 1). The previous body collapsed both with
+    # `2>/dev/null || echo ""`, which is exactly the failure mode
+    # called out as BLOCK #2.
+    fd_stderr_file=$(mktemp -t fd-teardown-stderr.XXXXXX)
+    trap 'rm -f "$fd_stderr_file"' EXIT
+    # `flightdeck-state get` returns:
+    #   exit 0 + empty stdout — state file present, lookup miss (idempotent)
+    #   exit 1                — state file does not exist (registry never initialized; idempotent)
+    #   exit >= 2             — usage error or genuine read failure
+    # Treat 0+empty and 1 as "not found"; only exit >= 2 escalates to
+    # exit 6 (registry read failure) per BLOCK #2.
+    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // empty" 2>"$fd_stderr_file")
+    fd_status=$?
+    if (( fd_status >= 2 )); then
+      printf 'teardown-window: registry read failed (flightdeck-state exit=%s): ' "$fd_status" >&2
+      cat "$fd_stderr_file" >&2
+      echo >&2
+      exit 6
+    fi
+    entry_trim="${entry//[[:space:]]/}"
+    if (( fd_status == 1 )) || [[ -z "$entry_trim" || "$entry_trim" == "null" ]]; then
       echo "teardown-window: issue '$ISSUE' not found in registry" >&2
       exit 1
     fi
@@ -612,18 +702,43 @@ case "$ACTION" in
       fi
     fi
     if (( pane_alive == 1 )); then
+      case "$state" in
+        merged|aborted|dead) ;;
+        *)
+          if (( FORCE != 1 )); then
+            echo "teardown-window: policy refusal — pane_id '$pane_id' is alive but state is '$state' (not merged|aborted|dead); set a terminal state first or rerun with --force" >&2
+            exit 4
+          fi
+          ;;
+      esac
       window_id=$(tmux display-message -t "$pane_id" -p '#{window_id}' 2>/dev/null || echo "")
       pane_count=0
       if [[ -n "$window_id" ]]; then
         pane_count=$(tmux list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null | wc -l | tr -d ' ')
       fi
+      kill_stderr=$(mktemp -t fd-teardown-kill-stderr.XXXXXX)
       if [[ -n "$window_id" && "$pane_count" == "1" ]]; then
-        tmux kill-window -t "$window_id" 2>/dev/null || true
-        printf 'teardown-window: killed window %s (pane_id=%s, window=%s)\n' "$window_id" "$pane_id" "$window"
+        tmux kill-window -t "$window_id" 2>"$kill_stderr"
+        kill_status=$?
+        kind="window $window_id"
       else
-        tmux kill-pane -t "$pane_id" 2>/dev/null || true
-        printf 'teardown-window: killed pane %s (window has %s panes, window=%s)\n' "$pane_id" "$pane_count" "$window"
+        tmux kill-pane -t "$pane_id" 2>"$kill_stderr"
+        kill_status=$?
+        kind="pane $pane_id"
       fi
+      # Verify by re-checking the live pane list. tmux can return
+      # non-zero for benign reasons (e.g. the pane vanished between
+      # the alive-check and the kill), so the post-kill liveness
+      # check is authoritative — not the exit code.
+      if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qFx "$pane_id"; then
+        printf 'teardown-window: kill of %s failed (status=%s, pane_id=%s still alive): ' "$kind" "$kill_status" "$pane_id" >&2
+        cat "$kill_stderr" >&2
+        echo >&2
+        rm -f "$kill_stderr"
+        exit 5
+      fi
+      rm -f "$kill_stderr"
+      printf 'teardown-window: killed %s (pane_id=%s, window=%s, force=%s)\n' "$kind" "$pane_id" "$window" "$FORCE"
       exit 0
     fi
     # pane_id missing or already dead — gate teardown on terminal state.
@@ -641,7 +756,7 @@ case "$ACTION" in
 
   *)
     echo "Unknown action: $ACTION" >&2
-    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane" >&2
+    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane" >&2
     exit 2
     ;;
 esac

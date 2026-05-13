@@ -66,19 +66,25 @@ Persist any captured summary fields via `pane-registry set <ISSUE_ID> <field> <v
 
 Delegate the destructive teardown to the registry. **Never** derive a kill target from `pane_target` (`session:window.index`) — tmux reuses window indices after windows are destroyed, so the stored `pane_target` can after-the-fact point to an unrelated window (the daemon, the user's editor, ...), and a naive `tmux kill-window -t "${pane_target%.*}"` would destroy that unrelated workload (#16). The registry stores a stable `pane_id` (`%N`) at init time; the helper uses it as the only correct destructive target.
 
+This step runs AFTER § 3 has already written the terminal state (`merged|aborted|dead`). The helper enforces that contract — it will refuse to kill an alive pane whose registry state is non-terminal unless `--force` is passed.
+
 1. Run the safe teardown:
    ```
    .agents/skills/flightdeck/scripts/pane-registry teardown-window <ISSUE_ID>
    ```
-   The helper:
-   - **`pane_id` alive** → resolves the pane's `window_id` (`@N`). If that window has a single pane, runs `tmux kill-window -t "@N"`; otherwise runs `tmux kill-pane -t "%N"` (so we don't accidentally close another pane sharing the window).
-   - **`pane_id` gone AND `state ∈ {merged, aborted, dead}`** → treats the window as already closed; no fallback to `pane_target`. Exits success.
-   - **`pane_id` gone AND state is NOT terminal** → exits non-zero (registry drift). Do NOT retry by stripping `pane_target` — that's the original #16 footgun.
-2. Handle the exit:
-   - Exit `0` → done; proceed to § 5.
-   - Exit `1` (issue not registered) → already cleaned up; idempotent no-op; proceed to § 5.
-   - Exit `3` (registry drift) → log a warning with the issue id and continue. Skip § 5's destructive verify; let the user clean up manually. State has already been updated in § 3, so terminate's archive captures the outcome.
-3. Verify the window is gone (defensive): `tmux list-panes -a -F '#{pane_id}' | grep -qFx "<pane_id>"` — if the recorded `pane_id` is still alive, log a warning and continue (don't escalate; the user can clean up manually).
+   The helper performs the kill, verifies the pane is actually gone via a post-kill liveness check, and exits with a status that distinguishes every outcome below. `pane-registry teardown-entry <ENTRY_ID>` is an alias of the same code path anticipating the TrackedEntry schema.
+
+2. Branch on the helper's exit code:
+   | Exit | Meaning | Action |
+   |------|---------|--------|
+   | `0`  | window/pane killed, OR already closed (terminal + dead pane) | proceed to § 5 |
+   | `1`  | issue not registered — already removed by terminate or earlier cleanup | idempotent no-op; proceed to § 5 |
+   | `3`  | registry drift: `pane_id` gone but state is non-terminal. The registry says we should still be running. Do NOT derive a kill target from `pane_target` (#16). | log a warning with the issue id, skip the destructive verify in step 3, continue. The state recorded in § 3 means terminate's archive still captures the outcome. |
+   | `4`  | policy refusal: pane is alive but state is non-terminal. § 3 should have set a terminal state already — this signals an ordering bug in the caller. | log the helper's stderr and abort the workflow; the user must investigate. Do NOT silently rerun with `--force`. |
+   | `5`  | tmux kill failed: pane is still alive after the kill attempt. The helper has already captured the kill's stderr. | forward the helper's stderr to the user; the user may need to kill the window manually. |
+   | `6`  | registry read failure (flightdeck-state broken). | forward the helper's stderr; abort the workflow. Treating this as an idempotent no-op would mask state corruption. |
+
+3. Verify the window is gone (defensive, skipped on exit 3/4/5/6): `tmux list-panes -a -F '#{pane_id}' | grep -qFx "<pane_id>"` — if the recorded `pane_id` is still alive after a `0` exit, log a warning (don't escalate; the helper's own post-kill check already escalates to exit 5 in that case, so a positive match here is a tmux-state race the user can sort out).
 
 Pane registry entry is left in place for the end-of-session report (see `terminate.md` § 1). It carries the issue's history. Do NOT call `pane-registry remove` here — terminate is responsible for the final cleanup.
 

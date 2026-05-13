@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Test-only tmux shim. Reads/writes state from $TMUX_SHIM_STATE (JSON).
+# Implements only the tmux subcommands the pane-registry helper invokes:
+#   display-message, list-panes, list-windows, kill-window, kill-pane,
+#   show-options.
+#
+# State shape:
+#   {
+#     "session": "test-session",
+#     "panes": {
+#       "%100": {"window_id": "@10", "window_name": "issue-1",
+#                "path": "/tmp/wt-1", "window_index": 1, "pane_index": 0}
+#     },
+#     "windows": {
+#       "@10": {"name": "issue-1", "index": 1}
+#     }
+#   }
+#
+# Killing a pane removes it from .panes. Killing a window removes both
+# the window and every pane attached to it. Lookups by `pane_target`
+# (session:window_idx.pane_idx) walk .panes to find a match.
+set -euo pipefail
+
+STATE_FILE="${TMUX_SHIM_STATE:?TMUX_SHIM_STATE not set}"
+[[ -f "$STATE_FILE" ]] || { echo "shim: state file missing: $STATE_FILE" >&2; exit 1; }
+
+resolve_pane() {
+  # $1 = target, prints the pane object (or empty).
+  local target="$1"
+  jq --arg t "$target" --arg session "$(jq -r '.session' "$STATE_FILE")" '
+    def to_pt: "\($session):\(.value.window_index).\(.value.pane_index)";
+    .panes | to_entries[] |
+    select(.key == $t or (to_pt) == $t) |
+    .value
+  ' "$STATE_FILE"
+}
+
+resolve_pane_id() {
+  # $1 = target, prints the pane_id key (or empty).
+  local target="$1"
+  jq -r --arg t "$target" --arg session "$(jq -r '.session' "$STATE_FILE")" '
+    def to_pt: "\($session):\(.value.window_index).\(.value.pane_index)";
+    .panes | to_entries[] |
+    select(.key == $t or (to_pt) == $t) |
+    .key
+  ' "$STATE_FILE"
+}
+
+write_state() {
+  # $1 = jq filter
+  local filter="$1"
+  local tmp
+  tmp=$(mktemp -t fd-shim.XXXXXX)
+  jq "$filter" "$STATE_FILE" > "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+subcmd="${1:-}"
+shift || true
+
+case "$subcmd" in
+  display-message)
+    target=""
+    format=""
+    print=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        -p) print=1; shift ;;
+        *)
+          if (( print == 1 )) && [[ -z "$format" ]]; then format="$1"; fi
+          shift
+          ;;
+      esac
+    done
+    if [[ -z "$target" && -z "$format" ]]; then
+      jq -r '.session' "$STATE_FILE"
+      exit 0
+    fi
+    if [[ -z "$target" && "$format" == "#S" ]]; then
+      jq -r '.session' "$STATE_FILE"
+      exit 0
+    fi
+    pane=$(resolve_pane "$target")
+    if [[ -z "$pane" || "$pane" == "null" ]]; then
+      exit 1
+    fi
+    case "$format" in
+      "#{window_id}")         jq -r '.window_id // empty' <<< "$pane" ;;
+      "#{window_name}")       jq -r '.window_name // empty' <<< "$pane" ;;
+      "#{pane_id}")           jq -r --arg t "$target" --arg session "$(jq -r '.session' "$STATE_FILE")" '
+                                 def to_pt: "\($session):\(.value.window_index).\(.value.pane_index)";
+                                 .panes | to_entries[] |
+                                 select(.key == $t or (to_pt) == $t) |
+                                 .key
+                               ' "$STATE_FILE" ;;
+      "#{pane_current_path}") jq -r '.path // empty' <<< "$pane" ;;
+      "#S")                   jq -r '.session' "$STATE_FILE" ;;
+      *) echo "shim: unsupported display-message format: $format" >&2; exit 2 ;;
+    esac
+    ;;
+  list-panes)
+    all=0
+    target=""
+    format=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -a) all=1; shift ;;
+        -t) target="$2"; shift 2 ;;
+        -F) format="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if (( all == 1 )); then
+      jq -r '.panes | keys[]' "$STATE_FILE"
+      exit 0
+    fi
+    if [[ -n "$target" ]]; then
+      if [[ "$target" == @* ]]; then
+        # list-panes -t <window_id>
+        matches=$(jq -r --arg w "$target" '
+          .panes | to_entries[] |
+          select(.value.window_id == $w) | .key
+        ' "$STATE_FILE")
+        # Existence: exit 0 only if there is at least one pane.
+        if [[ -z "$matches" ]]; then
+          echo "shim: no panes in window $target" >&2
+          exit 1
+        fi
+        [[ -n "$format" ]] && echo "$matches"
+        exit 0
+      fi
+      # Target by pane_id or pane_target string.
+      pane=$(resolve_pane "$target")
+      if [[ -z "$pane" || "$pane" == "null" ]]; then
+        echo "shim: pane $target not found" >&2
+        exit 1
+      fi
+      [[ -n "$format" ]] && resolve_pane_id "$target"
+      exit 0
+    fi
+    echo "shim: list-panes requires -a or -t" >&2
+    exit 2
+    ;;
+  list-windows)
+    target=""
+    format=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        -F) format="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    jq -r '.windows | to_entries[] | .value.name' "$STATE_FILE"
+    ;;
+  kill-window)
+    target=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -z "$target" ]]; then exit 2; fi
+    # If target is @N, drop window and its panes.
+    if [[ "$target" == @* ]]; then
+      write_state "
+        .panes |= with_entries(select(.value.window_id != \"$target\"))
+        | .windows |= with_entries(select(.key != \"$target\"))
+      "
+      exit 0
+    fi
+    # Otherwise treat as session:window_idx — drop matching windows by index.
+    idx="${target##*:}"
+    write_state "
+      .panes |= with_entries(select((.value.window_index | tostring) != \"$idx\"))
+      | .windows |= with_entries(select((.value.index | tostring) != \"$idx\"))
+    "
+    ;;
+  kill-pane)
+    target=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -z "$target" ]]; then exit 2; fi
+    write_state ".panes |= with_entries(select(.key != \"$target\"))"
+    ;;
+  show-options)
+    # Only `-g pane-base-index` is consulted by pane-registry.
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -g) shift ;;
+        *) name="$1"; shift ;;
+      esac
+    done
+    case "${name:-pane-base-index}" in
+      pane-base-index) echo "pane-base-index 0" ;;
+      *) echo "${name:-} 0" ;;
+    esac
+    ;;
+  *)
+    echo "shim: unsupported tmux subcmd: $subcmd $*" >&2
+    exit 2
+    ;;
+esac

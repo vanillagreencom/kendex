@@ -63,7 +63,7 @@ if tmux list-panes -a -F '#{pane_id}' | grep -qFx "$pane_id"; then
 fi
 ```
 
-When `pane_id` is gone, the original pane is already destroyed; do NOT fall back to `pane_target` to "clean up". Either the issue is already terminal (`merged|aborted|dead`) and the window is already closed (no-op), or the registry has drifted and the caller must escalate. The shared implementation lives at `scripts/pane-registry teardown-window <ISSUE>` and is what `workflows/close-issue.md` § 4 calls; do not reimplement the kill path inline.
+When `pane_id` is gone, the original pane is already destroyed; do NOT fall back to `pane_target` to "clean up". Either the issue is already terminal (`merged|aborted|dead`) and the window is already closed (no-op), or the registry has drifted and the caller must escalate. The shared implementation lives at `scripts/pane-registry teardown-window <ISSUE>` (alias `teardown-entry <ENTRY_ID>` for the TrackedEntry schema) and is what `workflows/close-issue.md` § 4 calls; do not reimplement the kill path inline. The helper distinguishes every outcome via exit code: `0` success/already-closed, `1` issue-not-registered, `3` registry-drift (pane gone + non-terminal), `4` policy-refusal (pane alive + non-terminal; pass `--force` to override), `5` kill-failed (post-kill liveness check still finds the pane), `6` registry-read-failure. Callers must distinguish `1` from `6` — the former is idempotent, the latter is state corruption.
 
 The same rule applies to capture-pane reads during the close-issue two-signal check: prefer `pane_id`. A stale `pane_target` would feed an unrelated window's text into the signal accumulator and could either mask a real termination or trip a false positive on the wrong content.
 
@@ -71,7 +71,16 @@ The same rule applies to capture-pane reads during the close-issue two-signal ch
 
 ### Reconcile-time backfill guard (#16)
 
-`pane-registry reconcile` opportunistically backfills `pane_id` for legacy entries that recorded only `pane_target`. The backfill MUST reject any `pane_target` whose current `window_name` no longer matches the registered `window` — a mismatch means the original window was destroyed and the index has been reassigned. Adopting that pane id into the registry would silently graft an unrelated window onto the issue, and the next `teardown-window` call would then kill it. When the window-name guard rejects a backfill, leave `pane_id` empty so the liveness check drops the entry on the same pass.
+`pane-registry reconcile` opportunistically backfills `pane_id` for legacy entries that recorded only `pane_target`. tmux reuses window indices after a window is destroyed, so a stale `pane_target` may now resolve to an unrelated window; adopting its `pane_id` into the registry would silently graft that window onto the issue, and the next `teardown-window` call would then kill it. Window names are mutable (pi/codex auto-rename their windows; users can rename arbitrarily; duplicate names are allowed), so a single window-name comparison is too weak.
+
+The backfill requires the AND of two independent invariants:
+
+1. `#{window_name}` at the recorded `pane_target` == registered `window`.
+2. `#{pane_current_path}` at the recorded `pane_target` is `worktree` or starts with `worktree/`. The cwd-anchor is harder to spoof: agents launch with cwd pinned to their worktree, and a window-index collision with an identical-worktree-prefix is vanishingly unlikely.
+
+If either check has hard evidence of mismatch — a non-empty observed value that disagrees — reconcile MUST NOT adopt the pane id AND MUST NOT silently drop the entry. Instead it emits a single `reconciled: drift detected for N entr...` line on stderr and leaves the entry untouched so the operator can investigate. The drift gate covers both the index-reuse case from #16 and the rarer case of a user reusing a window name across workspaces.
+
+When neither check has enough data to disprove identity (e.g. either field empty), reconcile falls through to adoption — a benign cwd-changed-by-user pane would still get caught by `teardown-window`'s separate liveness check against the adopted `pane_id`.
 
 If fingerprinting fails (no sentinel matches on any pane), default to pane 0 and log a warning. Pane 0 is right for opencode and claude code in standard layouts.
 

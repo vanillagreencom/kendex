@@ -181,156 +181,283 @@ describe("pane-registry parity", () => {
 	});
 });
 
-// --- teardown-window (#16) -------------------------------------------------
+// --- teardown-window + reconcile (#16) ------------------------------------
 //
-// teardown-window is the destructive cleanup helper called from
-// workflows/close-issue.md § 4. The point of #16 is that the old
-// `WINDOW_TARGET="${pane_target%.*}"; tmux kill-window` path could destroy
-// an unrelated window after tmux reused the recorded window index. These
-// tests cover the three branches of the new helper:
-//
-//   1. pane_id alive, single-pane window  → kill the window
-//   2. pane_id alive, multi-pane window   → kill only the pane
-//   3. pane_id gone + terminal state       → no-op success (already closed)
-//   4. pane_id gone + non-terminal state   → exit 3 (registry drift)
-//   5. pane_target reused by another window (#16) → helper must NOT kill it
-//
-// All branches are exercised against both bash and TS implementations.
+// These tests run pane-registry against a deterministic tmux shim instead
+// of the live tmux server (reviewer BLOCKER #4: don't create/split/kill
+// real windows in CI). The shim is a bash script that reads/writes a JSON
+// state file; PATH-prepending its directory makes both the bash and TS
+// implementations resolve `tmux` to the shim. Each test owns its own
+// state file, so runs are isolated.
 
-function sessionId(): string {
-	return spawnSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" }).stdout.trim();
+const SHIM_DIR = resolve(HERE, "./tmux-shim");
+
+interface ShimPane {
+	window_id: string;
+	window_name: string;
+	path: string;
+	window_index: number;
+	pane_index: number;
 }
 
-function makeWindow(name: string): { paneId: string; windowId: string } {
-	const r = spawnSync(
-		"tmux",
-		["new-window", "-d", "-P", "-n", name, "-F", "#{pane_id}\t#{window_id}"],
-		{ encoding: "utf8" },
-	);
-	const [paneId, windowId] = (r.stdout ?? "").trim().split("\t");
-	if (!paneId || !windowId) throw new Error(`failed to create window ${name}: ${r.stderr}`);
-	return { paneId, windowId };
+interface ShimState {
+	session: string;
+	panes: Record<string, ShimPane>;
+	windows: Record<string, { name: string; index: number }>;
 }
 
-function killWindowIfExists(windowId: string): void {
-	spawnSync("tmux", ["kill-window", "-t", windowId], { stdio: "ignore" });
+function makeShimState(repo: string, state: ShimState): string {
+	const path = join(repo, "shim-state.json");
+	spawnSync("mkdir", ["-p", repo]);
+	require("node:fs").writeFileSync(path, JSON.stringify(state, null, 2));
+	return path;
 }
 
-function paneStillExists(paneId: string): boolean {
-	const r = spawnSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}"], { encoding: "utf8" });
-	return (r.stdout ?? "").split("\n").includes(paneId);
+function readShimState(path: string): ShimState {
+	return JSON.parse(require("node:fs").readFileSync(path, "utf8"));
 }
 
-function setIssueField(useTs: boolean, repo: string, issue: string, field: string, jsonValue: string): void {
-	run(useTs, repo, ["set", issue, field, jsonValue]);
+function runShim(useTs: boolean, repo: string, statePath: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	if (useTs) {
+		env.FLIGHTDECK_USE_TS_PANE_REGISTRY = "1";
+		env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE = "1";
+	} else {
+		delete env.FLIGHTDECK_USE_TS_PANE_REGISTRY;
+		delete env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE;
+	}
+	delete env.FLIGHTDECK_USE_TS;
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
+	env.TMUX_SHIM_STATE = statePath;
+	env.TMUX_PARITY_SESSION = readShimState(statePath).session;
+	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
+	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
-describe("pane-registry teardown-window (#16)", () => {
-	test("pane_id alive + single-pane window → kills the window", () => {
+function baseShim(session: string, extras: Partial<ShimState> = {}): ShimState {
+	return {
+		panes: {},
+		session,
+		windows: {},
+		...extras,
+	};
+}
+
+describe("pane-registry teardown-window (#16, shim-driven)", () => {
+	test("pane_id alive + terminal + single-pane window → kills the window", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
-			const name = `td-single-${useTs ? "ts" : "bash"}-${process.pid}`;
-			const { paneId, windowId } = makeWindow(name);
-			try {
-				run(useTs, repo, ["init", "TD-1", "--window", name, "--harness", "opencode", "--worktree", "/tmp/wt"]);
-				setIssueField(useTs, repo, "TD-1", "pane_id", JSON.stringify(paneId));
-				const r = run(useTs, repo, ["teardown-window", "TD-1"]);
-				expect(r.status).toBe(0);
-				expect(paneStillExists(paneId)).toBe(false);
-			} finally {
-				killWindowIfExists(windowId);
-			}
-		}
-	});
-
-	test("pane_id alive + multi-pane window → kills only the pane", () => {
-		for (const repo of [bashRepo, tsRepo]) {
-			const useTs = repo === tsRepo;
-			const name = `td-multi-${useTs ? "ts" : "bash"}-${process.pid}`;
-			const { paneId, windowId } = makeWindow(name);
-			// Split the window so it has two panes; we'll target the first.
-			const split = spawnSync(
-				"tmux",
-				["split-window", "-d", "-t", paneId, "-P", "-F", "#{pane_id}"],
-				{ encoding: "utf8" },
-			);
-			const siblingId = split.stdout.trim();
-			try {
-				run(useTs, repo, ["init", "TD-2", "--window", name, "--harness", "opencode", "--worktree", "/tmp/wt"]);
-				setIssueField(useTs, repo, "TD-2", "pane_id", JSON.stringify(paneId));
-				const r = run(useTs, repo, ["teardown-window", "TD-2"]);
-				expect(r.status).toBe(0);
-				expect(paneStillExists(paneId)).toBe(false);
-				// Sibling pane (and therefore the window) must still exist.
-				expect(paneStillExists(siblingId)).toBe(true);
-			} finally {
-				killWindowIfExists(windowId);
-			}
-		}
-	});
-
-	test("pane_id gone + terminal state → no-op success", () => {
-		for (const repo of [bashRepo, tsRepo]) {
-			const useTs = repo === tsRepo;
-			run(useTs, repo, ["init", "TD-3", "--window", "td-fake", "--harness", "opencode", "--worktree", "/tmp/wt"]);
-			setIssueField(useTs, repo, "TD-3", "pane_id", JSON.stringify("%999999"));
-			run(useTs, repo, ["set-state", "TD-3", "merged"]);
-			const r = run(useTs, repo, ["teardown-window", "TD-3"]);
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%100": { pane_index: 0, path: "/tmp/wt-a", window_id: "@10", window_index: 1, window_name: "issue-a" },
+				},
+				session: "test-session",
+				windows: { "@10": { index: 1, name: "issue-a" } },
+			});
+			runShim(useTs, repo, statePath, ["init", "TD-1", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-1", "pane_id", JSON.stringify("%100")]);
+			runShim(useTs, repo, statePath, ["set-state", "TD-1", "merged"]);
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-1"]);
 			expect(r.status).toBe(0);
-			expect(r.stdout).toContain("already closed");
+			const state = readShimState(statePath);
+			expect(state.panes["%100"]).toBeUndefined();
+			expect(state.windows["@10"]).toBeUndefined();
 		}
 	});
+
+	test("pane_id alive + terminal + multi-pane window → kills only the pane", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%100": { pane_index: 0, path: "/tmp/wt-a", window_id: "@10", window_index: 1, window_name: "issue-a" },
+					"%101": { pane_index: 1, path: "/tmp/wt-a", window_id: "@10", window_index: 1, window_name: "issue-a" },
+				},
+				session: "test-session",
+				windows: { "@10": { index: 1, name: "issue-a" } },
+			});
+			runShim(useTs, repo, statePath, ["init", "TD-2", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-2", "pane_id", JSON.stringify("%100")]);
+			runShim(useTs, repo, statePath, ["set-state", "TD-2", "merged"]);
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-2"]);
+			expect(r.status).toBe(0);
+			const state = readShimState(statePath);
+			expect(state.panes["%100"]).toBeUndefined();
+			expect(state.panes["%101"]).toBeDefined();
+			expect(state.windows["@10"]).toBeDefined();
+		}
+	});
+
+	for (const terminal of ["merged", "aborted", "dead"]) {
+		test(`pane_id gone + state=${terminal} → no-op success`, () => {
+			for (const repo of [bashRepo, tsRepo]) {
+				const useTs = repo === tsRepo;
+				const statePath = makeShimState(repo, baseShim("test-session"));
+				runShim(useTs, repo, statePath, ["init", "TD-3", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+				runShim(useTs, repo, statePath, ["set", "TD-3", "pane_id", JSON.stringify("%999999")]);
+				runShim(useTs, repo, statePath, ["set-state", "TD-3", terminal]);
+				const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-3"]);
+				expect(r.status).toBe(0);
+				expect(r.stdout).toContain("already closed");
+			}
+		});
+	}
 
 	test("pane_id gone + non-terminal state → exit 3 (registry drift)", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
-			run(useTs, repo, ["init", "TD-4", "--window", "td-fake", "--harness", "opencode", "--worktree", "/tmp/wt"]);
-			setIssueField(useTs, repo, "TD-4", "pane_id", JSON.stringify("%999998"));
-			// state remains "waiting" (default from init).
-			const r = run(useTs, repo, ["teardown-window", "TD-4"]);
+			const statePath = makeShimState(repo, baseShim("test-session"));
+			runShim(useTs, repo, statePath, ["init", "TD-4", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-4", "pane_id", JSON.stringify("%999998")]);
+			// state remains "waiting".
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-4"]);
 			expect(r.status).toBe(3);
 			expect(r.stderr).toContain("registry drift");
 		}
 	});
 
-	test("#16 scenario: stale pane_target reused by unrelated window is NOT killed", () => {
-		// Reproduce the issue: registry has a stale pane_target whose index
-		// has been reassigned to a different window. The helper must rely
-		// on the stable pane_id only; the unrelated window must survive.
+	test("pane_id alive + non-terminal state → exit 4 (policy refusal); --force kills", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
-			const victimName = `td-victim-${useTs ? "ts" : "bash"}-${process.pid}`;
-			const victim = makeWindow(victimName);
-			try {
-				const session = sessionId();
-				// Compute the victim's `session:window-index.pane-index`.
-				const meta = spawnSync(
-					"tmux",
-					["display-message", "-t", victim.paneId, "-p", "#{window_index}.#{pane_index}"],
-					{ encoding: "utf8" },
-				).stdout.trim();
-				const stalePaneTarget = `${session}:${meta}`;
-				run(useTs, repo, ["init", "TD-5", "--window", "orig-window-name", "--harness", "opencode", "--worktree", "/tmp/wt"]);
-				// Simulate the recorded state from issue #16: pane_id is the
-				// original (now-dead) one; pane_target now points at an
-				// unrelated live window via tmux index reuse.
-				setIssueField(useTs, repo, "TD-5", "pane_id", JSON.stringify("%999997"));
-				setIssueField(useTs, repo, "TD-5", "pane_target", JSON.stringify(stalePaneTarget));
-				run(useTs, repo, ["set-state", "TD-5", "merged"]);
-				const r = run(useTs, repo, ["teardown-window", "TD-5"]);
-				expect(r.status).toBe(0);
-				expect(paneStillExists(victim.paneId)).toBe(true);
-			} finally {
-				killWindowIfExists(victim.windowId);
-			}
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%100": { pane_index: 0, path: "/tmp/wt-a", window_id: "@10", window_index: 1, window_name: "issue-a" },
+				},
+				session: "test-session",
+				windows: { "@10": { index: 1, name: "issue-a" } },
+			});
+			runShim(useTs, repo, statePath, ["init", "TD-FORCE", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-FORCE", "pane_id", JSON.stringify("%100")]);
+			// state stays "waiting".
+			const r1 = runShim(useTs, repo, statePath, ["teardown-window", "TD-FORCE"]);
+			expect(r1.status).toBe(4);
+			expect(r1.stderr).toContain("policy refusal");
+			// Pane still alive after refusal.
+			expect(readShimState(statePath).panes["%100"]).toBeDefined();
+			const r2 = runShim(useTs, repo, statePath, ["teardown-window", "TD-FORCE", "--force"]);
+			expect(r2.status).toBe(0);
+			expect(readShimState(statePath).panes["%100"]).toBeUndefined();
 		}
 	});
 
-	test("unknown issue → exit 1", () => {
+	test("unknown issue → exit 1 (idempotent, distinct from read-failure)", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
-			const r = run(useTs, repo, ["teardown-window", "DOES-NOT-EXIST"]);
+			const statePath = makeShimState(repo, baseShim("test-session"));
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "DOES-NOT-EXIST"]);
 			expect(r.status).toBe(1);
+			expect(r.stderr).toContain("not found in registry");
+		}
+	});
+
+	test("teardown-entry is an alias for teardown-window", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, baseShim("test-session"));
+			runShim(useTs, repo, statePath, ["init", "TD-ALIAS", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-ALIAS", "pane_id", JSON.stringify("%999990")]);
+			runShim(useTs, repo, statePath, ["set-state", "TD-ALIAS", "aborted"]);
+			const r = runShim(useTs, repo, statePath, ["teardown-entry", "TD-ALIAS"]);
+			expect(r.status).toBe(0);
+			expect(r.stdout).toContain("already closed");
+		}
+	});
+});
+
+describe("pane-registry reconcile backfill safety (#16, shim-driven)", () => {
+	test("index reuse: window_name mismatch → drift, no adoption, victim survives", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			// Reproduce the original #16 wire: the registry has a NUMERIC
+			// pane_target (`HT:2.1` in the issue evidence) because the issue
+			// was previously persisted with a session:window-index.pane-index
+			// form. After the original window was destroyed and tmux reused
+			// the index, that target now resolves to an unrelated live pane
+			// (the daemon).
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%500": { pane_index: 0, path: "/some/daemon/cwd", window_id: "@50", window_index: 1, window_name: "flightdeck-daemon-s1" },
+				},
+				session: "test-session",
+				windows: { "@50": { index: 1, name: "flightdeck-daemon-s1" } },
+			});
+			runShim(useTs, repo, statePath, [
+				"init", "REUSE-1",
+				"--window", "orig-issue",
+				"--harness", "opencode",
+				"--worktree", "/tmp/wt-issue",
+			]);
+			// Force the legacy wire: numeric pane_target pointing at the
+			// victim's address, pane_id cleared.
+			runShim(useTs, repo, statePath, ["set", "REUSE-1", "pane_target", JSON.stringify("test-session:1.0")]);
+			runShim(useTs, repo, statePath, ["set", "REUSE-1", "pane_id", "null"]);
+			const r = runShim(useTs, repo, statePath, ["reconcile"]);
+			// Reconcile must not adopt the victim's pane_id; must emit drift;
+			// must not destroy the victim.
+			expect(r.stderr).toContain("drift detected");
+			expect(readShimState(statePath).panes["%500"]).toBeDefined();
+			const entry = JSON.parse(runShim(useTs, repo, statePath, ["get", "REUSE-1"]).stdout) as Record<string, unknown>;
+			expect(entry.pane_id).toBeNull();
+		}
+	});
+
+	test("index reuse: worktree (cwd) mismatch alone → drift, no adoption", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			// Pathological window-name collision: the new occupant happens to
+			// have the same window name (e.g. user reused a friendly name),
+			// but its cwd is a different worktree. The cwd-anchor invariant
+			// must catch this and emit drift.
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%600": { pane_index: 0, path: "/tmp/wt-other", window_id: "@60", window_index: 2, window_name: "orig-issue" },
+				},
+				session: "test-session",
+				windows: { "@60": { index: 2, name: "orig-issue" } },
+			});
+			runShim(useTs, repo, statePath, [
+				"init", "REUSE-2",
+				"--window", "orig-issue",
+				"--harness", "opencode",
+				"--worktree", "/tmp/wt-issue",
+				"--pane-index", "0",
+			]);
+			// Force pane_target to the victim's address and clear pane_id.
+			runShim(useTs, repo, statePath, ["set", "REUSE-2", "pane_target", JSON.stringify("test-session:2.0")]);
+			runShim(useTs, repo, statePath, ["set", "REUSE-2", "pane_id", "null"]);
+			const r = runShim(useTs, repo, statePath, ["reconcile"]);
+			expect(r.stderr).toContain("drift detected");
+			const entry = JSON.parse(runShim(useTs, repo, statePath, ["get", "REUSE-2"]).stdout) as Record<string, unknown>;
+			expect(entry.pane_id).toBeNull();
+			expect(readShimState(statePath).panes["%600"]).toBeDefined();
+		}
+	});
+
+	test("matching window_name + worktree → backfill adopts pane_id", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%700": { pane_index: 0, path: "/tmp/wt-good/subdir", window_id: "@70", window_index: 3, window_name: "good-issue" },
+				},
+				session: "test-session",
+				windows: { "@70": { index: 3, name: "good-issue" } },
+			});
+			runShim(useTs, repo, statePath, [
+				"init", "GOOD-1",
+				"--window", "good-issue",
+				"--harness", "opencode",
+				"--worktree", "/tmp/wt-good",
+				"--pane-index", "0",
+			]);
+			runShim(useTs, repo, statePath, ["set", "GOOD-1", "pane_target", JSON.stringify("test-session:3.0")]);
+			runShim(useTs, repo, statePath, ["set", "GOOD-1", "pane_id", "null"]);
+			const r = runShim(useTs, repo, statePath, ["reconcile"]);
+			expect(r.stderr).not.toContain("drift detected");
+			expect(r.stdout).toContain("backfilled pane_id");
+			const entry = JSON.parse(runShim(useTs, repo, statePath, ["get", "GOOD-1"]).stdout) as Record<string, unknown>;
+			expect(entry.pane_id).toBe("%700");
 		}
 	});
 });
