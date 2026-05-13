@@ -59,9 +59,9 @@ These tags assume issue-domain metadata (`domain.issue.*`), PR state, Linear/Git
 
 ### Domain guard
 
-`prompt-classify --entry-kind <kind>` and the TS classifier option used by `pane-poll` rewrite issue-only tags on non-issue entries to `domain-mismatch`. If registry lookup fails, callers must pass `--entry-kind-unknown`; that sentinel also routes issue-only tags to `domain-mismatch`. The watch loop must log a warning, skip all issue handlers, and surface a master question. This prevents an ad-hoc session from accidentally triggering cleanup, force-push, merge, Linear, or GitHub actions.
+`prompt-classify --entry-kind <kind>` and the TS classifier option used by `pane-poll` rewrite issue-only tags on non-issue entries to `domain-mismatch`. Missing kind now fails closed by default: if an issue-only tag is classified without any kind signal, the classifier emits a warning and returns `domain-mismatch`. If registry lookup fails, callers should pass `--entry-kind-unknown`; that sentinel also routes issue-only tags to `domain-mismatch`. The watch loop must log a warning, skip all issue handlers, and surface a master question. This prevents an ad-hoc session from accidentally triggering cleanup, force-push, merge, Linear, or GitHub actions.
 
-Legacy callers that omit `--entry-kind` are still permissive for backward compatibility: an issue-only tag is returned unchanged, but the classifier emits a stderr warning instructing the caller to pass `--entry-kind <kind>` or `--entry-kind-unknown`. New call sites should treat missing kind as a bug and should not rely on permissive mode.
+Legacy issue-mode callers that genuinely cannot pass kind yet must opt in explicitly with `--allow-missing-kind` (TS: `allowMissingKind: true`). That returns the original issue-only tag with a warning and exists only as a migration bridge; new call sites should pass `--entry-kind issue` or `--entry-kind-unknown` and should not rely on the opt-in.
 
 ---
 

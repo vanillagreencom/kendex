@@ -30,7 +30,7 @@ The watch layer is split into two modes:
 - **Generic session mode** (`workflows/session-watch.md` + `session-handle-prompt.md`) tracks any tmux-window entry and handles only domain-neutral prompts such as structured questions, bash permission prompts, safe bounded choices, terminal completion, and Pi background-task exits.
 - **Issue mode** (`workflows/watch.md` + `handle-prompt.md`) extends the generic loop with GitHub/Linear/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, audit relations, merge planning, scope creep, and descope actions.
 
-Issue-only prompt tags on ad-hoc sessions are guarded as `domain-mismatch`: Flightdeck logs a warning, takes no destructive action, and asks the master/user how to proceed. If entry lookup fails, callers pass `--entry-kind-unknown` to fail closed the same way; older callers that omit kind warn but remain permissive for compatibility.
+Issue-only prompt tags on ad-hoc sessions are guarded as `domain-mismatch`: Flightdeck logs a warning, takes no destructive action, and asks the master/user how to proceed. Missing kind now fails closed by default, and lookup misses should pass `--entry-kind-unknown`; legacy issue callers must explicitly opt in with `--allow-missing-kind` while they migrate.
 
 When every tracked issue is merged, aborted, or otherwise terminal, flightdeck writes a session summary — including any new issues the agents created along the way and a recommendation about what to tackle next — and hands control back.
 

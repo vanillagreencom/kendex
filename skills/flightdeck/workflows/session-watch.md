@@ -113,7 +113,7 @@ For each tracked entry:
 
 ### Handler guards
 
-`prompt-classify --entry-kind <kind>` (and the TS classifier option used by `pane-poll`) rewrites issue-only tags on non-issue entries to `domain-mismatch`. If entry lookup misses, the caller must pass `--entry-kind-unknown`; that sentinel also routes issue-only tags to `domain-mismatch`. Legacy callers that omit kind entirely warn but return the original issue tag for compatibility, so new watch/dispatch paths must not omit kind. The watch loop must then:
+`prompt-classify --entry-kind <kind>` (and the TS classifier option used by `pane-poll`) rewrites issue-only tags on non-issue entries to `domain-mismatch`. Missing kind fails closed by default: issue-only tags classify as `domain-mismatch` with a warning. If entry lookup misses, the caller should pass `--entry-kind-unknown`; that sentinel also routes issue-only tags to `domain-mismatch`. Legacy issue-mode callers that cannot pass kind yet must explicitly opt in with `--allow-missing-kind` / `allowMissingKind: true`; new watch/dispatch paths must not rely on that migration bridge. The watch loop must then:
 
 1. Log a warning naming the original prompt shape if available.
 2. Do **not** run issue handlers, touch worktrees, query PRs, merge, force-push, or clean up.

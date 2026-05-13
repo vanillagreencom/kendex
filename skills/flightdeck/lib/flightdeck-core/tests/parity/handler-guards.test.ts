@@ -94,10 +94,16 @@ describe("handler domain guards", () => {
 		expectWarning(result, "issue-only prompt tag merge-now");
 	});
 
-	test("legacy caller without entry kind warns but remains permissive", () => {
-		const result = expectBoth(fixture("14-merge-now.buffer"), [], "merge-now");
+	test("missing entry kind fails closed by default", () => {
+		const result = expectBoth(fixture("14-merge-now.buffer"), [], "domain-mismatch");
 		expectWarning(result, "classified without --entry-kind");
-		expectWarning(result, "domain-mismatch");
+		expectWarning(result, "routing as domain-mismatch");
+	});
+
+	test("legacy caller with allow-missing-kind warns but remains permissive", () => {
+		const result = expectBoth(fixture("14-merge-now.buffer"), ["--allow-missing-kind"], "merge-now");
+		expectWarning(result, "--allow-missing-kind was set");
+		expectWarning(result, "Migrate to --entry-kind issue");
 	});
 
 	test("generic tag on issue entry remains generic for the generic handler", () => {
