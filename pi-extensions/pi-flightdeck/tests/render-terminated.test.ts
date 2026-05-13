@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { after, before } from "node:test";
+import test, { afterEach, beforeEach } from "node:test";
 import {
 	type DashboardState,
 	makeInitialPopupState,
@@ -112,7 +112,7 @@ let ENV_PI_DIR = "";
 let ENV_HOME = "";
 let ENV_CWD = "";
 
-before(() => {
+beforeEach(() => {
 	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE"]) {
 		SAVED_ENV[key] = process.env[key];
 	}
@@ -129,7 +129,7 @@ before(() => {
 	process.env.USERPROFILE = ENV_HOME;
 });
 
-after(() => {
+afterEach(() => {
 	for (const [key, value] of Object.entries(SAVED_ENV)) {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
