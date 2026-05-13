@@ -11,7 +11,7 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, s
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
-import { normalizeConflictGraph, normalizeDecisionsLog } from "./state-normalizers.js";
+import { normalizeConflictGraph, normalizeDecisionsLog, normalizeOwner } from "./state-normalizers.js";
 
 export { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
 
@@ -318,26 +318,6 @@ function readJsonFile<T>(path: string): T | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-// TODO(structure): move to state-normalizers.ts if owner normalization grows.
-function normalizeOwner(owner: unknown): MasterOwner | undefined {
-	if (!owner || typeof owner !== "object" || Array.isArray(owner)) return undefined;
-	const raw = owner as Record<string, unknown>;
-	const pid = typeof raw.pid === "number" && Number.isFinite(raw.pid)
-		? Math.floor(raw.pid)
-		: typeof raw.pid === "string" && /^[1-9][0-9]*$/.test(raw.pid) ? Number.parseInt(raw.pid, 10) : undefined;
-	return {
-		...raw,
-		cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
-		harness: typeof raw.harness === "string" ? raw.harness : undefined,
-		pane_id: typeof raw.pane_id === "string" ? raw.pane_id : raw.pane_id === null ? null : undefined,
-		pane_target: typeof raw.pane_target === "string" ? raw.pane_target : raw.pane_target === null ? null : undefined,
-		pid,
-		pi_bridge_socket: typeof raw.pi_bridge_socket === "string" ? raw.pi_bridge_socket : raw.pi_bridge_socket === null ? null : undefined,
-		pi_session_id: typeof raw.pi_session_id === "string" ? raw.pi_session_id : raw.pi_session_id === null ? null : undefined,
-		discovery_error: typeof raw.discovery_error === "string" ? raw.discovery_error : raw.discovery_error === null ? null : undefined,
-	};
 }
 
 export function readMasterState(path: string): { state?: MasterState; error?: string } {

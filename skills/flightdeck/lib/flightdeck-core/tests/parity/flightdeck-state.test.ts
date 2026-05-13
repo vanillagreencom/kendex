@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,15 @@ function writeState(repoRoot: string, state: unknown): void {
 	const dir = join(repoRoot, "tmp");
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, `flightdeck-state-${SESSION}.json`), JSON.stringify(state), "utf8");
+}
+
+function writePiBridgeStub(repoRoot: string, body: string): string {
+	const dir = join(repoRoot, "stub-bin");
+	mkdirSync(dir, { recursive: true });
+	const bin = join(dir, "pi-bridge");
+	writeFileSync(bin, `#!/usr/bin/env bash\n${body}\n`, "utf8");
+	chmodSync(bin, 0o755);
+	return dir;
 }
 
 function normalize(state: unknown): unknown {
@@ -148,9 +157,57 @@ describe("flightdeck-state parity", () => {
 		const b = run(true, tsRepo, ["init"], overrides);
 		expect(a.status).toBe(0);
 		expect(b.status).toBe(0);
-		expect(a.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi-bridge not found); proceeding with null pi_session_id/pi_bridge_socket.");
-		expect(b.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi-bridge not found); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(a.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_not_found); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(b.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_not_found); proceeding with null pi_session_id/pi_bridge_socket.");
 		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
+		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
+	});
+
+	test("pi owner discovery timeout warns and persists discovery_error identically", () => {
+		const stub = writePiBridgeStub(bashRepo, "sleep 10");
+		const overrides: Record<string, string | undefined> = {
+			FLIGHTDECK_OWNER_HARNESS: "pi",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS: "1000",
+			FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_SEC: "1",
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: `${stub}:/usr/bin:/bin`,
+		};
+		const start = Date.now();
+		const a = run(false, bashRepo, ["init"], overrides);
+		const b = run(true, tsRepo, ["init"], overrides);
+		expect(Date.now() - start).toBeLessThan(3500);
+		expect(a.status).toBe(0);
+		expect(b.status).toBe(0);
+		expect(a.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_timeout); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(b.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_timeout); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect((readState(tsRepo) as { owner?: { discovery_error?: string } }).owner?.discovery_error).toBe("pi_bridge_timeout");
+		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
+	});
+
+	test("pi owner partial bridge metadata warns and persists discovery_error identically", () => {
+		const stub = writePiBridgeStub(bashRepo, "printf '%s\\n' '[{\"pid\":4242,\"sessionId\":\"pi-session-only\"}]'");
+		const overrides: Record<string, string | undefined> = {
+			FLIGHTDECK_OWNER_HARNESS: "pi",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: `${stub}:/usr/bin:/bin`,
+		};
+		const a = run(false, bashRepo, ["init"], overrides);
+		const b = run(true, tsRepo, ["init"], overrides);
+		expect(a.status).toBe(0);
+		expect(b.status).toBe(0);
+		expect(a.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_partial_metadata); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(b.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_partial_metadata); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect((readState(tsRepo) as { owner?: { discovery_error?: string; pi_session_id?: string; pi_bridge_socket?: string | null } }).owner).toMatchObject({
+			discovery_error: "pi_bridge_partial_metadata",
+			pi_bridge_socket: null,
+			pi_session_id: "pi-session-only",
+		});
 		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
 	});
 

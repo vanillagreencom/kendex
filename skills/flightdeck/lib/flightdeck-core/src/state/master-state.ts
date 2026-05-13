@@ -111,13 +111,15 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 	let foundSession = "";
 	let foundSocket = "";
 	let discoveryError = "";
-	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout: 1000 });
+	const timeoutMs = Number.parseInt(nonEmptyEnv("FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS") || "1000", 10);
+	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1000 });
 	if (r.error) {
-		discoveryError = (r.error as NodeJS.ErrnoException).code === "ENOENT" ? "pi-bridge not found" : r.error.message;
+		const code = (r.error as NodeJS.ErrnoException).code;
+		discoveryError = code === "ENOENT" ? "pi_bridge_not_found" : code === "ETIMEDOUT" ? "pi_bridge_timeout" : `pi_bridge_error_${code ?? "unknown"}`;
 	} else if (r.status !== 0) {
-		discoveryError = `pi-bridge list exited ${r.status ?? "unknown"}${r.stderr ? `: ${r.stderr.trim()}` : ""}`;
+		discoveryError = `pi_bridge_exit_${r.status ?? "unknown"}`;
 	} else if (!r.stdout.trim()) {
-		discoveryError = "pi-bridge list returned empty output";
+		discoveryError = "pi_bridge_empty_output";
 	} else {
 		try {
 			const parsed = JSON.parse(r.stdout) as unknown;
@@ -129,13 +131,14 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 				if (match) {
 					foundSession = typeof match.sessionId === "string" ? match.sessionId : typeof match.session_id === "string" ? match.session_id : "";
 					foundSocket = typeof match.socketPath === "string" ? match.socketPath : typeof match.socket === "string" ? match.socket : "";
+					if (!foundSession || !foundSocket) discoveryError = "pi_bridge_partial_metadata";
 				}
-				if (!match) discoveryError = `no pi-bridge instance found for pid ${pid}`;
+				if (!match) discoveryError = "pi_bridge_no_instance_for_pid";
 			} else {
-				discoveryError = "pi-bridge list JSON was not an array";
+				discoveryError = "pi_bridge_json_not_array";
 			}
 		} catch (e) {
-			discoveryError = `malformed pi-bridge JSON: ${e instanceof Error ? e.message : String(e)}`;
+			discoveryError = "pi_bridge_malformed_json";
 		}
 	}
 	return { discoveryError, sessionId: envSession || foundSession, socketPath: envSocket || foundSocket };
@@ -155,8 +158,8 @@ export function resolveOwnerMetadata(): FlightdeckOwner {
 	const pid = ownerPid();
 	const piMeta = piBridgeMetadata(pid);
 	const harness = detectOwnerHarness(piMeta);
-	const discoveryError = harness === "pi" && piMeta.discoveryError && (!piMeta.sessionId || !piMeta.socketPath)
-		? piMeta.discoveryError
+	const discoveryError = harness === "pi" && (!piMeta.sessionId || !piMeta.socketPath)
+		? (piMeta.discoveryError || "pi_bridge_partial_metadata")
 		: "";
 	if (discoveryError) {
 		process.stderr.write(`Warning: pi-bridge metadata discovery failed (${discoveryError}); proceeding with null pi_session_id/pi_bridge_socket.\n`);

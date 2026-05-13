@@ -172,26 +172,38 @@ resolve_pi_bridge_metadata() {
   fi
   local found_session="" found_socket="" discovery_error=""
   if ! command -v pi-bridge >/dev/null 2>&1; then
-    discovery_error="pi-bridge not found"
+    discovery_error="pi_bridge_not_found"
   else
     local json
     local status=0
-    json=$(pi-bridge list --json --pid "$owner_pid" 2>&1) || status=$?
+    local timeout_sec="${FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_SEC:-1}"
+    json=$(timeout "${timeout_sec}s" pi-bridge list --json --pid "$owner_pid" 2>&1) || status=$?
     if (( status != 0 )); then
-      discovery_error="pi-bridge list exited $status: ${json//$'\n'/ }"
+      if (( status == 124 )); then
+        discovery_error="pi_bridge_timeout"
+      else
+        discovery_error="pi_bridge_exit_$status"
+      fi
     elif [[ -z "${json//[[:space:]]/}" ]]; then
-      discovery_error="pi-bridge list returned empty output"
+      discovery_error="pi_bridge_empty_output"
     else
       local line
       local jq_status=0
       line=$(jq -r --arg pid "$owner_pid" '
-        if type == "array" then
-          map(select((.pid | tostring) == $pid)) | .[0] // {}
-        else {} end
-        | [(.sessionId // .session_id // ""), (.socketPath // .socket // ""), (if . == {} then "no pi-bridge instance found for pid " + $pid else "" end)] | @tsv
+        if type != "array" then
+          ["", "", "pi_bridge_json_not_array"]
+        else
+          (map(select((.pid | tostring) == $pid)) | .[0] // {}) as $m
+          | if $m == {} then
+              ["", "", "pi_bridge_no_instance_for_pid"]
+            else
+              [($m.sessionId // $m.session_id // ""), ($m.socketPath // $m.socket // ""), (if (($m.sessionId // $m.session_id // "") == "" or ($m.socketPath // $m.socket // "") == "") then "pi_bridge_partial_metadata" else "" end)]
+            end
+        end
+        | @tsv
       ' <<< "$json" 2>&1) || jq_status=$?
       if (( jq_status != 0 )); then
-        discovery_error="malformed pi-bridge JSON: ${line//$'\n'/ }"
+        discovery_error="pi_bridge_malformed_json"
       else
         found_session=$(awk -F'\t' '{print $1}' <<< "$line")
         found_socket=$(awk -F'\t' '{print $2}' <<< "$line")
@@ -263,7 +275,8 @@ case "$ACTION" in
     owner_pi_bridge_socket=$(awk -F'\t' '{print $2}' <<< "$pi_meta")
     owner_discovery_error=$(awk -F'\t' '{print $3}' <<< "$pi_meta")
     owner_harness=$(resolve_owner_harness "$owner_pi_session_id" "$owner_pi_bridge_socket")
-    if [[ "$owner_harness" == "pi" && -n "$owner_discovery_error" && ( -z "$owner_pi_session_id" || -z "$owner_pi_bridge_socket" ) ]]; then
+    if [[ "$owner_harness" == "pi" && ( -z "$owner_pi_session_id" || -z "$owner_pi_bridge_socket" ) ]]; then
+      [[ -n "$owner_discovery_error" ]] || owner_discovery_error="pi_bridge_partial_metadata"
       echo "Warning: pi-bridge metadata discovery failed ($owner_discovery_error); proceeding with null pi_session_id/pi_bridge_socket." >&2
     else
       owner_discovery_error=""

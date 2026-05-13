@@ -148,8 +148,20 @@ test("dashboardVisibility=tmux-session renders in a non-owner pane", () => {
 	assert.match(text, /CC-001/);
 });
 
+test("dashboardVisibility=tmux-session renders in owner pane", () => {
+	const text = joinRendered(renderIfVisible("tmux-session", "%42", "%42"));
+	assert.match(text, /Flightdeck/);
+	assert.match(text, /CC-001/);
+});
+
 test("dashboardVisibility=always renders in a non-owner pane", () => {
 	const text = joinRendered(renderIfVisible("always", "%99", "%42"));
+	assert.match(text, /Flightdeck/);
+	assert.match(text, /CC-001/);
+});
+
+test("dashboardVisibility=always renders in owner pane", () => {
+	const text = joinRendered(renderIfVisible("always", "%42", "%42"));
 	assert.match(text, /Flightdeck/);
 	assert.match(text, /CC-001/);
 });
