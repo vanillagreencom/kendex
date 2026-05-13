@@ -279,6 +279,26 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["pi-snapshot-failed"].adapter.pi_bridge_socket).toBe("/tmp/pi-snapshot.sock");
 		});
 
+		test(`start --strict-discovery refuses pre-launch snapshot failure (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "pi-strict-snapshot-failed",
+				"--title", "Pi strict snapshot failed",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "say hi",
+				"--strict-discovery",
+			], useTs, { PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo) });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("Warning: pre-launch pi snapshot failed");
+			expect(r.stderr).toContain("--strict-discovery refusing Pi launch");
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
+		});
+
 		test(`attach records existing pi pane metadata (${useTs ? "ts registry" : "bash registry"})`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
