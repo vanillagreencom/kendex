@@ -62,6 +62,7 @@ export interface MasterOwner {
 	pid?: number;
 	pi_session_id?: string | null;
 	pi_bridge_socket?: string | null;
+	discovery_error?: string | null;
 	[key: string]: unknown;
 }
 
@@ -319,6 +320,7 @@ function readJsonFile<T>(path: string): T | undefined {
 	}
 }
 
+// TODO(structure): move to state-normalizers.ts if owner normalization grows.
 function normalizeOwner(owner: unknown): MasterOwner | undefined {
 	if (!owner || typeof owner !== "object" || Array.isArray(owner)) return undefined;
 	const raw = owner as Record<string, unknown>;
@@ -334,6 +336,7 @@ function normalizeOwner(owner: unknown): MasterOwner | undefined {
 		pid,
 		pi_bridge_socket: typeof raw.pi_bridge_socket === "string" ? raw.pi_bridge_socket : raw.pi_bridge_socket === null ? null : undefined,
 		pi_session_id: typeof raw.pi_session_id === "string" ? raw.pi_session_id : raw.pi_session_id === null ? null : undefined,
+		discovery_error: typeof raw.discovery_error === "string" ? raw.discovery_error : raw.discovery_error === null ? null : undefined,
 	};
 }
 
@@ -612,6 +615,23 @@ export interface BuildSnapshotInputs {
 	projectRoot: string;
 	stateDir: string;
 	tmux: TmuxContext;
+}
+
+export interface OwnerVisibilityProbe {
+	tmux: TmuxContext;
+	ownerPaneId?: string | null;
+}
+
+// Cheap preflight for non-owner widget suppression. Reads only tmux context
+// + the live master state's owner pane before `buildSnapshot` tails daemon
+// logs, wake events, subscribers, and terminated archives.
+export function readOwnerVisibilityProbe(cwd: string, settings: SettingsLike): OwnerVisibilityProbe | undefined {
+	const tmux = resolveTmuxContext();
+	if (!tmux) return undefined;
+	const projectRoot = resolveProjectRoot(cwd);
+	const path = masterStatePath(projectRoot, settings, tmux.sessionName);
+	const { state } = readMasterState(path);
+	return { ownerPaneId: state?.owner?.pane_id, tmux };
 }
 
 export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot {

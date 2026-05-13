@@ -22,14 +22,14 @@ Merged baseline on `origin/main` now includes the following relevant work:
 
 ### Partially delivered
 
-- **Phase 1** has a Pi render-side `readTrackedEntries` seam from PR #23, but the core `skills/flightdeck/lib/flightdeck-core/src/state/` helpers, `entryIdForIssue`, dual-write/projection helpers, `.entries`, `schema_version`, and owner fields remain.
+- **Phase 1** has a Pi render-side `readTrackedEntries` seam from PR #23 and additive v1 `owner` metadata from PR #25, but the core `skills/flightdeck/lib/flightdeck-core/src/state/` helpers, `entryIdForIssue`, dual-write/projection helpers, `.entries`, and `schema_version` remain.
 - **Phase 2** has the `teardown-entry` alias from PR #22 and the `FLIGHTDECK_MANAGED=1`/`flightdeck-mode` managed-session signal from PR #21, but generic `init-entry`, `--kind adhoc`, `session-terminal`/`flightdeck-session`, and manual attach behavior remain.
 - **Phase 3** has canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 in both daemon paths, but the `session-watch.md` vs issue `watch.md` split remains.
-- **Phase 5** has render normalization, terminated archive fallback, and extracted terminated render helpers from PR #23, but type renames, sessions-first UI copy, kind badges, and owner-aware dashboard behavior remain.
+- **Phase 5** has render normalization, terminated archive fallback, and extracted terminated render helpers from PR #23 plus owner-aware persistent-widget behavior from PR #25, but type renames, sessions-first UI copy, and kind badges remain.
 
 ### Remaining unchanged in scope
 
-- **Phase 0 remains first and unchanged**: owner metadata, owner-only persistent dashboard rendering, and dashboard visibility settings are not delivered.
+- **Phase 0 follow-up remains**: short repo guidance in `AGENTS.md` is still pending because the Phase 0 implementation change only touched `skills/flightdeck/`, `pi-extensions/pi-flightdeck/`, and this plan doc.
 - Official ad-hoc session start/attach, schema v2 generic entries, generic watch split, issue-mode isolation, and full docs refresh remain in this plan.
 
 ## Why this is needed
@@ -153,7 +153,7 @@ Compatibility requirement: read old `.issues` state as `kind: "issue"` entries. 
 
 Purpose: stop the exact class of mistakes seen in the ad-hoc test while the larger reframe is built.
 
-Status (2026-05-13): **REMAINING**. PR #23 / commit `1fbed75` explicitly deferred owner gating and dashboard owner-only behavior, so this phase is still required and unchanged. Keep Phase 0 first.
+Status (2026-05-13): **PARTIAL**. Owner metadata, owner-scoped `pi-flightdeck` rendering, `dashboardVisibility`, and child-pane suppression are done in PR #25. The only remaining Phase 0 item is the short `AGENTS.md` operational guidance, deferred because that file was outside this worker's edit scope.
 
 1. **[REMAINING]** Add short repo guidance to `AGENTS.md` after implementation is ready:
    - When user asks for a new tmux tab/window for testing, create a new tmux window in the existing session, never split the current pane.
@@ -163,8 +163,8 @@ Status (2026-05-13): **REMAINING**. PR #23 / commit `1fbed75` explicitly deferre
    - `owner.pane_target`
    - `owner.harness`
    - `owner.cwd`
-   - `owner.pid`
-   - Pi owner bridge metadata when master harness is Pi.
+   - `owner.pid` as the owner harness PID (`FLIGHTDECK_OWNER_PID`, fallback parent PID)
+   - Pi owner bridge metadata when master harness is Pi, plus `owner.discovery_error` on lookup failure.
 3. **[DONE]** Update `pi-flightdeck` to render the mini dashboard only for the owner by default.
    - New setting: `dashboardVisibility = owner | tmux-session | always`.
    - Default: `owner`.
@@ -188,7 +188,7 @@ Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered a Pi rende
    - **[PARTIAL]** `readTrackedEntries(state)` reads `.entries` if present, else maps `.issues` to entries. Delivered in PR #23 for the Pi extension render path only (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`); remaining work is to add/own the core helper under `skills/flightdeck/lib/flightdeck-core/src/state/` for daemon/CLI/workflow consumers.
    - **[REMAINING]** `writeTrackedEntry(...)` writes `.entries[id]` and optionally updates `.issues[id]` for compatibility.
    - **[REMAINING]** `entryIdForIssue(issueId)` and `issueIdForEntry(entry)` helpers.
-2. **[REMAINING]** Add `schema_version` and `owner` to `flightdeck-state init`.
+2. **[PARTIAL]** Add `schema_version` and `owner` to `flightdeck-state init`. `owner` is delivered additively in PR #25; `schema_version` remains deferred until the schema-v2 entries migration needs it.
 3. **[REMAINING]** Keep existing `.issues`, `.merge_queue`, `.conflict_graph` in v1 compatibility path.
 4. **[PARTIAL]** Add tests for:
    - **[REMAINING]** v1 `.issues` read compatibility in the core state helpers.
@@ -313,7 +313,7 @@ Validation:
 
 Purpose: UI reflects sessions first, issue metadata second.
 
-Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered the render normalization seam (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`), terminated archive fallback (`buildSnapshotFromInputs` + `readArchiveStrict`), and extracted `pi-extensions/pi-flightdeck/extensions/render-terminated.ts`. Sessions-first naming, kind badges, and owner-aware behavior remain.
+Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered the render normalization seam (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`), terminated archive fallback (`buildSnapshotFromInputs` + `readArchiveStrict`), and extracted `pi-extensions/pi-flightdeck/extensions/render-terminated.ts`. PR #25 delivered owner-aware persistent-widget gating and observer popup header. Sessions-first naming and kind badges remain.
 
 1. **[PARTIAL]** Rename TypeScript UI types:
    - **[REMAINING]** `IssueRecord` → `TrackedSession` or `TrackedEntry`.
@@ -324,10 +324,10 @@ Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered the render
    - `Dashboard max issues` → `Dashboard max sessions`.
    - `Conflicts & merges` tab hides or renames when no issue-mode entries exist.
    - Rows render optional PR/worktree/scope metadata only when present.
-3. **[REMAINING]** Add owner-aware render behavior:
+3. **[DONE]** Add owner-aware render behavior:
    - Persistent widget shows only in owner by default.
    - Child panes remain suppressed.
-   - Observer popup can show `Owner: %pane · harness · cwd` and a setting-controlled read-only view.
+   - Observer popup shows `Observed Flightdeck owned by <owner.pane_id>` in peer panes.
 4. **[PARTIAL]** Update render details:
    - **[DONE]** Post-termination render fragments were extracted to `pi-extensions/pi-flightdeck/extensions/render-terminated.ts` and archive fallback now preserves completed-session context. Delivered in PR #23.
    - **[REMAINING]** Header counts: sessions by state, plus issue count when issue-mode entries exist.
@@ -388,15 +388,15 @@ Proposed short AGENTS.md wording once implementation supports it:
 
 ## Suggested execution order
 
-Some prerequisites are now satisfied by PRs #21-#24, but **Phase 0 still goes first** because owner gating and dashboard owner-only rendering remain undelivered.
+Some prerequisites are now satisfied by PRs #21-#25. Phase 0 implementation is functionally landed; finish the remaining `AGENTS.md` guidance before declaring Phase 0 fully closed, then continue with Phase 1.
 
-1. Finish Phase 0 owner gating in `pi-flightdeck` and state owner metadata.
+1. Finish the remaining Phase 0 `AGENTS.md` operational guidance.
 2. Complete Phase 1 core state normalization with v1 compatibility tests, reusing the PR #23 `readTrackedEntries` render seam instead of inventing a parallel read path.
 3. Extend the Phase 2 registry API from the delivered PR #22 `teardown-entry` alias to `init-entry`, normalized `list`, and entry-aware `find-by-pane`, leaving existing issue API intact.
 4. Add the official ad-hoc launch/attach path that uses `tmux new-window`, records immutable ids, and reuses the PR #21 `FLIGHTDECK_MANAGED=1` / `flightdeck-mode` managed-session signal.
 5. Split generic session watch/handler logic from issue workflow logic, reusing the PR #24 `pi-bg-task-exit` contract and PR #21 stale cleanup tags.
 6. Preserve and isolate issue/workflow management on top of the generic primitives.
-7. Reframe Pi dashboard language/types, kind badges, and owner-aware render behavior on top of the PR #23 archive/render seams.
+7. Reframe Pi dashboard language/types and kind badges on top of the PR #23 archive/render seams and PR #25 owner gating.
 8. Complete docs/guidance refresh once behavior lands.
 9. Only after all tests and live smoke pass, consider updating skill dependencies from hard required to mode-specific.
 

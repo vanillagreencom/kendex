@@ -21,7 +21,7 @@ function makeRepo(): string {
 	return dir;
 }
 
-function run(useTs: boolean, cwd: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
+function run(useTs: boolean, cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
 	if (useTs) env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE = "1";
@@ -34,6 +34,10 @@ function run(useTs: boolean, cwd: string, args: string[]): { stdout: string; std
 	env.FLIGHTDECK_OWNER_PID = "4242";
 	env.FLIGHTDECK_OWNER_PI_SESSION_ID = "pi-session-parity";
 	env.FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET = "/tmp/pi-session-bridge/parity.sock";
+	for (const [key, value] of Object.entries(extraEnv)) {
+		if (value === undefined) delete env[key];
+		else env[key] = value;
+	}
 	// Bash parses <action> first, then --session — preserve that order.
 	const [action, ...rest] = args;
 	const full = action ? [action, "--session", SESSION, ...rest] : ["--session", SESSION];
@@ -44,6 +48,14 @@ function run(useTs: boolean, cwd: string, args: string[]): { stdout: string; std
 function readState(repoRoot: string): unknown {
 	const path = join(repoRoot, "tmp", `flightdeck-state-${SESSION}.json`);
 	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readOwnerViaJq(repoRoot: string, sortKeys = false): string {
+	const path = join(repoRoot, "tmp", `flightdeck-state-${SESSION}.json`);
+	const args = sortKeys ? ["-S", ".owner", path] : [".owner", path];
+	const r = spawnSync("jq", args, { encoding: "utf8" });
+	expect(r.status).toBe(0);
+	return r.stdout;
 }
 
 function writeState(repoRoot: string, state: unknown): void {
@@ -92,11 +104,14 @@ describe("flightdeck-state parity", () => {
 			pane_id: "%42",
 			pane_target: "PARITY:7.0",
 			pid: 4242,
-			pi_bridge_socket: "/tmp/pi-session-bridge/parity.sock",
 			pi_session_id: "pi-session-parity",
+			pi_bridge_socket: "/tmp/pi-session-bridge/parity.sock",
+			discovery_error: null,
 		};
 		expect((readState(bashRepo) as { owner?: unknown }).owner).toEqual(expectedOwner);
 		expect((readState(tsRepo) as { owner?: unknown }).owner).toEqual(expectedOwner);
+		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
+		expect(readOwnerViaJq(tsRepo, true)).toBe(readOwnerViaJq(bashRepo, true));
 	});
 
 	test("init backfills owner metadata on legacy state without clobbering fields", () => {
@@ -118,6 +133,25 @@ describe("flightdeck-state parity", () => {
 		expect(Object.keys(state.issues ?? {})).toEqual(["CC-LEGACY"]);
 		expect(state.merge_queue).toEqual(["CC-LEGACY"]);
 		expect(state.owner?.pane_id).toBe("%42");
+	});
+
+	test("pi owner discovery failure warns and persists discovery_error identically", () => {
+		const overrides: Record<string, string | undefined> = {
+			FLIGHTDECK_OWNER_HARNESS: "pi",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: "/usr/bin:/bin",
+		};
+		const a = run(false, bashRepo, ["init"], overrides);
+		const b = run(true, tsRepo, ["init"], overrides);
+		expect(a.status).toBe(0);
+		expect(b.status).toBe(0);
+		expect(a.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi-bridge not found); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(b.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi-bridge not found); proceeding with null pi_session_id/pi_bridge_socket.");
+		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
+		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
 	});
 
 	test("init is idempotent", () => {

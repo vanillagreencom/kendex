@@ -24,6 +24,7 @@ export interface FlightdeckOwner {
 	pid: number;
 	pi_session_id: string | null;
 	pi_bridge_socket: string | null;
+	discovery_error: string | null;
 }
 
 export function resolveStateBase(): string {
@@ -98,17 +99,26 @@ function tmuxDisplay(format: string): string {
 function ownerPid(): number {
 	const raw = nonEmptyEnv("FLIGHTDECK_OWNER_PID");
 	if (/^[1-9][0-9]*$/.test(raw)) return Number.parseInt(raw, 10);
+	if (Number.isFinite(process.ppid) && process.ppid > 0) return process.ppid;
+	process.stderr.write("Warning: FLIGHTDECK_OWNER_PID unset and parent pid unavailable; using helper pid as owner.pid.\n");
 	return process.pid;
 }
 
-function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string } {
+function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string; discoveryError: string } {
 	const envSession = nonEmptyEnv("FLIGHTDECK_OWNER_PI_SESSION_ID") || nonEmptyEnv("PI_SESSION_ID");
 	const envSocket = nonEmptyEnv("FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET") || nonEmptyEnv("PI_BRIDGE_SOCKET_PATH");
-	if (envSession && envSocket) return { sessionId: envSession, socketPath: envSocket };
+	if (envSession && envSocket) return { discoveryError: "", sessionId: envSession, socketPath: envSocket };
 	let foundSession = "";
 	let foundSocket = "";
+	let discoveryError = "";
 	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout: 1000 });
-	if (r.status === 0 && r.stdout) {
+	if (r.error) {
+		discoveryError = (r.error as NodeJS.ErrnoException).code === "ENOENT" ? "pi-bridge not found" : r.error.message;
+	} else if (r.status !== 0) {
+		discoveryError = `pi-bridge list exited ${r.status ?? "unknown"}${r.stderr ? `: ${r.stderr.trim()}` : ""}`;
+	} else if (!r.stdout.trim()) {
+		discoveryError = "pi-bridge list returned empty output";
+	} else {
 		try {
 			const parsed = JSON.parse(r.stdout) as unknown;
 			if (Array.isArray(parsed)) {
@@ -120,12 +130,15 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string 
 					foundSession = typeof match.sessionId === "string" ? match.sessionId : typeof match.session_id === "string" ? match.session_id : "";
 					foundSocket = typeof match.socketPath === "string" ? match.socketPath : typeof match.socket === "string" ? match.socket : "";
 				}
+				if (!match) discoveryError = `no pi-bridge instance found for pid ${pid}`;
+			} else {
+				discoveryError = "pi-bridge list JSON was not an array";
 			}
-		} catch {
-			// Optional discovery only; env values still win below.
+		} catch (e) {
+			discoveryError = `malformed pi-bridge JSON: ${e instanceof Error ? e.message : String(e)}`;
 		}
 	}
-	return { sessionId: envSession || foundSession, socketPath: envSocket || foundSocket };
+	return { discoveryError, sessionId: envSession || foundSession, socketPath: envSocket || foundSocket };
 }
 
 function detectOwnerHarness(piMeta: { sessionId: string; socketPath: string }): string {
@@ -141,16 +154,24 @@ function detectOwnerHarness(piMeta: { sessionId: string; socketPath: string }): 
 export function resolveOwnerMetadata(): FlightdeckOwner {
 	const pid = ownerPid();
 	const piMeta = piBridgeMetadata(pid);
+	const harness = detectOwnerHarness(piMeta);
+	const discoveryError = harness === "pi" && piMeta.discoveryError && (!piMeta.sessionId || !piMeta.socketPath)
+		? piMeta.discoveryError
+		: "";
+	if (discoveryError) {
+		process.stderr.write(`Warning: pi-bridge metadata discovery failed (${discoveryError}); proceeding with null pi_session_id/pi_bridge_socket.\n`);
+	}
 	const paneId = nonEmptyEnv("FLIGHTDECK_OWNER_PANE_ID") || tmuxDisplay("#{pane_id}");
 	const paneTarget = nonEmptyEnv("FLIGHTDECK_OWNER_PANE_TARGET") || tmuxDisplay("#S:#{window_index}.#{pane_index}");
 	return {
-		cwd: nonEmptyEnv("FLIGHTDECK_OWNER_CWD") || process.cwd(),
-		harness: detectOwnerHarness(piMeta),
+		harness,
 		pane_id: paneId || null,
 		pane_target: paneTarget || null,
+		cwd: nonEmptyEnv("FLIGHTDECK_OWNER_CWD") || process.cwd(),
 		pid,
-		pi_bridge_socket: piMeta.socketPath || null,
 		pi_session_id: piMeta.sessionId || null,
+		pi_bridge_socket: piMeta.socketPath || null,
+		discovery_error: discoveryError || null,
 	};
 }
 

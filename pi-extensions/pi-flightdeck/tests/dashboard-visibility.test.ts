@@ -10,12 +10,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
 import {
+	dashboardVisibleForSnapshot,
 	dashboardVisibleInPane,
 	type DashboardVisibility,
+	isInFlightdeckChildPane,
 	isFlightdeckObserverPane,
-	renderDashboardLines,
 	renderObserverHeader,
-} from "../extensions/flightdeck.js";
+} from "../extensions/dashboard-visibility.js";
+import { renderDashboardLines } from "../extensions/flightdeck.js";
 import type { FlightdeckSnapshot } from "../extensions/state.js";
 
 type ThemeLike = {
@@ -56,7 +58,7 @@ let ENV_PI_DIR = "";
 let ENV_CWD = "";
 
 beforeEach(() => {
-	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE"]) {
+	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE", "FLIGHTDECK_CHILD_PANE", "PI_SUBAGENT_CHILD_AGENT"]) {
 		SAVED_ENV[key] = process.env[key];
 	}
 	ENV_HOME = mkdtempSync(join(tmpdir(), "pi-flightdeck-visibility-home-"));
@@ -155,4 +157,18 @@ test("dashboardVisibility=always renders in a non-owner pane", () => {
 test("child-pane suppression remains a separate hard gate", () => {
 	const lines = renderIfVisible("always", "%99", "%42", true);
 	assert.deepEqual(lines, []);
+});
+
+test("FLIGHTDECK_CHILD_PANE env var suppresses through production child-pane detection", () => {
+	process.env.FLIGHTDECK_CHILD_PANE = "1";
+	const snap = snapshot("%99", "%42");
+	assert.equal(isInFlightdeckChildPane(), true);
+	assert.equal(dashboardVisibleForSnapshot(snap, "always"), false);
+});
+
+test("PI_SUBAGENT_CHILD_AGENT env var suppresses through production child-pane detection", () => {
+	process.env.PI_SUBAGENT_CHILD_AGENT = "1";
+	const snap = snapshot("%99", "%42");
+	assert.equal(isInFlightdeckChildPane(), true);
+	assert.equal(dashboardVisibleForSnapshot(snap, "always"), false);
 });

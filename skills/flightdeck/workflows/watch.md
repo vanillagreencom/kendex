@@ -19,9 +19,12 @@ Master mode entry point. Polls every spawned issue pane, classifies their prompt
 1. Resolve session: `SESSION=$(tmux display-message -p '#S')`, `SESSION_ID=$(tmux display-message -p '#{session_id}')`.
 2. Init / resume master state:
    ```
-   .agents/skills/flightdeck/scripts/flightdeck-state init
+   # Prefer a long-lived harness PID; fall back to this watch caller's parent.
+   MASTER_OWNER_PID="${MASTER_OWNER_PID:-${PPID:-}}"
+   FLIGHTDECK_OWNER_PID="$MASTER_OWNER_PID" \
+     .agents/skills/flightdeck/scripts/flightdeck-state init
    ```
-   Idempotent — preserves an existing state file if one exists (compaction-recovery path).
+   Idempotent — preserves an existing state file if one exists (compaction-recovery path). `owner.pid` is the owner harness PID; do not pass the short-lived `flightdeck-state` helper PID.
 3. Reconcile registry against live tmux windows (drops stale entries from prior sessions whose windows are gone):
    ```
    .agents/skills/flightdeck/scripts/pane-registry reconcile

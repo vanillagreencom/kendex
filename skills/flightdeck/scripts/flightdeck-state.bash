@@ -127,13 +127,19 @@ gc_tmp_orphans() {
 
 # Owner metadata is additive state written at init time. Test paths can pin
 # every value with FLIGHTDECK_OWNER_* env vars; production falls back to the
-# current tmux pane + process context and Pi bridge discovery when present.
+# current tmux pane + owner process context and Pi bridge discovery when present.
 resolve_owner_pid() {
-  local pid="${FLIGHTDECK_OWNER_PID:-$$}"
-  if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
-    pid="$$"
+  local pid="${FLIGHTDECK_OWNER_PID:-}"
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$pid"
+    return
   fi
-  echo "$pid"
+  if [[ "${PPID:-}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$PPID"
+    return
+  fi
+  echo "Warning: FLIGHTDECK_OWNER_PID unset and parent pid unavailable; using helper pid as owner.pid." >&2
+  echo "$$"
 }
 
 resolve_owner_pane_id() {
@@ -161,26 +167,39 @@ resolve_pi_bridge_metadata() {
   local env_session="${FLIGHTDECK_OWNER_PI_SESSION_ID:-${PI_SESSION_ID:-}}"
   local env_socket="${FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET:-${PI_BRIDGE_SOCKET_PATH:-}}"
   if [[ -n "$env_session" && -n "$env_socket" ]]; then
-    printf '%s\t%s\n' "$env_session" "$env_socket"
+    printf '%s\t%s\t%s\n' "$env_session" "$env_socket" ""
     return
   fi
-  local found_session="" found_socket=""
-  if command -v pi-bridge >/dev/null 2>&1; then
+  local found_session="" found_socket="" discovery_error=""
+  if ! command -v pi-bridge >/dev/null 2>&1; then
+    discovery_error="pi-bridge not found"
+  else
     local json
-    json=$(pi-bridge list --json --pid "$owner_pid" 2>/dev/null || true)
-    if [[ -n "$json" ]]; then
+    local status=0
+    json=$(pi-bridge list --json --pid "$owner_pid" 2>&1) || status=$?
+    if (( status != 0 )); then
+      discovery_error="pi-bridge list exited $status: ${json//$'\n'/ }"
+    elif [[ -z "${json//[[:space:]]/}" ]]; then
+      discovery_error="pi-bridge list returned empty output"
+    else
       local line
+      local jq_status=0
       line=$(jq -r --arg pid "$owner_pid" '
         if type == "array" then
           map(select((.pid | tostring) == $pid)) | .[0] // {}
         else {} end
-        | [(.sessionId // .session_id // ""), (.socketPath // .socket // "")] | @tsv
-      ' <<< "$json" 2>/dev/null || true)
-      found_session=$(awk -F'\t' '{print $1}' <<< "$line")
-      found_socket=$(awk -F'\t' '{print $2}' <<< "$line")
+        | [(.sessionId // .session_id // ""), (.socketPath // .socket // ""), (if . == {} then "no pi-bridge instance found for pid " + $pid else "" end)] | @tsv
+      ' <<< "$json" 2>&1) || jq_status=$?
+      if (( jq_status != 0 )); then
+        discovery_error="malformed pi-bridge JSON: ${line//$'\n'/ }"
+      else
+        found_session=$(awk -F'\t' '{print $1}' <<< "$line")
+        found_socket=$(awk -F'\t' '{print $2}' <<< "$line")
+        discovery_error=$(awk -F'\t' '{print $3}' <<< "$line")
+      fi
     fi
   fi
-  printf '%s\t%s\n' "${env_session:-$found_session}" "${env_socket:-$found_socket}"
+  printf '%s\t%s\t%s\n' "${env_session:-$found_session}" "${env_socket:-$found_socket}" "$discovery_error"
 }
 
 resolve_owner_harness() {
@@ -242,7 +261,13 @@ case "$ACTION" in
     pi_meta=$(resolve_pi_bridge_metadata "$owner_pid")
     owner_pi_session_id=$(awk -F'\t' '{print $1}' <<< "$pi_meta")
     owner_pi_bridge_socket=$(awk -F'\t' '{print $2}' <<< "$pi_meta")
+    owner_discovery_error=$(awk -F'\t' '{print $3}' <<< "$pi_meta")
     owner_harness=$(resolve_owner_harness "$owner_pi_session_id" "$owner_pi_bridge_socket")
+    if [[ "$owner_harness" == "pi" && -n "$owner_discovery_error" && ( -z "$owner_pi_session_id" || -z "$owner_pi_bridge_socket" ) ]]; then
+      echo "Warning: pi-bridge metadata discovery failed ($owner_discovery_error); proceeding with null pi_session_id/pi_bridge_socket." >&2
+    else
+      owner_discovery_error=""
+    fi
     # Acquire the same lock the update_state helper uses so concurrent
     # `pane-registry init` paths don't race here (bugs review finding #5):
     # one path could pass the `-f $FILE` existence check while another is
@@ -266,6 +291,7 @@ case "$ACTION" in
           --argjson owner_pid "$owner_pid" \
           --arg owner_pi_session_id "$owner_pi_session_id" \
           --arg owner_pi_bridge_socket "$owner_pi_bridge_socket" \
+          --arg owner_discovery_error "$owner_discovery_error" \
           'def owner: {
              harness: $owner_harness,
              pane_id: ($owner_pane_id | if . == "" then null else . end),
@@ -273,7 +299,8 @@ case "$ACTION" in
              cwd: $owner_cwd,
              pid: $owner_pid,
              pi_session_id: ($owner_pi_session_id | if . == "" then null else . end),
-             pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end)
+             pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end),
+             discovery_error: ($owner_discovery_error | if . == "" then null else . end)
            };
            . + {owner: owner}' "$FILE" > "$init_tmp"
         mv "$init_tmp" "$FILE"
@@ -292,6 +319,7 @@ case "$ACTION" in
       --argjson owner_pid "$owner_pid" \
       --arg owner_pi_session_id "$owner_pi_session_id" \
       --arg owner_pi_bridge_socket "$owner_pi_bridge_socket" \
+      --arg owner_discovery_error "$owner_discovery_error" \
       '{
         session_id: $session_id,
         started_at: $started_at,
@@ -303,7 +331,8 @@ case "$ACTION" in
           cwd: $owner_cwd,
           pid: $owner_pid,
           pi_session_id: ($owner_pi_session_id | if . == "" then null else . end),
-          pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end)
+          pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end),
+          discovery_error: ($owner_discovery_error | if . == "" then null else . end)
         },
         issues: {},
         merge_queue: [],
