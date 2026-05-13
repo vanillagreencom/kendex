@@ -125,6 +125,90 @@ gc_tmp_orphans() {
   shopt -u nullglob
 }
 
+# Owner metadata is additive state written at init time. Test paths can pin
+# every value with FLIGHTDECK_OWNER_* env vars; production falls back to the
+# current tmux pane + process context and Pi bridge discovery when present.
+resolve_owner_pid() {
+  local pid="${FLIGHTDECK_OWNER_PID:-$$}"
+  if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    pid="$$"
+  fi
+  echo "$pid"
+}
+
+resolve_owner_pane_id() {
+  if [[ -n "${FLIGHTDECK_OWNER_PANE_ID:-}" ]]; then
+    echo "$FLIGHTDECK_OWNER_PANE_ID"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+  fi
+}
+
+resolve_owner_pane_target() {
+  if [[ -n "${FLIGHTDECK_OWNER_PANE_TARGET:-}" ]]; then
+    echo "$FLIGHTDECK_OWNER_PANE_TARGET"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#S:#{window_index}.#{pane_index}' 2>/dev/null || true
+  fi
+}
+
+resolve_pi_bridge_metadata() {
+  local owner_pid="$1"
+  local env_session="${FLIGHTDECK_OWNER_PI_SESSION_ID:-${PI_SESSION_ID:-}}"
+  local env_socket="${FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET:-${PI_BRIDGE_SOCKET_PATH:-}}"
+  if [[ -n "$env_session" && -n "$env_socket" ]]; then
+    printf '%s\t%s\n' "$env_session" "$env_socket"
+    return
+  fi
+  local found_session="" found_socket=""
+  if command -v pi-bridge >/dev/null 2>&1; then
+    local json
+    json=$(pi-bridge list --json --pid "$owner_pid" 2>/dev/null || true)
+    if [[ -n "$json" ]]; then
+      local line
+      line=$(jq -r --arg pid "$owner_pid" '
+        if type == "array" then
+          map(select((.pid | tostring) == $pid)) | .[0] // {}
+        else {} end
+        | [(.sessionId // .session_id // ""), (.socketPath // .socket // "")] | @tsv
+      ' <<< "$json" 2>/dev/null || true)
+      found_session=$(awk -F'\t' '{print $1}' <<< "$line")
+      found_socket=$(awk -F'\t' '{print $2}' <<< "$line")
+    fi
+  fi
+  printf '%s\t%s\n' "${env_session:-$found_session}" "${env_socket:-$found_socket}"
+}
+
+resolve_owner_harness() {
+  local pi_session="$1"
+  local pi_socket="$2"
+  if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
+    echo "$FLIGHTDECK_OWNER_HARNESS"
+    return
+  fi
+  if [[ -n "$pi_session" || -n "$pi_socket" ]]; then
+    echo "pi"
+    return
+  fi
+  if [[ -n "${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}" ]]; then
+    echo "claude"
+    return
+  fi
+  if [[ -n "${OPENCODE_SESSION_ID:-${OPENCODE_APP_INFO:-}}" ]]; then
+    echo "opencode"
+    return
+  fi
+  if [[ -n "${CODEX_SESSION_ID:-${CODEX_SANDBOX:-}}" ]]; then
+    echo "codex"
+    return
+  fi
+  echo "unknown"
+}
+
 # --- Argument parsing -----------------------------------------------------
 
 ACTION="${1:-}"
@@ -151,6 +235,14 @@ case "$ACTION" in
 
   init)
     gc_tmp_orphans "$FILE"
+    owner_pid=$(resolve_owner_pid)
+    owner_pane_id=$(resolve_owner_pane_id)
+    owner_pane_target=$(resolve_owner_pane_target)
+    owner_cwd="${FLIGHTDECK_OWNER_CWD:-$PWD}"
+    pi_meta=$(resolve_pi_bridge_metadata "$owner_pid")
+    owner_pi_session_id=$(awk -F'\t' '{print $1}' <<< "$pi_meta")
+    owner_pi_bridge_socket=$(awk -F'\t' '{print $2}' <<< "$pi_meta")
+    owner_harness=$(resolve_owner_harness "$owner_pi_session_id" "$owner_pi_bridge_socket")
     # Acquire the same lock the update_state helper uses so concurrent
     # `pane-registry init` paths don't race here (bugs review finding #5):
     # one path could pass the `-f $FILE` existence check while another is
@@ -161,9 +253,31 @@ case "$ACTION" in
     exec 9>"$init_lock"
     flock 9
     if [[ -f "$FILE" ]]; then
-      # Idempotent — don't clobber existing state (compaction-recovery path).
+      # Idempotent — don't clobber existing state (compaction-recovery path),
+      # but backfill the additive owner block on pre-owner live state files.
       # Stale `terminated: true` files are rotated by `terminate.md § 5` via
       # the `archive` action, so a present file here is always a live session.
+      if jq -e '.owner? == null' "$FILE" >/dev/null 2>&1; then
+        jq \
+          --arg owner_harness "$owner_harness" \
+          --arg owner_pane_id "$owner_pane_id" \
+          --arg owner_pane_target "$owner_pane_target" \
+          --arg owner_cwd "$owner_cwd" \
+          --argjson owner_pid "$owner_pid" \
+          --arg owner_pi_session_id "$owner_pi_session_id" \
+          --arg owner_pi_bridge_socket "$owner_pi_bridge_socket" \
+          'def owner: {
+             harness: $owner_harness,
+             pane_id: ($owner_pane_id | if . == "" then null else . end),
+             pane_target: ($owner_pane_target | if . == "" then null else . end),
+             cwd: $owner_cwd,
+             pid: $owner_pid,
+             pi_session_id: ($owner_pi_session_id | if . == "" then null else . end),
+             pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end)
+           };
+           . + {owner: owner}' "$FILE" > "$init_tmp"
+        mv "$init_tmp" "$FILE"
+      fi
       exec 9>&-
       exit 0
     fi
@@ -171,10 +285,26 @@ case "$ACTION" in
     jq -n \
       --arg session_id "$SESSION" \
       --arg started_at "$started_at" \
+      --arg owner_harness "$owner_harness" \
+      --arg owner_pane_id "$owner_pane_id" \
+      --arg owner_pane_target "$owner_pane_target" \
+      --arg owner_cwd "$owner_cwd" \
+      --argjson owner_pid "$owner_pid" \
+      --arg owner_pi_session_id "$owner_pi_session_id" \
+      --arg owner_pi_bridge_socket "$owner_pi_bridge_socket" \
       '{
         session_id: $session_id,
         started_at: $started_at,
         terminated: false,
+        owner: {
+          harness: $owner_harness,
+          pane_id: ($owner_pane_id | if . == "" then null else . end),
+          pane_target: ($owner_pane_target | if . == "" then null else . end),
+          cwd: $owner_cwd,
+          pid: $owner_pid,
+          pi_session_id: ($owner_pi_session_id | if . == "" then null else . end),
+          pi_bridge_socket: ($owner_pi_bridge_socket | if . == "" then null else . end)
+        },
         issues: {},
         merge_queue: [],
         conflict_graph: {edges: [], computed_at: null},

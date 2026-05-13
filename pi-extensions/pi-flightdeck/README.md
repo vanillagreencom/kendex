@@ -11,7 +11,7 @@ Read-only mission-control dashboard for the [`flightdeck`](../../skills/flightde
 - **Expanded dashboard tree** — issue details render as proper child rows, with ASCII or Unicode connectors matching the Tree connector style setting.
 - **`/flightdeck` popup** (F6) — mission-control view with six tabs: Overview, Live feed, Conversations, Conflicts & merges, Decisions, Daemon. Conversations render as a newest-first stream keyed by issue/session names, hide raw pane ids from normal view, and collapse Pi streaming partials into one finalized turn. Decisions are selectable; press Enter to open the full wrapped answer, then Esc or Backspace to return.
 - **Session-complete view** — once `terminate.md` flips master state to `terminated: true`, the dashboard and popup keep rendering the completed session. `buildSnapshot` falls back to the newest `flightdeck-state-<SESSION>-*.json.archive` whenever the live file is missing (it's renamed by `flightdeck-state archive`), so Overview shows the terminated banner + summary file path, Decisions retains the full log, and Conflicts & merges adds a `Merge history` panel (PR + merge commit + age) that outlives the now-drained `merge_queue`. The daemon-health chip is swapped for a green `✔ session complete` so the user does not read the intentional shutdown as an alarming `daemon dead`. Dismiss with `Alt+M`.
-- Dashboard suppresses in child panes so the same state doesn't echo inside every agent.
+- Dashboard defaults to the Flightdeck owner pane only, using `owner.pane_id` from master state. Child panes remain suppressed, and `dashboardVisibility` can opt back into same-tmux-session or always-on rendering for observer workflows.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Optional terminal bell and auto-popup when master pauses.
 
@@ -45,6 +45,8 @@ Restart Pi after installation.
 
 Inside the popup, use Tab / Shift+Tab to switch tabs, arrows to move or scroll, `-/=` to page, and type to filter. Selected rows brighten muted metadata for contrast. Conversations and Live feed use compact streams with a wrapped selected-item preview; Enter opens the full retained turn/event with scroll. Live feed labels each row by managed issue/session and defaults to important events; Ctrl+N toggles noisy info/heartbeat rows. In Decisions, Enter opens a detail popup for the selected decision; the detail view wraps the full answer and scrolls with arrows/page keys. Esc or Backspace returns to the main Flightdeck popup. In Daemon, heartbeat runs are folded into one summary row so real daemon events stay visible while the log remains scrollable.
 
+The popup is always openable from peer panes in the same tmux session. When the current pane is not `owner.pane_id`, the header says `Observed Flightdeck owned by <pane>` and the popup acts as a read-only observer view.
+
 ## Settings
 
 All settings live in the extension manager under **Flightdeck Dashboard**.
@@ -54,6 +56,7 @@ All settings live in the extension manager under **Flightdeck Dashboard**.
 | Setting | What it does |
 | --- | --- |
 | Show dashboard widget | Render the persistent dashboard above the editor. |
+| Dashboard visibility | Where the persistent dashboard may render: `owner` (default), `tmux-session` (legacy same-session behavior), or `always`. Child panes remain suppressed in all modes. |
 | Dashboard default state | Initial state: `hidden`, `compact`, or `expanded`. |
 | Dashboard max issues | Max issue rows shown. |
 | Dashboard stale-after (min) | Suppress the issue tree with a one-line hint when the daemon is dead and the last poll is older than N minutes. `0` disables. |

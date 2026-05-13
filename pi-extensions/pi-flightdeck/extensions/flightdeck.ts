@@ -77,6 +77,7 @@ const POPUP_WIDTH_PERCENT = "92%";
 const POPUP_MAX_HEIGHT = "85%";
 
 export type DashboardState = "hidden" | "compact" | "expanded";
+export type DashboardVisibility = "owner" | "tmux-session" | "always";
 
 interface VstackModalLock { depth: number }
 
@@ -235,6 +236,26 @@ function usageForIssue(issue: IssueRecord, paneMap: Map<string, string>, bridge:
 function defaultDashboardState(cwd?: string): DashboardState {
 	const value = settingString("dashboardDefaultState", "compact", cwd);
 	return value === "hidden" || value === "expanded" ? value : "compact";
+}
+
+function dashboardVisibility(cwd?: string): DashboardVisibility {
+	const value = settingString("dashboardVisibility", "owner", cwd);
+	return value === "tmux-session" || value === "always" ? value : "owner";
+}
+
+export function dashboardVisibleInPane(options: { visibility: DashboardVisibility; currentPaneId?: string | null; ownerPaneId?: string | null; inChildPane?: boolean }): boolean {
+	if (options.inChildPane) return false;
+	if (options.visibility === "always") return true;
+	if (options.visibility === "tmux-session") return true;
+	return Boolean(options.currentPaneId && options.ownerPaneId && options.currentPaneId === options.ownerPaneId);
+}
+
+export function isFlightdeckOwnerPane(snapshot: FlightdeckSnapshot | undefined): boolean {
+	return Boolean(snapshot?.tmux.paneId && snapshot.master?.owner?.pane_id && snapshot.tmux.paneId === snapshot.master.owner.pane_id);
+}
+
+export function isFlightdeckObserverPane(snapshot: FlightdeckSnapshot | undefined): boolean {
+	return Boolean(snapshot?.tmux.paneId && snapshot.master?.owner?.pane_id && snapshot.tmux.paneId !== snapshot.master.owner.pane_id);
 }
 
 function pollIntervalMs(cwd?: string): number {
@@ -454,6 +475,14 @@ function isPlainSearchInput(data: string): boolean {
 
 function activePopupCwd(ctx: ExtensionContext | ExtensionCommandContext): string {
 	return (ctx as { cwd?: string }).cwd ?? process.cwd();
+}
+
+export function renderObserverHeader(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string | undefined {
+	if (!isFlightdeckObserverPane(snapshot)) return undefined;
+	const ownerPane = snapshot.master?.owner?.pane_id;
+	if (!ownerPane) return undefined;
+	const current = snapshot.tmux.paneId ? ` ${theme.fg("dim", `(current ${snapshot.tmux.paneId})`)}` : "";
+	return truncateToWidth(`${theme.fg("warning", "Observed Flightdeck")} ${theme.fg("dim", "owned by")} ${theme.fg("accent", ownerPane)}${current}`, width, "");
 }
 
 // ----- Tab renderers --------------------------------------------------------
@@ -1323,6 +1352,14 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		if (cache.pauseSeenIssue === issueId) return;
 		cache.pauseSeenIssue = issueId;
 		cache.pauseSeenAt = Date.now();
+		const inChildPane = Boolean(process.env.PI_SUBAGENT_CHILD_AGENT || process.env.FLIGHTDECK_CHILD_PANE);
+		const paneAllowed = dashboardVisibleInPane({
+			currentPaneId: snapshot?.tmux.paneId,
+			inChildPane,
+			ownerPaneId: snapshot?.master?.owner?.pane_id,
+			visibility: dashboardVisibility(ctx.cwd),
+		});
+		if (!paneAllowed) return;
 		if (settingBoolean("pauseBeep", true, ctx.cwd)) process.stdout.write(ANSI_BELL);
 		if (settingBoolean("autoOpenOnPause", false, ctx.cwd)) {
 			openPopup(pi, ctx).catch(() => undefined);
@@ -1339,16 +1376,22 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		const snapshot = cache.lastSnapshot;
 		// Child panes (spawned via pi-agents-tmux as subagents OR via
 		// flightdeck's open-terminal as orchestrated workers) read the
-		// same project state as the master coordinator pane, so the
-		// dashboard would otherwise render inside every child. Suppress
-		// it there; keep the pause banner since a parent pause is still
-		// actionable context. (issue #8)
+		// same project state as the master coordinator pane. Preserve that
+		// suppression as a separate hard gate, then apply owner/tmux/always
+		// visibility for the persistent widget.
 		const inChildPane = Boolean(
 			process.env.PI_SUBAGENT_CHILD_AGENT ||
 			process.env.FLIGHTDECK_CHILD_PANE,
 		);
-		const showBanner = settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
-		const dashboardEnabled = !inChildPane && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
+		const visibility = dashboardVisibility(ctx.cwd);
+		const dashboardPaneAllowed = dashboardVisibleInPane({
+			currentPaneId: snapshot?.tmux.paneId,
+			inChildPane,
+			ownerPaneId: snapshot?.master?.owner?.pane_id,
+			visibility,
+		});
+		const showBanner = dashboardPaneAllowed && settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
+		const dashboardEnabled = dashboardPaneAllowed && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
 		const staleAfterMin = Math.max(0, Math.floor(settingNumber("dashboardStaleAfterMin", 5, ctx.cwd)));
 		const status = flightdeckSessionStatus(snapshot, { staleAfterMin });
 		if (status === "inactive" && !showBanner) {
@@ -1368,6 +1411,9 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			state: cache.state,
 			showBanner,
 			dashboardEnabled,
+			dashboardVisibility: visibility,
+			currentPaneId: snapshot?.tmux.paneId ?? null,
+			inChildPane,
 			status,
 			master: snapshot?.master ?? null,
 			daemonAlive: snapshot?.daemon?.pidAlive ?? null,
@@ -1706,6 +1752,11 @@ export default function flightdeck(pi: ExtensionAPI): void {
 						}
 						lines.push(renderTabBar(ui.tab, innerWidth, theme));
 						lines.push("");
+						const observerHeader = renderObserverHeader(snapshot, theme, innerWidth);
+						if (observerHeader) {
+							lines.push(observerHeader);
+							lines.push(divider(innerWidth, theme));
+						}
 						const headerSummary = renderPopupHeader(snapshot, theme, innerWidth);
 						lines.push(headerSummary);
 						lines.push(divider(innerWidth, theme));

@@ -158,17 +158,18 @@ Status (2026-05-13): **REMAINING**. PR #23 / commit `1fbed75` explicitly deferre
 1. **[REMAINING]** Add short repo guidance to `AGENTS.md` after implementation is ready:
    - When user asks for a new tmux tab/window for testing, create a new tmux window in the existing session, never split the current pane.
    - Use Flightdeck session tools/skill for harness launch and IO; persist `%pane_id`/`#{window_id}`; do not rely on window names.
-2. **[REMAINING]** Add owner metadata to current Flightdeck state init/watch path before broad schema work:
+2. **[DONE]** Add owner metadata to current Flightdeck state init/watch path before broad schema work:
    - `owner.pane_id`
    - `owner.pane_target`
    - `owner.harness`
    - `owner.cwd`
+   - `owner.pid`
    - Pi owner bridge metadata when master harness is Pi.
-3. **[REMAINING]** Update `pi-flightdeck` to render the mini dashboard only for the owner by default.
+3. **[DONE]** Update `pi-flightdeck` to render the mini dashboard only for the owner by default.
    - New setting: `dashboardVisibility = owner | tmux-session | always`.
    - Default: `owner`.
    - Popup can show read-only observer info if opened manually, but persistent widget should not appear in peer Pi sessions.
-4. **[REMAINING]** Preserve child-pane suppression (`PI_SUBAGENT_CHILD_AGENT`, `FLIGHTDECK_CHILD_PANE`) as an additional guard.
+4. **[DONE]** Preserve child-pane suppression (`PI_SUBAGENT_CHILD_AGENT`, `FLIGHTDECK_CHILD_PANE`) as an additional guard.
 
 Validation:
 

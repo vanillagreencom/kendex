@@ -60,6 +60,20 @@
           "apply": "live"
         },
         {
+          "key": "dashboardVisibility",
+          "label": "Dashboard visibility",
+          "description": "Where the persistent dashboard widget may render: owner pane only (default), any pane in the same tmux session, or always when state is readable. Child panes remain suppressed.",
+          "type": "enum",
+          "enumValues": [
+            "owner",
+            "tmux-session",
+            "always"
+          ],
+          "default": "owner",
+          "category": "Dashboard",
+          "apply": "live"
+        },
+        {
           "key": "dashboardDefaultState",
           "label": "Dashboard default state",
           "description": "Initial dashboard state when a flightdeck session first appears.",

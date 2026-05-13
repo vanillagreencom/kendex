@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +25,15 @@ function run(useTs: boolean, cwd: string, args: string[]): { stdout: string; std
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
 	if (useTs) env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE = "1";
-	else delete env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE;
+	else env.FLIGHTDECK_USE_TS_FLIGHTDECK_STATE = "0";
 	delete env.FLIGHTDECK_USE_TS;
+	env.FLIGHTDECK_OWNER_HARNESS = "pi";
+	env.FLIGHTDECK_OWNER_PANE_ID = "%42";
+	env.FLIGHTDECK_OWNER_PANE_TARGET = "PARITY:7.0";
+	env.FLIGHTDECK_OWNER_CWD = "/tmp/flightdeck-owner-parity";
+	env.FLIGHTDECK_OWNER_PID = "4242";
+	env.FLIGHTDECK_OWNER_PI_SESSION_ID = "pi-session-parity";
+	env.FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET = "/tmp/pi-session-bridge/parity.sock";
 	// Bash parses <action> first, then --session — preserve that order.
 	const [action, ...rest] = args;
 	const full = action ? [action, "--session", SESSION, ...rest] : ["--session", SESSION];
@@ -37,6 +44,12 @@ function run(useTs: boolean, cwd: string, args: string[]): { stdout: string; std
 function readState(repoRoot: string): unknown {
 	const path = join(repoRoot, "tmp", `flightdeck-state-${SESSION}.json`);
 	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function writeState(repoRoot: string, state: unknown): void {
+	const dir = join(repoRoot, "tmp");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, `flightdeck-state-${SESSION}.json`), JSON.stringify(state), "utf8");
 }
 
 function normalize(state: unknown): unknown {
@@ -68,6 +81,43 @@ describe("flightdeck-state parity", () => {
 		expect(a.status).toBe(0);
 		expect(b.status).toBe(0);
 		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
+	});
+
+	test("init records owner metadata identically", () => {
+		run(false, bashRepo, ["init"]);
+		run(true, tsRepo, ["init"]);
+		const expectedOwner = {
+			cwd: "/tmp/flightdeck-owner-parity",
+			harness: "pi",
+			pane_id: "%42",
+			pane_target: "PARITY:7.0",
+			pid: 4242,
+			pi_bridge_socket: "/tmp/pi-session-bridge/parity.sock",
+			pi_session_id: "pi-session-parity",
+		};
+		expect((readState(bashRepo) as { owner?: unknown }).owner).toEqual(expectedOwner);
+		expect((readState(tsRepo) as { owner?: unknown }).owner).toEqual(expectedOwner);
+	});
+
+	test("init backfills owner metadata on legacy state without clobbering fields", () => {
+		const legacy = {
+			conflict_graph: { computed_at: null, edges: [] },
+			issues: { "CC-LEGACY": { state: "waiting" } },
+			merge_queue: ["CC-LEGACY"],
+			paused_for_user: null,
+			session_id: SESSION,
+			started_at: "2026-05-13T00:00:00Z",
+			terminated: false,
+		};
+		writeState(bashRepo, legacy);
+		writeState(tsRepo, legacy);
+		run(false, bashRepo, ["init"]);
+		run(true, tsRepo, ["init"]);
+		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
+		const state = readState(tsRepo) as { issues?: Record<string, unknown>; merge_queue?: string[]; owner?: { pane_id?: string } };
+		expect(Object.keys(state.issues ?? {})).toEqual(["CC-LEGACY"]);
+		expect(state.merge_queue).toEqual(["CC-LEGACY"]);
+		expect(state.owner?.pane_id).toBe("%42");
 	});
 
 	test("init is idempotent", () => {

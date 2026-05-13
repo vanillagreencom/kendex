@@ -54,6 +54,17 @@ export interface PausedForUser {
 	[key: string]: unknown;
 }
 
+export interface MasterOwner {
+	harness?: string;
+	pane_id?: string | null;
+	pane_target?: string | null;
+	cwd?: string;
+	pid?: number;
+	pi_session_id?: string | null;
+	pi_bridge_socket?: string | null;
+	[key: string]: unknown;
+}
+
 export interface MasterState {
 	session_id?: string;
 	started_at?: string;
@@ -63,6 +74,7 @@ export interface MasterState {
 	// session summary markdown. Used by the dashboard to point users at the
 	// post-mortem file without re-reading the disk.
 	summary_path?: string;
+	owner?: MasterOwner;
 	issues: Record<string, IssueRecord>;
 	merge_queue: string[];
 	conflict_graph?: { edges?: Array<[string, string]>; computed_at?: string | null };
@@ -307,6 +319,24 @@ function readJsonFile<T>(path: string): T | undefined {
 	}
 }
 
+function normalizeOwner(owner: unknown): MasterOwner | undefined {
+	if (!owner || typeof owner !== "object" || Array.isArray(owner)) return undefined;
+	const raw = owner as Record<string, unknown>;
+	const pid = typeof raw.pid === "number" && Number.isFinite(raw.pid)
+		? Math.floor(raw.pid)
+		: typeof raw.pid === "string" && /^[1-9][0-9]*$/.test(raw.pid) ? Number.parseInt(raw.pid, 10) : undefined;
+	return {
+		...raw,
+		cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
+		harness: typeof raw.harness === "string" ? raw.harness : undefined,
+		pane_id: typeof raw.pane_id === "string" ? raw.pane_id : raw.pane_id === null ? null : undefined,
+		pane_target: typeof raw.pane_target === "string" ? raw.pane_target : raw.pane_target === null ? null : undefined,
+		pid,
+		pi_bridge_socket: typeof raw.pi_bridge_socket === "string" ? raw.pi_bridge_socket : raw.pi_bridge_socket === null ? null : undefined,
+		pi_session_id: typeof raw.pi_session_id === "string" ? raw.pi_session_id : raw.pi_session_id === null ? null : undefined,
+	};
+}
+
 export function readMasterState(path: string): { state?: MasterState; error?: string } {
 	if (!existsSync(path)) return {};
 	try {
@@ -334,6 +364,7 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 				conflict_graph: normalizeConflictGraph(raw.conflict_graph),
 				issues,
 				merge_queue: Array.isArray(raw.merge_queue) ? raw.merge_queue.filter((v): v is string => typeof v === "string") : [],
+				owner: normalizeOwner(raw.owner),
 				paused_for_user: raw.paused_for_user ?? null,
 				session_id: raw.session_id,
 				started_at: raw.started_at,

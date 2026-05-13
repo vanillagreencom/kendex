@@ -155,6 +155,15 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
   "session_id": "<TMUX_SESSION_NAME>",
   "started_at": "<ISO8601>",
   "terminated": false,
+  "owner": {
+    "harness": "claude|opencode|codex|pi|unknown",
+    "pane_id": "%25",
+    "pane_target": "<TMUX_SESSION>:<window>.<pane>",
+    "cwd": "<absolute cwd>",
+    "pid": 1752875,
+    "pi_session_id": "<pi-session-id-or-null>",
+    "pi_bridge_socket": "<pi-bridge-socket-or-null>"
+  },
   "issues": {
     "<ISSUE_ID>": {
       "window": "<window-name>",
@@ -193,7 +202,7 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
 }
 ```
 
-State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, aborted, dead}`. `paused_for_user` carries `{issue_id, reason, prompt_text}` when an aggressive-mode pause fires.
+State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, aborted, dead}`. `owner` is additive v1 metadata written by `flightdeck-state init`; pi-flightdeck uses `owner.pane_id` to keep the persistent dashboard owner-scoped by default, while older readers ignore the field. `paused_for_user` carries `{issue_id, reason, prompt_text}` when an aggressive-mode pause fires.
 
 ## Configuration
 
