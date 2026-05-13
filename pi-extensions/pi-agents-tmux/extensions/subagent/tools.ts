@@ -5,14 +5,14 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit to use that agent's default resumable lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
+	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit to use that agent's default resumable lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
+	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -23,7 +23,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 export const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
+	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution. Larger batches are internally chunked; caller does not need to split." })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
@@ -33,7 +33,7 @@ export const SubagentParams = Type.Object({
 	sessionKey: Type.Optional(
 		Type.String({
 			description:
-				"For bg (non-pane) agents only, single mode. Optional lane id used as the resumed pi session file name; omit to use that agent's default resumable lane. Use a stable workflow-scoped id like 'review-issue-123' when you want separate memories. Ignored for pane agents (panes already persist via their own session file).",
+				"For bg (non-pane) agents only, single mode. Optional lane id used as the resumed pi session file name; omit for a fresh one-shot lane. Use a stable workflow-scoped id like 'review-issue-123' when you want continuity. Ignored for pane agents (panes already persist via their own session file).",
 		}),
 	),
 	forceSpawn: Type.Optional(
@@ -55,8 +55,14 @@ export const GetSubagentResultParams = Type.Object({
 	taskId: Type.Optional(Type.String({ description: "Persistent pane task ID to retrieve" })),
 	agent: Type.Optional(Type.String({ description: "Persistent pane agent name; selects that agent's latest task when taskId is omitted" })),
 	wait: Type.Optional(Type.Boolean({ description: "Poll for completion until timeout before returning", default: false })),
+	waitFor: Type.Optional(StringEnum(["completion", "idle"] as const, { description: "Wait target when wait=true. completion polls task status; idle waits for pane bridge isIdle=true transition.", default: "completion" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time when wait=true", default: 30000 })),
 	verbose: Type.Optional(Type.Boolean({ description: "Include registry and artifact paths", default: false })),
+});
+
+export const WaitForSubagentIdleParams = Type.Object({
+	agent: Type.String({ description: "Persistent pane agent name to wait for" }),
+	timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time for an isIdle=true transition", default: 30000 })),
 });
 
 export const SteerSubagentParams = Type.Object({

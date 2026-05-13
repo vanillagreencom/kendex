@@ -14,6 +14,8 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Grouped completion notifications batch multiple agents finishing together.
 - `taskId` retrieval, mid-run steering, and pane stop without losing memory.
 - Stop kills the tmux process but preserves the session — next launch resumes it.
+- Bg agents use fresh one-shot lanes by default; explicit `sessionKey` opts into memory reuse with a context-budget guard.
+- Large parallel calls are auto-batched internally, and pane idle waits are first-class via `wait_for_subagent_idle`.
 
 ## Install
 
@@ -64,7 +66,13 @@ Useful options: `agentScope` (`project` default, `user`, `both`), `cwd` per task
 
 Persistent panes return a `taskId`. Keep it to retrieve or steer the task later.
 
-Bg agents resume per parent session by default. Pass `sessionKey: "<stable-id>"` for a separate named memory lane. Pane agents persist via their own session file and ignore `sessionKey`.
+Bg agents start in a fresh one-shot lane by default. Pass `sessionKey: "<stable-id>"` only when you want a named memory lane reused across calls. Pane agents persist via their own session file and ignore `sessionKey`.
+
+Parallel and chain items that omit `sessionKey` automatically receive distinct one-shot lanes, including same-agent parallel tasks. Calls above the internal batch size (default 8) are split into batches transparently.
+
+Explicit reused `sessionKey` lanes run a preflight context-budget heuristic before launch. Default policy refuses when estimated saved context exceeds 80% of the configured model limit; settings can raise/lower the threshold or warn instead.
+
+Agent names are validated against project/user inventory for the selected `agentScope` before any launch. Unknown names fail with structured details listing missing and available agents; no similar-name redirect is attempted.
 
 ## Commands
 
@@ -150,6 +158,14 @@ Dispatch and end your turn — the extension wakes the parent on completion. Use
 { "taskId": "iced-..." }
 ```
 
+Wait for a pane agent to become idle without shell polling:
+
+```json
+{ "agent": "iced", "timeoutMs": 30000 }
+```
+
+Use the `wait_for_subagent_idle` tool for this. `get_subagent_result` also accepts `waitFor: "idle"` for compatibility with existing result lookups.
+
 Use `steer_subagent` for mid-run correction. It targets `pi-session-bridge` when available; otherwise it queues a steering note for the pane to read when idle.
 
 ```json
@@ -167,10 +183,13 @@ All settings live in the extension manager under **Agents (tmux)**.
 | Setting | What it does |
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
-| Max parallel tasks | Cap on tasks in one parallel agent call. |
+| Max parallel tasks | Internal batch size for parallel calls; larger calls are auto-batched. |
 | Max concurrency | Cap on bg agent processes running simultaneously. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
+| Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |
+| Reused session budget policy | `refuse` (default) blocks near-limit reused lanes; `warn` logs and continues. |
+| Reused session context limit tokens | Context limit used by the session-file-size heuristic. |
 
 ### Rendering
 

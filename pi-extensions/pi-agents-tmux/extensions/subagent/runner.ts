@@ -28,6 +28,13 @@ import {
 	selectedToolsForAgent,
 	settingBoolean,
 } from "./settings.js";
+import {
+	guardReusedSessionBudget,
+	resolveBgSession,
+	resultHasContextLengthExceeded,
+	summarizeAttempt,
+	type BgSessionSelection,
+} from "./sessions.js";
 import { createTaskId, emitSubagentEvent } from "./tasks.js";
 import {
 	DETAIL_STRING_MAX_CHARS,
@@ -38,6 +45,13 @@ import {
 } from "./types.js";
 
 export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
+
+type SpawnProcess = typeof spawn;
+let spawnProcess: SpawnProcess = spawn;
+
+export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
+	spawnProcess = spawner ?? spawn;
+}
 
 export function formatTruncationNotice(
 	truncation: TruncationResult,
@@ -242,19 +256,132 @@ export async function runSingleAgent(
 		};
 	}
 
-	// Bg agents are resumable by default. A caller-provided sessionKey selects a
-	// named lane; otherwise each agent uses its default lane.
-	const args: string[] = ["--mode", "json", "-p"];
-	const effectiveSessionKey = sessionKey?.trim() || "default";
-	const sessionsDir = path.join(runtimeRoot, "sessions");
-	await fs.promises.mkdir(sessionsDir, { recursive: true, mode: 0o700 }).catch(() => undefined);
-	const resumedSessionPath = path.join(sessionsDir, `bg-${safeFileName(agent.name)}-${safeFileName(effectiveSessionKey)}.jsonl`);
-	args.push("--session", resumedSessionPath);
 	const selectedModel = selectedModelForAgent(agent, parentModel, defaultCwd);
-	if (selectedModel) args.push("--model", selectedModel);
 	const selectedThinking = selectedThinkingLevelForAgent(parentThinkingLevel, defaultCwd);
+	const firstSession = resolveBgSession(runtimeRoot, agent.name, sessionKey);
+	await fs.promises.mkdir(path.dirname(firstSession.path), { recursive: true, mode: 0o700 }).catch(() => undefined);
+
+	const budgetGuard = firstSession.explicit
+		? await guardReusedSessionBudget(firstSession.path, agent.name, selectedModel, cwd ?? defaultCwd)
+		: undefined;
+	if (budgetGuard && !budgetGuard.ok) {
+		const errorMessage = budgetGuard.warning ?? `Refusing reused session for ${agent.name}: estimated context budget exceeded.`;
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: errorMessage,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: budgetGuard.estimate.tokens, turns: 0 },
+			model: selectedModel,
+			sessionKey: firstSession.key,
+			sessionKeyExplicit: true,
+			sessionPath: firstSession.path,
+			ephemeralSession: false,
+			stopReason: "session_budget_exceeded",
+			errorMessage,
+			step,
+		};
+	}
+
+	const first = await runSingleAgentAttempt(
+		defaultCwd,
+		runtimeRoot,
+		agent,
+		agentName,
+		task,
+		cwd,
+		selectedModel,
+		selectedThinking,
+		step,
+		pi,
+		signal,
+		onUpdate,
+		makeDetails,
+		firstSession,
+		1,
+	);
+	if (budgetGuard?.warning) first.stderr = [budgetGuard.warning, first.stderr].filter(Boolean).join("\n");
+
+	if (!resultHasContextLengthExceeded(first)) return first;
+
+	const retrySession = resolveBgSession(runtimeRoot, agent.name);
+	const warning = `Context length exceeded for ${agent.name} session ${firstSession.key}; retrying once with fresh session ${retrySession.key}.`;
+	first.stderr = [first.stderr, warning].filter(Boolean).join("\n");
+	first.errorMessage = first.errorMessage ?? warning;
+	emitSubagentEvent(pi, "subagents:retrying", {
+		mode: "oneshot",
+		agent: agent.name,
+		taskId: first.taskId,
+		task,
+		runtimeRoot,
+		transcriptPath: first.transcriptPath,
+		model: first.model,
+		usage: first.usage,
+		reason: "context_length_exceeded",
+		retrySessionKey: retrySession.key,
+	});
+
+	const retry = await runSingleAgentAttempt(
+		defaultCwd,
+		runtimeRoot,
+		agent,
+		agentName,
+		task,
+		cwd,
+		selectedModel,
+		selectedThinking,
+		step,
+		pi,
+		signal,
+		onUpdate,
+		makeDetails,
+		retrySession,
+		2,
+	);
+	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
+	retry.attempts = attempts;
+	const retryFailed = retry.exitCode !== 0 || retry.stopReason === "error" || retry.stopReason === "aborted" || resultHasContextLengthExceeded(retry);
+	if (!retryFailed) {
+		retry.stderr = [warning, retry.stderr].filter(Boolean).join("\n");
+		return retry;
+	}
+
+	const retryError = retry.errorMessage || retry.stderr || "retry failed without output";
+	const firstError = first.errorMessage || first.stderr || "first attempt failed without output";
+	const combinedError = [
+		`Context length exceeded for ${agent.name}; retry with fresh session also failed.`,
+		`First attempt (${first.sessionKey ?? firstSession.key}) exit ${first.exitCode}: ${firstError}`,
+		`Retry attempt (${retry.sessionKey ?? retrySession.key}) exit ${retry.exitCode}: ${retryError}`,
+	].join("\n");
+	retry.exitCode = retry.exitCode === 0 ? 1 : retry.exitCode;
+	retry.errorMessage = combinedError;
+	retry.stderr = [warning, combinedError, retry.stderr].filter(Boolean).join("\n");
+	return retry;
+}
+
+async function runSingleAgentAttempt(
+	defaultCwd: string,
+	runtimeRoot: string,
+	agent: AgentConfig,
+	agentName: string,
+	task: string,
+	cwd: string | undefined,
+	selectedModel: string | undefined,
+	selectedThinking: string | undefined,
+	step: number | undefined,
+	pi: ExtensionAPI,
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	session: BgSessionSelection,
+	attempt: number,
+): Promise<SingleResult> {
+	const args: string[] = ["--mode", "json", "-p", "--session", session.path];
+	if (selectedModel) args.push("--model", selectedModel);
 	if (selectedThinking && selectedThinking !== "off") args.push("--thinking", selectedThinking);
-	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], pi.getActiveTools());
+	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], pi.getActiveTools?.() ?? []);
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -278,10 +405,15 @@ export async function runSingleAgent(
 		// -1 = still running. Real exit code is set after proc.close; streaming
 		// partials must not look completed to callers that key on exitCode.
 		exitCode: -1,
+		attempt,
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 		model: selectedModel,
+		sessionKey: session.key,
+		sessionKeyExplicit: session.explicit,
+		sessionPath: session.path,
+		ephemeralSession: session.ephemeral,
 		taskId: oneShotTaskId,
 		transcriptPath,
 		step,
@@ -313,8 +445,12 @@ export async function runSingleAgent(
 			runtimeRoot,
 			transcriptPath,
 			model: selectedModel,
+			sessionKey: session.key,
+			sessionPath: session.path,
+			ephemeralSession: session.ephemeral,
+			attempt,
 		});
-		appendTranscript({ type: "start", agent: agent.name, taskId: oneShotTaskId, task, cwd: cwd ?? defaultCwd });
+		appendTranscript({ type: "start", agent: agent.name, taskId: oneShotTaskId, task, cwd: cwd ?? defaultCwd, sessionKey: session.key, sessionPath: session.path, ephemeralSession: session.ephemeral, attempt });
 
 		if (agent.systemPrompt.trim()) {
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
@@ -328,7 +464,7 @@ export async function runSingleAgent(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
+			const proc = spawnProcess(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -368,6 +504,13 @@ export async function runSingleAgent(
 					emitUpdate();
 				}
 
+				if (event.type === "error") {
+					const errorText = typeof event.error === "string" ? event.error : JSON.stringify(event.error ?? event);
+					currentResult.errorMessage = errorText;
+					currentResult.stderr += `${errorText}\n`;
+					emitUpdate();
+				}
+
 				if (event.type === "tool_result_end") {
 					emitUpdate();
 				}
@@ -388,13 +531,13 @@ export async function runSingleAgent(
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
-				appendTranscript({ type: "exit", code: code ?? 0 });
+				appendTranscript({ type: "exit", code: code ?? 0, attempt });
 				Promise.allSettled(transcriptWrites).finally(() => resolve(code ?? 0));
 			});
 
 			proc.on("error", (error) => {
 				currentResult.errorMessage = stringifyError(error);
-				appendTranscript({ type: "process_error", error: stringifyError(error) });
+				appendTranscript({ type: "process_error", error: stringifyError(error), attempt });
 				Promise.allSettled(transcriptWrites).finally(() => resolve(1));
 			});
 
@@ -425,6 +568,10 @@ export async function runSingleAgent(
 				transcriptPath,
 				model: currentResult.model,
 				usage: currentResult.usage,
+				sessionKey: session.key,
+				sessionPath: session.path,
+				ephemeralSession: session.ephemeral,
+				attempt,
 			});
 			throw new Error("Agent was aborted");
 		}
@@ -440,6 +587,10 @@ export async function runSingleAgent(
 			model: currentResult.model,
 			usage: currentResult.usage,
 			error: failed ? currentResult.errorMessage || currentResult.stderr || undefined : undefined,
+			sessionKey: session.key,
+			sessionPath: session.path,
+			ephemeralSession: session.ephemeral,
+			attempt,
 		});
 		return currentResult;
 	} finally {

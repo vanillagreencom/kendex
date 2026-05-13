@@ -19,6 +19,7 @@
     "appendSystem": "./instructions.md"
   },
   "scripts": {
+    "test": "bun test --preload ./tests/preload.ts ./tests",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
   },
@@ -52,7 +53,7 @@
         {
           "key": "maxParallelTasks",
           "label": "Max parallel tasks",
-          "description": "Maximum number of tasks accepted in one parallel agent call.",
+          "description": "Internal batch size for parallel agent calls. Larger calls are automatically split into batches.",
           "type": "number",
           "default": 8,
           "category": "Execution",
@@ -64,6 +65,37 @@
           "description": "Maximum number of bg agent processes to run at the same time.",
           "type": "number",
           "default": 4,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "reusedSessionBudgetThreshold",
+          "label": "Reused session budget threshold",
+          "description": "Refuse or warn before launching an explicit bg sessionKey when the saved session estimate exceeds this fraction of model context.",
+          "type": "number",
+          "default": 0.8,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "reusedSessionBudgetPolicy",
+          "label": "Reused session budget policy",
+          "description": "Behavior when an explicit bg sessionKey is near context limit. refuse blocks launch; warn allows launch with a warning.",
+          "type": "enum",
+          "enumValues": [
+            "refuse",
+            "warn"
+          ],
+          "default": "refuse",
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "reusedSessionContextLimitTokens",
+          "label": "Reused session context limit tokens",
+          "description": "Model context limit used by the reused-session file-size heuristic.",
+          "type": "number",
+          "default": 200000,
           "category": "Execution",
           "apply": "live"
         },
@@ -249,7 +281,12 @@
         {
           "kind": "tool",
           "name": "get_subagent_result",
-          "description": "Retrieve persistent pane agent task results by taskId or latest agent task."
+          "description": "Retrieve persistent pane agent task results by taskId or latest agent task; can also wait for pane idle."
+        },
+        {
+          "kind": "tool",
+          "name": "wait_for_subagent_idle",
+          "description": "Wait for a persistent pane agent to transition to pi-bridge isIdle=true."
         },
         {
           "kind": "tool",

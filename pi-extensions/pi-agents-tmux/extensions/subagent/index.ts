@@ -51,10 +51,16 @@ import {
 	wrappedText,
 } from "./format.js";
 import {
+	assignEphemeralSessionKeys,
+	formatInventoryValidationError,
+	mapInBatchesWithConcurrencyLimit,
+	validateAgentInventory,
+	type AgentInventory,
+} from "./dispatch.js";
+import {
 	ensurePaneBridgeMetadata,
 	ensurePersistentPane,
 	execCapture,
-	mapWithConcurrencyLimit,
 	migrateLegacyPackageRuntime,
 	migrateLegacyProjectRuntime,
 	paneExists,
@@ -137,6 +143,7 @@ import {
 	SteerSubagentParams,
 	StopSubagentParams,
 	SubagentParams,
+	WaitForSubagentIdleParams,
 } from "./tools.js";
 import {
 	COLLAPSED_ITEM_COUNT,
@@ -165,14 +172,31 @@ import {
 	type SubagentStatsBridge,
 	type SubagentStatsItem,
 	type SubagentStatuslineBridge,
+	type WaitForSubagentIdleDetails,
 	SUBAGENT_WIDGET_KEY,
 	type UsageStats,
 } from "./types.js";
+import { extractBridgeState, waitForIdleTransition } from "./wait.js";
 
 function bridgeTargetArgs(metadata: { socket?: string; pid?: string }): string[] {
 	if (metadata.socket) return ["--socket", metadata.socket];
 	if (metadata.pid) return ["--pid", metadata.pid];
 	return [];
+}
+
+function launchInventory(cwd: string, scope: AgentScope, allowed: AgentConfig[]): AgentInventory {
+	void scope;
+	const project = discoverAgents(cwd, "project").agents;
+	const user = discoverAgents(cwd, "user").agents;
+	return { allowed, project, user };
+}
+
+function collectRequestedAgentNames(params: Record<string, any>): Set<string> {
+	const requested = new Set<string>();
+	if (Array.isArray(params.chain)) for (const step of params.chain) if (typeof step?.agent === "string") requested.add(step.agent);
+	if (Array.isArray(params.tasks)) for (const task of params.tasks) if (typeof task?.agent === "string") requested.add(task.agent);
+	if (typeof params.agent === "string") requested.add(params.agent);
+	return requested;
 }
 
 type FollowUpTask = { taskId: string; outboxFile: string; taskFile?: string };
@@ -1355,11 +1379,72 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
+	const waitForPaneIdle = async (ctx: ExtensionCommandContext | ExtensionContext, agentName: string, timeoutMs = 30000): Promise<{ text: string; details: WaitForSubagentIdleDetails; isError?: boolean }> => {
+		const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx as ExtensionContext));
+		const registry = await readPaneRegistry(runtimeRoot);
+		const entry = registry[agentName];
+		if (!entry) {
+			return {
+				text: `No persistent pane registry entry for ${agentName} in runtime ${runtimeRoot}.`,
+				details: { agent: agentName, runtimeRoot, samples: 0, timedOut: false, transitioned: false },
+				isError: true,
+			};
+		}
+		if (!paneSessionBelongsToRuntime(runtimeRoot, entry)) {
+			return {
+				text: `Refusing to wait for ${agentName}: pane session file is outside this runtime. Session: ${entry.sessionFile}. Runtime: ${runtimeRoot}`,
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				isError: true,
+			};
+		}
+		if (!(await paneExists(entry.paneId))) {
+			return {
+				text: `Agent ${agentName} is not live.`,
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				isError: true,
+			};
+		}
+		const metadata = await ensurePaneBridgeMetadata(runtimeRoot, entry);
+		const bridgeBin = metadata ? await resolvePiBridgeBin() : undefined;
+		const targetArgs = metadata ? bridgeTargetArgs(metadata) : [];
+		if (!bridgeBin || targetArgs.length === 0) {
+			return {
+				text: `No live pi-bridge target for ${agentName}; cannot wait for isIdle transition.`,
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				isError: true,
+			};
+		}
+		const wait = await waitForIdleTransition(async () => {
+			const result = await execCapture(bridgeBin, ["state", ...targetArgs], { cwd: entry.cwd });
+			if (result.code !== 0) return undefined;
+			return extractBridgeState(result.stdout);
+		}, timeoutMs, 500);
+		const details: WaitForSubagentIdleDetails = {
+			agent: agentName,
+			bridgePid: metadata?.pid,
+			bridgeSocket: metadata?.socket,
+			isIdle: wait.lastState?.isIdle,
+			paneId: entry.paneId,
+			runtimeRoot,
+			samples: wait.samples,
+			sessionFile: entry.sessionFile,
+			timedOut: wait.timedOut,
+			transitioned: wait.transitioned,
+		};
+		return {
+			text: wait.transitioned
+				? `${agentName} is idle (pane ${entry.paneId}).`
+				: `Timed out waiting for ${agentName} idle transition after ${timeoutMs}ms.`,
+			details,
+			isError: !wait.transitioned,
+		};
+	};
+
 	pi.registerTool({
 		renderShell: "self",
 		name: "get_subagent_result",
 		label: "Get Agent Result",
-		description: "Retrieve status/results for persistent pane agent tasks by taskId or latest agent task. This is a recovery/status tool for pane tasks and does not change Flightdeck or Orchestration ownership.",
+		description: "Retrieve status/results for persistent pane agent tasks by taskId or latest agent task. Use waitFor: \"idle\" to wait for pane isIdle transition without shell polling. This is a recovery/status tool for pane tasks and does not change Flightdeck or Orchestration ownership.",
 		parameters: GetSubagentResultParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!params.taskId && !params.agent) {
@@ -1370,6 +1455,26 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
+			if ((params.waitFor ?? "completion") === "idle") {
+				let agentName = params.agent;
+				if (!agentName && params.taskId) {
+					const records = await readTaskRegistry(runtimeRoot);
+					agentName = records[params.taskId]?.agent;
+				}
+				if (!agentName) {
+					return {
+						content: [{ type: "text", text: `No task record found for ${params.taskId}; provide agent to wait for pane idle.` }],
+						details: { taskId: params.taskId, waitFor: "idle" } satisfies GetSubagentResultDetails,
+						isError: true,
+					};
+				}
+				const waited = await waitForPaneIdle(ctx, agentName, params.timeoutMs ?? 30000);
+				return {
+					content: [{ type: "text", text: waited.text }],
+					details: { agent: agentName, paneId: waited.details.paneId, taskId: params.taskId, waitFor: "idle", waitTimedOut: waited.details.timedOut } satisfies GetSubagentResultDetails,
+					isError: waited.isError,
+				};
+			}
 			const deadline = Date.now() + Math.max(0, Math.floor(params.timeoutMs ?? 30000));
 			let record: PaneTaskRecord | undefined;
 			let diagnostics: string[] = [];
@@ -1411,6 +1516,31 @@ export default function (pi: ExtensionAPI) {
 			const target = details?.agent ? details.agent : "unknown";
 			const tone = details?.status === "completed" ? "success" : details?.status === "failed" ? "error" : "warning";
 			return wrappedText(agentStatusLine(theme, target, details?.status ?? "result", tone));
+		},
+	});
+
+	pi.registerTool({
+		renderShell: "self",
+		name: "wait_for_subagent_idle",
+		label: "Wait Agent Idle",
+		description: "Wait for a persistent pane agent's pi-bridge state to transition to isIdle=true. Use this instead of polling pi-bridge state in shell loops.",
+		parameters: WaitForSubagentIdleParams,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const waited = await waitForPaneIdle(ctx, params.agent, params.timeoutMs ?? 30000);
+			return {
+				content: [{ type: "text", text: waited.text }],
+				details: waited.details,
+				isError: waited.isError,
+			};
+		},
+		renderCall(_args, _theme, _context) {
+			return new Container();
+		},
+		renderResult(result, _options, theme, context) {
+			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
+			const details = result.details as WaitForSubagentIdleDetails | undefined;
+			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Agent idle wait failed")}\n${theme.fg("muted", raw)}`);
+			return wrappedText(agentStatusLine(theme, details?.agent ?? "agent", "idle", "success"));
 		},
 	});
 
@@ -1628,6 +1758,8 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized agents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			"Bg agents use fresh one-shot sessions by default; pass sessionKey only when you want continuity.",
+			`Parallel calls above ${MAX_PARALLEL_TASKS} items are internally batched; callers do not need to split requests.`,
 			`Results are truncated by default to ${DEFAULT_RESULT_MAX_LINES} lines or ${formatSize(DEFAULT_RESULT_MAX_BYTES)}; full oversized output is saved under the session runtime when enabled.`,
 			'Default agent scope is "project" (.pi/agents plus .claude/agents compatibility).',
 			'Use agentScope: "both" to include user-level agents from ~/.pi/agent/agents.',
@@ -1666,12 +1798,18 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
-				const requestedAgentNames = new Set<string>();
-				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
-				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
-				if (params.agent) requestedAgentNames.add(params.agent);
+			const requestedAgentNames = collectRequestedAgentNames(params as Record<string, any>);
+			const inventoryError = validateAgentInventory(requestedAgentNames, launchInventory(ctx.cwd, agentScope, agents), agentScope);
+			if (inventoryError) {
+				const mode = hasChain ? "chain" : hasTasks ? "parallel" : "single";
+				return {
+					content: [{ type: "text", text: formatInventoryValidationError(inventoryError) }],
+					details: { ...makeDetails(mode)([]), inventoryError },
+					isError: true,
+				};
+			}
 
+			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
 				const projectAgentsRequested = Array.from(requestedAgentNames)
 					.map((name) => agents.find((a) => a.name === name))
 					.filter((a): a is AgentConfig => a?.source === "project");
@@ -1692,11 +1830,12 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.chain && params.chain.length > 0) {
+				const chainSteps = assignEphemeralSessionKeys(params.chain as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>);
 				const results: SingleResult[] = [];
 				let previousOutput = "";
 
-				for (let i = 0; i < params.chain.length; i++) {
-					const step = params.chain[i];
+				for (let i = 0; i < chainSteps.length; i++) {
+					const step = chainSteps[i];
 					const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
 
 					const chainUpdate: OnUpdateCallback | undefined = onUpdate
@@ -1811,19 +1950,15 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.tasks && params.tasks.length > 0) {
-				const maxParallelTasks = Math.max(1, Math.floor(settingNumber("maxParallelTasks", MAX_PARALLEL_TASKS, ctx.cwd)));
-				if (params.tasks.length > maxParallelTasks)
-					return {
-						content: [{ type: "text", text: `Too many parallel tasks (${params.tasks.length}). Max is ${maxParallelTasks}.` }],
-						details: makeDetails("parallel")([]),
-					};
+				const parallelTasks = assignEphemeralSessionKeys(params.tasks as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>);
+				const parallelBatchSize = Math.max(1, Math.floor(settingNumber("maxParallelTasks", MAX_PARALLEL_TASKS, ctx.cwd)));
 
 				const allResults: SingleResult[] = new Array(params.tasks.length);
 				for (let i = 0; i < params.tasks.length; i++) {
 					allResults[i] = {
-						agent: params.tasks[i].agent,
+						agent: parallelTasks[i].agent,
 						agentSource: "unknown",
-						task: params.tasks[i].task,
+						task: parallelTasks[i].task,
 						exitCode: -1,
 						messages: [],
 						stderr: "",
@@ -1854,7 +1989,7 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				const maxConcurrency = Math.max(1, Math.floor(settingNumber("maxConcurrency", MAX_CONCURRENCY, ctx.cwd)));
-				const results = await mapWithConcurrencyLimit(params.tasks, maxConcurrency, async (t: { agent: string; task: string; cwd?: string; sessionKey?: string }, index) => {
+				const results = await mapInBatchesWithConcurrencyLimit(parallelTasks, parallelBatchSize, maxConcurrency, async (t: { agent: string; task: string; cwd?: string; sessionKey?: string }, index) => {
 					const updateOneshotDashboard = (item: SingleResult) => {
 						updateDashboard({
 							agent: item.agent,

@@ -1,4 +1,4 @@
-## pi-agents-tmux — `subagent`, `steer_subagent`, `get_subagent_result`, `stop_subagent`
+## pi-agents-tmux — `subagent`, `steer_subagent`, `get_subagent_result`, `wait_for_subagent_idle`, `stop_subagent`
 
 `subagent` delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as resumable bg agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
 
@@ -9,7 +9,11 @@ Do not use for: trivial work the parent can do directly with read/grep/find; any
 Calling rules:
 - One self-contained `task` string per delegation — the subagent cannot ask follow-ups.
 - Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.pi/agent/agents` are explicitly needed.
+- Bg (`pane: false`) agents start in a fresh one-shot session when `sessionKey` is omitted. Pass a stable `sessionKey` only when you intentionally want to reuse memory across calls; reused lanes are preflight-guarded near context limit and may refuse with a warning.
+- Parallel and chain bg items without `sessionKey` receive distinct one-shot lanes automatically, so same-agent tasks do not collide. Parallel calls larger than the internal batch size are auto-batched; do not split manually just for the old cap.
+- Agent names are inventory-checked before launch for the selected `agentScope`. Missing names fail fast with available project/user agents; no similar-name redirect is attempted.
 - Persistent-pane (`pane: true`) dispatches return immediately with a `taskId` for follow-up collection. **End your turn after dispatching.** The completion arrives as a follow-up message that wakes you in a new turn — do not call `get_subagent_result` with `wait: true` to block, unless the user asked.
-- Save the `taskId`; use `get_subagent_result` only if you suspect a missed wake event. Use `steer_subagent` for mid-run correction, `stop_subagent` to kill/close a pane.
+- Save the `taskId`; use `get_subagent_result` only if you suspect a missed wake event. For pane-idle waits, use `wait_for_subagent_idle` (or `get_subagent_result` with `waitFor: "idle"`) instead of shell polling loops.
+- If a bg subagent hits `context_length_exceeded`, the extension retries once in a fresh one-shot lane and returns both attempt summaries if the retry also fails.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. Pass `forceSpawn: true` only when the user wants a fresh session.
 - `confirmProjectAgents: true` gates project-defined agents behind explicit user approval.
