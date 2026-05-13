@@ -40,6 +40,39 @@ done
 
 Persist BOTH `pane_target` (`"HT:cc-463.0"`) and the immutable `pane_id` (`"%403"`) in master state. `pane-registry init` resolves and stores both at spawn time; reconcile / drift recovery keep them in sync. The daemon and pane-poll prefer `pane_id` because pi/codex auto-rename their tmux window once the TUI starts, which breaks any `pane_target`-only lookup once the window name changes.
 
+### Stable-id rule for destructive ops (#16)
+
+**Never derive a destructive tmux target from `pane_target`.** tmux reuses window indices after a window is destroyed, so the recorded `pane_target` (`session:window-index.pane-index`) is only valid for the lifetime of the original pane. A stripped `WINDOW_TARGET="${pane_target%.*}"` produces a session:window-index string that may now point to a completely different window — e.g. the long-running `flightdeck-daemon` window, or the user's editor window. Calling `tmux kill-window` against that derived target destroys the unrelated workload.
+
+Destructive teardown (`kill-window`, `kill-pane`, anything that removes panes/windows) MUST use the stable `pane_id` (`%N`) recorded at init time:
+
+```bash
+# WRONG — derives a reusable index; can kill the daemon after window reuse (#16)
+WINDOW_TARGET="${pane_target%.*}"
+tmux kill-window -t "$WINDOW_TARGET"
+
+# RIGHT — stable id; only ever targets the originally-registered pane
+if tmux list-panes -a -F '#{pane_id}' | grep -qFx "$pane_id"; then
+  window_id=$(tmux display-message -t "$pane_id" -p '#{window_id}')
+  pane_count=$(tmux list-panes -t "$window_id" -F '#{pane_id}' | wc -l)
+  if [[ "$pane_count" == "1" ]]; then
+    tmux kill-window -t "$window_id"
+  else
+    tmux kill-pane -t "$pane_id"
+  fi
+fi
+```
+
+When `pane_id` is gone, the original pane is already destroyed; do NOT fall back to `pane_target` to "clean up". Either the issue is already terminal (`merged|aborted|dead`) and the window is already closed (no-op), or the registry has drifted and the caller must escalate. The shared implementation lives at `scripts/pane-registry teardown-window <ISSUE>` and is what `workflows/close-issue.md` § 4 calls; do not reimplement the kill path inline.
+
+The same rule applies to capture-pane reads during the close-issue two-signal check: prefer `pane_id`. A stale `pane_target` would feed an unrelated window's text into the signal accumulator and could either mask a real termination or trip a false positive on the wrong content.
+
+**Bell-clear is not destructive.** `pane-respond` derives `WINDOW_TARGET="${TARGET%.*}"` to call `pane-clear-bell`, which only performs a paired `tmux select-window` (focus flip back to origin). Even against a recycled target this is at worst a brief UI flicker on an unrelated window; nothing is killed. The stable-id rule above applies specifically to destructive ops — `kill-window`, `kill-pane`, and anything else that removes panes or windows. The `pane-respond` send itself targets whatever the caller passed (callers should pass `pane_id` whenever possible; the registry's `list --format inner-panes` already prefers `pane_id`).
+
+### Reconcile-time backfill guard (#16)
+
+`pane-registry reconcile` opportunistically backfills `pane_id` for legacy entries that recorded only `pane_target`. The backfill MUST reject any `pane_target` whose current `window_name` no longer matches the registered `window` — a mismatch means the original window was destroyed and the index has been reassigned. Adopting that pane id into the registry would silently graft an unrelated window onto the issue, and the next `teardown-window` call would then kill it. When the window-name guard rejects a backfill, leave `pane_id` empty so the liveness check drops the entry on the same pass.
+
 If fingerprinting fails (no sentinel matches on any pane), default to pane 0 and log a warning. Pane 0 is right for opencode and claude code in standard layouts.
 
 ### Capture-pane scrollback depth

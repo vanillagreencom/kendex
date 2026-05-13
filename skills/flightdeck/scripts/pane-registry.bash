@@ -13,6 +13,7 @@
 #   pane-registry remove <ISSUE>                         # also releases oc port + deletes spawn file
 #   pane-registry remove-merged                          # drop terminal-state issues with closed windows
 #   pane-registry reconcile                              # drop entries whose windows no longer exist
+#   pane-registry teardown-window <ISSUE>                # safely kill the issue's window/pane using stable pane_id
 #   pane-registry oc-attach-args <ISSUE>                # prints '--url U --session S' or empty
 #   pane-registry find-by-pane <pane-target>             # prints issue id matching pane_target
 #
@@ -483,9 +484,20 @@ case "$ACTION" in
     # at startup to clean up stale registry state from prior sessions.
     # Same pane_id-first logic as remove-merged: the previous
     # window_name-only check silently dropped live entries when pi/codex
-    # auto-renamed their window post-spawn (#3 finding 3). Opportunistic
-    # backfill: for legacy entries with a pane_target but no pane_id, try
-    # to resolve it now so future reconciles use the stable key.
+    # auto-renamed their window post-spawn (#3 finding 3).
+    #
+    # Opportunistic backfill: for legacy entries with a pane_target but
+    # no pane_id, try to resolve it now so future reconciles use the
+    # stable key. CRITICAL (#16): tmux reuses window indices after
+    # windows are destroyed, so a stale pane_target like `HT:2.1` may
+    # now point to a completely different window (e.g. the daemon).
+    # Resolving pane_id from such a stale target would adopt the
+    # WRONG pane id into the registry and turn future teardowns into
+    # a kill of the unrelated window. The window-name guard rejects
+    # any pane_target whose current window name no longer matches the
+    # registered window — that mismatch means the original window was
+    # destroyed and the index recycled. Such entries get dropped
+    # outright (no backfill, no pane_target fallback).
     LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
@@ -507,11 +519,21 @@ case "$ACTION" in
         # Same list-panes gate as init: avoid tmux's silent fallback to
         # the active pane when the recorded pane_target no longer exists.
         if tmux list-panes -t "$pane_target" >/dev/null 2>&1; then
-          resolved=$(tmux display-message -t "$pane_target" -p '#{pane_id}' 2>/dev/null || echo "")
-          if [[ -n "$resolved" ]]; then
-            "$FD_STATE" set ".issues[\"$issue\"].pane_id" "\"$resolved\""
-            pane_id="$resolved"
-            BACKFILLED+=("$issue")
+          current_window=$(tmux display-message -t "$pane_target" -p '#{window_name}' 2>/dev/null || echo "")
+          # Guard against index reuse (#16): if the window name at the
+          # recorded pane_target no longer matches the issue's window,
+          # the original window was destroyed and tmux has reassigned
+          # the index to an unrelated window. Do not backfill — the
+          # original pane is gone.
+          if [[ -n "$window" && -n "$current_window" && "$current_window" != "$window" ]]; then
+            : # mismatched window name → leave pane_id empty so liveness check below drops this entry
+          else
+            resolved=$(tmux display-message -t "$pane_target" -p '#{pane_id}' 2>/dev/null || echo "")
+            if [[ -n "$resolved" ]]; then
+              "$FD_STATE" set ".issues[\"$issue\"].pane_id" "\"$resolved\""
+              pane_id="$resolved"
+              BACKFILLED+=("$issue")
+            fi
           fi
         fi
       fi
@@ -519,6 +541,11 @@ case "$ACTION" in
       if [[ -n "$pane_id" ]]; then
         grep -qx "$pane_id" <<< "$LIVE_PANES" || alive=0
       else
+        # No stable pane_id — pane_target alone is not trustworthy
+        # (#16 index reuse), so use window_name liveness as the only
+        # fallback. If the window name is gone the entry is dropped;
+        # if it happens to still exist, the entry survives this pass
+        # and a future reconcile will retry pane_id resolution.
         if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then alive=0; fi
       fi
       if (( alive == 0 )); then
@@ -540,9 +567,81 @@ case "$ACTION" in
     fi
     ;;
 
+  teardown-window)
+    # Safely tear down the tmux window/pane for an issue using the
+    # stable `pane_id` (`%N`) recorded at init time. Never derives a
+    # kill target from the human-readable `pane_target`
+    # (`session:window.index`) — tmux reuses window indices after the
+    # original window is destroyed, so a stale `pane_target` may now
+    # point to an unrelated window (the daemon, the user's editor,
+    # etc.). Killing that would destroy the wrong workload (#16).
+    #
+    # Behavior:
+    #   1. If `pane_id` is alive in `tmux list-panes -a`, kill the
+    #      window when it has exactly one pane, otherwise kill only
+    #      the pane. Single-pane-window kill matches the historical
+    #      contract from close-issue.md § 4.
+    #   2. If `pane_id` is gone AND the issue is already in a terminal
+    #      state (`merged|aborted|dead`), treat the window as already
+    #      closed and exit success. No fallback to `pane_target`.
+    #   3. If `pane_id` is gone AND the issue is NOT terminal, exit 3
+    #      with an error: the registry has drifted from tmux reality
+    #      and the caller must escalate. Silently deriving a kill
+    #      target from `pane_target` is exactly the #16 footgun.
+    #
+    # Exit codes:
+    #   0 - window/pane killed, or already closed (terminal + dead pane)
+    #   1 - issue not found in registry
+    #   2 - bad arguments
+    #   3 - registry drift: pane_id is gone but state is not terminal
+    ISSUE="${1:-}"
+    [[ -z "$ISSUE" ]] && { echo "Usage: teardown-window <ISSUE>" >&2; exit 2; }
+    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // empty" 2>/dev/null || echo "")
+    if [[ -z "$entry" || "$entry" == "null" ]]; then
+      echo "teardown-window: issue '$ISSUE' not found in registry" >&2
+      exit 1
+    fi
+    fields=$(jq -r '[(.state // ""), (.pane_id // ""), (.window // "")] | @tsv' <<< "$entry")
+    state=$(awk -F'\t' '{print $1}' <<< "$fields")
+    pane_id=$(awk -F'\t' '{print $2}' <<< "$fields")
+    window=$(awk -F'\t' '{print $3}' <<< "$fields")
+    pane_alive=0
+    if [[ -n "$pane_id" ]]; then
+      if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qFx "$pane_id"; then
+        pane_alive=1
+      fi
+    fi
+    if (( pane_alive == 1 )); then
+      window_id=$(tmux display-message -t "$pane_id" -p '#{window_id}' 2>/dev/null || echo "")
+      pane_count=0
+      if [[ -n "$window_id" ]]; then
+        pane_count=$(tmux list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null | wc -l | tr -d ' ')
+      fi
+      if [[ -n "$window_id" && "$pane_count" == "1" ]]; then
+        tmux kill-window -t "$window_id" 2>/dev/null || true
+        printf 'teardown-window: killed window %s (pane_id=%s, window=%s)\n' "$window_id" "$pane_id" "$window"
+      else
+        tmux kill-pane -t "$pane_id" 2>/dev/null || true
+        printf 'teardown-window: killed pane %s (window has %s panes, window=%s)\n' "$pane_id" "$pane_count" "$window"
+      fi
+      exit 0
+    fi
+    # pane_id missing or already dead — gate teardown on terminal state.
+    case "$state" in
+      merged|aborted|dead)
+        printf 'teardown-window: window already closed (pane_id=%s gone, state=%s)\n' "${pane_id:-<none>}" "$state"
+        exit 0
+        ;;
+      *)
+        echo "teardown-window: registry drift — pane_id '${pane_id:-<none>}' is gone but state is '${state}' (not merged|aborted|dead); refusing to derive kill target from pane_target (#16)" >&2
+        exit 3
+        ;;
+    esac
+    ;;
+
   *)
     echo "Unknown action: $ACTION" >&2
-    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | oc-attach-args | find-by-pane" >&2
+    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane" >&2
     exit 2
     ;;
 esac

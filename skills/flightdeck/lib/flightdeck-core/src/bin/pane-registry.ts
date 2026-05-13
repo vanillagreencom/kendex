@@ -59,6 +59,22 @@ function tmuxPaneExists(target: string): boolean {
 	return r.status === 0;
 }
 
+function tmuxLivePaneIds(): Set<string> {
+	const r = spawnSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}"], { encoding: "utf8" });
+	const panes = new Set<string>();
+	if (r.status !== 0) return panes;
+	for (const line of (r.stdout ?? "").split("\n")) {
+		if (line) panes.add(line);
+	}
+	return panes;
+}
+
+function tmuxPaneCountInWindow(windowId: string): number {
+	const r = spawnSync("tmux", ["list-panes", "-t", windowId, "-F", "#{pane_id}"], { encoding: "utf8" });
+	if (r.status !== 0) return 0;
+	return (r.stdout ?? "").split("\n").filter(Boolean).length;
+}
+
 function tmuxBasePaneIndex(): string {
 	const r = spawnSync("tmux", ["show-options", "-g", "pane-base-index"], { encoding: "utf8" });
 	const out = (r.stdout ?? "").trim();
@@ -432,11 +448,23 @@ function cmdReconcile(): void {
 		const win = String(rec.window ?? "");
 		if (!paneId && paneTarget) {
 			if (tmuxPaneExists(paneTarget)) {
-				const resolved = tmuxField(paneTarget, "#{pane_id}");
-				if (resolved) {
-					fdStateOrDie(["set", `.issues["${issue}"].pane_id`, JSON.stringify(resolved)]);
-					paneId = resolved;
-					backfilled.push(issue);
+				// Guard against index reuse (#16): tmux reassigns destroyed
+				// window indices to new windows. A stale pane_target like
+				// `HT:2.1` may now point to an unrelated window (the daemon,
+				// the user's editor, ...). Backfilling pane_id from that
+				// target would adopt the WRONG pane id and turn the next
+				// teardown into a kill of the unrelated workload. Reject
+				// the backfill whenever the window name at the recorded
+				// pane_target no longer matches the issue's window.
+				const currentWindow = tmuxField(paneTarget, "#{window_name}");
+				const mismatched = win && currentWindow && currentWindow !== win;
+				if (!mismatched) {
+					const resolved = tmuxField(paneTarget, "#{pane_id}");
+					if (resolved) {
+						fdStateOrDie(["set", `.issues["${issue}"].pane_id`, JSON.stringify(resolved)]);
+						paneId = resolved;
+						backfilled.push(issue);
+					}
 				}
 			}
 		}
@@ -452,6 +480,54 @@ function cmdReconcile(): void {
 	if (backfilled.length > 0) {
 		process.stdout.write(`reconciled: backfilled pane_id for ${backfilled.length} entr${backfilled.length === 1 ? "y" : "ies"} (${backfilled.join(",")})\n`);
 	}
+}
+
+// ----- teardown-window -----------------------------------------------------
+
+const TERMINAL_STATES = new Set(["merged", "aborted", "dead"]);
+
+function cmdTeardownWindow(issue: string): void {
+	if (!issue) die("Usage: teardown-window <ISSUE>");
+	const r = fdState(["get", `.issues["${issue}"] // empty`]);
+	const raw = (r.stdout ?? "").trim();
+	if (!raw || raw === "null") {
+		process.stderr.write(`teardown-window: issue '${issue}' not found in registry\n`);
+		process.exit(1);
+	}
+	let rec: IssueRec;
+	try { rec = JSON.parse(raw) as IssueRec; }
+	catch {
+		process.stderr.write(`teardown-window: malformed registry entry for '${issue}'\n`);
+		process.exit(1);
+	}
+	const state = String(rec.state ?? "");
+	const paneId = String(rec.pane_id ?? "");
+	const windowName = String(rec.window ?? "");
+	let paneAlive = false;
+	if (paneId) {
+		const live = tmuxLivePaneIds();
+		paneAlive = live.has(paneId);
+	}
+	if (paneAlive) {
+		const windowId = tmuxField(paneId, "#{window_id}");
+		const paneCount = windowId ? tmuxPaneCountInWindow(windowId) : 0;
+		if (windowId && paneCount === 1) {
+			spawnSync("tmux", ["kill-window", "-t", windowId], { encoding: "utf8" });
+			process.stdout.write(`teardown-window: killed window ${windowId} (pane_id=${paneId}, window=${windowName})\n`);
+		} else {
+			spawnSync("tmux", ["kill-pane", "-t", paneId], { encoding: "utf8" });
+			process.stdout.write(`teardown-window: killed pane ${paneId} (window has ${paneCount} panes, window=${windowName})\n`);
+		}
+		return;
+	}
+	if (TERMINAL_STATES.has(state)) {
+		process.stdout.write(`teardown-window: window already closed (pane_id=${paneId || "<none>"} gone, state=${state})\n`);
+		return;
+	}
+	process.stderr.write(
+		`teardown-window: registry drift — pane_id '${paneId || "<none>"}' is gone but state is '${state}' (not merged|aborted|dead); refusing to derive kill target from pane_target (#16)\n`,
+	);
+	process.exit(3);
 }
 
 // ----- main ----------------------------------------------------------------
@@ -475,6 +551,7 @@ switch (action) {
 	case "pi-bridge-args":  cmdPiBridgeArgs(argv[0] ?? ""); break;
 	case "cx-bridge-args":  cmdCxBridgeArgs(argv[0] ?? ""); break;
 	case "find-by-pane":    cmdFindByPane(argv[0] ?? ""); break;
+	case "teardown-window": cmdTeardownWindow(argv[0] ?? ""); break;
 	default:
-		die(`Unknown action: ${action}\nActions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
+		die(`Unknown action: ${action}\nActions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
 }

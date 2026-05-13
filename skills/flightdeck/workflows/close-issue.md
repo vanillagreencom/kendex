@@ -29,7 +29,7 @@ Signals (any two):
 
 Implementation:
 
-1. Read pane: `tmux capture-pane -t <pane_target> -p -S -200`.
+1. Read pane: `tmux capture-pane -t "${pane_id:-$pane_target}" -p -S -200`. Prefer the stable `pane_id` (`%N`) from the registry over the human-readable `pane_target` — tmux reuses window indices after windows are destroyed, so a stale `pane_target` can after-the-fact point to an unrelated window (the daemon, the user's editor, etc.) and feed that window's text into the two-signal check. See `patterns/tmux-monitoring.md` § Stable-id rule.
 2. Apply portable buffer signals (banner, end-session text).
 3. Apply harness-specific signals via the adapter for the registered harness:
    - **Claude Code**: idle indicator `* Idle` on its own line near buffer end; destroyed-CWD pattern includes `Path does not exist` and a path matching the worktree.
@@ -64,9 +64,21 @@ Persist any captured summary fields via `pane-registry set <ISSUE_ID> <field> <v
 
 ## § 4: Tear Down Window
 
-1. Resolve the window: `WINDOW_TARGET="${pane_target%.*}"` (strip the pane index suffix).
-2. Kill the window: `tmux kill-window -t "$WINDOW_TARGET"`.
-3. Verify it's gone: `tmux list-windows -F '#{window_name}' | grep -qx "<window-name>"` — if still present, log a warning and continue (don't escalate; the user can clean up manually).
+Delegate the destructive teardown to the registry. **Never** derive a kill target from `pane_target` (`session:window.index`) — tmux reuses window indices after windows are destroyed, so the stored `pane_target` can after-the-fact point to an unrelated window (the daemon, the user's editor, ...), and a naive `tmux kill-window -t "${pane_target%.*}"` would destroy that unrelated workload (#16). The registry stores a stable `pane_id` (`%N`) at init time; the helper uses it as the only correct destructive target.
+
+1. Run the safe teardown:
+   ```
+   .agents/skills/flightdeck/scripts/pane-registry teardown-window <ISSUE_ID>
+   ```
+   The helper:
+   - **`pane_id` alive** → resolves the pane's `window_id` (`@N`). If that window has a single pane, runs `tmux kill-window -t "@N"`; otherwise runs `tmux kill-pane -t "%N"` (so we don't accidentally close another pane sharing the window).
+   - **`pane_id` gone AND `state ∈ {merged, aborted, dead}`** → treats the window as already closed; no fallback to `pane_target`. Exits success.
+   - **`pane_id` gone AND state is NOT terminal** → exits non-zero (registry drift). Do NOT retry by stripping `pane_target` — that's the original #16 footgun.
+2. Handle the exit:
+   - Exit `0` → done; proceed to § 5.
+   - Exit `1` (issue not registered) → already cleaned up; idempotent no-op; proceed to § 5.
+   - Exit `3` (registry drift) → log a warning with the issue id and continue. Skip § 5's destructive verify; let the user clean up manually. State has already been updated in § 3, so terminate's archive captures the outcome.
+3. Verify the window is gone (defensive): `tmux list-panes -a -F '#{pane_id}' | grep -qFx "<pane_id>"` — if the recorded `pane_id` is still alive, log a warning and continue (don't escalate; the user can clean up manually).
 
 Pane registry entry is left in place for the end-of-session report (see `terminate.md` § 1). It carries the issue's history. Do NOT call `pane-registry remove` here — terminate is responsible for the final cleanup.
 
