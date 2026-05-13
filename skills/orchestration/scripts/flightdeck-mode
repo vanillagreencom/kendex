@@ -152,6 +152,7 @@ detect_mode() {
     local state_file cwd
     if state_file=$(resolve_master_state_file 2>/dev/null) && [[ -n "$state_file" ]]; then
       cwd=$(current_pwd_abs)
+      # TODO(reframe-phase-1): consume via TrackedEntry seam once available.
       if [[ -n "$cwd" ]] && jq -e --arg p "$cwd" \
         '(.issues // {}) | to_entries | any(.value.worktree == $p)' \
         "$state_file" >/dev/null 2>&1; then

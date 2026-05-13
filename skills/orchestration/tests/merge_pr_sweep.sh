@@ -33,13 +33,17 @@ assert_eq() {
   fi
 }
 
-# --- Sandbox: a "main repo" with two registered worktrees and three
-# extra stale local branches that have no associated PR. PROJ-99 is the
-# issue currently finalizing.
+# --- Sandbox: a "main repo" with two registered worktrees, three extra
+# stale local branches with no associated PR, and TWO orphan worktree
+# directories on disk (no live `git worktree list` entry). PROJ-99 is
+# the issue currently finalizing.
 MAIN_REPO="$TMP_ROOT/main"
-WORKTREE_99="$TMP_ROOT/trees/PROJ-99"
-WORKTREE_88="$TMP_ROOT/trees/PROJ-88"
-mkdir -p "$(dirname "$WORKTREE_99")"
+TREES_DIR="$TMP_ROOT/trees"
+WORKTREE_99="$TREES_DIR/PROJ-99"
+WORKTREE_88="$TREES_DIR/PROJ-88"
+ORPHAN_DIR_A="$TREES_DIR/orphan-old-experiment"
+ORPHAN_DIR_B="$TREES_DIR/orphan-leftover"
+mkdir -p "$TREES_DIR"
 git -C "$(dirname "$MAIN_REPO")" init -q "$(basename "$MAIN_REPO")"
 git -C "$MAIN_REPO" config user.email t@t
 git -C "$MAIN_REPO" config user.name t
@@ -51,6 +55,10 @@ git -C "$MAIN_REPO" worktree add -b PROJ-88 "$WORKTREE_88" >/dev/null 2>&1
 for stale in orch/method-20260427T141609 random-experiment dropped-spike; do
   git -C "$MAIN_REPO" branch "$stale" >/dev/null 2>&1
 done
+# Two orphan worktree directories: filesystem-only, no `git worktree`
+# linkage. These are exactly the entries merge-pr.md § 5b would surface
+# via `ls [TREES_DIR]/ | ... grep -v "git worktree list ..."`.
+mkdir -p "$ORPHAN_DIR_A" "$ORPHAN_DIR_B"
 
 mkdir -p "$MAIN_REPO/tmp"
 cat >"$MAIN_REPO/tmp/workflow-state-PROJ-99.json" <<EOF
@@ -84,14 +92,15 @@ sweep() {
     esac
 
     if [[ "$SWEEP" == "managed" ]]; then
-      # Managed sweep: only validate + (would) delete scoped branch.
-      # Emit a structured trace the test can assert against.
+      # Managed sweep: only validate + (would) delete scoped branch,
+      # and do NOT enumerate orphan worktree directories. Emit a
+      # structured trace the test can assert against.
       if "$FD_MODE" --issue "$scoped_issue" match-branch "$SCOPED_BRANCH" 2>/dev/null; then
         echo "DELETE-CANDIDATE: $SCOPED_BRANCH"
       else
         echo "SKIP-DELETE: $SCOPED_BRANCH (match-branch refused)"
       fi
-      # NOTE: must NOT enumerate other branches here.
+      # NOTE: must NOT enumerate other branches or orphan dirs here.
     else
       # Standalone sweep: enumerate every local branch and emit a
       # prompt directive per branch matching merge-pr.md § 5b.
@@ -108,6 +117,20 @@ sweep() {
             ;;
         esac
       done < <(git -C "$MAIN_REPO" branch --format='%(refname:short)' 2>/dev/null)
+
+      # Orphan worktree enumeration (merge-pr.md § 5b second block):
+      # any directory under [TREES_DIR] that is NOT in `git worktree
+      # list --porcelain` surfaces as `"Stale worktree for X. Remove?"`.
+      local live_wts
+      live_wts=$(git -C "$MAIN_REPO" worktree list --porcelain 2>/dev/null \
+                 | awk '/^worktree /{print $2}')
+      for d in "$TREES_DIR"/*; do
+        [[ -d "$d" ]] || continue
+        if ! grep -qxF "$d" <<<"$live_wts"; then
+          base=$(basename "$d")
+          echo "PROMPT: Stale worktree for $base (PR already merged). Remove?"
+        fi
+      done
     fi
   ) 2> >(warn=$(cat); printf '%s' "$warn" >&2) || true
 }
@@ -123,6 +146,18 @@ if grep -q 'orch/method-20260427T141609' <<<"$out"; then
 else
   PASS=$((PASS+1)); printf '  ok    managed mode does NOT mention orch/method-20260427T141609 (issue #18)\n'
 fi
+
+# Orphan worktree suppression in managed mode: the two orphan dirs we
+# put on disk MUST NOT appear in the output (this is the
+# stale-orphan-worktree scope-violation that prompted issue #18's
+# defensive prompt tag).
+for orphan in orphan-old-experiment orphan-leftover; do
+  if grep -q "Stale worktree for $orphan" <<<"$out"; then
+    FAIL=$((FAIL+1)); printf '  FAIL  managed mode prompted about orphan worktree %s\n        out: %s\n' "$orphan" "$out"
+  else
+    PASS=$((PASS+1)); printf '  ok    managed mode does NOT prompt about orphan worktree %s\n' "$orphan"
+  fi
+done
 
 # Same in managed mode but cwd is the worktree (not main repo). Must
 # still resolve scope and refuse unrelated branches.
@@ -146,10 +181,35 @@ else
   FAIL=$((FAIL+1)); printf '  FAIL  standalone mode did not auto-delete PROJ-99\n        out: %s\n' "$out"
 fi
 
+# Orphan worktree dirs MUST appear as prompts in standalone mode — this
+# is the maintenance behavior we want to preserve outside Flightdeck.
+for orphan in orphan-old-experiment orphan-leftover; do
+  if grep -qE "Stale worktree for $orphan" <<<"$out"; then
+    PASS=$((PASS+1)); printf '  ok    standalone mode prompts about orphan worktree %s\n' "$orphan"
+  else
+    FAIL=$((FAIL+1)); printf '  FAIL  standalone mode missing orphan prompt for %s\n        out: %s\n' "$orphan" "$out"
+  fi
+done
+# The live worktrees (PROJ-99, PROJ-88) must NOT show up as orphan
+# prompts — they're tracked by `git worktree list`.
+for live in PROJ-99 PROJ-88; do
+  if grep -q "Stale worktree for $live" <<<"$out"; then
+    FAIL=$((FAIL+1)); printf '  FAIL  standalone mode misreported live worktree %s as orphan\n' "$live"
+  else
+    PASS=$((PASS+1)); printf '  ok    standalone mode does NOT report live worktree %s as orphan\n' "$live"
+  fi
+done
+
 echo "=== merge-pr § 5 -- unknown mode (no env signal) fails closed ==="
 stderr_file="$TMP_ROOT/sweep.err"
 out=$(sweep "$MAIN_REPO" "" PROJ-99 2>"$stderr_file")
 assert_eq "$out" "DELETE-CANDIDATE: PROJ-99" "unknown mode fails closed: only scoped branch (no broad sweep)"
+# And no orphan prompts under unknown either.
+if grep -q 'Stale worktree for' <<<"$out"; then
+  FAIL=$((FAIL+1)); printf '  FAIL  unknown mode leaked orphan prompts:\n%s\n' "$out"
+else
+  PASS=$((PASS+1)); printf '  ok    unknown mode does NOT enumerate orphan worktrees\n'
+fi
 if grep -q 'flightdeck-mode unknown' "$stderr_file"; then
   PASS=$((PASS+1)); printf '  ok    unknown mode emits stderr warning\n'
 else

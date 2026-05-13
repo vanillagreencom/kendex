@@ -237,6 +237,28 @@ Extensions can ship an `instructions.md` (declared via `pi.appendSystem` in `pac
 | [`pi-tool-renderer`](pi-extensions/pi-tool-renderer/README.md) | Compact Claude/opencode-style renderers for built-in tools. |
 | [`pi-web-tools`](pi-extensions/pi-web-tools/README.md) | First-party web stack: search, deep research, fetch, video, and more. |
 
+## Testing
+
+The orchestration skill ships a self-contained regression suite. Each
+file under `skills/orchestration/tests/*.sh` builds its own sandbox and
+exits non-zero on failure; a runner discovers and aggregates them:
+
+```bash
+bash skills/orchestration/tests/run-all.sh
+# Or filter by name fragment:
+bash skills/orchestration/tests/run-all.sh flightdeck_mode
+```
+
+Flightdeck has its own layered test surface under
+`skills/flightdeck/lib/flightdeck-core/tests/` — see
+`skills/flightdeck/tests/README.md` for the parity + live-wake suites.
+
+CLI integration tests live under `cli/`:
+
+```bash
+cd cli && cargo test
+```
+
 ## License
 
 MIT
