@@ -254,6 +254,34 @@ export function masterStatePath(projectRoot: string, settings: SettingsLike, ses
 	return join(projectRoot, dir, `flightdeck-state-${sessionName}.json`);
 }
 
+export function masterStateDir(projectRoot: string, settings: SettingsLike): string {
+	const dir = nonEmpty(settings.flightdeckStateDir) ?? "tmp";
+	return join(projectRoot, dir);
+}
+
+// Discover the newest `flightdeck-state-<SESSION>-<TS>.json.archive` so
+// `buildSnapshot` can fall back to it after `terminate.md § 5` rotates
+// the live file away. Without this, post-completion the live JSON is
+// gone, `readMasterState` returns `{}`, and the dashboard collapses to
+// `inactive` even though the archive carries the full session history
+// (issue #17 BLOCKER #1). Archive filenames embed `terminated_at` in
+// `YYYYMMDDTHHMMSSZ` form (see `flightdeck-state archive`), so name
+// order is a sound proxy for newest-first.
+export function findNewestTerminatedArchive(stateDir: string, sessionName: string): string | undefined {
+	let entries: string[];
+	try {
+		entries = readdirSync(stateDir);
+	} catch {
+		return undefined;
+	}
+	const prefix = `flightdeck-state-${sessionName}-`;
+	const suffix = ".json.archive";
+	const candidates = entries
+		.filter((name) => name.startsWith(prefix) && name.endsWith(suffix))
+		.sort((a, b) => b.localeCompare(a));
+	return candidates.length > 0 ? join(stateDir, candidates[0]!) : undefined;
+}
+
 export interface DaemonPaths {
 	pid: string;
 	lock: string;
@@ -300,13 +328,19 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 		if (raw.issues && typeof raw.issues === "object" && !Array.isArray(raw.issues)) {
 			for (const [issue, value] of Object.entries(raw.issues as Record<string, unknown>)) {
 				if (value && typeof value === "object" && !Array.isArray(value)) {
-					issues[issue] = { issue, ...(value as Record<string, unknown>) } as IssueRecord;
+					const record = { issue, ...(value as Record<string, unknown>) } as IssueRecord;
+					// Malformed `decisions_log` (non-array or wrong-shape items)
+					// would otherwise throw inside the Decisions tab / dashboard
+					// child-row renderer. Normalize defensively so a corrupt
+					// archive renders as empty-but-stable, not as a popup crash.
+					record.decisions_log = normalizeDecisionsLog(record.decisions_log);
+					issues[issue] = record;
 				}
 			}
 		}
 		return {
 			state: {
-				conflict_graph: raw.conflict_graph ?? { edges: [], computed_at: null },
+				conflict_graph: normalizeConflictGraph(raw.conflict_graph),
 				issues,
 				merge_queue: Array.isArray(raw.merge_queue) ? raw.merge_queue.filter((v): v is string => typeof v === "string") : [],
 				paused_for_user: raw.paused_for_user ?? null,
@@ -320,6 +354,37 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+// Defensive normalizers — a corrupt or truncated archive (e.g. partial
+// write during a crash) should render as empty-but-stable, not as a
+// render-time exception that crashes the popup.
+function normalizeConflictGraph(raw: unknown): { edges: Array<[string, string]>; computed_at: string | null } {
+	const empty = { computed_at: null, edges: [] as Array<[string, string]> };
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return empty;
+	const obj = raw as { edges?: unknown; computed_at?: unknown };
+	const edges: Array<[string, string]> = [];
+	if (Array.isArray(obj.edges)) {
+		for (const edge of obj.edges) {
+			if (Array.isArray(edge) && edge.length >= 2 && typeof edge[0] === "string" && typeof edge[1] === "string") {
+				edges.push([edge[0], edge[1]]);
+			}
+		}
+	}
+	const computed_at = typeof obj.computed_at === "string" ? obj.computed_at : null;
+	return { computed_at, edges };
+}
+
+function normalizeDecisionsLog(raw: unknown): IssueRecord["decisions_log"] {
+	if (!Array.isArray(raw)) return [];
+	const out: NonNullable<IssueRecord["decisions_log"]> = [];
+	for (const entry of raw) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+		const e = entry as { ts?: unknown; prompt_tag?: unknown; answer?: unknown };
+		if (typeof e.ts !== "string" || typeof e.prompt_tag !== "string" || typeof e.answer !== "string") continue;
+		out.push({ answer: e.answer, prompt_tag: e.prompt_tag, ts: e.ts });
+	}
+	return out;
 }
 
 function emptyState(): MasterState {
@@ -521,13 +586,39 @@ export function readPendingEvents(stateDir: string, sessionKey: string, maxLines
 	return readJsonLines(paths.events, maxLines) as DaemonEvent[];
 }
 
-export function buildSnapshot(cwd: string, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot | undefined {
-	const tmux = resolveTmuxContext();
-	if (!tmux) return undefined;
-	const stateDir = resolveStateDir(settings);
-	const projectRoot = resolveProjectRoot(cwd);
-	const statePath = masterStatePath(projectRoot, settings, tmux.sessionName);
-	const { state, error } = readMasterState(statePath);
+// Test seam — production code calls `buildSnapshot`. Tests inject a
+// fully resolved (projectRoot, stateDir, tmux) so they don't have to
+// stand up a real tmux session or git worktree just to exercise the
+// post-terminate read path (issue #17 BLOCKER #2).
+export interface BuildSnapshotInputs {
+	projectRoot: string;
+	stateDir: string;
+	tmux: TmuxContext;
+}
+
+export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot {
+	const { projectRoot, stateDir, tmux } = inputs;
+	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
+	let resolvedStatePath = liveStatePath;
+	let { state, error } = readMasterState(liveStatePath);
+	// Archive fallback (issue #17 BLOCKER #1). When the live file is
+	// missing AND the project's master-state directory holds a terminated
+	// archive for this session, read the archive and serve it as a
+	// read-only post-completion snapshot. We only do this when there is
+	// nothing on disk — a live file always takes precedence so the
+	// fallback can never shadow an in-flight session.
+	if (!state && !error) {
+		const dir = masterStateDir(projectRoot, settings);
+		const archivePath = findNewestTerminatedArchive(dir, tmux.sessionName);
+		if (archivePath) {
+			const archiveRead = readMasterState(archivePath);
+			if (archiveRead.state?.terminated) {
+				state = archiveRead.state;
+				error = archiveRead.error;
+				resolvedStatePath = archivePath;
+			}
+		}
+	}
 	const daemon = readDaemonHealth(
 		stateDir,
 		tmux.sessionKey,
@@ -539,12 +630,28 @@ export function buildSnapshot(cwd: string, settings: SettingsLike, options?: { l
 		daemon,
 		master: state,
 		masterError: error,
-		masterStatePath: statePath,
+		masterStatePath: resolvedStatePath,
 		pendingEvents,
 		stateDir,
 		tmux,
 		wakeEvents: daemon.wakeEventsRecent ?? [],
 	};
+}
+
+export function buildSnapshot(cwd: string, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot | undefined {
+	const tmux = resolveTmuxContext();
+	if (!tmux) return undefined;
+	const stateDir = resolveStateDir(settings);
+	const projectRoot = resolveProjectRoot(cwd);
+	return buildSnapshotFromInputs({ projectRoot, stateDir, tmux }, settings, options);
+}
+
+// Normalization seam (BLOCKER #4 from review). The dashboard / render
+// code reads tracked issues via this helper instead of touching
+// `.issues` directly. When the registry-reframe lands (`.entries` /
+// `.tracked`), the migration changes only this seam, not the renderer.
+export function readTrackedEntries(state: MasterState | undefined): IssueRecord[] {
+	return sortedIssues(state);
 }
 
 export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): boolean {

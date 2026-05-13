@@ -33,8 +33,8 @@ import {
 	formatAge,
 	mergedIssueHistory,
 	mostRecentPollMs,
+	readTrackedEntries,
 	type SettingsLike,
-	sortedIssues,
 } from "./state.js";
 import {
 	buildPaneTargetToIdMap,
@@ -77,7 +77,7 @@ const WIDGET_KEY = "vstack-flightdeck-widget";
 const POPUP_WIDTH_PERCENT = "92%";
 const POPUP_MAX_HEIGHT = "85%";
 
-type DashboardState = "hidden" | "compact" | "expanded";
+export type DashboardState = "hidden" | "compact" | "expanded";
 
 interface VstackModalLock { depth: number }
 
@@ -282,9 +282,13 @@ function renderStaleHintLine(snapshot: FlightdeckSnapshot, theme: Theme, width: 
 	return [truncateToWidth(line, Math.max(1, width), "…")];
 }
 
-function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width: number, state: DashboardState, cwd: string, paneMap: Map<string, string>): string[] {
+// Render functions are exported so tests can assert the post-terminate
+// UI shape against the actual renderer (BLOCKER #5 from review). The
+// extension still composes them internally below via `setMiniDashboardWidget`
+// and the `/flightdeck` popup; tests just bypass the TUI scaffolding.
+export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width: number, state: DashboardState, cwd: string, paneMap: Map<string, string>): string[] {
 	if (state === "hidden") return [];
-	const issues = sortedIssues(snapshot.master);
+	const issues = readTrackedEntries(snapshot.master);
 	const max = Math.max(1, Math.floor(settingNumber("dashboardMaxItems", 8, cwd)));
 	const treeStyle = (settingString("treeStyle", "unicode", cwd) === "ascii" ? "ascii" : "unicode") as TreeStyle;
 	const totalIssues = issues.length;
@@ -438,9 +442,11 @@ interface PopupUiState {
 	liveShowNoisy: boolean;
 }
 
-function makeInitialPopupState(): PopupUiState {
+export function makeInitialPopupState(): PopupUiState {
 	return { conversationDetailScroll: 0, decisionDetailScroll: 0, liveDetailScroll: 0, liveShowNoisy: false, scroll: 0, search: "", selected: 0, showHelp: false, tab: TAB_OVERVIEW };
 }
+
+export type { PopupUiState };
 
 function renderTabBar(active: Tab, width: number, theme: Theme): string {
 	const cells = TABS.map((tab) => {
@@ -461,8 +467,8 @@ function activePopupCwd(ctx: ExtensionContext | ExtensionCommandContext): string
 
 // ----- Tab renderers --------------------------------------------------------
 
-function renderOverviewTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, paneMap: Map<string, string>): string[] {
-	const issues = sortedIssues(snapshot.master);
+export function renderOverviewTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, paneMap: Map<string, string>): string[] {
+	const issues = readTrackedEntries(snapshot.master);
 	const filtered = ui.search.trim()
 		? issues.filter((issue) => {
 			const hay = `${issue.issue} ${issue.window ?? ""} ${issue.harness ?? ""} ${issue.state ?? ""} ${issue.substate ?? ""}`.toLowerCase();
@@ -863,7 +869,7 @@ function issuePaneTargetLabel(issue: IssueRecord | undefined): string | undefine
 
 function issueByConversationPane(snapshot: FlightdeckSnapshot): Map<string, IssueRecord> {
 	const issueByPane = new Map<string, IssueRecord>();
-	for (const issue of sortedIssues(snapshot.master)) {
+	for (const issue of readTrackedEntries(snapshot.master)) {
 		if (issue.pane_id) issueByPane.set(issue.pane_id, issue);
 		if (issue.pane_target) issueByPane.set(issue.pane_target, issue);
 	}
@@ -1019,7 +1025,7 @@ function renderConversationsTab(snapshot: FlightdeckSnapshot, conversations: Map
 	return lines;
 }
 
-function renderConflictsTab(snapshot: FlightdeckSnapshot, _ui: PopupUiState, width: number, theme: Theme): string[] {
+export function renderConflictsTab(snapshot: FlightdeckSnapshot, _ui: PopupUiState, width: number, theme: Theme): string[] {
 	const lines: string[] = [];
 	const queue = snapshot.master?.merge_queue ?? [];
 	const edges = snapshot.master?.conflict_graph?.edges ?? [];
@@ -1083,7 +1089,7 @@ function selectedDecision(snapshot: FlightdeckSnapshot, ui: PopupUiState, cwd: s
 	return decisions[ui.selected];
 }
 
-function renderDecisionsTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, cwd: string): string[] {
+export function renderDecisionsTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, cwd: string): string[] {
 	const all = flatDecisionsLog(snapshot.master, Math.max(50, Math.floor(settingNumber("liveFeedLines", 200, cwd))));
 	const filtered = filteredDecisions(snapshot, ui, cwd);
 	const lines: string[] = [];
@@ -1775,7 +1781,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	}
 
 	function renderPopupHeader(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string {
-		const issues = sortedIssues(snapshot.master);
+		const issues = readTrackedEntries(snapshot.master);
 		const counts: Record<string, number> = {};
 		for (const issue of issues) counts[issue.state ?? "?"] = (counts[issue.state ?? "?"] ?? 0) + 1;
 		const order: IssueState[] = ["prompting", "merge-ready", "submitting", "waiting", "merged", "aborted", "dead"];

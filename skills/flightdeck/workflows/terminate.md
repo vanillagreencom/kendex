@@ -200,7 +200,7 @@ On "Stick with planned cycle / Done": proceed to § 8.
 
 Do **not** close any additional panes here. Terminal issue windows were already closed by `close-issue.md` after the two-signal check; any remaining paused/non-terminal panes stay with the user so they can inspect transcripts or resume manually.
 
-§ 5's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale `issues` / `merge_queue` carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` (full `.issues` history, including merged-issue `decisions_log` / `pr_number` / `merge_commit`) and the summary file. pi-flightdeck reads the same shape and renders the completed session until the user dismisses the dashboard via `Alt+M`.
+§ 5's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale `issues` / `merge_queue` carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` (full `.issues` history, including merged-issue `decisions_log` / `pr_number` / `merge_commit`) and the summary file. pi-flightdeck's `buildSnapshot` falls back to the newest `flightdeck-state-<SESSION>-*.json.archive` with `terminated: true` whenever the live file is missing for the current `$TMUX` session name, so the dashboard, Overview, Decisions, and Conflicts & merges tabs keep rendering the completed session until the user dismisses the widget via `Alt+M` or a new `flightdeck start` writes a fresh live file.
 
 ---
 
