@@ -67,6 +67,17 @@ When writing through legacy helpers, keep the legacy `state` value so existing i
 
 During `session-watch.md` § 2, issue entries add these checks after generic structured events and before issue handler routing:
 
+Issue mode extends the generic `POLL_INPUT` with issue-domain metadata for `pane-poll` orphan terminal cross-checks and PR/worktree-aware handlers:
+
+```bash
+POLL_INPUT=$(jq '[.[]
+  | select((.state // "waiting") as $s | ["waiting","prompting","submitting","ready","merge-ready"] | index($s))
+  | {id, kind, issue, pane_id, pane_target, harness, cwd, worktree, pr_number,
+      oc_url, oc_session_id, cc_url, cc_transcript,
+      pi_bridge_pid, pi_bridge_socket, cx_ws, cx_thread_id}
+]' <<< "$REGISTRY_JSON")
+```
+
 1. **Orchestration hijack/start check** — if `domain.issue.orchestration_started` is false, look for `tmp/workflow-state-<ISSUE>.json`. If absent beyond `FLIGHTDECK_HIJACK_GRACE_SECS` (default 90), set `paused_for_user = {issue_id, reason: "orchestration-never-started", prompt_text: ...}`.
 2. **Issue-only tags** — route only when `kind == "issue"`. Tags include:
    - `cleanup-prompt`

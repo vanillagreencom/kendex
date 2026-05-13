@@ -80,7 +80,7 @@ Build one batch from normalized tracked entries. Generic mode selects all non-te
 REGISTRY_JSON=$(.agents/skills/flightdeck/scripts/pane-registry list --format json)
 POLL_INPUT=$(jq '[.[]
   | select((.state // "waiting") as $s | ["waiting","prompting","submitting","ready"] | index($s))
-  | {id, kind, issue, pane_id, pane_target, harness, cwd, worktree, pr_number,
+  | {id, kind, issue, pane_id, pane_target, harness, cwd,
       oc_url, oc_session_id, cc_url, cc_transcript,
       pi_bridge_pid, pi_bridge_socket, cx_ws, cx_thread_id}
 ]' <<< "$REGISTRY_JSON")

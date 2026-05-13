@@ -45,6 +45,7 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 | `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, and records a generic `.entries[ID]` row. Pi `--prompt` launch starts `pi` directly and records bridge metadata when discovery succeeds. |
 | `session attach` | `--pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window. For Pi, probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
 | `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
+| `session prompt routing` | nested from `session watch` | `workflows/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries`/legacy `.issues` snapshot. |
 | `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id`; issue remove remains the legacy cleanup path. Generic removal cleanup is still being expanded. |
 
@@ -295,15 +296,17 @@ TS-port toggles:
 | `workflows/start.md` | `start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter watch |
 | `workflows/start-new.md` | `start new` | Create new issue from main + spawn |
 | `workflows/parallel-check.md` | `parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
-| `workflows/watch.md` | `watch` (entry) or invoked at end of `start.md` after spawn | Master oversight loop — initialize state, poll panes, route prompts, plan merges, terminate |
-| `workflows/handle-prompt.md` | Nested invocation from `watch` § 3 | Per-pane prompt classification + response |
+| `workflows/session-watch.md` | `session watch`, and core loop invoked by issue `watch` | Generic state init, entry reconciliation, daemon spawn/ack/yield, polling, generic prompt routing, compaction recovery |
+| `workflows/session-handle-prompt.md` | Nested invocation from `session-watch` / issue `watch` for generic tags | Generic prompt response surface; no PR/Linear/GitHub/worktree dependency |
+| `workflows/watch.md` | `watch` (issue entry) or invoked at end of `start.md` after spawn | Issue-mode extension over `session-watch`: load issue skills, map legacy issue states, route issue-only handlers, plan merges, terminate |
+| `workflows/handle-prompt.md` | Nested invocation from issue `watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
 | `workflows/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
 | `workflows/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
 | `workflows/terminate.md` | Nested invocation from `watch` § 6 | Final summary, new-issues report, next-cycle recommendation, master-state finalization |
 
 ## Workflow Execution
 
-These rules apply to flightdeck's boundary workflows (`start.md`, `start-new.md`, `terminate.md`, `close-issue.md`, and per-tag handlers in `handle-prompt.md`). The `watch.md` loop body is reactive by nature — its inner decisions are judgment calls and not subject to these rules.
+These rules apply to flightdeck's boundary workflows (`start.md`, `start-new.md`, `terminate.md`, `close-issue.md`, and per-tag handlers in `session-handle-prompt.md` / `handle-prompt.md`). The `session-watch.md` generic loop and `watch.md` issue extension are reactive by nature — their inner decisions are judgment calls and not subject to these rules.
 
 ### Sequential Section Execution
 
@@ -326,12 +329,12 @@ The user-visible output blocks at the end of `terminate.md` and `close-issue.md`
 
 ## Implementation Constraints
 
-1. **Aggressive autonomy on known shapes; escalate on novel shapes.** The classifier returns a tag for known prompt shapes. `generic-multi-choice` still tries the bounded auto-decide policy in `handle-prompt.md` § 11; it escalates only when options are destructive, ambiguous, or genuinely novel. It does NOT blindly pick the first option.
-2. **Daemon-driven wake; no blocking sleeps.** `flightdeck-daemon` (spawned in `watch.md` § 1) owns wake delivery for every harness. Master ends each turn after `flightdeck-daemon ack` + `flightdeck-state master-busy unlock`. Never `sleep`. Wake payload reference: `/flightdeck` (claude/opencode/default), `$flightdeck` (codex), `/skill:flightdeck` (pi). Claude Code MAY optionally arm `ScheduleWakeup({delaySeconds: 1800})` as a defensive fallback.
+1. **Aggressive autonomy on known shapes; escalate on novel shapes.** The classifier returns a tag for known prompt shapes. Generic `generic-multi-choice` uses the bounded safe policy in `session-handle-prompt.md`; issue-only prompts use `handle-prompt.md`. Both escalate when options are destructive, ambiguous, or genuinely novel. They do NOT blindly pick the first option.
+2. **Daemon-driven wake; no blocking sleeps.** `flightdeck-daemon` (spawned by `session-watch.md` § 1; issue `watch.md` reuses that core loop) owns wake delivery for every harness. Master ends each turn after `flightdeck-daemon ack` + `flightdeck-state master-busy unlock`. Never `sleep`. Wake payload reference: `/flightdeck` (claude/opencode/default), `$flightdeck` (codex), `/skill:flightdeck` (pi). Claude Code MAY optionally arm `ScheduleWakeup({delaySeconds: 1800})` as a defensive fallback.
 3. **Pi dashboard is read-only and additive.** Optional `pi-flightdeck` extension renders mission-control UX from the on-disk artifacts master already writes; never bypasses the schema. No harness-specific shortcuts that bypass the on-disk schema in other harnesses either. See README.md.
 4. **One daemon per tmux session.** Concurrent flightdecks within the same tmux session are refused via flock. Run separate sessions for parallel flightdeck instances.
 5. **All scripts must appear in this SKILL.md's Scripts table.** No "hidden" scripts. README.md mirrors the table for human readers.
 
 ## Compaction Recovery
 
-Master state is persisted on every state mutation and rehydrated on `watch` re-entry. The `unknown_since` force-merge timer survives compaction. Procedure: `workflows/watch.md` § 9.
+Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/watch.md` § 8.
