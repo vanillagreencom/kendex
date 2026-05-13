@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 
 import { formatUsageCompact, type AgentsBridgeItem } from "./agents-bridge.js";
 import { harnessChip, label, pad, stateBadge, stateColor, stateGlyph, tagBadge, wrapLine } from "./render.js";
-import { ageSecondsSince, formatAge, type TrackedSession, type TrackedState } from "./state.js";
+import { ageSecondsSince, formatAge, isIssueSession as stateIsIssueSession, trackedIssueDomain, type TrackedSession, type TrackedState } from "./state.js";
 
 export const TRACKED_STATE_ORDER: TrackedState[] = ["prompting", "ready", "waiting", "submitting", "merge-ready", "complete", "merged", "cancelled", "aborted", "dead"];
 
@@ -15,11 +15,17 @@ export function sessionLabel(session: TrackedSession | undefined): string {
 }
 
 export function issueDomain(session: TrackedSession | undefined) {
-	return session?.domain?.issue;
+	return trackedIssueDomain(session);
 }
 
 export function isIssueSession(session: TrackedSession | undefined): boolean {
-	return session?.kind === "issue";
+	return stateIsIssueSession(session);
+}
+
+export function sessionKind(session: TrackedSession | undefined): string | undefined {
+	if (!session) return undefined;
+	if (isIssueSession(session)) return "issue";
+	return typeof session.kind === "string" ? session.kind : undefined;
 }
 
 export function issueSessionCount(sessions: TrackedSession[]): number {
@@ -55,8 +61,9 @@ export function sessionPaneTargetLabel(session: TrackedSession | undefined): str
 	return undefined;
 }
 
-export function kindBadge(theme: Theme, kind: string | undefined | null): string {
-	const normalized = typeof kind === "string" ? kind.toLowerCase() : "";
+export function kindBadge(theme: Theme, input: TrackedSession | string | undefined | null): string {
+	const raw = input && typeof input === "object" ? sessionKind(input) : input;
+	const normalized = typeof raw === "string" ? raw.toLowerCase() : "";
 	switch (normalized) {
 		case "adhoc": return theme.fg("accent", "AH");
 		case "issue": return theme.fg("warning", "ISS");
@@ -107,7 +114,7 @@ function selectedSoft(theme: Theme, selected: boolean, text: string): string {
 
 export function formatOverviewRow(session: TrackedSession, theme: Theme, width: number, stats: string | undefined, hasStats: boolean, hasPr: boolean, selected = false): string {
 	const name = pad(theme.fg("text", sessionLabel(session)), 22);
-	const kind = pad(kindBadge(theme, session.kind), 6);
+	const kind = pad(kindBadge(theme, session), 6);
 	const soft = (text: string): string => selectedSoft(theme, selected, text);
 	const stateAndPrompt = session.substate
 		? `${stateBadge(theme, session.state)} ${soft("·")} ${tagBadge(theme, session.substate)}`
@@ -131,7 +138,7 @@ export function renderSessionLine(session: TrackedSession, theme: Theme, stats?:
 	const polledTxt = polled !== undefined ? ` ${theme.fg("dim", `(${formatAge(polled)})`)}` : "";
 	const usageText = formatUsageCompact(stats?.usage);
 	const usageTxt = usageText ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", usageText)}` : "";
-	return `${kindBadge(theme, session.kind)} ${theme.bold(theme.fg("text", sessionLabel(session)))} ${theme.fg("dim", "·")} ${state} ${theme.fg("dim", "·")} ${harness}${pr}${sub}${usageTxt}${polledTxt}`;
+	return `${kindBadge(theme, session)} ${theme.bold(theme.fg("text", sessionLabel(session)))} ${theme.fg("dim", "·")} ${state} ${theme.fg("dim", "·")} ${harness}${pr}${sub}${usageTxt}${polledTxt}`;
 }
 
 export function renderSessionDetailLines(session: TrackedSession, theme: Theme, stats?: AgentsBridgeItem): string[] {
@@ -161,7 +168,7 @@ export function renderSessionDetailLines(session: TrackedSession, theme: Theme, 
 
 export function renderSessionDetailBlock(session: TrackedSession, theme: Theme, width: number, stats?: AgentsBridgeItem): string[] {
 	const lines: string[] = [];
-	lines.push(`${kindBadge(theme, session.kind)} ${theme.fg("customMessageLabel", theme.bold(sessionLabel(session)))} ${theme.fg("dim", "·")} ${stateBadge(theme, session.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, session.harness ?? undefined)}`);
+	lines.push(`${kindBadge(theme, session)} ${theme.fg("customMessageLabel", theme.bold(sessionLabel(session)))} ${theme.fg("dim", "·")} ${stateBadge(theme, session.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, session.harness ?? undefined)}`);
 	if (session.pane_target) lines.push(`${label(theme, "pane:")} ${theme.fg("text", session.pane_target)}`);
 	if (session.launch?.model || session.launch?.effort || session.launch?.cmd) lines.push(`${label(theme, "run:")}  ${theme.fg("text", formatLaunchProfile(session))}`);
 	const domain = issueDomain(session);

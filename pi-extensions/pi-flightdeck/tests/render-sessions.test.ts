@@ -122,8 +122,26 @@ function issue(overrides: Partial<TrackedSession> = {}): TrackedSession {
 	};
 }
 
+function workflow(overrides: Partial<TrackedSession> = {}): TrackedSession {
+	return {
+		decisions_log: [],
+		harness: "codex",
+		id: "workflow-1",
+		issue: "workflow-1",
+		kind: "workflow",
+		last_polled_at: "2026-05-13T00:14:00Z",
+		pane_id: "%23",
+		pane_target: "HT:workflow.0",
+		spawned_at: "2026-05-13T00:02:00Z",
+		state: "waiting",
+		title: "Release workflow",
+		...overrides,
+	};
+}
+
 function snapshot(entries: TrackedSession[], overrides: Partial<FlightdeckSnapshot> = {}): FlightdeckSnapshot {
 	const entryMap = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
+	const issueEntries = entries.filter((entry) => typeof entry.domain?.issue?.id === "string" && entry.domain.issue.id.trim());
 	return {
 		daemon: {
 			heartbeatAgeSec: 1,
@@ -137,8 +155,8 @@ function snapshot(entries: TrackedSession[], overrides: Partial<FlightdeckSnapsh
 		master: {
 			conflict_graph: { computed_at: null, edges: [] },
 			entries: entryMap,
-			issues: Object.fromEntries(entries.filter((entry) => entry.kind === "issue").map((entry) => [entry.domain?.issue?.id ?? entry.id, entry])),
-			merge_queue: entries.some((entry) => entry.kind === "issue") ? ["CC-777"] : [],
+			issues: Object.fromEntries(issueEntries.map((entry) => [entry.domain?.issue?.id ?? entry.id, entry])),
+			merge_queue: issueEntries.length > 0 ? ["CC-777"] : [],
 			owner: { cwd: "/repo", harness: "pi", pane_id: "%1" },
 			paused_for_user: null,
 			session_id: "HT",
@@ -163,6 +181,13 @@ test("no sessions overview uses sessions-first empty copy", () => {
 	assert.doesNotMatch(text, /No issues tracked/);
 });
 
+test("compact dashboard with no sessions renders header plus empty state", () => {
+	const text = dashboardText([]);
+	assert.match(text, /Flightdeck/);
+	assert.match(text, /0 sessions/);
+	assert.match(text, /No tracked sessions yet/);
+});
+
 test("one ad-hoc session renders AH badge, title-first label, and no issue metadata", () => {
 	const text = dashboardText([adhoc()]);
 	assert.match(text, /1 session/);
@@ -181,6 +206,32 @@ test("one issue session renders ISS badge and issue-domain child metadata", () =
 	assert.match(text, /PR#88/);
 	assert.match(text, /wt\s+\/repo\/wt\/CC-777/);
 	assert.match(text, /scope 3\/2/);
+});
+
+test("one issue session compact row renders ISS badge, title, and state", () => {
+	const text = dashboardText([issue()]);
+	assert.match(text, /1 session/);
+	assert.match(text, /1 issue/);
+	assert.match(text, /ISS\s+Fix bug/);
+	assert.match(text, /merge-ready/);
+});
+
+test("one workflow session renders WF kind badge", () => {
+	const text = dashboardText([workflow()]);
+	assert.match(text, /1 session/);
+	assert.match(text, /WF\s+Release workflow/);
+	assert.match(text, /waiting/);
+	assert.doesNotMatch(text, /1 issue/);
+});
+
+test("domain.issue metadata promotes corrupted kind to issue mode", () => {
+	const corrupted = issue({ kind: "broken" });
+	const text = dashboardText([corrupted]);
+	assert.match(text, /1 issue/);
+	assert.match(text, /ISS\s+Fix bug/);
+	const conflicts = joinRendered(renderConflictsTab(snapshot([corrupted]), makeInitialPopupState(), 120, plainTheme() as never));
+	assert.match(conflicts, /Merge queue/);
+	assert.doesNotMatch(conflicts, /No issue-mode sessions are tracked/);
 });
 
 test("mixed ad-hoc plus issue sessions show session total plus issue count", () => {

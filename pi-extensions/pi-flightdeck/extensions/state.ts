@@ -107,6 +107,17 @@ export type IssueState = TrackedState;
 /** @deprecated Use TrackedSession. Kept for one release cycle. */
 export type IssueRecord = TrackedSession;
 
+export function trackedIssueDomain(session: TrackedSession | undefined): TrackedIssueDomain | undefined {
+	const domain = session?.domain?.issue;
+	if (!domain || typeof domain !== "object" || Array.isArray(domain)) return undefined;
+	const id = typeof domain.id === "string" && domain.id.trim() ? domain.id.trim() : undefined;
+	return id ? { ...domain, id } : undefined;
+}
+
+export function isIssueSession(session: TrackedSession | undefined): boolean {
+	return session?.kind === "issue" || Boolean(trackedIssueDomain(session));
+}
+
 export interface PausedForUser {
 	issue_id?: string;
 	reason?: string;
@@ -423,11 +434,12 @@ function normalizeIssueDomain(raw: unknown, fallbackId: string | undefined, lega
 function normalizeTrackedSession(key: string, value: Record<string, unknown>, legacyIssueId?: string): TrackedSession {
 	const id = stringValue(value.id) ?? key;
 	const domainSource = isRecord(value.domain) ? value.domain : {};
-	const legacyId = legacyIssueId ?? stringValue(value.issue);
+	const hasRawIssueDomain = isRecord(domainSource.issue);
+	const legacyId = legacyIssueId ?? (hasRawIssueDomain ? stringValue(value.issue) : undefined);
 	const issueDomain = normalizeIssueDomain(domainSource.issue, legacyId, value);
 	const domain = issueDomain ? { ...domainSource, issue: issueDomain } : Object.keys(domainSource).length > 0 ? domainSource : undefined;
-	const kind = stringValue(value.kind) ?? (issueDomain ? "issue" : "adhoc");
-	const issue = issueDomain?.id ?? legacyId ?? id;
+	const kind = issueDomain ? "issue" : stringValue(value.kind) ?? "adhoc";
+	const issue = issueDomain?.id ?? stringValue(value.issue) ?? legacyId ?? id;
 	const record: TrackedSession = {
 		...value,
 		decisions_log: normalizeDecisionsLog(value.decisions_log),
@@ -950,7 +962,7 @@ export function flightdeckSessionStatus(
 // Conflicts & merges tab to render a stable "Merge history" panel that
 // outlives the live `merge_queue` (which drains as items land).
 export function mergedIssueHistory(state: MasterState | undefined): TrackedSession[] {
-	const merged = readTrackedEntries(state).filter((entry) => entry.kind === "issue" && entry.state === "merged");
+	const merged = readTrackedEntries(state).filter((entry) => isIssueSession(entry) && entry.state === "merged");
 	merged.sort((a, b) => {
 		const at = Date.parse(a.last_polled_at ?? a.spawned_at ?? "");
 		const bt = Date.parse(b.last_polled_at ?? b.spawned_at ?? "");

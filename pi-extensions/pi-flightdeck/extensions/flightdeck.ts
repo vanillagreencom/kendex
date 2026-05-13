@@ -292,6 +292,10 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 	const bridge = getAgentsBridge();
 	if (state === "compact") {
 		const lines = [header];
+		if (sessions.length === 0) {
+			lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", "No tracked sessions yet")}`);
+			return framePanel(lines, width, theme);
+		}
 		const visible = sessions.slice(0, max);
 		for (const [index, session] of visible.entries()) {
 			const isLast = index === visible.length - 1 && sessions.length === visible.length;
@@ -304,6 +308,10 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 	}
 	// expanded
 	const lines = [header];
+	if (sessions.length === 0) {
+		lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", "No tracked sessions yet")}`);
+		return framePanel(lines, width, theme);
+	}
 	for (const [index, session] of sessions.entries()) {
 		const isLast = index === sessions.length - 1;
 		const stats = usageForSession(session, paneMap, bridge);
@@ -805,7 +813,7 @@ function conversationTagChip(theme: Theme, tag: string | undefined, selected = f
 function renderConversationInlineDetail(item: ConversationFeedItem, theme: Theme, width: number, maxRows: number): string[] {
 	const target = sessionPaneTargetLabel(item.session);
 	const meta = [
-		kindBadge(theme, item.session?.kind),
+		kindBadge(theme, item.session),
 		stateBadge(theme, item.session?.state),
 		harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined),
 		tagBadge(theme, item.turn.tag),
@@ -829,7 +837,7 @@ function renderConversationInlineDetail(item: ConversationFeedItem, theme: Theme
 function renderConversationDetailView(item: ConversationFeedItem, ui: PopupUiState, width: number, theme: Theme, innerRows: number): string[] {
 	const target = sessionPaneTargetLabel(item.session);
 	const header = [
-		`${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${kindBadge(theme, item.session?.kind)} ${theme.fg("dim", "·")} ${stateBadge(theme, item.session?.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined)} ${theme.fg("dim", "·")} ${tagBadge(theme, item.turn.tag)}`,
+		`${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${kindBadge(theme, item.session)} ${theme.fg("dim", "·")} ${stateBadge(theme, item.session?.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined)} ${theme.fg("dim", "·")} ${tagBadge(theme, item.turn.tag)}`,
 		`${label(theme, "time:")} ${theme.fg("text", item.turn.ts)}${target ? ` ${theme.fg("dim", "·")} ${label(theme, "tmux:")} ${theme.fg("text", target)}` : ""} ${theme.fg("dim", "·")} ${label(theme, "chars:")} ${theme.fg("text", String(item.turn.excerpt.length))}`,
 		divider(width, theme),
 		label(theme, "assistant turn"),
