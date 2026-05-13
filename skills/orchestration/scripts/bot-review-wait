@@ -64,6 +64,10 @@ fi
 # shellcheck source=/dev/null
 source "$GH_LIB"
 
+# Shared GH_TOKEN/GITHUB_TOKEN sanitizer (see lib/gh-auth.sh).
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
 # --- arg parse ---
 JSON_OUTPUT=false
 REVIEWERS_ARG=""
@@ -122,10 +126,8 @@ ensure_gh_ready() {
   # A bad GH_TOKEN/GITHUB_TOKEN masks gh keyring auth. If keyring auth works
   # with those variables removed, prefer the working auth source instead of
   # polling until timeout with every API read degraded to "unknown".
-  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && \
-     env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1; then
-    echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
-    unset GH_TOKEN GITHUB_TOKEN
+  orchestration_sanitize_gh_env
+  if gh auth status >/dev/null 2>&1; then
     return 0
   fi
 

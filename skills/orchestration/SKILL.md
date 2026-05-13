@@ -165,7 +165,7 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | `ci-wait` | Block until CI completes on a PR — same |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 
-`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output. When a bad `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, it unsets those variables for the wait process and continues with a warning.
+`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output. Both `bot-review-wait` and `ci-wait` share the `scripts/lib/gh-auth.sh` guard: when a bad `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, they unset those variables for the wait process and continue with a warning.
 
 ### `workflow-state` actions
 

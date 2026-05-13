@@ -51,7 +51,7 @@ Set in `.env` or `.env.local`, or export in the shell. Helper scripts source bot
 | `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
 | `BOT_CHECK_NAME` | CI check name for early review detection | — |
 
-`bot-review-wait --json` fails fast with JSON `status: "error"` when GitHub auth/API reads are not reliable. If an invalid `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, it unsets those variables for the wait process and continues with a warning.
+`bot-review-wait --json` fails fast with JSON `status: "error"` when GitHub auth/API reads are not reliable. Both `bot-review-wait` and `ci-wait` source `scripts/lib/gh-auth.sh`: if an invalid `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, the wait process unsets those variables and continues with a warning so a stale inherited token does not 401 every API call.
 
 ## System Dependencies
 

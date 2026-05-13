@@ -7,11 +7,24 @@
 #
 # Usage: ci-wait <PR#> [poll_interval] [max_wait]
 #
+# Auth: stale GH_TOKEN/GITHUB_TOKEN env vars that mask working `gh` keyring
+# auth are detected and unset before any `gh` call (see vstack#19). After
+# that, .env / .env.local GH_BOT_TOKEN is loaded only when GH_TOKEN is empty,
+# matching skills/github/scripts/github.sh.
+#
 # Environment:
 #   GIT_HOST_CLI  - (optional) Path to git host CLI script for enriched output
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# Sanitize stale GH_TOKEN/GITHUB_TOKEN that mask working `gh` keyring auth.
+# Must run before any `gh` call so a bad inherited token does not 401 every
+# request. Mirrors the guard in bot-review-wait.
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+orchestration_sanitize_gh_env
 
 # --- Auth: mirror skills/github/scripts/github.sh — only override when GH_TOKEN unset ---
 if [ -z "${GH_TOKEN:-}" ]; then
