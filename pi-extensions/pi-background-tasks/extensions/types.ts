@@ -7,11 +7,13 @@ export type NotifyMode = "always" | "transition" | "first-match-only";
 export type WakeDropReason =
 	| "empty-output"
 	| "first-match-only-suppressed"
+	| "cleared-on-task-exit"
 	| "notify-exit-disabled"
 	| "notify-output-disabled"
 	| "notify-pattern-no-match"
 	| "output-after-stop-suppressed"
 	| "output-transition-dedupe"
+	| "output-wake-rescheduled"
 	| "shutting-down"
 	| "voided";
 
@@ -93,6 +95,7 @@ export interface BackgroundTaskSnapshot {
 	voidedWakeSequences?: number[];
 	pendingWakes?: WakePendingRecord[];
 	lastOutputDedupeHash?: string;
+	lastOutputDedupeByKey?: Record<string, string>;
 	outputPatternMatched?: boolean;
 	// True after sendTaskEvent('exit') has fired for this task. Persisted so
 	// a session restart can replay missed exit wakeups for tasks that hit

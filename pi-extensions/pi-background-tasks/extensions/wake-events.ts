@@ -25,6 +25,7 @@ export function ensureWakeState(task: ManagedTask): void {
 	task.wakeEvents = Array.isArray(task.wakeEvents) ? task.wakeEvents : [];
 	task.pendingWakes = Array.isArray(task.pendingWakes) ? task.pendingWakes : [];
 	task.voidedWakeSequences = Array.isArray(task.voidedWakeSequences) ? [...new Set(task.voidedWakeSequences)] : [];
+	task.lastOutputDedupeByKey = task.lastOutputDedupeByKey && typeof task.lastOutputDedupeByKey === "object" ? task.lastOutputDedupeByKey : {};
 	if (!(task.voidedWakes instanceof Set)) task.voidedWakes = new Set<number>();
 	for (const sequence of task.voidedWakeSequences) task.voidedWakes.add(sequence);
 	task.voidedWakeSequences = [...task.voidedWakes].sort((a, b) => a - b);
@@ -96,6 +97,39 @@ export function recordWakeEvent(task: ManagedTask, record: WakeEventRecord): voi
 		task.voidedWakes.add(record.sequence);
 		task.voidedWakeSequences = [...task.voidedWakes].sort((a, b) => a - b);
 	}
+}
+
+export interface RecordScheduledOutputDropInput {
+	extra?: Partial<WakeDiagnostic>;
+	logDiagnostic: (diagnostic: WakeDiagnostic) => void;
+	now?: () => number;
+	pending: WakePendingRecord;
+	reason: WakeDropReason;
+	task: ManagedTask;
+}
+
+export function recordScheduledOutputDrop(input: RecordScheduledOutputDropInput): void {
+	const now = input.now ?? Date.now;
+	const timestamp = now();
+	forgetPendingWake(input.task, input.pending.sequence);
+	recordWakeEvent(input.task, {
+		deliveredAt: null,
+		droppedReason: input.reason,
+		eventAt: input.pending.eventAt,
+		eventType: "output",
+		sequence: input.pending.sequence,
+		taskStatusAtEmit: input.task.status,
+	});
+	input.logDiagnostic({
+		eventAt: input.pending.eventAt,
+		eventType: "output",
+		reason: input.reason,
+		sequence: input.pending.sequence,
+		taskId: input.task.id,
+		taskStatus: input.task.status,
+		timestamp,
+		...input.extra,
+	});
 }
 
 function recordWakeDrop(
@@ -186,8 +220,9 @@ export function shouldEmitOutputWake(task: ManagedTask, input: OutputWakeDecisio
 	if (notifyMode === "transition") {
 		const dedupeKey = outputDedupeKey(task);
 		const hash = sha256(input.newOutputTail);
-		const previous = input.dedupeHashes?.get(dedupeKey) ?? task.lastOutputDedupeHash;
+		const previous = input.dedupeHashes?.get(dedupeKey) ?? task.lastOutputDedupeByKey?.[dedupeKey];
 		task.lastOutputDedupeHash = hash;
+		task.lastOutputDedupeByKey = { ...(task.lastOutputDedupeByKey ?? {}), [dedupeKey]: hash };
 		input.dedupeHashes?.set(dedupeKey, hash);
 		if (previous === hash) {
 			log?.({ ...baseDiagnostic, dedupeKey, reason: "output-transition-dedupe" });

@@ -79,19 +79,19 @@ import type {
 	TaskEventType,
 	WakeDiagnostic,
 	WakeDropReason,
-	WakePendingRecord,
 } from "./types.js";
 import {
 	canEmitOutputWake,
 	ensureWakeState,
-	forgetPendingWake,
 	normalizeNotifyMode,
-	recordWakeEvent,
+	recordScheduledOutputDrop,
 	scheduleTaskWake,
 	sendTaskWake,
 	shouldEmitOutputWake,
 	voidPendingTaskWakes,
 } from "./wake-events.js";
+
+// TODO(structure): split scheduleOutputReaction and scheduled-drop handling into a focused module when next touched.
 
 /**
  * Clamp the rendered line count of an aboveEditor widget so it can never push
@@ -207,12 +207,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	};
 
 	const clearTaskTimers = (task: ManagedTask) => {
+		if (task.outputTimer) {
+			for (const pending of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
+				persistScheduledOutputDrop(task, pending, "cleared-on-task-exit");
+			}
+		}
 		if (task.outputTimer) clearTimeout(task.outputTimer);
 		if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
 		if (task.forceKillTimer) clearTimeout(task.forceKillTimer);
-		for (const pending of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
-			forgetPendingWake(task, pending.sequence);
-		}
 		task.outputTimer = null;
 		task.timeoutTimer = null;
 		task.forceKillTimer = null;
@@ -302,30 +304,18 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		process.stderr.write(`[pi-background-tasks] wake diagnostic ${JSON.stringify(diagnostic)}\n`);
 	};
 
-	const recordScheduledOutputDrop = (
+	const persistScheduledOutputDrop = (
 		task: ManagedTask,
-		pending: WakePendingRecord,
+		pending: { eventAt: number; eventType: TaskEventType; sequence: number },
 		reason: WakeDropReason,
 		extra: Partial<WakeDiagnostic> = {},
 	) => {
-		forgetPendingWake(task, pending.sequence);
-		recordWakeEvent(task, {
-			deliveredAt: null,
-			droppedReason: reason,
-			eventAt: pending.eventAt,
-			eventType: "output",
-			sequence: pending.sequence,
-			taskStatusAtEmit: task.status,
-		});
-		logWakeDiagnostic({
-			eventAt: pending.eventAt,
-			eventType: "output",
+		recordScheduledOutputDrop({
+			extra,
+			logDiagnostic: logWakeDiagnostic,
+			pending,
 			reason,
-			sequence: pending.sequence,
-			taskId: task.id,
-			taskStatus: task.status,
-			timestamp: Date.now(),
-			...extra,
+			task,
 		});
 		rememberSnapshot(task);
 		persistSnapshots();
@@ -364,9 +354,11 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			});
 			return;
 		}
-		if (task.outputTimer) clearTimeout(task.outputTimer);
-		for (const pending of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
-			forgetPendingWake(task, pending.sequence);
+		if (task.outputTimer) {
+			for (const pendingWake of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
+				persistScheduledOutputDrop(task, pendingWake, "output-wake-rescheduled");
+			}
+			clearTimeout(task.outputTimer);
 		}
 		const pending = scheduleTaskWake(task, "output", task.lastOutputAt ?? Date.now());
 		task.outputTimer = setTimeout(() => {
@@ -380,7 +372,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const unseenOutput = output.slice(task.lastAnnouncedLength);
 			if (!unseenOutput.trim()) {
 				task.lastAnnouncedLength = output.length;
-				recordScheduledOutputDrop(task, pending, "empty-output");
+				persistScheduledOutputDrop(task, pending, "empty-output");
 				return;
 			}
 			if (task.matcher && !canEmitOutputWake(task)) {
@@ -390,7 +382,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			}
 			const patternMatched = task.matcher ? (task.matcher(unseenOutput) || task.matcher(output)) : true;
 			if (!patternMatched) {
-				recordScheduledOutputDrop(task, pending, "notify-pattern-no-match", { matchedPattern: task.notifyPattern });
+				persistScheduledOutputDrop(task, pending, "notify-pattern-no-match", { matchedPattern: task.notifyPattern });
 				return;
 			}
 			const newOutputTail = tailText(unseenOutput, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd));
@@ -408,7 +400,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 				const diagnostic = decisionDiagnostics[decisionDiagnostics.length - 1];
 				const reason = (diagnostic?.reason ?? "output-after-stop-suppressed") as WakeDropReason;
 				task.lastAnnouncedLength = output.length;
-				recordScheduledOutputDrop(task, pending, reason, diagnostic ?? {});
+				persistScheduledOutputDrop(task, pending, reason, diagnostic ?? {});
 				refreshUi();
 				return;
 			}
@@ -601,6 +593,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			voidedWakes: new Set<number>(),
 			pendingWakes: [],
 			lastOutputDedupeHash: undefined,
+			lastOutputDedupeByKey: {},
 			outputPatternMatched: false,
 			outputTimer: null,
 			pid: spawnedPid,

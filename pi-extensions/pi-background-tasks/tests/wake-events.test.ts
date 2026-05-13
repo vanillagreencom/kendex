@@ -5,6 +5,7 @@ import { taskSnapshot } from "../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, ManagedTask, WakeDiagnostic } from "../extensions/types.js";
 import {
 	noteOutputWakeSent,
+	recordScheduledOutputDrop,
 	scheduleTaskWake,
 	sendTaskWake,
 	shouldEmitOutputWake,
@@ -167,6 +168,25 @@ describe("sendTaskWake", () => {
 		expect(diagnostics.some((diagnostic) => diagnostic.reason === "voided-wake-fired" && diagnostic.sequence === pending.sequence)).toBe(true);
 		expect(task.wakeEvents?.at(-1)?.droppedReason).toBe("voided");
 	});
+
+	test("scheduled output drop helper records task-exit timer cleanup", () => {
+		const diagnostics: WakeDiagnostic[] = [];
+		const task = fakeTask({ status: "completed" });
+		const pending = scheduleTaskWake(task, "output", 1_666);
+
+		recordScheduledOutputDrop({
+			logDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			now: () => 1_777,
+			pending,
+			reason: "cleared-on-task-exit",
+			task,
+		});
+
+		expect(task.pendingWakes).toHaveLength(0);
+		expect(task.wakeEvents?.at(-1)?.droppedReason).toBe("cleared-on-task-exit");
+		expect(diagnostics.at(-1)?.reason).toBe("cleared-on-task-exit");
+		expect(diagnostics.at(-1)?.timestamp).toBe(1_777);
+	});
 });
 
 describe("output notify modes", () => {
@@ -203,6 +223,61 @@ describe("output notify modes", () => {
 			sequence: 3,
 		})).toBe(true);
 		expect(diagnostics.at(-1)?.reason).toBe("output-transition-dedupe");
+	});
+
+	test("notifyMode=transition coalesces different tasks sharing one dedupeKey", () => {
+		const diagnostics: WakeDiagnostic[] = [];
+		const dedupeHashes = new Map<string, string>();
+		const first = fakeTask({ id: "bg-first", notifyMode: "transition", dedupeKey: "shared-monitor" });
+		const second = fakeTask({ id: "bg-second", notifyMode: "transition", dedupeKey: "shared-monitor" });
+
+		expect(shouldEmitOutputWake(first, {
+			dedupeHashes,
+			eventAt: 2_000,
+			logDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			newOutput: "IDLE pid=777\n",
+			newOutputTail: "IDLE pid=777\n",
+			patternMatched: true,
+			sequence: 1,
+		})).toBe(true);
+		expect(shouldEmitOutputWake(second, {
+			dedupeHashes,
+			eventAt: 2_100,
+			logDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			newOutput: "IDLE pid=777\n",
+			newOutputTail: "IDLE pid=777\n",
+			patternMatched: true,
+			sequence: 1,
+		})).toBe(false);
+		expect(diagnostics.at(-1)?.reason).toBe("output-transition-dedupe");
+		expect(diagnostics.at(-1)?.taskId).toBe("bg-second");
+	});
+
+	test("notifyMode=transition keeps different dedupeKeys independent on same task", () => {
+		const diagnostics: WakeDiagnostic[] = [];
+		const dedupeHashes = new Map<string, string>();
+		const task = fakeTask({ id: "bg-shared", notifyMode: "transition", dedupeKey: "monitor-a" });
+
+		expect(shouldEmitOutputWake(task, {
+			dedupeHashes,
+			eventAt: 2_200,
+			logDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			newOutput: "IDLE pid=777\n",
+			newOutputTail: "IDLE pid=777\n",
+			patternMatched: true,
+			sequence: 1,
+		})).toBe(true);
+		task.dedupeKey = "monitor-b";
+		expect(shouldEmitOutputWake(task, {
+			dedupeHashes,
+			eventAt: 2_300,
+			logDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+			newOutput: "IDLE pid=777\n",
+			newOutputTail: "IDLE pid=777\n",
+			patternMatched: true,
+			sequence: 2,
+		})).toBe(true);
+		expect(diagnostics.some((diagnostic) => diagnostic.reason === "output-transition-dedupe")).toBe(false);
 	});
 
 	test("notifyMode=first-match-only fires once for notifyPattern", () => {

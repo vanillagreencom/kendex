@@ -62,6 +62,10 @@ Useful spawn options: `notifyOnExit` (default true), `notifyOnOutput`, `notifyPa
 
 `notifyMode: "transition"` wakes only when the new output tail hash changes, so polling loops can print state each pass without waking the agent on identical snapshots. `notifyMode: "first-match-only"` wakes once for a matching `notifyPattern` and then suppresses later output wakes. `dedupeKey` lets related matching wakes share a transition hash bucket.
 
+## Closes parts of #27
+
+This release closes the pi-background-tasks portions of vstack issue #27: #7 output-wake suppression after stop on the output path, #9 wake metadata (`eventAt`, `deliveredAt`, `taskStatusAtEmit`, `sequence`), partial #8 extension-side voided-wake tracking, and #11 `notifyMode` / `dedupeKey` output coalescing.
+
 ## Auto-background
 
 Bash commands matching obvious monitor patterns are intercepted before they start and run as a background task instead. The foreground bash tool returns a short acknowledgement with the task id, PID, and log path so the agent turn keeps moving.
