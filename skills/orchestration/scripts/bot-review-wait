@@ -131,6 +131,15 @@ ensure_gh_ready() {
     return 0
   fi
 
+  # Final fallback: a stale env token plus broken keyring may still recover
+  # if .env.local/.env carries a valid GH_BOT_TOKEN. Drop any remaining
+  # stale env token first so we are not just retrying the bad one.
+  unset GH_TOKEN GITHUB_TOKEN
+  if orchestration_load_env_bot_token "$PROJECT_ROOT" && \
+     gh auth status >/dev/null 2>&1; then
+    return 0
+  fi
+
   printf '%s\n' "$auth_output" >&2
   return 1
 }

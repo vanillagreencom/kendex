@@ -7,10 +7,18 @@
 #
 # Usage: ci-wait <PR#> [poll_interval] [max_wait]
 #
-# Auth: stale GH_TOKEN/GITHUB_TOKEN env vars that mask working `gh` keyring
-# auth are detected and unset before any `gh` call (see vstack#19). After
-# that, .env / .env.local GH_BOT_TOKEN is loaded only when GH_TOKEN is empty,
-# matching skills/github/scripts/github.sh.
+# Auth resolution ladder (see vstack#19):
+#   1. orchestration_sanitize_gh_env — drop stale GH_TOKEN/GITHUB_TOKEN
+#      env vars that mask working `gh` keyring auth.
+#   2. If GH_TOKEN ended up empty (never set, or step 1 cleared it), match
+#      skills/github/scripts/github.sh and load a .env.local/.env
+#      GH_BOT_TOKEN if one is present.
+#   3. If the current `gh auth status` still fails, drop any remaining
+#      stale env token and retry the GH_BOT_TOKEN load — covers the
+#      stale-env-token + bad-keyring + valid-bot-token combination.
+#   4. If no auth path works after that, exit 3 with a clear diagnostic.
+#      Exit 3 matches bot-review-wait's auth-error exit so callers can
+#      treat the two consistently.
 #
 # Environment:
 #   GIT_HOST_CLI  - (optional) Path to git host CLI script for enriched output
@@ -19,36 +27,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# Sanitize stale GH_TOKEN/GITHUB_TOKEN that mask working `gh` keyring auth.
-# Must run before any `gh` call so a bad inherited token does not 401 every
-# request. Mirrors the guard in bot-review-wait.
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ci-wait: gh CLI not found on PATH" >&2
+  exit 3
+fi
+
 orchestration_sanitize_gh_env
 
-# --- Auth: mirror skills/github/scripts/github.sh — only override when GH_TOKEN unset ---
-if [ -z "${GH_TOKEN:-}" ]; then
-  for _env_file in "$PROJECT_ROOT/.env.local" "$PROJECT_ROOT/.env"; do
-    if [ -f "$_env_file" ]; then
-      _env_bot_token=$(
-        set +u
-        # shellcheck disable=SC1090
-        source "$_env_file" >/dev/null 2>&1 || true
-        printf '%s' "${GH_BOT_TOKEN:-}"
-      )
-      if [ -n "$_env_bot_token" ]; then
-        if [[ "$_env_bot_token" == op://* ]] && command -v op &>/dev/null; then
-          _resolved=$(op read "$_env_bot_token" 2>/dev/null || true)
-          [ -n "$_resolved" ] && _env_bot_token="$_resolved"
-        fi
-        if [[ "$_env_bot_token" =~ ^gh[pors]_ ]] || [[ "$_env_bot_token" =~ ^github_pat_ ]]; then
-          export GH_TOKEN="$_env_bot_token"
-        fi
-        break
-      fi
-    fi
-  done
-  unset _env_file _env_bot_token _resolved
+if [[ -z "${GH_TOKEN:-}" ]]; then
+  orchestration_load_env_bot_token "$PROJECT_ROOT" || true
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  unset GH_TOKEN GITHUB_TOKEN
+  orchestration_load_env_bot_token "$PROJECT_ROOT" || true
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  {
+    echo "ci-wait: no working GitHub auth path."
+    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, .env.local/.env GH_BOT_TOKEN."
+    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+  } >&2
+  exit 3
 fi
 
 PR_NUM="${1:?Usage: ci-wait <PR#> [poll_interval] [max_wait]}"

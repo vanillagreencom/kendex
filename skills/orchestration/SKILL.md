@@ -165,7 +165,13 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | `ci-wait` | Block until CI completes on a PR — same |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 
-`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output. Both `bot-review-wait` and `ci-wait` share the `scripts/lib/gh-auth.sh` guard: when a bad `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, they unset those variables for the wait process and continue with a warning.
+`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output.
+
+Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-step auth-resolution ladder: (1) sanitize stale `GH_TOKEN`/`GITHUB_TOKEN` that mask working `gh` keyring auth and continue with a warning; (2) when `GH_TOKEN` ends up empty, load a valid `GH_BOT_TOKEN` from `.env.local`/`.env` (`op://` references resolved via `op read`); (3) on a remaining auth failure, drop env tokens and retry the bot-token load so a stale env token plus broken keyring still recovers if `.env.local` provides a valid bot token; (4) if no auth path works, exit `3` with a clear diagnostic. Exit `3` matches `bot-review-wait`'s auth-error exit so callers can treat the two consistently.
+
+### Tests
+
+`bash skills/orchestration/tests/run-all.sh` runs every script-level regression test (`bot_review_wait.sh`, `ci_wait.sh`). Each test stages a temp repo with a parametrized `gh` stub on `PATH` and exercises every rung of the auth ladder: stale-token sanitize, keyring fallback, `.env.local` `GH_BOT_TOKEN` fallback, and the hard “no working auth path” exit.
 
 ### `workflow-state` actions
 

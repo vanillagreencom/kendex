@@ -51,7 +51,15 @@ Set in `.env` or `.env.local`, or export in the shell. Helper scripts source bot
 | `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
 | `BOT_CHECK_NAME` | CI check name for early review detection | — |
 
-`bot-review-wait --json` fails fast with JSON `status: "error"` when GitHub auth/API reads are not reliable. Both `bot-review-wait` and `ci-wait` source `scripts/lib/gh-auth.sh`: if an invalid `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, the wait process unsets those variables and continues with a warning so a stale inherited token does not 401 every API call.
+`bot-review-wait --json` fails fast with JSON `status: "error"` when GitHub auth/API reads are not reliable. Both `bot-review-wait` and `ci-wait` source `scripts/lib/gh-auth.sh` for a four-step auth ladder: (1) sanitize stale `GH_TOKEN`/`GITHUB_TOKEN` that mask working `gh` keyring auth (warns on stderr and unsets); (2) if `GH_TOKEN` ends up empty, load a valid `GH_BOT_TOKEN` from `.env.local`/`.env` (`op://` references resolved via `op read`); (3) on remaining auth failure, drop env tokens and retry the bot-token load so a stale env token plus broken keyring still recovers if `.env.local` provides a valid bot token; (4) if no auth path works, exit `3` with a clear diagnostic.
+
+## Tests
+
+```
+bash skills/orchestration/tests/run-all.sh
+```
+
+Runs every script-level regression test (`bot_review_wait.sh`, `ci_wait.sh`). Each test stages a temp repo with a parametrized `gh` stub on `PATH` and exercises every rung of the auth ladder — stale-token sanitize, keyring fallback, `.env.local` `GH_BOT_TOKEN` fallback, and the hard “no working auth path” exit (code `3`).
 
 ## System Dependencies
 
