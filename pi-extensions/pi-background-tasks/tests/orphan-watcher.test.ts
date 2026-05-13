@@ -149,12 +149,36 @@ describe("createOrphanWatcher.checkOnce", () => {
 		expect(hooks.events[0]?.type).toBe("exit");
 	});
 
-	test("PID reuse: alive pid with mismatched identity → finalize with pid-reused reason", () => {
+	test("comm drift (bash -lc 'sleep N') → still running, no finalize", () => {
+		// vstack#15 round 5 reviewer-error BLOCK: a typical workload is
+		// /bin/bash -lc "sleep 5". After the shell exec(2)s the target
+		// the pid and start time stay identical but /proc/<pid>/comm
+		// rotates "bash" -> "sleep". The watcher must rely on startToken
+		// only, NOT comm, or it will falsely finalize a live task.
+		const hooks = recordingHooks();
+		const task = orphanTask({
+			id: "bg-bash-exec",
+			pid: 4242,
+			command: "/bin/bash -lc 'sleep 5'",
+			procIdent: { pid: 4242, startToken: "19283746", comm: "bash" },
+		});
+		const watcher = createOrphanWatcher({
+			getTasks: () => [task],
+			hooks,
+			identityProbe: (pid: number) => ({ pid, startToken: "19283746", comm: "sleep" }),
+		});
+		const result = watcher.checkOnce();
+		expect(result.finalized).toBe(0);
+		expect(hooks.events).toHaveLength(0);
+		expect(task.status).toBe("running");
+	});
+
+	test("PID reuse: alive pid with mismatched startToken → finalize with pid-reused reason", () => {
 		// vstack#15 round 4 reviewer-error MAJOR + reviewer-test #1: the
 		// original orphan exited and the OS reused PID 12345 for an
-		// unrelated process (different command name, different start
-		// time). Bare kill -0 would call it alive; identity comparison
-		// detects the reuse and treats the original task as gone.
+		// unrelated process (different start time). Bare kill -0 would
+		// call it alive; startToken comparison detects the reuse and
+		// treats the original task as gone.
 		const hooks = recordingHooks();
 		const tasks = [orphanTask({
 			id: "bg-3",

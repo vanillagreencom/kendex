@@ -114,10 +114,21 @@ export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null 
 	return { pid, startToken: parts.slice(0, 5).join(" "), comm: parts.slice(5).join(" ") };
 }
 
-// True iff both identities are present and every field matches. Absent
-// identity on the snapshot (pre-1.2.2 upgrade) is treated as a match
-// because we have no pre-recorded token to compare against and PID-only
-// liveness is the documented degraded path.
+// True iff both identities are present and the kernel-stable subset
+// matches. "Kernel-stable" means pid + startToken (process start time):
+// these cannot drift while the original process lives. comm is
+// captured and persisted as a diagnostic so `bg_task list` / logs can
+// show what the process was at spawn, but it is NOT part of equality:
+// the common `bash -lc "sleep 5"` pattern rotates /proc/<pid>/comm
+// from "bash" to "sleep" via exec(2) without changing pid or
+// starttime. Gating identity on comm would false-finalize a still-live
+// task (reviewer-error BLOCK, vstack#15 round 5).
+//
+// Absent identity on the snapshot (pre-1.2.2 upgrade) is treated as a
+// match because we have no pre-recorded token to compare against and
+// PID-only liveness is the documented degraded path. background-tasks.ts
+// emits a one-time legacy-fallback warning so operators can notice
+// long-lived pre-upgrade tasks.
 export function identityMatches(
 	recorded: ProcessIdentity | undefined,
 	current: ProcessIdentity | null,
@@ -125,8 +136,7 @@ export function identityMatches(
 	if (!current) return false;
 	if (!recorded) return true;
 	return recorded.pid === current.pid
-		&& recorded.startToken === current.startToken
-		&& recorded.comm === current.comm;
+		&& recorded.startToken === current.startToken;
 }
 
 export interface RestoreOptions {

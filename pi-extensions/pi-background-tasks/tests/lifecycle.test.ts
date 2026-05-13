@@ -94,17 +94,37 @@ describe("restoredTaskFromSnapshot", () => {
 		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
-	test("PID-reuse safe: alive pid with mismatched identity coerces to stopped", () => {
+	test("PID-reuse safe: alive pid with mismatched startToken coerces to stopped", () => {
 		// vstack#15 round 4 reviewer-error MAJOR: the original orphan
 		// died, the OS reused the PID for an unrelated process, and a
-		// bare kill -0 would treat the task as still running. Identity
-		// comparison (startToken/comm) detects the reuse and coerces the
-		// restored task to stopped so the canonical exit wake fires.
+		// bare kill -0 would treat the task as still running. Start-time
+		// comparison detects the reuse and coerces the restored task to
+		// stopped so the canonical exit wake fires.
 		const snapshot = fakeSnapshot({ status: "running", pid: 12345, exitNotified: false, procIdent: fakeIdent(12345) });
 		const restored = restoredTaskFromSnapshot(snapshot, { now: 1_700_000_300_000, identityProbe: probeReused, sessionId: "sess-1" });
 		expect(restored.status).toBe("stopped");
 		expect(restored.exitNotified).toBe(false);
 		expect(selectMissedExits([restored])).toHaveLength(1);
+	});
+
+	test("comm drift (bash -lc 'sleep N'): same pid + startToken, different comm -> still running", () => {
+		// vstack#15 round 5 reviewer-error BLOCK: bash often exec(2)s
+		// the target binary in the same pid (the canonical example is
+		// /bin/bash -lc "sleep 5" which rotates /proc/<pid>/comm from
+		// "bash" to "sleep"). startToken is the kernel-stable signal;
+		// gating identity on comm would falsely finalize this live task.
+		const snapshot = fakeSnapshot({
+			status: "running",
+			pid: 4242,
+			command: "/bin/bash -lc 'sleep 5'",
+			procIdent: { pid: 4242, startToken: "19283746", comm: "bash" },
+		});
+		const probeCommDrifted = (pid: number): ProcessIdentity => ({ pid, startToken: "19283746", comm: "sleep" });
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeCommDrifted, sessionId: "sess-1" });
+		expect(restored.status).toBe("running");
+		expect(restored.closed).toBe(false);
+		expect(restored.stopReason).toBeNull();
+		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
 	test("pre-1.2.2 snapshot with no procIdent degrades to PID-only liveness", () => {
