@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# flightdeck-mode — detect Flightdeck-managed orchestration sessions and
+# expose the scoped issue's worktree/branch so cleanup steps can avoid
+# destructive prompts about unrelated artifacts.
+#
+# Managed mode is detected from any of the following signals:
+#   1. FLIGHTDECK_CHILD_PANE=1 env var (canonical signal set on Pi child
+#      panes by skills/flightdeck/scripts/open-terminal).
+#   2. FLIGHTDECK_MANAGED=1 env var (explicit cross-harness alias; set
+#      this in spawn templates for non-Pi harnesses).
+#   3. Flightdeck master-state file at
+#      <main-repo-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<tmux-session>.json
+#      contains an `.issues` entry whose `worktree` equals $PWD.
+#
+# Subcommands:
+#   check                  exit 0 if managed, 1 if not
+#   scope-json             print {"managed":bool,"issue_id":...,"worktree":...,"branch":...}
+#   current-issue          print scoped issue id (empty when not derivable)
+#   current-worktree       print scoped worktree absolute path
+#   current-branch         print scoped branch name
+#   match-branch <name>    exit 0 if <name> equals scoped branch, 1 otherwise
+#   match-worktree <path>  exit 0 if <path> resolves to scoped worktree, 1 otherwise
+#
+# Exit code 2 = bad arguments.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+resolve_main_repo_root() {
+  local common_dir
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+  [[ -z "$common_dir" ]] && return 1
+  if [[ "$common_dir" == ".git" ]]; then
+    git rev-parse --show-toplevel 2>/dev/null
+  else
+    sed 's|/\.git$||' <<<"$common_dir"
+  fi
+}
+
+resolve_workflow_state_file() {
+  # The orchestration workflow-state file lives under $ORCH_STATE_DIR
+  # (default tmp/) relative to the current repo (worktree). Find the
+  # newest workflow-state-*.json belonging to this directory.
+  local state_dir="${ORCH_STATE_DIR:-tmp}"
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  [[ -d "$root/$state_dir" ]] || return 1
+  local newest=""
+  while IFS= read -r -d '' f; do
+    if [[ -z "$newest" || "$f" -nt "$newest" ]]; then
+      newest="$f"
+    fi
+  done < <(find "$root/$state_dir" -maxdepth 1 -name 'workflow-state-*.json' -print0 2>/dev/null)
+  [[ -n "$newest" ]] && printf '%s' "$newest"
+}
+
+resolve_master_state_file() {
+  local main_root state_dir session_name
+  main_root=$(resolve_main_repo_root) || return 1
+  state_dir="${FLIGHTDECK_STATE_DIR:-tmp}"
+  session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
+  [[ -z "$session_name" ]] && return 1
+  local f="$main_root/$state_dir/flightdeck-state-$session_name.json"
+  [[ -f "$f" ]] || return 1
+  printf '%s' "$f"
+}
+
+current_pwd_abs() {
+  local p="$PWD"
+  cd "$p" 2>/dev/null && pwd
+}
+
+# Returns 0 if env-var managed signal is present.
+env_managed_signal() {
+  [[ "${FLIGHTDECK_CHILD_PANE:-0}" == "1" ]] && return 0
+  [[ "${FLIGHTDECK_MANAGED:-0}" == "1" ]] && return 0
+  return 1
+}
+
+# Returns 0 if pane-registry master state lists our worktree.
+registry_managed_signal() {
+  command -v jq >/dev/null 2>&1 || return 1
+  local state_file
+  state_file=$(resolve_master_state_file 2>/dev/null) || return 1
+  local cwd
+  cwd=$(current_pwd_abs)
+  [[ -z "$cwd" ]] && return 1
+  jq -e --arg p "$cwd" \
+    '(.issues // {}) | to_entries | any(.value.worktree == $p)' \
+    "$state_file" >/dev/null 2>&1
+}
+
+is_managed() {
+  env_managed_signal && return 0
+  registry_managed_signal && return 0
+  return 1
+}
+
+scope_issue_id() {
+  # Prefer the orchestration workflow-state file (authoritative for the
+  # current pane). Fall back to deriving from branch name.
+  local wf
+  if wf=$(resolve_workflow_state_file 2>/dev/null) && [[ -f "$wf" ]]; then
+    local id
+    id=$(jq -r '.issue_id // empty' "$wf" 2>/dev/null || true)
+    if [[ -n "$id" ]]; then
+      printf '%s' "$id"
+      return 0
+    fi
+  fi
+  local branch pat
+  branch=$(git branch --show-current 2>/dev/null || true)
+  pat="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+  if [[ -n "$branch" ]]; then
+    printf '%s' "$branch" | grep -oiE "$pat" | head -1 | tr '[:lower:]' '[:upper:]' || true
+  fi
+}
+
+scope_worktree() {
+  local wf p
+  if wf=$(resolve_workflow_state_file 2>/dev/null) && [[ -f "$wf" ]]; then
+    p=$(jq -r '.worktree // empty' "$wf" 2>/dev/null || true)
+    if [[ -n "$p" ]]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  fi
+  current_pwd_abs
+}
+
+scope_branch() {
+  local wf b
+  if wf=$(resolve_workflow_state_file 2>/dev/null) && [[ -f "$wf" ]]; then
+    b=$(jq -r '.branch // empty' "$wf" 2>/dev/null || true)
+    if [[ -n "$b" ]]; then
+      printf '%s' "$b"
+      return 0
+    fi
+  fi
+  git branch --show-current 2>/dev/null || true
+}
+
+cmd_check() {
+  if is_managed; then exit 0; else exit 1; fi
+}
+
+cmd_scope_json() {
+  local managed=false issue worktree branch
+  if is_managed; then managed=true; fi
+  issue=$(scope_issue_id)
+  worktree=$(scope_worktree)
+  branch=$(scope_branch)
+  jq -n \
+    --argjson managed "$managed" \
+    --arg issue_id "${issue:-}" \
+    --arg worktree "${worktree:-}" \
+    --arg branch "${branch:-}" \
+    '{managed:$managed, issue_id:$issue_id, worktree:$worktree, branch:$branch}'
+}
+
+cmd_current_issue()    { scope_issue_id; printf '\n'; }
+cmd_current_worktree() { scope_worktree; printf '\n'; }
+cmd_current_branch()   { scope_branch; printf '\n'; }
+
+cmd_match_branch() {
+  local target="${1:-}"
+  [[ -z "$target" ]] && { echo "match-branch requires <branch>" >&2; exit 2; }
+  local scoped
+  scoped=$(scope_branch)
+  [[ -n "$scoped" && "$target" == "$scoped" ]] && exit 0 || exit 1
+}
+
+cmd_match_worktree() {
+  local target="${1:-}"
+  [[ -z "$target" ]] && { echo "match-worktree requires <path>" >&2; exit 2; }
+  local scoped abs_target abs_scoped
+  scoped=$(scope_worktree)
+  [[ -z "$scoped" ]] && exit 1
+  abs_target=$(cd "$target" 2>/dev/null && pwd || printf '%s' "$target")
+  abs_scoped=$(cd "$scoped" 2>/dev/null && pwd || printf '%s' "$scoped")
+  [[ "$abs_target" == "$abs_scoped" ]] && exit 0 || exit 1
+}
+
+cmd_help() {
+  cat <<'EOF'
+Usage: flightdeck-mode <command> [args]
+
+Commands:
+  check                       exit 0 if managed by Flightdeck, 1 otherwise
+  scope-json                  print {managed,issue_id,worktree,branch}
+  current-issue               print scoped issue id
+  current-worktree            print scoped worktree absolute path
+  current-branch              print scoped branch name
+  match-branch <name>         exit 0 if <name> == scoped branch
+  match-worktree <path>       exit 0 if <path> resolves to scoped worktree
+
+Environment:
+  FLIGHTDECK_CHILD_PANE=1     primary managed-mode signal (set by Flightdeck spawns)
+  FLIGHTDECK_MANAGED=1        explicit cross-harness alias
+  FLIGHTDECK_STATE_DIR        master-state dir (default: tmp)
+  ORCH_STATE_DIR              workflow-state dir (default: tmp)
+  GH_ISSUE_PATTERN            regex for issue IDs (default: [A-Z]+-[0-9]+)
+EOF
+}
+
+case "${1:-help}" in
+  check)           shift; cmd_check "$@" ;;
+  scope-json)      shift; cmd_scope_json "$@" ;;
+  current-issue)   shift; cmd_current_issue "$@" ;;
+  current-worktree) shift; cmd_current_worktree "$@" ;;
+  current-branch)  shift; cmd_current_branch "$@" ;;
+  match-branch)    shift; cmd_match_branch "$@" ;;
+  match-worktree)  shift; cmd_match_worktree "$@" ;;
+  help|--help|-h)  cmd_help ;;
+  *) echo "Unknown command: $1" >&2; cmd_help >&2; exit 2 ;;
+esac

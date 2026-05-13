@@ -164,6 +164,7 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | `bot-review-wait` | Block until bot review posts on a PR — invoked by per-issue agents inside their submit-pr flow |
 | `ci-wait` | Block until CI completes on a PR — same |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
+| `flightdeck-mode` | Detect Flightdeck-managed mode + report scoped issue/worktree/branch. Used by `merge-pr.md` § 5 to suppress cross-branch sweeps when running under Flightdeck. |
 
 `bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output.
 

@@ -9,6 +9,8 @@ Classification tags and per-tag handler logic for the prompts that surface acros
 | Tag | Sentinel pattern (illustrative) | Handler |
 |-----|--------------------------------|---------|
 | `cleanup-prompt` | `"Cleanup the .* worktree after merge"` or `"Worktree for .* exists. Cleanup"` | Cleanup scope handler |
+| `stale-no-pr-branch` | `"Local branch .* has no associated PR. Delete"` | Out-of-scope under Flightdeck — always answer `Keep branch` |
+| `stale-orphan-worktree` | `"orphan: .*"` or `"Stale worktree for .* \(PR already merged\). Remove"` referring to a non-asker worktree | Out-of-scope under Flightdeck — always answer `Keep worktree` |
 | `bot-review-wait-stuck` | `"No bot review comments were found"` or `"Bot review hasn't started"` after defer-ci is set and `Claude Code claude` check is SUCCESS | Skip — drop defer-ci |
 | `rebase-multi-choice` | `"How should I resolve the .* merge conflicts"` with options including `Rebase + force push` | Combined preserve/apply/verify payload |
 | `audit-relation-prompt` | `"Create issue .*"` or `"Create the audited follow-up issues"` with structure column showing `child of` / `related` | Default `related` |
@@ -29,6 +31,37 @@ If a buffer matches multiple sentinels, the most specific tag wins (e.g., `force
 Some agents propose batch cleanup of multiple worktrees. That's wrong because parallel sessions are still using sibling worktrees.
 
 **Rule**: answer YES iff the prompt's target worktree path equals the asking pane's registered worktree. NO for any sibling.
+
+## Handler: `stale-no-pr-branch`
+
+Per-issue orchestration's `merge-pr` workflow has a Flightdeck-mode guard
+(`skills/orchestration/scripts/flightdeck-mode`) that suppresses the broad
+"local branch without an associated PR" sweep when the pane is managed by
+Flightdeck. If a prompt of this shape still reaches master — e.g. the pane
+is running an older orchestration build, or the guard was bypassed — master
+MUST answer `Keep branch`. Per-issue finalization has no business touching
+branches that don't belong to the asking pane's registered scope; the
+destructive option (`git branch -D <unrelated-branch>`) runs from the main
+repo and may delete work that other live worktrees or the master's own
+maintenance schedule depend on.
+
+After answering, log a `process-violation` decision against the asking
+issue: the per-issue agent should not have surfaced this prompt in the
+first place, and the orchestration workflow doc should be updated to honor
+the guard.
+
+## Handler: `stale-orphan-worktree`
+
+Same rule, different artifact: prompts of the form `"Stale worktree for
+[BRANCH] (PR already merged). Remove?"` or `"orphan: <dir>"` that refer to
+a worktree path other than the asking pane's own registered worktree are
+out-of-scope under Flightdeck. Master answers `Keep worktree` and, where
+the prompt offers a free-text response, scopes any agreed removal to the
+asker's own worktree only.
+
+The master's pane registry is authoritative for worktree ownership; do not
+let a per-issue pane unilaterally retire sibling worktrees. Project-wide
+orphan cleanup is a separate standalone maintenance workflow.
 
 ### Extracting the target
 
