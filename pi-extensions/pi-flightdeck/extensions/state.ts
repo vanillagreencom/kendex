@@ -139,6 +139,14 @@ export interface FlightdeckSnapshot {
 	masterStatePath?: string;
 	master?: MasterState;
 	masterError?: string;
+	// Set when the archive-fallback path produced the masterError
+	// (every candidate archive failed strict validation, or the master-
+	// state directory itself was unreadable). Drives the `archive-error`
+	// status arm. Always implies `masterError` is set and `master` is
+	// unset; the distinct flag avoids brittle string-matching in the
+	// status predicate and lets non-archive failures (live read errors)
+	// stay in their own bucket.
+	masterArchiveError?: boolean;
 	daemon: DaemonHealth;
 	wakeEvents: WakeEvent[];
 	pendingEvents: DaemonEvent[];
@@ -540,6 +548,31 @@ export function readPendingEvents(stateDir: string, sessionKey: string, maxLines
 	return readJsonLines(paths.events, maxLines) as DaemonEvent[];
 }
 
+// Strict archive read for the post-terminate fallback. Distinguishes:
+//   * blank file (0 bytes / whitespace-only) — partial-write corruption
+//   * non-object root (`[]`, scalar) — rejected by `readMasterState`
+//   * non-terminated payload — readable but not the post-mortem record
+//   * malformed JSON — rejected by `readMasterState`
+//   * IO error — propagated
+// Without these, a blank or non-terminated archive collapsed silently
+// to `inactive` and hid corruption from the user (BLOCK round 4).
+type ReadArchiveResult = { kind: "ok"; state: MasterState } | { kind: "error"; message: string };
+
+function readArchiveStrict(path: string): ReadArchiveResult {
+	let text: string;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch (e) {
+		return { kind: "error", message: `read failed: ${(e as Error).message ?? String(e)}` };
+	}
+	if (!text.trim()) return { kind: "error", message: "blank archive" };
+	const read = readMasterState(path);
+	if (read.error) return { kind: "error", message: read.error };
+	if (!read.state) return { kind: "error", message: "archive yielded no state" };
+	if (!read.state.terminated) return { kind: "error", message: "archive missing terminated:true" };
+	return { kind: "ok", state: read.state };
+}
+
 // Test seam — production code calls `buildSnapshot`. Tests inject a
 // fully resolved (projectRoot, stateDir, tmux) so they don't have to
 // stand up a real tmux session or git worktree just to exercise the
@@ -554,36 +587,42 @@ export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: S
 	const { projectRoot, stateDir, tmux } = inputs;
 	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
 	let resolvedStatePath = liveStatePath;
+	let archiveError = false;
 	let { state, error } = readMasterState(liveStatePath);
-	// Archive fallback (issue #17 BLOCKER #1, refined in BLOCK round 3).
+	// Archive fallback (issue #17 BLOCKER #1, refined in rounds 3 and 4).
 	// When the live file is missing, walk the master-state directory's
 	// terminated archives newest-first and serve the first VALID
-	// `terminated: true` snapshot. If every candidate archive errors
-	// (malformed JSON / IO failure), surface a `masterError` with a
-	// diagnostic so the dashboard can render an `archive-read-error`
-	// banner instead of an indistinguishable-from-no-session blank
-	// view (BLOCK round 3 finding). Live state always wins when present,
-	// so the fallback never shadows an in-flight session.
+	// `terminated: true` snapshot. STRICT validation: blank archives,
+	// readable-but-non-terminated archives, malformed JSON, and IO
+	// failures all count as failures with their own reason strings.
+	// A non-ENOENT readdir error (permission denied / IO) also surfaces
+	// as a diagnostic so the user sees "state was lost" instead of
+	// silently falling back to inactive. Live state always wins when
+	// present, so the fallback never shadows an in-flight session.
 	if (!state && !error) {
 		const dir = masterStateDir(projectRoot, settings);
-		const archives = listTerminatedArchives(dir, tmux.sessionName);
+		const listing = listTerminatedArchives(dir, tmux.sessionName);
 		const failures: Array<{ path: string; reason: string }> = [];
-		for (const candidate of archives) {
-			const archiveRead = readMasterState(candidate);
-			if (archiveRead.error) {
-				failures.push({ path: candidate, reason: archiveRead.error });
-				continue;
-			}
-			if (archiveRead.state?.terminated) {
-				state = archiveRead.state;
+		for (const candidate of listing.archives) {
+			const reason = readArchiveStrict(candidate);
+			if (reason.kind === "ok") {
+				state = reason.state;
 				resolvedStatePath = candidate;
 				break;
 			}
+			failures.push({ path: candidate, reason: reason.message });
 		}
-		if (!state && failures.length > 0) {
-			const latest = failures[0]!;
-			error = `no readable terminated archive: ${failures.length} candidate${failures.length === 1 ? "" : "s"} failed (latest ${latest.path}: ${latest.reason})`;
-			resolvedStatePath = latest.path;
+		if (!state) {
+			if (failures.length > 0) {
+				const latest = failures[0]!;
+				error = `no readable terminated archive: ${failures.length} candidate${failures.length === 1 ? "" : "s"} failed (latest ${latest.path}: ${latest.reason})`;
+				resolvedStatePath = latest.path;
+				archiveError = true;
+			} else if (listing.error) {
+				error = `archive directory unreadable: ${listing.error.code} ${listing.error.path}: ${listing.error.message}`;
+				resolvedStatePath = listing.error.path;
+				archiveError = true;
+			}
 		}
 	}
 	const daemon = readDaemonHealth(
@@ -596,6 +635,7 @@ export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: S
 	return {
 		daemon,
 		master: state,
+		masterArchiveError: archiveError || undefined,
 		masterError: error,
 		masterStatePath: resolvedStatePath,
 		pendingEvents,
@@ -669,12 +709,11 @@ export function flightdeckSessionStatus(
 	options?: { staleAfterMin?: number; now?: number },
 ): FlightdeckSessionStatus {
 	if (!snapshot) return "inactive";
-	// Archive lookup tried but every candidate was malformed. Render the
+	// Archive lookup tried but every candidate was malformed (or the
+	// master-state directory itself was unreadable). Render the
 	// diagnostic banner instead of falling through to `inactive` — the
 	// user otherwise can't tell a corrupted archive from a missing one.
-	if (!snapshot.master && snapshot.masterError && snapshot.masterStatePath?.endsWith(".json.archive")) {
-		return "archive-error";
-	}
+	if (snapshot.masterArchiveError) return "archive-error";
 	const master = snapshot.master;
 	const hasAnyIssues = !!master && Object.keys(master.issues).length > 0;
 	// terminated + issues preserved → read-only completion view. Issue #17

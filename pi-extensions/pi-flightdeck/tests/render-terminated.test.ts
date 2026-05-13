@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import {
 	type DashboardState,
 	makeInitialPopupState,
@@ -91,6 +91,57 @@ function makeProject(): { projectRoot: string; stateDir: string; tmpDir: string;
 	};
 }
 
+// Env isolation (BLOCKER round 4 from review). The dashboard renderer
+// reads `dashboardMaxItems`, `treeStyle`, etc. via
+// `flightdeck.ts:readVstackConfig`, which lays user-global settings
+// (`$PI_CODING_AGENT_DIR/settings.json` or `~/.pi/agent/settings.json`)
+// over project settings discovered by walking up from `cwd`. Without
+// pinning these, a host with `dashboardMaxItems=1` in its global
+// settings would silently make the "compact view lists merged issues"
+// test fail because CC-510 falls below the display cap. We point
+// PI_CODING_AGENT_DIR and HOME at fresh empty dirs so config lookup
+// finds nothing on every test invocation, and we always pass a
+// project-isolated `cwd` to the render functions instead of a
+// hard-coded path that might escape upward into a real `.pi`.
+//
+// Verified by re-running these tests with a polluted PI_CODING_AGENT_DIR
+// (settings.json with dashboardMaxItems=1) — isolated harness passes;
+// removing the harness reproduces the failure described in the review.
+const SAVED_ENV: Record<string, string | undefined> = {};
+let ENV_PI_DIR = "";
+let ENV_HOME = "";
+let ENV_CWD = "";
+
+before(() => {
+	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE"]) {
+		SAVED_ENV[key] = process.env[key];
+	}
+	ENV_PI_DIR = mkdtempSync(join(tmpdir(), "pi-flightdeck-render-piconf-"));
+	ENV_HOME = mkdtempSync(join(tmpdir(), "pi-flightdeck-render-home-"));
+	// `cwd` passed to render fns: walks up looking for .pi/.git/.vstack-lock
+	// and stops at root if none found. Putting it under HOME with no
+	// markers keeps `projectPiSettingsPath` resolving to a non-existent
+	// file under HOME, which `existsSync` cleanly rejects.
+	ENV_CWD = mkdtempSync(join(ENV_HOME, "isolated-cwd-"));
+	process.env.PI_CODING_AGENT_DIR = ENV_PI_DIR;
+	process.env.HOME = ENV_HOME;
+	process.env.XDG_CONFIG_HOME = ENV_HOME;
+	process.env.USERPROFILE = ENV_HOME;
+});
+
+after(() => {
+	for (const [key, value] of Object.entries(SAVED_ENV)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	if (ENV_PI_DIR) rmSync(ENV_PI_DIR, { force: true, recursive: true });
+	if (ENV_HOME) rmSync(ENV_HOME, { force: true, recursive: true });
+});
+
+function isolatedCwd(): string {
+	return ENV_CWD;
+}
+
 function simulateTerminate(tmpDir: string): string {
 	const payload = {
 		conflict_graph: { computed_at: null, edges: [] },
@@ -147,7 +198,7 @@ function buildPostTerminateSnapshot(): { snapshot: FlightdeckSnapshot; cleanup: 
 test("dashboard header renders 'session complete' chip when master.terminated is true", () => {
 	const { snapshot, cleanup } = buildPostTerminateSnapshot();
 	try {
-		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "compact" as DashboardState, "/tmp/nowhere", new Map());
+		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "compact" as DashboardState, isolatedCwd(), new Map());
 		const text = joinRendered(lines);
 		assert.match(text, /session complete/);
 		assert.ok(!/daemon dead/.test(text), "must NOT show 'daemon dead' on terminate");
@@ -159,7 +210,7 @@ test("dashboard header renders 'session complete' chip when master.terminated is
 test("dashboard compact view lists merged issues with state + PR after terminate", () => {
 	const { snapshot, cleanup } = buildPostTerminateSnapshot();
 	try {
-		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "compact" as DashboardState, "/tmp/nowhere", new Map());
+		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "compact" as DashboardState, isolatedCwd(), new Map());
 		const text = joinRendered(lines);
 		assert.match(text, /CC-503/);
 		assert.match(text, /CC-510/);
@@ -174,7 +225,7 @@ test("dashboard compact view lists merged issues with state + PR after terminate
 test("dashboard hidden state renders nothing", () => {
 	const { snapshot, cleanup } = buildPostTerminateSnapshot();
 	try {
-		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "hidden" as DashboardState, "/tmp/nowhere", new Map());
+		const lines = renderDashboardLines(snapshot, plainTheme() as never, 120, "hidden" as DashboardState, isolatedCwd(), new Map());
 		assert.deepEqual(lines, []);
 	} finally {
 		cleanup();
@@ -216,7 +267,7 @@ test("Conflicts & merges tab surfaces summary_path", () => {
 test("Decisions tab renders preserved decisions_log entries for merged issues", () => {
 	const { snapshot, cleanup } = buildPostTerminateSnapshot();
 	try {
-		const lines = renderDecisionsTab(snapshot, makeInitialPopupState(), 120, plainTheme() as never, 40, "/tmp/nowhere");
+		const lines = renderDecisionsTab(snapshot, makeInitialPopupState(), 120, plainTheme() as never, 40, isolatedCwd());
 		const text = joinRendered(lines);
 		assert.match(text, /review-fix/);
 		assert.match(text, /merge-now/);

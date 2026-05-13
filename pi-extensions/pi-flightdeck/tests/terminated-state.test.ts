@@ -39,6 +39,7 @@ import {
 	type SettingsLike,
 	type TmuxContext,
 } from "../extensions/state.js";
+import { listTerminatedArchives } from "../extensions/state-archive.js";
 
 const SETTINGS: SettingsLike = { flightdeckStateDir: "tmp", stateDir: "" };
 const TMUX: TmuxContext = { paneId: "%1", sessionId: "$1", sessionKey: "s1", sessionName: "HT" };
@@ -417,6 +418,118 @@ test("buildSnapshotFromInputs: malformed newest + valid older archive → falls 
 		assert.equal(snapshot.masterError, undefined, "successful fallback should not leave masterError set");
 		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
 	} finally {
+		cleanup();
+	}
+});
+
+// ----- BLOCK round 4: strict archive validation ----------------------------
+
+test("strict archive: zero-byte file counts as failure (blank archive)", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /blank archive/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("strict archive: whitespace-only file counts as failure (blank archive)", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "   \n\t  \n", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /blank archive/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("strict archive: null root counts as failure (not an object)", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "null", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /not an object/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("strict archive: `{}` root counts as failure (archive missing terminated:true)", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "{}", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /archive missing terminated:true/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("strict archive: valid-object-but-not-terminated counts as failure", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		const payload = terminatedPayload({ "X-1": makeMergedIssueRecord({ pr_number: 1 }) });
+		// Strip the terminated flag entirely — the archive carries a valid
+		// state shape but isn't a completion record.
+		delete (payload as Record<string, unknown>).terminated;
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), JSON.stringify(payload), "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /archive missing terminated:true/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("strict archive: every candidate fails for different reasons → count + latest reason in diagnostic", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "{not json", "utf8");
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260101T000000Z.json.archive"), "", "utf8");
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20250101T000000Z.json.archive"), "{}", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /no readable terminated archive: 3 candidates failed/);
+		assert.match(snapshot.masterError ?? "", /20260513T002128Z/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+// ----- MAJOR round 4: ENOENT vs other readdir errors -----------------------
+
+test("readdir ENOENT → archives:[], no error (project never had a tmp/)", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-flightdeck-nonexist-"));
+	rmSync(dir, { force: true, recursive: true });
+	const result = listTerminatedArchives(dir, "HT");
+	assert.deepEqual(result.archives, []);
+	assert.equal(result.error, undefined);
+});
+
+test("readdir EACCES → archives:[], error propagated with code+path", { skip: process.getuid?.() === 0 ? "running as root; chmod 000 is bypassed" : false }, () => {
+	const { chmodSync } = require("node:fs") as typeof import("node:fs");
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		chmodSync(tmpDir, 0o000);
+		const result = listTerminatedArchives(tmpDir, "HT");
+		assert.deepEqual(result.archives, []);
+		assert.ok(result.error, "non-ENOENT readdir errors must propagate");
+		assert.equal(result.error?.code, "EACCES");
+		assert.equal(result.error?.path, tmpDir);
+		// And the snapshot should surface it as archive-error.
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.match(snapshot.masterError ?? "", /archive directory unreadable: EACCES/);
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		try { chmodSync(tmpDir, 0o755); } catch { /* dir may already be gone */ }
 		cleanup();
 	}
 });
