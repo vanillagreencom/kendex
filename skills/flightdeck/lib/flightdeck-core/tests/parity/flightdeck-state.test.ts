@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readTrackedEntries, writeTrackedEntry } from "../../src/state/tracked-entry.ts";
+import { entryIdForIssue, readTrackedEntries, writeTrackedEntry } from "../../src/state/tracked-entry.ts";
 import type { TrackedEntry } from "../../src/state/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -69,6 +69,12 @@ function writeState(repoRoot: string, state: unknown): void {
 function parseRunJson<T>(r: { stdout: string; status: number | null; stderr: string }): T {
 	expect(r.status).toBe(0);
 	if (r.stderr) expect(r.stderr).toBe("");
+	return JSON.parse(r.stdout) as T;
+}
+
+function parseRunJsonWithWarning<T>(r: { stdout: string; status: number | null; stderr: string }, warning: string): T {
+	expect(r.status).toBe(0);
+	expect(r.stderr).toBe(`${warning}\n`);
 	return JSON.parse(r.stdout) as T;
 }
 
@@ -235,19 +241,50 @@ describe("flightdeck-state parity", () => {
 		expect(b).toEqual(expected);
 	});
 
-	test("tracked-entries prefers v2 entries when entries map is non-empty", () => {
+	test("tracked-entries returns v2-only entries when issues map is absent", () => {
 		const entry = sampleTrackedEntry();
-		const state = {
-			entries: { [entry.id]: entry },
-			issues: { "CC-OLD": { state: "waiting", worktree: "/repo/old" } },
-			merge_queue: ["CC-OLD"],
-		};
+		const state = { entries: { [entry.id]: entry }, merge_queue: [] };
 		writeState(bashRepo, state);
 		writeState(tsRepo, state);
 		const expected = { [entry.id]: entry };
 		expect(readTrackedEntries(state)).toEqual(expected);
 		expect(parseRunJson<Record<string, TrackedEntry>>(run(false, bashRepo, ["tracked-entries"]))).toEqual(expected);
 		expect(parseRunJson<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]))).toEqual(expected);
+	});
+
+	test("tracked-entries merges legacy issues under entries with entries winning by id", () => {
+		const entry = sampleTrackedEntry();
+		const state = {
+			entries: { [entry.id]: { ...entry, state: "prompting", title: "entry wins" } },
+			issues: {
+				[entry.id]: { state: "waiting", worktree: "/repo/legacy-a" },
+				"CC-303": { harness: "claude", pane_id: "%303", pr_number: 303, state: "waiting", worktree: "/repo/trees/CC-303" },
+			},
+			merge_queue: [entry.id, "CC-303"],
+		};
+		writeState(bashRepo, state);
+		writeState(tsRepo, state);
+		const expected = readTrackedEntries(state);
+		expect(Object.keys(expected).sort()).toEqual(["CC-202", "CC-303"]);
+		expect(expected["CC-202"]?.title).toBe("entry wins");
+		expect(expected["CC-202"]?.domain?.issue?.worktree).toBe("/repo/trees/CC-202");
+		expect(expected["CC-303"]).toMatchObject({ domain: { issue: { id: "CC-303", pr_number: 303 } }, id: "CC-303", kind: "issue" });
+		expect(parseRunJson<Record<string, TrackedEntry>>(run(false, bashRepo, ["tracked-entries"]))).toEqual(expected);
+		expect(parseRunJson<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]))).toEqual(expected);
+	});
+
+	test("tracked-entries skips malformed entries and keeps matching legacy issue projection", () => {
+		const state = {
+			entries: { "CC-404": "not-an-object" },
+			issues: { "CC-404": { pane_id: "%404", pr_number: 404, state: "waiting", worktree: "/repo/trees/CC-404" } },
+		};
+		writeState(bashRepo, state);
+		writeState(tsRepo, state);
+		const expected = readTrackedEntries(state);
+		const warning = 'Warning: invalid .entries value(s) for "CC-404"; skipping.';
+		expect(expected["CC-404"]).toMatchObject({ domain: { issue: { id: "CC-404", pr_number: 404 } }, id: "CC-404", kind: "issue" });
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(false, bashRepo, ["tracked-entries"]), warning)).toEqual(expected);
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]), warning)).toEqual(expected);
 	});
 
 	test("writeTrackedEntry adds entries and projects issue compatibility fields", () => {
@@ -267,6 +304,41 @@ describe("flightdeck-state parity", () => {
 			state: "prompting",
 			worktree: "/repo/trees/CC-202",
 		});
+	});
+
+	test("entry id validation rejects blank ids in helpers and CLI", () => {
+		expect(entryIdForIssue("")).toBeNull();
+		const entry = sampleTrackedEntry();
+		expect(() => writeTrackedEntry({ issues: {} }, " ", { ...entry, id: " " })).toThrow(/invalid entry id/);
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init"]);
+			const blankArg = run(useTs, repo, ["write-entry", " ", JSON.stringify({ ...entry, id: " " })]);
+			expect(blankArg.status).toBe(2);
+			expect(blankArg.stderr).toContain("Error: invalid entry id: must be non-empty and match ^[A-Za-z0-9._-]+$");
+			const blankJsonId = run(useTs, repo, ["write-entry", entry.id, JSON.stringify({ ...entry, id: " " })]);
+			expect(blankJsonId.status).toBe(2);
+			expect(blankJsonId.stderr).toContain("Error: invalid entry.id: must be non-empty and match ^[A-Za-z0-9._-]+$");
+		}
+	});
+
+	test("unknown schema warns on read and refuses write unless override is set", () => {
+		const entry = sampleTrackedEntry();
+		const future = { entries: {}, issues: {}, schema_version: "9.9" };
+		writeState(bashRepo, future);
+		writeState(tsRepo, future);
+		const warning = 'Warning: unknown schema_version "9.9", treating as 1.1 (read-only safe).';
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(false, bashRepo, ["tracked-entries"]), warning)).toEqual({});
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]), warning)).toEqual({});
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const refused = run(useTs, repo, ["write-entry", entry.id, JSON.stringify(entry)]);
+			expect(refused.status).toBe(2);
+			expect(refused.stderr).toContain('Error: unknown schema_version "9.9"; refusing write (set FLIGHTDECK_ALLOW_FUTURE_SCHEMA=1 to override)');
+			const allowed = run(useTs, repo, ["write-entry", entry.id, JSON.stringify(entry)], { FLIGHTDECK_ALLOW_FUTURE_SCHEMA: "1" });
+			expect(allowed.status).toBe(0);
+			expect(allowed.stderr).toBe(`${warning}\n`);
+		}
 	});
 
 	test("write-entry round-trips through tracked-entries", () => {

@@ -298,18 +298,83 @@ def legacy_entry($id; $i): {
   unknown_since: s($i.unknown_since),
   window: s($i.window)
 };
-(.entries // {} | obj) as $entries
-| if ($entries | length) > 0 then
-    ($entries | to_entries | map(select(.value | type == "object") | {key: .key, value: normalized_entry(.key; .value)}) | from_entries)
-  else
-    (.issues // {} | obj | to_entries | map(select(.value | type == "object") | {key: .key, value: legacy_entry(.key; .value)}) | from_entries)
-  end
+(.issues // {} | obj | to_entries | map(select(.value | type == "object") | {key: .key, value: legacy_entry(.key; .value)}) | from_entries) as $issues
+| (.entries // {} | obj | to_entries | map(select(.value | type == "object") | {key: .key, value: normalized_entry(.key; .value)}) | from_entries) as $entries
+| $issues + $entries
 JQ
+}
+
+unknown_schema_value() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  local value
+  value=$(jq -r 'if type == "object" and has("schema_version") and .schema_version != null then (.schema_version | tostring) else "" end' "$file" 2>/dev/null || true)
+  if [[ -n "$value" && "$value" != "$FLIGHTDECK_SCHEMA_VERSION" ]]; then
+    printf '%s' "$value"
+  fi
+}
+
+warn_unknown_schema() {
+  local value="$1"
+  [[ -z "$value" ]] && return 0
+  printf 'Warning: unknown schema_version "%s", treating as 1.1 (read-only safe).\n' "$value" >&2
+}
+
+warn_unknown_schema_from_file() {
+  local value
+  value=$(unknown_schema_value "$FILE")
+  warn_unknown_schema "$value"
+}
+
+assert_writable_schema() {
+  local value
+  value=$(unknown_schema_value "$FILE")
+  [[ -z "$value" ]] && return 0
+  if [[ "${FLIGHTDECK_ALLOW_FUTURE_SCHEMA:-}" == "1" ]]; then
+    warn_unknown_schema "$value"
+    return 0
+  fi
+  printf 'Error: unknown schema_version "%s"; refusing write (set FLIGHTDECK_ALLOW_FUTURE_SCHEMA=1 to override)\n' "$value" >&2
+  exit 2
+}
+
+warn_malformed_entries() {
+  [[ -f "$FILE" ]] || return 0
+  local ids
+  ids=$(jq -r 'if (.entries // null | type) == "object" then [.entries | to_entries[] | select(.value | type != "object") | (.key | @json)] | join(", ") else "" end' "$FILE" 2>/dev/null || true)
+  if [[ -n "$ids" ]]; then
+    printf 'Warning: invalid .entries value(s) for %s; skipping.\n' "$ids" >&2
+  fi
+}
+
+validate_entry_id() {
+  local raw="$1" label="$2"
+  local trimmed
+  trimmed=$(printf '%s' "$raw" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  if [[ ! "$trimmed" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    printf 'Error: invalid %s: must be non-empty and match ^[A-Za-z0-9._-]+$\n' "$label" >&2
+    exit 2
+  fi
+  ENTRY_ID_RESULT="$trimmed"
+}
+
+validate_json_entry_id() {
+  local json="$1"
+  local kind raw
+  kind=$(jq -r '.id | type' <<< "$json")
+  if [[ "$kind" != "string" ]]; then
+    echo 'Error: invalid entry.id: must be a string' >&2
+    exit 2
+  fi
+  raw=$(jq -r '.id' <<< "$json")
+  validate_entry_id "$raw" "entry.id"
 }
 
 write_tracked_entry_filter() {
   local id_json="$1"
   local entry_json="$2"
+  # NOTE: projection jq is intentionally duplicated with the TS sibling for parity;
+  # next size increase here should move it to a shared jq fixture/heredoc.
   printf '%s' "($id_json) as \$id | ($entry_json) as \$entry | def s(\$v): if (\$v | type) == \"string\" then \$v else null end; def n(\$v): if (\$v | type) == \"number\" then \$v else null end; def b(\$v): if (\$v | type) == \"boolean\" then \$v else null end; def arr(\$v): if (\$v | type) == \"array\" then \$v else [] end; .entries = ((.entries // {}) + {(\$id): \$entry}) | ((\$entry.domain.issue.id // (if \$entry.kind == \"issue\" then \$entry.id else null end)) as \$issue_id | if \$issue_id == null then . else .issues = ((.issues // {}) + {(\$issue_id): ((.issues[\$issue_id] // {}) + {window: s(\$entry.window), pane_target: s(\$entry.pane_target), pane_id: s(\$entry.pane_id), harness: s(\$entry.harness), launch: (if (\$entry.launch | type) == \"object\" then \$entry.launch else null end), worktree: (s(\$entry.domain.issue.worktree) // s(\$entry.cwd)), pr_number: n(\$entry.domain.issue.pr_number), oc_url: s(\$entry.adapter.oc_url), oc_session_id: s(\$entry.adapter.oc_session_id), oc_port: n(\$entry.adapter.oc_port), cc_url: s(\$entry.adapter.cc_url), cc_session_uuid: s(\$entry.adapter.cc_session_uuid), cc_port: n(\$entry.adapter.cc_port), cc_transcript: s(\$entry.adapter.cc_transcript), pi_bridge_pid: n(\$entry.adapter.pi_bridge_pid), pi_bridge_socket: s(\$entry.adapter.pi_bridge_socket), pi_session_id: s(\$entry.adapter.pi_session_id), cx_ws: s(\$entry.adapter.cx_ws), cx_thread_id: s(\$entry.adapter.cx_thread_id), state: s(\$entry.state), substate: s(\$entry.substate), unknown_since: s(\$entry.unknown_since), last_capture_hash: s(\$entry.last_capture_hash), last_response_at: s(\$entry.last_response_at), spawned_at: s(\$entry.spawned_at), last_polled_at: s(\$entry.last_polled_at), orchestration_started: b(\$entry.domain.issue.orchestration_started), scope_files_declared: n(\$entry.domain.issue.scope_files_declared), scope_files_actual: n(\$entry.domain.issue.scope_files_actual), decisions_log: arr(\$entry.decisions_log), merge_commit: (s(\$entry.merge_commit) // s(\$entry.domain.issue.merge_commit))})}) end)"
 }
 
@@ -339,6 +404,7 @@ case "$ACTION" in
 
   init)
     gc_tmp_orphans "$FILE"
+    assert_writable_schema
     owner_pid=$(resolve_owner_pid)
     owner_pane_id=$(resolve_owner_pane_id)
     owner_pane_target=$(resolve_owner_pane_target)
@@ -438,11 +504,13 @@ case "$ACTION" in
   get)
     [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: get <jq-path>" >&2; exit 2; }
     [[ ! -f "$FILE" ]] && exit 1
+    warn_unknown_schema_from_file
     jq -r "${ARGS[0]}" "$FILE"
     ;;
 
   set)
     [[ ${#ARGS[@]} -lt 2 ]] && { echo "Usage: set <field> <json-value>" >&2; exit 2; }
+    assert_writable_schema
     field=$(normalize_path "${ARGS[0]}")
     value="${ARGS[1]}"
     update_state "$FILE" "$field = ($value)"
@@ -450,6 +518,7 @@ case "$ACTION" in
 
   append)
     [[ ${#ARGS[@]} -lt 2 ]] && { echo "Usage: append <field> <json-value>" >&2; exit 2; }
+    assert_writable_schema
     field=$(normalize_path "${ARGS[0]}")
     value="${ARGS[1]}"
     update_state "$FILE" "$field += [($value)]"
@@ -457,19 +526,30 @@ case "$ACTION" in
 
   increment)
     [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: increment <field>" >&2; exit 2; }
+    assert_writable_schema
     field=$(normalize_path "${ARGS[0]}")
     update_state "$FILE" "$field = (($field // 0) + 1)"
     ;;
 
   tracked-entries)
     [[ ! -f "$FILE" ]] && exit 1
+    warn_unknown_schema_from_file
+    warn_malformed_entries
     jq -c "$(tracked_entries_filter)" "$FILE"
     ;;
 
   write-entry)
     [[ ${#ARGS[@]} -lt 2 ]] && { echo "Usage: write-entry <ENTRY_ID> <json-entry>" >&2; exit 2; }
-    entry_id="${ARGS[0]}"
+    assert_writable_schema
+    validate_entry_id "${ARGS[0]}" "entry id"
+    entry_id="$ENTRY_ID_RESULT"
     entry_json=$(jq -c . <<< "${ARGS[1]}") || { echo "Error: invalid json-entry" >&2; exit 2; }
+    validate_json_entry_id "$entry_json"
+    json_entry_id="$ENTRY_ID_RESULT"
+    if [[ "$json_entry_id" != "$entry_id" ]]; then
+      printf 'Error: invalid entry.id: must match entry id %s\n' "$entry_id" >&2
+      exit 2
+    fi
     entry_id_json=$(jq -Rn --arg v "$entry_id" '$v')
     update_state "$FILE" "$(write_tracked_entry_filter "$entry_id_json" "$entry_json")"
     ;;
@@ -516,6 +596,7 @@ case "$ACTION" in
     ;;
 
   archive)
+    assert_writable_schema
     [[ ! -f "$FILE" ]] && exit 0
     ts=$(jq -r '.terminated_at // empty' "$FILE" 2>/dev/null)
     [[ -z "$ts" ]] && ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

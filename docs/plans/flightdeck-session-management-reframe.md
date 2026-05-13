@@ -22,7 +22,7 @@ Merged baseline on `origin/main` now includes the following relevant work:
 
 ### In `fd-reframe-p1`
 
-- **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, and issue compatibility projection back to `.issues`, with bash/TS parity coverage.
+- **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, issue compatibility projection back to `.issues`, `.issues`-under-`.entries` merge semantics, schema/id guards, and bash/TS parity coverage.
 
 ### Partially delivered
 
@@ -188,9 +188,9 @@ Purpose: introduce generic entries without breaking issue workflows.
 Status (2026-05-13): **DONE in `fd-reframe-p1`**. PR #23 / commit `1fbed75` delivered the Pi render-side normalization seam; this phase adds the core state helpers, `schema_version: 1.1`, additive `.entries`, compatibility projection back to `.issues`, and bash/TS parity coverage.
 
 1. **[DONE]** Add state normalization helpers in `skills/flightdeck/lib/flightdeck-core/src/state/`:
-   - **[DONE]** `readTrackedEntries(state)` reads `.entries` if present and non-empty, else maps `.issues` to `TrackedEntry` records.
+   - **[DONE]** `readTrackedEntries(state)` projects `.issues` to `TrackedEntry` records, then overlays valid `.entries` records by id so entries are authoritative without hiding legacy issue-only writes.
    - **[DONE]** `writeTrackedEntry(...)` writes `.entries[id]` and projects `kind: "issue"` entries to `.issues[issueId]` for compatibility.
-   - **[DONE]** `entryIdForIssue(issueId)` and `issueIdForEntry(entry)` helpers.
+   - **[DONE]** `entryIdForIssue(issueId)` and `issueIdForEntry(entry)` helpers, with blank/invalid entry ids rejected on writes.
    - **[DONE]** Core helper mirrors the pi-flightdeck render seam contract instead of reintroducing direct renderer/core `.issues` reads; pi-flightdeck remains read-only and package-local.
 2. **[DONE]** Add `schema_version` and `owner` to `flightdeck-state init`. `owner` was delivered additively in PR #25; `schema_version: 1.1` and `.entries: {}` are now backfilled additively by init.
 3. **[DONE]** Keep existing `.issues`, `.merge_queue`, `.conflict_graph` in v1 compatibility path.
@@ -198,7 +198,7 @@ Status (2026-05-13): **DONE in `fd-reframe-p1`**. PR #23 / commit `1fbed75` deli
    - **[DONE]** v1 `.issues` read compatibility in the core state helpers.
    - **[DONE]** v2 `.entries` read path.
    - **[DONE]** dual-write/projection behavior.
-   - **[DONE]** bash/TS parity for `tracked-entries` plus `write-entry` round trip. Archive/stale-state parsing remains covered by PR #23's pi-flightdeck tests and existing `flightdeck-state archive` parity coverage.
+   - **[DONE]** bash/TS parity for `tracked-entries` plus `write-entry` round trip, including v2-only entries, mixed `.issues`/`.entries`, malformed entry warnings, unknown schema guard, and id validation. Archive/stale-state parsing remains covered by PR #23's pi-flightdeck tests and existing `flightdeck-state archive` parity coverage.
 
 Validation:
 

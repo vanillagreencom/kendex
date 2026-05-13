@@ -16,7 +16,12 @@ import {
 	updateState,
 } from "../state/master-state.ts";
 import { resolveProjectRoot } from "../shared/project.ts";
-import { readTrackedEntries } from "../state/tracked-entry.ts";
+import {
+	assertWritableSchemaVersion,
+	readTrackedEntries,
+	unknownSchemaWarning,
+	validateEntryId,
+} from "../state/tracked-entry.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
 import {
 	fdBusyFile,
@@ -57,46 +62,63 @@ switch (action) {
 		break;
 	}
 	case "init": {
+		assertWritableSchemaFromFile();
 		initState(file);
 		break;
 	}
 	case "get": {
 		if (rest.length < 1) die("Usage: get <jq-path>");
 		if (!existsSync(file)) process.exit(1);
+		warnUnknownSchemaFromFile();
 		process.stdout.write(getField(file, rest[0]!));
 		break;
 	}
 	case "set": {
 		if (rest.length < 2) die("Usage: set <field> <json-value>");
+		assertWritableSchemaFromFile();
 		const field = normalizePath(rest[0]!);
 		updateState(file, `${field} = (${rest[1]})`);
 		break;
 	}
 	case "append": {
 		if (rest.length < 2) die("Usage: append <field> <json-value>");
+		assertWritableSchemaFromFile();
 		const field = normalizePath(rest[0]!);
 		updateState(file, `${field} += [(${rest[1]})]`);
 		break;
 	}
 	case "increment": {
 		if (rest.length < 1) die("Usage: increment <field>");
+		assertWritableSchemaFromFile();
 		const field = normalizePath(rest[0]!);
 		updateState(file, `${field} = ((${field} // 0) + 1)`);
 		break;
 	}
 	case "tracked-entries": {
 		if (!existsSync(file)) process.exit(1);
-		const state = JSON.parse(readFileSync(file, "utf8")) as FlightdeckStateLike;
-		process.stdout.write(`${JSON.stringify(readTrackedEntries(state))}\n`);
+		const state = readStateJson();
+		warnUnknownSchema(state);
+		process.stdout.write(`${JSON.stringify(readTrackedEntries(state, { warn: warnLine }))}\n`);
 		break;
 	}
 	case "write-entry": {
 		if (rest.length < 2) die("Usage: write-entry <ENTRY_ID> <json-entry>");
-		const entry = JSON.parse(rest[1]!) as TrackedEntry;
-		updateState(file, writeTrackedEntryFilter(rest[0]!, entry));
+		assertWritableSchemaFromFile();
+		let entry: TrackedEntry;
+		try {
+			entry = JSON.parse(rest[1]!) as TrackedEntry;
+		} catch {
+			die("Error: invalid json-entry");
+		}
+		const entryId = validateEntryIdOrDie(rest[0]!, "entry id");
+		const jsonEntryId = validateEntryIdOrDie(entry.id, "entry.id");
+		if (jsonEntryId !== entryId) die(`Error: invalid entry.id: must match entry id ${entryId}`);
+		entry.id = jsonEntryId;
+		updateState(file, writeTrackedEntryFilter(entryId, entry));
 		break;
 	}
 	case "archive": {
+		assertWritableSchemaFromFile();
 		const ap = archiveState(file);
 		if (ap) process.stdout.write(`${ap}\n`);
 		break;
@@ -118,7 +140,61 @@ switch (action) {
 function writeTrackedEntryFilter(id: string, entry: TrackedEntry): string {
 	const idJson = JSON.stringify(id);
 	const entryJson = JSON.stringify(entry);
+	// NOTE: projection jq is intentionally duplicated with the bash sibling for parity;
+	// next size increase here should move it to a shared jq fixture/heredoc.
 	return `(${idJson}) as $id | (${entryJson}) as $entry | def s($v): if ($v | type) == "string" then $v else null end; def n($v): if ($v | type) == "number" then $v else null end; def b($v): if ($v | type) == "boolean" then $v else null end; def arr($v): if ($v | type) == "array" then $v else [] end; .entries = ((.entries // {}) + {($id): $entry}) | (($entry.domain.issue.id // (if $entry.kind == "issue" then $entry.id else null end)) as $issue_id | if $issue_id == null then . else .issues = ((.issues // {}) + {($issue_id): ((.issues[$issue_id] // {}) + {window: s($entry.window), pane_target: s($entry.pane_target), pane_id: s($entry.pane_id), harness: s($entry.harness), launch: (if ($entry.launch | type) == "object" then $entry.launch else null end), worktree: (s($entry.domain.issue.worktree) // s($entry.cwd)), pr_number: n($entry.domain.issue.pr_number), oc_url: s($entry.adapter.oc_url), oc_session_id: s($entry.adapter.oc_session_id), oc_port: n($entry.adapter.oc_port), cc_url: s($entry.adapter.cc_url), cc_session_uuid: s($entry.adapter.cc_session_uuid), cc_port: n($entry.adapter.cc_port), cc_transcript: s($entry.adapter.cc_transcript), pi_bridge_pid: n($entry.adapter.pi_bridge_pid), pi_bridge_socket: s($entry.adapter.pi_bridge_socket), pi_session_id: s($entry.adapter.pi_session_id), cx_ws: s($entry.adapter.cx_ws), cx_thread_id: s($entry.adapter.cx_thread_id), state: s($entry.state), substate: s($entry.substate), unknown_since: s($entry.unknown_since), last_capture_hash: s($entry.last_capture_hash), last_response_at: s($entry.last_response_at), spawned_at: s($entry.spawned_at), last_polled_at: s($entry.last_polled_at), orchestration_started: b($entry.domain.issue.orchestration_started), scope_files_declared: n($entry.domain.issue.scope_files_declared), scope_files_actual: n($entry.domain.issue.scope_files_actual), decisions_log: arr($entry.decisions_log), merge_commit: (s($entry.merge_commit) // s($entry.domain.issue.merge_commit))})}) end)`;
+}
+
+function readStateJson(): FlightdeckStateLike {
+	return JSON.parse(readFileSync(file, "utf8")) as FlightdeckStateLike;
+}
+
+function tryReadStateJson(): FlightdeckStateLike | undefined {
+	try {
+		return readStateJson();
+	} catch {
+		// Preserve legacy jq-driven error semantics for corrupt files: callers
+		// like pane-registry distinguish read failure from not-found by jq's exit
+		// status, so schema preflight must not collapse malformed JSON to exit 1.
+		return undefined;
+	}
+}
+
+function warnLine(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
+function warnUnknownSchema(state: FlightdeckStateLike): void {
+	const warning = unknownSchemaWarning(state);
+	if (warning) warnLine(warning);
+}
+
+function warnUnknownSchemaFromFile(): void {
+	if (!existsSync(file)) return;
+	const state = tryReadStateJson();
+	if (state) warnUnknownSchema(state);
+}
+
+function assertWritableSchemaFromFile(): void {
+	if (!existsSync(file)) return;
+	const state = tryReadStateJson();
+	if (!state) return;
+	const warning = unknownSchemaWarning(state);
+	const allowFuture = process.env.FLIGHTDECK_ALLOW_FUTURE_SCHEMA === "1";
+	if (warning && allowFuture) warnLine(warning);
+	try {
+		assertWritableSchemaVersion(state, allowFuture);
+	} catch (error) {
+		die(`Error: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+function validateEntryIdOrDie(value: unknown, label: string): string {
+	try {
+		return validateEntryId(value, label);
+	} catch (error) {
+		die(`Error: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 function runPhase(issue: string): void {

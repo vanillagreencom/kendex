@@ -6,17 +6,40 @@ import type {
 	TrackedEntryLaunch,
 } from "./types.ts";
 
+export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const SUPPORTED_SCHEMA_VERSION = "1.1";
+
+export interface ReadTrackedEntriesOptions {
+	warn?: (message: string) => void;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function recordMap(value: unknown): Record<string, Record<string, unknown>> {
+function issueRecordMap(value: unknown): Record<string, Record<string, unknown>> {
 	if (!isRecord(value)) return {};
 	const out: Record<string, Record<string, unknown>> = {};
 	for (const [key, raw] of Object.entries(value)) {
 		if (isRecord(raw)) out[key] = raw;
 	}
 	return out;
+}
+
+function entryRecordMap(value: unknown, warn?: (message: string) => void): Record<string, Record<string, unknown>> {
+	if (!isRecord(value)) return {};
+	const out: Record<string, Record<string, unknown>> = {};
+	const invalid: string[] = [];
+	for (const [key, raw] of Object.entries(value)) {
+		if (isRecord(raw)) out[key] = raw;
+		else invalid.push(key);
+	}
+	if (invalid.length > 0) warn?.(invalidEntriesWarning(invalid));
+	return out;
+}
+
+function invalidEntriesWarning(ids: string[]): string {
+	return `Warning: invalid .entries value(s) for ${ids.map((id) => JSON.stringify(id)).join(", ")}; skipping.`;
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -39,13 +62,32 @@ function decisionsLogOrEmpty(value: unknown): TrackedEntry["decisions_log"] {
 	return Array.isArray(value) ? value as TrackedEntry["decisions_log"] : [];
 }
 
-function normalizeEntry(id: string, raw: Record<string, unknown>): TrackedEntry {
-	const entryId = typeof raw.id === "string" && raw.id.trim() ? raw.id : id;
+export function validateEntryId(value: unknown, label = "entry id"): string {
+	if (typeof value !== "string") throw new Error(`invalid ${label}: must be a string`);
+	const trimmed = value.trim();
+	if (!trimmed || !ENTRY_ID_PATTERN.test(trimmed)) throw new Error(`invalid ${label}: must be non-empty and match ${ENTRY_ID_PATTERN.source}`);
+	return trimmed;
+}
+
+function normalizeEntry(id: string, raw: Record<string, unknown>, opts: { strict?: boolean } = {}): TrackedEntry {
+	const keyId = opts.strict ? validateEntryId(id, "entry id") : (validateEntryIdOrNull(id) ?? id);
+	const rawId = typeof raw.id === "string" ? validateEntryIdOrNull(raw.id) : null;
+	const entryId = rawId ?? keyId;
 	const kind = typeof raw.kind === "string" && raw.kind.trim() ? raw.kind : "issue";
 	return { ...raw, id: entryId, kind } as TrackedEntry;
 }
 
-function entryFromLegacyIssue(issueId: string, raw: Record<string, unknown>): TrackedEntry {
+function validateEntryIdOrNull(value: unknown): string | null {
+	try {
+		return validateEntryId(value);
+	} catch {
+		return null;
+	}
+}
+
+function entryFromLegacyIssue(issueId: string, raw: Record<string, unknown>): TrackedEntry | null {
+	const entryId = entryIdForIssue(issueId);
+	if (!entryId) return null;
 	const issue = raw as LegacyIssueRecord;
 	const adapter: TrackedEntryAdapter = {
 		cc_port: numberOrNull(issue.cc_port),
@@ -77,7 +119,7 @@ function entryFromLegacyIssue(issueId: string, raw: Record<string, unknown>): Tr
 			},
 		},
 		harness: stringOrNull(issue.harness),
-		id: entryIdForIssue(issueId),
+		id: entryId,
 		kind: "issue",
 		last_capture_hash: stringOrNull(issue.last_capture_hash),
 		last_polled_at: stringOrNull(issue.last_polled_at),
@@ -95,26 +137,28 @@ function entryFromLegacyIssue(issueId: string, raw: Record<string, unknown>): Tr
 	};
 }
 
-export function readTrackedEntries(state: FlightdeckStateLike | undefined | null): Record<string, TrackedEntry> {
+export function readTrackedEntries(state: FlightdeckStateLike | undefined | null, options: ReadTrackedEntriesOptions = {}): Record<string, TrackedEntry> {
 	if (!state || typeof state !== "object") return {};
-	const entries = recordMap(state.entries);
-	if (Object.keys(entries).length > 0) {
-		const out: Record<string, TrackedEntry> = {};
-		for (const [id, raw] of Object.entries(entries)) out[id] = normalizeEntry(id, raw);
-		return out;
-	}
-	const issues = recordMap(state.issues);
 	const out: Record<string, TrackedEntry> = {};
-	for (const [issueId, raw] of Object.entries(issues)) out[entryIdForIssue(issueId)] = entryFromLegacyIssue(issueId, raw);
+	const issues = issueRecordMap(state.issues);
+	for (const [issueId, raw] of Object.entries(issues)) {
+		const projected = entryFromLegacyIssue(issueId, raw);
+		if (projected) out[projected.id] = projected;
+	}
+	const entries = entryRecordMap(state.entries, options.warn);
+	for (const [id, raw] of Object.entries(entries)) out[id] = normalizeEntry(id, raw);
 	return out;
 }
 
 export function writeTrackedEntry<T extends FlightdeckStateLike>(state: T, id: string, entry: TrackedEntry): T {
 	const target = state as FlightdeckStateLike;
+	const validId = validateEntryId(id, "entry id");
+	const entryId = validateEntryId(entry.id, "entry.id");
+	if (entryId !== validId) throw new Error(`invalid entry.id: must match entry id ${validId}`);
 	if (!isRecord(target.entries)) target.entries = {};
 	const entries = target.entries as Record<string, TrackedEntry>;
-	const normalized = normalizeEntry(id, entry as unknown as Record<string, unknown>);
-	entries[id] = normalized;
+	const normalized = normalizeEntry(validId, entry as unknown as Record<string, unknown>, { strict: true });
+	entries[validId] = normalized;
 
 	const issueId = issueIdForEntry(normalized);
 	if (issueId) {
@@ -128,8 +172,8 @@ export function writeTrackedEntry<T extends FlightdeckStateLike>(state: T, id: s
 	return state;
 }
 
-export function entryIdForIssue(issueId: string): string {
-	return issueId;
+export function entryIdForIssue(issueId: string): string | null {
+	return validateEntryIdOrNull(issueId);
 }
 
 export function issueIdForEntry(entry: Pick<TrackedEntry, "id" | "kind" | "domain">): string | undefined {
@@ -174,4 +218,19 @@ export function legacyIssueProjection(entry: TrackedEntry, issueId = issueIdForE
 		window: stringOrNull(entry.window),
 		worktree: stringOrNull(issue?.worktree) ?? stringOrNull(entry.cwd),
 	};
+}
+
+export function unknownSchemaWarning(state: FlightdeckStateLike | undefined | null): string | undefined {
+	if (!state || typeof state !== "object") return undefined;
+	if (!("schema_version" in state) || state.schema_version === null || state.schema_version === undefined) return undefined;
+	const raw = String(state.schema_version);
+	if (raw === SUPPORTED_SCHEMA_VERSION) return undefined;
+	return `Warning: unknown schema_version ${JSON.stringify(raw)}, treating as 1.1 (read-only safe).`;
+}
+
+export function assertWritableSchemaVersion(state: FlightdeckStateLike | undefined | null, allowFuture = false): void {
+	const warning = unknownSchemaWarning(state);
+	if (!warning || allowFuture) return;
+	const version = state && typeof state === "object" && state.schema_version !== undefined ? String(state.schema_version) : "unknown";
+	throw new Error(`unknown schema_version ${JSON.stringify(version)}; refusing write (set FLIGHTDECK_ALLOW_FUTURE_SCHEMA=1 to override)`);
 }
