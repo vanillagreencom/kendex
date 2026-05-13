@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { parseOutputMatcher } from "./format.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "./types.js";
+import { normalizeNotifyMode } from "./wake-events.js";
 
 const liveSnapshots = new Map<string, BackgroundTaskSnapshot>();
 
@@ -19,7 +20,17 @@ export function taskSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
 		notifyOnExit: task.notifyOnExit,
 		notifyOnOutput: task.notifyOnOutput,
 		notifyPattern: task.notifyPattern,
+		notifyMode: normalizeNotifyMode(task.notifyMode),
+		dedupeKey: task.dedupeKey,
 		outputBytes: task.outputBytes,
+		wakeSequence: task.wakeSequence ?? 0,
+		wakeEvents: task.wakeEvents ?? [],
+		voidedWakeSequences: task.voidedWakes instanceof Set
+			? [...task.voidedWakes].sort((a, b) => a - b)
+			: (task.voidedWakeSequences ?? []),
+		pendingWakes: task.pendingWakes ?? [],
+		lastOutputDedupeHash: task.lastOutputDedupeHash,
+		outputPatternMatched: task.outputPatternMatched === true,
 		pid: task.pid,
 		procIdent: task.procIdent,
 		sessionId: task.sessionId,
@@ -217,12 +228,20 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 		exitNotified,
 		forceKillTimer: null,
 		lastAnnouncedLength: snapshot.outputBytes,
+		lastOutputDedupeHash: snapshot.lastOutputDedupeHash,
 		matcher: parseOutputMatcher(snapshot.notifyPattern),
+		notifyMode: normalizeNotifyMode(snapshot.notifyMode),
 		output: "",
+		outputPatternMatched: snapshot.outputPatternMatched === true,
 		outputTimer: null,
+		pendingWakes: [],
 		status: pidStillAlive ? "running" : (wasRunning ? "stopped" : snapshot.status),
 		stopReason: pidStillAlive ? null : (coercedFromRunning ? "shutdown" : null),
 		timeoutTimer: null,
+		voidedWakeSequences: snapshot.voidedWakeSequences ?? [],
+		voidedWakes: new Set(snapshot.voidedWakeSequences ?? []),
+		wakeEvents: snapshot.wakeEvents ?? [],
+		wakeSequence: snapshot.wakeSequence ?? 0,
 		restored: true,
 		updatedAt: coercedFromRunning ? now : snapshot.updatedAt,
 		sessionId: options.sessionId ?? snapshot.sessionId,

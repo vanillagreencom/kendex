@@ -132,7 +132,7 @@ export function bashBackgroundAckText(task: BackgroundTaskSnapshot, decision: Ba
 		`Command: ${task.command}`,
 		`Cwd: ${task.cwd}`,
 		`Log: ${task.logFile}`,
-		`Wakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"}`,
+		`Wakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"}, mode=${task.notifyMode ?? "always"}${task.dedupeKey ? `, dedupeKey=${task.dedupeKey}` : ""}`,
 		"Continue the turn without waiting. Use bg_task list/log/stop to inspect or terminate this task.",
 	].join("\n");
 }

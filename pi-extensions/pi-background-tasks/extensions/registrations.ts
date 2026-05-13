@@ -20,6 +20,7 @@ import { openDashboard, type DashboardDeps } from "./dashboard.js";
 import { formatRelativeTime, formatTaskLog, summarizeTaskStatus, taskLogTruncation } from "./format.js";
 import { makeToolResult, renderBgToolResult, renderEmpty } from "./render.js";
 import type { BackgroundTaskSnapshot, ManagedTask, SpawnTaskOptions } from "./types.js";
+import { NOTIFY_MODES } from "./wake-events.js";
 
 export interface RegistrationDeps {
 	getActiveCtx: () => ExtensionContext | null;
@@ -101,6 +102,10 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			notifyOnExit: Type.Optional(Type.Boolean({ description: "Wake the agent when the task exits. Defaults to true." })),
 			notifyOnOutput: Type.Optional(Type.Boolean({ description: "Wake the agent when new output arrives. Defaults to false." })),
 			notifyPattern: Type.Optional(Type.String({ description: "Substring or /regex/flags gate for output wakeups." })),
+			notifyMode: Type.Optional(StringEnum(NOTIFY_MODES, {
+				description: "Output wake mode: always=every output update, transition=only changed output tail hash, first-match-only=one notifyPattern match then suppress output wakes.",
+			})),
+			dedupeKey: Type.Optional(Type.String({ description: "Optional key used by notifyMode=transition to coalesce matching output wakes across tasks." })),
 			pid: Type.Optional(Type.Number({ description: "PID for action=log or action=stop" })),
 			timeoutSeconds: Type.Optional(Type.Number({ description: "Timeout for spawned tasks. Defaults to 0 (disabled)." })),
 			title: Type.Optional(Type.String({ description: "Optional display label for action=spawn" })),
@@ -120,6 +125,8 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 					notifyOnExit: params.notifyOnExit,
 					notifyOnOutput: params.notifyOnOutput,
 					notifyPattern: params.notifyPattern,
+					notifyMode: params.notifyMode,
+					dedupeKey: params.dedupeKey,
 					timeoutSeconds: params.timeoutSeconds,
 					title: params.title,
 				});
@@ -128,7 +135,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 						task.expiresAt != null ? formatRelativeTime(task.expiresAt) : "none"
 					}\nWakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${
 						task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"
-					}`,
+					}, mode=${task.notifyMode ?? "always"}${task.dedupeKey ? `, dedupeKey=${task.dedupeKey}` : ""}`,
 					{ action: "spawn", task: deps.rememberSnapshot(task) },
 				);
 			}

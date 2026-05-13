@@ -213,7 +213,7 @@ export async function openDashboard(
 						commandHidden = pushDetail(right, "Command", selected.command, detailPaneWidth, commandExpanded ? Number.MAX_SAFE_INTEGER : 4);
 						pushDetail(right, "Cwd", selected.cwd, detailPaneWidth, 2);
 						pushDetail(right, "Log", selected.logFile, detailPaneWidth, 2);
-						pushDetail(right, "Wakeups", `exit=${selected.notifyOnExit ? "yes" : "no"}, output=${selected.notifyOnOutput ? (selected.notifyPattern ?? "yes") : "no"}`, detailPaneWidth, 2);
+						pushDetail(right, "Wakeups", `exit=${selected.notifyOnExit ? "yes" : "no"}, output=${selected.notifyOnOutput ? (selected.notifyPattern ?? "yes") : "no"}, mode=${selected.notifyMode ?? "always"}${selected.dedupeKey ? `, dedupeKey=${selected.dedupeKey}` : ""}`, detailPaneWidth, 2);
 						right.push("", theme.fg("muted", theme.bold("Output")));
 						right.push(...outputLines);
 					}

@@ -72,13 +72,26 @@ import {
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import type {
-	BackgroundTaskEventDetails,
 	BackgroundTaskSnapshot,
 	BackgroundTaskStatus,
 	ManagedTask,
 	SpawnTaskOptions,
 	TaskEventType,
+	WakeDiagnostic,
+	WakeDropReason,
+	WakePendingRecord,
 } from "./types.js";
+import {
+	canEmitOutputWake,
+	ensureWakeState,
+	forgetPendingWake,
+	normalizeNotifyMode,
+	recordWakeEvent,
+	scheduleTaskWake,
+	sendTaskWake,
+	shouldEmitOutputWake,
+	voidPendingTaskWakes,
+} from "./wake-events.js";
 
 /**
  * Clamp the rendered line count of an aboveEditor widget so it can never push
@@ -113,6 +126,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	let taskCounter = 0;
 	let shuttingDown = false;
 	const tasks = new Map<string, ManagedTask>();
+	const outputDedupeHashes = new Map<string, string>();
 
 	const numericTaskId = (id: string): number => {
 		const match = id.match(/^bg-(\d+)$/);
@@ -196,6 +210,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		if (task.outputTimer) clearTimeout(task.outputTimer);
 		if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
 		if (task.forceKillTimer) clearTimeout(task.forceKillTimer);
+		for (const pending of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
+			forgetPendingWake(task, pending.sequence);
+		}
 		task.outputTimer = null;
 		task.timeoutTimer = null;
 		task.forceKillTimer = null;
@@ -281,55 +298,126 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		requestWidgetRender?.();
 	};
 
+	const logWakeDiagnostic = (diagnostic: WakeDiagnostic) => {
+		process.stderr.write(`[pi-background-tasks] wake diagnostic ${JSON.stringify(diagnostic)}\n`);
+	};
+
+	const recordScheduledOutputDrop = (
+		task: ManagedTask,
+		pending: WakePendingRecord,
+		reason: WakeDropReason,
+		extra: Partial<WakeDiagnostic> = {},
+	) => {
+		forgetPendingWake(task, pending.sequence);
+		recordWakeEvent(task, {
+			deliveredAt: null,
+			droppedReason: reason,
+			eventAt: pending.eventAt,
+			eventType: "output",
+			sequence: pending.sequence,
+			taskStatusAtEmit: task.status,
+		});
+		logWakeDiagnostic({
+			eventAt: pending.eventAt,
+			eventType: "output",
+			reason,
+			sequence: pending.sequence,
+			taskId: task.id,
+			taskStatus: task.status,
+			timestamp: Date.now(),
+			...extra,
+		});
+		rememberSnapshot(task);
+		persistSnapshots();
+	};
+
 	const sendTaskEvent = (
 		eventType: TaskEventType,
 		task: ManagedTask,
-		options: { matchedPattern?: string; newOutputTail?: string } = {},
+		options: { eventAt?: number; matchedPattern?: string; newOutputTail?: string; sequence?: number } = {},
 	): boolean => {
-		if (shuttingDown) return false;
-		if (eventType === "output" && !task.notifyOnOutput) return false;
-		if (eventType === "exit" && !task.notifyOnExit) return false;
-
-		const details: BackgroundTaskEventDetails = {
-			eventAt: Date.now(),
-			eventType,
-			matchedPattern: options.matchedPattern,
-			newOutputTail: options.newOutputTail,
-			outputTail: tailText(getTaskOutput(task), settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
-			task: rememberSnapshot(task),
-		};
-		const headline = eventType === "exit"
-			? `Background task ${task.id} finished.`
-			: `Background task ${task.id} emitted new output.`;
-
-		pi.sendMessage(
-			{
-				content: `${headline}\nCommand: ${task.command}`,
-				customType: BG_MESSAGE_TYPE,
-				details,
-				display: true,
-			},
-			eventType === "exit" ? { deliverAs: "followUp", triggerTurn: true } : { deliverAs: "steer", triggerTurn: true },
-		);
-		return true;
+		const sent = sendTaskWake({
+			isShuttingDown: () => shuttingDown,
+			logDiagnostic: logWakeDiagnostic,
+			messageType: BG_MESSAGE_TYPE,
+			outputTail: (target) => tailText(getTaskOutput(target), settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
+			rememberSnapshot,
+			sendMessage: (message, messageOptions) => pi.sendMessage(message as any, messageOptions as any),
+		}, eventType, task, options);
+		rememberSnapshot(task);
+		persistSnapshots();
+		return sent;
 	};
 
 	const scheduleOutputReaction = (task: ManagedTask) => {
-		if (!task.notifyOnOutput || task.status !== "running") return;
+		ensureWakeState(task);
+		if (!task.notifyOnOutput) return;
+		if (!canEmitOutputWake(task)) {
+			logWakeDiagnostic({
+				eventAt: task.lastOutputAt ?? Date.now(),
+				eventType: "output",
+				reason: "output-after-stop-suppressed",
+				stopReason: task.stopReason ?? undefined,
+				taskId: task.id,
+				taskStatus: task.status,
+				timestamp: Date.now(),
+			});
+			return;
+		}
 		if (task.outputTimer) clearTimeout(task.outputTimer);
+		for (const pending of (task.pendingWakes ?? []).filter((wake) => wake.eventType === "output")) {
+			forgetPendingWake(task, pending.sequence);
+		}
+		const pending = scheduleTaskWake(task, "output", task.lastOutputAt ?? Date.now());
 		task.outputTimer = setTimeout(() => {
 			task.outputTimer = null;
+			if (!canEmitOutputWake(task)) {
+				sendTaskEvent("output", task, { eventAt: pending.eventAt, sequence: pending.sequence });
+				refreshUi();
+				return;
+			}
 			const output = getTaskOutput(task);
 			const unseenOutput = output.slice(task.lastAnnouncedLength);
 			if (!unseenOutput.trim()) {
 				task.lastAnnouncedLength = output.length;
+				recordScheduledOutputDrop(task, pending, "empty-output");
 				return;
 			}
-			if (task.matcher && !(task.matcher(unseenOutput) || task.matcher(output))) return;
+			if (task.matcher && !canEmitOutputWake(task)) {
+				sendTaskEvent("output", task, { eventAt: pending.eventAt, sequence: pending.sequence });
+				refreshUi();
+				return;
+			}
+			const patternMatched = task.matcher ? (task.matcher(unseenOutput) || task.matcher(output)) : true;
+			if (!patternMatched) {
+				recordScheduledOutputDrop(task, pending, "notify-pattern-no-match", { matchedPattern: task.notifyPattern });
+				return;
+			}
+			const newOutputTail = tailText(unseenOutput, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd));
+			const decisionDiagnostics: WakeDiagnostic[] = [];
+			const shouldEmit = shouldEmitOutputWake(task, {
+				dedupeHashes: outputDedupeHashes,
+				eventAt: pending.eventAt,
+				logDiagnostic: (diagnostic) => decisionDiagnostics.push(diagnostic),
+				newOutput: unseenOutput,
+				newOutputTail,
+				patternMatched,
+				sequence: pending.sequence,
+			});
+			if (!shouldEmit) {
+				const diagnostic = decisionDiagnostics[decisionDiagnostics.length - 1];
+				const reason = (diagnostic?.reason ?? "output-after-stop-suppressed") as WakeDropReason;
+				task.lastAnnouncedLength = output.length;
+				recordScheduledOutputDrop(task, pending, reason, diagnostic ?? {});
+				refreshUi();
+				return;
+			}
 			task.lastAnnouncedLength = output.length;
 			sendTaskEvent("output", task, {
+				eventAt: pending.eventAt,
 				matchedPattern: task.notifyPattern,
-				newOutputTail: tailText(unseenOutput, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
+				newOutputTail,
+				sequence: pending.sequence,
 			});
 			refreshUi();
 		}, settingNumber("outputSettleMs", DEFAULT_OUTPUT_SETTLE_MS, activeCtx?.cwd));
@@ -438,6 +526,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 		task.stopReason = reason;
 		task.updatedAt = Date.now();
+		voidPendingTaskWakes(task, reason === "shutdown" ? "shutdown" : "stop", logWakeDiagnostic);
 		rememberSnapshot(task);
 		if (task.outputTimer) clearTimeout(task.outputTimer);
 		task.outputTimer = null;
@@ -502,8 +591,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			notifyOnExit: options.notifyOnExit ?? true,
 			notifyOnOutput: options.notifyOnOutput ?? false,
 			notifyPattern: options.notifyPattern?.trim() || undefined,
+			notifyMode: normalizeNotifyMode(options.notifyMode),
+			dedupeKey: options.dedupeKey?.trim() || undefined,
 			output: "",
 			outputBytes: 0,
+			wakeSequence: 0,
+			wakeEvents: [],
+			voidedWakeSequences: [],
+			voidedWakes: new Set<number>(),
+			pendingWakes: [],
+			lastOutputDedupeHash: undefined,
+			outputPatternMatched: false,
 			outputTimer: null,
 			pid: spawnedPid,
 			startedAt: now,
@@ -556,6 +654,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		let removed = 0;
 		for (const [id, task] of tasks) {
 			if (task.status === "running") continue;
+			voidPendingTaskWakes(task, "clear", logWakeDiagnostic);
 			clearTaskTimers(task);
 			tasks.delete(id);
 			forgetSnapshot(id);
@@ -648,6 +747,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		for (const task of tasks.values()) {
 			if (task.status === "running") {
 				task.stopReason = "shutdown";
+				voidPendingTaskWakes(task, "shutdown", logWakeDiagnostic);
 				task.status = "stopped";
 				task.updatedAt = Date.now();
 				killTaskProcess(task, "SIGTERM");

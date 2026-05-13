@@ -2,6 +2,51 @@ import type { ChildProcess } from "node:child_process";
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "timed_out";
 export type TaskEventType = "output" | "exit";
+export type NotifyMode = "always" | "transition" | "first-match-only";
+
+export type WakeDropReason =
+	| "empty-output"
+	| "first-match-only-suppressed"
+	| "notify-exit-disabled"
+	| "notify-output-disabled"
+	| "notify-pattern-no-match"
+	| "output-after-stop-suppressed"
+	| "output-transition-dedupe"
+	| "shutting-down"
+	| "voided";
+
+export interface WakeEventRecord {
+	deliveredAt: number | null;
+	droppedReason?: WakeDropReason;
+	eventAt: number;
+	eventType: TaskEventType;
+	sequence: number;
+	taskStatusAtEmit: BackgroundTaskStatus;
+}
+
+export interface WakePendingRecord {
+	eventAt: number;
+	eventType: TaskEventType;
+	sequence: number;
+}
+
+export interface WakeDiagnostic {
+	action?: "stop" | "clear" | "shutdown";
+	dedupeKey?: string;
+	deliveredAt?: number | null;
+	eventAt?: number;
+	eventType?: TaskEventType;
+	matchedPattern?: string;
+	reason:
+		| WakeDropReason
+		| "voided-wake-fired"
+		| "wake-voided";
+	sequence?: number;
+	stopReason?: "user" | "timeout" | "shutdown";
+	taskId: string;
+	taskStatus: BackgroundTaskStatus;
+	timestamp: number;
+}
 
 // Identity tuple used to detect PID reuse on restore/poll. The kernel
 // may recycle a PID for an unrelated process; a bare `kill -0` check
@@ -40,7 +85,15 @@ export interface BackgroundTaskSnapshot {
 	notifyOnExit: boolean;
 	notifyOnOutput: boolean;
 	notifyPattern?: string;
+	notifyMode?: NotifyMode;
+	dedupeKey?: string;
 	outputBytes: number;
+	wakeSequence?: number;
+	wakeEvents?: WakeEventRecord[];
+	voidedWakeSequences?: number[];
+	pendingWakes?: WakePendingRecord[];
+	lastOutputDedupeHash?: string;
+	outputPatternMatched?: boolean;
 	// True after sendTaskEvent('exit') has fired for this task. Persisted so
 	// a session restart can replay missed exit wakeups for tasks that hit
 	// terminal state (notably the running->stopped coercion in
@@ -70,18 +123,22 @@ export type ManagedTask = BackgroundTaskSnapshot & {
 	matcher: ((text: string) => boolean) | null;
 	output: string;
 	outputTimer: ReturnType<typeof setTimeout> | null;
+	voidedWakes: Set<number>;
 	stopReason: "user" | "timeout" | "shutdown" | null;
 	timeoutTimer: ReturnType<typeof setTimeout> | null;
 	restored?: boolean;
 };
 
 export interface BackgroundTaskEventDetails {
+	deliveredAt: number;
 	eventAt: number;
 	eventType: TaskEventType;
 	matchedPattern?: string;
 	newOutputTail?: string;
 	outputTail: string;
+	sequence: number;
 	task: BackgroundTaskSnapshot;
+	taskStatusAtEmit: BackgroundTaskStatus;
 }
 
 export interface BackgroundLogTruncation {
@@ -98,6 +155,8 @@ export interface SpawnTaskOptions {
 	notifyOnExit?: boolean;
 	notifyOnOutput?: boolean;
 	notifyPattern?: string;
+	notifyMode?: NotifyMode;
+	dedupeKey?: string;
 	timeoutSeconds?: number;
 	title?: string;
 }

@@ -196,7 +196,7 @@ export function renderTaskDetails(task: BackgroundTaskSnapshot, theme: Theme, cw
 	lines.push(
 		`${bgTree(theme, "└", cwd)}${theme.fg("muted", "Wakeups")}: exit=${current.notifyOnExit ? "yes" : "no"}, output=${
 			current.notifyOnOutput ? (current.notifyPattern ?? "yes") : "no"
-		}`,
+		}, mode=${current.notifyMode ?? "always"}${current.dedupeKey ? `, dedupeKey=${current.dedupeKey}` : ""}`,
 	);
 	return lines;
 }
