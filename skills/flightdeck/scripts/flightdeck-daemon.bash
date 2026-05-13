@@ -1007,6 +1007,16 @@ clear_bell_for_window() {
 PANE_REGISTRY="$_daemon_script_dir/pane-registry"
 WAKE_EVENTS_LOG=$(oc_wake_events_log "$SESSION_KEY")
 
+pane_registry_find_id() {
+  local target="$1" raw
+  raw=$("$PANE_REGISTRY" find-by-pane "$target" 2>/dev/null || true)
+  if [[ "$raw" == \{* ]]; then
+    jq -r '.id // empty' <<< "$raw" 2>/dev/null || true
+  else
+    printf '%s' "$raw"
+  fi
+}
+
 oc_bell_marker_file() {
   local pane_id="$1"
   printf '%s/oc-bell-%s' "$STATE_DIR" "$(oc_pane_id_safe "$pane_id")"
@@ -1274,7 +1284,7 @@ spawn_cc_subscriber() {
 resolve_cc_meta() {
   local pane_target="$1"
   local issue
-  issue=$("$PANE_REGISTRY" find-by-pane "$pane_target" 2>/dev/null || echo "")
+  issue=$(pane_registry_find_id "$pane_target")
   [[ -z "$issue" ]] && return 1
   local args
   args=$("$PANE_REGISTRY" cc-channel-args "$issue" 2>/dev/null || echo "")
@@ -1472,7 +1482,7 @@ spawn_pi_subscriber() {
 resolve_pi_meta() {
   local pane_target="$1"
   local issue
-  issue=$("$PANE_REGISTRY" find-by-pane "$pane_target" 2>/dev/null || echo "")
+  issue=$(pane_registry_find_id "$pane_target")
   [[ -z "$issue" ]] && return 1
   local args
   args=$("$PANE_REGISTRY" pi-bridge-args "$issue" 2>/dev/null || echo "")
@@ -1572,7 +1582,7 @@ spawn_cx_subscriber() {
 resolve_cx_meta() {
   local pane_target="$1"
   local issue
-  issue=$("$PANE_REGISTRY" find-by-pane "$pane_target" 2>/dev/null || echo "")
+  issue=$(pane_registry_find_id "$pane_target")
   [[ -z "$issue" ]] && return 1
   local args
   args=$("$PANE_REGISTRY" cx-bridge-args "$issue" 2>/dev/null || echo "")
@@ -1687,7 +1697,7 @@ drain_oc_wake_events() {
 resolve_oc_meta() {
   local pane_target="$1"
   local issue
-  issue=$("$PANE_REGISTRY" find-by-pane "$pane_target" 2>/dev/null || echo "")
+  issue=$(pane_registry_find_id "$pane_target")
   [[ -z "$issue" ]] && return 1
   local args
   args=$("$PANE_REGISTRY" oc-attach-args "$issue" 2>/dev/null || echo "")

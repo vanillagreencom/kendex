@@ -97,6 +97,16 @@ source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 # shellcheck source=lib/codex-paths.sh
 source "$SCRIPT_DIR/lib/codex-paths.sh"
 
+pane_registry_find_id() {
+  local target="$1" raw
+  raw=$("$SCRIPT_DIR/pane-registry" find-by-pane "$target" 2>/dev/null || true)
+  if [[ "$raw" == \{* ]]; then
+    jq -r '.id // empty' <<< "$raw" 2>/dev/null || true
+  else
+    printf '%s' "$raw"
+  fi
+}
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
   echo "Usage: pane-respond <pane-target> <payload>|--option N|--keys k1,k2,... [flags]" >&2
@@ -489,7 +499,7 @@ CX_ADAPTER_USED=0
 #   pi-bridge reject --pid <PID> --request-id <id>
 # The request_id disambiguates the pending prompt.
 if [[ "$MODE" == "question" && "$HARNESS" == "opencode" ]]; then
-  oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  oc_issue=$(pane_registry_find_id "$TARGET")
   oc_attach_args=""
   if [[ -n "$oc_issue" ]]; then
     oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
@@ -533,7 +543,7 @@ if [[ "$MODE" == "question" && "$HARNESS" == "opencode" ]]; then
 fi
 
 if [[ "$MODE" == "question" && "$HARNESS" == "pi" ]]; then
-  pi_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  pi_issue=$(pane_registry_find_id "$TARGET")
   pi_args=""
   if [[ -n "$pi_issue" ]]; then
     pi_args=$("$SCRIPT_DIR/pane-registry" pi-bridge-args "$pi_issue" 2>/dev/null || echo "")
@@ -603,7 +613,7 @@ if [[ "$MODE" == "question" && "$HARNESS" == "pi" ]]; then
 fi
 
 if [[ "$HARNESS" == "opencode" && $OC_ADAPTER_USED -eq 0 ]]; then
-  oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  oc_issue=$(pane_registry_find_id "$TARGET")
   oc_attach_args=""
   if [[ -n "$oc_issue" ]]; then
     oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
@@ -646,7 +656,7 @@ fi
 # All non-tmux modes route through the channel; --keys is rejected
 # unless --keys-allow-tmux. Symmetric with the opencode block above.
 if [[ "$HARNESS" == "claude" && $OC_ADAPTER_USED -eq 0 ]]; then
-  cc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  cc_issue=$(pane_registry_find_id "$TARGET")
   cc_args=""
   if [[ -n "$cc_issue" ]]; then
     cc_args=$("$SCRIPT_DIR/pane-registry" cc-channel-args "$cc_issue" 2>/dev/null || echo "")
@@ -703,7 +713,7 @@ fi
 # over the per-process Unix socket. Symmetric with claude/opencode
 # blocks above.
 if [[ "$HARNESS" == "pi" && $OC_ADAPTER_USED -eq 0 && $CC_ADAPTER_USED -eq 0 && $PI_ADAPTER_USED -eq 0 ]]; then
-  pi_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  pi_issue=$(pane_registry_find_id "$TARGET")
   pi_args=""
   if [[ -n "$pi_issue" ]]; then
     pi_args=$("$SCRIPT_DIR/pane-registry" pi-bridge-args "$pi_issue" 2>/dev/null || echo "")
@@ -764,7 +774,7 @@ fi
 # Codex bridge adapter (Phase 4). Routes via the vendored bun
 # codex-bridge over JSON-RPC/WS to the per-session app-server.
 if [[ "$HARNESS" == "codex" && $OC_ADAPTER_USED -eq 0 && $CC_ADAPTER_USED -eq 0 && $PI_ADAPTER_USED -eq 0 ]]; then
-  cx_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  cx_issue=$(pane_registry_find_id "$TARGET")
   cx_args=""
   if [[ -n "$cx_issue" ]]; then
     cx_args=$("$SCRIPT_DIR/pane-registry" cx-bridge-args "$cx_issue" 2>/dev/null || echo "")

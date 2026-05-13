@@ -140,7 +140,14 @@ function registryIssueForPane(issue: string, paneLookup: string): string {
 	if (issue) return issue;
 	const r = spawnSync(PANE_REGISTRY_SCRIPT, ["find-by-pane", paneLookup], { encoding: "utf8" });
 	if (r.status !== 0) return "";
-	return (r.stdout ?? "").trim();
+	const raw = (r.stdout ?? "").trim();
+	if (!raw.startsWith("{")) return raw;
+	try {
+		const parsed = JSON.parse(raw) as { id?: unknown };
+		return typeof parsed.id === "string" ? parsed.id : "";
+	} catch {
+		return "";
+	}
 }
 
 function paneRegistryArgs(action: string, issue: string): string {

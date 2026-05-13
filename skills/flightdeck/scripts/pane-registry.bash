@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Issue↔pane registry CRUD. Wraps flightdeck-state for the .issues map.
+# TrackedEntry↔pane registry CRUD. Wraps flightdeck-state for .entries and
+# dual-writes issue entries to the legacy .issues map.
 #
 # Usage:
+#   pane-registry init-entry <ENTRY_ID> --title <T> --kind adhoc|issue|workflow --cwd <path> --window <N> --harness <h> [--worktree <path>] [--pr <N>]
 #   pane-registry init <ISSUE> --window <name> --harness <h> --worktree <path> [--pane-index <N>] [--pr <N>]
 #                                  [--oc-url <URL> --oc-session-id <ID> [--oc-port <N>]]
 #   pane-registry list [--format json|inner-panes|inner-harnesses]
@@ -16,7 +18,7 @@
 #   pane-registry teardown-window <ISSUE> [--force]      # safely kill the issue's window/pane using stable pane_id
 #   pane-registry teardown-entry <ENTRY_ID> [--force]    # alias for teardown-window (TrackedEntry alignment)
 #   pane-registry oc-attach-args <ISSUE>                # prints '--url U --session S' or empty
-#   pane-registry find-by-pane <pane-target>             # prints issue id matching pane_target
+#   pane-registry find-by-pane <pane-target>             # prints {id,kind} JSON matching pane target/id
 #
 # When --harness is opencode and --oc-url is omitted, init auto-loads from
 # the spawn-discovery file written by open-terminal at oc_spawn_file(<ISSUE>).
@@ -48,178 +50,245 @@ shift
 
 now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
+entry_list_filter() {
+  cat <<'JQ'
+to_entries | map(
+  .value as $e
+  | ($e.adapter // {}) as $a
+  | ($e.domain.issue // {}) as $i
+  | $e + {
+      id: ($e.id // .key),
+      issue: (if ($e.kind // "issue") == "issue" then ($i.id // $e.id // .key) else null end),
+      worktree: ($i.worktree // $e.cwd // null),
+      pr_number: ($i.pr_number // null),
+      oc_url: ($a.oc_url // null),
+      oc_session_id: ($a.oc_session_id // null),
+      oc_port: ($a.oc_port // null),
+      cc_url: ($a.cc_url // null),
+      cc_session_uuid: ($a.cc_session_uuid // null),
+      cc_port: ($a.cc_port // null),
+      cc_transcript: ($a.cc_transcript // null),
+      pi_bridge_pid: ($a.pi_bridge_pid // null),
+      pi_bridge_socket: ($a.pi_bridge_socket // null),
+      pi_session_id: ($a.pi_session_id // null),
+      cx_ws: ($a.cx_ws // null),
+      cx_thread_id: ($a.cx_thread_id // null),
+      orchestration_started: ($i.orchestration_started // null),
+      scope_files_declared: ($i.scope_files_declared // null),
+      scope_files_actual: ($i.scope_files_actual // null)
+    }
+)
+JQ
+}
+
+lookup_id() {
+  local raw="$1"
+  if [[ "$raw" == \{* ]]; then
+    jq -r '.id // empty' <<< "$raw" 2>/dev/null || true
+  else
+    printf '%s' "$raw"
+  fi
+}
+
+read_registry_field() {
+  local raw_id="$1" field="$2" id id_json
+  id=$(lookup_id "$raw_id")
+  [[ -n "$id" ]] || return 1
+  id_json=$(jq -Rn --arg v "$id" '$v')
+  "$FD_STATE" get "(.issues[$id_json].$field // .entries[$id_json].adapter.$field // .entries[$id_json].$field // empty)" 2>/dev/null | tr -d '"'
+}
+
+cmd_init_entry() {
+  local ENTRY_ID="$1" MODE="${2:-entry}"
+  shift 2 || true
+  [[ -n "$ENTRY_ID" ]] || { echo "Usage: pane-registry init-entry <ENTRY_ID> [flags]" >&2; exit 2; }
+
+  DEFAULT_PANE_INDEX="$(tmux show-options -g pane-base-index 2>/dev/null | awk '{print $2}')"
+  DEFAULT_PANE_INDEX="${DEFAULT_PANE_INDEX:-0}"
+  TITLE="$ENTRY_ID"; KIND="adhoc"; CWD=""; WINDOW=""; HARNESS=""; WORKTREE=""; PANE_INDEX="$DEFAULT_PANE_INDEX"; PR=""
+  PANE_ID=""; PANE_TARGET=""; WINDOW_ID=""; WINDOW_INDEX=""
+  OC_URL=""; OC_SESSION_ID=""; OC_PORT=""
+  CC_URL=""; CC_SESSION_UUID=""; CC_PORT=""; CC_TRANSCRIPT=""
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  CX_WS=""; CX_THREAD_ID=""
+  LAUNCH_MODEL=""; LAUNCH_EFFORT=""; LAUNCH_CMD=""
+
+  if [[ "$MODE" == "issue" ]]; then
+    KIND="issue"
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) TITLE="$2"; shift 2 ;;
+      --kind) KIND="$2"; shift 2 ;;
+      --cwd) CWD="$2"; shift 2 ;;
+      --window) WINDOW="$2"; shift 2 ;;
+      --harness) HARNESS="$2"; shift 2 ;;
+      --worktree) WORKTREE="$2"; shift 2 ;;
+      --pane-index) PANE_INDEX="$2"; shift 2 ;;
+      --pane-id) PANE_ID="$2"; shift 2 ;;
+      --pane-target) PANE_TARGET="$2"; shift 2 ;;
+      --window-id) WINDOW_ID="$2"; shift 2 ;;
+      --window-index) WINDOW_INDEX="$2"; shift 2 ;;
+      --pr) PR="$2"; shift 2 ;;
+      --oc-url) OC_URL="$2"; shift 2 ;;
+      --oc-session-id) OC_SESSION_ID="$2"; shift 2 ;;
+      --oc-port) OC_PORT="$2"; shift 2 ;;
+      --cc-url) CC_URL="$2"; shift 2 ;;
+      --cc-session-uuid) CC_SESSION_UUID="$2"; shift 2 ;;
+      --cc-port) CC_PORT="$2"; shift 2 ;;
+      --cc-transcript) CC_TRANSCRIPT="$2"; shift 2 ;;
+      --pi-bridge-pid) PI_BRIDGE_PID="$2"; shift 2 ;;
+      --pi-bridge-socket) PI_BRIDGE_SOCKET="$2"; shift 2 ;;
+      --pi-session-id) PI_SESSION_ID="$2"; shift 2 ;;
+      --cx-ws) CX_WS="$2"; shift 2 ;;
+      --cx-thread-id) CX_THREAD_ID="$2"; shift 2 ;;
+      --launch-model) LAUNCH_MODEL="$2"; shift 2 ;;
+      --launch-effort) LAUNCH_EFFORT="$2"; shift 2 ;;
+      --launch-cmd) LAUNCH_CMD="$2"; shift 2 ;;
+      *) echo "Unknown flag: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  case "$KIND" in adhoc|issue|workflow) ;; *) echo "init-entry requires --kind adhoc|issue|workflow" >&2; exit 2 ;; esac
+  if [[ "$MODE" == "issue" ]]; then
+    [[ -z "$CWD" ]] && CWD="$WORKTREE"
+    [[ -z "$TITLE" ]] && TITLE="$ENTRY_ID"
+    [[ -z "$WORKTREE" ]] && { echo "init requires --window, --harness, --worktree" >&2; exit 2; }
+  fi
+  [[ -z "$WORKTREE" && "$KIND" == "issue" ]] && WORKTREE="$CWD"
+  [[ -z "$CWD" ]] && CWD="$WORKTREE"
+  [[ -z "$TITLE" ]] && TITLE="$ENTRY_ID"
+  [[ -z "$WINDOW" || -z "$HARNESS" || -z "$CWD" ]] && {
+    echo "init-entry requires --title, --kind, --cwd, --window, --harness" >&2; exit 2; }
+
+  # Auto-hydrate bridge metadata from legacy issue-keyed spawn files when
+  # callers do not pass adapter fields explicitly. This preserves init alias
+  # behavior and lets issue-mode init-entry share the same code path.
+  if [[ "$HARNESS" == "opencode" && -z "$OC_URL" ]]; then
+    _spawn_file="$(oc_spawn_file "$ENTRY_ID")"
+    if [[ -f "$_spawn_file" ]]; then
+      OC_URL=$(jq -r '.url // ""' "$_spawn_file" 2>/dev/null || echo "")
+      OC_SESSION_ID=$(jq -r '.session_id // ""' "$_spawn_file" 2>/dev/null || echo "")
+      OC_PORT=$(jq -r '.port // ""' "$_spawn_file" 2>/dev/null || echo "")
+      LAUNCH_MODEL=${LAUNCH_MODEL:-$(jq -r '.launch.model // ""' "$_spawn_file" 2>/dev/null || echo "")}
+      LAUNCH_EFFORT=${LAUNCH_EFFORT:-$(jq -r '.launch.effort // ""' "$_spawn_file" 2>/dev/null || echo "")}
+    fi
+  fi
+  if [[ "$HARNESS" == "claude" && -z "$CC_URL" ]]; then
+    _cc_spawn_file="$(cc_spawn_file "$ENTRY_ID")"
+    if [[ -f "$_cc_spawn_file" ]]; then
+      CC_URL=$(jq -r '.url // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
+      CC_SESSION_UUID=$(jq -r '.session_uuid // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
+      CC_PORT=$(jq -r '.port // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
+      CC_TRANSCRIPT=$(jq -r '.transcript // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
+      LAUNCH_MODEL=${LAUNCH_MODEL:-$(jq -r '.launch.model // ""' "$_cc_spawn_file" 2>/dev/null || echo "")}
+      LAUNCH_EFFORT=${LAUNCH_EFFORT:-$(jq -r '.launch.effort // ""' "$_cc_spawn_file" 2>/dev/null || echo "")}
+    fi
+  fi
+  if [[ "$HARNESS" == "pi" && -z "$PI_BRIDGE_PID" ]]; then
+    _pi_spawn_file="$(pi_spawn_file "$ENTRY_ID")"
+    if [[ -f "$_pi_spawn_file" ]]; then
+      PI_BRIDGE_PID=$(jq -r '.pid // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
+      PI_BRIDGE_SOCKET=$(jq -r '.socket // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
+      PI_SESSION_ID=$(jq -r '.session_id // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
+      LAUNCH_MODEL=${LAUNCH_MODEL:-$(jq -r '.launch.model // ""' "$_pi_spawn_file" 2>/dev/null || echo "")}
+      LAUNCH_EFFORT=${LAUNCH_EFFORT:-$(jq -r '.launch.effort // ""' "$_pi_spawn_file" 2>/dev/null || echo "")}
+    fi
+  fi
+  if [[ "$HARNESS" == "codex" && -z "$CX_WS" ]]; then
+    _cx_spawn_file="$(cx_spawn_file "$ENTRY_ID")"
+    if [[ -f "$_cx_spawn_file" ]]; then
+      CX_WS=$(jq -r '.url // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
+      CX_THREAD_ID=$(jq -r '.thread_id // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
+      LAUNCH_MODEL=${LAUNCH_MODEL:-$(jq -r '.launch.model // ""' "$_cx_spawn_file" 2>/dev/null || echo "")}
+      LAUNCH_EFFORT=${LAUNCH_EFFORT:-$(jq -r '.launch.effort // ""' "$_cx_spawn_file" 2>/dev/null || echo "")}
+    fi
+  fi
+
+  "$FD_STATE" init >/dev/null
+  SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
+  if [[ -z "$PANE_TARGET" ]]; then
+    PANE_TARGET="${SESSION}:${WINDOW}.${PANE_INDEX}"
+  fi
+  if [[ -z "$PANE_ID" ]] && tmux list-panes -t "$PANE_TARGET" >/dev/null 2>&1; then
+    PANE_ID=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_id}' 2>/dev/null || echo "")
+  fi
+
+  entry_obj=$(jq -n \
+    --arg id "$ENTRY_ID" \
+    --arg title "$TITLE" \
+    --arg kind "$KIND" \
+    --arg cwd "$CWD" \
+    --arg window "$WINDOW" \
+    --arg window_id "$WINDOW_ID" \
+    --arg window_index "$WINDOW_INDEX" \
+    --arg pane_target "$PANE_TARGET" \
+    --arg pane_id "$PANE_ID" \
+    --arg harness "$HARNESS" \
+    --arg worktree "$WORKTREE" \
+    --arg pr "$PR" \
+    --arg oc_url "$OC_URL" \
+    --arg oc_session_id "$OC_SESSION_ID" \
+    --arg oc_port "$OC_PORT" \
+    --arg cc_url "$CC_URL" \
+    --arg cc_session_uuid "$CC_SESSION_UUID" \
+    --arg cc_port "$CC_PORT" \
+    --arg cc_transcript "$CC_TRANSCRIPT" \
+    --arg pi_bridge_pid "$PI_BRIDGE_PID" \
+    --arg pi_bridge_socket "$PI_BRIDGE_SOCKET" \
+    --arg pi_session_id "$PI_SESSION_ID" \
+    --arg cx_ws "$CX_WS" \
+    --arg cx_thread_id "$CX_THREAD_ID" \
+    --arg launch_model "$LAUNCH_MODEL" \
+    --arg launch_effort "$LAUNCH_EFFORT" \
+    --arg launch_cmd "$LAUNCH_CMD" \
+    --arg now "$(now)" \
+    'def s($v): if $v == "" then null else $v end;
+     def n($v): if $v == "" then null else ($v | tonumber) end;
+     {
+       id: $id,
+       title: $title,
+       kind: $kind,
+       state: "waiting",
+       substate: null,
+       harness: $harness,
+       cwd: $cwd,
+       window: $window,
+       window_id: s($window_id),
+       window_index: n($window_index),
+       pane_target: s($pane_target),
+       pane_id: s($pane_id),
+       launch: (if $launch_model == "" and $launch_effort == "" and $launch_cmd == "" then null else {model: s($launch_model), effort: s($launch_effort), cmd: s($launch_cmd)} end),
+       adapter: {
+         oc_url: s($oc_url), oc_session_id: s($oc_session_id), oc_port: n($oc_port),
+         cc_url: s($cc_url), cc_session_uuid: s($cc_session_uuid), cc_port: n($cc_port), cc_transcript: s($cc_transcript),
+         pi_bridge_pid: n($pi_bridge_pid), pi_bridge_socket: s($pi_bridge_socket), pi_session_id: s($pi_session_id),
+         cx_ws: s($cx_ws), cx_thread_id: s($cx_thread_id)
+       },
+       domain: (if $kind == "issue" then {issue: {id: $id, worktree: s($worktree), pr_number: n($pr), orchestration_started: false, scope_files_declared: null, scope_files_actual: null}} else null end),
+       last_capture_hash: null,
+       last_response_at: null,
+       spawned_at: $now,
+       last_polled_at: $now,
+       decisions_log: [],
+       unknown_since: null
+     }')
+
+  "$FD_STATE" write-entry "$ENTRY_ID" "$entry_obj"
+}
+
 case "$ACTION" in
   init)
     ISSUE="${1:-}"; shift || true
     [[ -z "$ISSUE" ]] && { echo "Usage: pane-registry init <ISSUE> [flags]" >&2; exit 2; }
-
-    # Default pane index follows tmux's pane-base-index (commonly 0; some
-    # configs set 1). Fingerprinting in the watch loop still resolves the
-    # actual orchestrator pane when a TUI lays out differently — this just
-    # avoids a wasted round-trip when the default-index is correct.
-    DEFAULT_PANE_INDEX="$(tmux show-options -g pane-base-index 2>/dev/null | awk '{print $2}')"
-    DEFAULT_PANE_INDEX="${DEFAULT_PANE_INDEX:-0}"
-    WINDOW=""; HARNESS=""; WORKTREE=""; PANE_INDEX="$DEFAULT_PANE_INDEX"; PR=""
-    OC_URL=""; OC_SESSION_ID=""; OC_PORT=""
-    CC_URL=""; CC_SESSION_UUID=""; CC_PORT=""; CC_TRANSCRIPT=""
-    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
-    CX_WS=""; CX_THREAD_ID=""
-    LAUNCH_MODEL=""; LAUNCH_EFFORT=""
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --window) WINDOW="$2"; shift 2 ;;
-        --harness) HARNESS="$2"; shift 2 ;;
-        --worktree) WORKTREE="$2"; shift 2 ;;
-        --pane-index) PANE_INDEX="$2"; shift 2 ;;
-        --pr) PR="$2"; shift 2 ;;
-        --oc-url) OC_URL="$2"; shift 2 ;;
-        --oc-session-id) OC_SESSION_ID="$2"; shift 2 ;;
-        --oc-port) OC_PORT="$2"; shift 2 ;;
-        --cc-url) CC_URL="$2"; shift 2 ;;
-        --cc-session-uuid) CC_SESSION_UUID="$2"; shift 2 ;;
-        --cc-port) CC_PORT="$2"; shift 2 ;;
-        --cc-transcript) CC_TRANSCRIPT="$2"; shift 2 ;;
-        --pi-bridge-pid) PI_BRIDGE_PID="$2"; shift 2 ;;
-        --pi-bridge-socket) PI_BRIDGE_SOCKET="$2"; shift 2 ;;
-        --pi-session-id) PI_SESSION_ID="$2"; shift 2 ;;
-        --cx-ws) CX_WS="$2"; shift 2 ;;
-        --cx-thread-id) CX_THREAD_ID="$2"; shift 2 ;;
-        *) echo "Unknown flag: $1" >&2; exit 2 ;;
-      esac
-    done
-    [[ -z "$WINDOW" || -z "$HARNESS" || -z "$WORKTREE" ]] && {
-      echo "init requires --window, --harness, --worktree" >&2; exit 2; }
-
-    # Auto-hydrate opencode bridge metadata from the spawn-discovery file
-    # written by open-terminal, when caller didn't pass it explicitly.
-    if [[ "$HARNESS" == "opencode" && -z "$OC_URL" ]]; then
-      _spawn_file="$(oc_spawn_file "$ISSUE")"
-      if [[ -f "$_spawn_file" ]]; then
-        OC_URL=$(jq -r '.url // ""' "$_spawn_file" 2>/dev/null || echo "")
-        OC_SESSION_ID=$(jq -r '.session_id // ""' "$_spawn_file" 2>/dev/null || echo "")
-        OC_PORT=$(jq -r '.port // ""' "$_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_MODEL=$(jq -r '.launch.model // ""' "$_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_EFFORT=$(jq -r '.launch.effort // ""' "$_spawn_file" 2>/dev/null || echo "")
-      fi
-    fi
-    # Auto-hydrate claude channel metadata.
-    if [[ "$HARNESS" == "claude" && -z "$CC_URL" ]]; then
-      _cc_spawn_file="$(cc_spawn_file "$ISSUE")"
-      if [[ -f "$_cc_spawn_file" ]]; then
-        CC_URL=$(jq -r '.url // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-        CC_SESSION_UUID=$(jq -r '.session_uuid // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-        CC_PORT=$(jq -r '.port // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-        CC_TRANSCRIPT=$(jq -r '.transcript // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_MODEL=$(jq -r '.launch.model // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_EFFORT=$(jq -r '.launch.effort // ""' "$_cc_spawn_file" 2>/dev/null || echo "")
-      fi
-    fi
-    # Auto-hydrate pi bridge metadata.
-    if [[ "$HARNESS" == "pi" && -z "$PI_BRIDGE_PID" ]]; then
-      _pi_spawn_file="$(pi_spawn_file "$ISSUE")"
-      if [[ -f "$_pi_spawn_file" ]]; then
-        PI_BRIDGE_PID=$(jq -r '.pid // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
-        PI_BRIDGE_SOCKET=$(jq -r '.socket // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
-        PI_SESSION_ID=$(jq -r '.session_id // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_MODEL=$(jq -r '.launch.model // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_EFFORT=$(jq -r '.launch.effort // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
-      fi
-    fi
-    # Auto-hydrate codex bridge metadata.
-    if [[ "$HARNESS" == "codex" && -z "$CX_WS" ]]; then
-      _cx_spawn_file="$(cx_spawn_file "$ISSUE")"
-      if [[ -f "$_cx_spawn_file" ]]; then
-        CX_WS=$(jq -r '.url // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
-        CX_THREAD_ID=$(jq -r '.thread_id // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_MODEL=$(jq -r '.launch.model // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
-        LAUNCH_EFFORT=$(jq -r '.launch.effort // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
-      fi
-    fi
-
-    "$FD_STATE" init >/dev/null
-    SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
-    PANE_TARGET="${SESSION}:${WINDOW}.${PANE_INDEX}"
-
-    # Resolve the immutable tmux pane id (`%N`) at init time and store it
-    # alongside the human-readable pane_target. Window names are mutable —
-    # pi/codex auto-rename their window once the TUI starts, which broke
-    # the previous window_name-keyed reconcile path and caused live entries
-    # to be silently dropped (#3 finding 3 + #4 finding 4). `allow-rename
-    # off` doesn't help: pi invokes `tmux rename-window` directly via IPC,
-    # bypassing the OSC-2 gate. pane_id is stable for the life of the
-    # pane, regardless of rename / split / harness restart.
-    #
-    # Validate the target exists before resolving the id. `tmux
-    # display-message -t <bogus>` silently returns the active pane's id
-    # (footgun: an init call with a typoed window name would store the
-    # caller's own pane id and reconcile would never drop it). list-panes
-    # exits non-zero for a missing target, so use it as the gate.
-    PANE_ID=""
-    if tmux list-panes -t "$PANE_TARGET" >/dev/null 2>&1; then
-      PANE_ID=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_id}' 2>/dev/null || echo "")
-    fi
-
-    issue_obj=$(jq -n \
-      --arg window "$WINDOW" \
-      --arg pane_target "$PANE_TARGET" \
-      --arg pane_id "$PANE_ID" \
-      --arg harness "$HARNESS" \
-      --arg worktree "$WORKTREE" \
-      --arg pr "$PR" \
-      --arg oc_url "$OC_URL" \
-      --arg oc_session_id "$OC_SESSION_ID" \
-      --arg oc_port "$OC_PORT" \
-      --arg cc_url "$CC_URL" \
-      --arg cc_session_uuid "$CC_SESSION_UUID" \
-      --arg cc_port "$CC_PORT" \
-      --arg cc_transcript "$CC_TRANSCRIPT" \
-      --arg pi_bridge_pid "$PI_BRIDGE_PID" \
-      --arg pi_bridge_socket "$PI_BRIDGE_SOCKET" \
-      --arg pi_session_id "$PI_SESSION_ID" \
-      --arg cx_ws "$CX_WS" \
-      --arg cx_thread_id "$CX_THREAD_ID" \
-      --arg launch_model "$LAUNCH_MODEL" \
-      --arg launch_effort "$LAUNCH_EFFORT" \
-      --arg now "$(now)" \
-      '{
-        window: $window,
-        pane_target: $pane_target,
-        pane_id: ($pane_id | if . == "" then null else . end),
-        harness: $harness,
-        worktree: $worktree,
-        pr_number: ($pr | if . == "" then null else (. | tonumber) end),
-        oc_url: ($oc_url | if . == "" then null else . end),
-        oc_session_id: ($oc_session_id | if . == "" then null else . end),
-        oc_port: ($oc_port | if . == "" then null else (. | tonumber) end),
-        cc_url: ($cc_url | if . == "" then null else . end),
-        cc_session_uuid: ($cc_session_uuid | if . == "" then null else . end),
-        cc_port: ($cc_port | if . == "" then null else (. | tonumber) end),
-        cc_transcript: ($cc_transcript | if . == "" then null else . end),
-        pi_bridge_pid: ($pi_bridge_pid | if . == "" then null else (. | tonumber) end),
-        pi_bridge_socket: ($pi_bridge_socket | if . == "" then null else . end),
-        pi_session_id: ($pi_session_id | if . == "" then null else . end),
-        cx_ws: ($cx_ws | if . == "" then null else . end),
-        cx_thread_id: ($cx_thread_id | if . == "" then null else . end),
-        launch: (if $launch_model == "" and $launch_effort == "" then null else {
-          model: ($launch_model | if . == "" then null else . end),
-          effort: ($launch_effort | if . == "" then null else . end)
-        } end),
-        state: "waiting",
-        substate: null,
-        unknown_since: null,
-        last_capture_hash: null,
-        last_response_at: null,
-        spawned_at: $now,
-        last_polled_at: $now,
-        orchestration_started: false,
-        scope_files_declared: null,
-        scope_files_actual: null,
-        decisions_log: []
-      }')
-
-    "$FD_STATE" set ".issues[\"$ISSUE\"]" "$issue_obj"
+    cmd_init_entry "$ISSUE" issue --title "$ISSUE" "$@"
     ;;
 
+  init-entry)
+    ENTRY_ID="${1:-}"; shift || true
+    cmd_init_entry "$ENTRY_ID" entry "$@"
+    ;;
   list)
     FORMAT="json"
     while [[ $# -gt 0 ]]; do
@@ -230,24 +299,16 @@ case "$ACTION" in
     done
     case "$FORMAT" in
       json)
-        "$FD_STATE" get '.issues // {} | to_entries | map({issue: .key} + .value)'
+        "$FD_STATE" tracked-entries | jq -c "$(entry_list_filter)"
         ;;
       inner-panes)
-        # Comma-separated target list, one per issue, suitable for
-        # `flightdeck-daemon start --inner`. Prefer the immutable
-        # `pane_id` (`%N`) when the registry recorded one; fall back to
-        # `pane_target` for legacy entries that haven't been re-init'd
-        # or whose pane_id resolution failed at init. Without preferring
-        # pane_id here, daemon start would resolve targets through the
-        # current window name and could fail on pi/codex auto-renamed
-        # windows even though reconcile keeps the entries alive
-        # (cross-harness review finding #4).
-        "$FD_STATE" get '.issues // {} | to_entries | map(.value.pane_id // .value.pane_target // empty) | join(",")'
+        # Comma-separated target list, one per tracked entry, suitable for
+        # `flightdeck-daemon start --inner`. Prefer immutable pane_id.
+        "$FD_STATE" tracked-entries | jq -r 'to_entries | map(.value.pane_id // .value.pane_target // empty) | join(",")'
         ;;
       inner-harnesses)
-        # Comma-separated harness list in the same issue order as
-        # `inner-panes`, suitable for `flightdeck-daemon --inner-harnesses`.
-        "$FD_STATE" get '.issues // {} | to_entries | map(.value.harness // "") | join(",")'
+        # Comma-separated harness list in the same order as `inner-panes`.
+        "$FD_STATE" tracked-entries | jq -r 'to_entries | map(.value.harness // "") | join(",")'
         ;;
       *)
         echo "Unknown format: $FORMAT (supported: json, inner-panes, inner-harnesses)" >&2
@@ -357,9 +418,9 @@ case "$ACTION" in
     # (cross-harness review finding #2).
     ISSUE="${1:-}"
     [[ -z "$ISSUE" ]] && { echo "Usage: oc-attach-args <ISSUE>" >&2; exit 2; }
-    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.oc_url // \"\"), (.oc_session_id // \"\")] | @tsv" 2>/dev/null | tr -d '"')
-    url=$(awk -F'\t' '{print $1}' <<< "$line")
-    sid=$(awk -F'\t' '{print $2}' <<< "$line")
+    ISSUE=$(lookup_id "$ISSUE")
+    url=$(read_registry_field "$ISSUE" oc_url || true)
+    sid=$(read_registry_field "$ISSUE" oc_session_id || true)
     if [[ -n "$url" && -n "$sid" && "$url" != "null" && "$sid" != "null" ]]; then
       if oc_adapter_is_fresh "$ISSUE" 2>/dev/null; then
         printf -- "--url %s --session %s\n" "$url" "$sid"
@@ -373,9 +434,9 @@ case "$ACTION" in
     # file exists. Same fallback contract as `oc-attach-args`.
     ISSUE="${1:-}"
     [[ -z "$ISSUE" ]] && { echo "Usage: cc-channel-args <ISSUE>" >&2; exit 2; }
-    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.cc_url // \"\"), (.cc_transcript // \"\")] | @tsv" 2>/dev/null | tr -d '"')
-    url=$(awk -F'\t' '{print $1}' <<< "$line")
-    transcript=$(awk -F'\t' '{print $2}' <<< "$line")
+    ISSUE=$(lookup_id "$ISSUE")
+    url=$(read_registry_field "$ISSUE" cc_url || true)
+    transcript=$(read_registry_field "$ISSUE" cc_transcript || true)
     if [[ -n "$url" && -n "$transcript" && "$url" != "null" && "$transcript" != "null" ]]; then
       if cc_adapter_is_fresh "$ISSUE" 2>/dev/null; then
         printf -- "--url %s --transcript %s\n" "$url" "$transcript"
@@ -389,9 +450,9 @@ case "$ACTION" in
     # stdout when stale or missing — caller falls back to tmux.
     ISSUE="${1:-}"
     [[ -z "$ISSUE" ]] && { echo "Usage: pi-bridge-args <ISSUE>" >&2; exit 2; }
-    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.pi_bridge_pid // \"\"), (.pi_bridge_socket // \"\")] | @tsv" 2>/dev/null | tr -d '"')
-    pid=$(awk -F'\t' '{print $1}' <<< "$line")
-    socket=$(awk -F'\t' '{print $2}' <<< "$line")
+    ISSUE=$(lookup_id "$ISSUE")
+    pid=$(read_registry_field "$ISSUE" pi_bridge_pid || true)
+    socket=$(read_registry_field "$ISSUE" pi_bridge_socket || true)
     if [[ -n "$pid" && -n "$socket" && "$pid" != "null" && "$socket" != "null" ]]; then
       if pi_bridge_is_fresh "$pid" "$socket" 2>/dev/null; then
         printf -- "--pid %s --socket %s\n" "$pid" "$socket"
@@ -405,9 +466,9 @@ case "$ACTION" in
     # adapter args (cross-harness review finding #2).
     ISSUE="${1:-}"
     [[ -z "$ISSUE" ]] && { echo "Usage: cx-bridge-args <ISSUE>" >&2; exit 2; }
-    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.cx_ws // \"\"), (.cx_thread_id // \"\")] | @tsv" 2>/dev/null | tr -d '"')
-    url=$(awk -F'\t' '{print $1}' <<< "$line")
-    thread=$(awk -F'\t' '{print $2}' <<< "$line")
+    ISSUE=$(lookup_id "$ISSUE")
+    url=$(read_registry_field "$ISSUE" cx_ws || true)
+    thread=$(read_registry_field "$ISSUE" cx_thread_id || true)
     if [[ -n "$url" && -n "$thread" && "$url" != "null" && "$thread" != "null" ]]; then
       if cx_adapter_is_fresh "$ISSUE" 2>/dev/null; then
         printf -- "--url %s --thread %s\n" "$url" "$thread"
@@ -416,19 +477,20 @@ case "$ACTION" in
     ;;
 
   find-by-pane)
-    # Print the issue id whose registry entry matches the given target.
-    # Accepts either `pane_target` (session:window.pane) or `pane_id`
-    # (%N) — needed because `list --format inner-panes` now emits the
-    # immutable pane_id when present, so daemon callers pass `%N` to
-    # `find-by-pane` and must still resolve back to the issue id. Empty
-    # stdout (exit 1) when no match (cross-harness verify follow-up).
+    # Print stable JSON for the tracked entry matching pane_target or pane_id.
+    # The normalized read path covers both .entries and legacy .issues rows.
     PANE_TARGET="${1:-}"
     [[ -z "$PANE_TARGET" ]] && { echo "Usage: find-by-pane <pane-target-or-pane-id>" >&2; exit 2; }
-    issue=$("$FD_STATE" get ".issues // {} | to_entries[] | select(.value.pane_target == \"$PANE_TARGET\" or .value.pane_id == \"$PANE_TARGET\") | .key" 2>/dev/null | tr -d '"' | head -n1)
-    if [[ -z "$issue" ]]; then
+    match=$("$FD_STATE" tracked-entries 2>/dev/null | jq -c --arg target "$PANE_TARGET" '
+      to_entries
+      | map(select(.value.pane_target == $target or .value.pane_id == $target))
+      | .[0] // empty
+      | {id: (.value.id // .key), kind: (.value.kind // "issue")}
+    ' 2>/dev/null | head -n1)
+    if [[ -z "$match" ]]; then
       exit 1
     fi
-    echo "$issue"
+    echo "$match"
     ;;
 
   remove-merged)
@@ -684,7 +746,7 @@ case "$ACTION" in
     #   exit >= 2             — usage error or genuine read failure
     # Treat 0+empty and 1 as "not found"; only exit >= 2 escalates to
     # exit 6 (registry read failure) per BLOCK #2.
-    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // empty" 2>"$fd_stderr_file")
+    entry=$("$FD_STATE" get ".issues[\"$ISSUE\"] // .entries[\"$ISSUE\"] // empty" 2>"$fd_stderr_file")
     fd_status=$?
     if (( fd_status >= 2 )); then
       printf 'teardown-window: registry read failed (flightdeck-state exit=%s): ' "$fd_status" >&2
@@ -762,7 +824,7 @@ case "$ACTION" in
 
   *)
     echo "Unknown action: $ACTION" >&2
-    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane" >&2
+    echo "Actions: init-entry | init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane" >&2
     exit 2
     ;;
 esac

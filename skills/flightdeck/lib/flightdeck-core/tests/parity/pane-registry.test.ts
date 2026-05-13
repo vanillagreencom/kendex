@@ -46,6 +46,11 @@ function readIssues(repo: string, session = process.env.TMUX_PARITY_SESSION ?? s
 	return JSON.parse(readFileSync(file, "utf8")).issues;
 }
 
+function readEntries(repo: string, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): unknown {
+	const file = join(repo, "tmp", `flightdeck-state-${session}.json`);
+	return JSON.parse(readFileSync(file, "utf8")).entries;
+}
+
 function sessionName(): string {
 	const r = spawnSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" });
 	return (r.stdout ?? "").trim();
@@ -154,6 +159,74 @@ describe("pane-registry parity", () => {
 		expect(b.stdout.trim().split(",").sort()).toEqual(a.stdout.trim().split(",").sort());
 	});
 
+	test("init-entry writes normalized adhoc entry without legacy issue projection", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const r = run(useTs, repo, [
+				"init-entry", "adhoc.one",
+				"--title", "Scratch Session",
+				"--kind", "adhoc",
+				"--cwd", "/tmp/scratch",
+				"--window", "7",
+				"--harness", "pi",
+				"--pane-target", "test:7.0",
+				"--pane-id", "%777",
+			]);
+			expect(r.status).toBe(0);
+		}
+		const bEntries = readEntries(bashRepo) as Record<string, Record<string, unknown>>;
+		const tEntries = readEntries(tsRepo) as Record<string, Record<string, unknown>>;
+		expect(tEntries["adhoc.one"]!.kind).toBe("adhoc");
+		expect(tEntries["adhoc.one"]!.pane_id).toBe("%777");
+		expect(normalize(tEntries)).toEqual(normalize(bEntries));
+		expect(readIssues(tsRepo)).toEqual({});
+		expect(readIssues(bashRepo)).toEqual({});
+	});
+
+	test("init-entry kind=issue dual-writes .entries and .issues", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const r = run(useTs, repo, [
+				"init-entry", "ISSUE-42",
+				"--title", "Issue 42",
+				"--kind", "issue",
+				"--cwd", "/tmp/wt42",
+				"--window", "issue-42",
+				"--harness", "opencode",
+				"--worktree", "/tmp/wt42",
+				"--pr", "42",
+			]);
+			expect(r.status).toBe(0);
+		}
+		const bIssues = readIssues(bashRepo) as Record<string, Record<string, unknown>>;
+		const tIssues = readIssues(tsRepo) as Record<string, Record<string, unknown>>;
+		const tEntries = readEntries(tsRepo) as Record<string, Record<string, unknown>>;
+		expect(tEntries["ISSUE-42"]!.kind).toBe("issue");
+		expect(tIssues["ISSUE-42"]!.pr_number).toBe(42);
+		expect(normalize(tIssues)).toEqual(normalize(bIssues));
+	});
+
+	test("list --format json returns normalized entries with legacy issue fields", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init-entry", "adhoc-json", "--title", "Adhoc", "--kind", "adhoc", "--cwd", "/tmp/a", "--window", "10", "--harness", "pi", "--pane-id", "%10"]);
+			run(useTs, repo, ["init", "JSON-9", "--window", "json-9", "--harness", "codex", "--worktree", "/tmp/json-9", "--pr", "9"]);
+		}
+		const a = JSON.parse(run(false, bashRepo, ["list", "--format", "json"]).stdout) as Array<Record<string, unknown>>;
+		const b = JSON.parse(run(true, tsRepo, ["list", "--format", "json"]).stdout) as Array<Record<string, unknown>>;
+		const normRows = (rows: Array<Record<string, unknown>>) => rows.map((row) => ({
+			id: row.id,
+			issue: row.issue,
+			kind: row.kind,
+			pane_id: row.pane_id,
+			pr_number: row.pr_number,
+			worktree: row.worktree,
+		})).sort((x, y) => String(x.id).localeCompare(String(y.id)));
+		expect(normRows(b)).toEqual(normRows(a));
+		expect(normRows(b)).toContainEqual({ id: "JSON-9", issue: "JSON-9", kind: "issue", pane_id: null, pr_number: 9, worktree: "/tmp/json-9" });
+		expect(normRows(b)).toContainEqual({ id: "adhoc-json", issue: null, kind: "adhoc", pane_id: "%10", pr_number: null, worktree: "/tmp/a" });
+	});
+
 	test("find-by-pane resolves an issue", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
@@ -165,8 +238,21 @@ describe("pane-registry parity", () => {
 		const target = `${session}:wF.0`;
 		const a = run(false, bashRepo, ["find-by-pane", target]);
 		const b = run(true, tsRepo, ["find-by-pane", target]);
-		expect(b.stdout.trim()).toBe("FBP-001");
-		expect(a.stdout.trim()).toBe("FBP-001");
+		expect(JSON.parse(b.stdout)).toEqual({ id: "FBP-001", kind: "issue" });
+		expect(JSON.parse(a.stdout)).toEqual({ id: "FBP-001", kind: "issue" });
+	});
+
+	test("find-by-pane resolves entry rows and legacy issue rows", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init-entry", "adhoc-fbp", "--title", "Adhoc FBP", "--kind", "adhoc", "--cwd", "/tmp/a", "--window", "11", "--harness", "pi", "--pane-id", "%110"]);
+			run(useTs, repo, ["init", "LEGACY-1", "--window", "legacy-win", "--harness", "pi", "--worktree", "/tmp/l", "--pane-index", "0"]);
+		}
+		const session = sessionName();
+		expect(JSON.parse(run(false, bashRepo, ["find-by-pane", "%110"]).stdout)).toEqual({ id: "adhoc-fbp", kind: "adhoc" });
+		expect(JSON.parse(run(true, tsRepo, ["find-by-pane", "%110"]).stdout)).toEqual({ id: "adhoc-fbp", kind: "adhoc" });
+		expect(JSON.parse(run(false, bashRepo, ["find-by-pane", `${session}:legacy-win.0`]).stdout)).toEqual({ id: "LEGACY-1", kind: "issue" });
+		expect(JSON.parse(run(true, tsRepo, ["find-by-pane", `${session}:legacy-win.0`]).stdout)).toEqual({ id: "LEGACY-1", kind: "issue" });
 	});
 
 	test("remove drops the issue from .issues", () => {

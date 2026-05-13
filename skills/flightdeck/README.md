@@ -33,6 +33,44 @@ When every tracked issue is merged, aborted, or otherwise terminal, flightdeck w
 - **Pauses** for you on: scope creep that wants reverting, force-merging against a real content conflict, an issue abort, a `main` mutation that needs human OK, or a novel prompt shape no rule covers. Sets `paused_for_user` in state and stops polling. Resume by running `watch` again.
 - **Terminates** automatically when every tracked issue is in a terminal state for two consecutive poll cycles. Writes a summary, archives the state file, hands control back.
 
+## Ad-hoc sessions
+
+Use `flightdeck-session` when you need Flightdeck to track a tmux window that is not tied to an issue/worktree workflow.
+
+Launch a managed ad-hoc Pi session:
+
+```bash
+skills/flightdeck/scripts/flightdeck-session start \
+  --session-id scratch-pi \
+  --title "Scratch Pi" \
+  --cwd "$PWD" \
+  --harness pi \
+  --prompt "Investigate this repo and report risks" \
+  --kind adhoc
+```
+
+Launch any command in a new tracked tmux window:
+
+```bash
+skills/flightdeck/scripts/flightdeck-session start \
+  --session-id logs-1 \
+  --title "Log watcher" \
+  --cwd "$PWD" \
+  --harness shell \
+  --cmd "tail -f tmp/app.log"
+```
+
+Attach an existing Pi pane without launching a new window:
+
+```bash
+skills/flightdeck/scripts/flightdeck-session attach \
+  --pane %33 \
+  --harness pi \
+  --title "Manual Pi"
+```
+
+All starts use `tmux new-window` (never split panes), set `FLIGHTDECK_MANAGED=1` and `FLIGHTDECK_CHILD_PANE=1` in the launched command environment, capture stable `pane_id`/`window_id` metadata, and register through `pane-registry init-entry`. `pane-registry list --format json` returns normalized entries for both ad-hoc sessions and legacy issue rows.
+
 ## Install
 
 ```bash
@@ -101,7 +139,8 @@ The `patterns/` directory documents the decisions the master agent makes — *wh
 
 You don't run any of these by hand in normal use — the skill calls them.
 
-- `open-terminal` — launches a tmux window with the chosen harness on the chosen worktree.
+- `open-terminal` — launches issue worktree tmux windows with the chosen harness.
+- `flightdeck-session` — launches or attaches generic tracked tmux sessions without fake issue ids.
 - `flightdeck-state` — reads/writes the session's master state file, including schema `1.1` tracked-entry normalization (`tracked-entries`, `write-entry`).
 - `flightdeck-daemon` — background poller; wakes the master.
 - `pane-registry`, `pane-poll`, `pane-respond` — pane tracking and IO.

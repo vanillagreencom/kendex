@@ -100,7 +100,14 @@ function paneRegistryArgs(bin: string, action: string, issue: string): string {
 function paneRegistryIssueForPane(bin: string, paneTarget: string): string {
 	const r = spawnSync(bin, ["find-by-pane", paneTarget], { encoding: "utf8" });
 	if (r.status !== 0) return "";
-	return (r.stdout ?? "").trim();
+	const raw = (r.stdout ?? "").trim();
+	if (!raw.startsWith("{")) return raw;
+	try {
+		const parsed = JSON.parse(raw) as { id?: unknown };
+		return typeof parsed.id === "string" ? parsed.id : "";
+	} catch {
+		return "";
+	}
 }
 
 function extractFlag(args: string, flag: string): string {

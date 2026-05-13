@@ -177,7 +177,14 @@ function tmuxRun(args: string[], opts: { input?: string } = {}): void {
 function paneRegistry(args: string[]): string {
 	const r = spawnSync(PANE_REGISTRY, args, { encoding: "utf8" });
 	if (r.status !== 0) return "";
-	return (r.stdout ?? "").trim();
+	const raw = (r.stdout ?? "").trim();
+	if (args[0] !== "find-by-pane" || !raw.startsWith("{")) return raw;
+	try {
+		const parsed = JSON.parse(raw) as { id?: unknown };
+		return typeof parsed.id === "string" ? parsed.id : "";
+	} catch {
+		return "";
+	}
 }
 
 function extractFlag(s: string, flag: string): string {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Test-only tmux shim. Reads/writes state from $TMUX_SHIM_STATE (JSON).
-# Implements only the tmux subcommands the pane-registry helper invokes:
-#   display-message, list-panes, list-windows, kill-window, kill-pane,
-#   show-options.
+# Implements only the tmux subcommands the pane-registry / flightdeck-session helpers invoke:
+#   display-message, list-panes, list-windows, new-window, send-keys,
+#   kill-window, kill-pane, show-options.
 #
 # State shape:
 #   {
@@ -55,6 +55,33 @@ write_state() {
   mv "$tmp" "$STATE_FILE"
 }
 
+next_numeric_suffix() {
+  local path="$1" prefix="$2"
+  jq -r --arg p "$prefix" "$path | keys | map(sub(\"^\" + \$p; \"\") | tonumber? // 0) | max // 0 | . + 1" "$STATE_FILE"
+}
+
+max_window_index() {
+  jq -r '.windows | to_entries | map(.value.index // 0) | max // 0' "$STATE_FILE"
+}
+
+format_new_window() {
+  local fmt="$1" pane_id="$2" window_id="$3" window_index="$4" pane_index="$5" cwd="$6" out
+  case "$fmt" in
+    '#{pane_id}') echo "$pane_id"; return ;;
+    '#{window_id}') echo "$window_id"; return ;;
+    '#{window_index}') echo "$window_index"; return ;;
+    '#{pane_index}') echo "$pane_index"; return ;;
+    '#{pane_current_path}') echo "$cwd"; return ;;
+  esac
+  out="$fmt"
+  out="${out//'#{pane_id}'/$pane_id}"
+  out="${out//'#{window_id}'/$window_id}"
+  out="${out//'#{window_index}'/$window_index}"
+  out="${out//'#{pane_index}'/$pane_index}"
+  out="${out//'#{pane_current_path}'/$cwd}"
+  printf '%s\n' "$out"
+}
+
 subcmd="${1:-}"
 shift || true
 
@@ -88,6 +115,9 @@ case "$subcmd" in
     case "$format" in
       "#{window_id}")         jq -r '.window_id // empty' <<< "$pane" ;;
       "#{window_name}")       jq -r '.window_name // empty' <<< "$pane" ;;
+      "#{window_index}")      jq -r '.window_index // empty' <<< "$pane" ;;
+      "#{pane_index}")        jq -r '.pane_index // empty' <<< "$pane" ;;
+      "#{pane_pid}")          jq -r '.pane_pid // empty' <<< "$pane" ;;
       "#{pane_id}")           jq -r --arg t "$target" --arg session "$(jq -r '.session' "$STATE_FILE")" '
                                  def to_pt: "\($session):\(.value.window_index).\(.value.pane_index)";
                                  .panes | to_entries[] |
@@ -153,6 +183,71 @@ case "$subcmd" in
       esac
     done
     jq -r '.windows | to_entries[] | .value.name' "$STATE_FILE"
+    ;;
+  new-window)
+    name=""
+    cwd=""
+    format=""
+    print=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -n) name="$2"; shift 2 ;;
+        -c) cwd="$2"; shift 2 ;;
+        -F) format="$2"; shift 2 ;;
+        -P) print=1; shift ;;
+        -d|-a) shift ;;
+        -t) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$name" ]] || name="window-$(($(max_window_index) + 1))"
+    [[ -n "$cwd" ]] || cwd="/tmp"
+    win_num=$(next_numeric_suffix '.windows' '@')
+    pane_num=$(next_numeric_suffix '.panes' '%')
+    window_id="@$win_num"
+    pane_id="%$pane_num"
+    window_index=$(($(max_window_index) + 1))
+    pane_index=0
+    pane_pid=$((10000 + pane_num))
+    tmp=$(mktemp -t fd-shim-new-window.XXXXXX)
+    jq \
+      --arg window_id "$window_id" \
+      --arg pane_id "$pane_id" \
+      --arg name "$name" \
+      --arg cwd "$cwd" \
+      --argjson window_index "$window_index" \
+      --argjson pane_index "$pane_index" \
+      --argjson pane_pid "$pane_pid" \
+      '.windows[$window_id] = {name: $name, index: $window_index}
+       | .panes[$pane_id] = {window_id: $window_id, window_name: $name, path: $cwd, window_index: $window_index, pane_index: $pane_index, pane_pid: $pane_pid, sent_keys: []}' \
+      "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
+    if (( print == 1 )); then
+      fmt="$format"
+      [[ -n "$fmt" ]] || fmt='#{pane_id}'
+      format_new_window "$fmt" "$pane_id" "$window_id" "$window_index" "$pane_index" "$cwd"
+    fi
+    ;;
+  send-keys)
+    target=""
+    keys=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        -l) shift ;;
+        *) keys+=("$1"); shift ;;
+      esac
+    done
+    if [[ -z "$target" ]]; then
+      target=$(jq -r '.panes | keys | last // empty' "$STATE_FILE")
+    fi
+    [[ -n "$target" ]] || exit 1
+    pane_id=$(resolve_pane_id "$target")
+    [[ -n "$pane_id" ]] || exit 1
+    payload="${keys[*]}"
+    tmp=$(mktemp -t fd-shim-send-keys.XXXXXX)
+    jq --arg pane_id "$pane_id" --arg payload "$payload" '.panes[$pane_id].sent_keys += [$payload]' "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
     ;;
   kill-window)
     target=""

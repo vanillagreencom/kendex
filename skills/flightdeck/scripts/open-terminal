@@ -39,6 +39,8 @@ source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 # shellcheck source=lib/codex-paths.sh
 source "$SCRIPT_DIR/lib/codex-paths.sh"
+# shellcheck source=lib/pane-env.sh
+source "$SCRIPT_DIR/lib/pane-env.sh"
 
 # Resolve project root (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -299,23 +301,9 @@ launch_metadata_json_args() {
   jq -nc --arg model "$model" --arg effort "$effort" '{model:$model, effort:$effort}'
 }
 
-# Env-prefix tokens that mark every flightdeck-spawned pane as managed.
-# `FLIGHTDECK_MANAGED=1` is the canonical cross-harness signal consumed
-# by orchestration's `flightdeck-mode` helper to scope destructive
-# cleanup. Expand with "${FLIGHTDECK_PANE_ENV[@]}" inside `cmd=(...)`
-# arrays, or call `flightdeck_pane_env_str` for the printf / send-keys
-# path. The Pi variant additionally sets `FLIGHTDECK_CHILD_PANE=1` for
-# backwards compatibility with the pi-flightdeck dashboard extension's
-# child-pane widget suppression (issue #8).
-FLIGHTDECK_PANE_ENV=(env FLIGHTDECK_MANAGED=1)
-FLIGHTDECK_PI_PANE_ENV=(env FLIGHTDECK_MANAGED=1 FLIGHTDECK_CHILD_PANE=1)
-
-flightdeck_pane_env_str() {
-  # Space-joined string form of FLIGHTDECK_PANE_ENV, suitable for
-  # prefixing tmux send-keys / printf command lines.
-  printf '%s' "${FLIGHTDECK_PANE_ENV[*]}"
-}
-
+# Env-prefix tokens that mark every flightdeck-spawned pane as managed live
+# in lib/pane-env.sh. Use "${FLIGHTDECK_PANE_ENV[@]}" inside arrays or
+# `flightdeck_pane_env_str` for string-form tmux send-keys paths.
 detect_start_cmd() {
   local issue="$1"
   if [[ -n "$CMD_TEMPLATE" ]]; then
@@ -1034,6 +1022,21 @@ open_tmux() {
   if [[ -z "${TMUX:-}" ]]; then
     echo "Error: not inside a tmux session" >&2
     return 1
+  fi
+  # Phase 2 generic launcher path. Preserve legacy issue behavior while
+  # registering through pane-registry init-entry immediately. Adapter-specific
+  # spawners still write their spawn files after this call; watch/init can
+  # refresh metadata as before.
+  if [[ -n "$cmd" && -x "$SCRIPT_DIR/flightdeck-session" ]]; then
+    "$SCRIPT_DIR/flightdeck-session" start \
+      --session-id "$name" \
+      --title "$name" \
+      --kind issue \
+      --cwd "$dir" \
+      --worktree "$dir" \
+      --harness "${HARNESS:-unknown}" \
+      --cmd "$cmd"
+    return $?
   fi
   local last_idx
   last_idx=$(tmux list-windows -F '#{window_index}' | tail -1)

@@ -166,12 +166,17 @@ split_target_and_index() {
 }
 
 registry_issue_for_pane() {
-  local issue="$1" pane_lookup="$2"
+  local issue="$1" pane_lookup="$2" raw
   if [[ -n "$issue" ]]; then
     printf '%s' "$issue"
     return 0
   fi
-  "$PANE_REGISTRY" find-by-pane "$pane_lookup" 2>/dev/null || true
+  raw=$("$PANE_REGISTRY" find-by-pane "$pane_lookup" 2>/dev/null || true)
+  if [[ "$raw" == \{* ]]; then
+    jq -r '.id // empty' <<< "$raw" 2>/dev/null || true
+  else
+    printf '%s' "$raw"
+  fi
 }
 
 resolve_oc_args() {

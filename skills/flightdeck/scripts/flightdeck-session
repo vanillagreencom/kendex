@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# First-class Flightdeck session launcher/attacher for non-issue panes.
+# Uses tmux windows only (never split panes) and records TrackedEntry rows
+# through pane-registry init-entry.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PANE_REGISTRY="$SCRIPT_DIR/pane-registry"
+
+# shellcheck source=lib/pane-env.sh
+source "$SCRIPT_DIR/lib/pane-env.sh"
+# shellcheck source=lib/pi-bridge-paths.sh
+source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue]
+  flightdeck-session attach --pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc|workflow]
+USAGE
+  exit 2
+}
+
+now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+shell_join() {
+  local out="" arg quoted
+  for arg in "$@"; do
+    printf -v quoted '%q' "$arg"
+    if [[ -z "$out" ]]; then out="$quoted"; else out+=" $quoted"; fi
+  done
+  printf '%s\n' "$out"
+}
+
+require_tmux() {
+  [[ -n "${TMUX:-}" ]] || { echo "Error: flightdeck-session requires an active tmux session" >&2; exit 2; }
+}
+
+valid_kind() {
+  case "$1" in adhoc|workflow|issue) return 0 ;; *) return 1 ;; esac
+}
+
+capture_pane_meta() {
+  local target="$1"
+  CAPTURE_PANE_ID=$(tmux display-message -t "$target" -p '#{pane_id}' 2>/dev/null || true)
+  [[ -n "$CAPTURE_PANE_ID" ]] || { echo "Error: unable to resolve pane id for $target" >&2; exit 2; }
+  CAPTURE_WINDOW_ID=$(tmux display-message -t "$CAPTURE_PANE_ID" -p '#{window_id}' 2>/dev/null || true)
+  CAPTURE_WINDOW_INDEX=$(tmux display-message -t "$CAPTURE_PANE_ID" -p '#{window_index}' 2>/dev/null || true)
+  CAPTURE_PANE_INDEX=$(tmux display-message -t "$CAPTURE_PANE_ID" -p '#{pane_index}' 2>/dev/null || true)
+  CAPTURE_PANE_CWD=$(tmux display-message -t "$CAPTURE_PANE_ID" -p '#{pane_current_path}' 2>/dev/null || true)
+  CAPTURE_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
+  CAPTURE_PANE_TARGET="${CAPTURE_SESSION}:${CAPTURE_WINDOW_INDEX}.${CAPTURE_PANE_INDEX}"
+}
+
+pi_state_for_pid() {
+  local pid="$1" bridge_bin state
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
+  state=$("$bridge_bin" state --pid "$pid" 2>/dev/null || true)
+  [[ -n "$state" ]] || return 1
+  PI_BRIDGE_PID="$pid"
+  PI_BRIDGE_SOCKET=$(jq -r '.data.socketPath // .data.socket // ""' <<< "$state" 2>/dev/null || echo "")
+  PI_SESSION_ID=$(jq -r '.data.sessionId // .data.session_id // ""' <<< "$state" 2>/dev/null || echo "")
+  [[ -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
+}
+
+pi_discover_after_launch() {
+  local cwd="$1" pre_pids="$2" timeout_secs="${PI_BRIDGE_DISCOVERY_TIMEOUT:-30}" pid
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  if pid=$(pi_discover_pid "$cwd" "$timeout_secs" "$pre_pids" 2>/dev/null); then
+    pi_state_for_pid "$pid" || true
+  fi
+}
+
+pi_discover_for_pane() {
+  local pane="$1" pane_pid bridge_bin out line
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  pane_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)
+  [[ -n "$pane_pid" ]] || return 1
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
+  out=$("$bridge_bin" list --json --pid "$pane_pid" 2>/dev/null || "$bridge_bin" list --json 2>/dev/null || echo "[]")
+  line=$(jq -r --arg pid "$pane_pid" '
+    (if type == "array" then . else (.data.instances // .instances // []) end)
+    | map(select((.pid | tostring) == $pid))
+    | .[0] // {}
+    | [(.pid // ""), (.socketPath // .socket // ""), (.sessionId // .session_id // "")]
+    | @tsv
+  ' <<< "$out" 2>/dev/null || echo "")
+  PI_BRIDGE_PID=$(awk -F'\t' '{print $1}' <<< "$line")
+  PI_BRIDGE_SOCKET=$(awk -F'\t' '{print $2}' <<< "$line")
+  PI_SESSION_ID=$(awk -F'\t' '{print $3}' <<< "$line")
+  [[ -n "$PI_BRIDGE_PID" || -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
+}
+
+build_pi_prompt_cmd() {
+  local prompt="$1" pi_bin ext_path bridge_args=()
+  pi_bin=$(pi_resolve_pi_bin) || { echo "Error: pi binary not found" >&2; exit 2; }
+  ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
+  [[ -n "$ext_path" ]] && bridge_args=(-e "$ext_path")
+  shell_join "${FLIGHTDECK_CHILD_PANE_ENV[@]}" "$pi_bin" "${bridge_args[@]}" "$prompt"
+}
+
+register_entry() {
+  local entry_id="$1" title="$2" kind="$3" cwd="$4" window_index="$5" harness="$6" pane_id="$7" pane_target="$8" window_id="$9" launch_cmd="${10}" worktree="${11:-}" pr="${12:-}"
+  local args=(init-entry "$entry_id" --title "$title" --kind "$kind" --cwd "$cwd" --window "$window_index" --harness "$harness" --pane-id "$pane_id" --pane-target "$pane_target" --window-id "$window_id" --window-index "$window_index")
+  [[ -n "$worktree" ]] && args+=(--worktree "$worktree")
+  [[ -n "$pr" ]] && args+=(--pr "$pr")
+  [[ -n "$launch_cmd" ]] && args+=(--launch-cmd "$launch_cmd")
+  [[ -n "${PI_BRIDGE_PID:-}" ]] && args+=(--pi-bridge-pid "$PI_BRIDGE_PID")
+  [[ -n "${PI_BRIDGE_SOCKET:-}" ]] && args+=(--pi-bridge-socket "$PI_BRIDGE_SOCKET")
+  [[ -n "${PI_SESSION_ID:-}" ]] && args+=(--pi-session-id "$PI_SESSION_ID")
+  "$PANE_REGISTRY" "${args[@]}"
+}
+
+cmd_start() {
+  require_tmux
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session-id) session_id="$2"; shift 2 ;;
+      --session-id=*) session_id="${1#--session-id=}"; shift ;;
+      --title) title="$2"; shift 2 ;;
+      --title=*) title="${1#--title=}"; shift ;;
+      --cwd) cwd="$2"; shift 2 ;;
+      --cwd=*) cwd="${1#--cwd=}"; shift ;;
+      --harness) harness="$2"; shift 2 ;;
+      --harness=*) harness="${1#--harness=}"; shift ;;
+      --cmd) cmd="$2"; shift 2 ;;
+      --cmd=*) cmd="${1#--cmd=}"; shift ;;
+      --prompt) prompt="$2"; shift 2 ;;
+      --prompt=*) prompt="${1#--prompt=}"; shift ;;
+      --kind) kind="$2"; shift 2 ;;
+      --kind=*) kind="${1#--kind=}"; shift ;;
+      --worktree) worktree="$2"; shift 2 ;;
+      --worktree=*) worktree="${1#--worktree=}"; shift ;;
+      --pr) pr="$2"; shift 2 ;;
+      --pr=*) pr="${1#--pr=}"; shift ;;
+      --help|-h) usage ;;
+      *) echo "Unknown flag: $1" >&2; usage ;;
+    esac
+  done
+  [[ -n "$session_id" && -n "$title" && -n "$cwd" && -n "$harness" ]] || usage
+  valid_kind "$kind" || { echo "Error: invalid --kind: $kind" >&2; exit 2; }
+  [[ -n "$cmd" || -n "$prompt" ]] || { echo "Error: start requires --cmd or --prompt" >&2; exit 2; }
+  [[ -z "$cmd" || -z "$prompt" ]] || { echo "Error: --cmd and --prompt are mutually exclusive" >&2; exit 2; }
+
+  local abs_cwd launch_cmd pre_pids="[]"
+  abs_cwd=$(cd "$cwd" && pwd)
+  if [[ -n "$prompt" ]]; then
+    case "$harness" in
+      pi)
+        pre_pids=$(pi_snapshot_pids 2>/dev/null || echo "[]")
+        launch_cmd=$(build_pi_prompt_cmd "$prompt")
+        ;;
+      *) echo "Error: --prompt launch currently supports --harness pi; use --cmd for $harness" >&2; exit 2 ;;
+    esac
+  else
+    launch_cmd="$(flightdeck_child_pane_env_str) $cmd"
+  fi
+
+  local pane_id
+  pane_id=$(tmux new-window -d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd" 2>/dev/null)
+  [[ -n "$pane_id" ]] || { echo "Error: tmux new-window failed" >&2; exit 2; }
+  capture_pane_meta "$pane_id"
+  tmux send-keys -t "$pane_id" "clear" Enter
+  tmux send-keys -t "$pane_id" -l "$launch_cmd"
+  tmux send-keys -t "$pane_id" Enter
+
+  if [[ -n "$prompt" && "$harness" == "pi" ]]; then
+    pi_discover_after_launch "$abs_cwd" "$pre_pids" || true
+  else
+    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  fi
+
+  [[ -n "$worktree" ]] || [[ "$kind" != "issue" ]] || worktree="$abs_cwd"
+  register_entry "$session_id" "$title" "$kind" "${CAPTURE_PANE_CWD:-$abs_cwd}" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr"
+  printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
+}
+
+cmd_attach() {
+  require_tmux
+  local pane="" harness="" title="" kind="adhoc" session_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --pane=*) pane="${1#--pane=}"; shift ;;
+      --harness) harness="$2"; shift 2 ;;
+      --harness=*) harness="${1#--harness=}"; shift ;;
+      --title) title="$2"; shift 2 ;;
+      --title=*) title="${1#--title=}"; shift ;;
+      --kind) kind="$2"; shift 2 ;;
+      --kind=*) kind="${1#--kind=}"; shift ;;
+      --session-id) session_id="$2"; shift 2 ;;
+      --session-id=*) session_id="${1#--session-id=}"; shift ;;
+      --help|-h) usage ;;
+      *) echo "Unknown flag: $1" >&2; usage ;;
+    esac
+  done
+  [[ -n "$pane" && -n "$harness" && -n "$title" ]] || usage
+  valid_kind "$kind" || { echo "Error: invalid --kind: $kind" >&2; exit 2; }
+  tmux list-panes -t "$pane" >/dev/null 2>&1 || { echo "Error: pane not found: $pane" >&2; exit 1; }
+  capture_pane_meta "$pane"
+  if [[ "$harness" == "pi" ]]; then
+    pi_discover_for_pane "$CAPTURE_PANE_ID" || true
+  else
+    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  fi
+  if [[ -z "$session_id" ]]; then
+    if [[ -n "${PI_SESSION_ID:-}" ]]; then
+      session_id="$PI_SESSION_ID"
+    else
+      session_id="pane-${CAPTURE_PANE_ID#%}"
+    fi
+  fi
+  register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "" ""
+  printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
+}
+
+ACTION="${1:-start}"
+case "$ACTION" in
+  start) shift || true; cmd_start "$@" ;;
+  attach) shift || true; cmd_attach "$@" ;;
+  --help|-h|help) usage ;;
+  *) cmd_start "$@" ;;
+esac

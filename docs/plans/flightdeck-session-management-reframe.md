@@ -212,31 +212,31 @@ bun run typecheck
 
 Purpose: make official ad-hoc session management possible without fake issue IDs.
 
-Status (2026-05-13): **PARTIAL**. PR #22 / commit `7045946` delivered the `teardown-entry` alias and safe pane-id teardown; PR #21 / commit `6a10e4d` delivered the `FLIGHTDECK_MANAGED=1` signal and `skills/orchestration/scripts/flightdeck-mode` basis for managed detection. Generic registry init/list, `--kind adhoc`, and launch/attach APIs remain.
+Status (2026-05-13): **PARTIAL**. PR #22 / commit `7045946` delivered the `teardown-entry` alias and safe pane-id teardown; PR #21 / commit `6a10e4d` delivered the `FLIGHTDECK_MANAGED=1` signal and `skills/orchestration/scripts/flightdeck-mode` basis for managed detection. Phase 2 worker branch `fd-reframe-p2` adds generic registry init/list/find, `flightdeck-session start`, and Pi attach. Remaining work is mostly adapter spawn-file generalization, broader non-Pi adapter launch metadata, and Phase 3 watch split.
 
-1. **[PARTIAL]** Evolve `pane-registry` CLI:
+1. **[DONE]** Evolve `pane-registry` CLI:
    - **[DONE]** `pane-registry teardown-entry <ENTRY_ID>` is available as a TrackedEntry-aligned alias for `teardown-window` in `skills/flightdeck/scripts/pane-registry.bash` and `skills/flightdeck/lib/flightdeck-core/src/bin/pane-registry.ts::cmdTeardownWindow`. Delivered in PR #22.
-   - **[REMAINING]** Add aliases or new commands using `entry` terminology:
-     - `pane-registry init-entry <ENTRY_ID> --title ... --kind ... --cwd ... --window ... --harness ...`
-     - `pane-registry list --format json` returns normalized entries while preserving legacy fields for issue entries.
-     - `pane-registry find-by-pane` returns entry id, not necessarily issue id.
-   - **[REMAINING]** Keep current commands (`init <ISSUE>`, `set-state <ISSUE>`, etc.) as issue-mode aliases.
-2. **[REMAINING]** Rename internal variable names from `issue` to `entryId` where code is generic.
+   - **[DONE]** Add aliases or new commands using `entry` terminology:
+     - **[DONE]** `pane-registry init-entry <ENTRY_ID> --title ... --kind ... --cwd ... --window ... --harness ...` writes through `flightdeck-state write-entry` / `writeTrackedEntry` and dual-writes `.issues[id]` for `kind=issue`.
+     - **[DONE]** `pane-registry list --format json` returns normalized entries from `tracked-entries` while preserving legacy top-level issue fields for issue entries.
+     - **[DONE]** `pane-registry find-by-pane` returns stable JSON `{id, kind}` and resolves both `.entries[*]` and legacy `.issues[*]` pane ids/targets.
+   - **[DONE]** Keep current commands (`init <ISSUE>`, `set-state <ISSUE>`, etc.) as issue-mode aliases.
+2. **[PARTIAL]** Rename internal variable names from `issue` to `entryId` where code is generic. New `init-entry` paths use entry terminology, but legacy issue-mode commands and compatibility adapters intentionally keep `issue` names until Phase 3/4 split the watch and issue layers.
 3. **[REMAINING]** Split adapter spawn metadata paths away from issue IDs:
    - New `adapter-spawn-<entryId>.json` helpers, or preserve per-harness files but pass `entryId` not issue id.
    - Old files still read for compatibility.
-4. **[REMAINING]** Add first-class ad-hoc launch script/API:
+4. **[DONE]** Add first-class ad-hoc launch script/API:
    - Option A: extend `open-terminal` with `--session-id`, `--title`, `--cwd`, `--prompt`, and `--cmd` so it can launch without worktree creation.
-   - Option B: add `session-terminal` or `flightdeck-session` script and keep `open-terminal` as issue preset.
-   - Preferred: add a new script for clarity, then let `open-terminal` call it in issue mode.
+   - **[DONE]** Option B: add `flightdeck-session` script and keep `open-terminal` as issue preset.
+   - **[DONE]** Preferred: add a new script for clarity, then let `open-terminal` call it in issue mode for the tmux fallback path.
 5. **[PARTIAL]** New launch behavior:
-   - **[REMAINING]** Always use `tmux new-window`, not split panes, in the new generic launch path.
-   - **[REMAINING]** Capture `#{window_id}`, `#{pane_id}`, `#{window_index}`, and pane cwd immediately for generic entries.
-   - **[PARTIAL]** Set `FLIGHTDECK_CHILD_PANE=1` in launched child sessions so pi-flightdeck does not render full owner dashboard inside children. Existing Pi child panes already carry it; PR #21 added the cross-harness `FLIGHTDECK_MANAGED=1` signal in `skills/flightdeck/scripts/open-terminal`. Remaining work is to reuse both signals in the generic launcher.
-   - **[REMAINING]** Prefer harness adapters (`pi-bridge`, OpenCode HTTP attach, Claude channels, Codex bridge) over tmux fallback in the generic launch/attach path.
-6. **[REMAINING]** Add attach behavior for sessions launched manually:
-   - `flightdeck session attach --pane %33 --harness pi --title "..."`
-   - Discovers adapter metadata where possible.
+   - **[DONE]** Always use `tmux new-window`, not split panes, in the new generic launch path.
+   - **[DONE]** Capture `#{window_id}`, `#{pane_id}`, `#{window_index}`, and pane cwd immediately for generic entries.
+   - **[DONE]** Set `FLIGHTDECK_CHILD_PANE=1` and `FLIGHTDECK_MANAGED=1` in launched child sessions through the shared pane env helper.
+   - **[PARTIAL]** Prefer harness adapters (`pi-bridge`, OpenCode HTTP attach, Claude channels, Codex bridge) over tmux fallback in the generic launch/attach path. Pi launch/attach bridge discovery is implemented; OpenCode/Claude/Codex generic adapter metadata remains tied to issue spawn files.
+6. **[DONE]** Add attach behavior for sessions launched manually:
+   - **[DONE]** `flightdeck-session attach --pane %33 --harness pi --title "..."`
+   - **[DONE]** Discovers Pi adapter metadata via `pi-bridge list --pid` where possible.
 
 Validation:
 

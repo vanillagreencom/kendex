@@ -88,145 +88,231 @@ function readJsonIfExists<T>(path: string): T | null {
 	catch { return null; }
 }
 
-// ----- init ----------------------------------------------------------------
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
-function cmdInit(issue: string, args: string[]): void {
-	if (!issue) die("Usage: pane-registry init <ISSUE> [flags]");
-	const defaultIdx = tmuxBasePaneIndex() || "0";
-	const fields: Record<string, string> = {
+function lookupId(raw: string): string {
+	if (!raw.trim().startsWith("{")) return raw;
+	try {
+		const obj = JSON.parse(raw) as unknown;
+		return isRecord(obj) && typeof obj.id === "string" ? obj.id : raw;
+	} catch {
+		return raw;
+	}
+}
+
+interface InitFields {
+	cc_port: string;
+	cc_session_uuid: string;
+	cc_transcript: string;
+	cc_url: string;
+	cwd: string;
+	cx_thread_id: string;
+	cx_ws: string;
+	harness: string;
+	kind: string;
+	launch_cmd: string;
+	launch_effort: string;
+	launch_model: string;
+	oc_port: string;
+	oc_session_id: string;
+	oc_url: string;
+	pane_id: string;
+	pane_index: string;
+	pane_target: string;
+	pi_bridge_pid: string;
+	pi_bridge_socket: string;
+	pi_session_id: string;
+	pr: string;
+	title: string;
+	window: string;
+	window_id: string;
+	window_index: string;
+	worktree: string;
+}
+
+function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
+	return {
 		cc_port: "", cc_session_uuid: "", cc_transcript: "", cc_url: "",
+		cwd: "",
 		cx_thread_id: "", cx_ws: "",
 		harness: "",
-		launch_effort: "", launch_model: "",
+		kind,
+		launch_cmd: "", launch_effort: "", launch_model: "",
 		oc_port: "", oc_session_id: "", oc_url: "",
-		pane_index: defaultIdx,
+		pane_id: "", pane_index: tmuxBasePaneIndex() || "0", pane_target: "",
 		pi_bridge_pid: "", pi_bridge_socket: "", pi_session_id: "",
 		pr: "",
-		window: "",
+		title: entryId,
+		window: "", window_id: "", window_index: "",
 		worktree: "",
 	};
-	const flagMap: Record<string, keyof typeof fields> = {
-		"--cc-port": "cc_port",
-		"--cc-session-uuid": "cc_session_uuid",
-		"--cc-transcript": "cc_transcript",
-		"--cc-url": "cc_url",
-		"--cx-thread-id": "cx_thread_id",
-		"--cx-ws": "cx_ws",
-		"--harness": "harness",
-		"--oc-port": "oc_port",
-		"--oc-session-id": "oc_session_id",
-		"--oc-url": "oc_url",
-		"--pane-index": "pane_index",
-		"--pi-bridge-pid": "pi_bridge_pid",
-		"--pi-bridge-socket": "pi_bridge_socket",
-		"--pi-session-id": "pi_session_id",
-		"--pr": "pr",
-		"--window": "window",
-		"--worktree": "worktree",
-	};
+}
+
+const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
+	"--cc-port": "cc_port",
+	"--cc-session-uuid": "cc_session_uuid",
+	"--cc-transcript": "cc_transcript",
+	"--cc-url": "cc_url",
+	"--cwd": "cwd",
+	"--cx-thread-id": "cx_thread_id",
+	"--cx-ws": "cx_ws",
+	"--harness": "harness",
+	"--kind": "kind",
+	"--launch-cmd": "launch_cmd",
+	"--launch-effort": "launch_effort",
+	"--launch-model": "launch_model",
+	"--oc-port": "oc_port",
+	"--oc-session-id": "oc_session_id",
+	"--oc-url": "oc_url",
+	"--pane-id": "pane_id",
+	"--pane-index": "pane_index",
+	"--pane-target": "pane_target",
+	"--pi-bridge-pid": "pi_bridge_pid",
+	"--pi-bridge-socket": "pi_bridge_socket",
+	"--pi-session-id": "pi_session_id",
+	"--pr": "pr",
+	"--title": "title",
+	"--window": "window",
+	"--window-id": "window_id",
+	"--window-index": "window_index",
+	"--worktree": "worktree",
+};
+
+function parseInitFlags(fields: InitFields, args: string[]): void {
 	for (let i = 0; i < args.length; i += 1) {
-		const key = flagMap[args[i] ?? ""];
+		const key = INIT_FLAG_MAP[args[i] ?? ""];
 		if (!key) die(`Unknown flag: ${args[i]}`);
 		fields[key] = args[++i] ?? "";
 	}
-	if (!fields.window || !fields.harness || !fields.worktree) die("init requires --window, --harness, --worktree");
+}
 
-	// Auto-hydrate spawn discovery files.
+function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 	const harness = fields.harness;
-	const issueId = issue;
 	if (harness === "opencode" && !fields.oc_url) {
-		const rec = readJsonIfExists<Record<string, unknown>>(ocSpawnFile(issueId));
+		const rec = readJsonIfExists<Record<string, unknown>>(ocSpawnFile(entryId));
 		if (rec) {
 			fields.oc_url = String(rec.url ?? "");
 			fields.oc_session_id = String(rec.session_id ?? "");
 			fields.oc_port = String(rec.port ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			fields.launch_model = String(launch?.model ?? "");
-			fields.launch_effort = String(launch?.effort ?? "");
+			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
+			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
 		}
 	}
 	if (harness === "claude" && !fields.cc_url) {
-		const rec = readJsonIfExists<Record<string, unknown>>(ccSpawnFile(issueId));
+		const rec = readJsonIfExists<Record<string, unknown>>(ccSpawnFile(entryId));
 		if (rec) {
 			fields.cc_url = String(rec.url ?? "");
 			fields.cc_session_uuid = String(rec.session_uuid ?? "");
 			fields.cc_port = String(rec.port ?? "");
 			fields.cc_transcript = String(rec.transcript ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			fields.launch_model = String(launch?.model ?? "");
-			fields.launch_effort = String(launch?.effort ?? "");
+			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
+			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
 		}
 	}
 	if (harness === "pi" && !fields.pi_bridge_pid) {
-		const rec = readJsonIfExists<Record<string, unknown>>(piSpawnFile(issueId));
+		const rec = readJsonIfExists<Record<string, unknown>>(piSpawnFile(entryId));
 		if (rec) {
 			fields.pi_bridge_pid = String(rec.pid ?? "");
 			fields.pi_bridge_socket = String(rec.socket ?? "");
 			fields.pi_session_id = String(rec.session_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			fields.launch_model = String(launch?.model ?? "");
-			fields.launch_effort = String(launch?.effort ?? "");
+			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
+			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
 		}
 	}
 	if (harness === "codex" && !fields.cx_ws) {
-		const rec = readJsonIfExists<Record<string, unknown>>(cxSpawnFile(issueId));
+		const rec = readJsonIfExists<Record<string, unknown>>(cxSpawnFile(entryId));
 		if (rec) {
 			fields.cx_ws = String(rec.url ?? "");
 			fields.cx_thread_id = String(rec.thread_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			fields.launch_model = String(launch?.model ?? "");
-			fields.launch_effort = String(launch?.effort ?? "");
+			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
+			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
 		}
 	}
+}
 
+function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" = "entry"): void {
+	if (!entryId) die(mode === "issue" ? "Usage: pane-registry init <ISSUE> [flags]" : "Usage: pane-registry init-entry <ENTRY_ID> [flags]");
+	const fields = defaultInitFields(entryId, mode === "issue" ? "issue" : "adhoc");
+	parseInitFlags(fields, args);
+	if (!fields.title) fields.title = entryId;
+	if (mode === "issue") fields.kind = "issue";
+	if (!["adhoc", "issue", "workflow"].includes(fields.kind)) die("init-entry requires --kind adhoc|issue|workflow");
+	if (mode === "issue" && !fields.worktree) die("init requires --window, --harness, --worktree");
+	if (fields.kind === "issue" && !fields.worktree) fields.worktree = fields.cwd;
+	if (!fields.cwd) fields.cwd = fields.worktree;
+	if (!fields.window || !fields.harness || !fields.cwd) die(mode === "issue" ? "init requires --window, --harness, --worktree" : "init-entry requires --title, --kind, --cwd, --window, --harness");
+
+	hydrateSpawnMetadata(entryId, fields);
 	fdStateOrDie(["init"]);
 	const session = tmuxCurrentSession();
-	const paneTarget = `${session}:${fields.window}.${fields.pane_index}`;
-	let paneId = "";
-	if (tmuxPaneExists(paneTarget)) {
-		paneId = tmuxField(paneTarget, "#{pane_id}");
-	}
+	const paneTarget = fields.pane_target || `${session}:${fields.window}.${fields.pane_index}`;
+	let paneId = fields.pane_id;
+	if (!paneId && tmuxPaneExists(paneTarget)) paneId = tmuxField(paneTarget, "#{pane_id}");
 
-	const launch = (fields.launch_model || fields.launch_effort)
-		? { effort: fields.launch_effort || null, model: fields.launch_model || null }
+	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd)
+		? { cmd: fields.launch_cmd || null, effort: fields.launch_effort || null, model: fields.launch_model || null }
 		: null;
-
-	const issueObj = {
+	const adapter = {
 		cc_port: numOrNull(fields.cc_port),
 		cc_session_uuid: strOrNull(fields.cc_session_uuid),
 		cc_transcript: strOrNull(fields.cc_transcript),
 		cc_url: strOrNull(fields.cc_url),
 		cx_thread_id: strOrNull(fields.cx_thread_id),
 		cx_ws: strOrNull(fields.cx_ws),
-		decisions_log: [],
-		harness: fields.harness,
-		last_capture_hash: null,
-		last_polled_at: nowIso(),
-		last_response_at: null,
-		launch,
 		oc_port: numOrNull(fields.oc_port),
 		oc_session_id: strOrNull(fields.oc_session_id),
 		oc_url: strOrNull(fields.oc_url),
-		orchestration_started: false,
-		pane_id: paneId || null,
-		pane_target: paneTarget,
 		pi_bridge_pid: numOrNull(fields.pi_bridge_pid),
 		pi_bridge_socket: strOrNull(fields.pi_bridge_socket),
 		pi_session_id: strOrNull(fields.pi_session_id),
+	};
+	const issueDomain = fields.kind === "issue" ? {
+		id: entryId,
+		orchestration_started: false,
 		pr_number: numOrNull(fields.pr),
 		scope_files_actual: null,
 		scope_files_declared: null,
-		spawned_at: nowIso(),
+		worktree: strOrNull(fields.worktree),
+	} : undefined;
+	const ts = nowIso();
+	const entry = {
+		adapter,
+		cwd: fields.cwd,
+		decisions_log: [],
+		domain: issueDomain ? { issue: issueDomain } : null,
+		harness: fields.harness,
+		id: entryId,
+		kind: fields.kind,
+		last_capture_hash: null,
+		last_polled_at: ts,
+		last_response_at: null,
+		launch,
+		pane_id: paneId || null,
+		pane_target: paneTarget || null,
+		spawned_at: ts,
 		state: "waiting",
 		substate: null,
+		title: fields.title,
 		unknown_since: null,
 		window: fields.window,
-		worktree: fields.worktree,
+		window_id: strOrNull(fields.window_id),
+		window_index: numOrNull(fields.window_index),
 	};
 
-	fdStateOrDie(["set", `.issues["${issueId}"]`, JSON.stringify(issueObj)]);
+	fdStateOrDie(["write-entry", entryId, JSON.stringify(entry)]);
 }
 
+// ----- init ----------------------------------------------------------------
+
+function cmdInit(issue: string, args: string[]): void {
+	cmdInitEntry(issue, args, "issue");
+}
 function strOrNull(s: string): string | null {
 	return s ? s : null;
 }
@@ -235,6 +321,57 @@ function numOrNull(s: string): number | null {
 	if (!s) return null;
 	const n = Number(s);
 	return Number.isFinite(n) ? n : null;
+}
+
+function trackedEntries(): Record<string, Record<string, unknown>> {
+	const out = fdStateOrDie(["tracked-entries"]);
+	try {
+		const parsed = JSON.parse(out || "{}") as unknown;
+		if (!isRecord(parsed)) return {};
+		const entries: Record<string, Record<string, unknown>> = {};
+		for (const [key, value] of Object.entries(parsed)) if (isRecord(value)) entries[key] = value;
+		return entries;
+	} catch {
+		return {};
+	}
+}
+
+function nestedRecord(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+	const value = obj[key];
+	return isRecord(value) ? value : {};
+}
+
+function entryRows(): Record<string, unknown>[] {
+	const entries = trackedEntries();
+	return Object.entries(entries).map(([key, entry]) => {
+		const adapter = nestedRecord(entry, "adapter");
+		const domain = nestedRecord(entry, "domain");
+		const issue = nestedRecord(domain, "issue");
+		const id = typeof entry.id === "string" ? entry.id : key;
+		const kind = typeof entry.kind === "string" ? entry.kind : "issue";
+		return {
+			...entry,
+			cc_port: adapter.cc_port ?? null,
+			cc_session_uuid: adapter.cc_session_uuid ?? null,
+			cc_transcript: adapter.cc_transcript ?? null,
+			cc_url: adapter.cc_url ?? null,
+			cx_thread_id: adapter.cx_thread_id ?? null,
+			cx_ws: adapter.cx_ws ?? null,
+			id,
+			issue: kind === "issue" ? (issue.id ?? id) : null,
+			oc_port: adapter.oc_port ?? null,
+			oc_session_id: adapter.oc_session_id ?? null,
+			oc_url: adapter.oc_url ?? null,
+			orchestration_started: issue.orchestration_started ?? null,
+			pi_bridge_pid: adapter.pi_bridge_pid ?? null,
+			pi_bridge_socket: adapter.pi_bridge_socket ?? null,
+			pi_session_id: adapter.pi_session_id ?? null,
+			pr_number: issue.pr_number ?? null,
+			scope_files_actual: issue.scope_files_actual ?? null,
+			scope_files_declared: issue.scope_files_declared ?? null,
+			worktree: issue.worktree ?? entry.cwd ?? null,
+		};
+	});
 }
 
 // ----- list ----------------------------------------------------------------
@@ -247,13 +384,13 @@ function cmdList(args: string[]): void {
 	}
 	switch (format) {
 		case "json":
-			process.stdout.write(fdStateOrDie(["get", ".issues // {} | to_entries | map({issue: .key} + .value)"]));
+			process.stdout.write(`${JSON.stringify(entryRows())}\n`);
 			break;
 		case "inner-panes":
-			process.stdout.write(fdStateOrDie(["get", ".issues // {} | to_entries | map(.value.pane_id // .value.pane_target // empty) | join(\",\")"]));
+			process.stdout.write(`${entryRows().map((row) => row.pane_id ?? row.pane_target ?? "").filter(Boolean).join(",")}\n`);
 			break;
 		case "inner-harnesses":
-			process.stdout.write(fdStateOrDie(["get", ".issues // {} | to_entries | map(.value.harness // \"\") | join(\",\")"]));
+			process.stdout.write(`${entryRows().map((row) => String(row.harness ?? "")).join(",")}\n`);
 			break;
 		default:
 			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses)`);
@@ -327,7 +464,9 @@ function cmdRemove(issue: string): void {
 }
 
 function readField(issue: string, field: string): string {
-	const r = fdState(["get", `.issues["${issue}"].${field} // empty`]);
+	const id = lookupId(issue);
+	const idJson = JSON.stringify(id);
+	const r = fdState(["get", `(.issues[${idJson}].${field} // .entries[${idJson}].adapter.${field} // .entries[${idJson}].${field} // empty)`]);
 	return r.stdout.replace(/\n$/, "").replace(/^"|"$/g, "");
 }
 
@@ -345,6 +484,7 @@ function safeUnlink(p: string): void {
 
 function cmdOcAttachArgs(issue: string): void {
 	if (!issue) die("Usage: oc-attach-args <ISSUE>");
+	issue = lookupId(issue);
 	const url = readField(issue, "oc_url");
 	const sid = readField(issue, "oc_session_id");
 	if (url && sid && url !== "null" && sid !== "null") {
@@ -354,6 +494,7 @@ function cmdOcAttachArgs(issue: string): void {
 
 function cmdCcChannelArgs(issue: string): void {
 	if (!issue) die("Usage: cc-channel-args <ISSUE>");
+	issue = lookupId(issue);
 	const url = readField(issue, "cc_url");
 	const transcript = readField(issue, "cc_transcript");
 	if (url && transcript && url !== "null" && transcript !== "null") {
@@ -363,6 +504,7 @@ function cmdCcChannelArgs(issue: string): void {
 
 function cmdPiBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: pi-bridge-args <ISSUE>");
+	issue = lookupId(issue);
 	const pid = readField(issue, "pi_bridge_pid");
 	const socket = readField(issue, "pi_bridge_socket");
 	if (pid && socket && pid !== "null" && socket !== "null") {
@@ -372,6 +514,7 @@ function cmdPiBridgeArgs(issue: string): void {
 
 function cmdCxBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: cx-bridge-args <ISSUE>");
+	issue = lookupId(issue);
 	const url = readField(issue, "cx_ws");
 	const thread = readField(issue, "cx_thread_id");
 	if (url && thread && url !== "null" && thread !== "null") {
@@ -383,12 +526,10 @@ function cmdCxBridgeArgs(issue: string): void {
 
 function cmdFindByPane(target: string): void {
 	if (!target) die("Usage: find-by-pane <pane-target-or-pane-id>");
-	const out = fdStateOrDie([
-		"get",
-		`.issues // {} | to_entries[] | select(.value.pane_target == "${target}" or .value.pane_id == "${target}") | .key`,
-	]).trim().split("\n").filter(Boolean)[0] ?? "";
-	if (!out) process.exit(1);
-	process.stdout.write(`${out}\n`);
+	const hit = Object.entries(trackedEntries()).find(([, entry]) => entry.pane_target === target || entry.pane_id === target);
+	if (!hit) process.exit(1);
+	const [key, entry] = hit;
+	process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
 }
 
 // ----- reconcile / remove-merged -------------------------------------------
@@ -537,7 +678,7 @@ function cmdTeardownWindow(args: string[]): void {
 	//   exit >= 2             — usage error or genuine read failure
 	// Treat 0+empty and 1 as "not found" (exit 1); only exit >= 2 escalates
 	// to exit 6 (registry read failure) per BLOCK #2.
-	const r = fdState(["get", `.issues["${issue}"] // empty`]);
+	const r = fdState(["get", `.issues["${issue}"] // .entries["${issue}"] // empty`]);
 	const status = r.status ?? 0;
 	if (status >= 2) {
 		process.stderr.write(
@@ -616,6 +757,7 @@ const action = argv.shift();
 if (!action) die("Usage: pane-registry <action> [args]");
 switch (action) {
 	case "init":          cmdInit(argv.shift() ?? "", argv); break;
+	case "init-entry":    cmdInitEntry(argv.shift() ?? "", argv); break;
 	case "list":          cmdList(argv); break;
 	case "get":           cmdGet(argv[0] ?? ""); break;
 	case "set-state":     cmdSetState(argv[0] ?? "", argv[1] ?? ""); break;
@@ -633,5 +775,5 @@ switch (action) {
 	case "teardown-window":
 	case "teardown-entry":  cmdTeardownWindow(argv); break;
 	default:
-		die(`Unknown action: ${action}\nActions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
+		die(`Unknown action: ${action}\nActions: init-entry | init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
 }

@@ -36,7 +36,19 @@ You are in **master mode**. Observe-and-direct only:
 
 ## Commands
 
-### Session
+### Session management
+
+Generic tmux-window session tracking. These commands do not require a fake issue id.
+
+| Command | Arguments | Workflow / Script | Notes |
+|---------|-----------|-------------------|-------|
+| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, and records a generic `.entries[ID]` row. Pi `--prompt` launch starts `pi` directly and records bridge metadata when discovery succeeds. |
+| `session attach` | `--pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window. For Pi, probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
+| `session watch` | `[ENTRY_ID...]` | Phase 3 pending | Generic watch split is not landed yet; current daemon/watch paths still share issue-mode prompt handling. |
+| `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries`/legacy `.issues` snapshot. |
+| `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id`; issue remove remains the legacy cleanup path. Generic removal cleanup is still being expanded. |
+
+### Issue workflows
 
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
@@ -126,12 +138,13 @@ complete. Parity tests for every port live under
 
 | Script | Purpose |
 |--------|---------|
-| `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll tmux/terminal commands — use this for every spawn.** |
+| `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll issue tmux/terminal commands — use this for issue workflow spawns.** Tmux fallback now delegates to `flightdeck-session` in issue mode. |
+| `flightdeck-session` | Generic session launcher/attacher. `start` creates a tmux window and registers `.entries[id]`; `attach` records an existing Pi pane by stable pane id. |
 | `parallel-groups` | Read/manage parallel issue groups. |
 | `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`tracked-entries`/`write-entry`/`archive`) and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/watch.md` § 1 for lock semantics. |
 | `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. See `patterns/tmux-monitoring.md` for adapter freshness + tmux-fallback semantics; the script's own header comment for daemon internals. |
 | `codex-app-server-spawn` / `-stop` | Idempotent bring-up/teardown of the per-session codex `app-server --listen ws://...` shared by all `codex --remote` panes. |
-| `pane-registry` | Issue↔pane mapping CRUD. `init` stores immutable `pane_id` (`%N`) alongside `pane_target`. `list --format json\|inner-panes\|inner-harnesses` feeds `pane-poll --batch -` and `flightdeck-daemon start`. |
+| `pane-registry` | TrackedEntry↔pane mapping CRUD. `init-entry` writes `.entries[id]` and dual-writes `.issues[id]` for `kind=issue`; legacy `init <ISSUE>` remains an issue-mode alias. `find-by-pane` emits `{id,kind}` JSON. `list --format json\|inner-panes\|inner-harnesses` feeds `pane-poll --batch -` and `flightdeck-daemon start`. |
 | `pane-poll` | Pane state read. Preferred: `--batch -` from `pane-registry list --format json` (one JSONL object per issue). Legacy single-pane mode for drift re-polls / manual debug. See `patterns/tmux-monitoring.md` for per-harness adapter routes. |
 | `pane-respond` | Send response to a pane. Modes: free-text payload, `--option N`, `--option-multi`, `--keys` (rejected without `--keys-allow-tmux`), `--question <reqID> --answer\|--answer-multi\|--answer-text\|--answers-json\|--reject`. Validates rebase-multi-choice payloads for the preserve/apply/verify triplet. See `patterns/prompt-handlers.md` for mode selection and `patterns/opencode-questions.md` / `patterns/pi-questions.md` for question routing. |
 | `pane-clear-bell` | Atomic chained-command bell clear (no flicker). |
