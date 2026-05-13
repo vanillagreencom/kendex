@@ -98,6 +98,21 @@ read_registry_field() {
   "$FD_STATE" get "(.issues[$id_json].$field // .entries[$id_json].adapter.$field // .entries[$id_json].$field // empty)" 2>/dev/null | tr -d '"'
 }
 
+pane_match_is_live() {
+  local pane_id="$1" pane_target="$2" lookup="${pane_id:-$pane_target}"
+  [[ -n "$lookup" ]] || return 1
+  if [[ -n "$pane_id" ]]; then
+    tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qFx "$pane_id"
+    return $?
+  fi
+  tmux list-panes -t "$pane_target" >/dev/null 2>&1
+}
+
+warn_stale_pane_match() {
+  local pane_id="$1" pane_target="$2" lookup="${pane_id:-$pane_target}"
+  printf 'Warning: find-by-pane match %s is stale (pane no longer exists); use pane-registry reconcile.\n' "${lookup:-<none>}" >&2
+}
+
 cmd_init_entry() {
   local ENTRY_ID="$1" MODE="${2:-entry}"
   shift 2 || true
@@ -111,7 +126,7 @@ cmd_init_entry() {
   CC_URL=""; CC_SESSION_UUID=""; CC_PORT=""; CC_TRANSCRIPT=""
   PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
   CX_WS=""; CX_THREAD_ID=""
-  LAUNCH_MODEL=""; LAUNCH_EFFORT=""; LAUNCH_CMD=""
+  LAUNCH_MODEL=""; LAUNCH_EFFORT=""; LAUNCH_CMD=""; DISCOVERY_ERROR=""
 
   if [[ "$MODE" == "issue" ]]; then
     KIND="issue"
@@ -146,6 +161,7 @@ cmd_init_entry() {
       --launch-model) LAUNCH_MODEL="$2"; shift 2 ;;
       --launch-effort) LAUNCH_EFFORT="$2"; shift 2 ;;
       --launch-cmd) LAUNCH_CMD="$2"; shift 2 ;;
+      --discovery-error) DISCOVERY_ERROR="$2"; shift 2 ;;
       *) echo "Unknown flag: $1" >&2; exit 2 ;;
     esac
   done
@@ -243,6 +259,7 @@ cmd_init_entry() {
     --arg launch_model "$LAUNCH_MODEL" \
     --arg launch_effort "$LAUNCH_EFFORT" \
     --arg launch_cmd "$LAUNCH_CMD" \
+    --arg discovery_error "$DISCOVERY_ERROR" \
     --arg now "$(now)" \
     'def s($v): if $v == "" then null else $v end;
      def n($v): if $v == "" then null else ($v | tonumber) end;
@@ -259,6 +276,7 @@ cmd_init_entry() {
        window_index: n($window_index),
        pane_target: s($pane_target),
        pane_id: s($pane_id),
+       discovery_error: s($discovery_error),
        launch: (if $launch_model == "" and $launch_effort == "" and $launch_cmd == "" then null else {model: s($launch_model), effort: s($launch_effort), cmd: s($launch_cmd)} end),
        adapter: {
          oc_url: s($oc_url), oc_session_id: s($oc_session_id), oc_port: n($oc_port),
@@ -485,12 +503,18 @@ case "$ACTION" in
       to_entries
       | map(select(.value.pane_target == $target or .value.pane_id == $target))
       | .[0] // empty
-      | {id: (.value.id // .key), kind: (.value.kind // "issue")}
+      | {id: (.value.id // .key), kind: (.value.kind // "issue"), pane_id: (.value.pane_id // null), pane_target: (.value.pane_target // null)}
     ' 2>/dev/null | head -n1)
     if [[ -z "$match" ]]; then
       exit 1
     fi
-    echo "$match"
+    match_pane_id=$(jq -r '.pane_id // ""' <<< "$match")
+    match_pane_target=$(jq -r '.pane_target // ""' <<< "$match")
+    if ! pane_match_is_live "$match_pane_id" "$match_pane_target"; then
+      warn_stale_pane_match "$match_pane_id" "$match_pane_target"
+      exit 1
+    fi
+    jq -c '{id, kind}' <<< "$match"
     ;;
 
   remove-merged)

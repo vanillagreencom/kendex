@@ -27,6 +27,9 @@
 #   PI_BRIDGE_DISCOVERY_TIMEOUT - Seconds to wait for pi-session-bridge metadata after
 #                               opening a Pi pane (default: 30). Test/operator override.
 
+# TODO(structure, phase-3+): keep generic launch behavior in flightdeck-session;
+# open-terminal should shrink to issue-mode compatibility and adapter presets.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -54,30 +54,41 @@ capture_pane_meta() {
 
 pi_state_for_pid() {
   local pid="$1" bridge_bin state
-  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { PI_DISCOVERY_ERROR="pi_bridge_not_found"; return 1; }
   state=$("$bridge_bin" state --pid "$pid" 2>/dev/null || true)
-  [[ -n "$state" ]] || return 1
+  [[ -n "$state" ]] || { PI_DISCOVERY_ERROR="pi_bridge_state_unavailable"; return 1; }
   PI_BRIDGE_PID="$pid"
   PI_BRIDGE_SOCKET=$(jq -r '.data.socketPath // .data.socket // ""' <<< "$state" 2>/dev/null || echo "")
   PI_SESSION_ID=$(jq -r '.data.sessionId // .data.session_id // ""' <<< "$state" 2>/dev/null || echo "")
+  if [[ -z "$PI_BRIDGE_SOCKET" || -z "$PI_SESSION_ID" ]]; then
+    PI_DISCOVERY_ERROR="pi_bridge_partial_metadata"
+  fi
   [[ -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
 }
 
 pi_discover_after_launch() {
   local cwd="$1" pre_pids="$2" timeout_secs="${PI_BRIDGE_DISCOVERY_TIMEOUT:-30}" pid
-  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
+  if ! pi_resolve_bridge_bin >/dev/null 2>&1; then
+    PI_DISCOVERY_ERROR="pi_bridge_not_found"
+    return 1
+  fi
   if pid=$(pi_discover_pid "$cwd" "$timeout_secs" "$pre_pids" 2>/dev/null); then
-    pi_state_for_pid "$pid" || true
+    pi_state_for_pid "$pid" || return 1
+  else
+    PI_DISCOVERY_ERROR="pi_bridge_discovery_timeout"
+    return 1
   fi
 }
 
 pi_discover_for_pane() {
   local pane="$1" pane_pid bridge_bin out line
-  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
   pane_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)
-  [[ -n "$pane_pid" ]] || return 1
-  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
+  [[ -n "$pane_pid" ]] || { PI_DISCOVERY_ERROR="pi_pane_pid_unavailable"; return 1; }
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { PI_DISCOVERY_ERROR="pi_bridge_not_found"; return 1; }
   out=$("$bridge_bin" list --json --pid "$pane_pid" 2>/dev/null || "$bridge_bin" list --json 2>/dev/null || echo "[]")
+  [[ -n "${out//[[:space:]]/}" ]] || { PI_DISCOVERY_ERROR="pi_bridge_empty_output"; return 1; }
   line=$(jq -r --arg pid "$pane_pid" '
     (if type == "array" then . else (.data.instances // .instances // []) end)
     | map(select((.pid | tostring) == $pid))
@@ -88,7 +99,20 @@ pi_discover_for_pane() {
   PI_BRIDGE_PID=$(awk -F'\t' '{print $1}' <<< "$line")
   PI_BRIDGE_SOCKET=$(awk -F'\t' '{print $2}' <<< "$line")
   PI_SESSION_ID=$(awk -F'\t' '{print $3}' <<< "$line")
+  if [[ -z "$PI_BRIDGE_PID" && -z "$PI_BRIDGE_SOCKET" && -z "$PI_SESSION_ID" ]]; then
+    PI_DISCOVERY_ERROR="pi_bridge_no_instance_for_pane_pid"
+    return 1
+  fi
+  if [[ -z "$PI_BRIDGE_SOCKET" || -z "$PI_SESSION_ID" ]]; then
+    PI_DISCOVERY_ERROR="pi_bridge_partial_metadata"
+  fi
   [[ -n "$PI_BRIDGE_PID" || -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
+}
+
+warn_pi_discovery_error() {
+  local context="$1"
+  [[ -n "${PI_DISCOVERY_ERROR:-}" ]] || return 0
+  printf 'Warning: pi-bridge metadata discovery failed during %s (%s); registering degraded entry.\n' "$context" "$PI_DISCOVERY_ERROR" >&2
 }
 
 build_pi_prompt_cmd() {
@@ -108,6 +132,7 @@ register_entry() {
   [[ -n "${PI_BRIDGE_PID:-}" ]] && args+=(--pi-bridge-pid "$PI_BRIDGE_PID")
   [[ -n "${PI_BRIDGE_SOCKET:-}" ]] && args+=(--pi-bridge-socket "$PI_BRIDGE_SOCKET")
   [[ -n "${PI_SESSION_ID:-}" ]] && args+=(--pi-session-id "$PI_SESSION_ID")
+  [[ -n "${PI_DISCOVERY_ERROR:-}" ]] && args+=(--discovery-error "$PI_DISCOVERY_ERROR")
   "$PANE_REGISTRY" "${args[@]}"
 }
 
@@ -158,7 +183,10 @@ cmd_start() {
   fi
 
   local pane_id
-  pane_id=$(tmux new-window -d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd" 2>/dev/null)
+  if ! pane_id=$(tmux new-window -d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd" 2>/dev/null); then
+    echo "Error: tmux new-window failed" >&2
+    exit 2
+  fi
   [[ -n "$pane_id" ]] || { echo "Error: tmux new-window failed" >&2; exit 2; }
   capture_pane_meta "$pane_id"
   tmux send-keys -t "$pane_id" "clear" Enter
@@ -167,8 +195,9 @@ cmd_start() {
 
   if [[ -n "$prompt" && "$harness" == "pi" ]]; then
     pi_discover_after_launch "$abs_cwd" "$pre_pids" || true
+    warn_pi_discovery_error "start"
   else
-    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
   fi
 
   [[ -n "$worktree" ]] || [[ "$kind" != "issue" ]] || worktree="$abs_cwd"
@@ -201,8 +230,9 @@ cmd_attach() {
   capture_pane_meta "$pane"
   if [[ "$harness" == "pi" ]]; then
     pi_discover_for_pane "$CAPTURE_PANE_ID" || true
+    warn_pi_discovery_error "attach"
   else
-    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+    PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
   fi
   if [[ -z "$session_id" ]]; then
     if [[ -n "${PI_SESSION_ID:-}" ]]; then

@@ -185,6 +185,10 @@ case "$subcmd" in
     jq -r '.windows | to_entries[] | .value.name' "$STATE_FILE"
     ;;
   new-window)
+    if [[ "${TMUX_SHIM_FAIL_NEW_WINDOW:-0}" == "1" ]]; then
+      echo "shim: new-window refused (TMUX_SHIM_FAIL_NEW_WINDOW=1)" >&2
+      exit 1
+    fi
     name=""
     cwd=""
     format=""

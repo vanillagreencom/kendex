@@ -69,6 +69,16 @@ function tmuxLivePaneIds(): Set<string> {
 	return panes;
 }
 
+function paneMatchIsLive(paneId: string, paneTarget: string): boolean {
+	if (paneId) return tmuxLivePaneIds().has(paneId);
+	return !!paneTarget && tmuxPaneExists(paneTarget);
+}
+
+function warnStalePaneMatch(paneId: string, paneTarget: string): void {
+	const lookup = paneId || paneTarget || "<none>";
+	process.stderr.write(`Warning: find-by-pane match ${lookup} is stale (pane no longer exists); use pane-registry reconcile.\n`);
+}
+
 function tmuxPaneCountInWindow(windowId: string): number {
 	const r = spawnSync("tmux", ["list-panes", "-t", windowId, "-F", "#{pane_id}"], { encoding: "utf8" });
 	if (r.status !== 0) return 0;
@@ -110,6 +120,7 @@ interface InitFields {
 	cwd: string;
 	cx_thread_id: string;
 	cx_ws: string;
+	discovery_error: string;
 	harness: string;
 	kind: string;
 	launch_cmd: string;
@@ -137,6 +148,7 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		cc_port: "", cc_session_uuid: "", cc_transcript: "", cc_url: "",
 		cwd: "",
 		cx_thread_id: "", cx_ws: "",
+		discovery_error: "",
 		harness: "",
 		kind,
 		launch_cmd: "", launch_effort: "", launch_model: "",
@@ -158,6 +170,7 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--cwd": "cwd",
 	"--cx-thread-id": "cx_thread_id",
 	"--cx-ws": "cx_ws",
+	"--discovery-error": "discovery_error",
 	"--harness": "harness",
 	"--kind": "kind",
 	"--launch-cmd": "launch_cmd",
@@ -285,6 +298,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		adapter,
 		cwd: fields.cwd,
 		decisions_log: [],
+		discovery_error: strOrNull(fields.discovery_error),
 		domain: issueDomain ? { issue: issueDomain } : null,
 		harness: fields.harness,
 		id: entryId,
@@ -529,6 +543,12 @@ function cmdFindByPane(target: string): void {
 	const hit = Object.entries(trackedEntries()).find(([, entry]) => entry.pane_target === target || entry.pane_id === target);
 	if (!hit) process.exit(1);
 	const [key, entry] = hit;
+	const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+	const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
+	if (!paneMatchIsLive(paneId, paneTarget)) {
+		warnStalePaneMatch(paneId, paneTarget);
+		process.exit(1);
+	}
 	process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
 }
 

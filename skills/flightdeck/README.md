@@ -35,6 +35,8 @@ When every tracked issue is merged, aborted, or otherwise terminal, flightdeck w
 
 ## Ad-hoc sessions
 
+Existing issue workflows (`start`, `start new`, `parallel-check`) are unchanged; ad-hoc sessions are additive.
+
 Use `flightdeck-session` when you need Flightdeck to track a tmux window that is not tied to an issue/worktree workflow.
 
 Launch a managed ad-hoc Pi session:
