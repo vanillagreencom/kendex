@@ -215,6 +215,18 @@ The `audit-issues-input` and `roadmap-plan-input` schemas live in `project-manag
 - `bash` 4+
 - `flock` (util-linux) for atomic state updates
 
+## Tests
+
+Run the full orchestration regression suite:
+
+```bash
+bash skills/orchestration/tests/run-all.sh
+# Optional filter:
+bash skills/orchestration/tests/run-all.sh flightdeck_mode
+```
+
+Each `tests/*.sh` file is self-contained (builds its own sandbox, prints `pass: N fail: M`, exits non-zero on failure). The runner discovers them at execution time, so adding a new test file requires no central registration.
+
 ## Skill Rules
 
 ### Workflow Execution

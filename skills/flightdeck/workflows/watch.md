@@ -137,6 +137,8 @@ For each tracked issue currently in a non-terminal state (`waiting | prompting |
    | `bot-review-wait-stuck` | `prompting` | substate = tag |
    | `rebase-multi-choice` | `prompting` | substate = tag |
    | `force-push-prompt` | `prompting` | substate = tag |
+   | `stale-no-pr-branch` | `prompting` | substate = tag (handler always answers Keep — scope violation from older orchestration build) |
+   | `stale-orphan-worktree` | `prompting` | substate = tag (handler always answers Keep) |
    | `audit-relation-prompt` | `prompting` | substate = tag |
    | `merge-now` | `prompting` | substate = tag |
    | `merge-ready-but-unknown` | `prompting` | substate = tag; if `unknown_since` is null, set it now |

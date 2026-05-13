@@ -21,6 +21,8 @@
 #   bot-review-wait-stuck      - bot-review-wait timeout with Skip/Wait/Abort options
 #   rebase-multi-choice        - merge-conflict resolution prompt
 #   force-push-prompt          - confirm force push (typically --force-with-lease over orphan/diverged remote)
+#   stale-no-pr-branch         - per-issue agent asking to delete an unrelated local branch with no PR
+#   stale-orphan-worktree      - per-issue agent asking to remove an unrelated worktree directory
 #   cleanup-prompt             - worktree cleanup post-merge / on abort
 #   audit-relation-prompt      - issue-audit creating new issues with structure column
 #   descope-related            - reconciliation suggesting child-issue descope
@@ -154,6 +156,23 @@ fi
 # about resolving merge conflicts. Sentinels match common phrasings.
 if grep -qE 'Force[- ]push (to|over|the)|--force-with-lease|push.*\?.*force|Confirm force push' <<< "$buf"; then
   emit force-push-prompt "force-push confirmation"
+fi
+
+# stale-no-pr-branch — per-issue agent surfacing a sweep prompt for an
+# unrelated local branch that has no associated PR. This violates the
+# Flightdeck cleanup-scope rule (see merge-pr.md § 5 / issue #18).
+# Master answers Keep regardless of buffer content; the bug is upstream.
+# Match BEFORE cleanup-prompt so the more specific tag wins.
+if grep -qE 'Local branch [^ ]+ has no associated PR\. Delete' <<< "$buf"; then
+  emit stale-no-pr-branch "stale no-PR branch prompt"
+fi
+
+# stale-orphan-worktree — per-issue agent surfacing a sweep prompt for
+# an unrelated orphan worktree directory or a sibling's stale worktree.
+# Same scope violation. Match BEFORE cleanup-prompt so the more specific
+# tag wins.
+if grep -qE 'Stale worktree for [^ ]+ \(PR already merged\)\. Remove|^orphan: ' <<< "$buf"; then
+  emit stale-orphan-worktree "stale orphan worktree prompt"
 fi
 
 # cleanup-prompt (post-merge or on-abort worktree removal)

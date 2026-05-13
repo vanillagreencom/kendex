@@ -305,30 +305,35 @@ detect_start_cmd() {
     echo "${CMD_TEMPLATE//\{issue\}/$issue}"
     return
   fi
+  # FLIGHTDECK_MANAGED=1 is the canonical cross-harness signal that the
+  # spawned pane is running under Flightdeck. Per-issue workflows
+  # (orchestration/merge-pr in particular) consult this env to scope
+  # destructive cleanup to the asking issue's artifacts only. Set it
+  # via `env` so it propagates regardless of the harness binary.
   local cmd=() launch_args=() bypass
   add_launch_args "$HARNESS" launch_args
   bypass="$(bypass_flag_for_harness "$HARNESS")"
   case "$HARNESS" in
     claude)
-      cmd=(claude -n "$issue")
+      cmd=(env FLIGHTDECK_MANAGED=1 claude -n "$issue")
       [[ -n "$bypass" ]] && cmd+=("$bypass")
       cmd+=("${launch_args[@]}" "/orchestration start $issue")
       shell_join "${cmd[@]}"
       ;;
     codex)
-      cmd=(codex "${launch_args[@]}" "\$orchestration start $issue")
+      cmd=(env FLIGHTDECK_MANAGED=1 codex "${launch_args[@]}" "\$orchestration start $issue")
       shell_join "${cmd[@]}"
       ;;
     opencode)
-      cmd=(opencode "${launch_args[@]}" --prompt "/orchestration start $issue")
+      cmd=(env FLIGHTDECK_MANAGED=1 opencode "${launch_args[@]}" --prompt "/orchestration start $issue")
       shell_join "${cmd[@]}"
       ;;
     omp)
-      cmd=(omp "/skill:orchestration start $issue")
+      cmd=(env FLIGHTDECK_MANAGED=1 omp "/skill:orchestration start $issue")
       shell_join "${cmd[@]}"
       ;;
     pi)
-      cmd=(pi "${launch_args[@]}" "/skill:orchestration start $issue")
+      cmd=(env FLIGHTDECK_MANAGED=1 pi "${launch_args[@]}" "/skill:orchestration start $issue")
       shell_join "${cmd[@]}"
       ;;
     *)        echo "" ;;
@@ -550,9 +555,12 @@ spawn_oc_attach_tmux() {
 
   # Send the actual `opencode attach` command into the pre-created pane.
   # Using send-keys preserves the existing UX (clear → type cmd → Enter)
-  # so the pane shows the command in its scrollback.
+  # so the pane shows the command in its scrollback. Prefix with
+  # `env FLIGHTDECK_MANAGED=1` so orchestration's flightdeck-mode helper
+  # detects the pane as Flightdeck-managed without depending on tmux
+  # set-environment propagation.
   local attach_cmd
-  attach_cmd=$(printf "%s attach http://127.0.0.1:%s --session %s" "$bin" "$port" "$sid")
+  attach_cmd=$(printf "env FLIGHTDECK_MANAGED=1 %s attach http://127.0.0.1:%s --session %s" "$bin" "$port" "$sid")
   tmux send-keys -t "$pane_id" "clear" Enter
   tmux send-keys -t "$pane_id" -l "$attach_cmd"
   tmux send-keys -t "$pane_id" Enter
@@ -675,7 +683,10 @@ cc_write_mcp_config() {
 # dismissed via a delayed tmux send-keys after the pane opens.
 build_claude_channel_cmd() {
   local bin="$1" mcp_path="$2" uuid="$3" issue="$4" bypass="$5"
-  local cmd=("$bin" -n "$issue")
+  # `env FLIGHTDECK_MANAGED=1` prefix exposes the Flightdeck-managed
+  # signal to orchestration's flightdeck-mode helper (consumed by
+  # merge-pr.md § 5 to scope cleanup).
+  local cmd=(env FLIGHTDECK_MANAGED=1 "$bin" -n "$issue")
   local launch_args=()
   [[ -n "$bypass" ]] && cmd+=("$bypass")
   add_launch_args claude launch_args
@@ -814,7 +825,11 @@ spawn_pi_bridge_tmux() {
   # Mark this pane as a flightdeck-launched child so the pi-flightdeck
   # dashboard extension suppresses its persistent widget here (issue
   # #8). Same shape as pi-agents-tmux's PI_SUBAGENT_CHILD_AGENT.
-  cmd=$(shell_join env "FLIGHTDECK_CHILD_PANE=1" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
+  # FLIGHTDECK_MANAGED=1 is the canonical signal consumed by
+  # orchestration's flightdeck-mode helper. FLIGHTDECK_CHILD_PANE=1
+  # remains for backwards compatibility with the pi-flightdeck
+  # dashboard extension's child-pane widget suppression (issue #8).
+  cmd=$(shell_join env "FLIGHTDECK_MANAGED=1" "FLIGHTDECK_CHILD_PANE=1" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
 
   # Snapshot existing pi-bridge pids BEFORE spawning so discovery can
   # exclude already-running pi processes in the same worktree (bugs
@@ -902,10 +917,12 @@ spawn_cx_remote_tmux() {
       ' 2>/dev/null)
   : "${pre_threads_json:=[]}"
 
-  # Spawn the per-pane TUI bound to the shared server.
+  # Spawn the per-pane TUI bound to the shared server. Prefix with
+  # `env FLIGHTDECK_MANAGED=1` so orchestration's flightdeck-mode helper
+  # detects the pane as Flightdeck-managed.
   local cmd launch_args=()
   add_launch_args codex launch_args
-  cmd=$(shell_join "$cx_bin" "${launch_args[@]}" --remote "$ws_url")
+  cmd=$(shell_join env FLIGHTDECK_MANAGED=1 "$cx_bin" "${launch_args[@]}" --remote "$ws_url")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi

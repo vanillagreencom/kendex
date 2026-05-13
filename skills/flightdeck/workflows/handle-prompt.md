@@ -84,6 +84,38 @@ See `patterns/prompt-handlers.md` § Handler: `rebase-multi-choice`.
 
 ---
 
+## § 4.6: Handler — `stale-no-pr-branch` / `stale-orphan-worktree`
+
+Defensive coverage for Flightdeck-scope violations (issue #18). The
+per-issue `orchestration merge-pr` workflow honors a Flightdeck-mode
+guard (`skills/orchestration/scripts/flightdeck-mode`) and should not
+surface these prompts from a managed pane. If one still arrives —
+older orchestration build, guard bypassed, prose drift — master must
+refuse the destructive option.
+
+### Decision
+
+1. Identify the negative / keep option in the buffer. Common shapes:
+   - `1. Keep branch` / `2. Delete branch` — pick `--option 1`.
+   - `1. Keep worktree` / `2. Remove worktree` — pick `--option 1`.
+   - Free-text or non-binary prompt — send a payload reading
+     `Keep. Per-issue cleanup is scoped to the asking issue's own
+     worktree/branch; unrelated artifacts are master's responsibility.`
+2. Send via `pane-respond <pane_target> --option <N>` (binary) or the
+   payload form above. Do NOT use `Type your own answer` to invent a
+   delete instruction; the only safe answers are Keep / scope-to-self.
+3. Log via `pane-registry log-decision <ISSUE_ID> <TAG> Keep`.
+4. Treat the appearance as a process violation: append a note to the
+   issue's `decisions_log` flagging that the per-issue pane surfaced an
+   out-of-scope cleanup prompt so it shows up in the end-of-session
+   report (`terminate.md` § 1) for follow-up.
+
+Never escalate to the user for these tags — the safe answer is
+mechanical, and asking the user wastes their attention on a bug that
+should have been caught upstream.
+
+---
+
 ## § 4.5: Handler — `force-push-prompt`
 
 Per-issue agent has prompted to force-push (typically over an orphan or diverged remote ref). Master auto-approves only when the push is bounded.

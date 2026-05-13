@@ -240,23 +240,42 @@ merge. Detach them first.
    remote branch of its PR). Master-side parallel sessions may still be using
    sibling worktrees and unrelated local branches in the main repo; per-issue
    finalization MUST NOT prompt to delete them. The broad cross-branch sweep
-   described after the managed-mode block below is a **standalone maintenance
-   workflow** — only execute it when this `merge-pr` was invoked directly by
-   the user from outside a Flightdeck-managed pane.
+   described below is a **standalone maintenance workflow** — only execute it
+   when this `merge-pr` was invoked directly by the user from outside a
+   Flightdeck-managed pane.
 
-   Detect managed mode with:
+   **Capture scope BEFORE changing directories.** The helper's scope
+   resolution depends on the current repo's `$ORCH_STATE_DIR`. `cd`ing into
+   the main repo first would point `flightdeck-mode` at the wrong
+   workflow-state file and `match-branch` could fail to recognize the
+   scoped branch. Always read scope from inside the worktree, then pass
+   `--issue <ID>` to subsequent calls so the helper finds the right state
+   file regardless of cwd.
+
+   Detect managed mode + capture scope (run from the worktree, not
+   `[MAIN_REPO_ROOT]`):
    ```bash
-   if .agents/skills/orchestration/scripts/flightdeck-mode check; then
-       MANAGED=1
-   else
-       MANAGED=0
-   fi
-   SCOPED_ISSUE=$(.agents/skills/orchestration/scripts/flightdeck-mode current-issue)
-   SCOPED_BRANCH=$(.agents/skills/orchestration/scripts/flightdeck-mode current-branch)
-   SCOPED_WORKTREE=$(.agents/skills/orchestration/scripts/flightdeck-mode current-worktree)
+   SCOPE=$(.agents/skills/orchestration/scripts/flightdeck-mode scope-json)
+   MODE=$(jq -r '.mode' <<<"$SCOPE")          # managed | unmanaged | unknown
+   SCOPED_ISSUE=$(jq -r '.issue_id' <<<"$SCOPE")
+   SCOPED_BRANCH=$(jq -r '.branch' <<<"$SCOPE")
+   SCOPED_WORKTREE=$(jq -r '.worktree' <<<"$SCOPE")
+
+   case "$MODE" in
+     managed)   SWEEP=managed ;;
+     unmanaged) SWEEP=standalone ;;
+     unknown)
+       # Fail closed: we can't prove this is a standalone run, so do
+       # NOT sweep unrelated artifacts. Stick to the scoped branch and
+       # emit a warning so the user can re-run with FLIGHTDECK_MANAGED=0
+       # if they truly want the broad sweep.
+       echo "WARN merge-pr: flightdeck-mode unknown (no explicit FLIGHTDECK_MANAGED signal); skipping cross-branch sweep. Re-run with FLIGHTDECK_MANAGED=0 for the standalone maintenance behavior." >&2
+       SWEEP=managed
+       ;;
+   esac
    ```
 
-   ### 5a. Managed-mode sweep (only when `MANAGED=1`)
+   ### 5a. Managed-mode sweep (when `SWEEP=managed`)
 
    Operate strictly on the scoped issue's artifacts. Do NOT iterate other
    local branches or other worktrees.
@@ -264,15 +283,18 @@ merge. Detach them first.
    1. **Scoped branch deletion**. If the PR for `[ISSUE_ID]` is `MERGED` or
       `CLOSED`, the remote branch is already gone (handled by
       `gh pr merge --delete-branch` in step 2) or scheduled for deletion.
-      Delete the local `[SCOPED_BRANCH]` from `[MAIN_REPO_ROOT]` after
-      confirming it equals the scoped branch:
+      Delete the local `[SCOPED_BRANCH]` from `[MAIN_REPO_ROOT]`. Validate
+      against the scope we captured above by passing `--issue`, NOT by
+      re-reading scope after `cd [MAIN_REPO_ROOT]`:
       ```bash
+      WORKTREE_FD_MODE="$PWD/.agents/skills/orchestration/scripts/flightdeck-mode"
       (cd [MAIN_REPO_ROOT] && \
-         .agents/skills/orchestration/scripts/flightdeck-mode match-branch "[SCOPED_BRANCH]" && \
-         git branch -D "[SCOPED_BRANCH]")
+         "$WORKTREE_FD_MODE" --issue "$SCOPED_ISSUE" match-branch "$SCOPED_BRANCH" && \
+         git branch -D "$SCOPED_BRANCH")
       ```
-      Skip if `match-branch` exits non-zero (sanity guard — refuses to delete
-      anything other than the scoped branch).
+      `match-branch` exits non-zero if `$SCOPED_BRANCH` no longer matches
+      the workflow-state file for `$SCOPED_ISSUE` — in that case skip the
+      delete and surface in § 7. Never delete a branch the guard refuses.
 
    2. **Scoped worktree removal** is handled by step 6 (`Cleanup current
       worktree`) when § 4.1 captured a cleanup request. Do NOT enumerate or
@@ -288,10 +310,12 @@ merge. Detach them first.
 
    Report in § 7 only the scoped branch action (deleted or skipped).
 
-   ### 5b. Standalone maintenance sweep (only when `MANAGED=0`)
+   ### 5b. Standalone maintenance sweep (when `SWEEP=standalone`)
 
    This is a project-wide maintenance scan. Only execute when `merge-pr` was
-   invoked directly by the user from outside a Flightdeck-managed pane.
+   invoked directly by the user from outside a Flightdeck-managed pane
+   (`MODE == unmanaged`, i.e. `FLIGHTDECK_MANAGED=0` was set explicitly).
+   `MODE == unknown` falls into 5a fail-closed.
 
    Find local branches whose remote PRs are already merged/closed:
    ```bash
