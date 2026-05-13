@@ -31,6 +31,7 @@ import {
 	flightdeckSessionStatus,
 	foldWakeEventsIntoConversations,
 	formatAge,
+	mergedIssueHistory,
 	mostRecentPollMs,
 	type SettingsLike,
 	sortedIssues,
@@ -58,6 +59,7 @@ import {
 	panelBranch,
 	searchRow,
 	selectedRow,
+	sessionCompleteChip,
 	stateBadge,
 	stateColor,
 	stateGlyph,
@@ -294,7 +296,11 @@ function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width:
 	// already shows the same state badge — avoids "✱ 1 · CC-511 · ✱ waiting".
 	const showStateCounts = totalIssues > 1;
 	if (showStateCounts) for (const s of order) if (counts[s]) summaryParts.push(theme.fg(stateColor(s), `${stateGlyph(s)} ${counts[s]}`));
-	const daemonHealth = daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
+	// Terminated sessions render with a "session complete" badge instead of
+	// the alarming "daemon dead" red dot — the daemon is supposed to be down
+	// after `terminate.md § 5` (issue #17).
+	const terminated = !!snapshot.master?.terminated;
+	const headerRight = terminated ? sessionCompleteChip(theme) : daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
 	const queueLen = snapshot.master?.merge_queue?.length ?? 0;
 	const queueBadge = queueLen > 0 ? ` ${theme.fg("muted", "·")} ${theme.fg("accent", `merge-queue ${queueLen}`)}` : "";
 	// Keyhints — same pattern as pi-agents-tmux dashboard header:
@@ -302,11 +308,11 @@ function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width:
 	// shortcuts read from extension settings so user overrides are reflected.
 	const toggleShortcut = settingString("dashboardShortcut", "alt+m", cwd);
 	const popupShortcut = settingString("popupShortcut", "f6", cwd);
-	const toggleHint = toggleShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(toggleShortcut)} toggle`);
+	const toggleHint = toggleShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(toggleShortcut)} ${terminated ? "dismiss" : "toggle"}`);
 	const popupHint = popupShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(popupShortcut)} popup`);
 	const hints = `${toggleHint}${popupHint}`;
 	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${theme.fg("muted", `${totalIssues} issue${totalIssues === 1 ? "" : "s"}`)}${summaryParts.length > 0 ? ` ${theme.fg("muted", "·")} ${summaryParts.join(theme.fg("dim", " "))}` : ""}${queueBadge}${hints}`;
-	const header = `${headerLeft}  ${theme.fg("dim", "·")}  ${daemonHealth}`;
+	const header = `${headerLeft}  ${theme.fg("dim", "·")}  ${headerRight}`;
 	const bridge = getAgentsBridge();
 	if (state === "compact") {
 		const lines = [header];
@@ -466,6 +472,16 @@ function renderOverviewTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width
 	clampSelection(ui, filtered.length, viewportRows);
 	const lines: string[] = [];
 	lines.push(searchRow(theme, ui.search, width));
+	// Terminated banner — surfaces session-complete + summary path at the
+	// top of Overview so the post-mortem is the first thing the user sees
+	// when reopening the popup after a completed session (issue #17).
+	if (snapshot.master?.terminated) {
+		const when = snapshot.master.terminated_at ?? "";
+		const whenTxt = when ? ` ${theme.fg("dim", `at ${when}`)}` : "";
+		lines.push(`${sessionCompleteChip(theme)}${whenTxt}`);
+		if (snapshot.master.summary_path) lines.push(`${label(theme, "summary:")} ${theme.fg("text", snapshot.master.summary_path)}`);
+		lines.push(divider(width, theme));
+	}
 	lines.push("");
 	if (filtered.length === 0) {
 		if (issues.length === 0) {
@@ -530,6 +546,9 @@ function renderIssueDetailBlock(issue: IssueRecord, theme: Theme, width: number,
 	if (issue.launch?.model || issue.launch?.effort) lines.push(`${label(theme, "run:")}  ${theme.fg("text", formatLaunchProfile(issue))}`);
 	if (issue.worktree) lines.push(`${label(theme, "wt:")}   ${theme.fg("text", compactPath(issue.worktree))}`);
 	if (issue.pr_number) lines.push(`${label(theme, "PR:")}   ${theme.fg("accent", `#${issue.pr_number}`)}`);
+	if (typeof issue.merge_commit === "string" && issue.merge_commit.trim()) {
+		lines.push(`${label(theme, "merge:")} ${theme.fg("success", issue.merge_commit.trim().slice(0, 7))} ${theme.fg("dim", issue.merge_commit.trim())}`);
+	}
 	if (issue.substate) lines.push(`${label(theme, "tag:")}  ${tagBadge(theme, issue.substate)}`);
 	const usageText = formatUsageCompact(stats?.usage);
 	if (usageText) {
@@ -1013,6 +1032,29 @@ function renderConflictsTab(snapshot: FlightdeckSnapshot, _ui: PopupUiState, wid
 		const pr = issue?.pr_number ? theme.fg("accent", `PR#${issue.pr_number}`) : theme.fg("dim", "no-PR");
 		lines.push(`  ${theme.fg("muted", `${i + 1}.`)} ${theme.bold(theme.fg("text", id))} ${theme.fg("dim", "·")} ${state} ${theme.fg("dim", "·")} ${pr}`);
 	}
+	// Merge history — stable record of every `state=merged` issue with its
+	// PR and merge commit. Survives `merge_queue` drain so users can review
+	// what landed in this session after the queue empties or after
+	// `terminate.md § 5` flips the session to `terminated: true`. Without
+	// this, the tab showed only the live (now-empty) queue and the user lost
+	// visibility of what was merged (issue #17).
+	const merged = mergedIssueHistory(snapshot.master);
+	lines.push("");
+	lines.push(`${theme.fg("customMessageLabel", theme.bold("Merge history"))} ${theme.fg("dim", `(${merged.length})`)}`);
+	if (merged.length === 0) lines.push(theme.fg("dim", "  (no merges recorded)"));
+	else for (const issue of merged) {
+		const pr = issue.pr_number ? theme.fg("accent", `PR#${issue.pr_number}`) : theme.fg("dim", "no-PR");
+		const rawCommit = typeof issue.merge_commit === "string" ? issue.merge_commit.trim() : "";
+		const commit = rawCommit ? theme.fg("success", rawCommit.slice(0, 7)) : theme.fg("dim", "—");
+		const when = ageSecondsSince(issue.last_polled_at);
+		const whenTxt = when !== undefined ? ` ${theme.fg("dim", `${formatAge(when)} ago`)}` : "";
+		lines.push(`  ${theme.fg("success", "✓")} ${theme.bold(theme.fg("text", issue.issue))} ${theme.fg("dim", "·")} ${pr} ${theme.fg("dim", "·")} ${commit}${whenTxt}`);
+	}
+	const summaryPath = snapshot.master?.summary_path;
+	if (summaryPath) {
+		lines.push("");
+		lines.push(`${label(theme, "summary:")} ${theme.fg("text", summaryPath)}`);
+	}
 	lines.push("");
 	lines.push(`${theme.fg("customMessageLabel", theme.bold("Conflict graph"))} ${theme.fg("dim", `(${edges.length} edge${edges.length === 1 ? "" : "s"}${computed ? `, ${formatAge(ageSecondsSince(computed))} ago` : ""})`)}`);
 	if (edges.length === 0) lines.push(theme.fg("dim", "  (no detected file overlap)"));
@@ -1346,6 +1388,12 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		const dashboardEnabled = !inChildPane && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
 		const staleAfterMin = Math.max(0, Math.floor(settingNumber("dashboardStaleAfterMin", 5, ctx.cwd)));
 		const status = flightdeckSessionStatus(snapshot, { staleAfterMin });
+		// `terminated` is treated the same as `live` for visibility — the
+		// dashboard renders the completed session (Overview / Decisions /
+		// Conflicts & merges all read preserved `.issues`) and stays open
+		// until the user dismisses with `dashboardShortcut` (Alt+M). The
+		// alarming "daemon dead" chip is swapped for a green "session
+		// complete" chip by `renderDashboardLines` (issue #17).
 		if (status === "inactive" && !showBanner) {
 			if (cache.lastSyncKey !== "__off__") {
 				setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.FLIGHTDECK, undefined);
@@ -1377,7 +1425,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 				const lines: string[] = [];
 				if (showBanner && snapshot) lines.push(...renderPauseBannerLines(snapshot, theme, width));
 				if (dashboardEnabled && snapshot) {
-					if (status === "live") {
+					if (status === "live" || status === "terminated") {
 						if (lines.length > 0) lines.push("");
 						lines.push(...renderDashboardLines(snapshot, theme, width, cache.state, ctx.cwd, cache.paneTargetToId));
 					} else if (status === "stale") {
@@ -1739,7 +1787,10 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			: "";
 		const queue = snapshot.master?.merge_queue?.length ?? 0;
 		const queuePart = queue > 0 ? ` ${theme.fg("dim", "·")} ${theme.fg("accent", `merge-queue ${queue}`)}` : "";
-		const headerRight = daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
+		// Terminated popup header mirrors the dashboard chip swap — see
+		// `renderDashboardLines`; daemon-stop is intentional after
+		// `terminate.md § 5` (issue #17).
+		const headerRight = snapshot.master?.terminated ? sessionCompleteChip(theme) : daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
 		// tmux session_id ($N) is dropped here — it never changes for the life
 		// of the session and visually collides with USD cost strings; the
 		// Daemon tab still shows it for diagnostics.

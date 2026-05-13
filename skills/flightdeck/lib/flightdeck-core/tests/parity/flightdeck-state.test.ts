@@ -134,4 +134,48 @@ describe("flightdeck-state parity", () => {
 			expect(r.stdout).toMatch(/-2026-05-11T000000Z\.json\.archive\n$/);
 		}
 	});
+
+	// Regression: issue #17. `terminate.md § 5` previously ran
+	// `pane-registry remove-merged` after `set terminated true` and before
+	// `archive`, which deleted every merged-issue history from the archive.
+	// The workflow now skips `remove-merged` on terminate; the archive is
+	// the authoritative post-mortem record. This test pins the contract
+	// directly against `flightdeck-state` so future refactors don't
+	// reintroduce data loss: simulate a merged-issue session, run the
+	// terminate sequence, and assert every preserved field round-trips
+	// through the archive.
+	test("terminate sequence preserves merged-issue history in archive (issue #17)", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init"]);
+			run(useTs, repo, ["set", `.issues["CC-503"]`, JSON.stringify({
+				state: "merged",
+				pr_number: 81,
+				merge_commit: "156d9df02ce8fb3a798f233c73e489338db969f9",
+				harness: "claude",
+				window: "CC-503",
+				decisions_log: [
+					{ ts: "2026-05-13T00:00:01Z", prompt_tag: "review-fix", answer: "apply" },
+					{ ts: "2026-05-13T00:10:00Z", prompt_tag: "merge-now", answer: "yes" },
+					{ ts: "2026-05-13T00:15:35Z", prompt_tag: "terminal-state-reached", answer: "merged" },
+				],
+			})]);
+			run(useTs, repo, ["set", "terminated", "true"]);
+			run(useTs, repo, ["set", "terminated_at", '"2026-05-13T00:21:28Z"']);
+			run(useTs, repo, ["set", "summary_path", '"tmp/flightdeck-summary-HT-2026-05-13T002128Z.md"']);
+			const archive = run(useTs, repo, ["archive"]);
+			expect(archive.status).toBe(0);
+			const archivePath = archive.stdout.trim();
+			const data = JSON.parse(readFileSync(archivePath, "utf8"));
+			expect(data.terminated).toBe(true);
+			expect(data.terminated_at).toBe("2026-05-13T00:21:28Z");
+			expect(data.summary_path).toBe("tmp/flightdeck-summary-HT-2026-05-13T002128Z.md");
+			expect(Object.keys(data.issues)).toEqual(["CC-503"]);
+			expect(data.issues["CC-503"].state).toBe("merged");
+			expect(data.issues["CC-503"].pr_number).toBe(81);
+			expect(data.issues["CC-503"].merge_commit).toBe("156d9df02ce8fb3a798f233c73e489338db969f9");
+			expect(data.issues["CC-503"].decisions_log).toHaveLength(3);
+			expect(data.issues["CC-503"].decisions_log[2].prompt_tag).toBe("terminal-state-reached");
+		}
+	});
 });

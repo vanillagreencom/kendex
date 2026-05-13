@@ -140,7 +140,7 @@ complete. Parity tests for every port live under
 
 ## Schema — master state
 
-Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 5`). Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
+Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 5`). The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
 ```json
 {
@@ -172,7 +172,8 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
       "scope_files_actual": 27,
       "decisions_log": [
         {"ts": "<ISO8601>", "prompt_tag": "cleanup-prompt", "answer": "yes-own-only"}
-      ]
+      ],
+      "merge_commit": "<git-sha-or-null>"
     }
   },
   "merge_queue": ["<ISSUE_ID>", "<ISSUE_ID>"],

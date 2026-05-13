@@ -110,12 +110,13 @@ Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons):
 flightdeck-state set terminated true
 flightdeck-state set terminated_at "\"<ISO8601>\""
 flightdeck-state set summary_path "\"<tmp/flightdeck-summary-<SESSION>-<TS>.md>\""
-pane-registry remove-merged
 flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
 
-`pane-registry remove-merged` drops registry entries for issues in terminal state (`merged | aborted | dead`) whose tmux windows are already gone — keeps the archived state file scoped to actually-tracked issues instead of carrying zombie post-merge entries. `flightdeck-daemon stop` then terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` rotates the live state file to `tmp/flightdeck-state-<SESSION>-<terminated_at>.json.archive` so the next session in the same tmux name (e.g. `HT`) starts clean instead of inheriting this session's `issues` map, `merge_queue`, and `terminated` flag. The archive line preserves the full state for post-mortem inspection.
+Do NOT call `pane-registry remove-merged` here. Earlier revisions did, but `close-issue.md § 4` has already killed every terminal-state issue's tmux window by the time terminate runs, so `remove-merged` would unconditionally delete every `merged|aborted|dead` issue's history — including `decisions_log`, `pr_number`, and `merge_commit` — from the file that is about to be archived. The pi-flightdeck dashboard depends on those records to render the post-completion `Overview`, `Decisions`, and `Conflicts & merges` tabs; deleting them collapses the dashboard to an empty `0 issues` state immediately after a successful session. The archive's value is precisely the full session history (see [[issue-17]]).
+
+`flightdeck-daemon stop` terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` rotates the live state file to `tmp/flightdeck-state-<SESSION>-<terminated_at>.json.archive` so the next session in the same tmux name (e.g. `HT`) starts clean instead of inheriting this session's `issues` map, `merge_queue`, and `terminated` flag. The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) for post-mortem inspection and dashboard rendering.
 
 ---
 
@@ -199,7 +200,7 @@ On "Stick with planned cycle / Done": proceed to § 8.
 
 Do **not** close any additional panes here. Terminal issue windows were already closed by `close-issue.md` after the two-signal check; any remaining paused/non-terminal panes stay with the user so they can inspect transcripts or resume manually.
 
-§ 5's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale `issues` / `merge_queue` carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` and the summary file.
+§ 5's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale `issues` / `merge_queue` carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` (full `.issues` history, including merged-issue `decisions_log` / `pr_number` / `merge_commit`) and the summary file. pi-flightdeck reads the same shape and renders the completed session until the user dismisses the dashboard via `Alt+M`.
 
 ---
 

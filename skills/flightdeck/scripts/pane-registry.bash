@@ -431,9 +431,12 @@ case "$ACTION" in
 
   remove-merged)
     # Drop registry entries for issues in terminal state (merged|aborted|dead)
-    # whose tmux panes are gone. Called by terminate.md § 5 before archive
-    # so the archived state file is scoped to actually-tracked issues, not
-    # zombie post-merge entries. Primary liveness key is the immutable
+    # whose tmux panes are gone. NOT called by terminate.md anymore: doing so
+    # erased the entire merged-issue history (decisions_log, pr_number,
+    # merge_commit) from the archive that pi-flightdeck depends on for the
+    # post-completion view (issue #17). Kept as a callable subcommand for
+    # ad-hoc registry cleanup outside the terminate workflow. Primary
+    # liveness key is the immutable
     # tmux pane_id (`%N`); window_name is only a fallback for legacy
     # entries written before #3 fix and for entries whose init-time
     # pane_id resolution failed.

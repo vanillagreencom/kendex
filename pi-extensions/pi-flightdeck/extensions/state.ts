@@ -36,6 +36,10 @@ export interface IssueRecord {
 	scope_files_declared?: number | null;
 	scope_files_actual?: number | null;
 	decisions_log?: Array<{ ts: string; prompt_tag: string; answer: string }>;
+	// Captured by close-issue.md § 3 / merge-plan.md § 3 when a PR lands; the
+	// post-completion dashboard surfaces it in Overview and the merge-history
+	// pane of the Conflicts & merges tab.
+	merge_commit?: string | null;
 	[key: string]: unknown;
 }
 
@@ -51,6 +55,10 @@ export interface MasterState {
 	started_at?: string;
 	terminated?: boolean;
 	terminated_at?: string;
+	// `terminate.md § 5` writes the absolute or project-relative path to the
+	// session summary markdown. Used by the dashboard to point users at the
+	// post-mortem file without re-reading the disk.
+	summary_path?: string;
 	issues: Record<string, IssueRecord>;
 	merge_queue: string[];
 	conflict_graph?: { edges?: Array<[string, string]>; computed_at?: string | null };
@@ -304,6 +312,7 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 				paused_for_user: raw.paused_for_user ?? null,
 				session_id: raw.session_id,
 				started_at: raw.started_at,
+				summary_path: typeof raw.summary_path === "string" ? raw.summary_path : undefined,
 				terminated: raw.terminated ?? false,
 				terminated_at: raw.terminated_at,
 			},
@@ -545,7 +554,13 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 	return false;
 }
 
-export type FlightdeckSessionStatus = "live" | "stale" | "inactive";
+// `terminated`: master flagged the session complete via `terminate.md § 5`
+// and `.issues` is still populated. The dashboard keeps rendering the
+// completed session (Overview / Decisions / Conflicts & merges all read
+// the preserved history) until the user dismisses the widget. Without
+// this third arm, terminated sessions fell into `inactive` and the
+// post-completion summary was hidden from the user (issue #17).
+export type FlightdeckSessionStatus = "live" | "stale" | "inactive" | "terminated";
 
 const TERMINAL_ISSUE_STATES = new Set<IssueState>(["merged", "aborted", "dead"]);
 
@@ -577,9 +592,15 @@ export function flightdeckSessionStatus(
 ): FlightdeckSessionStatus {
 	if (!snapshot) return "inactive";
 	const master = snapshot.master;
-	const hasIssues = !!master && !master.terminated && Object.keys(master.issues).length > 0;
+	const hasAnyIssues = !!master && Object.keys(master.issues).length > 0;
+	// terminated + issues preserved → read-only completion view. Issue #17
+	// was the regression where `pane-registry remove-merged` ran inside
+	// `terminate.md § 5` and left `.issues == {}` on a terminated file, so
+	// this branch was unreachable and the dashboard collapsed.
+	if (master?.terminated && hasAnyIssues) return "terminated";
+	const hasLiveIssues = !!master && !master.terminated && hasAnyIssues;
 	const daemonAlive = snapshot.daemon.pidAlive;
-	if (!hasIssues && !daemonAlive) return "inactive";
+	if (!hasLiveIssues && !daemonAlive) return "inactive";
 	if (daemonAlive) return "live";
 	const staleAfterMin = options?.staleAfterMin ?? 5;
 	if (staleAfterMin <= 0) return "live";
@@ -588,6 +609,21 @@ export function flightdeckSessionStatus(
 	if (latest === undefined) return "stale";
 	const ageSec = Math.max(0, Math.floor((now - latest) / 1000));
 	return ageSec > staleAfterMin * 60 ? "stale" : "live";
+}
+
+// Merged issues, newest-merge-first by `last_polled_at`, used by the
+// Conflicts & merges tab to render a stable "Merge history" panel that
+// outlives the live `merge_queue` (which drains as items land).
+export function mergedIssueHistory(state: MasterState | undefined): IssueRecord[] {
+	if (!state) return [];
+	const merged = Object.values(state.issues).filter((issue) => issue.state === "merged");
+	merged.sort((a, b) => {
+		const at = Date.parse(a.last_polled_at ?? a.spawned_at ?? "");
+		const bt = Date.parse(b.last_polled_at ?? b.spawned_at ?? "");
+		if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return bt - at;
+		return a.issue.localeCompare(b.issue);
+	});
+	return merged;
 }
 
 export function sortedIssues(state: MasterState | undefined): IssueRecord[] {

@@ -229,6 +229,14 @@ export function daemonHealthChip(theme: Theme, alive: boolean, heartbeatAgeSec: 
 	return `${theme.fg("success", "●")} ${theme.fg("dim", "daemon")}`;
 }
 
+// Header chip rendered in place of `daemonHealthChip` when the master
+// state has `terminated: true`. The daemon is intentionally stopped after
+// `terminate.md § 5`; the alarming red "daemon dead" badge was the
+// previous (wrong) signal in the post-completion view (issue #17).
+export function sessionCompleteChip(theme: Theme): string {
+	return `${theme.fg("success", "✔")} ${theme.fg("success", "session complete")}`;
+}
+
 function formatAgeShort(sec: number): string {
 	if (sec < 60) return `${sec}s`;
 	if (sec < 3600) return `${Math.floor(sec / 60)}m`;
