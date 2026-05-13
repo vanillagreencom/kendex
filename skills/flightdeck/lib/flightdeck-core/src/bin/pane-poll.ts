@@ -251,6 +251,7 @@ function extractFlag(s: string, flag: string): string {
 
 interface PollRow {
 	issue: string;
+	entryKind: string;
 	rawTarget: string;
 	explicitIndex: string;
 	harness: string;
@@ -402,7 +403,7 @@ function pollOne(row: PollRow): string {
 	}
 
 	const captureHash = `sha256:${createHash("sha256").update(buf).digest("hex")}`;
-	const classifyResult = classifyBuffer(buf, { noFooterGate: adapterUsed });
+	const classifyResult = classifyBuffer(buf, { entryKind: row.entryKind, noFooterGate: adapterUsed });
 	let tag = classifyResult.tag;
 
 	if (tag !== "terminal-state-reached" && worktree && worktree !== "null" && pr && pr !== "null") {
@@ -446,7 +447,7 @@ function pollOne(row: PollRow): string {
 // ---- main ---------------------------------------------------------------
 
 function usage(code = 2): never {
-	process.stderr.write("Usage:\n  pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>]\n  pane-poll --batch -\n  pane-poll --batch <json-or-file>\n");
+	process.stderr.write("Usage:\n  pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>] [--kind <kind>]\n  pane-poll --batch -\n  pane-poll --batch <json-or-file>\n");
 	process.exit(code);
 }
 
@@ -477,6 +478,7 @@ if (argv[0] === "--batch") {
 			ccUrl: String(rec.cc_url ?? ""),
 			cxThread: String(rec.cx_thread_id ?? ""),
 			cxUrl: String(rec.cx_ws ?? ""),
+			entryKind: String(rec.kind ?? (rec.issue ? "issue" : "")),
 			explicitIndex: "",
 			fromBatch: true,
 			harness: String(rec.harness ?? ""),
@@ -498,7 +500,7 @@ if (argv[0] === "--batch") {
 let target = argv.shift();
 if (!target) usage();
 let paneIndex = "0";
-let harness = "", worktree = "", pr = "";
+let harness = "", worktree = "", pr = "", entryKind = "";
 if (argv.length > 0 && !argv[0]!.startsWith("--") && !target!.startsWith("%")) {
 	paneIndex = argv.shift()!;
 }
@@ -510,6 +512,8 @@ while (argv.length > 0) {
 	else if (a.startsWith("--worktree=")) worktree = a.slice("--worktree=".length);
 	else if (a === "--pr") pr = argv.shift() ?? "";
 	else if (a.startsWith("--pr=")) pr = a.slice("--pr=".length);
+	else if (a === "--kind" || a === "--entry-kind") entryKind = argv.shift() ?? "";
+	else if (a.startsWith("--kind=") || a.startsWith("--entry-kind=")) entryKind = a.slice(a.indexOf("=") + 1);
 	else if (a === "-h" || a === "--help") usage(0);
 }
 
@@ -517,6 +521,7 @@ refreshTmuxMetadata();
 process.stdout.write(`${pollOne({
 	ccTranscript: "", ccUrl: "",
 	cxThread: "", cxUrl: "",
+	entryKind,
 	explicitIndex: paneIndex,
 	fromBatch: false,
 	harness, issue: "",

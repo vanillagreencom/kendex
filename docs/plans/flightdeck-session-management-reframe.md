@@ -27,7 +27,7 @@ Merged baseline on `origin/main` now includes the following relevant work:
 ### Partially delivered
 
 - **Phase 2** has the `teardown-entry` alias from PR #22 and the `FLIGHTDECK_MANAGED=1`/`flightdeck-mode` managed-session signal from PR #21, but generic `init-entry`, `--kind adhoc`, `session-terminal`/`flightdeck-session`, and manual attach behavior remain.
-- **Phase 3** has canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 in both daemon paths, but the `session-watch.md` vs issue `watch.md` split remains.
+- **Phase 3** is completed on worker branch `fd-reframe-p3`: canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 are preserved, `session-watch.md` / issue `watch.md` and `session-handle-prompt.md` / issue `handle-prompt.md` are split, and domain guards route issue-only tags on ad-hoc entries to `domain-mismatch`.
 - **Phase 5** has render normalization, terminated archive fallback, and extracted terminated render helpers from PR #23 plus owner-aware persistent-widget behavior from PR #25, but type renames, sessions-first UI copy, and kind badges remain.
 
 ### Remaining unchanged in scope
@@ -249,12 +249,12 @@ Validation:
 
 Purpose: keep the daemon/prompt loop generic, move PR/issue decisions behind domain guards.
 
-Status (2026-05-13): **PARTIAL**. PR #24 / commit `41ef1a5` delivered the canonical `pi-bg-task-exit` wake event and handler routing; PR #21 / commit `6a10e4d` delivered canonical stale cleanup tags in both daemon paths. The `session-watch.md` vs issue `watch.md` split itself remains.
+Status (2026-05-13): **DONE in fd-reframe-p3**. PR #24 / commit `41ef1a5` delivered the canonical `pi-bg-task-exit` wake event and handler routing; PR #21 / commit `6a10e4d` delivered canonical stale cleanup tags in both daemon paths. Branch `fd-reframe-p3` completes the workflow/documentation split and adds domain guards in bash + TS prompt classification.
 
-1. **[REMAINING]** Refactor `workflows/watch.md` into two conceptual parts:
-   - Generic `session-watch.md`: init state, reconcile entries, spawn daemon, poll entries, route generic prompts, ack/yield.
-   - Issue `watch.md` extension: merge planning, terminal issue states, PR conflict graph, workflow phase summaries.
-2. **[REMAINING]** Generic states:
+1. **[DONE]** Refactor `workflows/watch.md` into two conceptual parts:
+   - **[DONE]** Generic `session-watch.md`: init state, reconcile entries, spawn daemon, poll entries, route generic prompts, ack/yield.
+   - **[DONE]** Issue `watch.md` extension: merge planning, terminal issue states, PR conflict graph, workflow phase summaries.
+2. **[DONE]** Generic states:
    - `waiting`
    - `prompting`
    - `submitting`
@@ -262,20 +262,25 @@ Status (2026-05-13): **PARTIAL**. PR #24 / commit `41ef1a5` delivered the canoni
    - `complete`
    - `cancelled`
    - `dead`
-3. **[REMAINING]** Issue-mode state mapping:
-   - `merge-ready` maps to generic `ready` + domain `issue.phase=merge-ready`.
-   - `merged` maps to generic `complete` + domain `issue.outcome=merged`.
-   - `aborted` maps to generic `cancelled` + domain `issue.outcome=aborted`.
-4. **[REMAINING]** Keep existing states in compatibility until all issue workflows are updated.
-5. **[PARTIAL]** Prompt handler split:
+3. **[DONE]** Issue-mode state mapping documented:
+   - `merge-ready` maps to generic `ready` + `domain.issue.phase = "merge-ready"`.
+   - `merged` maps to generic `complete` + `domain.issue.outcome = "merged"`.
+   - `aborted` maps to generic `cancelled` + `domain.issue.outcome = "aborted"`.
+4. **[DONE]** Keep existing states in compatibility until all issue workflows are updated.
+5. **[DONE]** Prompt handler split:
    - **[DONE]** `pi-bg-task-exit` is a canonical daemon wake and is routed in `skills/flightdeck/workflows/watch.md` and `skills/flightdeck/workflows/handle-prompt.md`. Delivered in PR #24.
    - **[DONE]** `stale-no-pr-branch` and `stale-orphan-worktree` are canonical tags in bash and TS daemon/classifier paths and route to safe keep handlers. Delivered in PR #21.
-   - **[REMAINING]** Generic handlers: `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`/completion signal, plus `pi-bg-task-exit`, need to live behind a generic session handler surface.
-   - **[REMAINING]** Issue handlers: cleanup worktree, bot-review, rebase, force-push, audit relation, merge, descope, review fix suggestions, scope creep.
-6. **[PARTIAL]** Add handler guards:
+   - **[DONE]** Generic handlers live in `workflows/session-handle-prompt.md`: `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, and `pi-bg-task-exit`.
+   - **[DONE]** Issue handlers remain in `workflows/handle-prompt.md`: cleanup worktree, bot-review/CI recovery, rebase, force-push, audit relation, merge, descope, review fix suggestions, scope creep, stale branch/worktree defenses.
+6. **[DONE]** Add handler guards:
    - **[PARTIAL]** Existing stale cleanup tags now avoid destructive out-of-scope cleanup in managed Flightdeck mode. Delivered in PR #21.
-   - **[REMAINING]** If an issue-only tag appears on an ad-hoc session, escalate as `domain-mismatch` instead of applying PR/worktree assumptions.
-   - **[REMAINING]** If a generic tag appears on an issue session, use generic handler then resume issue flow.
+   - **[DONE]** If an issue-only tag appears on an ad-hoc session, `prompt-classify --entry-kind` / TS `classifyBuffer({entryKind})` rewrites it to `domain-mismatch` instead of applying PR/worktree assumptions.
+   - **[DONE]** If a generic tag appears on an issue session, `watch.md` routes through `session-handle-prompt.md` then resumes issue flow.
+
+Remaining after Phase 3:
+
+- **[REMAINING]** Live ad-hoc smoke without GitHub/Linear credentials is still part of the broader reframe test matrix.
+- **[REMAINING]** Phase 4 issue-mode isolation keeps the existing issue commands and dependency language cleanup.
 
 Validation:
 

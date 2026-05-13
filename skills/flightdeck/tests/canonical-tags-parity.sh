@@ -18,6 +18,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 BASH_SRC="$SKILL_DIR/scripts/flightdeck-daemon.bash"
 TS_SRC="$SKILL_DIR/lib/flightdeck-core/src/daemon/events.ts"
+TS_BG_TASK_SRC="$SKILL_DIR/lib/flightdeck-core/src/events/bg-task-exit.ts"
 
 PASS=0; FAIL=0
 assert_eq() {
@@ -45,7 +46,9 @@ extract_bash_tags() {
 
 extract_ts_tags() {
   # Pull the lines between `new Set<string>([` and `])`, strip quotes
-  # and commas, drop blank lines and comments. Tags only.
+  # and commas, drop blank lines and comments. Tags only. Also resolve
+  # the shared BG_TASK_EXIT_CLASSIFIER_TAG constant when the allowlist uses
+  # it instead of duplicating the literal string.
   awk '
     /new Set<string>\(\[/ { inside=1; next }
     inside && /^]\);/     { inside=0; next }
@@ -57,9 +60,17 @@ extract_ts_tags() {
         # "tag",
         gsub(/^"/, ""); gsub(/",$/, ""); gsub(/"$/, "");
         print $0
+      } else if ($0 == "BG_TASK_EXIT_CLASSIFIER_TAG,") {
+        print "__BG_TASK_EXIT_CLASSIFIER_TAG__"
       }
     }
-  ' "$TS_SRC" | sort -u
+  ' "$TS_SRC" | while IFS= read -r tag; do
+    if [[ "$tag" == "__BG_TASK_EXIT_CLASSIFIER_TAG__" ]]; then
+      awk -F'"' '/export const BG_TASK_EXIT_CLASSIFIER_TAG/ { print $2; exit }' "$TS_BG_TASK_SRC"
+    else
+      printf '%s\n' "$tag"
+    fi
+  done | sort -u
 }
 
 BASH_TAGS=$(extract_bash_tags)

@@ -25,6 +25,13 @@ When a channel isn't available, flightdeck falls back to reading the agent's ter
 
 A small background daemon polls the agent panes a few times a second, detects when an agent has something to ask, classifies the prompt against a library of known shapes, and wakes the master agent. The master either auto-answers (most prompts have a learned default) or pauses for the human.
 
+The watch layer is split into two modes:
+
+- **Generic session mode** (`workflows/session-watch.md` + `session-handle-prompt.md`) tracks any tmux-window entry and handles only domain-neutral prompts such as structured questions, bash permission prompts, safe bounded choices, terminal completion, and Pi background-task exits.
+- **Issue mode** (`workflows/watch.md` + `handle-prompt.md`) extends the generic loop with GitHub/Linear/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, audit relations, merge planning, scope creep, and descope actions.
+
+Issue-only prompt tags on ad-hoc sessions are guarded as `domain-mismatch`: Flightdeck logs a warning, takes no destructive action, and asks the master/user how to proceed.
+
 When every tracked issue is merged, aborted, or otherwise terminal, flightdeck writes a session summary — including any new issues the agents created along the way and a recommendation about what to tackle next — and hands control back.
 
 ## Activation and termination
@@ -71,7 +78,7 @@ skills/flightdeck/scripts/flightdeck-session attach \
   --title "Manual Pi"
 ```
 
-All starts use `tmux new-window` (never split panes), set `FLIGHTDECK_MANAGED=1` and `FLIGHTDECK_CHILD_PANE=1` in the launched command environment, capture stable `pane_id`/`window_id` metadata, and register through `pane-registry init-entry`. `pane-registry list --format json` returns normalized entries for both ad-hoc sessions and legacy issue rows.
+All starts use `tmux new-window` (never split panes), set `FLIGHTDECK_MANAGED=1` and `FLIGHTDECK_CHILD_PANE=1` in the launched command environment, capture stable `pane_id`/`window_id` metadata, and register through `pane-registry init-entry`. `pane-registry list --format json` returns normalized entries for both ad-hoc sessions and legacy issue rows. `session watch` uses the generic session loop; issue `watch` layers merge/PR workflow logic on top.
 
 ## Install
 
@@ -146,7 +153,7 @@ You don't run any of these by hand in normal use — the skill calls them.
 - `flightdeck-state` — reads/writes the session's master state file, including schema `1.1` tracked-entry normalization (`tracked-entries`, `write-entry`).
 - `flightdeck-daemon` — background poller; wakes the master.
 - `pane-registry`, `pane-poll`, `pane-respond` — pane tracking and IO.
-- `prompt-classify` — pattern-matches agent output against known prompt shapes.
+- `prompt-classify` — pattern-matches agent output against known prompt shapes and guards issue-only tags on non-issue entries as `domain-mismatch`.
 - `pr-conflict-graph`, `parallel-groups` — merge-order planning.
 - `codex-app-server-spawn` / `-stop` — Codex bridge server lifecycle.
 

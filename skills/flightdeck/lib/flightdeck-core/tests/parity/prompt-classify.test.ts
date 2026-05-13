@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(HERE, "../fixtures/prompt-classify");
-const BASH_SCRIPT = resolve(HERE, "../../../../scripts/prompt-classify");
+const BASH_SCRIPT = resolve(HERE, "../../../../scripts/prompt-classify.bash");
 const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
 
 interface Fixture {

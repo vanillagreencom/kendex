@@ -5,7 +5,7 @@
 # batch mode emits JSONL, one object per registry row.
 #
 # Usage:
-#   pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>]
+#   pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>] [--kind <kind>]
 #   pane-poll --batch -        # stdin: JSON array from `pane-registry list --format json`
 #   pane-poll --batch <json>   # direct JSON array (or a file path containing it)
 #
@@ -17,7 +17,7 @@
 #   pane-registry list --format json | pane-poll --batch -
 #
 # Batch input rows should contain:
-#   {"issue":"CC-123","pane_id":"%403","pane_target":"HT:cc-123.0","harness":"pi","worktree":"/repo/trees/cc-123","pr_number":123}
+#   {"id":"CC-123","kind":"issue","issue":"CC-123","pane_id":"%403","pane_target":"HT:cc-123.0","harness":"pi","worktree":"/repo/trees/cc-123","pr_number":123}
 #
 # When --worktree and --pr are both passed (or present in batch input) and
 # the worktree directory is gone AND `gh pr view <PR>` returns MERGED, the
@@ -50,7 +50,7 @@ usage() {
   local code="${1:-2}"
   cat >&2 <<'EOF'
 Usage:
-  pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>]
+  pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>] [--kind <kind>]
   pane-poll --batch -
   pane-poll --batch <json-or-file>
 EOF
@@ -285,6 +285,7 @@ poll_one() {
   local row_oc_url="${7:-}" row_oc_session="${8:-}" row_cc_url="${9:-}" row_cc_transcript="${10:-}"
   local row_pi_pid="${11:-}" row_pi_socket="${12:-}" row_cx_url="${13:-}" row_cx_thread="${14:-}"
   local from_batch="${15:-0}"
+  local entry_kind="${16:-}"
   local window_target pane_target pane_index pid window_list_target derive_target output_pane
   local bell=0 activity=0 silence=0
 
@@ -400,15 +401,16 @@ poll_one() {
     fi
   fi
 
-  local capture_hash tag
+  local capture_hash tag classifier_args=()
   capture_hash=$(printf '%s' "$buf" | sha256sum | awk '{print "sha256:"$1}')
   # Adapter-mode input has no TUI footer; skip the footer gate so option-list
   # / merge-now / etc. shapes classify correctly. Tmux-fallback path keeps
   # the footer gate as a buffer-completeness signal.
+  [[ -n "$entry_kind" ]] && classifier_args+=(--entry-kind "$entry_kind")
   if [[ $oc_used -eq 1 || $cc_used -eq 1 || $pi_used -eq 1 || $cx_used -eq 1 ]]; then
-    tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" --no-footer-gate 2>/dev/null || echo "idle")
+    tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" --no-footer-gate "${classifier_args[@]}" 2>/dev/null || echo "idle")
   else
-    tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" 2>/dev/null || echo "idle")
+    tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" "${classifier_args[@]}" 2>/dev/null || echo "idle")
   fi
 
   # Orphan cross-check — when caller passes --worktree and --pr, synthesize
@@ -466,8 +468,8 @@ run_batch() {
   fi
 
   refresh_tmux_metadata
-  local issue target pane_id pane_target harness worktree pr oc_url oc_session cc_url cc_transcript pi_pid pi_socket cx_url cx_thread
-  while IFS=$'\t' read -r issue pane_id pane_target harness worktree pr oc_url oc_session cc_url cc_transcript pi_pid pi_socket cx_url cx_thread; do
+  local issue entry_kind target pane_id pane_target harness worktree pr oc_url oc_session cc_url cc_transcript pi_pid pi_socket cx_url cx_thread
+  while IFS=$'\t' read -r issue entry_kind pane_id pane_target harness worktree pr oc_url oc_session cc_url cc_transcript pi_pid pi_socket cx_url cx_thread; do
     [[ -z "$issue$pane_id$pane_target" ]] && continue
     if [[ -n "$pane_id" && "$pane_id" != "null" ]]; then
       target="$pane_id"
@@ -475,9 +477,10 @@ run_batch() {
       target="$pane_target"
     fi
     poll_one "$issue" "$target" "" "$harness" "$worktree" "$pr" \
-      "$oc_url" "$oc_session" "$cc_url" "$cc_transcript" "$pi_pid" "$pi_socket" "$cx_url" "$cx_thread" "1"
+      "$oc_url" "$oc_session" "$cc_url" "$cc_transcript" "$pi_pid" "$pi_socket" "$cx_url" "$cx_thread" "1" "$entry_kind"
   done < <(jq -r '.[] | [
     (.issue // ""),
+    (.kind // (if ((.issue // "") != "") then "issue" else "" end)),
     (.pane_id // ""),
     (.pane_target // ""),
     (.harness // ""),
@@ -521,6 +524,7 @@ fi
 HARNESS=""
 WORKTREE=""
 PR=""
+ENTRY_KIND=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --harness) HARNESS="$2"; shift 2 ;;
@@ -529,10 +533,12 @@ while [[ $# -gt 0 ]]; do
     --worktree=*) WORKTREE="${1#--worktree=}"; shift ;;
     --pr) PR="$2"; shift 2 ;;
     --pr=*) PR="${1#--pr=}"; shift ;;
+    --kind|--entry-kind) ENTRY_KIND="$2"; shift 2 ;;
+    --kind=*|--entry-kind=*) ENTRY_KIND="${1#*=}"; shift ;;
     -h|--help) usage ;;
     *) shift ;;
   esac
 done
 
 refresh_tmux_metadata
-poll_one "" "$TARGET" "$PANE_INDEX" "$HARNESS" "$WORKTREE" "$PR"
+poll_one "" "$TARGET" "$PANE_INDEX" "$HARNESS" "$WORKTREE" "$PR" "" "" "" "" "" "" "" "" "0" "$ENTRY_KIND"

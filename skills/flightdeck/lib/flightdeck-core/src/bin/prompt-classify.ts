@@ -7,13 +7,14 @@ import { readFileSync } from "node:fs";
 import { classifyBuffer } from "../classifier/classify.ts";
 
 function usage(): never {
-	process.stderr.write("Usage: prompt-classify [--buffer-file <path>] [--dry-run] [--no-footer-gate]\n");
+	process.stderr.write("Usage: prompt-classify [--buffer-file <path>] [--dry-run] [--no-footer-gate] [--entry-kind <kind>]\n");
 	process.exit(2);
 }
 
 let bufferFile = "";
 let dryRun = false;
 let noFooterGate = false;
+let entryKind = "";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i += 1) {
@@ -22,6 +23,8 @@ for (let i = 0; i < args.length; i += 1) {
 	if (a.startsWith("--buffer-file=")) { bufferFile = a.slice("--buffer-file=".length); continue; }
 	if (a === "--dry-run") { dryRun = true; continue; }
 	if (a === "--no-footer-gate") { noFooterGate = true; continue; }
+	if (a === "--entry-kind" || a === "--kind") { entryKind = args[++i] ?? ""; continue; }
+	if (a.startsWith("--entry-kind=") || a.startsWith("--kind=")) { entryKind = a.slice(a.indexOf("=") + 1); continue; }
 	process.stderr.write(`Unknown flag: ${a}\n`);
 	process.exit(2);
 }
@@ -35,7 +38,11 @@ if (bufferFile) {
 	buf = Buffer.concat(chunks).toString("utf8");
 }
 
-const result = classifyBuffer(buf, { noFooterGate });
+const unguarded = classifyBuffer(buf, { noFooterGate });
+const result = classifyBuffer(buf, { entryKind, noFooterGate });
+if (result.tag === "domain-mismatch" && unguarded.tag !== result.tag) {
+	process.stderr.write(`Warning: issue-only prompt tag ${unguarded.tag} appeared on ${entryKind || "unknown"} entry; routing as domain-mismatch.\n`);
+}
 if (dryRun && result.matched) {
 	process.stdout.write(`${result.tag}\t${result.matched}\n`);
 } else {

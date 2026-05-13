@@ -10,6 +10,28 @@ export interface Rule {
 	matched: string;
 }
 
+// Tags that assume issue/worktree/PR context. When prompt-classify is told
+// it is classifying a non-issue TrackedEntry, these are rewritten to
+// `domain-mismatch` so the watch loop can warn/escalate instead of taking
+// destructive issue-mode action against an ad-hoc pane.
+export const ISSUE_ONLY_TAGS = new Set<string>([
+	"force-merge-confirm",
+	"merge-ready-but-unknown",
+	"merge-now",
+	"bot-review-wait-stuck",
+	"rebase-multi-choice",
+	"force-push-prompt",
+	"stale-no-pr-branch",
+	"stale-orphan-worktree",
+	"cleanup-prompt",
+	"audit-relation-prompt",
+	"descope-related",
+	"external-fix-suggestions",
+	"cycle-fix-suggestions",
+	"scope-creep-detected",
+	"multi-select-tabbed",
+]);
+
 // Awaiting-direction is classified before the footer gate (post-cancel
 // idle state has no option-list footer).
 export const PRE_FOOTER_RULES: Rule[] = [

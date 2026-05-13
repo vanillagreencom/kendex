@@ -140,6 +140,7 @@ CANONICAL_TAGS=(
   pi-question
   pi-subagent-completion
   pi-bg-task-exit
+  domain-mismatch
 )
 
 is_canonical_tag() {

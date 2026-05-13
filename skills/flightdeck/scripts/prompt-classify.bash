@@ -10,6 +10,7 @@
 #   prompt-classify --buffer-file <path>
 #   tmux capture-pane -t HT:cc-463.0 -p -S -200 | prompt-classify
 #   prompt-classify --buffer-file /tmp/buf.txt --dry-run    # print tag + matched line
+#   prompt-classify --entry-kind adhoc                      # guard issue-only tags
 #
 # Tags (in match-priority order):
 #   rendering                  - prompt isn't fully painted yet
@@ -32,6 +33,7 @@
 #   multi-select-tabbed        - tabbed checkbox UI; needs --option-multi (NOT --option)
 #   awaiting-direction         - recoverable post-cancel / no-prompt idle state
 #   generic-multi-choice       - has option list but no specific match
+#   domain-mismatch            - issue-only tag appeared on a non-issue entry
 #   idle                       - no prompt detected
 #
 # Exit code: 0 (always; tag goes to stdout)
@@ -40,11 +42,14 @@ set -euo pipefail
 DRY_RUN=0
 BUFFER_FILE=""
 NO_FOOTER_GATE=0
+ENTRY_KIND=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --buffer-file) BUFFER_FILE="$2"; shift 2 ;;
     --buffer-file=*) BUFFER_FILE="${1#--buffer-file=}"; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --entry-kind|--kind) ENTRY_KIND="$2"; shift 2 ;;
+    --entry-kind=*|--kind=*) ENTRY_KIND="${1#*=}"; shift ;;
     # Skip the TUI-footer gate. Use this when the input is a structured
     # assistant-text blob from a harness adapter (HTTP /message, MCP
     # channel, WS events) — no rendered terminal chrome to look for.
@@ -64,12 +69,28 @@ fi
 
 emit() {
   local tag="$1" matched="${2:-}"
+  if domain_guard_should_escalate "$tag"; then
+    printf 'Warning: issue-only prompt tag %s appeared on %s entry; routing as domain-mismatch.\n' "$tag" "${ENTRY_KIND:-unknown}" >&2
+    matched="issue-only $tag on ${ENTRY_KIND:-unknown} entry"
+    tag="domain-mismatch"
+  fi
   if [[ $DRY_RUN -eq 1 && -n "$matched" ]]; then
     printf '%s\t%s\n' "$tag" "$matched"
   else
     printf '%s\n' "$tag"
   fi
   exit 0
+}
+
+domain_guard_should_escalate() {
+  local tag="$1" kind="${ENTRY_KIND,,}"
+  [[ -n "$kind" && "$kind" != "issue" ]] || return 1
+  case "$tag" in
+    force-merge-confirm|merge-ready-but-unknown|merge-now|bot-review-wait-stuck|rebase-multi-choice|force-push-prompt|stale-no-pr-branch|stale-orphan-worktree|cleanup-prompt|audit-relation-prompt|descope-related|external-fix-suggestions|cycle-fix-suggestions|scope-creep-detected|multi-select-tabbed)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 # awaiting-direction — recoverable post-cancel / post-decline state where
