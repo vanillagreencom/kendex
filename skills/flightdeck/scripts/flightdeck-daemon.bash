@@ -117,6 +117,8 @@ CANONICAL_TAGS=(
   force-push-prompt
   merge-now
   cleanup-prompt
+  stale-no-pr-branch
+  stale-orphan-worktree
   rebase-multi-choice
   generic-multi-choice
   multi-select-tabbed

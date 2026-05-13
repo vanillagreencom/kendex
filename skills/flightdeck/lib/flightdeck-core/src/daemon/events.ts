@@ -95,6 +95,14 @@ const CANONICAL_TAGS = new Set<string>([
 	"force-push-prompt",
 	"merge-now",
 	"cleanup-prompt",
+	// Flightdeck cleanup-scope defensive tags (issue #18). Per-issue
+	// orchestration should never surface these under FLIGHTDECK_MANAGED=1,
+	// but if an older orchestration build does, master needs to wake on
+	// the stable buffer so the handler in handle-prompt.md § 4.6 can
+	// answer Keep. Without these in the allowlist the daemon records the
+	// hash as notified and never fires wake.
+	"stale-no-pr-branch",
+	"stale-orphan-worktree",
 	"rebase-multi-choice",
 	"generic-multi-choice",
 	"multi-select-tabbed",

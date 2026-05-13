@@ -7,6 +7,17 @@
 
 set -euo pipefail
 
+# Env isolation: every test must behave identically regardless of any
+# FLIGHTDECK_* / ORCH_STATE_DIR / FLIGHTDECK_STATE_DIR pollution in the
+# caller's environment. The reviewer's spot check (running with
+# FLIGHTDECK_MANAGED=1 or ORCH_STATE_DIR=other set in the shell) must
+# not flip outcomes here. The `run` / `run_with` / `run_cwd` helpers
+# below also use `env -u`, but the top-level unset is the belt that
+# protects assertions like the corrupt-master-state probe that don't
+# go through those helpers.
+unset FLIGHTDECK_MANAGED FLIGHTDECK_CHILD_PANE FLIGHTDECK_SESSION_ID \
+      FLIGHTDECK_STATE_DIR ORCH_STATE_DIR
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/skills/orchestration/scripts/flightdeck-mode"

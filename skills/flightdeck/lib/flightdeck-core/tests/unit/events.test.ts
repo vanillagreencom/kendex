@@ -117,4 +117,16 @@ describe("isCanonicalTag", () => {
 		expect(isCanonicalTag("idle")).toBe(false);
 		expect(isCanonicalTag("")).toBe(false);
 	});
+
+	// Flightdeck cleanup-scope defensive tags (issue #18). Without these
+	// in CANONICAL_TAGS the daemon stable-buffer path marks the hash
+	// notified and never wakes master, so handle-prompt's `Keep` answer
+	// never fires and the per-issue pane stalls on the destructive prompt.
+	test("stale-no-pr-branch is canonical (issue #18)", () => {
+		expect(isCanonicalTag("stale-no-pr-branch")).toBe(true);
+	});
+
+	test("stale-orphan-worktree is canonical (issue #18)", () => {
+		expect(isCanonicalTag("stale-orphan-worktree")).toBe(true);
+	});
 });

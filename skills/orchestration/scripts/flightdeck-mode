@@ -198,7 +198,12 @@ scope_worktree() {
   fi
   # No --issue and no workflow-state: fall back to $PWD only when the
   # caller did not name an issue. With --issue we refuse to guess.
-  [[ -z "$ISSUE_ARG" ]] && current_pwd_abs
+  # Always return 0 so `set -e` callers don't die when scope is
+  # genuinely missing (e.g. unknown mode under a polluted ORCH_STATE_DIR).
+  if [[ -z "$ISSUE_ARG" ]]; then
+    current_pwd_abs || true
+  fi
+  return 0
 }
 
 scope_branch() {
@@ -210,7 +215,10 @@ scope_branch() {
       return 0
     fi
   fi
-  [[ -z "$ISSUE_ARG" ]] && git branch --show-current 2>/dev/null
+  if [[ -z "$ISSUE_ARG" ]]; then
+    git branch --show-current 2>/dev/null || true
+  fi
+  return 0
 }
 
 cmd_check() {

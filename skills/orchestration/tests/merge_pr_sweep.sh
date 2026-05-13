@@ -19,6 +19,16 @@
 
 set -euo pipefail
 
+# Env isolation. The reviewer's spot check ran this file with
+# FLIGHTDECK_MANAGED=1 / ORCH_STATE_DIR=other in the shell and observed
+# scenario-specific failures (unknown-mode case no longer saw unknown;
+# scope-json resolved against the wrong state dir and led to a SWEEP=
+# unbound variable). Unsetting every relevant FLIGHTDECK_* /
+# ORCH_STATE_DIR / FLIGHTDECK_STATE_DIR var at the top makes every
+# subsequent assertion independent of the caller's environment.
+unset FLIGHTDECK_MANAGED FLIGHTDECK_CHILD_PANE FLIGHTDECK_SESSION_ID \
+      FLIGHTDECK_STATE_DIR ORCH_STATE_DIR
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 FD_MODE="$REPO_ROOT/skills/orchestration/scripts/flightdeck-mode"
@@ -74,19 +84,30 @@ EOF
 sweep() {
   # Args: cwd, FLIGHTDECK_MANAGED value (empty for unset), scoped-issue.
   local cwd="$1" managed="$2" scoped_issue="$3"
-  local warn=""
   (
+    # Belt-and-braces env scrub inside the subshell so the function
+    # behaves identically when called from a parent that had any
+    # FLIGHTDECK_* / ORCH_STATE_DIR var set.
+    unset FLIGHTDECK_MANAGED FLIGHTDECK_CHILD_PANE FLIGHTDECK_SESSION_ID \
+          FLIGHTDECK_STATE_DIR ORCH_STATE_DIR
     cd "$cwd"
     if [[ -n "$managed" ]]; then export FLIGHTDECK_MANAGED="$managed"; fi
     SCOPE=$("$FD_MODE" --issue "$scoped_issue" scope-json)
     MODE=$(jq -r '.mode' <<<"$SCOPE")
     SCOPED_BRANCH=$(jq -r '.branch' <<<"$SCOPE")
+    SWEEP=managed  # default to the safe path; case may override
     case "$MODE" in
       managed)   SWEEP=managed ;;
       unmanaged) SWEEP=standalone ;;
       unknown)
         # Fail closed: emit warning and stay managed.
         echo "WARN merge-pr: flightdeck-mode unknown" >&2
+        SWEEP=managed
+        ;;
+      *)
+        # Defensive: any other value (jq error, future addition) also
+        # fails closed with a warning.
+        echo "WARN merge-pr: flightdeck-mode returned unexpected mode='$MODE'" >&2
         SWEEP=managed
         ;;
     esac
@@ -121,7 +142,6 @@ sweep() {
       # Orphan worktree enumeration (merge-pr.md § 5b second block):
       # any directory under [TREES_DIR] that is NOT in `git worktree
       # list --porcelain` surfaces as `"Stale worktree for X. Remove?"`.
-      local live_wts
       live_wts=$(git -C "$MAIN_REPO" worktree list --porcelain 2>/dev/null \
                  | awk '/^worktree /{print $2}')
       for d in "$TREES_DIR"/*; do
@@ -132,7 +152,7 @@ sweep() {
         fi
       done
     fi
-  ) 2> >(warn=$(cat); printf '%s' "$warn" >&2) || true
+  )
 }
 
 echo "=== merge-pr § 5 -- managed mode (FLIGHTDECK_MANAGED=1) ==="

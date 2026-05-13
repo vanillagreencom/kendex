@@ -354,6 +354,18 @@ detect_start_cmd() {
 
 # --- Opencode HTTP-attach adapter (Phase 1) ----------------------------------
 #
+# FLIGHTDECK_MANAGED env contract for OpenCode panes:
+# The authoritative process env is `opencode serve` (Step 0). Tool calls
+# fired during `opencode run --attach` (Step 1 bootstrap, Step 2
+# fire_orchestration_async, and the long-lived attach TUI) all execute
+# inside the server process and inherit FLIGHTDECK_MANAGED=1 from there.
+# We additionally prefix every `run --attach` invocation with the env
+# var as belt-and-braces — if the server is ever restarted out-of-band
+# (e.g. crash + supervisor respawn from a context that drops the env),
+# subsequent run --attach calls still surface the signal to the
+# orchestration tools that read it. See tests/oc-flightdeck-managed.sh
+# for the static coverage check.
+#
 # Two-step launch (corrected from initial Phase 1 plan):
 #   Step 0: spawn `opencode serve --port <PORT>` as a detached background
 #           process (setsid + nohup). PID persisted in the spawn file.
@@ -407,7 +419,13 @@ start_oc_server() {
   # the function's stdout, which is the captured `$(...)` pipe. Without
   # the outer redirect, the server's grandchildren keep the pipe alive
   # and `server_pid=$(start_oc_server ...)` hangs forever.
-  ( cd "$wt_path" && setsid nohup "$bin" serve --port "$port" --hostname 127.0.0.1 \
+  # Export FLIGHTDECK_MANAGED=1 into the server's environment so any
+  # `flightdeck-mode` invocation from inside an opencode tool call sees
+  # the same managed signal as the attach TUI. Without this the long-
+  # lived server process would not carry the signal and orchestration
+  # tools executed via `opencode run --attach` would fall back to
+  # registry/tmux detection only (reviewer-error finding, PR #21).
+  ( cd "$wt_path" && FLIGHTDECK_MANAGED=1 setsid nohup "$bin" serve --port "$port" --hostname 127.0.0.1 \
       </dev/null >>"$server_log" 2>&1 ) </dev/null >/dev/null 2>&1 &
   local launcher_pid=$!
   local deadline=$((SECONDS + 15))
@@ -448,8 +466,11 @@ create_oc_session() {
   local bootstrap="reply with READY and nothing else"
   local launch_args=()
   add_launch_args opencode launch_args
+  # FLIGHTDECK_MANAGED=1 also exports into this short-lived
+  # session-creation invocation so any tool calls fired during the
+  # bootstrap turn see the canonical signal.
   local out
-  if ! out=$( cd "$wt_path" && timeout --kill-after=10 60 "$bin" run --attach "$url" \
+  if ! out=$( cd "$wt_path" && FLIGHTDECK_MANAGED=1 timeout --kill-after=10 60 "$bin" run --attach "$url" \
                "${launch_args[@]}" --agent build --format json "$bootstrap" 2>&1); then
     echo "  oc-attach-unavailable: opencode run --attach (session create) exit non-zero" >&2
     [[ -n "$out" ]] && printf '%s\n' "$out" | head -n 20 >&2
@@ -494,9 +515,12 @@ fire_orchestration_async() {
   fi
   local launch_args=()
   add_launch_args opencode launch_args
+  # FLIGHTDECK_MANAGED=1 also exports into the fire-and-forget
+  # `/orchestration start` invocation so any tool calls (e.g.
+  # merge-pr.md § 5 running flightdeck-mode) see the canonical signal.
   # Outer redirect detaches the subshell's FDs from anything the caller
   # might be capturing — same hazard as start_oc_server.
-  ( cd "$wt_path" && setsid nohup "$bin" run --attach "$url" \
+  ( cd "$wt_path" && FLIGHTDECK_MANAGED=1 setsid nohup "$bin" run --attach "$url" \
       "${launch_args[@]}" --session "$sid" --format json "$prompt" \
       </dev/null >>"$log".orch 2>&1 ) </dev/null >/dev/null 2>&1 &
   disown 2>/dev/null || true
