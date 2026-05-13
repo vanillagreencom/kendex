@@ -25,6 +25,7 @@ import {
 	renderDecisionsTab,
 	renderOverviewTab,
 } from "../extensions/flightdeck.js";
+import { renderArchiveErrorBanner } from "../extensions/render-terminated.js";
 import {
 	buildSnapshotFromInputs,
 	type FlightdeckSnapshot,
@@ -263,6 +264,27 @@ test("Conflicts & merges tab renders gracefully when no merges recorded", () => 
 		const text = joinRendered(renderConflictsTab(snapshot, makeInitialPopupState(), 120, plainTheme() as never));
 		assert.match(text, /Merge history/);
 		assert.match(text, /no merges recorded/);
+	} finally {
+		cleanup();
+	}
+});
+
+test("dashboard renders archive-read-error banner when every candidate archive is malformed (BLOCK round 3)", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "{corrupt", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		// Sanity: the snapshot itself is in the archive-error state.
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /no readable terminated archive/);
+		// Render the banner directly — the in-extension widget composes it
+		// from the same fn when `flightdeckSessionStatus` returns
+		// `archive-error`.
+		const text = joinRendered(renderArchiveErrorBanner(snapshot, plainTheme() as never, 120));
+		assert.match(text, /ARCHIVE READ ERROR/);
+		assert.match(text, /no readable terminated archive/);
+		assert.match(text, /\.json\.archive/);
+		assert.ok(!/session complete/.test(text), "must NOT render the session-complete chip when archive is unreadable");
 	} finally {
 		cleanup();
 	}

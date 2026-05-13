@@ -363,6 +363,64 @@ test("edge case: archive present but summary_path absent renders gracefully", ()
 	}
 });
 
+// ----- BLOCK round 3: malformed archive surfacing ---------------------------
+
+test("buildSnapshotFromInputs: every candidate archive malformed → masterError + archive-error status", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "{not valid json", "utf8");
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260101T000000Z.json.archive"), "also {not json}", "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.equal(snapshot.master, undefined);
+		assert.ok(snapshot.masterError, "masterError must be set when all archives fail");
+		assert.match(snapshot.masterError ?? "", /no readable terminated archive: 2 candidates failed/);
+		assert.match(snapshot.masterError ?? "", /20260513T002128Z\.json\.archive/, "diagnostic should reference the newest candidate (tried first)");
+		assert.ok(snapshot.masterStatePath?.endsWith(".json.archive"), "masterStatePath should point at the archive that failed");
+		assert.equal(flightdeckSessionStatus(snapshot), "archive-error");
+	} finally {
+		cleanup();
+	}
+});
+
+test("readMasterState rejects non-object roots (JSON array, scalars) as malformed", () => {
+	// Defends the archive-error diagnostic by pinning the readMasterState
+	// contract: only `{ ... }` payloads count as readable; arrays / scalars
+	// are surfaced as `error` so the BLOCK fallback path records them as
+	// failures rather than silently treating them as empty state.
+	const { tmpDir, cleanup } = makeProject();
+	try {
+		const path = join(tmpDir, "flightdeck-state-HT.json");
+		writeFileSync(path, "[]", "utf8");
+		const arrayRead = readMasterState(path);
+		assert.equal(arrayRead.state, undefined);
+		assert.match(arrayRead.error ?? "", /not an object/);
+		writeFileSync(path, "42", "utf8");
+		const scalarRead = readMasterState(path);
+		assert.equal(scalarRead.state, undefined);
+		assert.match(scalarRead.error ?? "", /not an object/);
+	} finally {
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs: malformed newest + valid older archive → falls back to the valid one", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	try {
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260513T002128Z.json.archive"), "{corrupt", "utf8");
+		writeFileSync(join(tmpDir, "flightdeck-state-HT-20260101T000000Z.json.archive"), JSON.stringify(terminatedPayload({
+			"OLD-1": makeMergedIssueRecord({ pr_number: 99 }),
+		}, { terminated_at: "2026-01-01T00:00:00Z" })), "utf8");
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		assert.equal(snapshot.master?.terminated, true);
+		assert.equal(snapshot.master?.issues["OLD-1"]?.pr_number, 99);
+		assert.ok(snapshot.masterStatePath?.endsWith("20260101T000000Z.json.archive"), "should land on the older but valid archive");
+		assert.equal(snapshot.masterError, undefined, "successful fallback should not leave masterError set");
+		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+	} finally {
+		cleanup();
+	}
+});
+
 // ----- shared helpers -------------------------------------------------------
 
 function makeSnapshot(masterShape: unknown): FlightdeckSnapshot {

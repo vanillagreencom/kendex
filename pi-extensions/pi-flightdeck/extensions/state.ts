@@ -10,6 +10,10 @@ import { spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
+import { normalizeConflictGraph, normalizeDecisionsLog } from "./state-normalizers.js";
+
+export { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
 
 export type IssueState = "waiting" | "prompting" | "submitting" | "merge-ready" | "merged" | "aborted" | "dead";
 
@@ -259,28 +263,7 @@ export function masterStateDir(projectRoot: string, settings: SettingsLike): str
 	return join(projectRoot, dir);
 }
 
-// Discover the newest `flightdeck-state-<SESSION>-<TS>.json.archive` so
-// `buildSnapshot` can fall back to it after `terminate.md § 5` rotates
-// the live file away. Without this, post-completion the live JSON is
-// gone, `readMasterState` returns `{}`, and the dashboard collapses to
-// `inactive` even though the archive carries the full session history
-// (issue #17 BLOCKER #1). Archive filenames embed `terminated_at` in
-// `YYYYMMDDTHHMMSSZ` form (see `flightdeck-state archive`), so name
-// order is a sound proxy for newest-first.
-export function findNewestTerminatedArchive(stateDir: string, sessionName: string): string | undefined {
-	let entries: string[];
-	try {
-		entries = readdirSync(stateDir);
-	} catch {
-		return undefined;
-	}
-	const prefix = `flightdeck-state-${sessionName}-`;
-	const suffix = ".json.archive";
-	const candidates = entries
-		.filter((name) => name.startsWith(prefix) && name.endsWith(suffix))
-		.sort((a, b) => b.localeCompare(a));
-	return candidates.length > 0 ? join(stateDir, candidates[0]!) : undefined;
-}
+
 
 export interface DaemonPaths {
 	pid: string;
@@ -322,7 +305,7 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 		const text = readFileSync(path, "utf8");
 		if (!text.trim()) return { state: emptyState() };
 		const parsed = JSON.parse(text);
-		if (!parsed || typeof parsed !== "object") return { error: "master state JSON is not an object" };
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "master state JSON is not an object" };
 		const raw = parsed as Partial<MasterState>;
 		const issues: Record<string, IssueRecord> = {};
 		if (raw.issues && typeof raw.issues === "object" && !Array.isArray(raw.issues)) {
@@ -356,36 +339,7 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 	}
 }
 
-// Defensive normalizers — a corrupt or truncated archive (e.g. partial
-// write during a crash) should render as empty-but-stable, not as a
-// render-time exception that crashes the popup.
-function normalizeConflictGraph(raw: unknown): { edges: Array<[string, string]>; computed_at: string | null } {
-	const empty = { computed_at: null, edges: [] as Array<[string, string]> };
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return empty;
-	const obj = raw as { edges?: unknown; computed_at?: unknown };
-	const edges: Array<[string, string]> = [];
-	if (Array.isArray(obj.edges)) {
-		for (const edge of obj.edges) {
-			if (Array.isArray(edge) && edge.length >= 2 && typeof edge[0] === "string" && typeof edge[1] === "string") {
-				edges.push([edge[0], edge[1]]);
-			}
-		}
-	}
-	const computed_at = typeof obj.computed_at === "string" ? obj.computed_at : null;
-	return { computed_at, edges };
-}
 
-function normalizeDecisionsLog(raw: unknown): IssueRecord["decisions_log"] {
-	if (!Array.isArray(raw)) return [];
-	const out: NonNullable<IssueRecord["decisions_log"]> = [];
-	for (const entry of raw) {
-		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-		const e = entry as { ts?: unknown; prompt_tag?: unknown; answer?: unknown };
-		if (typeof e.ts !== "string" || typeof e.prompt_tag !== "string" || typeof e.answer !== "string") continue;
-		out.push({ answer: e.answer, prompt_tag: e.prompt_tag, ts: e.ts });
-	}
-	return out;
-}
 
 function emptyState(): MasterState {
 	return {
@@ -601,22 +555,35 @@ export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: S
 	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
 	let resolvedStatePath = liveStatePath;
 	let { state, error } = readMasterState(liveStatePath);
-	// Archive fallback (issue #17 BLOCKER #1). When the live file is
-	// missing AND the project's master-state directory holds a terminated
-	// archive for this session, read the archive and serve it as a
-	// read-only post-completion snapshot. We only do this when there is
-	// nothing on disk — a live file always takes precedence so the
-	// fallback can never shadow an in-flight session.
+	// Archive fallback (issue #17 BLOCKER #1, refined in BLOCK round 3).
+	// When the live file is missing, walk the master-state directory's
+	// terminated archives newest-first and serve the first VALID
+	// `terminated: true` snapshot. If every candidate archive errors
+	// (malformed JSON / IO failure), surface a `masterError` with a
+	// diagnostic so the dashboard can render an `archive-read-error`
+	// banner instead of an indistinguishable-from-no-session blank
+	// view (BLOCK round 3 finding). Live state always wins when present,
+	// so the fallback never shadows an in-flight session.
 	if (!state && !error) {
 		const dir = masterStateDir(projectRoot, settings);
-		const archivePath = findNewestTerminatedArchive(dir, tmux.sessionName);
-		if (archivePath) {
-			const archiveRead = readMasterState(archivePath);
+		const archives = listTerminatedArchives(dir, tmux.sessionName);
+		const failures: Array<{ path: string; reason: string }> = [];
+		for (const candidate of archives) {
+			const archiveRead = readMasterState(candidate);
+			if (archiveRead.error) {
+				failures.push({ path: candidate, reason: archiveRead.error });
+				continue;
+			}
 			if (archiveRead.state?.terminated) {
 				state = archiveRead.state;
-				error = archiveRead.error;
-				resolvedStatePath = archivePath;
+				resolvedStatePath = candidate;
+				break;
 			}
+		}
+		if (!state && failures.length > 0) {
+			const latest = failures[0]!;
+			error = `no readable terminated archive: ${failures.length} candidate${failures.length === 1 ? "" : "s"} failed (latest ${latest.path}: ${latest.reason})`;
+			resolvedStatePath = latest.path;
 		}
 	}
 	const daemon = readDaemonHealth(
@@ -667,7 +634,11 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 // the preserved history) until the user dismisses the widget. Without
 // this third arm, terminated sessions fell into `inactive` and the
 // post-completion summary was hidden from the user (issue #17).
-export type FlightdeckSessionStatus = "live" | "stale" | "inactive" | "terminated";
+// `archive-error`: a terminated archive was selected but every candidate
+// failed to parse. Renders an error banner with the diagnostic so the
+// user sees "state was lost" instead of a blank "no session" view
+// (BLOCK round 3).
+export type FlightdeckSessionStatus = "live" | "stale" | "inactive" | "terminated" | "archive-error";
 
 const TERMINAL_ISSUE_STATES = new Set<IssueState>(["merged", "aborted", "dead"]);
 
@@ -698,6 +669,12 @@ export function flightdeckSessionStatus(
 	options?: { staleAfterMin?: number; now?: number },
 ): FlightdeckSessionStatus {
 	if (!snapshot) return "inactive";
+	// Archive lookup tried but every candidate was malformed. Render the
+	// diagnostic banner instead of falling through to `inactive` — the
+	// user otherwise can't tell a corrupted archive from a missing one.
+	if (!snapshot.master && snapshot.masterError && snapshot.masterStatePath?.endsWith(".json.archive")) {
+		return "archive-error";
+	}
 	const master = snapshot.master;
 	const hasAnyIssues = !!master && Object.keys(master.issues).length > 0;
 	// terminated + issues preserved → read-only completion view. Issue #17
