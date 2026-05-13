@@ -163,6 +163,12 @@ case "$subcmd" in
       esac
     done
     if [[ -z "$target" ]]; then exit 2; fi
+    # TMUX_SHIM_REFUSE_KILL=1 simulates a tmux that returns non-zero
+    # AND leaves the target alive — used by the exit-5 teardown test.
+    if [[ "${TMUX_SHIM_REFUSE_KILL:-0}" == "1" ]]; then
+      echo "shim: kill-window refused (TMUX_SHIM_REFUSE_KILL=1)" >&2
+      exit 1
+    fi
     # If target is @N, drop window and its panes.
     if [[ "$target" == @* ]]; then
       write_state "
@@ -187,6 +193,10 @@ case "$subcmd" in
       esac
     done
     if [[ -z "$target" ]]; then exit 2; fi
+    if [[ "${TMUX_SHIM_REFUSE_KILL:-0}" == "1" ]]; then
+      echo "shim: kill-pane refused (TMUX_SHIM_REFUSE_KILL=1)" >&2
+      exit 1
+    fi
     write_state ".panes |= with_entries(select(.key != \"$target\"))"
     ;;
   show-options)

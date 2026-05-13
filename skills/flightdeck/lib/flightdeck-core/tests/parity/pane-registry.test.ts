@@ -217,7 +217,7 @@ function readShimState(path: string): ShimState {
 	return JSON.parse(require("node:fs").readFileSync(path, "utf8"));
 }
 
-function runShim(useTs: boolean, repo: string, statePath: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
+function runShim(useTs: boolean, repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	if (useTs) {
 		env.FLIGHTDECK_USE_TS_PANE_REGISTRY = "1";
@@ -231,8 +231,13 @@ function runShim(useTs: boolean, repo: string, statePath: string, args: string[]
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.TMUX_SHIM_STATE = statePath;
 	env.TMUX_PARITY_SESSION = readShimState(statePath).session;
+	for (const [k, v] of Object.entries(extraEnv)) env[k] = v;
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function stateFilePath(repo: string, session: string): string {
+	return join(repo, "tmp", `flightdeck-state-${session}.json`);
 }
 
 function baseShim(session: string, extras: Partial<ShimState> = {}): ShimState {
@@ -361,6 +366,57 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 			const r = runShim(useTs, repo, statePath, ["teardown-entry", "TD-ALIAS"]);
 			expect(r.status).toBe(0);
 			expect(r.stdout).toContain("already closed");
+		}
+	});
+
+	test("tmux kill fails and pane stays alive → exit 5", () => {
+		// Reviewer BLOCKER: drive the shim to refuse kill-window/kill-pane
+		// (non-zero exit + state unchanged). Post-kill liveness check sees
+		// the pane is still listed and escalates instead of falsely
+		// returning success.
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%900": { pane_index: 0, path: "/tmp/wt-a", window_id: "@90", window_index: 1, window_name: "issue-a" },
+				},
+				session: "test-session",
+				windows: { "@90": { index: 1, name: "issue-a" } },
+			});
+			runShim(useTs, repo, statePath, ["init", "TD-KILLFAIL", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-KILLFAIL", "pane_id", JSON.stringify("%900")]);
+			runShim(useTs, repo, statePath, ["set-state", "TD-KILLFAIL", "merged"]);
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-KILLFAIL"], { TMUX_SHIM_REFUSE_KILL: "1" });
+			expect(r.status).toBe(5);
+			expect(r.stderr).toContain("kill of");
+			expect(r.stderr).toContain("%900 still alive");
+			// Pane and window unchanged in shim state.
+			const state = readShimState(statePath);
+			expect(state.panes["%900"]).toBeDefined();
+			expect(state.windows["@90"]).toBeDefined();
+		}
+	});
+
+	test("corrupt registry state file → exit 6 (distinct from issue-not-found)", () => {
+		// Reviewer BLOCKER: a flightdeck-state get failure (corrupt JSON
+		// here — jq exits 5) must NOT be conflated with "issue not in
+		// registry" (exit 1). close-issue.md treats exit 1 as idempotent;
+		// exit 6 must surface so the operator sees state corruption.
+		const fs = require("node:fs") as typeof import("node:fs");
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, baseShim("test-session"));
+			// Initialise the registry once so the state file exists, then
+			// corrupt it. (Without an init step flightdeck-state would
+			// return the normal exit-1 "file missing" path which IS the
+			// idempotent case and correctly maps to teardown exit 1.)
+			runShim(useTs, repo, statePath, ["init", "TD-CORRUPT", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
+			const registryPath = stateFilePath(repo, "test-session");
+			fs.writeFileSync(registryPath, "{not valid json at all,,,");
+			const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-CORRUPT"]);
+			expect(r.status).toBe(6);
+			expect(r.stderr).toContain("registry read failed");
+			expect(r.stderr).not.toContain("not found in registry");
 		}
 	});
 });

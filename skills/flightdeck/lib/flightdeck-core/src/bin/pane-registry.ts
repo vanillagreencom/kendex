@@ -506,6 +506,9 @@ function cmdReconcile(): void {
 
 // ----- teardown-window -----------------------------------------------------
 //
+// Parity: scripts/pane-registry.bash cmd_teardown_window
+// (see tests/parity/pane-registry.test.ts).
+//
 // Exit codes (mirror the bash sibling):
 //   0 - window/pane killed, or already closed (terminal + dead pane)
 //   1 - issue not registered (caller may treat as idempotent no-op)

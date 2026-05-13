@@ -610,6 +610,9 @@ case "$ACTION" in
     ;;
 
   teardown-window|teardown-entry)
+    # Parity: lib/flightdeck-core/src/bin/pane-registry.ts cmdTeardownWindow
+    # (see tests/parity/pane-registry.test.ts).
+    #
     # Safely tear down the tmux window/pane for an issue using the
     # stable `pane_id` (`%N`) recorded at init time. Never derives a
     # kill target from the human-readable `pane_target`
