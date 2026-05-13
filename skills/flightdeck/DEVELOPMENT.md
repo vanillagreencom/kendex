@@ -84,7 +84,7 @@ Detailed list of what each script does, for debugging or porting work:
 | `open-terminal` | Launches a new tmux window with the chosen harness running on the chosen issue worktree. |
 | `flightdeck-state` | Reads/writes the session's master state file, including schema `1.1` tracked-entry normalization (`tracked-entries`, `write-entry`). |
 | `flightdeck-daemon` | Background poller. Wakes the master when an agent needs attention. |
-| `pane-registry` | Tracks which issue lives in which tmux pane and how to talk to its agent. |
+| `pane-registry` | Tracks which tracked entry (issue or adhoc session) lives in which tmux pane and how to talk to its agent. |
 | `pane-poll` | Reads an agent's current state (via native channel where possible). |
 | `pane-respond` | Sends a reply or option pick into an agent. |
 | `prompt-classify` | Pattern-matches an agent's last output against known prompt shapes. |
