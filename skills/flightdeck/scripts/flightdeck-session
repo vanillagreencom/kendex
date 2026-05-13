@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue]
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--strict-discovery]
   flightdeck-session attach --pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc|workflow]
 USAGE
   exit 2
@@ -30,6 +30,35 @@ shell_join() {
     if [[ -z "$out" ]]; then out="$quoted"; else out+=" $quoted"; fi
   done
   printf '%s\n' "$out"
+}
+
+set_pi_discovery_error() {
+  local reason="$1" mode="${2:-preserve}"
+  if [[ "$mode" == "force" || -z "${PI_DISCOVERY_ERROR:-}" ]]; then
+    PI_DISCOVERY_ERROR="$reason"
+  fi
+}
+
+pi_bridge_call_timeout_secs() {
+  printf '%s' "${PI_BRIDGE_CALL_TIMEOUT_SEC:-5}"
+}
+
+pi_bridge_call() {
+  local timeout_secs out status
+  PI_BRIDGE_CALL_OUTPUT=""
+  timeout_secs="$(pi_bridge_call_timeout_secs)"
+  set +e
+  out=$(timeout --kill-after=1 "${timeout_secs}s" "$@" 2>/dev/null)
+  status=$?
+  set -e
+  if (( status == 124 || status == 137 )); then
+    set_pi_discovery_error "pi_bridge_timeout" force
+    return 124
+  fi
+  if (( status != 0 )); then
+    return "$status"
+  fi
+  PI_BRIDGE_CALL_OUTPUT="$out"
 }
 
 require_tmux() {
@@ -54,29 +83,103 @@ capture_pane_meta() {
 
 pi_state_for_pid() {
   local pid="$1" bridge_bin state
-  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { PI_DISCOVERY_ERROR="pi_bridge_not_found"; return 1; }
-  state=$("$bridge_bin" state --pid "$pid" 2>/dev/null || true)
-  [[ -n "$state" ]] || { PI_DISCOVERY_ERROR="pi_bridge_state_unavailable"; return 1; }
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { set_pi_discovery_error "pi_bridge_not_found"; return 1; }
+  if ! pi_bridge_call "$bridge_bin" state --pid "$pid"; then
+    [[ "${PI_DISCOVERY_ERROR:-}" == "pi_bridge_timeout" ]] || set_pi_discovery_error "pi_bridge_state_unavailable"
+    return 1
+  fi
+  state="$PI_BRIDGE_CALL_OUTPUT"
+  [[ -n "$state" ]] || { set_pi_discovery_error "pi_bridge_state_unavailable"; return 1; }
   PI_BRIDGE_PID="$pid"
   PI_BRIDGE_SOCKET=$(jq -r '.data.socketPath // .data.socket // ""' <<< "$state" 2>/dev/null || echo "")
   PI_SESSION_ID=$(jq -r '.data.sessionId // .data.session_id // ""' <<< "$state" 2>/dev/null || echo "")
   if [[ -z "$PI_BRIDGE_SOCKET" || -z "$PI_SESSION_ID" ]]; then
-    PI_DISCOVERY_ERROR="pi_bridge_partial_metadata"
+    set_pi_discovery_error "pi_bridge_partial_metadata"
   fi
   [[ -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
 }
 
-pi_discover_after_launch() {
-  local cwd="$1" pre_pids="$2" timeout_secs="${PI_BRIDGE_DISCOVERY_TIMEOUT:-30}" pid
-  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
-  if ! pi_resolve_bridge_bin >/dev/null 2>&1; then
-    PI_DISCOVERY_ERROR="pi_bridge_not_found"
+pi_snapshot_pids_checked() {
+  local bridge_bin out pids jq_status
+  PI_SNAPSHOT_PIDS="[]"
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || {
+    set_pi_discovery_error "pi_snapshot_failed" force
+    PI_SNAPSHOT_ERROR="pi_bridge_not_found"
+    return 1
+  }
+  if ! pi_bridge_call "$bridge_bin" list --json; then
+    PI_SNAPSHOT_ERROR="${PI_DISCOVERY_ERROR:-pi_bridge_list_failed}"
+    set_pi_discovery_error "pi_snapshot_failed" force
     return 1
   fi
-  if pid=$(pi_discover_pid "$cwd" "$timeout_secs" "$pre_pids" 2>/dev/null); then
+  out="$PI_BRIDGE_CALL_OUTPUT"
+  set +e
+  pids=$(jq -c 'if type == "array" then map(.pid) | map(select(. != null)) else error("not array") end' <<< "$out" 2>/dev/null)
+  jq_status=$?
+  set -e
+  if (( jq_status != 0 )); then
+    PI_SNAPSHOT_ERROR="pi_bridge_malformed_json"
+    set_pi_discovery_error "pi_snapshot_failed" force
+    return 1
+  fi
+  PI_SNAPSHOT_PIDS="$pids"
+}
+
+warn_pi_snapshot_failure() {
+  local reason="${PI_SNAPSHOT_ERROR:-unknown}"
+  printf 'Warning: pre-launch pi snapshot failed (%s); cwd-only discovery is unreliable.\n' "$reason" >&2
+}
+
+pi_discover_pid_bounded() {
+  local wt_path="$1" timeout_secs="${2:-30}" pre_pids_json="${3:-[]}" bridge_bin abs_wt deadline out pid jq_status
+  PI_DISCOVERED_PID=""
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { set_pi_discovery_error "pi_bridge_not_found"; return 1; }
+  abs_wt=$(cd "$wt_path" && pwd)
+  deadline=$((SECONDS + timeout_secs))
+  while (( SECONDS < deadline )); do
+    if ! pi_bridge_call "$bridge_bin" list --json; then
+      [[ "${PI_DISCOVERY_ERROR:-}" == "pi_bridge_timeout" ]] || set_pi_discovery_error "pi_bridge_list_failed"
+      return 1
+    fi
+    out="$PI_BRIDGE_CALL_OUTPUT"
+    set +e
+    pid=$(jq -r --arg dir "$abs_wt" --argjson pre "$pre_pids_json" '
+      (if type == "array" then . else [] end)
+      | map(select((.cwd // "") == $dir))
+      | map(select(.pid as $p | ($pre // []) | index($p) | not))
+      | sort_by(.startedAt // .started_at // 0)
+      | last
+      | (.pid // empty)
+    ' <<< "$out" 2>/dev/null)
+    jq_status=$?
+    set -e
+    if (( jq_status != 0 )); then
+      set_pi_discovery_error "pi_bridge_malformed_json"
+      return 1
+    fi
+    if [[ -n "$pid" && "$pid" != "null" ]]; then
+      PI_DISCOVERED_PID="$pid"
+      return 0
+    fi
+    sleep 0.2
+  done
+  set_pi_discovery_error "pi_bridge_discovery_timeout"
+  return 1
+}
+
+pi_discover_after_launch() {
+  local cwd="$1" pre_pids="$2" timeout_secs="${PI_BRIDGE_DISCOVERY_TIMEOUT:-30}" pid existing_error
+  existing_error="${PI_DISCOVERY_ERROR:-}"
+  PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR="$existing_error"
+  if ! pi_resolve_bridge_bin >/dev/null 2>&1; then
+    set_pi_discovery_error "pi_bridge_not_found"
+    return 1
+  fi
+  if pi_discover_pid_bounded "$cwd" "$timeout_secs" "$pre_pids"; then
+    pid="$PI_DISCOVERED_PID"
     pi_state_for_pid "$pid" || return 1
   else
-    PI_DISCOVERY_ERROR="pi_bridge_discovery_timeout"
+    set_pi_discovery_error "pi_bridge_discovery_timeout"
     return 1
   fi
 }
@@ -85,10 +188,19 @@ pi_discover_for_pane() {
   local pane="$1" pane_pid bridge_bin out line
   PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""; PI_DISCOVERY_ERROR=""
   pane_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)
-  [[ -n "$pane_pid" ]] || { PI_DISCOVERY_ERROR="pi_pane_pid_unavailable"; return 1; }
-  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { PI_DISCOVERY_ERROR="pi_bridge_not_found"; return 1; }
-  out=$("$bridge_bin" list --json --pid "$pane_pid" 2>/dev/null || "$bridge_bin" list --json 2>/dev/null || echo "[]")
-  [[ -n "${out//[[:space:]]/}" ]] || { PI_DISCOVERY_ERROR="pi_bridge_empty_output"; return 1; }
+  [[ -n "$pane_pid" ]] || { set_pi_discovery_error "pi_pane_pid_unavailable"; return 1; }
+  bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || { set_pi_discovery_error "pi_bridge_not_found"; return 1; }
+  if ! pi_bridge_call "$bridge_bin" list --json --pid "$pane_pid"; then
+    if [[ "${PI_DISCOVERY_ERROR:-}" == "pi_bridge_timeout" ]]; then
+      return 1
+    fi
+    if ! pi_bridge_call "$bridge_bin" list --json; then
+      [[ "${PI_DISCOVERY_ERROR:-}" == "pi_bridge_timeout" ]] || set_pi_discovery_error "pi_bridge_list_failed"
+      return 1
+    fi
+  fi
+  out="$PI_BRIDGE_CALL_OUTPUT"
+  [[ -n "${out//[[:space:]]/}" ]] || { set_pi_discovery_error "pi_bridge_empty_output"; return 1; }
   line=$(jq -r --arg pid "$pane_pid" '
     (if type == "array" then . else (.data.instances // .instances // []) end)
     | map(select((.pid | tostring) == $pid))
@@ -100,11 +212,11 @@ pi_discover_for_pane() {
   PI_BRIDGE_SOCKET=$(awk -F'\t' '{print $2}' <<< "$line")
   PI_SESSION_ID=$(awk -F'\t' '{print $3}' <<< "$line")
   if [[ -z "$PI_BRIDGE_PID" && -z "$PI_BRIDGE_SOCKET" && -z "$PI_SESSION_ID" ]]; then
-    PI_DISCOVERY_ERROR="pi_bridge_no_instance_for_pane_pid"
+    set_pi_discovery_error "pi_bridge_no_instance_for_pane_pid"
     return 1
   fi
   if [[ -z "$PI_BRIDGE_SOCKET" || -z "$PI_SESSION_ID" ]]; then
-    PI_DISCOVERY_ERROR="pi_bridge_partial_metadata"
+    set_pi_discovery_error "pi_bridge_partial_metadata"
   fi
   [[ -n "$PI_BRIDGE_PID" || -n "$PI_BRIDGE_SOCKET" || -n "$PI_SESSION_ID" ]]
 }
@@ -138,7 +250,7 @@ register_entry() {
 
 cmd_start() {
   require_tmux
-  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr=""
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session-id) session_id="$2"; shift 2 ;;
@@ -159,6 +271,7 @@ cmd_start() {
       --worktree=*) worktree="${1#--worktree=}"; shift ;;
       --pr) pr="$2"; shift 2 ;;
       --pr=*) pr="${1#--pr=}"; shift ;;
+      --strict-discovery) strict_discovery=1; shift ;;
       --help|-h) usage ;;
       *) echo "Unknown flag: $1" >&2; usage ;;
     esac
@@ -169,11 +282,21 @@ cmd_start() {
   [[ -z "$cmd" || -z "$prompt" ]] || { echo "Error: --cmd and --prompt are mutually exclusive" >&2; exit 2; }
 
   local abs_cwd launch_cmd pre_pids="[]"
+  PI_DISCOVERY_ERROR=""
+  PI_SNAPSHOT_ERROR=""
+  PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
   if [[ -n "$prompt" ]]; then
     case "$harness" in
       pi)
-        pre_pids=$(pi_snapshot_pids 2>/dev/null || echo "[]")
+        if ! pi_snapshot_pids_checked; then
+          warn_pi_snapshot_failure
+          if (( strict_discovery == 1 )); then
+            echo "Error: --strict-discovery refusing Pi launch after pre-launch snapshot failure" >&2
+            exit 2
+          fi
+        fi
+        pre_pids="$PI_SNAPSHOT_PIDS"
         launch_cmd=$(build_pi_prompt_cmd "$prompt")
         ;;
       *) echo "Error: --prompt launch currently supports --harness pi; use --cmd for $harness" >&2; exit 2 ;;

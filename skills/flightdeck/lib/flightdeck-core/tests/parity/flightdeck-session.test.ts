@@ -98,6 +98,60 @@ exit 1
 	return bin;
 }
 
+function makeHangingPiBridgeShim(repo: string): string {
+	const bin = join(repo, "pi-bridge-hang-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+sleep 10
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
+function makeStartListTimeoutPiBridgeShim(repo: string): string {
+	const bin = join(repo, "pi-bridge-start-timeout-shim");
+	const countFile = join(repo, "pi-bridge-start-timeout.count");
+	writeFileSync(bin, `#!/usr/bin/env bash
+count_file=${JSON.stringify(countFile)}
+count=0
+[[ -f "$count_file" ]] && count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [[ "$1" == "list" && "$count" == "1" ]]; then
+  echo '[]'
+  exit 0
+fi
+sleep 10
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
+function makeSnapshotFailThenSuccessPiBridgeShim(repo: string): string {
+	const bin = join(repo, "pi-bridge-snapshot-fail-shim");
+	const countFile = join(repo, "pi-bridge-snapshot-fail.count");
+	writeFileSync(bin, `#!/usr/bin/env bash
+count_file=${JSON.stringify(countFile)}
+count=0
+[[ -f "$count_file" ]] && count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+case "$1" in
+  list)
+    if [[ "$count" == "1" ]]; then
+      exit 7
+    fi
+    printf '[{"pid":5151,"socketPath":"/tmp/pi-snapshot.sock","sessionId":"pi-snapshot-session","cwd":%s}]\\n' ${JSON.stringify(JSON.stringify(repo))}
+    ;;
+  state)
+    echo '{"data":{"protocol":"pi-session-bridge.v1","socketPath":"/tmp/pi-snapshot.sock","sessionId":"pi-snapshot-session"}}'
+    ;;
+  *) echo '{}' ;;
+esac
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makePiBinShim(repo: string): string {
 	const bin = join(repo, "pi-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -185,23 +239,44 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		});
 
-		test(`start records Pi discovery_error when bridge discovery fails (${useTs ? "ts registry" : "bash registry"})`, () => {
+		test(`start records Pi discovery_error when bridge discovery times out (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const started = Date.now();
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "pi-timeout",
+				"--title", "Pi timeout",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "say hi",
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeStartListTimeoutPiBridgeShim(repo), PI_BRIDGE_CALL_TIMEOUT_SEC: "1", PI_BRIDGE_DISCOVERY_TIMEOUT: "5" });
+			expect(Date.now() - started).toBeLessThan(4000);
+			expect(r.status).toBe(0);
+			expect(r.stderr).toContain("Warning: pi-bridge metadata discovery failed during start");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["pi-timeout"].discovery_error).toBe("pi_bridge_timeout");
+			expect(state.entries["pi-timeout"].adapter.pi_bridge_socket).toBeNull();
+		});
+
+		test(`start surfaces pre-launch snapshot failure (${useTs ? "ts registry" : "bash registry"})`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
 			const r = run(repo, shim, [
 				"start",
-				"--session-id", "pi-degraded",
-				"--title", "Pi degraded",
+				"--session-id", "pi-snapshot-failed",
+				"--title", "Pi snapshot failed",
 				"--cwd", repo,
 				"--harness", "pi",
 				"--prompt", "say hi",
-			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo), PI_BRIDGE_DISCOVERY_TIMEOUT: "0" });
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeSnapshotFailThenSuccessPiBridgeShim(repo), PI_BRIDGE_CALL_TIMEOUT_SEC: "1", PI_BRIDGE_DISCOVERY_TIMEOUT: "2" });
 			expect(r.status).toBe(0);
-			expect(r.stderr).toContain("Warning: pi-bridge metadata discovery failed during start");
+			expect(r.stderr).toContain("Warning: pre-launch pi snapshot failed");
 			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
-			expect(state.entries["pi-degraded"].discovery_error).toBe("pi_bridge_discovery_timeout");
-			expect(state.entries["pi-degraded"].adapter.pi_bridge_socket).toBeNull();
+			expect(state.entries["pi-snapshot-failed"].discovery_error).toBe("pi_snapshot_failed");
+			expect(state.entries["pi-snapshot-failed"].adapter.pi_bridge_socket).toBe("/tmp/pi-snapshot.sock");
 		});
 
 		test(`attach records existing pi pane metadata (${useTs ? "ts registry" : "bash registry"})`, () => {
@@ -249,7 +324,32 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("Warning: pi-bridge metadata discovery failed during attach");
 			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
 			expect(state.entries["pane-88"].pane_id).toBe("%88");
-			expect(state.entries["pane-88"].discovery_error).toBe("pi_bridge_no_instance_for_pane_pid");
+			expect(state.entries["pane-88"].discovery_error).toBe("pi_bridge_list_failed");
+		});
+
+		test(`attach records Pi discovery_error when bridge call times out (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, {
+				panes: {
+					"%89": { pane_index: 0, pane_pid: 8989, path: "/tmp/attach-timeout", window_id: "@9", window_index: 9, window_name: "manual-pi-timeout" },
+				},
+				session: "test-session",
+				windows: { "@9": { index: 9, name: "manual-pi-timeout" } },
+			});
+			const started = Date.now();
+			const r = run(repo, shim, [
+				"attach",
+				"--pane", "%89",
+				"--harness", "pi",
+				"--title", "Manual Timeout Pi",
+			], useTs, { PI_BRIDGE_BIN: makeHangingPiBridgeShim(repo), PI_BRIDGE_CALL_TIMEOUT_SEC: "1" });
+			expect(Date.now() - started).toBeLessThan(4000);
+			expect(r.status).toBe(0);
+			expect(r.stderr).toContain("Warning: pi-bridge metadata discovery failed during attach");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["pane-89"].pane_id).toBe("%89");
+			expect(state.entries["pane-89"].discovery_error).toBe("pi_bridge_timeout");
 		});
 	}
 });
