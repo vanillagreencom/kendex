@@ -2,6 +2,8 @@
 
 Verify issues have zero cross-dependencies before parallel execution.
 
+Issue-mode workflow only. Generic/ad-hoc sessions do not run Linear/GitHub/worktree checks; their common supervision underlay is `workflows/session-watch.md` plus `workflows/session-handle-prompt.md`.
+
 ## Inputs
 
 | Input | Source | Required |

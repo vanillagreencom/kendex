@@ -1,6 +1,6 @@
 # Flightdeck
 
-Generic tmux session management for AI harness panes, plus optional issue-mode orchestration. In core session mode, Flightdeck launches or attaches tmux-window sessions, tracks stable panes, routes prompts, and summarizes completion. In issue mode, it adds GitHub/Linear/worktree decisions, merge planning, and next-cycle recommendations.
+Flightdeck supervises AI harness sessions in tmux windows. In core session mode it launches or attaches panes, tracks stable ids, routes prompts, and summarizes completion. Issue orchestration is a built-in domain mode layered on top: GitHub/Linear/worktree decisions, merge planning, and next-cycle recommendations.
 
 > Agents reading this: you want `SKILL.md` instead. Hacking on flightdeck itself: see [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
@@ -79,6 +79,30 @@ skills/flightdeck/scripts/flightdeck-session attach \
 ```
 
 All starts use `tmux new-window` (never split panes), set `FLIGHTDECK_MANAGED=1` and `FLIGHTDECK_CHILD_PANE=1` in the launched command environment, capture stable `pane_id`/`window_id` metadata, and register through `pane-registry init-entry`. `pane-registry list --format json` returns normalized entries for both ad-hoc sessions and legacy issue rows. `session watch` uses the generic session loop; issue `watch` layers merge/PR workflow logic on top.
+
+## Issue workflows
+
+Issue orchestration remains first-class when the session is tied to a Linear/GitHub/worktree domain. It uses the same tracked-session underlay, then adds issue selection, worktree launch, PR prompt handling, merge planning, and recommendation summaries.
+
+Start one issue session:
+
+```bash
+flightdeck start CC-123
+```
+
+Check and launch a safe parallel issue group:
+
+```bash
+flightdeck parallel-check CC-123 CC-456 CC-789
+flightdeck start CC-123 CC-456 CC-789
+```
+
+Resume issue supervision or recompute merge order:
+
+```bash
+flightdeck watch
+flightdeck merge-plan
+```
 
 ## Install
 

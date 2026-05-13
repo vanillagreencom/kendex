@@ -24,16 +24,14 @@ Merged baseline on `origin/main` now includes the following relevant work:
 
 - **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, issue compatibility projection back to `.issues`, `.issues`-under-`.entries` merge semantics, schema/id guards (including `domain.issue.id` and `phase`), and bash/TS parity coverage.
 
-### Partially delivered
+### Delivered in worker branches now merged
 
-- **Phase 2** has the `teardown-entry` alias from PR #22 and the `FLIGHTDECK_MANAGED=1`/`flightdeck-mode` managed-session signal from PR #21, but generic `init-entry`, `--kind adhoc`, `session-terminal`/`flightdeck-session`, and manual attach behavior remain.
-- **Phase 3** is completed on worker branch `fd-reframe-p3`: canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 are preserved, `session-watch.md` / issue `watch.md` and `session-handle-prompt.md` / issue `handle-prompt.md` are split, and domain guards route issue-only tags on ad-hoc entries to `domain-mismatch`.
-- **Phase 5** has render normalization, terminated archive fallback, and extracted terminated render helpers from PR #23 plus owner-aware persistent-widget behavior from PR #25, but type renames, sessions-first UI copy, and kind badges remain.
-
-### Remaining unchanged in scope
-
-- **Phase 0 follow-up remains**: short repo guidance in `AGENTS.md` is still pending because the Phase 0 implementation change only touched `skills/flightdeck/`, `pi-extensions/pi-flightdeck/`, and this plan doc.
-- Official ad-hoc session start/attach, full schema-v2 registry/launcher migration, generic watch split, issue-mode isolation, and full docs refresh remain in this plan.
+- **Phase 0** owner metadata, owner-scoped `pi-flightdeck` rendering, `dashboardVisibility`, child-pane suppression, and repo-level new-tmux-window guidance are complete.
+- **Phase 2** generic `init-entry`, normalized `list`, `find-by-pane`, official `flightdeck-session start`, and manual Pi attach behavior are complete on top of PR #22 safe teardown and PR #21 managed-mode signals.
+- **Phase 3** is complete: canonical `pi-bg-task-exit` handling from PR #24 and stale cleanup tags from PR #21 are preserved, `session-watch.md` / issue `watch.md` and `session-handle-prompt.md` / issue `handle-prompt.md` are split, and domain guards route issue-only tags on ad-hoc entries to `domain-mismatch`.
+- **Phase 4** is complete: issue/workflow management remains a domain layer with mode-specific dependencies and mixed/generic termination routing.
+- **Phase 5** is complete: render normalization, terminated archive fallback, owner-aware persistent-widget behavior, sessions-first UI/type names, kind badges, and observer wording are delivered.
+- **Phase 6** is complete in `fd-reframe-p6`: docs and repo guidance match the sessions-first model.
 
 ## Why this is needed
 
@@ -156,9 +154,9 @@ Compatibility requirement: read old `.issues` state as `kind: "issue"` entries. 
 
 Purpose: stop the exact class of mistakes seen in the ad-hoc test while the larger reframe is built.
 
-Status (2026-05-13): **PARTIAL**. Owner metadata, owner-scoped `pi-flightdeck` rendering, `dashboardVisibility`, and child-pane suppression are done in PR #25. The only remaining Phase 0 item is the short `AGENTS.md` operational guidance, deferred because that file was outside this worker's edit scope.
+Status (2026-05-13): **DONE**. Owner metadata, owner-scoped `pi-flightdeck` rendering, `dashboardVisibility`, and child-pane suppression are done in PR #25. Phase 6 adds the deferred `AGENTS.md` operational guidance.
 
-1. **[REMAINING]** Add short repo guidance to `AGENTS.md` after implementation is ready:
+1. **[DONE]** Add short repo guidance to `AGENTS.md` after implementation is ready:
    - When user asks for a new tmux tab/window for testing, create a new tmux window in the existing session, never split the current pane.
    - Use Flightdeck session tools/skill for harness launch and IO; persist `%pane_id`/`#{window_id}`; do not rely on window names.
 2. **[DONE]** Add owner metadata to current Flightdeck state init/watch path before broad schema work:
@@ -363,55 +361,48 @@ Validation:
 
 Update all docs in the same code change that changes behavior:
 
-Status (2026-05-13): **PARTIAL / BLOCKED**. Targeted workflow docs were refreshed by PR #21, PR #22, PR #23, and PR #24, but the sessions-first documentation pass is blocked on Phases 0-5.
+Status (2026-05-13): **DONE in `fd-reframe-p6`**. Phases 0-5 are merged; this phase completed the sessions-first documentation sweep and closed the deferred Phase 0 repo guidance.
 
-- **[REMAINING]** `AGENTS.md`
-  - Add 1-2 lines for "new tmux tab/window" requests.
-- **[PARTIAL]** `skills/flightdeck/SKILL.md`
-  - New framing: session manager first; issue/workflow mode second.
-  - Dependencies split by mode.
-  - Commands table split into core session commands and issue workflow commands.
-  - Schema section updated for entries + issue domain metadata.
-  - Existing partial refresh: PR #24 documented the `pi-bg-task-exit` canonical wake contract.
-- **[REMAINING]** `skills/flightdeck/README.md`
-  - Product framing: supervise AI harness sessions; issue orchestration is built-in domain mode.
-  - Add ad-hoc examples.
-  - Retain issue/PR examples.
-- **[REMAINING]** `skills/flightdeck/DEVELOPMENT.md`
-  - Explain schema v2 compatibility and generic/session vs issue plugin boundaries.
-- **[PARTIAL]** `skills/flightdeck/patterns/tmux-monitoring.md`
-  - Add explicit "new tmux tab/window" operational pattern.
-  - Existing partial refresh: PR #22 documented `teardown-entry`/stable-pane teardown, and PR #24 documented `pi-bg-task-exit` monitoring.
-- **[PARTIAL]** `skills/flightdeck/patterns/prompt-handlers.md`
-  - Split generic vs issue-only handlers.
-  - Existing partial refresh: PR #21 documented `stale-no-pr-branch` and `stale-orphan-worktree` safe keep handlers.
-- **[PARTIAL]** `skills/flightdeck/workflows/*.md`
-  - Add generic workflows and update issue workflows to call core session primitives.
-  - Existing partial refresh: PR #21 scoped managed cleanup in `close-issue.md`/orchestration merge flow, PR #23 updated `terminate.md`, and PR #24 routed `pi-bg-task-exit` in `watch.md`/`handle-prompt.md`.
-- **[REMAINING]** `pi-extensions/pi-flightdeck/README.md`
-  - Dashboard owner scope and sessions-first language.
-- **[REMAINING]** `pi-extensions/pi-flightdeck/package.json`
-  - Settings descriptions from issue to session.
-- **[REMAINING]** `docs/work-in-progress/flightdeck-dashboard-tui-plan.md`
-  - If still active, align its `IssueCard` model with `TrackedEntry`.
+- **[DONE]** `AGENTS.md`
+  - Added new-tmux-tab/window guidance: create a new tmux window, never split the active pane, persist `%pane_id`/`#{window_id}`, and prefer harness adapters before tmux fallback.
+- **[DONE]** `skills/flightdeck/SKILL.md`
+  - Framing remains session manager first, issue/workflow mode second.
+  - Dependencies are split by mode: core session commands require tmux + harness adapter only; issue workflows load GitHub/Linear/project-management/worktree on demand.
+  - Commands table is split into `Session management`, `Issue workflows`, and issue-mode planning cross-calls, with `session-watch.md` / `session-handle-prompt.md` as the generic underlay.
+  - Schema section now explicitly describes `schema_version: 1.1`, `.entries`, `TrackedEntry`, `owner`, and v1↔v2 compatibility/projection rules.
+- **[DONE]** `skills/flightdeck/README.md`
+  - Product framing is sessions-first: supervise AI harness sessions; issue orchestration is a built-in domain mode.
+  - Ad-hoc `flightdeck-session start` / `attach` examples are present.
+  - Issue/PR workflow examples remain: `flightdeck start`, `parallel-check`, `watch`, and `merge-plan`.
+- **[DONE]** `skills/flightdeck/DEVELOPMENT.md`
+  - Added schema `1.1` compatibility, future v2 `.entries` direction, generic-session vs issue-domain boundary, and the TrackedEntry seam shared by core and pi-flightdeck.
+- **[DONE]** `skills/flightdeck/patterns/tmux-monitoring.md`
+  - Added explicit "new tmux tab/window" operational pattern referencing `flightdeck-session start|attach`, stable pane/window ids, and adapter-first IO.
+- **[DONE]** `skills/flightdeck/patterns/prompt-handlers.md`
+  - Generic vs issue-only handler split and the `domain-mismatch` guard are documented as the core/session vs issue-plugin boundary.
+- **[DONE]** `skills/flightdeck/workflows/*.md`
+  - `start.md` points ad-hoc users to `flightdeck-session start` while preserving the issue start flow.
+  - `parallel-check.md`, `merge-plan.md`, `close-issue.md`, and `terminate.md` now identify issue-mode or mode-aware boundaries and cross-link `session-watch.md` / `session-handle-prompt.md` as the generic underlay.
+- **[DONE]** `pi-extensions/pi-flightdeck/README.md`
+  - Owner-scoped dashboard behavior and sessions-first language are explicit; the read-only TrackedSession seam is documented.
+- **[DONE]** `pi-extensions/pi-flightdeck/package.json`
+  - Extension manager descriptions now say sessions/tracked sessions and owner-scoped dashboard instead of pane/issue-centered wording.
+- **[DONE]** `docs/work-in-progress/flightdeck-dashboard-tui-plan.md`
+  - No active file exists in this worktree; this reframe plan is the canonical pointer for `IssueCard` → `TrackedEntry` / `TrackedSession` intent.
 
-Proposed short AGENTS.md wording once implementation supports it:
+## Execution status
 
-> When user asks to test in a "new tmux tab/window", create a new tmux window in the current session, never split the active pane. Use Flightdeck session tooling for launch/attach and harness IO; persist `%pane_id`/`#{window_id}` and communicate through the harness adapter (`pi-bridge`, OpenCode HTTP, Claude channels, Codex bridge) before tmux fallback.
+Phases 0-6 are complete as of `fd-reframe-p6`. The original order is preserved below as a completion checklist:
 
-## Suggested execution order
-
-Some prerequisites are now satisfied by PRs #21-#25. Phase 0 implementation is functionally landed; finish the remaining `AGENTS.md` guidance before declaring Phase 0 fully closed, then continue with Phase 1.
-
-1. Finish the remaining Phase 0 `AGENTS.md` operational guidance.
-2. Complete Phase 1 core state normalization with v1 compatibility tests, reusing the PR #23 `readTrackedEntries` render seam instead of inventing a parallel read path.
-3. Extend the Phase 2 registry API from the delivered PR #22 `teardown-entry` alias to `init-entry`, normalized `list`, and entry-aware `find-by-pane`, leaving existing issue API intact.
-4. Add the official ad-hoc launch/attach path that uses `tmux new-window`, records immutable ids, and reuses the PR #21 `FLIGHTDECK_MANAGED=1` / `flightdeck-mode` managed-session signal.
-5. Split generic session watch/handler logic from issue workflow logic, reusing the PR #24 `pi-bg-task-exit` contract and PR #21 stale cleanup tags.
-6. Preserve and isolate issue/workflow management on top of the generic primitives.
-7. Reframe Pi dashboard language/types and kind badges on top of the PR #23 archive/render seams and PR #25 owner gating.
-8. Complete docs/guidance refresh once behavior lands.
-9. Only after all tests and live smoke pass, consider updating skill dependencies from hard required to mode-specific.
+1. **[DONE]** Finish the remaining Phase 0 `AGENTS.md` operational guidance.
+2. **[DONE]** Complete Phase 1 core state normalization with v1 compatibility tests, reusing the PR #23 `readTrackedEntries` render seam instead of inventing a parallel read path.
+3. **[DONE]** Extend the Phase 2 registry API from the delivered PR #22 `teardown-entry` alias to `init-entry`, normalized `list`, and entry-aware `find-by-pane`, leaving existing issue API intact.
+4. **[DONE]** Add the official ad-hoc launch/attach path that uses `tmux new-window`, records immutable ids, and reuses the PR #21 `FLIGHTDECK_MANAGED=1` / `flightdeck-mode` managed-session signal.
+5. **[DONE]** Split generic session watch/handler logic from issue workflow logic, reusing the PR #24 `pi-bg-task-exit` contract and PR #21 stale cleanup tags.
+6. **[DONE]** Preserve and isolate issue/workflow management on top of the generic primitives.
+7. **[DONE]** Reframe Pi dashboard language/types and kind badges on top of the PR #23 archive/render seams and PR #25 owner gating.
+8. **[DONE]** Complete docs/guidance refresh once behavior lands.
+9. **[DONE]** Keep skill dependencies mode-specific: core session mode has no required GitHub/Linear/worktree/project-management load; issue mode loads them on demand.
 
 ## Test matrix
 

@@ -28,6 +28,11 @@ Rules for any agent landing here:
   `.agents/`, `.claude/`, `.opencode/`, or `.pi/`; they are installed
   harness directories for repo use, not canonical packages. Work in
   `agents/`, `skills/`, `hooks/`, and `pi-extensions/` only.
+- **New tmux tab/window requests.** Create a new tmux window in the current
+  session, never split the active pane. Use Flightdeck session tooling for
+  launch/attach and harness IO; persist `%pane_id`/`#{window_id}` and talk via
+  harness adapters (`pi-bridge`, OpenCode HTTP, Claude channels, Codex bridge)
+  before tmux fallback.
 - **flock semantics.** Use the helpers in
   `lib/flightdeck-core/src/state/locking.ts`. The naive
   `spawnSync("flock", ["-x", String(fd), "true"])` pattern is a no-op;

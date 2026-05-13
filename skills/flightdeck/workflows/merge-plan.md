@@ -2,6 +2,8 @@
 
 Compute the file-intersection conflict graph for all `merge-ready` PRs, sort by smallest-scope-first, execute the next safe merge.
 
+Issue-mode workflow only. It is invoked by `workflows/watch.md` after the generic `workflows/session-watch.md` loop has reconciled entries and routed domain-neutral prompts through `workflows/session-handle-prompt.md`.
+
 **Inputs**: master state (read-only at entry); the implicit list of `merge-ready` issues.
 
 **Pre-conditions**: `watch.md` § 4 detected ≥1 issue in `merge-ready` state.

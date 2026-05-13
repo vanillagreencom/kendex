@@ -5,6 +5,8 @@ Classification tags and per-tag handler logic for prompts surfaced by tracked pa
 - **Generic session tags** are safe for any tracked entry (`adhoc`, `workflow`, or `issue`) and route to `workflows/session-handle-prompt.md`.
 - **Issue tags** require `kind="issue"` and route to `workflows/handle-prompt.md` only after the domain guard passes.
 
+This split is intentional: generic handlers are the core session-manager surface, while issue handlers are the issue-domain plugin. If an issue-only sentinel appears on a non-issue entry, `domain-mismatch` fails closed and no PR/worktree action runs.
+
 If a buffer matches multiple sentinels, the most specific tag wins (for example `force-merge-confirm` before `merge-ready-but-unknown` before `generic-multi-choice`).
 
 ---

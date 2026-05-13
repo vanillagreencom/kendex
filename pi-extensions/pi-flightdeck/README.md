@@ -2,7 +2,7 @@
 
 > ⚠️ **WIP — not production ready.** APIs, settings, and UI may change without notice.
 
-Read-only session-control dashboard for the [`flightdeck`](../../skills/flightdeck) skill. When Pi runs as the flightdeck master agent in a tmux session, this extension surfaces the same on-disk tracked-session state the daemon and master maintain — without ever mutating it.
+Read-only, sessions-first dashboard for the [`flightdeck`](../../skills/flightdeck) skill. When Pi runs as the Flightdeck master agent in a tmux session, this extension surfaces the same owner-scoped on-disk tracked-session state the daemon and master maintain — without ever mutating it.
 
 ## Highlights
 
@@ -11,7 +11,7 @@ Read-only session-control dashboard for the [`flightdeck`](../../skills/flightde
 - **Expanded dashboard tree** — session details render as proper child rows, with ASCII or Unicode connectors matching the Tree connector style setting.
 - **`/flightdeck` popup** (F6) — session-control view with six tabs: Overview, Live feed, Conversations, Conflicts & merges (issue mode), Decisions, Daemon. Conversations render as a newest-first stream keyed by tracked-session titles/names, hide raw pane ids from normal view, and collapse Pi streaming partials into one finalized turn. Decisions are selectable; press Enter to open the full wrapped answer, then Esc or Backspace to return.
 - **Session-complete view** — once `terminate.md` flips master state to `terminated: true`, the dashboard and popup keep rendering the completed session. `buildSnapshot` falls back to the newest `flightdeck-state-<SESSION>-*.json.archive` whenever the live file is missing (it's renamed by `flightdeck-state archive`), so Overview shows the terminated banner + summary file path, Decisions retains the full log, and Conflicts & merges (issue mode) adds a `Merge history` panel (PR + merge commit + age) that outlives the now-drained `merge_queue`. The daemon-health chip is swapped for a green `✔ session complete` so the user does not read the intentional shutdown as an alarming `daemon dead`. Dismiss with `Alt+M`.
-- Dashboard defaults to the Flightdeck owner pane only, using `owner.pane_id` from master state. Child panes remain suppressed, and `dashboardVisibility` can opt back into same-tmux-session or always-on rendering for observer workflows. Peer panes can still open the popup; the header says `Observer view (owner: %pane · cwd)`.
+- Dashboard defaults to the Flightdeck owner pane only, using `owner.pane_id` from master state. Child panes remain suppressed, and `dashboardVisibility` can opt back into same-tmux-session or always-on rendering for observer workflows. Peer panes can still open the popup; the header says `Observer view (owner: %pane · cwd)` so owner scope is explicit.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Optional terminal bell and auto-popup when master pauses.
 
@@ -29,7 +29,7 @@ PR, worktree, scope, and merge metadata render only for `ISS` rows that carry a 
 
 ## Read-only by design
 
-The flightdeck skill owns state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck only renders what's already on disk. The skill works fine without this extension; it's purely additive UX for the Pi harness.
+The flightdeck skill owns state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck only renders what's already on disk through the same normalized tracked-session seam (`TrackedSession` / `TrackedState`, backed by `.entries` with legacy `.issues` folded in). The skill works fine without this extension; it's purely additive UX for the Pi harness.
 
 ## Install
 

@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-flightdeck",
   "version": "0.1.0",
-  "description": "Read-only session-control dashboard for the flightdeck skill: live overview of tracked sessions, daemon health, decisions log, and a prominent pause-banner when master is awaiting the user.",
+  "description": "Read-only sessions-first dashboard for the flightdeck skill: owner-scoped overview of tracked sessions, daemon health, decisions log, and a prominent pause banner when master is awaiting the user.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -23,7 +23,7 @@
         {
           "key": "enabled",
           "label": "Enable flightdeck dashboard",
-          "description": "Register /flightdeck command, persistent dashboard widget, and pause banner.",
+          "description": "Register /flightdeck command, owner-scoped persistent session dashboard, and pause banner.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -53,7 +53,7 @@
         {
           "key": "dashboard",
           "label": "Show dashboard widget",
-          "description": "Render a persistent dashboard above the editor when a flightdeck session is active in this tmux session.",
+          "description": "Render a persistent sessions dashboard above the owner editor when a Flightdeck session is active.",
           "type": "boolean",
           "default": true,
           "category": "Dashboard",
@@ -145,7 +145,7 @@
         {
           "key": "liveFeedLines",
           "label": "Live feed lines",
-          "description": "Number of daemon log + decision lines retained in the popup Live feed tab.",
+          "description": "Number of daemon log + tracked-session decision lines retained in the popup Live feed tab.",
           "type": "number",
           "default": 200,
           "category": "Popup",
@@ -154,7 +154,7 @@
         {
           "key": "conversationExcerptChars",
           "label": "Conversation excerpt chars",
-          "description": "Maximum characters of last assistant text retained per pane in the Conversations tab.",
+          "description": "Maximum characters of last assistant text retained per tracked session in the Conversations tab.",
           "type": "number",
           "default": 800,
           "category": "Popup",
@@ -163,7 +163,7 @@
         {
           "key": "conversationsHistory",
           "label": "Conversations turns kept",
-          "description": "Number of recent assistant turns retained per pane in the Conversations tab. Rows resolve to tracked-session titles when available.",
+          "description": "Number of recent assistant turns retained per tracked session in the Conversations tab. Rows resolve to tracked-session titles when available.",
           "type": "number",
           "default": 5,
           "category": "Popup",

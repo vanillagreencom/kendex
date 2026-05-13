@@ -2,6 +2,8 @@
 
 Initialize development session, display status, select work, evaluate research, create worktree, and hand off to worktree session.
 
+This is the legacy issue-mode start workflow. For ad-hoc or workflow sessions that are not tied to an issue/worktree, use `scripts/flightdeck-session start` or `flightdeck session start`, then supervise with `workflows/session-watch.md` and `workflows/session-handle-prompt.md`.
+
 ## 1. Initialize Session
 
 ### 1.1 Sync Cache
