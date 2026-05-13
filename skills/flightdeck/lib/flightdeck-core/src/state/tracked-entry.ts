@@ -42,6 +42,10 @@ function invalidEntriesWarning(ids: string[]): string {
 	return `Warning: invalid .entries value(s) for ${ids.map((id) => JSON.stringify(id)).join(", ")}; skipping.`;
 }
 
+function invalidEntryIdWarning(entryKey: string, rawId: unknown): string {
+	return `Warning: invalid .entries[${JSON.stringify(entryKey)}].id ${JSON.stringify(rawId)}; using entry key.`;
+}
+
 function stringOrNull(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }
@@ -69,9 +73,10 @@ export function validateEntryId(value: unknown, label = "entry id"): string {
 	return trimmed;
 }
 
-function normalizeEntry(id: string, raw: Record<string, unknown>, opts: { strict?: boolean } = {}): TrackedEntry {
+function normalizeEntry(id: string, raw: Record<string, unknown>, opts: { strict?: boolean; warn?: (message: string) => void } = {}): TrackedEntry {
 	const keyId = opts.strict ? validateEntryId(id, "entry id") : (validateEntryIdOrNull(id) ?? id);
 	const rawId = typeof raw.id === "string" ? validateEntryIdOrNull(raw.id) : null;
+	if (raw.id !== undefined && rawId === null) opts.warn?.(invalidEntryIdWarning(id, raw.id));
 	const entryId = rawId ?? keyId;
 	const kind = typeof raw.kind === "string" && raw.kind.trim() ? raw.kind : "issue";
 	return { ...raw, id: entryId, kind } as TrackedEntry;
@@ -146,7 +151,7 @@ export function readTrackedEntries(state: FlightdeckStateLike | undefined | null
 		if (projected) out[projected.id] = projected;
 	}
 	const entries = entryRecordMap(state.entries, options.warn);
-	for (const [id, raw] of Object.entries(entries)) out[id] = normalizeEntry(id, raw);
+	for (const [id, raw] of Object.entries(entries)) out[id] = normalizeEntry(id, raw, { warn: options.warn });
 	return out;
 }
 
@@ -155,6 +160,7 @@ export function writeTrackedEntry<T extends FlightdeckStateLike>(state: T, id: s
 	const validId = validateEntryId(id, "entry id");
 	const entryId = validateEntryId(entry.id, "entry.id");
 	if (entryId !== validId) throw new Error(`invalid entry.id: must match entry id ${validId}`);
+	validateDomainIssueId(entry);
 	if (!isRecord(target.entries)) target.entries = {};
 	const entries = target.entries as Record<string, TrackedEntry>;
 	const normalized = normalizeEntry(validId, entry as unknown as Record<string, unknown>, { strict: true });
@@ -178,8 +184,14 @@ export function entryIdForIssue(issueId: string): string | null {
 
 export function issueIdForEntry(entry: Pick<TrackedEntry, "id" | "kind" | "domain">): string | undefined {
 	const issue = entry.domain && typeof entry.domain === "object" && !Array.isArray(entry.domain) ? entry.domain.issue : undefined;
-	if (issue && typeof issue === "object" && !Array.isArray(issue) && typeof issue.id === "string" && issue.id.trim()) return issue.id;
+	if (issue && typeof issue === "object" && !Array.isArray(issue) && typeof issue.id === "string" && issue.id.trim()) return validateEntryId(issue.id, "domain.issue.id");
 	return entry.kind === "issue" && entry.id.trim() ? entry.id : undefined;
+}
+
+export function validateDomainIssueId(entry: Pick<TrackedEntry, "domain">): string | undefined {
+	const issue = entry.domain && typeof entry.domain === "object" && !Array.isArray(entry.domain) ? entry.domain.issue : undefined;
+	if (!issue || typeof issue !== "object" || Array.isArray(issue) || !("id" in issue) || issue.id === undefined) return undefined;
+	return validateEntryId(issue.id, "domain.issue.id");
 }
 
 export function legacyIssueProjection(entry: TrackedEntry, issueId = issueIdForEntry(entry) ?? entry.id): LegacyIssueRecord {

@@ -20,6 +20,7 @@ import {
 	assertWritableSchemaVersion,
 	readTrackedEntries,
 	unknownSchemaWarning,
+	validateDomainIssueId,
 	validateEntryId,
 } from "../state/tracked-entry.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
@@ -113,7 +114,9 @@ switch (action) {
 		const entryId = validateEntryIdOrDie(rest[0]!, "entry id");
 		const jsonEntryId = validateEntryIdOrDie(entry.id, "entry.id");
 		if (jsonEntryId !== entryId) die(`Error: invalid entry.id: must match entry id ${entryId}`);
+		const domainIssueId = validateDomainIssueIdOrDie(entry);
 		entry.id = jsonEntryId;
+		if (domainIssueId && entry.domain?.issue) entry.domain.issue.id = domainIssueId;
 		updateState(file, writeTrackedEntryFilter(entryId, entry));
 		break;
 	}
@@ -197,6 +200,14 @@ function validateEntryIdOrDie(value: unknown, label: string): string {
 	}
 }
 
+function validateDomainIssueIdOrDie(entry: TrackedEntry): string | undefined {
+	try {
+		return validateDomainIssueId(entry);
+	} catch (error) {
+		die(`Error: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
 function runPhase(issue: string): void {
 	const root = resolveProjectRoot();
 	const orchDir = process.env.ORCH_STATE_DIR && process.env.ORCH_STATE_DIR.trim() ? process.env.ORCH_STATE_DIR.trim() : "tmp";
@@ -219,6 +230,7 @@ function runPhase(issue: string): void {
 		return;
 	}
 	if (existsSync(file)) {
+		warnUnknownSchemaFromFile();
 		const fd = getField(file, `.issues["${issue}"].state // empty`).trim();
 		if (fd) {
 			process.stdout.write(`fd:${fd}\n`);

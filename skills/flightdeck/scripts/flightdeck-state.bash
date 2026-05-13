@@ -246,13 +246,15 @@ resolve_owner_harness() {
 tracked_entries_filter() {
   cat <<'JQ'
 def obj: if type == "object" then . else {} end;
+def trim: gsub("^\\s+|\\s+$"; "");
+def valid_id($v): (($v | type) == "string") and (($v | trim) | test("^[A-Za-z0-9._-]+$"));
 def s($v): if ($v | type) == "string" then $v else null end;
 def n($v): if ($v | type) == "number" then $v else null end;
 def b($v): if ($v | type) == "boolean" then $v else null end;
 def arr($v): if ($v | type) == "array" then $v else [] end;
 def normalized_entry($id; $e):
   $e + {
-    id: (if (($e.id | type) == "string" and ($e.id | length) > 0) then $e.id else $id end),
+    id: (if valid_id($e.id) then ($e.id | trim) else $id end),
     kind: (if (($e.kind | type) == "string" and ($e.kind | length) > 0) then $e.kind else "issue" end)
   };
 def legacy_entry($id; $i): {
@@ -347,6 +349,14 @@ warn_malformed_entries() {
   fi
 }
 
+warn_invalid_entry_ids() {
+  [[ -f "$FILE" ]] || return 0
+  local warnings
+  warnings=$(jq -r 'def trim: gsub("^\\s+|\\s+$"; ""); def valid_id($v): (($v | type) == "string") and (($v | trim) | test("^[A-Za-z0-9._-]+$")); if (.entries // null | type) == "object" then .entries | to_entries[] | select((.value | type) == "object" and (.value | has("id")) and (valid_id(.value.id) | not)) | "Warning: invalid .entries[\(.key | @json)].id \(.value.id | @json); using entry key." else empty end' "$FILE" 2>/dev/null || true)
+  [[ -n "$warnings" ]] && printf '%s\n' "$warnings" >&2
+  return 0
+}
+
 validate_entry_id() {
   local raw="$1" label="$2"
   local trimmed
@@ -368,6 +378,21 @@ validate_json_entry_id() {
   fi
   raw=$(jq -r '.id' <<< "$json")
   validate_entry_id "$raw" "entry.id"
+}
+
+validate_domain_issue_id() {
+  local json="$1"
+  local has_id kind raw
+  has_id=$(jq -r '(.domain.issue? | type) == "object" and (.domain.issue | has("id"))' <<< "$json")
+  [[ "$has_id" == "true" ]] || { DOMAIN_ISSUE_ID_RESULT=""; return 0; }
+  kind=$(jq -r '.domain.issue.id | type' <<< "$json")
+  if [[ "$kind" != "string" ]]; then
+    echo 'Error: invalid domain.issue.id: must be a string' >&2
+    exit 2
+  fi
+  raw=$(jq -r '.domain.issue.id' <<< "$json")
+  validate_entry_id "$raw" "domain.issue.id"
+  DOMAIN_ISSUE_ID_RESULT="$ENTRY_ID_RESULT"
 }
 
 write_tracked_entry_filter() {
@@ -535,6 +560,7 @@ case "$ACTION" in
     [[ ! -f "$FILE" ]] && exit 1
     warn_unknown_schema_from_file
     warn_malformed_entries
+    warn_invalid_entry_ids
     jq -c "$(tracked_entries_filter)" "$FILE"
     ;;
 
@@ -549,6 +575,10 @@ case "$ACTION" in
     if [[ "$json_entry_id" != "$entry_id" ]]; then
       printf 'Error: invalid entry.id: must match entry id %s\n' "$entry_id" >&2
       exit 2
+    fi
+    validate_domain_issue_id "$entry_json"
+    if [[ -n "$DOMAIN_ISSUE_ID_RESULT" ]]; then
+      entry_json=$(jq -c --arg issue_id "$DOMAIN_ISSUE_ID_RESULT" '.domain.issue.id = $issue_id' <<< "$entry_json")
     fi
     entry_id_json=$(jq -Rn --arg v "$entry_id" '$v')
     update_state "$FILE" "$(write_tracked_entry_filter "$entry_id_json" "$entry_json")"
@@ -583,6 +613,7 @@ case "$ACTION" in
     else
       # No orchestration state — use flightdeck's own view.
       if [[ -f "$FILE" ]]; then
+        warn_unknown_schema_from_file
         fd_state=$(jq -r ".issues[\"$issue\"].state // empty" "$FILE" 2>/dev/null)
         if [[ -n "$fd_state" ]]; then
           echo "fd:$fd_state"

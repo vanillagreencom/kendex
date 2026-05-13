@@ -287,6 +287,18 @@ describe("flightdeck-state parity", () => {
 		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]), warning)).toEqual(expected);
 	});
 
+	test("tracked-entries warns and falls back to key for malformed internal entry id", () => {
+		const entry = { ...sampleTrackedEntry(), id: "bad id" };
+		const state = { entries: { "CC-1": entry } };
+		writeState(bashRepo, state);
+		writeState(tsRepo, state);
+		const expected = readTrackedEntries(state);
+		const warning = 'Warning: invalid .entries["CC-1"].id "bad id"; using entry key.';
+		expect(expected["CC-1"]?.id).toBe("CC-1");
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(false, bashRepo, ["tracked-entries"]), warning)).toEqual(expected);
+		expect(parseRunJsonWithWarning<Record<string, TrackedEntry>>(run(true, tsRepo, ["tracked-entries"]), warning)).toEqual(expected);
+	});
+
 	test("writeTrackedEntry adds entries and projects issue compatibility fields", () => {
 		const entry = sampleTrackedEntry();
 		const state: { entries?: Record<string, TrackedEntry>; issues?: Record<string, unknown> } = { issues: {} };
@@ -322,6 +334,21 @@ describe("flightdeck-state parity", () => {
 		}
 	});
 
+	test("write-entry rejects blank and malformed domain.issue.id", () => {
+		const entry = sampleTrackedEntry();
+		expect(() => writeTrackedEntry({ issues: {} }, entry.id, { ...entry, domain: { issue: { ...entry.domain!.issue!, id: "" } } })).toThrow(/invalid domain.issue.id/);
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init"]);
+			const blankDomain = run(useTs, repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { issue: { ...entry.domain!.issue!, id: "" } } })]);
+			expect(blankDomain.status).toBe(2);
+			expect(blankDomain.stderr).toContain("Error: invalid domain.issue.id: must be non-empty and match ^[A-Za-z0-9._-]+$");
+			const malformedDomain = run(useTs, repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { issue: { ...entry.domain!.issue!, id: "bad id" } } })]);
+			expect(malformedDomain.status).toBe(2);
+			expect(malformedDomain.stderr).toContain("Error: invalid domain.issue.id: must be non-empty and match ^[A-Za-z0-9._-]+$");
+		}
+	});
+
 	test("unknown schema warns on read and refuses write unless override is set", () => {
 		const entry = sampleTrackedEntry();
 		const future = { entries: {}, issues: {}, schema_version: "9.9" };
@@ -338,6 +365,20 @@ describe("flightdeck-state parity", () => {
 			const allowed = run(useTs, repo, ["write-entry", entry.id, JSON.stringify(entry)], { FLIGHTDECK_ALLOW_FUTURE_SCHEMA: "1" });
 			expect(allowed.status).toBe(0);
 			expect(allowed.stderr).toBe(`${warning}\n`);
+		}
+	});
+
+	test("phase warns on unknown schema before reading flightdeck state fallback", () => {
+		const future = { issues: { "CC-777": { state: "waiting" } }, schema_version: "9.9" };
+		writeState(bashRepo, future);
+		writeState(tsRepo, future);
+		const warning = 'Warning: unknown schema_version "9.9", treating as 1.1 (read-only safe).';
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const phase = run(useTs, repo, ["phase", "CC-777"]);
+			expect(phase.status).toBe(0);
+			expect(phase.stdout.trim()).toBe("fd:waiting");
+			expect(phase.stderr).toBe(`${warning}\n`);
 		}
 	});
 

@@ -22,7 +22,7 @@ Merged baseline on `origin/main` now includes the following relevant work:
 
 ### In `fd-reframe-p1`
 
-- **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, issue compatibility projection back to `.issues`, `.issues`-under-`.entries` merge semantics, schema/id guards, and bash/TS parity coverage.
+- **Phase 1** adds core `TrackedEntry` normalization helpers, `flightdeck-state tracked-entries`, `flightdeck-state write-entry`, additive `schema_version: 1.1`, additive `.entries`, issue compatibility projection back to `.issues`, `.issues`-under-`.entries` merge semantics, schema/id guards (including `domain.issue.id` and `phase`), and bash/TS parity coverage.
 
 ### Partially delivered
 
@@ -198,7 +198,7 @@ Status (2026-05-13): **DONE in `fd-reframe-p1`**. PR #23 / commit `1fbed75` deli
    - **[DONE]** v1 `.issues` read compatibility in the core state helpers.
    - **[DONE]** v2 `.entries` read path.
    - **[DONE]** dual-write/projection behavior.
-   - **[DONE]** bash/TS parity for `tracked-entries` plus `write-entry` round trip, including v2-only entries, mixed `.issues`/`.entries`, malformed entry warnings, unknown schema guard, and id validation. Archive/stale-state parsing remains covered by PR #23's pi-flightdeck tests and existing `flightdeck-state archive` parity coverage.
+   - **[DONE]** bash/TS parity for `tracked-entries` plus `write-entry` round trip, including v2-only entries, mixed `.issues`/`.entries`, malformed entry/id warnings, unknown schema guard (including `phase` fallback reads), and id validation. Archive/stale-state parsing remains covered by PR #23's pi-flightdeck tests and existing `flightdeck-state archive` parity coverage.
 
 Validation:
 
