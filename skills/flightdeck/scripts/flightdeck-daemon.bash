@@ -1306,15 +1306,20 @@ pi_subscriber_loop() {
     pi_target_args=(--pid "$pi_pid")
   fi
 
-  # Stream bridge events. We emit three classes:
+  # Stream bridge events. We emit four classes:
   #   - pi-question: structured pi-questions prompts opened by the child pane.
   #   - pi-subagent-completion: blocked/failed/needs-completion inner persistent-subagent completions.
+  #   - pi-bg-task-exit: vstack-background-tasks 'exit' events; daemon wakes master
+  #     directly so a bg_task terminal state lands even if the agent's follow-up
+  #     turn never fires (vstack#15).
   #   - normal assistant turn-end text events, classified through prompt-classify.
   "$pi_bin" stream "${pi_target_args[@]}" 2>/dev/null \
     | jq --unbuffered -c 'select(
         (.type == "event" and .event == "question" and (.data.action // "") == "opened")
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
+        or
+        (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "vstack-background-tasks:event") and ((.data.message.details.eventType // "") == "exit"))
         or
         (.type == "event" and .data.message.role == "assistant" and (.data.message.stopReason // "") != "")
       )' \
@@ -1355,6 +1360,39 @@ pi_subscriber_loop() {
 
       local custom_type
       custom_type=$(jq -r '.data.message.customType // ""' <<< "$line" 2>/dev/null)
+      if [[ "$custom_type" == "vstack-background-tasks:event" ]]; then
+        # bg_task transitioned to terminal state. Emit a canonical wake
+        # event even when the agent's own follow-up turn doesn't fire
+        # (silent-stall defense from issue #15). Task identity + status +
+        # exit code drives the hash so exactly one wake per terminal
+        # transition lands.
+        local bg_details bg_task_id bg_status bg_exit_code bg_hash
+        bg_details=$(jq -c '.data.message.details // {}' <<< "$line" 2>/dev/null)
+        [[ -z "$bg_details" || "$bg_details" == "null" ]] && bg_details="{}"
+        bg_task_id=$(jq -r '.task.id // ""' <<< "$bg_details" 2>/dev/null)
+        bg_status=$(jq -r '.task.status // ""' <<< "$bg_details" 2>/dev/null)
+        bg_exit_code=$(jq -r '.task.exitCode // "null"' <<< "$bg_details" 2>/dev/null)
+        bg_hash=$(printf '%s|%s|%s' "$bg_task_id" "$bg_status" "$bg_exit_code" | sha256sum | awk '{print substr($1,1,12)}')
+        if [[ "$bg_hash" == "$last_hash" ]]; then
+          continue
+        fi
+        printf '%s [pi-bg-task-exit] pane=%s task=%s status=%s exit=%s\n' \
+          "$(date -Iseconds)" "$pane_id" "$bg_task_id" "$bg_status" "$bg_exit_code" \
+          >> "$sub_log" 2>/dev/null || true
+        ( exec 218>"$SESSION_LOCK"
+          flock 218
+          jq -nc --arg ts "$(date -Iseconds)" \
+                 --arg pid "$pane_id" \
+                 --arg harness "pi" \
+                 --arg tag "pi-bg-task-exit" \
+                 --arg h "$bg_hash" \
+                 --argjson details "$bg_details" \
+                 '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"bg-task-exit", task:(($details).task // {}), classifier_tag:$tag, hash:$h}' \
+                 >> "$WAKE_EVENTS_LOG"
+        )
+        last_hash="$bg_hash"
+        continue
+      fi
       if [[ "$custom_type" == "subagent-completion" ]]; then
         local details hash has_bad
         details=$(jq -c '.data.message.details // {}' <<< "$line" 2>/dev/null)

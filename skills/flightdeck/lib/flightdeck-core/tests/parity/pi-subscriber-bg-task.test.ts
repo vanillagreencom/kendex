@@ -6,6 +6,14 @@
 // We stub `pi-bridge stream` with a tiny script on PATH that emits a
 // canned JSONL exit event, run scripts/lib/subscribers.bash pi against
 // it, and assert the canonical wake event appears.
+//
+// Toolchain requirements (Linux/macOS): bash, jq, flock, sha256sum,
+// awk, sleep. The subscriber loop is a shared bash body (used by both
+// the bash and TS daemons), so testing its jq filter without spawning
+// it would require duplicating the jq expression into TS. We instead
+// stub the `pi-bridge` binary on PATH and shorten the second test's
+// observation window. The mostly-pure consumer side is covered without
+// subprocesses in `tests/unit/bg-task-events.test.ts`.
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -141,7 +149,18 @@ sleep 30
 				detached: true,
 			});
 			const subPid = sub.pid!;
-			await sleep(2000);
+			// Watch the wake-events log for up to 1s; any pi-bg-task-exit
+			// row would have been written almost immediately after the
+			// stub emitted, so a short window catches the failure case
+			// without paying a 2s sleep.
+			const deadline = Date.now() + 1000;
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					const peek = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean);
+					if (peek.some((raw) => raw.includes("pi-bg-task-exit"))) break;
+				}
+				await sleep(50);
+			}
 
 			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
 			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }

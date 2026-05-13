@@ -22,6 +22,26 @@ Route by `<TAG>` to the matching subsection below. Each subsection is documented
 
 ---
 
+## § 1.4: Handler — `pi-bg-task-exit`
+
+A `pi-background-tasks` bg_task reached a terminal state inside this issue's pane. The daemon emits this canonical event whenever a `vstack-background-tasks:event` message with `details.eventType="exit"` lands in the Pi bridge stream (vstack#15), independent of whether the inner agent's follow-up turn actually fires. Default behavior is to verify the bg_task's downstream effect (typically a PR/CI state change) and nudge the orchestrator forward rather than wait for the silent stall.
+
+**Pre-conditions**: structured event details from `watch.md` § 2.0a carry `task.id`, `task.status`, `task.exitCode`, `task.command`, `task.notifyOnExit`. If details are absent (degraded event path), re-poll the pane once before falling through to escalation.
+
+1. Read `task` from the daemon event details. If `task.notifyOnExit == false` or `task` is missing → do nothing this cycle (the agent never asked to be woken); demote state back to `waiting` and log a `pi-bg-task-exit:ignored` decision.
+2. Inspect `task.command` and recover bg_task intent:
+   - **bot-review-wait** (matches `.agents/skills/orchestration/scripts/bot-review-wait` or `bot-review-wait `): query `gh pr view <registry.pr_number> --json statusCheckRollup,reviewDecision,labels,mergeStateStatus`. If review state matches the orchestrator's normal continuation gate (bot check `SUCCESS` + `reviewDecision == APPROVED`, or no reviewers required), send a continuation directive via `pane-respond <pane> "bot-review-wait bg_task ended (task=<id> status=<status>). PR state: <reviewDecision>/<mergeStateStatus>. Continue with the normal merge-readiness path."`. If review state is `CHANGES_REQUESTED` or checks failed, escalate with the structured PR state included.
+   - **ci-wait** / generic check waiters: same shape, querying `statusCheckRollup` only.
+   - **Unknown command shape**: nudge the orchestrator with `"Background task <id> (<command excerpt>) ended with status=<status> exitCode=<exitCode>. Inspect log via bg_task log id=<id> and resume."`.
+3. Log: `pane-registry log-decision <ISSUE_ID> pi-bg-task-exit "<task.id>:<task.status>:<resolution>"`.
+4. If the bg_task exited `failed` AND the inferred downstream state cannot be recovered (no PR number, registry has no `pr_number`, or `gh` query fails), escalate via `paused_for_user = {issue_id, reason: "pi-bg-task-exit-unknown-context", prompt_text: <task.id> <task.command excerpt>}`.
+
+### Why this exists
+
+The original incident (hyprtrade CC-503) silently stalled because `bg_task` transitioned `running → stopped` with `exitCode: null` and no agent turn surfaced the wake. The `pi-bg-task-exit` event makes the daemon see the terminal transition directly; this handler routes that event into the same continuation path the orchestrator would have followed if its own follow-up turn had landed.
+
+---
+
 ## § 1.5: Handler — `oc-question` / `pi-question`
 
 Structured question events already include the authoritative request payload; do not infer labels from the rendered TUI.

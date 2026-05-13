@@ -101,6 +101,8 @@ For each tracked issue currently in a non-terminal state (`waiting | prompting |
 
 0. **Structured-question event check** — if `PENDING` contains an event for this issue's pane with `tag == "oc-question"` or `tag == "pi-question"`, set state to `prompting`, substate to that tag, and carry `details.request_id` + `details.question` into `handle-prompt.md`. Do not try to rediscover this by `capture-pane`; the inline/modal question may not appear in plain assistant text.
 
+0a. **Structured bg-task-exit event check (vstack#15)** — if `PENDING` contains an event for this issue's pane with `tag == "pi-bg-task-exit"`, set state to `prompting`, substate to that tag, and carry `details.task` (`id`, `status`, `exitCode`, `command`, `notifyOnExit`) into `handle-prompt.md`. This event is the canonical wake for `pi-background-tasks` terminal transitions and fires even when the agent's own follow-up turn never lands. Do not infer this from pane text; the bg_task exit message is a system-role `customType=vstack-background-tasks:event` that the classifier sees as `idle`/`rendering`.
+
 0.5. **Pane-hijack check** — only if `orchestration_started` is `false` for this issue:
    - If the orchestration workflow-state file exists at `tmp/workflow-state-<ISSUE>.json` (or wherever `ORCH_STATE_DIR` resolves to), set `orchestration_started: true` via `pane-registry set <ISSUE> orchestration_started true` and proceed to step 1.
    - Otherwise check `(now - spawned_at)`. If elapsed exceeds `FLIGHTDECK_HIJACK_GRACE_SECS` (default 90), the pane was either hijacked for unrelated work or orchestration silently failed to start. Escalate: `paused_for_user = {issue_id, reason: "orchestration-never-started", prompt_text: "<ISSUE> spawned <elapsed>s ago; no workflow-state file. Pane may have been hijacked or orchestration failed to start."}`. Skip the rest of § 2 for this issue.
@@ -152,6 +154,7 @@ For each tracked issue currently in a non-terminal state (`waiting | prompting |
    | `generic-multi-choice` | `prompting` | substate = tag (handler auto-decides per § 11 of `handle-prompt.md`, escalates only on novelty/destructive ambiguity) |
    | `oc-question` | `prompting` | substate = tag; handler uses structured event details, not pane text |
    | `pi-question` | `prompting` | substate = tag; handler uses structured event details, including `allowCustom` |
+   | `pi-bg-task-exit` | `prompting` | substate = tag; handler uses structured event details (`task.id`, `task.status`, `task.exitCode`, `task.command`). Daemon-emitted on `vstack-background-tasks:event` exit messages (vstack#15). The inner agent may not have turned yet; handler re-checks PR/work state directly and either nudges the orchestrator forward, re-polls after the next stable hash, or escalates if no in-flight bg_task context is recoverable. |
 
    **`terminal-state-reached` routing**: do not transition to `prompting`. Instead invoke `⤵ workflows/close-issue.md <ISSUE_ID>`. That workflow verifies the signal (two-signal rule), updates master state, and tears down the window. Returns here when done.
 

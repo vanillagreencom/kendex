@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import {
@@ -66,13 +66,13 @@ import {
 	renderEmpty,
 	renderTaskEventMessage,
 } from "./render.js";
+import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import {
 	forgetSnapshot,
 	rememberSnapshot,
 	resolveTaskByToken,
 	restoredTaskFromSnapshot,
-	selectMissedExits,
 	taskSnapshot,
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
@@ -135,40 +135,86 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return match ? Number(match[1]) : 0;
 	};
 
+	// Track the active session id so spawn/restore/replay can scope snapshots
+	// to the current Pi session and reject cross-session leaks.
+	let activeSessionId: string | null = null;
+
+	const persistFailure = (where: string, error: unknown): void => {
+		// vstack#15 (reviewer-error #2): persistence failures used to be
+		// silently swallowed. Now we surface them on stderr (visible in the
+		// Pi log file) and as a transient UI notify so an operator can spot
+		// degraded durability before it becomes a stalled-task incident.
+		const msg = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`[pi-background-tasks] persistence failed (${where}): ${msg}\n`);
+		activeCtx?.ui.notify?.(`Background task state persistence failed (${where}). Recent task transitions may not survive a restart.`, "warning");
+	};
+
 	const rememberRestoredSnapshot = (snapshot: BackgroundTaskSnapshot) => {
 		if (!snapshot?.id || !snapshot.command) return;
 		const existing = tasks.get(snapshot.id);
 		if (existing && existing.updatedAt >= snapshot.updatedAt) return;
-		const restored = restoredTaskFromSnapshot(snapshot);
+		const restored = restoredTaskFromSnapshot(snapshot, {
+			sessionId: activeSessionId ?? undefined,
+		});
 		tasks.set(restored.id, restored);
 		taskCounter = Math.max(taskCounter, numericTaskId(restored.id));
 		rememberSnapshot(restored);
 	};
 
-	const persistSnapshots = () => {
+	// Atomic temp-file rename for the sidecar (reviewer-error #2). Writing
+	// directly to state.json races with a crash between truncate and write
+	// and loses ALL replay records; rename(2) is atomic so an interrupted
+	// write leaves the previous good state intact.
+	const writeSidecarAtomic = (file: string, payload: string): void => {
+		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+		const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
 		try {
-			const snapshot = sortedTasks().map((task) => rememberSnapshot(task));
-			pi.appendEntry(BG_STATE_TYPE, { version: 1, tasks: snapshot, updatedAt: Date.now() });
-			if (activeCtx) {
-				const file = sidecarStatePath(activeCtx);
-				mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-				writeFileSync(file, `${JSON.stringify({ version: 1, tasks: snapshot, updatedAt: Date.now() }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-			}
-		} catch {
-			// Tool results and log files remain available even if session state persistence fails.
+			writeFileSync(tmp, payload, { encoding: "utf8", mode: 0o600 });
+			renameSync(tmp, file);
+		} catch (error) {
+			try { unlinkSync(tmp); } catch { /* */ }
+			throw error;
 		}
+	};
+
+	// persistSnapshots reports per-channel success: pi.appendEntry and the
+	// sidecar write are independent. A failure on one channel does not
+	// suppress the other, so a partial write still leaves at least one
+	// durable copy of the latest state.
+	const persistSnapshots = (): { appendEntry: boolean; sidecar: boolean } => {
+		const snapshot = sortedTasks().map((task) => rememberSnapshot(task));
+		const payload = { version: 1, tasks: snapshot, updatedAt: Date.now() };
+		let appendEntryOk = false;
+		let sidecarOk = !activeCtx;
+		try {
+			pi.appendEntry(BG_STATE_TYPE, payload);
+			appendEntryOk = true;
+		} catch (error) {
+			persistFailure("appendEntry", error);
+		}
+		if (activeCtx) {
+			try {
+				writeSidecarAtomic(sidecarStatePath(activeCtx), `${JSON.stringify(payload, null, 2)}\n`);
+				sidecarOk = true;
+			} catch (error) {
+				persistFailure("sidecar", error);
+			}
+		}
+		return { appendEntry: appendEntryOk, sidecar: sidecarOk };
 	};
 
 	const restoreSnapshots = (ctx: ExtensionContext) => {
 		tasks.clear();
 		taskCounter = 0;
+		activeSessionId = sessionIdForContext(ctx);
 		try {
 			const file = sidecarStatePath(ctx);
 			if (existsSync(file)) {
 				const data = JSON.parse(readFileSync(file, "utf8")) as { tasks?: unknown };
 				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
 			}
-		} catch {
+		} catch (error) {
+			persistFailure("sidecar-read", error);
 			// Fall back to session entries below.
 		}
 		for (const entry of ctx.sessionManager.getBranch()) {
@@ -343,50 +389,32 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		task.outputTimer.unref?.();
 	};
 
-	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): ManagedTask => {
-		if (task.closed) return task;
-		task.closed = true;
-		task.updatedAt = Date.now();
-		task.exitCode = exitCode;
-		clearTaskTimers(task);
-
-		if (statusOverride) {
-			task.status = statusOverride;
-		} else if (task.stopReason === "timeout") {
-			task.status = "timed_out";
-		} else if (task.stopReason) {
-			task.status = "stopped";
-		} else {
-			task.status = exitCode === 0 ? "completed" : "failed";
-		}
-		rememberSnapshot(task);
-		persistSnapshots();
-
-		const notified = sendTaskEvent("exit", task);
-		if (notified) {
-			task.exitNotified = true;
-			rememberSnapshot(task);
-			persistSnapshots();
-		}
-		refreshUi();
-		return task;
+	const lifecycleHooks: LifecycleHooks = {
+		rememberSnapshot,
+		persistSnapshots,
+		sendTaskEvent,
+		refreshUi,
+		clearTaskTimers,
 	};
+
+	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): ManagedTask =>
+		finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
 
 	// Replay 'exit' wakeups for any task we restored in a terminal state
 	// without ever notifying the agent. The canonical failure path: a long-
 	// running session_shutdown or a mid-session restore coerced status
 	// running->stopped (restoredTaskFromSnapshot) and the agent never saw
-	// the exit. Without this replay the bg_task silently stalls.
+	// the exit. Without this replay the bg_task silently stalls (vstack#15).
+	//
+	// Restored tasks whose process is still alive remain status='running'
+	// (handled by restoredTaskFromSnapshot) and are skipped by
+	// selectMissedExits, so kill -9 / OOM with an orphaned-but-alive child
+	// does not get a fake exit.
 	const replayMissedExits = () => {
-		let replayed = 0;
-		for (const task of selectMissedExits(tasks.values())) {
-			const notified = sendTaskEvent("exit", task);
-			if (!notified) continue;
-			task.exitNotified = true;
-			rememberSnapshot(task);
-			replayed += 1;
+		const replayed = replayMissedExitsLifecycle(tasks.values(), lifecycleHooks);
+		if (replayed > 0) {
+			process.stderr.write(`[pi-background-tasks] replayed ${replayed} missed exit wake(s) for session=${activeSessionId ?? "unknown"}\n`);
 		}
-		if (replayed > 0) persistSnapshots();
 	};
 
 	const appendLogLine = (task: ManagedTask, text: string) => {
@@ -475,6 +503,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			cwd,
 			exitCode: null,
 			exitNotified: false,
+			sessionId: activeSessionId ?? undefined,
 			expiresAt,
 			forceKillTimer: null,
 			id,

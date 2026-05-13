@@ -136,7 +136,15 @@ complete. Parity tests for every port live under
 | `pane-respond` | Send response to a pane. Modes: free-text payload, `--option N`, `--option-multi`, `--keys` (rejected without `--keys-allow-tmux`), `--question <reqID> --answer\|--answer-multi\|--answer-text\|--answers-json\|--reject`. Validates rebase-multi-choice payloads for the preserve/apply/verify triplet. See `patterns/prompt-handlers.md` for mode selection and `patterns/opencode-questions.md` / `patterns/pi-questions.md` for question routing. |
 | `pane-clear-bell` | Atomic chained-command bell clear (no flicker). |
 | `pr-conflict-graph` | File-intersection adjacency for a list of PR numbers via `gh pr view --json files`. |
-| `prompt-classify` | Regex/sentinel + computed-tag matcher mapping pane state to a handler tag: `rendering`, `terminal-state-reached`, `bash-permission-prompt`, `force-merge-confirm`, `merge-ready-but-unknown`, `merge-now`, `bot-review-wait-stuck`, `rebase-multi-choice`, `force-push-prompt`, `cleanup-prompt`, `audit-relation-prompt`, `descope-related`, `external-fix-suggestions`, `cycle-fix-suggestions`, `scope-creep-detected` [computed], `multi-select-tabbed`, `awaiting-direction`, `generic-multi-choice`, `idle`. Daemon/event-only tags: `oc-question`, `pi-question`, `pi-subagent-completion`, `pi-bg-task-exit`. |
+| `prompt-classify` | Regex/sentinel + computed-tag matcher mapping pane state to a handler tag: `rendering`, `terminal-state-reached`, `bash-permission-prompt`, `force-merge-confirm`, `merge-ready-but-unknown`, `merge-now`, `bot-review-wait-stuck`, `rebase-multi-choice`, `force-push-prompt`, `cleanup-prompt`, `audit-relation-prompt`, `descope-related`, `external-fix-suggestions`, `cycle-fix-suggestions`, `scope-creep-detected` [computed], `multi-select-tabbed`, `awaiting-direction`, `generic-multi-choice`, `idle`. Daemon/event-only tags: `oc-question`, `pi-question`, `pi-subagent-completion`, `pi-bg-task-exit`.
+
+`pi-bg-task-exit` (vstack#15): the Pi subscriber matches `pi-bridge stream` events of shape `{ type: "event", event: "message_end", data.message.customType: "vstack-background-tasks:event", data.message.details.eventType: "exit" }` and appends a canonical wake row to `WAKE_EVENTS_LOG`:
+
+```
+{"ts":"<iso>","pane_id":"%18","harness":"pi","event_type":"bg-task-exit","task":{"id":"bg-3","status":"failed","exitCode":null,"command":"...","outputBytes":89},"classifier_tag":"pi-bg-task-exit","hash":"<12hex>"}
+```
+
+The daemon (`scripts/flightdeck-daemon.bash` + `lib/flightdeck-core/src/daemon/loop.ts`) treats the tag as canonical, appends to the per-session events file via `appendEvent`, extends `WAKE_PENDING.in_flight`, and wakes master. Master routes through `workflows/watch.md` § 2.0a → `workflows/handle-prompt.md` § 1.4. The classifier never sees these messages — they are system-role customType messages, not assistant text — so `prompt-classify` has no matching tag and only the daemon path produces them. |
 
 ## Schema — master state
 
