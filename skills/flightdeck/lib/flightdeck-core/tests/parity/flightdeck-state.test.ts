@@ -398,6 +398,27 @@ describe("flightdeck-state parity", () => {
 		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
 	});
 
+	test("write-entry canonicalizes padded entry and domain issue ids before storing", () => {
+		const padded = {
+			...sampleTrackedEntry(),
+			domain: { issue: { ...sampleTrackedEntry().domain!.issue!, id: " CC-1 " } },
+			id: " CC-1 ",
+		};
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init"]);
+			const write = run(useTs, repo, ["write-entry", " CC-1 ", JSON.stringify(padded)]);
+			expect(write.status).toBe(0);
+			const state = readState(repo) as { entries?: Record<string, TrackedEntry>; issues?: Record<string, Record<string, unknown>> };
+			expect(state.entries?.["CC-1"]?.id).toBe("CC-1");
+			expect(state.entries?.["CC-1"]?.domain?.issue?.id).toBe("CC-1");
+			expect(state.issues?.["CC-1"]?.worktree).toBe("/repo/trees/CC-202");
+			expect(Object.keys(state.entries ?? {})).toEqual(["CC-1"]);
+			expect(Object.keys(state.issues ?? {})).toEqual(["CC-1"]);
+		}
+		expect(normalize(readState(bashRepo))).toEqual(normalize(readState(tsRepo)));
+	});
+
 	test("init backfills owner metadata on legacy state without clobbering fields", () => {
 		const legacy = {
 			conflict_graph: { computed_at: null, edges: [] },

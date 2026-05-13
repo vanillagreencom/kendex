@@ -576,6 +576,7 @@ case "$ACTION" in
       printf 'Error: invalid entry.id: must match entry id %s\n' "$entry_id" >&2
       exit 2
     fi
+    entry_json=$(jq -c --arg entry_id "$entry_id" '.id = $entry_id' <<< "$entry_json")
     validate_domain_issue_id "$entry_json"
     if [[ -n "$DOMAIN_ISSUE_ID_RESULT" ]]; then
       entry_json=$(jq -c --arg issue_id "$DOMAIN_ISSUE_ID_RESULT" '.domain.issue.id = $issue_id' <<< "$entry_json")
