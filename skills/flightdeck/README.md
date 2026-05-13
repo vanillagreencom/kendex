@@ -1,18 +1,18 @@
 # Flightdeck
 
-Hands-off orchestration for parallel AI dev sessions. When you spawn multiple coding agents to work on different issues at the same time, flightdeck supervises all of them, answers their prompts with sensible defaults, plans the merge order around file conflicts, and only interrupts you when something genuinely needs a human.
+Generic tmux session management for AI harness panes, plus optional issue-mode orchestration. In core session mode, Flightdeck launches or attaches tmux-window sessions, tracks stable panes, routes prompts, and summarizes completion. In issue mode, it adds GitHub/Linear/worktree decisions, merge planning, and next-cycle recommendations.
 
 > Agents reading this: you want `SKILL.md` instead. Hacking on flightdeck itself: see [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
 ## The problem
 
-Running one agent at a time is fine. Running five at once is chaos — each one keeps stopping to ask *"should I clean this up?"* or *"the bot review timed out, abort?"*, and the order you merge them in turns into a guessing game. Flightdeck handles the supervisory layer so you can spawn a whole cycle's worth of work and walk away.
+Running one agent at a time is fine. Running five at once is chaos — each one keeps stopping to ask questions, background tasks finish at odd times, and issue-mode merge order can turn into a guessing game. Flightdeck handles the supervisory layer so you can track generic sessions or spawn a whole issue cycle and walk away.
 
-Activates only inside tmux and only when you ask for it (`flightdeck start` from your harness). Outside tmux it's a no-op.
+Activates only inside tmux and only when you ask for it (`flightdeck session start|attach` for core sessions, `flightdeck start` for issue workflows). Outside tmux it's a no-op.
 
 ## How it works
 
-Flightdeck spawns each agent into its own tmux window via `open-terminal`, then watches all of them in parallel. For each agent it picks the cleanest available communication channel:
+Flightdeck launches generic sessions with `flightdeck-session` or issue agents with `open-terminal`, always into their own tmux windows, then watches them in parallel. For each tracked pane it picks the cleanest available communication channel:
 
 | Harness | How flightdeck talks to that agent |
 | --- | --- |
@@ -32,13 +32,13 @@ The watch layer is split into two modes:
 
 Issue-only prompt tags on ad-hoc sessions are guarded as `domain-mismatch`: Flightdeck logs a warning, takes no destructive action, and asks the master/user how to proceed. Missing kind now fails closed by default, and lookup misses should pass `--entry-kind-unknown`; legacy issue callers must explicitly opt in with `--allow-missing-kind` while they migrate.
 
-When every tracked issue is merged, aborted, or otherwise terminal, flightdeck writes a session summary — including any new issues the agents created along the way and a recommendation about what to tackle next — and hands control back.
+When tracked entries are terminal, Flightdeck writes a summary and hands control back. Generic-only sessions get a local session summary. Sessions with any issue entries keep the issue/PR/new-issue recommendation summary; mixed sessions include both.
 
 ## Activation and termination
 
-- **Activates** on `flightdeck start` from your harness inside tmux. Single issue or many — flightdeck supervises whatever you spawn.
-- **Pauses** for you on: scope creep that wants reverting, force-merging against a real content conflict, an issue abort, a `main` mutation that needs human OK, or a novel prompt shape no rule covers. Sets `paused_for_user` in state and stops polling. Resume by running `watch` again.
-- **Terminates** automatically when every tracked issue is in a terminal state for two consecutive poll cycles. Writes a summary, archives the state file, hands control back.
+- **Activates** on `flightdeck session start|attach` for generic tracked sessions, or `flightdeck start` for issue workflows, from inside tmux.
+- **Pauses** for you on: scope creep that wants reverting, force-merging against a real content conflict, an issue abort, a `main` mutation that needs human OK, domain mismatch, or a novel prompt shape no rule covers. Sets `paused_for_user` in state and stops polling. Resume by running `session watch` or issue `watch` again.
+- **Terminates** automatically when every tracked entry is terminal for the relevant mode. Generic-only sessions write a session summary with no GitHub/Linear/worktree calls. Issue sessions write the issue summary, archive the state file, and hand control back.
 
 ## Ad-hoc sessions
 
@@ -87,9 +87,11 @@ cd /path/to/your/project
 vstack add vanillagreencom/vstack --skill flightdeck -y
 ```
 
-Pulls in required dependencies (`github`, `linear`, `project-management`).
+Core mode requires tmux only at the workflow/skill-dependency layer, plus the harness adapter you choose for a tracked pane (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). It does not require GitHub, Linear credentials, project-management, or worktree setup.
 
-System requirements: `bash` 4+, `tmux` 3.x, `jq`, `gh`, `flock`, and `bun` (https://bun.sh). Mac users: install GNU coreutils for `sha256sum` and GNU date.
+Issue mode adds the optional `github`, `linear`, `worktree`, and `project-management` skills on demand for `flightdeck start <ISSUE>`, `start new`, `parallel-check`, `merge-plan`, `close-issue`, and issue termination/recommendation workflows.
+
+Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, `jq`, `flock`, and `bun` (https://bun.sh). Issue mode additionally needs the GitHub/Linear CLIs or auth wrappers used by those skills, plus normal git worktree support. Mac users: install GNU coreutils for `sha256sum` and GNU date.
 
 ## Pi dashboard (optional)
 
@@ -154,7 +156,7 @@ You don't run any of these by hand in normal use — the skill calls them.
 - `flightdeck-daemon` — background poller; wakes the master.
 - `pane-registry`, `pane-poll`, `pane-respond` — pane tracking and IO.
 - `prompt-classify` — pattern-matches agent output against known prompt shapes and guards issue-only tags on non-issue entries as `domain-mismatch`.
-- `pr-conflict-graph`, `parallel-groups` — merge-order planning.
+- `pr-conflict-graph`, `parallel-groups` — issue-mode merge-order planning.
 - `codex-app-server-spawn` / `-stop` — Codex bridge server lifecycle.
 
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the full script list with descriptions.

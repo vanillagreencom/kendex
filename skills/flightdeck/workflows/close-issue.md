@@ -49,7 +49,7 @@ Map signals to terminal state:
 - PR state `CLOSED` without merge AND issue tracker state cancelled → `state = aborted`.
 - Pane signals end-of-session but PR state is still `OPEN` and no other signal contradicts → return without teardown; the orchestrator may have ended its turn but the merge hasn't actually landed yet. Re-poll.
 
-Capture the outcome's summary fields from the buffer if present (PR number, merge commit, branch deleted-on-remote, etc.) — these go into the end-of-session report (`terminate.md` § 1).
+Capture the outcome's summary fields from the buffer if present (PR number, merge commit, branch deleted-on-remote, etc.) — these go into the issue end-of-session report (`terminate.md` § 2).
 
 ---
 
@@ -88,7 +88,7 @@ This step runs AFTER § 3 has already written the terminal state (`merged|aborte
 
 3. Verify the window is gone (defensive, skipped on exit 3/4/5/6): `tmux list-panes -a -F '#{pane_id}' | grep -qFx "<pane_id>"` — if the recorded `pane_id` is still alive after a `0` exit, log a warning (don't escalate; the helper's own post-kill check already escalates to exit 5 in that case, so a positive match here is a tmux-state race the user can sort out).
 
-Pane registry entry is left in place for the end-of-session report (see `terminate.md` § 1). It carries the issue's history. Do NOT call `pane-registry remove` here — terminate is responsible for the final cleanup.
+Pane registry entry is left in place for the issue end-of-session report (see `terminate.md` § 2). It carries the issue's history. Do NOT call `pane-registry remove` here — terminate is responsible for the final cleanup.
 
 ---
 

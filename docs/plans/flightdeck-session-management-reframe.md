@@ -292,31 +292,34 @@ Validation:
 
 Purpose: no regression for current Flightdeck users.
 
-Status (2026-05-13): **REMAINING**. The new generic plumbing delivered in PRs #21, #22, and #24 makes isolation safer, but the issue/workflow preservation layer has not been reframed yet.
+Status (2026-05-13): **DONE in fd-reframe-p4**. Core/session dependency language is isolated from issue mode, issue commands remain grouped under `Issue workflows`, and termination now routes by tracked-entry kind so generic ad-hoc sessions do not require GitHub/Linear/worktree/project-management.
 
-1. **[REMAINING]** Keep `flightdeck start [ISSUE_ID]`, `start new`, `parallel-check`, merge planning, and termination summary as issue-mode workflows.
-2. **[REMAINING]** Move required dependency language:
+1. **[DONE]** Keep `flightdeck start [ISSUE_ID]`, `start new`, `parallel-check`, merge planning, and termination summary as issue-mode workflows. `SKILL.md` keeps these under `Issue workflows` and adds explicit `merge-plan`, `close-issue`, and `terminate` rows.
+2. **[DONE]** Move required dependency language:
    - Core Flightdeck requires tmux and harness adapters only.
    - Issue mode requires `github`, `linear`, `project-management`, and `worktree` as applicable.
-3. **[REMAINING]** In `SKILL.md`, change required setup:
+3. **[DONE]** In `SKILL.md`, change required setup:
    - Always verify `$TMUX`.
-   - Load GitHub/Linear/project-management only when entering issue workflow commands.
-4. **[REMAINING]** Keep issue commands in command table under `Issue workflows`.
-5. **[REMAINING]** Add new generic commands under `Session management`:
+   - Load GitHub/Linear/project-management/worktree only when entering issue workflow commands.
+   - Generic session commands explicitly skip those loads.
+4. **[DONE]** Keep issue commands in command table under `Issue workflows`.
+5. **[DONE]** Add new generic commands under `Session management`:
    - `session start`
    - `session attach`
    - `session watch`
    - `session status`
    - `session stop` / `session remove`
-6. **[REMAINING]** Update termination behavior:
+6. **[DONE]** Update termination behavior:
    - Generic sessions end with a session summary, not merge summary.
    - Issue sessions still produce the current issue/PR/new-issue recommendation summary.
-7. **[REMAINING]** Keep `pr-conflict-graph`, `parallel-groups`, and issue decision biases untouched except for namespacing/docs.
+   - Mixed sessions produce both.
+7. **[DONE]** Keep `pr-conflict-graph`, `parallel-groups`, and issue decision biases untouched except for namespacing/docs.
 
 Validation:
 
-- Run focused issue-mode tests and at least one live issue-mode smoke before any default flip.
-- Run generic ad-hoc smoke without Linear/GitHub credentials to prove core mode does not require them.
+- **[DONE]** Added `skills/flightdeck/lib/flightdeck-core/tests/parity/terminate-session.test.ts` covering issue-only, ad-hoc-only, and mixed termination summaries, including the no-credentials generic smoke.
+- **[DONE]** Run `cd skills/flightdeck/lib/flightdeck-core && bun test && bun run typecheck` in clean and polluted env before merging this phase.
+- **[PARTIAL]** Live issue-mode smoke is not part of this default-preserving change; still required before any future default flip.
 
 ### Phase 5 — Reframe Pi dashboard and UI language
 

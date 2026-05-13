@@ -1,11 +1,11 @@
 ---
 name: flightdeck
-description: "Master session lifecycle for multi-issue parallel dev work: dashboard, spawn, oversee tmux panes, answer prompts, plan merges, drive every tracked issue to merged or aborted."
+description: "Generic tmux session manager for AI harness panes; optional issue mode supervises issue/PR workflows, prompt handling, merge planning, and unwind."
 license: MIT
 user-invocable: true
 dependencies:
-  required: [github, linear, project-management]
-  optional: [decider, worktree]
+  required: []
+  optional: [decider, github, linear, project-management, worktree]
 metadata:
   author: vanillagreen
   version: "0.2.0"
@@ -17,10 +17,26 @@ metadata:
 
 ## STOP — Required Setup
 
-1. Verify `$TMUX` is set. If unset, **exit immediately with no-op**: print `Flightdeck requires tmux; skipping.` and return control to the caller. Flightdeck does nothing outside tmux.
-2. Load `github`, `linear`, and `project-management` skills if not already loaded. Redundant loads are no-ops.
+1. Verify `$TMUX` is set for every Flightdeck command. If unset, **exit immediately with no-op**: print `Flightdeck requires tmux; skipping.` and return control to the caller. Flightdeck does nothing outside tmux.
+2. Determine the command mode before loading dependencies:
+   - Generic session commands (`session start`, `session attach`, `session watch`, `session status`, `session stop`, `session remove`) require only tmux plus the selected harness adapter (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). Do **not** load `github`, `linear`, `project-management`, or `worktree` for generic session commands.
+   - Issue workflow commands (`start [ISSUE_ID]`, `start new`, `parallel-check`, issue `watch`, `merge-plan`, `close-issue`, `terminate` when any tracked entry is `kind=issue`) load `github`, `linear`, `project-management`, and `worktree` on demand. Redundant loads are no-ops.
+3. If an issue workflow dependency cannot be loaded after entering issue mode, stop and tell the user. Do not proceed with issue/PR/worktree actions without it.
 
-If a required skill cannot be loaded, stop and tell the user. Do not proceed without them.
+---
+
+## Dependency modes
+
+Core Flightdeck is a generic session manager. It requires tmux and the harness adapters needed for the tracked panes only; it does not require GitHub, Linear, project-management, or worktree skills.
+
+### Issue-mode dependencies (load when entering issue workflows)
+
+- `github` — PR inspection, merge state, checks, review threads, file lists.
+- `linear` — issue metadata, created follow-ups, cycle/todo recommendation checks.
+- `worktree` — issue branch/worktree ownership and cleanup scope.
+- `project-management` — cycle planning, audits, roadmaps, research issue wrappers used by issue workflows.
+
+`decider` remains optional for agents that want an extra decision aid, but core session management does not require it.
 
 ---
 
@@ -51,16 +67,21 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 ### Issue workflows
 
+Issue/PR/worktree workflows. Entering these commands loads the issue-mode dependencies on demand.
+
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
-| `start` | `[ISSUE_ID]` | `workflows/start.md` | From-main entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter watch loop. |
-| `start new` | `[title]` | `workflows/start-new.md` | Create new issue + spawn. |
-| `start self` | — | inline | Initialize master session only, await further commands. |
-| `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Verify a candidate set is safe to spawn in parallel. |
-| `watch` | `[ISSUE_IDS]` | `workflows/watch.md` → `workflows/session-watch.md` | Issue-mode extension over the generic session loop. Loads issue skills, keeps legacy issue states, routes PR/Linear/worktree handlers, and resumes merge planning. |
+| `start` | `[ISSUE_ID]` | `workflows/start.md` | From-main issue entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter issue watch loop. |
+| `start new` | `[title]` | `workflows/start-new.md` | Create new issue + spawn through the issue workflow path. |
+| `start self` | — | inline | Initialize master issue session only, await further issue commands. |
+| `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Verify a candidate issue set is safe to spawn in parallel. |
+| `watch` | `[ISSUE_IDS]` | `workflows/watch.md` → `workflows/session-watch.md` | Issue-mode extension over the generic loop. Keeps legacy issue states, routes PR/Linear/worktree handlers, and resumes merge planning. |
+| `merge-plan` | — | `workflows/merge-plan.md` | Build PR conflict graph and choose smallest-safe merge order for issue entries. |
+| `close-issue` | `<ISSUE_ID>` | `workflows/close-issue.md` | Verify terminal issue outcome, record issue fields, and tear down the issue window safely. |
+| `terminate` | — | `workflows/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
 | `status` | — | inline | Print current pane registry + state machine snapshot from `tmp/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
 
-### Planning (cross-call to `project-management`)
+### Planning (cross-call to `project-management`, issue mode only)
 
 | Command | Workflow | Notes |
 |---------|----------|-------|
@@ -162,7 +183,7 @@ The daemon (`scripts/flightdeck-daemon.bash` + `lib/flightdeck-core/src/daemon/l
 
 ## Schema — master state
 
-Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 5`). The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. pi-flightdeck's `buildSnapshot` falls back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view in the dashboard / popup keeps rendering until a new `flightdeck start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
+Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 6`). The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. pi-flightdeck's `buildSnapshot` falls back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view in the dashboard / popup keeps rendering until a new `flightdeck start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
 Schema `1.1` is additive. `flightdeck-state init` writes `schema_version: 1.1`, keeps the v1 `.issues`, `.merge_queue`, and `.conflict_graph` fields, and adds `.entries` for the neutral `TrackedEntry` model. Older v1 readers ignore `schema_version` and `.entries`; issue-mode readers continue using `.issues`. New core readers must call `readTrackedEntries(state)` instead of touching `.issues` directly: it projects legacy `.issues` records first, then overlays valid `.entries` records by id so `.entries` wins on collisions but issue-only legacy updates remain visible. Malformed non-object `.entries` values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids, including `entry.domain.issue.id` when present, writes `.entries[id]`, and projects `kind: "issue"` entries back to `.issues[issueId]` for compatibility. Unknown future `schema_version` values warn on read (including `phase`) and refuse writes unless `FLIGHTDECK_ALLOW_FUTURE_SCHEMA=1` is set. This mirrors the pi-flightdeck render seam; do not fork renderer-only `.issues` reads back into core logic.
 
@@ -302,7 +323,7 @@ TS-port toggles:
 | `workflows/handle-prompt.md` | Nested invocation from issue `watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
 | `workflows/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
 | `workflows/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
-| `workflows/terminate.md` | Nested invocation from `watch` § 6 | Final summary, new-issues report, next-cycle recommendation, master-state finalization |
+| `workflows/terminate.md` | Nested invocation from issue `watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
 
 ## Workflow Execution
 
@@ -325,7 +346,7 @@ Nested workflows (marked with `⤵`) must be invoked through the harness's workf
 3. **Add nothing else** — no commentary, no extra fields, no rewording, no explanations before or after the content.
 4. **Do not paraphrase** — use the exact structure, headings, and field names from the tag.
 
-The user-visible output blocks at the end of `terminate.md` and `close-issue.md` are `<output_format>` tagged for this reason: the agent must emit them in full, not collapse to a summary line.
+The user-visible output blocks at the end of `terminate.md` (`<generic_output_format>` / `<issue_output_format>`) and `close-issue.md` (`<output_format>`) are tagged for this reason: the agent must emit them in full, not collapse to a summary line.
 
 ## Implementation Constraints
 

@@ -1,35 +1,87 @@
-# Workflow: `terminate` — Final Summary + Next-Cycle Recommendation
+# Workflow: `terminate` — Final Summary + Mode-Aware Unwind
 
-End-of-session unwind. Composes a per-issue summary, the new-issues report, and a next-cycle recommendation. Marks master state terminated. Returns control to flightdeck's dashboard.
+End-of-session unwind. Routes by tracked-entry kind, writes the summary file, marks master state terminated, archives state, and returns control to flightdeck's dashboard. Issue entries keep the existing issue/PR/new-issue recommendation behavior; ad-hoc/workflow entries get a generic session summary with no issue-system side effects.
 
-**Inputs**: master state (every tracked issue is `merged | aborted | dead`; debounce satisfied).
+**Inputs**: master state after debounce confirms every tracked entry is terminal enough to end the session.
 
-**Pre-conditions**: `watch.md` § 6 confirmed all-done across consecutive poll cycles.
+**Pre-conditions**:
+- `session-watch.md` confirmed generic entries are `complete | cancelled | dead` (or intentionally removed from active watch).
+- When issue entries exist, `watch.md` § 7 confirmed every tracked issue is terminal (`merged | aborted | dead`) across consecutive poll cycles.
 
-**Post-condition**: `tmp/flightdeck-summary-<SESSION>-<TS>.md` written; `master_state.terminated = true`; user-visible summary line emitted; control returned to flightdeck's dashboard loop (`workflows/start.md` § 1).
+**Post-condition**: `tmp/flightdeck-summary-<SESSION>-<TS>.md` written; `master_state.terminated = true`; user-visible summary block(s) emitted; live state archived.
 
 ---
 
-## § 1: Compose Per-Issue Outcomes
+## § 0: Partition tracked entries by kind
 
-For each tracked issue, gather:
+Read through the normalized TrackedEntry seam:
+
+```bash
+ENTRIES_JSON=$(flightdeck-state tracked-entries)
+```
+
+Partition tracked entries by kind:
+
+- `ISSUE_ENTRIES`: entries with `kind == "issue"` or `domain.issue.id`.
+- `GENERIC_ENTRIES`: entries with `kind == "adhoc"`, `kind == "workflow"`, or any non-issue kind.
+
+Routing rules:
+
+1. If `ISSUE_ENTRIES` is non-empty, run the issue summary path (§§ 2-4) and preserve the current issue/PR/new-issue recommendation summary behavior.
+2. If `ISSUE_ENTRIES` is empty and `GENERIC_ENTRIES` is non-empty, run only the generic session summary path (§ 1). Do not call `gh`, `linear`, worktree helpers, merge planning, or `project-management`.
+3. For mixed sessions, run both paths: generic session summary for `GENERIC_ENTRIES`, then issue/PR/new-issue recommendation summary for `ISSUE_ENTRIES`.
+4. Unknown or malformed kinds fail safe as generic unless `domain.issue.id` is present.
+
+---
+
+## § 1: Compose Generic Session Outcomes
+
+**Skip this section** when `GENERIC_ENTRIES` is empty.
+
+For each generic entry, gather only local state:
 
 | Field | Source |
 |-------|--------|
-| `id` | registry key |
-| `state` | `merged | aborted | dead` |
-| `pr_number` | registry |
-| `merge_commit` | `gh pr view <PR> --json mergeCommit` (when `state == merged`) |
-| `time_elapsed` | `now - master_state.started_at` per-issue if tracked, else session-level |
+| `id` | entry id |
+| `title` | entry title, fallback id |
+| `kind` | entry kind (`adhoc`, `workflow`, or future non-issue kind) |
+| `state` | `complete | cancelled | dead | ready | ...` |
+| `harness` | entry harness |
+| `time_elapsed` | `now - entry.spawned_at`, fallback session elapsed |
 | `decisions_count` | length of `decisions_log` |
-| `scope_files_declared` | registry |
-| `scope_files_actual` | registry (or fetch from `gh pr view --json files`) |
+| `last_prompt` | latest `decisions_log[-1].prompt_tag`, if any |
+| `last_answer` | latest `decisions_log[-1].answer`, if any |
+
+Generic sessions must not query GitHub, Linear, PR state, worktree metadata, or project-management workflows. They do not produce merge ordering, issue cleanup, new issue reports, or next-cycle recommendations.
 
 ---
 
-## § 2: Compose New-Issues Report
+## § 2: Compose Per-Issue Outcomes
 
-Walk every issue's `decisions_log` for `audit-relation-prompt` entries. For each created issue captured during the session, gather:
+**Skip this section** when `ISSUE_ENTRIES` is empty.
+
+For each issue entry, gather:
+
+| Field | Source |
+|-------|--------|
+| `id` | `domain.issue.id` or legacy registry key |
+| `state` | `merged | aborted | dead` |
+| `pr_number` | `domain.issue.pr_number` / legacy registry |
+| `merge_commit` | cached `domain.issue.merge_commit` / legacy `merge_commit`; if missing and `state == merged`, `gh pr view <PR> --json mergeCommit` |
+| `time_elapsed` | `now - spawned_at` per issue, fallback session elapsed |
+| `decisions_count` | length of `decisions_log` |
+| `scope_files_declared` | `domain.issue.scope_files_declared` / legacy registry |
+| `scope_files_actual` | `domain.issue.scope_files_actual` / legacy registry; if missing and PR exists, fetch from `gh pr view --json files` |
+
+Issue-mode lookups may use `github`, `linear`, `worktree`, and `project-management` because § 0 already proved at least one tracked issue exists.
+
+---
+
+## § 3: Compose New-Issues Report
+
+**Skip this section** when `ISSUE_ENTRIES` is empty.
+
+Walk every issue entry's `decisions_log` for `audit-relation-prompt` entries. For each created issue captured during the session, gather:
 
 | Field | Source |
 |-------|--------|
@@ -47,7 +99,9 @@ Group by `relation_kind`:
 
 ---
 
-## § 3: Compose Next-Cycle Recommendation
+## § 4: Compose Next-Cycle Recommendation
+
+**Skip this section** when `ISSUE_ENTRIES` is empty.
 
 For each standalone follow-up (the `relation_kind: follow-up` set):
 
@@ -66,13 +120,30 @@ If no follow-ups warrant precedence, the recommendation is "stick with planned c
 
 ---
 
-## § 4: Write Summary File
+## § 5: Write Summary File
 
-Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons):
+Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons).
+
+For generic-only sessions, write:
 
 ```markdown
 # Flightdeck Session Summary — <SESSION> — <ISO8601>
 
+## Tracked Sessions
+| Entry | Kind | State | Harness | Elapsed | Decisions | Last prompt | Answer |
+|-------|------|-------|---------|---------|-----------|-------------|--------|
+| ...
+
+## Counts
+- Sessions: <N>
+- Complete: <N>
+- Cancelled: <N>
+- Dead: <N>
+```
+
+When issue entries exist, append the existing issue-mode sections after any generic section:
+
+```markdown
 ## Outcomes
 | Issue | State | PR | Merge Commit | Elapsed | Decisions |
 |-------|-------|----|--------------|---------|-----------|
@@ -94,7 +165,7 @@ Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons):
 - **Pick up next**: <ISSUE> — <one-line rationale>
 ... or "Stick with planned cycle — no created issues warrant precedence."
 
-## Counts
+## Issue Counts
 - Merged: <N>
 - Aborted: <N>
 - New issues (children): <N>
@@ -104,7 +175,7 @@ Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons):
 
 ---
 
-## § 5: Finalize Master State
+## § 6: Finalize Master State
 
 ```
 flightdeck-state set terminated true
@@ -116,15 +187,33 @@ flightdeck-state archive
 
 Do NOT call `pane-registry remove-merged` here. Earlier revisions did, but `close-issue.md § 4` has already killed every terminal-state issue's tmux window by the time terminate runs, so `remove-merged` would unconditionally delete every `merged|aborted|dead` issue's history — including `decisions_log`, `pr_number`, and `merge_commit` — from the file that is about to be archived. The pi-flightdeck dashboard depends on those records to render the post-completion `Overview`, `Decisions`, and `Conflicts & merges` tabs; deleting them collapses the dashboard to an empty `0 issues` state immediately after a successful session. The archive's value is precisely the full session history (see [[issue-17]]).
 
-`flightdeck-daemon stop` terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` rotates the live state file to `tmp/flightdeck-state-<SESSION>-<terminated_at>.json.archive` so the next session in the same tmux name (e.g. `HT`) starts clean instead of inheriting this session's `issues` map, `merge_queue`, and `terminated` flag. The archive preserves the full `.issues` map (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) for post-mortem inspection and dashboard rendering.
+`flightdeck-daemon stop` terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` rotates the live state file to `tmp/flightdeck-state-<SESSION>-<terminated_at>.json.archive` so the next session in the same tmux name (e.g. `HT`) starts clean instead of inheriting this session's entries, issue map, merge queue, and `terminated` flag. The archive preserves the full `.entries` map and full `.issues` map for post-mortem inspection and dashboard rendering.
 
 ---
 
-## § 6: User-Visible Output
+## § 7: User-Visible Output
 
-Emit the full session summary inline using the `<output_format>` block below. Do not collapse to a single line. Do not skip the new-issues table when issues were created. Do not skip the next-cycle recommendation when § 3 produced one. Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty sections, add nothing else.
+Emit the full applicable summary block(s) inline. Do not collapse to a single line. Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty sections, add nothing else.
 
-<output_format>
+For generic entries, emit this block only when `GENERIC_ENTRIES` is non-empty:
+
+<generic_output_format>
+### ✈️ Flightdeck sessions complete
+
+**Tracked sessions**
+
+| Entry | Kind | State | Harness | Decisions |
+|-------|------|-------|---------|-----------|
+| [ENTRY_ID] | [adhoc|workflow|other] | [complete|cancelled|dead|ready|...] | [HARNESS] | [N] |
+
+**Counts**: [N] sessions · [N] complete · [N] cancelled · [N] dead
+
+Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+</generic_output_format>
+
+For issue entries, emit the existing issue summary block only when `ISSUE_ENTRIES` is non-empty:
+
+<issue_output_format>
 ### ✈️ Flightdeck session complete
 
 **Outcomes**
@@ -147,7 +236,7 @@ Standalone follow-ups:
 
 **Next-cycle recommendation**
 
-[For each recommended issue from § 3:]
+[For each recommended issue from § 4:]
 - **[ISSUE_ID]** ([PRIORITY], [PROJECT]) — [ONE_LINE_RATIONALE]
 
 [Or, if no follow-ups warrant precedence:]
@@ -156,19 +245,19 @@ Standalone follow-ups:
 **Counts**: [N] merged · [N] aborted · [N] children · [N] follow-ups · [N] recommended next
 
 Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
-</output_format>
+</issue_output_format>
 
-Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.
+For mixed sessions, emit `<generic_output_format>` first, then `<issue_output_format>`. Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.
 
 ---
 
-## § 7: Launch Recommended Follow-ups
+## § 8: Launch Recommended Follow-ups
 
-**Skip if** § 3 produced an empty recommendation list.
+**Skip if** `ISSUE_ENTRIES` is empty or § 4 produced an empty recommendation list.
 
-Ask the user whether to launch any of the recommended follow-ups now and continue the flightdeck session. The new issue(s) are spawned via `start.md`'s spawn path; the watch loop resumes with the new pane(s) added to the registry.
+Ask the user whether to launch any of the recommended follow-ups now and continue the flightdeck issue session. The new issue(s) are spawned via `start.md`'s spawn path; the watch loop resumes with the new pane(s) added to the registry.
 
-Use the harness's user-question primitive (Claude Code: `AskUserQuestion`) with options derived from § 3's recommendation list:
+Use the harness's user-question primitive (Claude Code: `AskUserQuestion`) with options derived from § 4's recommendation list:
 
 <launch_now_format>
 **Launch follow-ups now?**
@@ -190,20 +279,20 @@ On launch:
    ```
 2. Invoke the spawn path: `⤵ workflows/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck start <ISSUE_ID>` would take).
 3. The new pane is added to the registry; the watch loop's next cycle picks it up.
-4. Re-enter `watch.md § 2`. Do NOT proceed to § 8 (Pane Lifecycle) — session continues.
+4. Re-enter `watch.md § 2`. Do NOT proceed to § 9 (Pane Lifecycle) — session continues.
 
-On "Stick with planned cycle / Done": proceed to § 8.
+On "Stick with planned cycle / Done": proceed to § 9.
 
 ---
 
-## § 8: Pane Lifecycle
+## § 9: Pane Lifecycle
 
-Do **not** close any additional panes here. Terminal issue windows were already closed by `close-issue.md` after the two-signal check; any remaining paused/non-terminal panes stay with the user so they can inspect transcripts or resume manually.
+Do **not** close any additional panes here. Terminal issue windows were already closed by `close-issue.md` after the two-signal check; generic/ad-hoc windows remain available for transcript inspection or manual resume unless the user explicitly runs `session stop` / `session remove`.
 
-§ 5's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale `issues` / `merge_queue` carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` (full `.issues` history, including merged-issue `decisions_log` / `pr_number` / `merge_commit`) and the summary file. pi-flightdeck's `buildSnapshot` falls back to the newest `flightdeck-state-<SESSION>-*.json.archive` with `terminated: true` whenever the live file is missing for the current `$TMUX` session name, so the dashboard, Overview, Decisions, and Conflicts & merges tabs keep rendering the completed session until the user dismisses the widget via `Alt+M` or a new `flightdeck start` writes a fresh live file.
+§ 6's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale entries, issue map, merge queue, or `terminated` flag carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` and the summary file. pi-flightdeck's `buildSnapshot` falls back to the newest `flightdeck-state-<SESSION>-*.json.archive` with `terminated: true` whenever the live file is missing for the current `$TMUX` session name, so the dashboard keeps rendering the completed session until the user dismisses the widget via `Alt+M` or a new `flightdeck start` writes a fresh live file.
 
 ---
 
 ## Returns
 
-To flightdeck's dashboard loop (`workflows/start.md` § 1).
+To flightdeck's dashboard loop (`workflows/start.md` or `workflows/session-watch.md`), after summary emission and state archive.
