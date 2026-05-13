@@ -5,19 +5,15 @@
  * @ifi/pi-background-tasks package. See ../THIRD_PARTY_NOTICES.md.
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	getShellConfig,
-	type AgentToolResult,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import {
 	autoBackgroundDecision,
@@ -42,31 +38,29 @@ import {
 	DEFAULT_WIDGET_TOGGLE_SHORTCUT,
 	WIDGET_COMPACT_TASKS,
 } from "./constants.js";
-import { openDashboard } from "./dashboard.js";
+
 import {
 	buildTaskSummaryLine,
 	compactText,
 	formatDuration,
 	formatRelativeTime,
 	formatShortcutHint,
-	formatTaskLog,
 	parseOutputMatcher,
 	summarizeTaskStatus,
 	tailText,
 	taskDisplayName,
-	taskLogTruncation,
 	trimOutputBuffer,
 } from "./format.js";
 import {
 	bgStatusIcon,
 	bgTree,
 	frameWidget,
-	makeToolResult,
-	renderBgToolResult,
-	renderEmpty,
 	renderTaskEventMessage,
 } from "./render.js";
+import { registerAll } from "./registrations.js";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
+import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
+import { createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import {
 	forgetSnapshot,
@@ -119,17 +113,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	let shuttingDown = false;
 	const tasks = new Map<string, ManagedTask>();
 
-	const piUserDir = (): string => resolve(process.env.PI_CODING_AGENT_DIR?.trim() || `${process.env.HOME ?? ""}/.pi/agent`);
-	const safeFileName = (value: string): string => value.replace(/[^\w.-]+/g, "_");
-	const sessionIdForContext = (ctx: ExtensionContext): string => {
-		const id = ctx.sessionManager.getSessionId();
-		if (id && id.trim()) return id;
-		const file = ctx.sessionManager.getSessionFile();
-		if (file) return file.split(/[\\/]/).pop()?.replace(/\.jsonl$/, "") ?? `ephemeral-${process.pid}`;
-		return `ephemeral-${process.pid}`;
-	};
-	const sidecarStatePath = (ctx: ExtensionContext): string => join(piUserDir(), "vstack", "sessions", safeFileName(sessionIdForContext(ctx)), "pi-background-tasks", "state.json");
-
 	const numericTaskId = (id: string): number => {
 		const match = id.match(/^bg-(\d+)$/);
 		return match ? Number(match[1]) : 0;
@@ -139,15 +122,16 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// to the current Pi session and reject cross-session leaks.
 	let activeSessionId: string | null = null;
 
-	const persistFailure = (where: string, error: unknown): void => {
-		// vstack#15 (reviewer-error #2): persistence failures used to be
-		// silently swallowed. Now we surface them on stderr (visible in the
-		// Pi log file) and as a transient UI notify so an operator can spot
-		// degraded durability before it becomes a stalled-task incident.
-		const msg = error instanceof Error ? error.message : String(error);
-		process.stderr.write(`[pi-background-tasks] persistence failed (${where}): ${msg}\n`);
-		activeCtx?.ui.notify?.(`Background task state persistence failed (${where}). Recent task transitions may not survive a restart.`, "warning");
-	};
+	const persistenceLayer = createPersistence({
+		pi,
+		customType: BG_STATE_TYPE,
+		getActiveCtx: () => activeCtx,
+		listSnapshots: () => sortedTasks().map((task) => rememberSnapshot(task)),
+		notify: (where) => activeCtx?.ui.notify?.(
+			`Background task state persistence failed (${where}). Recent task transitions may not survive a restart.`,
+			"warning",
+		),
+	});
 
 	const rememberRestoredSnapshot = (snapshot: BackgroundTaskSnapshot) => {
 		if (!snapshot?.id || !snapshot.command) return;
@@ -161,47 +145,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		rememberSnapshot(restored);
 	};
 
-	// Atomic temp-file rename for the sidecar (reviewer-error #2). Writing
-	// directly to state.json races with a crash between truncate and write
-	// and loses ALL replay records; rename(2) is atomic so an interrupted
-	// write leaves the previous good state intact.
-	const writeSidecarAtomic = (file: string, payload: string): void => {
-		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-		const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
-		try {
-			writeFileSync(tmp, payload, { encoding: "utf8", mode: 0o600 });
-			renameSync(tmp, file);
-		} catch (error) {
-			try { unlinkSync(tmp); } catch { /* */ }
-			throw error;
-		}
-	};
-
-	// persistSnapshots reports per-channel success: pi.appendEntry and the
-	// sidecar write are independent. A failure on one channel does not
-	// suppress the other, so a partial write still leaves at least one
-	// durable copy of the latest state.
-	const persistSnapshots = (): { appendEntry: boolean; sidecar: boolean } => {
-		const snapshot = sortedTasks().map((task) => rememberSnapshot(task));
-		const payload = { version: 1, tasks: snapshot, updatedAt: Date.now() };
-		let appendEntryOk = false;
-		let sidecarOk = !activeCtx;
-		try {
-			pi.appendEntry(BG_STATE_TYPE, payload);
-			appendEntryOk = true;
-		} catch (error) {
-			persistFailure("appendEntry", error);
-		}
-		if (activeCtx) {
-			try {
-				writeSidecarAtomic(sidecarStatePath(activeCtx), `${JSON.stringify(payload, null, 2)}\n`);
-				sidecarOk = true;
-			} catch (error) {
-				persistFailure("sidecar", error);
-			}
-		}
-		return { appendEntry: appendEntryOk, sidecar: sidecarOk };
-	};
+	const persistSnapshots = (): { appendEntry: boolean; sidecar: boolean } =>
+		persistenceLayer.persistSnapshots();
 
 	const restoreSnapshots = (ctx: ExtensionContext) => {
 		tasks.clear();
@@ -214,7 +159,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
 			}
 		} catch (error) {
-			persistFailure("sidecar-read", error);
+			const msg = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`[pi-background-tasks] persistence failed (sidecar-read): ${msg}\n`);
 			// Fall back to session entries below.
 		}
 		for (const entry of ctx.sessionManager.getBranch()) {
@@ -399,6 +345,24 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): ManagedTask =>
 		finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+
+	// vstack#15 (reviewer-error BLOCK): orphan-running tasks (status=
+	// running, child=null, restored=true) need a liveness watcher.
+	// When the recorded pid eventually disappears, finalize and emit
+	// the canonical exit wake so the silent stall does not survive Pi
+	// dying mid-bg_task.
+	let orphanWatcher: OrphanWatcher | null = null;
+	const ensureOrphanWatcher = () => {
+		if (orphanWatcher) return;
+		orphanWatcher = createOrphanWatcher({
+			getTasks: () => tasks.values(),
+			hooks: lifecycleHooks,
+			onFinalize: (task) => {
+				process.stderr.write(`[pi-background-tasks] orphan task ${task.id} (pid ${task.pid}) died while Pi was offline; finalized as ${task.status}\n`);
+			},
+		});
+		orphanWatcher.start();
+	};
 
 	// Replay 'exit' wakeups for any task we restored in a terminal state
 	// without ever notifying the agent. The canonical failure path: a long-
@@ -633,6 +597,11 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		activeCtx = ctx;
 		restoreSnapshots(ctx);
 		replayMissedExits();
+		// Run one synchronous orphan-check before arming the interval so a
+		// task whose pid already died between Pi shutdown and Pi restart
+		// gets its exit wake without waiting one poll cycle.
+		ensureOrphanWatcher();
+		orphanWatcher?.checkOnce();
 		syncWidget(ctx);
 	});
 	pi.on("before_agent_start", (_event, ctx) => {
@@ -649,6 +618,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", () => {
 		shuttingDown = true;
+		orphanWatcher?.stop();
+		orphanWatcher = null;
 		for (const task of tasks.values()) {
 			if (task.status === "running") {
 				task.stopReason = "shutdown";
@@ -710,290 +681,30 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return { result: { output, exitCode: 0, cancelled: false, truncated: false } };
 	});
 
-	pi.registerTool({
-		renderShell: "self",
-		name: "bg_status",
-		label: "Background Process Status",
-		description: "List, tail, or stop background tasks spawned by bg_task or /bg. Use pid for log/stop.",
-		parameters: Type.Object({
-			action: StringEnum(["list", "log", "stop"] as const, {
-				description: "list=show tracked tasks, log=view task output by pid, stop=terminate by pid",
-			}),
-			pid: Type.Optional(Type.Number({ description: "Task pid for action=log or action=stop" })),
-		}),
-		async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
-			if (params.action === "list") return makeToolResult(formatTaskListText(), { action: "list", tasks: sortedTasks().map(rememberSnapshot) });
-			const task = resolveTask(undefined, params.pid);
-			if (!task) throw new Error("No background task matched that pid.");
-			if (params.action === "log") {
-				const output = getTaskOutput(task);
-				const truncation = taskLogTruncation(output, task.logFile, activeCtx?.cwd);
-				return makeToolResult(formatTaskLog(output, task.logFile, activeCtx?.cwd), {
-					action: "log",
-					task: rememberSnapshot(task),
-					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
-				});
+	registerAll(pi, {
+		getActiveCtx: () => activeCtx,
+		setActiveCtx: (ctx) => { activeCtx = ctx; },
+		rememberSnapshot,
+		sortedTasks,
+		formatTaskListText,
+		getTaskOutput,
+		resolveTask,
+		requestStop: (task, _reason) => requestStop(task, "user"),
+		spawnTask,
+		clearFinishedTasks,
+		armForcedBackground,
+		toggleWidget: () => {
+			if (widgetMode === "hidden") widgetMode = lastVisibleWidgetMode;
+			else {
+				lastVisibleWidgetMode = widgetMode;
+				widgetMode = "hidden";
 			}
-			const stopped = requestStop(task, "user");
-			if (!stopped.ok) throw new Error(stopped.message);
-			return makeToolResult(stopped.message, { action: "stop", task: rememberSnapshot(task) });
+			if (activeCtx) syncWidget(activeCtx);
 		},
-		renderCall() {
-			return renderEmpty();
-		},
-		renderResult(result: any, options: any, theme: Theme, context: any) {
-			return renderBgToolResult(result, options, theme, context);
-		},
+		dashboardDeps,
+		dashboardShortcut,
+		backgroundBashShortcut,
+		widgetToggleShortcut,
 	});
-
-	pi.registerTool({
-		renderShell: "self",
-		name: "bg_task",
-		label: "Background Task",
-		description:
-			"Spawn, inspect, and stop explicit background shell tasks without blocking the current turn. Tasks write persistent logs, do not time out by default, stop as a process group on Unix, and can wake the agent on exit or matching output. The background-tasks extension also auto-diverts recognized bash monitoring loops before they block.",
-		promptSnippet: "Spawn, inspect, and stop explicit non-blocking background shell tasks.",
-		promptGuidelines: [
-			"Use bg_task instead of bash backgrounding/nohup when the user wants a long-running command to continue while the conversation remains usable.",
-			"Use bg_task list/log/stop to inspect or terminate tasks started by bg_task or /bg.",
-			"Use bg_task for pi-bridge, session, tmux, agent/delegate, or log monitoring instead of raw foreground bash polling loops.",
-			"If a bash monitor is auto-backgrounded, continue the turn and inspect it later with bg_task log/list/stop rather than waiting on foreground bash.",
-		],
-		parameters: Type.Object({
-			action: StringEnum(["spawn", "list", "log", "stop", "clear"] as const, {
-				description: "spawn=start a task, list=show tasks, log=view output, stop=terminate, clear=remove finished tasks",
-			}),
-			command: Type.Optional(Type.String({ description: "Shell command for action=spawn" })),
-			cwd: Type.Optional(Type.String({ description: "Working directory for action=spawn" })),
-			id: Type.Optional(Type.String({ description: "Task id for action=log or action=stop" })),
-			notifyOnExit: Type.Optional(Type.Boolean({ description: "Wake the agent when the task exits. Defaults to true." })),
-			notifyOnOutput: Type.Optional(Type.Boolean({ description: "Wake the agent when new output arrives. Defaults to false." })),
-			notifyPattern: Type.Optional(Type.String({ description: "Substring or /regex/flags gate for output wakeups." })),
-			pid: Type.Optional(Type.Number({ description: "PID for action=log or action=stop" })),
-			timeoutSeconds: Type.Optional(Type.Number({ description: "Timeout for spawned tasks. Defaults to 0 (disabled)." })),
-			title: Type.Optional(Type.String({ description: "Optional display label for action=spawn" })),
-		}),
-		async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
-			if (params.action === "list") return makeToolResult(formatTaskListText(), { action: "list", tasks: sortedTasks().map(rememberSnapshot) });
-			if (params.action === "clear") {
-				const removed = clearFinishedTasks();
-				return makeToolResult(`Removed ${removed} finished background task(s).`, { action: "clear", removed });
-			}
-
-			if (params.action === "spawn") {
-				const task = spawnTask({
-					command: params.command ?? "",
-					cwd: params.cwd,
-					notifyOnExit: params.notifyOnExit,
-					notifyOnOutput: params.notifyOnOutput,
-					notifyPattern: params.notifyPattern,
-					timeoutSeconds: params.timeoutSeconds,
-					title: params.title,
-				});
-				return makeToolResult(
-					`Started ${task.id} (pid ${task.pid}) in the background.\nCommand: ${task.command}\nCwd: ${task.cwd}\nLog: ${task.logFile}\nExpiry: ${
-						task.expiresAt != null ? formatRelativeTime(task.expiresAt) : "none"
-					}\nWakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${
-						task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"
-					}`,
-					{ action: "spawn", task: rememberSnapshot(task) },
-				);
-			}
-
-			const task = resolveTask(params.id, params.pid);
-			if (!task) throw new Error("No background task matched that id or pid.");
-			if (params.action === "log") {
-				const output = getTaskOutput(task);
-				const truncation = taskLogTruncation(output, task.logFile, activeCtx?.cwd);
-				return makeToolResult(formatTaskLog(output, task.logFile, activeCtx?.cwd), {
-					action: "log",
-					task: rememberSnapshot(task),
-					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
-				});
-			}
-			const stopped = requestStop(task, "user");
-			if (!stopped.ok) throw new Error(stopped.message);
-			return makeToolResult(stopped.message, { action: "stop", task: rememberSnapshot(task) });
-		},
-		renderCall() {
-			return renderEmpty();
-		},
-		renderResult(result: any, options: any, theme: Theme, context: any) {
-			return renderBgToolResult(result, options, theme, context);
-		},
-	});
-
-	const taskIdCompletions = (prefix: string) => {
-		const query = prefix.trimStart().toLowerCase();
-		const items = sortedTasks()
-			.filter((task) => !query || task.id.toLowerCase().startsWith(query) || String(task.pid).startsWith(query))
-			.map((task) => ({
-				description: `${summarizeTaskStatus(task.status, task.exitCode)} · ${task.command}`,
-				label: task.id,
-				value: task.id,
-			}));
-		return items.length > 0 ? items : null;
-	};
-
-	pi.registerCommand(BG_COMMAND, {
-		description: "Background shell task dashboard and controls.",
-		getArgumentCompletions(prefix) {
-			const trimmed = prefix.trimStart();
-			const parts = trimmed.split(/\s+/).filter(Boolean);
-			if (parts.length === 0 || (parts.length === 1 && !trimmed.endsWith(" "))) {
-				return [
-					{ label: "list", value: "list", description: "Show tracked tasks" },
-					{ label: "next", value: "next", description: "Move the next bash command to background" },
-					{ label: "run", value: "run ", description: "Spawn a background shell task" },
-					{ label: "log", value: "log ", description: "Show task log tail" },
-					{ label: "watch", value: "watch ", description: "Open the dashboard focused on a task" },
-					{ label: "stop", value: "stop ", description: "Terminate a running task" },
-					{ label: "clear", value: "clear", description: "Remove finished tasks" },
-				].filter((option) => option.value.trim().startsWith(trimmed.toLowerCase()));
-			}
-			const [subcommand] = parts;
-			if (!(subcommand === "log" || subcommand === "stop" || subcommand === "watch")) return null;
-			if (parts.length > 2 || (parts.length === 2 && trimmed.endsWith(" "))) return null;
-			const taskQuery = parts[1]?.toLowerCase() ?? "";
-			const taskItems = sortedTasks()
-				.filter((task) => !taskQuery || task.id.toLowerCase().startsWith(taskQuery) || String(task.pid).startsWith(taskQuery))
-				.map((task) => ({
-					description: `${summarizeTaskStatus(task.status, task.exitCode)} · ${task.command}`,
-					label: task.id,
-					value: `${subcommand} ${task.id}`,
-				}));
-			return taskItems.length > 0 ? taskItems : null;
-		},
-		handler: async (args, ctx) => {
-			activeCtx = ctx;
-			const trimmed = args.trim();
-			if (!trimmed) {
-				await openDashboard(ctx, dashboardDeps);
-				return;
-			}
-			if (trimmed === "list") {
-				ctx.ui.notify(formatTaskListText(), "info");
-				return;
-			}
-			if (trimmed === "next") {
-				armForcedBackground(ctx, "command");
-				return;
-			}
-			if (trimmed === "clear") {
-				ctx.ui.notify(`Removed ${clearFinishedTasks()} finished background task(s).`, "info");
-				return;
-			}
-			if (trimmed.startsWith("run ")) {
-				const task = spawnTask({ command: trimmed.slice(4), cwd: ctx.cwd });
-				ctx.ui.notify(`Started ${task.id} (pid ${task.pid}) in the background.`, "info");
-				return;
-			}
-			const inspectMatch = trimmed.match(/^(?:watch|log)\s+(.+)$/);
-			if (inspectMatch) {
-				const task = resolveTask(inspectMatch[1]?.trim());
-				if (!task) {
-					ctx.ui.notify("No background task matched that id or pid.", "warning");
-					return;
-				}
-				if (trimmed.startsWith("log ")) ctx.ui.notify(formatTaskLog(getTaskOutput(task), task.logFile, ctx.cwd), "info");
-				else await openDashboard(ctx, dashboardDeps, task);
-				return;
-			}
-			if (trimmed.startsWith("stop ")) {
-				const stopped = requestStop(resolveTask(trimmed.slice(5).trim()), "user");
-				ctx.ui.notify(stopped.message, stopped.ok ? "info" : "warning");
-				return;
-			}
-			ctx.ui.notify(
-				`Unknown /${BG_COMMAND} action. Try run <command>, list, log <id>, watch <id>, stop <id>, or clear.`,
-				"warning",
-			);
-		},
-	});
-
-	pi.registerCommand(`${BG_COMMAND}:list`, {
-		description: "Show tracked background tasks",
-		handler: async (_args, ctx) => {
-			activeCtx = ctx;
-			ctx.ui.notify(formatTaskListText(), "info");
-		},
-	});
-	pi.registerCommand(`${BG_COMMAND}:next`, {
-		description: "Move the next bash command to a background task",
-		handler: async (_args, ctx) => {
-			activeCtx = ctx;
-			armForcedBackground(ctx, "command");
-		},
-	});
-	pi.registerCommand(`${BG_COMMAND}:clear`, {
-		description: "Remove finished background tasks",
-		handler: async (_args, ctx) => {
-			activeCtx = ctx;
-			ctx.ui.notify(`Removed ${clearFinishedTasks()} finished background task(s).`, "info");
-		},
-	});
-	pi.registerCommand(`${BG_COMMAND}:run`, {
-		description: "Spawn a background shell task: /bg:run <command>",
-		handler: async (args, ctx) => {
-			activeCtx = ctx;
-			const command = args.trim();
-			if (!command) {
-				ctx.ui.notify("Usage: /bg:run <command>", "warning");
-				return;
-			}
-			const task = spawnTask({ command, cwd: ctx.cwd });
-			ctx.ui.notify(`Started ${task.id} (pid ${task.pid}) in the background.`, "info");
-		},
-	});
-	pi.registerCommand(`${BG_COMMAND}:stop`, {
-		description: "Terminate a running background task: /bg:stop <id>",
-		getArgumentCompletions: taskIdCompletions,
-		handler: async (args, ctx) => {
-			activeCtx = ctx;
-			const stopped = requestStop(resolveTask(args.trim()), "user");
-			ctx.ui.notify(stopped.message, stopped.ok ? "info" : "warning");
-		},
-	});
-
-	if (dashboardShortcut !== "none") {
-		pi.registerShortcut(dashboardShortcut, {
-			description: "Open the background task dashboard",
-			handler: async (ctx) => {
-				activeCtx = ctx as ExtensionContext;
-				await openDashboard(ctx as ExtensionContext, dashboardDeps);
-			},
-		});
-	}
-	if (dashboardShortcut.toLowerCase() !== "f5") {
-		pi.registerShortcut("f5", {
-			description: "Open the background task dashboard",
-			handler: async (ctx) => {
-				activeCtx = ctx as ExtensionContext;
-				await openDashboard(ctx as ExtensionContext, dashboardDeps);
-			},
-		});
-	}
-	if (backgroundBashShortcut !== "none") {
-		pi.registerShortcut(backgroundBashShortcut, {
-			description: "Move the next not-yet-started bash command to a background task",
-			handler: async (ctx) => {
-				activeCtx = ctx as ExtensionContext;
-				armForcedBackground(ctx as ExtensionContext, "shortcut");
-			},
-		});
-	}
-	if (widgetToggleShortcut !== "none") {
-		pi.registerShortcut(widgetToggleShortcut, {
-			description: "Toggle background task mini-dashboard",
-			handler: async (ctx) => {
-				activeCtx = ctx as ExtensionContext;
-				if (widgetMode === "hidden") widgetMode = lastVisibleWidgetMode;
-				else {
-					lastVisibleWidgetMode = widgetMode;
-					widgetMode = "hidden";
-				}
-				syncWidget(ctx as ExtensionContext);
-			},
-		});
-	}
 }
+

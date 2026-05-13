@@ -125,6 +125,8 @@ Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shel
 
 Exit wakeups are durable across session restarts. Each task carries an `exitNotified` flag in its persisted snapshot; if a task hits a terminal state without ever firing its `notifyOnExit` event (session shutdown, mid-session restore that coerced `running` → `stopped`), the next `session_start` replays the missed `exit` wakeup so the agent never silently stalls on a finished background task.
 
+Orphan-running tasks (Pi died while the detached child kept running) are detected on restore via `kill -0 <pid>`. They are rehydrated as `running` rather than synthetically stopped, and a periodic liveness watcher (default 30s) polls until the PID disappears, then finalizes the task and fires the canonical exit wake. This means kill -9 / OOM that takes Pi down but leaves the bg_task alive will still produce a clean exit event when the orphan eventually finishes.
+
 ## Attribution
 
 Locally owned by vstack, based on the MIT-licensed `@ifi/pi-background-tasks` from `ifiokjr/oh-pi`. See `THIRD_PARTY_NOTICES.md`.

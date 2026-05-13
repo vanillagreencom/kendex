@@ -40,6 +40,7 @@ import { ccSubscriberPidFile } from "../paths/cc.ts";
 import { piSubscriberPidFile } from "../paths/pi.ts";
 import { cxSubscriberPidFile } from "../paths/codex.ts";
 import { isCanonicalTag, appendEvent } from "./events.ts";
+import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
 import { clearStaleWakePending, isMasterBusy } from "./busy.ts";
 import { clearBellForWindow, wakeMaster, resolvePiMasterPid } from "./wake.ts";
 import { PaneCache, capturePane, captureHash12, classifyBuffer, resolvePaneId, sessionAlive, stabilityForHarness } from "./pane-meta.ts";
@@ -370,7 +371,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (evTag === "oc-question") src = "oc-question-event";
 			else if (evTag === "pi-question") src = "pi-question-event";
 			else if (evTag === "pi-subagent-completion") src = "pi-subagent-completion-event";
-			else if (evTag === "pi-bg-task-exit") src = "pi-bg-task-exit-event";
+			else if (evTag === BG_TASK_EXIT_CLASSIFIER_TAG) src = "pi-bg-task-exit-event";
 
 			if (isCanonicalTag(evTag)) {
 				let extraJson = "null";
@@ -378,7 +379,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					extraJson = JSON.stringify({ event_type: ev.event_type, request_id: ev.request_id, question: ev.question, harness: ev.harness });
 				} else if (evTag === "pi-subagent-completion") {
 					extraJson = JSON.stringify({ event_type: ev.event_type, completion: ev.completion, harness: ev.harness });
-				} else if (evTag === "pi-bg-task-exit") {
+				} else if (evTag === BG_TASK_EXIT_CLASSIFIER_TAG) {
 					extraJson = JSON.stringify({ event_type: ev.event_type, task: ev.task, harness: ev.harness });
 				}
 				// Round-4 #6: only record a wake reason when the event is

@@ -36,6 +36,8 @@ source "$_lib_dir/cc-channel-paths.sh"
 source "$_lib_dir/pi-bridge-paths.sh"
 # shellcheck source=codex-paths.sh
 source "$_lib_dir/codex-paths.sh"
+# shellcheck source=daemon-bg-task-events.sh
+source "$_lib_dir/daemon-bg-task-events.sh"
 
 OC_POLL_SEC="${OC_POLL_SEC:-2}"
 OC_BACKOFF_MAX_SEC="${OC_BACKOFF_MAX_SEC:-16}"
@@ -312,36 +314,11 @@ pi_subscriber_loop() {
 
       local custom_type
       custom_type=$(jq -r '.data.message.customType // ""' <<< "$line" 2>/dev/null)
-      if [[ "$custom_type" == "vstack-background-tasks:event" ]]; then
-        # bg_task transitioned to terminal state. Emit a canonical wake
-        # event even when the agent's own turn doesn't fire (silent-stall
-        # defense from issue #15). The task snapshot drives the hash so
-        # one wake per (task,terminal status) lands.
-        local bg_details bg_task_id bg_status bg_exit_code bg_hash
-        bg_details=$(jq -c '.data.message.details // {}' <<< "$line" 2>/dev/null)
-        [[ -z "$bg_details" || "$bg_details" == "null" ]] && bg_details="{}"
-        bg_task_id=$(jq -r '.task.id // ""' <<< "$bg_details" 2>/dev/null)
-        bg_status=$(jq -r '.task.status // ""' <<< "$bg_details" 2>/dev/null)
-        bg_exit_code=$(jq -r '.task.exitCode // "null"' <<< "$bg_details" 2>/dev/null)
-        bg_hash=$(printf '%s|%s|%s' "$bg_task_id" "$bg_status" "$bg_exit_code" | sha256sum | awk '{print substr($1,1,12)}')
-        if [[ "$bg_hash" == "$last_hash" ]]; then
-          continue
-        fi
-        printf '%s [pi-bg-task-exit] pane=%s task=%s status=%s exit=%s\n' \
-          "$(date -Iseconds)" "$pane_id" "$bg_task_id" "$bg_status" "$bg_exit_code" \
-          >> "$sub_log" 2>/dev/null || true
-        ( exec 218>"$SESSION_LOCK"
-          flock 218
-          jq -nc --arg ts "$(date -Iseconds)" \
-                 --arg pid "$pane_id" \
-                 --arg harness "pi" \
-                 --arg tag "pi-bg-task-exit" \
-                 --arg h "$bg_hash" \
-                 --argjson details "$bg_details" \
-                 '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"bg-task-exit", task:(($details).task // {}), classifier_tag:$tag, hash:$h}' \
-                 >> "$WAKE_EVENTS_LOG"
-        )
-        last_hash="$bg_hash"
+      if [[ "$custom_type" == "$BG_TASK_EVENT_CUSTOM_TYPE" ]]; then
+        # vstack#15: dispatch the new branch via the shared
+        # daemon-bg-task-events.sh helper. Returns 0 on emit, 1 on
+        # dedup (caller `continue`s either way), 2 on malformed input.
+        emit_pi_bg_task_exit_event "$pane_id" "$line" last_hash "$sub_log"
         continue
       fi
       if [[ "$custom_type" == "subagent-completion" ]]; then
