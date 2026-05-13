@@ -320,7 +320,7 @@ test("edge case: empty terminated session (no issues) reports inactive, not term
 		// archive was loaded but had no issues — session-status policy
 		// folds this into `inactive`, matching the empty-Overview message
 		// behavior. This is the only safe choice: rendering a terminated
-		// banner with zero tracked issues would be confusing.
+		// banner with zero tracked sessions would be confusing.
 		assert.equal(snapshot.master?.terminated, true);
 		assert.equal(Object.keys(snapshot.master?.issues ?? {}).length, 0);
 		assert.equal(flightdeckSessionStatus(snapshot), "inactive");

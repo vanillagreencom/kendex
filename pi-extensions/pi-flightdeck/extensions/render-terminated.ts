@@ -12,6 +12,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { daemonHealthChip, divider, framePanel, label, sessionCompleteChip } from "./render.js";
+import { issueDomain, sessionLabel } from "./session-ui.js";
 import { ageSecondsSince, type FlightdeckSnapshot, formatAge, mergedIssueHistory } from "./state.js";
 
 // Header chip for the dashboard / popup. Terminated sessions show a
@@ -25,7 +26,7 @@ export function headerChipForSnapshot(snapshot: FlightdeckSnapshot, theme: Theme
 
 // Overview-tab banner. Renders `✔ session complete · at <ts>` + the
 // summary file path (when present) and a divider. The caller composes
-// this above the issue list so the post-mortem context is the first
+// this above the tracked-session list so the post-mortem context is the first
 // thing the user sees when reopening the popup after termination.
 export function renderTerminatedOverviewBanner(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string[] {
 	if (!snapshot.master?.terminated) return [];
@@ -41,7 +42,7 @@ export function renderTerminatedOverviewBanner(snapshot: FlightdeckSnapshot, the
 }
 
 // Conflicts & merges Merge-history panel. Stable record of every
-// `state=merged` issue with PR + short merge_commit, surfaced even
+// `state=merged` issue-mode session with PR + short merge_commit, surfaced even
 // after the live `merge_queue` drains. Without this, the tab showed
 // only the empty queue after terminate and merge history was invisible.
 export function renderMergeHistorySection(snapshot: FlightdeckSnapshot, theme: Theme): string[] {
@@ -52,13 +53,14 @@ export function renderMergeHistorySection(snapshot: FlightdeckSnapshot, theme: T
 		lines.push(theme.fg("dim", "  (no merges recorded)"));
 		return lines;
 	}
-	for (const issue of merged) {
-		const pr = issue.pr_number ? theme.fg("accent", `PR#${issue.pr_number}`) : theme.fg("dim", "no-PR");
-		const rawCommit = typeof issue.merge_commit === "string" ? issue.merge_commit.trim() : "";
+	for (const session of merged) {
+		const domain = issueDomain(session);
+		const pr = domain?.pr_number ? ` ${theme.fg("dim", "·")} ${theme.fg("accent", `PR#${domain.pr_number}`)}` : "";
+		const rawCommit = typeof domain?.merge_commit === "string" ? domain.merge_commit.trim() : "";
 		const commit = rawCommit ? theme.fg("success", rawCommit.slice(0, 7)) : theme.fg("dim", "—");
-		const when = ageSecondsSince(issue.last_polled_at);
+		const when = ageSecondsSince(session.last_polled_at);
 		const whenTxt = when !== undefined ? ` ${theme.fg("dim", `${formatAge(when)} ago`)}` : "";
-		lines.push(`  ${theme.fg("success", "✓")} ${theme.bold(theme.fg("text", issue.issue))} ${theme.fg("dim", "·")} ${pr} ${theme.fg("dim", "·")} ${commit}${whenTxt}`);
+		lines.push(`  ${theme.fg("success", "✓")} ${theme.bold(theme.fg("text", sessionLabel(session)))}${pr} ${theme.fg("dim", "·")} ${commit}${whenTxt}`);
 	}
 	return lines;
 }

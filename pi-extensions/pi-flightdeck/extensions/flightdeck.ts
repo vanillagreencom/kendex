@@ -17,10 +17,10 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import {
 	type ConversationTurn,
 	type FlightdeckSnapshot,
-	type IssueRecord,
-	type IssueState,
+	type TrackedSession,
 	ageSecondsSince,
 	buildSnapshot,
+	findTrackedEntry,
 	flatDecisionsLog,
 	flightdeckSessionStatus,
 	foldWakeEventsIntoConversations,
@@ -55,13 +55,12 @@ import {
 	searchRow,
 	selectedRow,
 	stateBadge,
-	stateColor,
-	stateGlyph,
 	tagBadge,
 	type TreeStyle,
 	wrapLine,
 } from "./render.js";
-import { headerChipForSnapshot, renderArchiveErrorBanner, renderIssueMergeCommitLine, renderTerminatedConflictsSection, renderTerminatedOverviewBanner } from "./render-terminated.js";
+import { headerChipForSnapshot, renderArchiveErrorBanner, renderTerminatedConflictsSection, renderTerminatedOverviewBanner } from "./render-terminated.js";
+import { formatOverviewHeader, formatOverviewRow, formatSessionTotals, formatStateBreakdown, hasIssueSessions, issueDomain, kindBadge, renderSessionDetailBlock, renderSessionDetailLines, renderSessionLine, sessionLabel, sessionPaneTargetLabel, sessionSearchText } from "./session-ui.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-flightdeck.installed");
 const CONFIG_ID = "@vanillagreen/pi-flightdeck";
@@ -191,7 +190,7 @@ interface DashboardCache {
 	lastSnapshot?: FlightdeckSnapshot;
 	pauseSeenIssue?: string;
 	pauseSeenAt?: number;
-	// Tmux `session:window.pane` → `%N` map, refreshed on each tick so issue
+	// Tmux `session:window.pane` → `%N` map, refreshed on each tick so session
 	// rows can join against the pi-agents-tmux stats bridge.
 	paneTargetToId: Map<string, string>;
 	// Last applied syncWidget key. Each poller tick re-runs syncWidget, which
@@ -214,12 +213,12 @@ function clampAboveEditorWidget(lines: string[], terminalRows: number, theme: Th
 	return [...lines.slice(0, maxLines - 1), theme.fg("muted", `… ${hidden} more (open /flightdeck for full view)`)];
 }
 
-function usageForIssue(issue: IssueRecord, paneMap: Map<string, string>, bridge: ReturnType<typeof getAgentsBridge>): AgentsBridgeItem | undefined {
+function usageForSession(session: TrackedSession, paneMap: Map<string, string>, bridge: ReturnType<typeof getAgentsBridge>): AgentsBridgeItem | undefined {
 	if (!bridge) return undefined;
 	// Prefer the registry-recorded pane_id (immutable for the life of the
 	// pane). Fall back to resolving pane_target via tmux for legacy
 	// registry entries that haven't been re-init'd since pane_id support.
-	const paneId = issue.pane_id || (issue.pane_target ? paneMap.get(issue.pane_target) : undefined);
+	const paneId = session.pane_id || (session.pane_target ? paneMap.get(session.pane_target) : undefined);
 	if (!paneId) return undefined;
 	return bridge.getByPaneId(paneId);
 }
@@ -238,13 +237,14 @@ function renderPauseBannerLines(snapshot: FlightdeckSnapshot, theme: Theme, widt
 	const paused = snapshot.master?.paused_for_user;
 	if (!paused) return [];
 	const issueId = paused.issue_id ?? "(unknown)";
+	const session = findTrackedEntry(snapshot.master, paused.issue_id);
 	const reason = paused.reason ?? "paused for user";
 	const promptText = (paused.prompt_text ?? "").replace(/\s+/g, " ").trim();
 	const inner = frameContentWidth(width) - 2;
-	const titleLine = `${theme.fg("warning", "▲ FLIGHTDECK PAUSED")} ${theme.fg("muted", "for")} ${theme.fg("accent", issueId)} ${theme.fg("dim", "—")} ${theme.fg("warning", reason)}`;
-	const issue = snapshot.master?.issues?.[issueId];
-	const paneInfo = issue?.pane_target ? `${theme.fg("muted", "pane")} ${theme.fg("text", issue.pane_target)} ${theme.fg("dim", "·")} ${harnessChip(theme, issue.harness)}` : "";
-	const prInfo = issue?.pr_number ? ` ${theme.fg("dim", "·")} ${theme.fg("muted", "PR")} ${theme.fg("accent", `#${issue.pr_number}`)}` : "";
+	const titleLine = `${theme.fg("warning", "▲ FLIGHTDECK PAUSED")} ${theme.fg("muted", "for")} ${theme.fg("accent", session ? sessionLabel(session) : issueId)} ${theme.fg("dim", "—")} ${theme.fg("warning", reason)}`;
+	const paneInfo = session?.pane_target ? `${theme.fg("muted", "pane")} ${theme.fg("text", session.pane_target)} ${theme.fg("dim", "·")} ${harnessChip(theme, session.harness ?? undefined)}` : "";
+	const pr = issueDomain(session)?.pr_number;
+	const prInfo = pr ? ` ${theme.fg("dim", "·")} ${theme.fg("muted", "PR")} ${theme.fg("accent", `#${pr}`)}` : "";
 	const meta = paneInfo ? `${paneInfo}${prInfo}` : "";
 	const promptWrap = promptText ? wrapLine(theme.fg("dim", promptText), inner).slice(0, 4) : [];
 	const hint = theme.fg("dim", "Respond in chat to resume the master agent. ") + theme.fg("warning", `${settingString("popupShortcut", "f6")} `) + theme.fg("dim", "for full context.");
@@ -260,29 +260,20 @@ function renderPauseBannerLines(snapshot: FlightdeckSnapshot, theme: Theme, widt
 	return framePanel(lines, width, theme, "warning", " PAUSE — awaiting user ");
 }
 
-function renderStaleHintLine(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string[] {
+export function renderStaleHintLine(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string[] {
 	const latest = mostRecentPollMs(snapshot);
 	const ageSec = latest === undefined ? undefined : Math.max(0, Math.floor((Date.now() - latest) / 1000));
 	const ageText = ageSec === undefined ? "unknown age" : `${formatAge(ageSec)} ago`;
 	const daemon = daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
-	const line = `${daemon} ${theme.fg("dim", "·")} ${theme.fg("dim", `Flightdeck · stale state from ${ageText} — restart with /skill:flightdeck start, or archive state file to dismiss`)}`;
+	const line = `${daemon} ${theme.fg("dim", "·")} ${theme.fg("dim", `Flightdeck · stale session state from ${ageText} — restart with /skill:flightdeck session watch, or archive state file to dismiss`)}`;
 	return [truncateToWidth(line, Math.max(1, width), "…")];
 }
 
 export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width: number, state: DashboardState, cwd: string, paneMap: Map<string, string>): string[] {
 	if (state === "hidden") return [];
-	const issues = readTrackedEntries(snapshot.master);
+	const sessions = readTrackedEntries(snapshot.master);
 	const max = Math.max(1, Math.floor(settingNumber("dashboardMaxItems", 8, cwd)));
 	const treeStyle = (settingString("treeStyle", "unicode", cwd) === "ascii" ? "ascii" : "unicode") as TreeStyle;
-	const totalIssues = issues.length;
-	const counts: Record<string, number> = {};
-	for (const issue of issues) counts[issue.state ?? "?"] = (counts[issue.state ?? "?"] ?? 0) + 1;
-	const summaryParts: string[] = [];
-	const order: IssueState[] = ["prompting", "merge-ready", "submitting", "waiting", "merged", "aborted", "dead"];
-	// Suppress the per-state count strip when the single issue row below
-	// already shows the same state badge — avoids "✱ 1 · CC-511 · ✱ waiting".
-	const showStateCounts = totalIssues > 1;
-	if (showStateCounts) for (const s of order) if (counts[s]) summaryParts.push(theme.fg(stateColor(s), `${stateGlyph(s)} ${counts[s]}`));
 	const terminated = !!snapshot.master?.terminated;
 	const headerRight = headerChipForSnapshot(snapshot, theme);
 	const queueLen = snapshot.master?.merge_queue?.length ?? 0;
@@ -295,28 +286,29 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 	const toggleHint = toggleShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(toggleShortcut)} ${terminated ? "dismiss" : "toggle"}`);
 	const popupHint = popupShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(popupShortcut)} popup`);
 	const hints = `${toggleHint}${popupHint}`;
-	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${theme.fg("muted", `${totalIssues} issue${totalIssues === 1 ? "" : "s"}`)}${summaryParts.length > 0 ? ` ${theme.fg("muted", "·")} ${summaryParts.join(theme.fg("dim", " "))}` : ""}${queueBadge}${hints}`;
+	const summary = formatStateBreakdown(theme, sessions);
+	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${formatSessionTotals(theme, sessions)}${summary ? ` ${theme.fg("muted", "·")} ${summary}` : ""}${queueBadge}${hints}`;
 	const header = `${headerLeft}  ${theme.fg("dim", "·")}  ${headerRight}`;
 	const bridge = getAgentsBridge();
 	if (state === "compact") {
 		const lines = [header];
-		const visible = issues.slice(0, max);
-		for (const [index, issue] of visible.entries()) {
-			const isLast = index === visible.length - 1 && issues.length === visible.length;
-			const stats = usageForIssue(issue, paneMap, bridge);
-			lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderIssueLine(issue, theme, snapshot, stats)}`);
+		const visible = sessions.slice(0, max);
+		for (const [index, session] of visible.entries()) {
+			const isLast = index === visible.length - 1 && sessions.length === visible.length;
+			const stats = usageForSession(session, paneMap, bridge);
+			lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(session, theme, stats)}`);
 		}
-		const hidden = Math.max(0, issues.length - visible.length);
+		const hidden = Math.max(0, sessions.length - visible.length);
 		if (hidden > 0) lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", `… ${hidden} more`)}`);
 		return framePanel(lines, width, theme);
 	}
 	// expanded
 	const lines = [header];
-	for (const [index, issue] of issues.entries()) {
-		const isLast = index === issues.length - 1;
-		const stats = usageForIssue(issue, paneMap, bridge);
-		lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderIssueLine(issue, theme, snapshot, stats)}`);
-		const detailRows = renderIssueDetailLines(issue, theme, stats);
+	for (const [index, session] of sessions.entries()) {
+		const isLast = index === sessions.length - 1;
+		const stats = usageForSession(session, paneMap, bridge);
+		lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(session, theme, stats)}`);
+		const detailRows = renderSessionDetailLines(session, theme, stats);
 		for (const [detailIndex, row] of detailRows.entries()) {
 			lines.push(`${dashboardChildBranch(theme, treeStyle, isLast, detailIndex === detailRows.length - 1)}${row}`);
 		}
@@ -331,48 +323,6 @@ function dashboardChildBranch(theme: Theme, style: TreeStyle, parentLast: boolea
 	}
 	const parentStem = parentLast ? "   " : "│  ";
 	return theme.fg("muted", `${parentStem}${childLast ? "└─ " : "├─ "}`);
-}
-
-function renderIssueLine(issue: IssueRecord, theme: Theme, _snapshot: FlightdeckSnapshot, stats?: AgentsBridgeItem): string {
-	const state = stateBadge(theme, issue.state);
-	const harness = harnessChip(theme, issue.harness);
-	const pr = issue.pr_number ? theme.fg("accent", `PR#${issue.pr_number}`) : theme.fg("dim", "no-PR");
-	const sub = issue.substate ? ` ${theme.fg("dim", "·")} ${tagBadge(theme, issue.substate)}` : "";
-	const polled = ageSecondsSince(issue.last_polled_at);
-	const polledTxt = polled !== undefined ? ` ${theme.fg("dim", `(${formatAge(polled)})`)}` : "";
-	const usageText = formatUsageCompact(stats?.usage);
-	const usageTxt = usageText ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", usageText)}` : "";
-	return `${theme.bold(theme.fg("text", issue.issue))} ${theme.fg("dim", "·")} ${state} ${theme.fg("dim", "·")} ${harness} ${theme.fg("dim", "·")} ${pr}${sub}${usageTxt}${polledTxt}`;
-}
-
-function renderIssueDetailLines(issue: IssueRecord, theme: Theme, stats?: AgentsBridgeItem): string[] {
-	const out: string[] = [];
-	if (issue.pane_target) out.push(theme.fg("dim", `pane ${issue.pane_target}`));
-	if (issue.launch?.model || issue.launch?.effort) out.push(theme.fg("dim", `run  ${formatLaunchProfile(issue)}`));
-	const usageText = formatUsageCompact(stats?.usage);
-	if (usageText) out.push(theme.fg("dim", `cost ${usageText}`));
-	if (issue.worktree) out.push(theme.fg("dim", `wt   ${compactPath(issue.worktree)}`));
-	const decisions = issue.decisions_log ?? [];
-	const last = decisions[decisions.length - 1];
-	if (last) {
-		out.push(`${theme.fg("dim", "last ")}${tagBadge(theme, last.prompt_tag)} ${theme.fg("dim", "→")} ${theme.fg("text", last.answer)} ${theme.fg("dim", `${formatAge(ageSecondsSince(last.ts))} ago`)}`);
-	}
-	if (issue.unknown_since) {
-		const sec = ageSecondsSince(issue.unknown_since);
-		out.push(theme.fg("warning", `unknown for ${formatAge(sec)}`));
-	}
-	if (typeof issue.scope_files_actual === "number" && typeof issue.scope_files_declared === "number" && issue.scope_files_declared > 0) {
-		const ratio = issue.scope_files_actual / issue.scope_files_declared;
-		const txt = `scope ${issue.scope_files_actual}/${issue.scope_files_declared}`;
-		out.push(ratio > 2 ? theme.fg("error", `${txt} (>2× — possible creep)`) : theme.fg("dim", txt));
-	}
-	return out;
-}
-
-function formatLaunchProfile(issue: IssueRecord): string {
-	const model = typeof issue.launch?.model === "string" && issue.launch.model.trim() ? issue.launch.model.trim() : "default-model";
-	const effort = typeof issue.launch?.effort === "string" && issue.launch.effort.trim() ? issue.launch.effort.trim() : "default-effort";
-	return `${model} · ${effort}`;
 }
 
 // ============================================================================
@@ -397,11 +347,16 @@ const TABS: Array<{ id: Tab; label: string }> = [
 	{ id: TAB_DAEMON, label: "Daemon" },
 ];
 
+function popupTabLabel(tab: { id: Tab; label: string }, snapshot?: FlightdeckSnapshot): string {
+	if (tab.id === TAB_CONFLICTS && snapshot && !hasIssueSessions(readTrackedEntries(snapshot.master))) return "Conflicts & merges (issue mode)";
+	return tab.label;
+}
+
 type DecisionEntry = ReturnType<typeof flatDecisionsLog>[number];
 
 interface ConversationFeedItem {
 	pane: string;
-	issue?: IssueRecord;
+	session?: TrackedSession;
 	turn: ConversationTurn;
 	sessionLabel: string;
 	sessionMeta: string[];
@@ -427,9 +382,9 @@ export function makeInitialPopupState(): PopupUiState {
 }
 export type { PopupUiState };
 
-function renderTabBar(active: Tab, width: number, theme: Theme): string {
+function renderTabBar(active: Tab, width: number, theme: Theme, snapshot?: FlightdeckSnapshot): string {
 	const cells = TABS.map((tab) => {
-		const text = ` ${tab.label} `;
+		const text = ` ${popupTabLabel(tab, snapshot)} `;
 		if (tab.id === active) return theme.fg("accent", theme.inverse(theme.bold(text)));
 		return theme.bg("selectedBg", theme.fg("accent", text));
 	});
@@ -447,105 +402,52 @@ function activePopupCwd(ctx: ExtensionContext | ExtensionCommandContext): string
 // ----- Tab renderers --------------------------------------------------------
 
 export function renderOverviewTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, paneMap: Map<string, string>): string[] {
-	const issues = readTrackedEntries(snapshot.master);
+	const sessions = readTrackedEntries(snapshot.master);
 	const filtered = ui.search.trim()
-		? issues.filter((issue) => {
-			const hay = `${issue.issue} ${issue.window ?? ""} ${issue.harness ?? ""} ${issue.state ?? ""} ${issue.substate ?? ""}`.toLowerCase();
+		? sessions.filter((session) => {
+			const hay = sessionSearchText(session);
 			return hay.includes(ui.search.trim().toLowerCase());
 		})
-		: issues;
+		: sessions;
 	clampSelection(ui, filtered.length, viewportRows);
 	const lines: string[] = [];
 	lines.push(searchRow(theme, ui.search, width));
 	lines.push(...renderTerminatedOverviewBanner(snapshot, theme, width));
 	lines.push("");
 	if (filtered.length === 0) {
-		if (issues.length === 0) {
-			lines.push(`${theme.fg("dim", "No issues tracked yet. Run ")}${ansiGreen("'/skill:flightdeck start'")}${theme.fg("dim", " to spawn.")}`);
+		if (sessions.length === 0) {
+			lines.push(`${theme.fg("dim", "No sessions tracked yet. Run ")}${ansiGreen("'/skill:flightdeck session start'")}${theme.fg("dim", " to spawn.")}`);
 		} else {
 			lines.push(theme.fg("dim", "No matches for current search."));
 		}
 		return lines;
 	}
 	const bridge = getAgentsBridge();
-	const statsByIssue = new Map<string, AgentsBridgeItem | undefined>();
-	for (const issue of filtered) statsByIssue.set(issue.issue, usageForIssue(issue, paneMap, bridge));
-	const hasStats = Array.from(statsByIssue.values()).some((stat) => Boolean(stat?.usage));
-	const hdr = formatOverviewHeader(theme, width, hasStats);
+	const statsBySession = new Map<string, AgentsBridgeItem | undefined>();
+	for (const session of filtered) statsBySession.set(session.id, usageForSession(session, paneMap, bridge));
+	const hasStats = Array.from(statsBySession.values()).some((stat) => Boolean(stat?.usage));
+	const hasPr = filtered.some((session) => Boolean(issueDomain(session)?.pr_number));
+	const hdr = formatOverviewHeader(theme, width, hasStats, hasPr);
 	lines.push(hdr);
 	lines.push(divider(width, theme));
 	const rows = Math.max(1, viewportRows - lines.length - 2);
 	const tail = Math.max(0, filtered.length - (ui.scroll + rows));
 	if (ui.scroll > 0) lines.push(theme.fg("dim", `↑ ${ui.scroll} earlier`));
-	for (const [vi, issue] of filtered.slice(ui.scroll, ui.scroll + rows).entries()) {
+	for (const [vi, session] of filtered.slice(ui.scroll, ui.scroll + rows).entries()) {
 		const idx = ui.scroll + vi;
 		const selected = idx === ui.selected;
-		const statsText = formatUsageCompact(statsByIssue.get(issue.issue)?.usage);
-		const row = formatOverviewRow(issue, theme, width, statsText, hasStats, selected);
+		const statsText = formatUsageCompact(statsBySession.get(session.id)?.usage);
+		const row = formatOverviewRow(session, theme, width, statsText, hasStats, hasPr, selected);
 		lines.push(selected ? selectedRow(theme, row, width) : row);
 	}
 	if (tail > 0) lines.push(theme.fg("dim", `↓ ${tail} more`));
-	const issue = filtered[ui.selected];
-	if (issue) {
+	const session = filtered[ui.selected];
+	if (session) {
 		lines.push("");
 		lines.push(divider(width, theme));
-		lines.push(...renderIssueDetailBlock(issue, theme, width, statsByIssue.get(issue.issue)));
+		lines.push(...renderSessionDetailBlock(session, theme, width, statsBySession.get(session.id)));
 	}
 	return lines;
-}
-
-function formatOverviewHeader(theme: Theme, width: number, hasStats: boolean): string {
-	const base = `${pad(label(theme, "ID"), 18)} ${pad(label(theme, "STATE / PROMPT"), 32)} ${pad(label(theme, "HARNESS"), 10)} ${pad(label(theme, "PR"), 8)}`;
-	const stats = hasStats ? ` ${pad(label(theme, "COST / TURNS / TOKENS"), 30)}` : "";
-	const line = `${base}${stats} ${label(theme, "AGE")}`;
-	return truncateToWidth(line, width, "");
-}
-
-function formatOverviewRow(issue: IssueRecord, theme: Theme, width: number, stats: string | undefined, hasStats: boolean, selected = false): string {
-	const id = pad(theme.fg("text", issue.issue), 18);
-	const soft = (text: string): string => selectedSoft(theme, selected, text);
-	const stateAndPrompt = issue.substate
-		? `${stateBadge(theme, issue.state)} ${soft("·")} ${tagBadge(theme, issue.substate)}`
-		: stateBadge(theme, issue.state);
-	const state = pad(stateAndPrompt, 32);
-	const harness = pad(harnessChip(theme, issue.harness), 10);
-	const pr = pad(issue.pr_number ? theme.fg("accent", `#${issue.pr_number}`) : soft("—"), 8);
-	const statsCell = hasStats ? ` ${pad(stats ? soft(stats) : soft("—"), 30)}` : "";
-	const age = formatAge(ageSecondsSince(issue.last_polled_at));
-	return truncateToWidth(`${id} ${state} ${harness} ${pr}${statsCell} ${soft(age)}`, width, "");
-}
-
-function renderIssueDetailBlock(issue: IssueRecord, theme: Theme, width: number, stats?: AgentsBridgeItem): string[] {
-	const lines: string[] = [];
-	lines.push(`${theme.fg("customMessageLabel", theme.bold(issue.issue))} ${theme.fg("dim", "·")} ${stateBadge(theme, issue.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, issue.harness)}`);
-	if (issue.pane_target) lines.push(`${label(theme, "pane:")} ${theme.fg("text", issue.pane_target)}`);
-	if (issue.launch?.model || issue.launch?.effort) lines.push(`${label(theme, "run:")}  ${theme.fg("text", formatLaunchProfile(issue))}`);
-	if (issue.worktree) lines.push(`${label(theme, "wt:")}   ${theme.fg("text", compactPath(issue.worktree))}`);
-	if (issue.pr_number) lines.push(`${label(theme, "PR:")}   ${theme.fg("accent", `#${issue.pr_number}`)}`);
-	lines.push(...renderIssueMergeCommitLine(issue.merge_commit, theme));
-	if (issue.substate) lines.push(`${label(theme, "tag:")}  ${tagBadge(theme, issue.substate)}`);
-	const usageText = formatUsageCompact(stats?.usage);
-	if (usageText) {
-		const modelSuffix = stats?.model ? ` ${theme.fg("dim", `(${stats.model})`)}` : "";
-		lines.push(`${label(theme, "usage:")} ${theme.fg("text", usageText)}${modelSuffix}`);
-	}
-	if (issue.unknown_since) {
-		const sec = ageSecondsSince(issue.unknown_since);
-		lines.push(`${label(theme, "unknown:")} ${theme.fg("warning", formatAge(sec))}`);
-	}
-	if (typeof issue.scope_files_actual === "number" && typeof issue.scope_files_declared === "number") {
-		lines.push(`${label(theme, "scope:")} ${theme.fg("text", `${issue.scope_files_actual} files`)} ${theme.fg("dim", `(declared ${issue.scope_files_declared})`)}`);
-	}
-	const decisions = issue.decisions_log ?? [];
-	if (decisions.length > 0) {
-		lines.push("");
-		lines.push(label(theme, `last decisions (${decisions.length}):`));
-		const recent = decisions.slice(-5);
-		for (const entry of recent) {
-			lines.push(`  ${theme.fg("dim", entry.ts.slice(11, 19))}  ${tagBadge(theme, entry.prompt_tag)} ${theme.fg("dim", "→")} ${theme.fg("text", entry.answer)}`);
-		}
-	}
-	return lines.flatMap((line) => wrapLine(line, width));
 }
 
 interface LiveEvent {
@@ -559,19 +461,19 @@ interface LiveEvent {
 
 function buildLiveFeedEvents(snapshot: FlightdeckSnapshot, cwd: string): LiveEvent[] {
 	const max = Math.max(20, Math.floor(settingNumber("liveFeedLines", 200, cwd)));
-	const issueByPane = issueByConversationPane(snapshot);
+	const sessionByPane = sessionByConversationPane(snapshot);
 	const raw: LiveEvent[] = [];
 	for (const line of (snapshot.daemon.logTail ?? []).slice(-max)) {
 		const isoTs = line.match(/^[^ ]+/)?.[0] ?? "";
-		raw.push({ kind: "daemon", line, sessionLabel: daemonLineSessionLabel(line, issueByPane), ts: isoTs.slice(11, 19), isoTs });
+		raw.push({ kind: "daemon", line, sessionLabel: daemonLineSessionLabel(line, sessionByPane), ts: isoTs.slice(11, 19), isoTs });
 	}
 	const decisions = flatDecisionsLog(snapshot.master, max);
 	for (const d of decisions) {
-		raw.push({ kind: "decision", line: `${d.ts} [decision] ${d.issue} ${d.prompt_tag} → ${d.answer}`, sessionLabel: d.issue, ts: d.ts.slice(11, 19), isoTs: d.ts });
+		raw.push({ kind: "decision", line: `${d.ts} [decision] ${d.session} ${d.prompt_tag} → ${d.answer}`, sessionLabel: d.session, ts: d.ts.slice(11, 19), isoTs: d.ts });
 	}
 	for (const ev of snapshot.pendingEvents.slice(-max)) {
 		const isoTs = ev.ts ?? "";
-		raw.push({ kind: "event-pending", line: `${isoTs} [pending] session=${sessionLabelForPane(ev.pane_id, issueByPane)} tag=${ev.tag ?? "?"} reason=${ev.reason ?? "?"} age=${ev.stable_age_sec ?? 0}s`, sessionLabel: sessionLabelForPane(ev.pane_id, issueByPane), ts: isoTs.slice(11, 19), isoTs });
+		raw.push({ kind: "event-pending", line: `${isoTs} [pending] session=${sessionLabelForPane(ev.pane_id, sessionByPane)} tag=${ev.tag ?? "?"} reason=${ev.reason ?? "?"} age=${ev.stable_age_sec ?? 0}s`, sessionLabel: sessionLabelForPane(ev.pane_id, sessionByPane), ts: isoTs.slice(11, 19), isoTs });
 	}
 	for (const ev of snapshot.wakeEvents.slice(-max)) {
 		const tag = ev.classifier_tag ?? "?";
@@ -580,7 +482,7 @@ function buildLiveFeedEvents(snapshot: FlightdeckSnapshot, cwd: string): LiveEve
 			? ` request_id=${ev.request_id ?? "?"}`
 			: ev.event_type === "subagent-completion" ? " subagent-completion" : "";
 		const isoTs = ev.ts ?? "";
-		const sessionLabel = sessionLabelForPane(ev.pane_id, issueByPane);
+		const sessionLabel = sessionLabelForPane(ev.pane_id, sessionByPane);
 		raw.push({ kind: "event-wake", line: `${isoTs} [adapter:${ev.harness ?? "?"}] session=${sessionLabel} tag=${tag}${extra}${text ? ` :: ${text}` : ""}`, sessionLabel, ts: isoTs.slice(11, 19), isoTs });
 	}
 	// Chronological order — the prior `localeCompare(line)` sort mixed daemon
@@ -606,10 +508,10 @@ function liveEventSearchText(ev: LiveEvent): string {
 	return `${ev.ts} ${ev.sessionLabel} ${ev.kind} ${liveEventKindText(ev)} ${ev.line}`.toLowerCase();
 }
 
-function sessionLabelForPane(paneId: string | undefined, issueByPane: Map<string, IssueRecord>): string {
+function sessionLabelForPane(paneId: string | undefined, sessionByPane: Map<string, TrackedSession>): string {
 	if (paneId) {
-		const issue = issueByPane.get(paneId);
-		if (issue?.issue) return issue.issue;
+		const session = sessionByPane.get(paneId);
+		if (session) return sessionLabel(session);
 	}
 	return "unmapped session";
 }
@@ -621,11 +523,11 @@ function parseDaemonLinePaneId(line: string): string | undefined {
 		?? line.match(/\[(?:classify|wake)\]\s+(%\d+)\b/)?.[1];
 }
 
-function daemonLineSessionLabel(line: string, issueByPane: Map<string, IssueRecord>): string {
+function daemonLineSessionLabel(line: string, sessionByPane: Map<string, TrackedSession>): string {
 	const paneId = parseDaemonLinePaneId(line);
 	if (paneId) {
-		const issue = issueByPane.get(paneId);
-		if (issue?.issue) return issue.issue;
+		const session = sessionByPane.get(paneId);
+		if (session) return sessionLabel(session);
 	}
 	const name = line.match(/\bname=([^\s]+)/)?.[1];
 	return name || "daemon";
@@ -828,49 +730,43 @@ function formatConversationTime(ts: string): string {
 	return match ?? (fallback || "--:--:--");
 }
 
-function issuePaneTargetLabel(issue: IssueRecord | undefined): string | undefined {
-	if (!issue) return undefined;
-	if (typeof issue.window === "string" && issue.window.trim()) return issue.window.trim();
-	if (typeof issue.pane_target === "string" && issue.pane_target.trim()) return issue.pane_target.trim();
-	return undefined;
-}
-
-function issueByConversationPane(snapshot: FlightdeckSnapshot): Map<string, IssueRecord> {
-	const issueByPane = new Map<string, IssueRecord>();
-	for (const issue of readTrackedEntries(snapshot.master)) {
-		if (issue.pane_id) issueByPane.set(issue.pane_id, issue);
-		if (issue.pane_target) issueByPane.set(issue.pane_target, issue);
+function sessionByConversationPane(snapshot: FlightdeckSnapshot): Map<string, TrackedSession> {
+	const sessionByPane = new Map<string, TrackedSession>();
+	for (const session of readTrackedEntries(snapshot.master)) {
+		if (session.pane_id) sessionByPane.set(session.pane_id, session);
+		if (session.pane_target) sessionByPane.set(session.pane_target, session);
 	}
-	return issueByPane;
+	return sessionByPane;
 }
 
-function conversationSessionLabel(pane: string, issue: IssueRecord | undefined): string {
-	if (issue?.issue) return issue.issue;
+function conversationSessionLabel(pane: string, session: TrackedSession | undefined): string {
+	if (session) return sessionLabel(session);
 	const suffix = pane.replace(/^%/, "#").trim();
 	return suffix ? `unmapped ${suffix}` : "unmapped session";
 }
 
-function conversationSessionMeta(issue: IssueRecord | undefined, turn: ConversationTurn): string[] {
+function conversationSessionMeta(session: TrackedSession | undefined, turn: ConversationTurn): string[] {
 	const meta: string[] = [];
-	if (issue?.state) meta.push(issue.state);
-	if (turn.harness || issue?.harness) meta.push(turn.harness ?? issue?.harness ?? "");
+	if (session?.kind) meta.push(session.kind);
+	if (session?.state) meta.push(session.state);
+	if (turn.harness || session?.harness) meta.push(turn.harness ?? session?.harness ?? "");
 	if (turn.tag) meta.push(turn.tag);
-	const target = issuePaneTargetLabel(issue);
+	const target = sessionPaneTargetLabel(session);
 	if (target) meta.push(target);
 	return meta.filter(Boolean);
 }
 
 function buildConversationFeed(snapshot: FlightdeckSnapshot, conversations: Map<string, ConversationTurn[]>): ConversationFeedItem[] {
-	const issueByPane = issueByConversationPane(snapshot);
+	const sessionByPane = sessionByConversationPane(snapshot);
 	const items: ConversationFeedItem[] = [];
 	for (const [pane, turns] of conversations) {
-		const issue = issueByPane.get(pane);
+		const session = sessionByPane.get(pane);
 		for (const turn of turns) {
 			items.push({
-				issue,
 				pane,
-				sessionLabel: conversationSessionLabel(pane, issue),
-				sessionMeta: conversationSessionMeta(issue, turn),
+				session,
+				sessionLabel: conversationSessionLabel(pane, session),
+				sessionMeta: conversationSessionMeta(session, turn),
 				turn,
 			});
 		}
@@ -895,7 +791,7 @@ function selectedConversationItem(snapshot: FlightdeckSnapshot, conversations: M
 function renderConversationRow(item: ConversationFeedItem, theme: Theme, width: number, selected = false): string {
 	const time = pad(selectedSoft(theme, selected, formatConversationTime(item.turn.ts)), 10);
 	const session = pad(theme.fg("customMessageLabel", item.sessionLabel), 18);
-	const harness = pad(harnessChip(theme, item.turn.harness ?? item.issue?.harness), 8);
+	const harness = pad(harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined), 8);
 	const tag = pad(conversationTagChip(theme, item.turn.tag, selected), 24);
 	const preview = theme.fg("text", item.turn.excerpt.replace(/\s+/g, " "));
 	return truncateToWidth(`${time} ${session} ${harness} ${tag} ${preview}`, width, "");
@@ -907,10 +803,11 @@ function conversationTagChip(theme: Theme, tag: string | undefined, selected = f
 }
 
 function renderConversationInlineDetail(item: ConversationFeedItem, theme: Theme, width: number, maxRows: number): string[] {
-	const target = issuePaneTargetLabel(item.issue);
+	const target = sessionPaneTargetLabel(item.session);
 	const meta = [
-		stateBadge(theme, item.issue?.state),
-		harnessChip(theme, item.turn.harness ?? item.issue?.harness),
+		kindBadge(theme, item.session?.kind),
+		stateBadge(theme, item.session?.state),
+		harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined),
 		tagBadge(theme, item.turn.tag),
 		selectedSoft(theme, false, formatConversationTime(item.turn.ts)),
 		target ? selectedSoft(theme, false, target) : "",
@@ -930,9 +827,9 @@ function renderConversationInlineDetail(item: ConversationFeedItem, theme: Theme
 }
 
 function renderConversationDetailView(item: ConversationFeedItem, ui: PopupUiState, width: number, theme: Theme, innerRows: number): string[] {
-	const target = issuePaneTargetLabel(item.issue);
+	const target = sessionPaneTargetLabel(item.session);
 	const header = [
-		`${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${stateBadge(theme, item.issue?.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, item.turn.harness ?? item.issue?.harness)} ${theme.fg("dim", "·")} ${tagBadge(theme, item.turn.tag)}`,
+		`${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${kindBadge(theme, item.session?.kind)} ${theme.fg("dim", "·")} ${stateBadge(theme, item.session?.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, item.turn.harness ?? item.session?.harness ?? undefined)} ${theme.fg("dim", "·")} ${tagBadge(theme, item.turn.tag)}`,
 		`${label(theme, "time:")} ${theme.fg("text", item.turn.ts)}${target ? ` ${theme.fg("dim", "·")} ${label(theme, "tmux:")} ${theme.fg("text", target)}` : ""} ${theme.fg("dim", "·")} ${label(theme, "chars:")} ${theme.fg("text", String(item.turn.excerpt.length))}`,
 		divider(width, theme),
 		label(theme, "assistant turn"),
@@ -998,22 +895,28 @@ export function renderConflictsTab(snapshot: FlightdeckSnapshot, _ui: PopupUiSta
 	const queue = snapshot.master?.merge_queue ?? [];
 	const edges = snapshot.master?.conflict_graph?.edges ?? [];
 	const computed = snapshot.master?.conflict_graph?.computed_at;
+	const sessions = readTrackedEntries(snapshot.master);
+	if (!hasIssueSessions(sessions)) {
+		lines.push(theme.fg("warning", "Conflicts & merges (issue mode)"));
+		lines.push(theme.fg("dim", "No issue-mode sessions are tracked. Ad-hoc and workflow sessions skip PR merge queues and file-overlap conflict graphs."));
+		return lines.flatMap((line) => wrapLine(line, width));
+	}
 	lines.push(`${theme.fg("customMessageLabel", theme.bold("Merge queue"))} ${theme.fg("dim", `(${queue.length})`)}`);
 	if (queue.length === 0) lines.push(theme.fg("dim", "  (empty)"));
 	else for (const [i, id] of queue.entries()) {
-		const issue = snapshot.master?.issues[id];
-		const state = stateBadge(theme, issue?.state);
-		const pr = issue?.pr_number ? theme.fg("accent", `PR#${issue.pr_number}`) : theme.fg("dim", "no-PR");
-		lines.push(`  ${theme.fg("muted", `${i + 1}.`)} ${theme.bold(theme.fg("text", id))} ${theme.fg("dim", "·")} ${state} ${theme.fg("dim", "·")} ${pr}`);
+		const session = findTrackedEntry(snapshot.master, id);
+		const state = stateBadge(theme, session?.state);
+		const pr = issueDomain(session)?.pr_number ? ` ${theme.fg("dim", "·")} ${theme.fg("accent", `PR#${issueDomain(session)?.pr_number}`)}` : "";
+		lines.push(`  ${theme.fg("muted", `${i + 1}.`)} ${theme.bold(theme.fg("text", id))} ${theme.fg("dim", "·")} ${state}${pr}`);
 	}
 	lines.push(...renderTerminatedConflictsSection(snapshot, theme));
 	lines.push(`${theme.fg("customMessageLabel", theme.bold("Conflict graph"))} ${theme.fg("dim", `(${edges.length} edge${edges.length === 1 ? "" : "s"}${computed ? `, ${formatAge(ageSecondsSince(computed))} ago` : ""})`)}`);
 	if (edges.length === 0) lines.push(theme.fg("dim", "  (no detected file overlap)"));
 	else for (const [a, b] of edges) {
-		const aIssue = snapshot.master?.issues[a];
-		const bIssue = snapshot.master?.issues[b];
-		const ap = aIssue?.pr_number ? `#${aIssue.pr_number}` : "";
-		const bp = bIssue?.pr_number ? `#${bIssue.pr_number}` : "";
+		const aIssue = findTrackedEntry(snapshot.master, a);
+		const bIssue = findTrackedEntry(snapshot.master, b);
+		const ap = issueDomain(aIssue)?.pr_number ? `#${issueDomain(aIssue)?.pr_number}` : "";
+		const bp = issueDomain(bIssue)?.pr_number ? `#${issueDomain(bIssue)?.pr_number}` : "";
 		lines.push(`  ${theme.fg("text", a)}${ap ? theme.fg("dim", ` ${ap}`) : ""} ${theme.fg("warning", "↔")} ${theme.fg("text", b)}${bp ? theme.fg("dim", ` ${bp}`) : ""}`);
 	}
 	return lines.flatMap((line) => wrapLine(line, width));
@@ -1024,7 +927,7 @@ function filteredDecisions(snapshot: FlightdeckSnapshot, ui: PopupUiState, cwd: 
 	const decisions = flatDecisionsLog(snapshot.master, max);
 	if (!ui.search.trim()) return decisions;
 	const query = ui.search.trim().toLowerCase();
-	return decisions.filter((d) => `${d.issue} ${d.prompt_tag} ${d.answer}`.toLowerCase().includes(query));
+	return decisions.filter((d) => `${d.session} ${d.prompt_tag} ${d.answer}`.toLowerCase().includes(query));
 }
 
 function selectedDecision(snapshot: FlightdeckSnapshot, ui: PopupUiState, cwd: string): DecisionEntry | undefined {
@@ -1044,7 +947,7 @@ export function renderDecisionsTab(snapshot: FlightdeckSnapshot, ui: PopupUiStat
 		lines.push(theme.fg("dim", all.length === 0 ? "No decisions logged yet." : "No matches for current search."));
 		return lines;
 	}
-	lines.push(`${pad(label(theme, "TIME"), 10)} ${pad(label(theme, "ISSUE"), 16)} ${pad(label(theme, "PROMPT TAG"), 26)} ${label(theme, "ANSWER")}`);
+	lines.push(`${pad(label(theme, "TIME"), 10)} ${pad(label(theme, "SESSION"), 16)} ${pad(label(theme, "PROMPT TAG"), 26)} ${label(theme, "ANSWER")}`);
 	lines.push(divider(width, theme));
 	const rows = Math.max(1, viewportRows - lines.length - 2);
 	clampSelection(ui, filtered.length, rows);
@@ -1055,10 +958,10 @@ export function renderDecisionsTab(snapshot: FlightdeckSnapshot, ui: PopupUiStat
 		const idx = start + vi;
 		const selected = idx === ui.selected;
 		const time = pad(selectedSoft(theme, selected, d.ts.slice(11, 19)), 10);
-		const issue = pad(theme.fg("text", d.issue), 16);
+		const session = pad(theme.fg("text", d.session), 16);
 		const tag = pad(tagBadge(theme, d.prompt_tag), 26);
 		const answer = theme.fg("text", d.answer);
-		const row = truncateToWidth(`${time} ${issue} ${tag} ${answer}`, width, "");
+		const row = truncateToWidth(`${time} ${session} ${tag} ${answer}`, width, "");
 		lines.push(selected ? selectedRow(theme, row, width) : row);
 	}
 	const tail = Math.max(0, filtered.length - end);
@@ -1073,7 +976,7 @@ function wrapDecisionAnswer(answer: string, width: number, theme: Theme): string
 
 function renderDecisionDetailView(decision: DecisionEntry, ui: PopupUiState, width: number, theme: Theme, innerRows: number): string[] {
 	const header = [
-		`${theme.fg("customMessageLabel", theme.bold(decision.issue))} ${theme.fg("dim", "·")} ${tagBadge(theme, decision.prompt_tag)}`,
+		`${theme.fg("customMessageLabel", theme.bold(decision.session))} ${theme.fg("dim", "·")} ${tagBadge(theme, decision.prompt_tag)}`,
 		`${label(theme, "time:")} ${theme.fg("text", decision.ts)} ${theme.fg("dim", "·")} ${label(theme, "answer chars:")} ${theme.fg("text", String(decision.answer.length))}`,
 		divider(width, theme),
 		label(theme, "answer"),
@@ -1099,20 +1002,20 @@ function renderDecisionDetailView(decision: DecisionEntry, ui: PopupUiState, wid
 type HarnessKey = "opencode" | "claude" | "pi" | "codex";
 const HARNESS_KEY_BY_NAME: Record<string, HarnessKey> = { opencode: "opencode", claude: "claude", pi: "pi", codex: "codex" };
 
-function isActiveIssue(issue: IssueRecord): boolean {
-	return issue.state !== "merged" && issue.state !== "aborted" && issue.state !== "dead";
+function isActiveSession(session: TrackedSession): boolean {
+	return session.state !== "merged" && session.state !== "aborted" && session.state !== "dead" && session.state !== "complete" && session.state !== "cancelled";
 }
 
-// An issue is "adapter-eligible" only when its registry record carries
+// A session is "adapter-eligible" only when its registry record carries
 // the adapter metadata fields the daemon's spawn_<h>_subscriber path
 // reads. Without this gate, expectedSubscribers counted every active
-// pi/claude/codex issue as needing a subscriber even when the spawn
+// pi/claude/codex session as needing a subscriber even when the spawn
 // failed gracefully and the pane is intentionally on tmux fallback
 // (cross-harness review finding #5).
-function issueIsAdapterEligible(issue: IssueRecord, harness: HarnessKey): boolean {
-	const rec = issue as Record<string, unknown>;
+function sessionIsAdapterEligible(session: TrackedSession, harness: HarnessKey): boolean {
+	const rec = session as Record<string, unknown>;
 	const hasField = (k: string): boolean => {
-		const v = rec[k];
+		const v = rec[k] ?? session.adapter?.[k];
 		return typeof v === "string" ? v.length > 0 : v !== null && v !== undefined && v !== "";
 	};
 	switch (harness) {
@@ -1125,10 +1028,10 @@ function issueIsAdapterEligible(issue: IssueRecord, harness: HarnessKey): boolea
 
 function expectedSubscribersByHarness(snapshot: FlightdeckSnapshot): Record<HarnessKey, number> {
 	const out: Record<HarnessKey, number> = { opencode: 0, claude: 0, pi: 0, codex: 0 };
-	for (const issue of Object.values(snapshot.master?.issues ?? {})) {
-		if (!isActiveIssue(issue)) continue;
-		const key = HARNESS_KEY_BY_NAME[issue.harness ?? ""];
-		if (key && issueIsAdapterEligible(issue, key)) out[key] += 1;
+	for (const session of readTrackedEntries(snapshot.master)) {
+		if (!isActiveSession(session)) continue;
+		const key = HARNESS_KEY_BY_NAME[session.harness ?? ""];
+		if (key && sessionIsAdapterEligible(session, key)) out[key] += 1;
 	}
 	return out;
 }
@@ -1159,25 +1062,25 @@ function shortSubscriberHarnesses(expected: Record<HarnessKey, number>, counts: 
 	return out;
 }
 
-function unsubscribedPanes(snapshot: FlightdeckSnapshot, expected: Record<HarnessKey, number>, counts: Record<HarnessKey, number>): IssueRecord[] {
-	// Only surface adapter-eligible issues whose harness is short on
+function unsubscribedPanes(snapshot: FlightdeckSnapshot, expected: Record<HarnessKey, number>, counts: Record<HarnessKey, number>): TrackedSession[] {
+	// Only surface adapter-eligible sessions whose harness is short on
 	// subscribers. Panes intentionally on tmux fallback (no adapter
 	// metadata recorded) are not surfaced as "unsubscribed" since the
 	// daemon never tried to subscribe them in the first place
 	// (cross-harness review finding #5).
 	const missingHarnesses = shortSubscriberHarnesses(expected, counts);
 	if (missingHarnesses.size === 0) return [];
-	const out: IssueRecord[] = [];
-	for (const issue of Object.values(snapshot.master?.issues ?? {})) {
-		if (!isActiveIssue(issue)) continue;
-		const key = HARNESS_KEY_BY_NAME[issue.harness ?? ""];
-		if (key && missingHarnesses.has(key) && issueIsAdapterEligible(issue, key)) out.push(issue);
+	const out: TrackedSession[] = [];
+	for (const session of readTrackedEntries(snapshot.master)) {
+		if (!isActiveSession(session)) continue;
+		const key = HARNESS_KEY_BY_NAME[session.harness ?? ""];
+		if (key && missingHarnesses.has(key) && sessionIsAdapterEligible(session, key)) out.push(session);
 	}
 	return out;
 }
 
-function issueForPane(snapshot: FlightdeckSnapshot, paneId: string): IssueRecord | undefined {
-	return Object.values(snapshot.master?.issues ?? {}).find((issue) => issue.pane_id === paneId || issue.pane_target === paneId);
+function sessionForPane(snapshot: FlightdeckSnapshot, paneId: string): TrackedSession | undefined {
+	return readTrackedEntries(snapshot.master).find((session) => session.pane_id === paneId || session.pane_target === paneId);
 }
 
 function renderDaemonTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number): string[] {
@@ -1205,18 +1108,18 @@ function renderDaemonTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: 
 	if (liveShortSubscribers.length > 0) {
 		lines.push(`${label(theme, "live subs:")} ${theme.fg("dim", "pids for short harness buckets")}`);
 		for (const sub of liveShortSubscribers.slice(0, 8)) {
-			const issue = issueForPane(snapshot, sub.paneId);
-			const issueLabel = issue?.issue ? `${issue.issue} ` : "";
-			lines.push(`   ${theme.fg("dim", "· ")}${theme.fg("text", `${issueLabel}${sub.paneId}`)} ${theme.fg("dim", "·")} ${harnessChip(theme, sub.harness)} ${theme.fg("dim", "·")} ${theme.fg("dim", `pid=${sub.pid}`)}`);
+			const session = sessionForPane(snapshot, sub.paneId);
+			const sessionPrefix = session ? `${sessionLabel(session)} ` : "";
+			lines.push(`   ${theme.fg("dim", "· ")}${theme.fg("text", `${sessionPrefix}${sub.paneId}`)} ${theme.fg("dim", "·")} ${harnessChip(theme, sub.harness)} ${theme.fg("dim", "·")} ${theme.fg("dim", `pid=${sub.pid}`)}`);
 		}
 		if (liveShortSubscribers.length > 8) lines.push(`   ${theme.fg("dim", `… ${liveShortSubscribers.length - 8} more`)}`);
 	}
 	const unsubscribed = unsubscribedPanes(snapshot, expected, counts);
 	if (unsubscribed.length > 0) {
 		lines.push(`${label(theme, "unsubscribed:")} ${theme.fg("warning", `${unsubscribed.length} tracked pane${unsubscribed.length === 1 ? "" : "s"} without an adapter subscriber`)}`);
-		for (const issue of unsubscribed.slice(0, 6)) {
-			const hint = issue.pane_target ? `pane ${issue.pane_target}` : "(no pane recorded)";
-			lines.push(`   ${theme.fg("dim", "· ")}${theme.fg("text", issue.issue)} ${theme.fg("dim", "·")} ${harnessChip(theme, issue.harness)} ${theme.fg("dim", "·")} ${theme.fg("dim", hint)}`);
+		for (const session of unsubscribed.slice(0, 6)) {
+			const hint = session.pane_target ? `pane ${session.pane_target}` : "(no pane recorded)";
+			lines.push(`   ${theme.fg("dim", "· ")}${theme.fg("text", sessionLabel(session))} ${theme.fg("dim", "·")} ${harnessChip(theme, session.harness ?? undefined)} ${theme.fg("dim", "·")} ${theme.fg("dim", hint)}`);
 		}
 		if (unsubscribed.length > 6) lines.push(`   ${theme.fg("dim", `… ${unsubscribed.length - 6} more`)}`);
 	}
@@ -1284,16 +1187,16 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			const turnsPerPane = Math.max(1, Math.floor(settingNumber("conversationsHistory", 5, cwd)));
 			const excerptChars = Math.max(120, Math.floor(settingNumber("conversationExcerptChars", 800, cwd)));
 			cache.conversations = foldWakeEventsIntoConversations(cache.conversations, snapshot.wakeEvents, turnsPerPane, excerptChars);
-			// Skip the tmux list-panes call entirely when there are no issues
+			// Skip the tmux list-panes call entirely when there are no sessions
 			// to join against. Key the cache by the joined pane_target set so
-			// repeated polls with the same issue set reuse the cached map
+			// repeated polls with the same session set reuse the cached map
 			// instead of re-shelling tmux every 1.5s (perf review finding #2).
-			const issues = snapshot.master ? Object.values(snapshot.master.issues) : [];
-			if (issues.length === 0 || !getAgentsBridge()) {
+			const sessions = readTrackedEntries(snapshot.master);
+			if (sessions.length === 0 || !getAgentsBridge()) {
 				cache.paneTargetToId = new Map();
 			} else {
-				const issueKey = issues.map((issue) => issue.pane_target ?? "").sort().join("|");
-				cache.paneTargetToId = buildPaneTargetToIdMap(issueKey);
+				const sessionKey = sessions.map((session) => session.pane_target ?? "").sort().join("|");
+				cache.paneTargetToId = buildPaneTargetToIdMap(sessionKey);
 			}
 		}
 		cache.lastSnapshot = snapshot;
@@ -1699,7 +1602,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 						if (ui.decisionDetail) {
 							return framePopup(renderDecisionDetailView(ui.decisionDetail, ui, innerWidth, theme, innerRows), safeWidth, theme, " Flightdeck · Decision ", innerRows);
 						}
-						lines.push(renderTabBar(ui.tab, innerWidth, theme));
+						lines.push(renderTabBar(ui.tab, innerWidth, theme, snapshot));
 						lines.push("");
 						const observerHeader = renderObserverHeader(snapshot, theme, innerWidth);
 						if (observerHeader) {
@@ -1735,16 +1638,8 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	}
 
 	function renderPopupHeader(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string {
-		const issues = readTrackedEntries(snapshot.master);
-		const counts: Record<string, number> = {};
-		for (const issue of issues) counts[issue.state ?? "?"] = (counts[issue.state ?? "?"] ?? 0) + 1;
-		const order: IssueState[] = ["prompting", "merge-ready", "submitting", "waiting", "merged", "aborted", "dead"];
-		// Same redundancy-suppression rule as the mini dashboard: when there's
-		// exactly one issue the table row already shows the state badge.
-		const showStateCounts = issues.length > 1;
-		const summary = showStateCounts
-			? order.filter((s) => counts[s]).map((s) => theme.fg(stateColor(s), `${stateGlyph(s)} ${counts[s]} ${s}`)).join(theme.fg("dim", "  ·  "))
-			: "";
+		const sessions = readTrackedEntries(snapshot.master);
+		const summary = formatStateBreakdown(theme, sessions, { includeNames: true, separator: theme.fg("dim", "  ·  ") });
 		const queue = snapshot.master?.merge_queue?.length ?? 0;
 		const queuePart = queue > 0 ? ` ${theme.fg("dim", "·")} ${theme.fg("accent", `merge-queue ${queue}`)}` : "";
 		const headerRight = headerChipForSnapshot(snapshot, theme);
@@ -1752,7 +1647,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		// of the session and visually collides with USD cost strings; the
 		// Daemon tab still shows it for diagnostics.
 		const sessionLine = `${theme.fg("muted", "session")} ${theme.fg("text", snapshot.tmux.sessionName)}`;
-		const left = `${sessionLine}  ${theme.fg("dim", "·")}  ${theme.fg("muted", `${issues.length} issue${issues.length === 1 ? "" : "s"}`)}${summary ? `  ${theme.fg("dim", "·")}  ${summary}` : ""}${queuePart}`;
+		const left = `${sessionLine}  ${theme.fg("dim", "·")}  ${formatSessionTotals(theme, sessions)}${summary ? `  ${theme.fg("dim", "·")}  ${summary}` : ""}${queuePart}`;
 		const padded = pad(left, Math.max(0, width - visibleWidth(headerRight) - 2));
 		return truncateToWidth(`${padded}  ${headerRight}`, width, "");
 	}
@@ -1793,7 +1688,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("flightdeck", {
-		description: "Open the flightdeck mission-control popup. With 'watch [args...]', dispatch the legacy flightdeck watch bridge workaround.",
+		description: "Open the flightdeck session-control popup. With 'watch [args...]', dispatch the legacy flightdeck watch bridge workaround.",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim();
 			if (!trimmed) {
@@ -1827,7 +1722,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	const popupShortcut = settingString("popupShortcut", "f6");
 	if (popupShortcut !== "none") {
 		pi.registerShortcut(popupShortcut as Parameters<typeof pi.registerShortcut>[0], {
-			description: "Open the flightdeck mission-control popup",
+			description: "Open the flightdeck session-control popup",
 			handler: async (ctx) => openPopup(pi, ctx as ExtensionContext),
 		});
 	}

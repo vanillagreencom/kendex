@@ -15,37 +15,97 @@ import { normalizeConflictGraph, normalizeDecisionsLog, normalizeOwner } from ".
 
 export { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
 
-export type IssueState = "waiting" | "prompting" | "submitting" | "merge-ready" | "merged" | "aborted" | "dead";
+export type TrackedState = "waiting" | "prompting" | "submitting" | "merge-ready" | "merged" | "aborted" | "dead" | "ready" | "complete" | "cancelled" | string;
+export type TrackedKind = "adhoc" | "issue" | "workflow" | string;
 
-export interface IssueRecord {
+export interface DecisionLogEntry {
+	ts: string;
+	prompt_tag: string;
+	answer: string;
+	[key: string]: unknown;
+}
+
+export interface TrackedSessionAdapter {
+	pi_bridge_pid?: number | null;
+	pi_bridge_socket?: string | null;
+	pi_session_id?: string | null;
+	oc_url?: string | null;
+	oc_session_id?: string | null;
+	oc_port?: number | null;
+	cc_url?: string | null;
+	cc_session_uuid?: string | null;
+	cc_transcript?: string | null;
+	cc_port?: number | null;
+	cx_ws?: string | null;
+	cx_thread_id?: string | null;
+	[key: string]: unknown;
+}
+
+export interface TrackedIssueDomain {
+	id: string;
+	worktree?: string | null;
+	pr_number?: number | null;
+	scope_files_declared?: number | null;
+	scope_files_actual?: number | null;
+	orchestration_started?: boolean | null;
+	merge_commit?: string | null;
+	[key: string]: unknown;
+}
+
+export interface TrackedSessionDomain {
+	issue?: TrackedIssueDomain;
+	[key: string]: unknown;
+}
+
+export interface TrackedSessionLaunch {
+	model?: string | null;
+	effort?: string | null;
+	cmd?: string | null;
+	[key: string]: unknown;
+}
+
+export interface TrackedSession {
+	id: string;
+	title?: string | null;
+	kind: TrackedKind;
+	/** @deprecated Use id/title plus domain.issue when issue-mode metadata is needed. */
 	issue: string;
 	window?: string;
 	pane_target?: string;
 	harness?: string;
+	cwd?: string | null;
 	worktree?: string;
 	pr_number?: number | null;
 	// Immutable tmux pane id (`%N`) captured by `pane-registry init`.
 	// Optional for legacy registry entries written before pane_id support;
 	// `pane-registry reconcile` backfills these opportunistically.
 	pane_id?: string | null;
-	launch?: { model?: string | null; effort?: string | null } | null;
-	state?: IssueState;
+	launch?: TrackedSessionLaunch | null;
+	adapter?: TrackedSessionAdapter | null;
+	domain?: TrackedSessionDomain | null;
+	state?: TrackedState | null;
 	substate?: string | null;
 	unknown_since?: string | null;
 	last_capture_hash?: string | null;
 	last_response_at?: string | null;
-	spawned_at?: string;
-	last_polled_at?: string;
+	spawned_at?: string | null;
+	last_polled_at?: string | null;
 	orchestration_started?: boolean;
 	scope_files_declared?: number | null;
 	scope_files_actual?: number | null;
-	decisions_log?: Array<{ ts: string; prompt_tag: string; answer: string }>;
+	decisions_log?: DecisionLogEntry[];
 	// Captured by close-issue.md § 3 / merge-plan.md § 3 when a PR lands; the
 	// post-completion dashboard surfaces it in Overview and the merge-history
 	// pane of the Conflicts & merges tab.
 	merge_commit?: string | null;
 	[key: string]: unknown;
 }
+
+/** @deprecated Use TrackedState. Kept for one release cycle. */
+export type IssueState = TrackedState;
+
+/** @deprecated Use TrackedSession. Kept for one release cycle. */
+export type IssueRecord = TrackedSession;
 
 export interface PausedForUser {
 	issue_id?: string;
@@ -76,7 +136,8 @@ export interface MasterState {
 	// post-mortem file without re-reading the disk.
 	summary_path?: string;
 	owner?: MasterOwner;
-	issues: Record<string, IssueRecord>;
+	entries?: Record<string, TrackedSession>;
+	issues: Record<string, TrackedSession>;
 	merge_queue: string[];
 	conflict_graph?: { edges?: Array<[string, string]>; computed_at?: string | null };
 	paused_for_user?: PausedForUser | null;
@@ -247,7 +308,7 @@ function resolveProjectRootUncached(cwd: string): string {
 	// worktree's own (non-existent) tmp dir. Without this, the overlay
 	// rendered inside a worktree pane would correctly detect the daemon
 	// (daemon files are uid-scoped, not cwd-scoped) but fail to load the
-	// master state file, falsely showing "0 issues" (#4 finding 3).
+	// master state file, falsely showing "0 sessions" (#4 finding 3).
 	const worktreeRoot = gitMainWorktreeRoot(cwd);
 	if (worktreeRoot) return worktreeRoot;
 	let current = resolve(cwd);
@@ -320,6 +381,132 @@ function readJsonFile<T>(path: string): T | undefined {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function nullableString(value: unknown): string | null | undefined {
+	if (value === null) return null;
+	return stringValue(value);
+}
+
+function nullableNumber(value: unknown): number | null | undefined {
+	if (value === null) return null;
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function nullableBoolean(value: unknown): boolean | null | undefined {
+	if (value === null) return null;
+	return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeIssueDomain(raw: unknown, fallbackId: string | undefined, legacy: Record<string, unknown>): TrackedIssueDomain | undefined {
+	const source = isRecord(raw) ? raw : {};
+	const id = stringValue(source.id) ?? fallbackId;
+	if (!id) return undefined;
+	return {
+		...source,
+		id,
+		merge_commit: nullableString(source.merge_commit) ?? nullableString(legacy.merge_commit),
+		orchestration_started: nullableBoolean(source.orchestration_started) ?? nullableBoolean(legacy.orchestration_started),
+		pr_number: nullableNumber(source.pr_number) ?? nullableNumber(legacy.pr_number),
+		scope_files_actual: nullableNumber(source.scope_files_actual) ?? nullableNumber(legacy.scope_files_actual),
+		scope_files_declared: nullableNumber(source.scope_files_declared) ?? nullableNumber(legacy.scope_files_declared),
+		worktree: nullableString(source.worktree) ?? nullableString(legacy.worktree),
+	};
+}
+
+function normalizeTrackedSession(key: string, value: Record<string, unknown>, legacyIssueId?: string): TrackedSession {
+	const id = stringValue(value.id) ?? key;
+	const domainSource = isRecord(value.domain) ? value.domain : {};
+	const legacyId = legacyIssueId ?? stringValue(value.issue);
+	const issueDomain = normalizeIssueDomain(domainSource.issue, legacyId, value);
+	const domain = issueDomain ? { ...domainSource, issue: issueDomain } : Object.keys(domainSource).length > 0 ? domainSource : undefined;
+	const kind = stringValue(value.kind) ?? (issueDomain ? "issue" : "adhoc");
+	const issue = issueDomain?.id ?? legacyId ?? id;
+	const record: TrackedSession = {
+		...value,
+		decisions_log: normalizeDecisionsLog(value.decisions_log),
+		domain,
+		id,
+		issue,
+		kind,
+		state: nullableString(value.state) as TrackedState | null | undefined,
+		title: nullableString(value.title),
+	};
+	if (issueDomain) {
+		record.worktree = issueDomain.worktree ?? record.worktree;
+		record.pr_number = issueDomain.pr_number ?? record.pr_number;
+		record.scope_files_declared = issueDomain.scope_files_declared ?? record.scope_files_declared;
+		record.scope_files_actual = issueDomain.scope_files_actual ?? record.scope_files_actual;
+		record.orchestration_started = issueDomain.orchestration_started ?? record.orchestration_started;
+		record.merge_commit = issueDomain.merge_commit ?? record.merge_commit;
+	}
+	return record;
+}
+
+function readEntriesRecord(raw: unknown): Record<string, TrackedSession> {
+	const out: Record<string, TrackedSession> = {};
+	if (Array.isArray(raw)) {
+		for (const value of raw) {
+			if (!isRecord(value)) continue;
+			const id = stringValue(value.id);
+			if (!id) continue;
+			out[id] = normalizeTrackedSession(id, value);
+		}
+		return out;
+	}
+	if (!isRecord(raw)) return out;
+	for (const [id, value] of Object.entries(raw)) {
+		if (isRecord(value)) out[id] = normalizeTrackedSession(id, value);
+	}
+	return out;
+}
+
+function readLegacyIssues(raw: unknown): Record<string, TrackedSession> {
+	const issues: Record<string, TrackedSession> = {};
+	if (!isRecord(raw)) return issues;
+	for (const [issue, value] of Object.entries(raw)) {
+		if (isRecord(value)) issues[issue] = normalizeTrackedSession(issue, value, issue);
+	}
+	return issues;
+}
+
+function normalizeSessionMap(raw: Record<string, TrackedSession> | undefined, legacyIssue = false): Record<string, TrackedSession> {
+	const out: Record<string, TrackedSession> = {};
+	for (const [id, value] of Object.entries(raw ?? {})) {
+		if (isRecord(value)) out[id] = normalizeTrackedSession(id, value, legacyIssue ? id : undefined);
+	}
+	return out;
+}
+
+function issueDomainId(session: TrackedSession): string | undefined {
+	return session.domain?.issue?.id;
+}
+
+function mergeLegacyIssuesIntoEntries(entries: Record<string, TrackedSession>, issues: Record<string, TrackedSession>): Record<string, TrackedSession> {
+	const merged = { ...entries };
+	const issueIds = new Set(Object.values(merged).map((entry) => issueDomainId(entry) ?? entry.issue).filter((id): id is string => Boolean(id)));
+	for (const [id, issue] of Object.entries(issues)) {
+		if (merged[id] || issueIds.has(id)) continue;
+		merged[id] = issue;
+	}
+	return merged;
+}
+
+function projectIssuesFromEntries(entries: Record<string, TrackedSession>, legacyIssues: Record<string, TrackedSession>): Record<string, TrackedSession> {
+	const issues = { ...legacyIssues };
+	for (const entry of Object.values(entries)) {
+		const issueId = issueDomainId(entry);
+		if (issueId && !issues[issueId]) issues[issueId] = entry;
+	}
+	return issues;
+}
+
 export function readMasterState(path: string): { state?: MasterState; error?: string } {
 	if (!existsSync(path)) return {};
 	try {
@@ -327,24 +514,15 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 		if (!text.trim()) return { state: emptyState() };
 		const parsed = JSON.parse(text);
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "master state JSON is not an object" };
-		const raw = parsed as Partial<MasterState>;
-		const issues: Record<string, IssueRecord> = {};
-		if (raw.issues && typeof raw.issues === "object" && !Array.isArray(raw.issues)) {
-			for (const [issue, value] of Object.entries(raw.issues as Record<string, unknown>)) {
-				if (value && typeof value === "object" && !Array.isArray(value)) {
-					const record = { issue, ...(value as Record<string, unknown>) } as IssueRecord;
-					// Malformed `decisions_log` (non-array or wrong-shape items)
-					// would otherwise throw inside the Decisions tab / dashboard
-					// child-row renderer. Normalize defensively so a corrupt
-					// archive renders as empty-but-stable, not as a popup crash.
-					record.decisions_log = normalizeDecisionsLog(record.decisions_log);
-					issues[issue] = record;
-				}
-			}
-		}
+		const raw = parsed as Partial<MasterState> & { entries?: unknown; issues?: unknown };
+		const legacyIssues = readLegacyIssues(raw.issues);
+		const rawEntries = readEntriesRecord(raw.entries);
+		const entries = mergeLegacyIssuesIntoEntries(rawEntries, legacyIssues);
+		const issues = projectIssuesFromEntries(entries, legacyIssues);
 		return {
 			state: {
 				conflict_graph: normalizeConflictGraph(raw.conflict_graph),
+				entries,
 				issues,
 				merge_queue: Array.isArray(raw.merge_queue) ? raw.merge_queue.filter((v): v is string => typeof v === "string") : [],
 				owner: normalizeOwner(raw.owner),
@@ -366,6 +544,7 @@ export function readMasterState(path: string): { state?: MasterState; error?: st
 function emptyState(): MasterState {
 	return {
 		conflict_graph: { edges: [], computed_at: null },
+		entries: {},
 		issues: {},
 		merge_queue: [],
 		paused_for_user: null,
@@ -684,44 +863,46 @@ export function buildSnapshot(cwd: string, settings: SettingsLike, options?: { l
 	return buildSnapshotFromInputs({ projectRoot, stateDir, tmux }, settings, options);
 }
 
-// Normalization seam (BLOCKER #4 from review). The dashboard / render
-// code reads tracked issues via this helper instead of touching
-// `.issues` directly. When the registry-reframe lands (`.entries` /
-// `.tracked`), the migration changes only this seam, not the renderer.
-export function readTrackedEntries(state: MasterState | undefined): IssueRecord[] {
-	return sortedIssues(state);
+// Normalization seam. The dashboard / render code reads tracked sessions via
+// this helper instead of touching `.issues` directly. It prefers schema-1.1
+// `.entries`, then folds in legacy `.issues` that are not already represented.
+export function readTrackedEntries(state: MasterState | undefined): TrackedSession[] {
+	return sortedTrackedEntries(state);
+}
+
+export function findTrackedEntry(state: MasterState | undefined, id: string | undefined | null): TrackedSession | undefined {
+	const needle = typeof id === "string" ? id.trim() : "";
+	if (!needle) return undefined;
+	return readTrackedEntries(state).find((entry) => entry.id === needle || entry.issue === needle || entry.domain?.issue?.id === needle);
 }
 
 export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): boolean {
 	if (!snapshot) return false;
-	if (snapshot.master && !snapshot.master.terminated && Object.keys(snapshot.master.issues).length > 0) return true;
+	if (snapshot.master && !snapshot.master.terminated && readTrackedEntries(snapshot.master).length > 0) return true;
 	if (snapshot.daemon.pidAlive) return true;
 	return false;
 }
 
 // `terminated`: master flagged the session complete via `terminate.md § 5`
-// and `.issues` is still populated. The dashboard keeps rendering the
-// completed session (Overview / Decisions / Conflicts & merges all read
-// the preserved history) until the user dismisses the widget. Without
-// this third arm, terminated sessions fell into `inactive` and the
-// post-completion summary was hidden from the user (issue #17).
+// and tracked entries are still populated. The dashboard keeps rendering the
+// completed session history until the user dismisses the widget. Without this
+// third arm, terminated sessions fell into `inactive` and the post-completion
+// summary was hidden from the user (issue #17).
 // `archive-error`: a terminated archive was selected but every candidate
 // failed to parse. Renders an error banner with the diagnostic so the
 // user sees "state was lost" instead of a blank "no session" view
 // (BLOCK round 3).
 export type FlightdeckSessionStatus = "live" | "stale" | "inactive" | "terminated" | "archive-error";
 
-const TERMINAL_ISSUE_STATES = new Set<IssueState>(["merged", "aborted", "dead"]);
+const TERMINAL_TRACKED_STATES = new Set<TrackedState>(["merged", "aborted", "dead", "complete", "cancelled"]);
 
-// Most recent `last_polled_at` (ms epoch) across non-terminal issues. Used
+// Most recent `last_polled_at` (ms epoch) across non-terminal sessions. Used
 // by both the stale-state predicate and the stale-hint renderer.
 export function mostRecentPollMs(snapshot: FlightdeckSnapshot | undefined): number | undefined {
-	const issues = snapshot?.master?.issues;
-	if (!issues) return undefined;
 	let best: number | undefined;
-	for (const issue of Object.values(issues)) {
-		if (issue.state && TERMINAL_ISSUE_STATES.has(issue.state)) continue;
-		const t = Date.parse(issue.last_polled_at ?? "");
+	for (const entry of readTrackedEntries(snapshot?.master)) {
+		if (entry.state && TERMINAL_TRACKED_STATES.has(entry.state)) continue;
+		const t = Date.parse(entry.last_polled_at ?? "");
 		if (!Number.isFinite(t)) continue;
 		if (best === undefined || t > best) best = t;
 	}
@@ -729,7 +910,7 @@ export function mostRecentPollMs(snapshot: FlightdeckSnapshot | undefined): numb
 }
 
 // Classify a snapshot for the dashboard renderer. A state file with
-// non-terminal issues and no live daemon is treated as `stale` once the
+// non-terminal sessions and no live daemon is treated as `stale` once the
 // most recent poll is older than `staleAfterMin` minutes — past that
 // window the daemon is not coming back on its own and the dashboard would
 // otherwise render leftover data from a prior session. Pass
@@ -746,15 +927,15 @@ export function flightdeckSessionStatus(
 	// user otherwise can't tell a corrupted archive from a missing one.
 	if (snapshot.masterArchiveError) return "archive-error";
 	const master = snapshot.master;
-	const hasAnyIssues = !!master && Object.keys(master.issues).length > 0;
-	// terminated + issues preserved → read-only completion view. Issue #17
+	const hasAnySessions = readTrackedEntries(master).length > 0;
+	// terminated + sessions preserved → read-only completion view. Issue #17
 	// was the regression where `pane-registry remove-merged` ran inside
 	// `terminate.md § 5` and left `.issues == {}` on a terminated file, so
 	// this branch was unreachable and the dashboard collapsed.
-	if (master?.terminated && hasAnyIssues) return "terminated";
-	const hasLiveIssues = !!master && !master.terminated && hasAnyIssues;
+	if (master?.terminated && hasAnySessions) return "terminated";
+	const hasLiveSessions = !!master && !master.terminated && hasAnySessions;
 	const daemonAlive = snapshot.daemon.pidAlive;
-	if (!hasLiveIssues && !daemonAlive) return "inactive";
+	if (!hasLiveSessions && !daemonAlive) return "inactive";
 	if (daemonAlive) return "live";
 	const staleAfterMin = options?.staleAfterMin ?? 5;
 	if (staleAfterMin <= 0) return "live";
@@ -765,37 +946,51 @@ export function flightdeckSessionStatus(
 	return ageSec > staleAfterMin * 60 ? "stale" : "live";
 }
 
-// Merged issues, newest-merge-first by `last_polled_at`, used by the
+// Merged issue-mode sessions, newest-merge-first by `last_polled_at`, used by the
 // Conflicts & merges tab to render a stable "Merge history" panel that
 // outlives the live `merge_queue` (which drains as items land).
-export function mergedIssueHistory(state: MasterState | undefined): IssueRecord[] {
-	if (!state) return [];
-	const merged = Object.values(state.issues).filter((issue) => issue.state === "merged");
+export function mergedIssueHistory(state: MasterState | undefined): TrackedSession[] {
+	const merged = readTrackedEntries(state).filter((entry) => entry.kind === "issue" && entry.state === "merged");
 	merged.sort((a, b) => {
 		const at = Date.parse(a.last_polled_at ?? a.spawned_at ?? "");
 		const bt = Date.parse(b.last_polled_at ?? b.spawned_at ?? "");
 		if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return bt - at;
-		return a.issue.localeCompare(b.issue);
+		return sessionSortLabel(a).localeCompare(sessionSortLabel(b));
 	});
 	return merged;
 }
 
-export function sortedIssues(state: MasterState | undefined): IssueRecord[] {
+export function sortedTrackedEntries(state: MasterState | undefined): TrackedSession[] {
 	if (!state) return [];
-	return Object.values(state.issues).sort((a, b) => {
+	const normalizedEntries = normalizeSessionMap(state.entries);
+	const normalizedIssues = normalizeSessionMap(state.issues, true);
+	const entries = Object.keys(normalizedEntries).length > 0
+		? mergeLegacyIssuesIntoEntries(normalizedEntries, normalizedIssues)
+		: normalizedIssues;
+	return Object.values(entries).sort((a, b) => {
 		const aTs = a.spawned_at ?? "";
 		const bTs = b.spawned_at ?? "";
 		if (aTs && bTs && aTs !== bTs) return aTs.localeCompare(bTs);
-		return a.issue.localeCompare(b.issue);
+		return sessionSortLabel(a).localeCompare(sessionSortLabel(b));
 	});
 }
 
-export function flatDecisionsLog(state: MasterState | undefined, max = 200): Array<{ issue: string; ts: string; prompt_tag: string; answer: string }> {
-	if (!state) return [];
-	const out: Array<{ issue: string; ts: string; prompt_tag: string; answer: string }> = [];
-	for (const issue of Object.values(state.issues)) {
-		for (const entry of issue.decisions_log ?? []) {
-			out.push({ answer: entry.answer, issue: issue.issue, prompt_tag: entry.prompt_tag, ts: entry.ts });
+
+/** @deprecated Use sortedTrackedEntries/readTrackedEntries. */
+export function sortedIssues(state: MasterState | undefined): TrackedSession[] {
+	return sortedTrackedEntries(state);
+}
+
+function sessionSortLabel(entry: TrackedSession): string {
+	return (typeof entry.title === "string" && entry.title.trim()) || entry.id || entry.issue;
+}
+
+export function flatDecisionsLog(state: MasterState | undefined, max = 200): Array<{ issue: string; session: string; ts: string; prompt_tag: string; answer: string }> {
+	const out: Array<{ issue: string; session: string; ts: string; prompt_tag: string; answer: string }> = [];
+	for (const session of readTrackedEntries(state)) {
+		const label = sessionSortLabel(session);
+		for (const entry of session.decisions_log ?? []) {
+			out.push({ answer: entry.answer, issue: label, prompt_tag: entry.prompt_tag, session: label, ts: entry.ts });
 		}
 	}
 	out.sort((a, b) => b.ts.localeCompare(a.ts));

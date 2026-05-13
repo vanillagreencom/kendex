@@ -4,9 +4,9 @@
 // gone wrong, manual JSON tweak) should render as empty-but-stable, not
 // as a render-time exception that crashes the popup. These helpers
 // filter the two nested fields the renderers iterate without guarding:
-// `conflict_graph.edges` and per-issue `decisions_log`.
+// `conflict_graph.edges` and per-session `decisions_log`.
 
-import type { IssueRecord, MasterOwner } from "./state.js";
+import type { MasterOwner, TrackedSession } from "./state.js";
 
 export function normalizeConflictGraph(raw: unknown): { edges: Array<[string, string]>; computed_at: string | null } {
 	const empty = { computed_at: null, edges: [] as Array<[string, string]> };
@@ -24,9 +24,9 @@ export function normalizeConflictGraph(raw: unknown): { edges: Array<[string, st
 	return { computed_at, edges };
 }
 
-export function normalizeDecisionsLog(raw: unknown): IssueRecord["decisions_log"] {
+export function normalizeDecisionsLog(raw: unknown): TrackedSession["decisions_log"] {
 	if (!Array.isArray(raw)) return [];
-	const out: NonNullable<IssueRecord["decisions_log"]> = [];
+	const out: NonNullable<TrackedSession["decisions_log"]> = [];
 	for (const entry of raw) {
 		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
 		const e = entry as { ts?: unknown; prompt_tag?: unknown; answer?: unknown };

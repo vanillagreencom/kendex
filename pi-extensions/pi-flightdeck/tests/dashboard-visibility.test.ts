@@ -139,7 +139,7 @@ test("dashboardVisibility=owner suppresses when current pane differs from owner 
 	const lines = renderIfVisible("owner", "%99", "%42");
 	assert.deepEqual(lines, []);
 	assert.equal(isFlightdeckObserverPane(snapshot("%99", "%42")), true);
-	assert.match(renderObserverHeader(snapshot("%99", "%42"), plainTheme() as never, 120) ?? "", /Observed Flightdeck owned by %42/);
+	assert.match(renderObserverHeader(snapshot("%99", "%42"), plainTheme() as never, 120) ?? "", /Observer view \(owner: %42 · \/repo\)/);
 });
 
 test("dashboardVisibility=tmux-session renders in a non-owner pane", () => {

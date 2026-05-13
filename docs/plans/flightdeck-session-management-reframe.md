@@ -325,38 +325,39 @@ Validation:
 
 Purpose: UI reflects sessions first, issue metadata second.
 
-Status (2026-05-13): **PARTIAL**. PR #23 / commit `1fbed75` delivered the render normalization seam (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`), terminated archive fallback (`buildSnapshotFromInputs` + `readArchiveStrict`), and extracted `pi-extensions/pi-flightdeck/extensions/render-terminated.ts`. PR #25 delivered owner-aware persistent-widget gating and observer popup header. Sessions-first naming and kind badges remain.
+Status (2026-05-13): **DONE in fd-reframe-p5**. PR #23 / commit `1fbed75` delivered the render normalization seam (`pi-extensions/pi-flightdeck/extensions/state.ts::readTrackedEntries`), terminated archive fallback (`buildSnapshotFromInputs` + `readArchiveStrict`), and extracted `pi-extensions/pi-flightdeck/extensions/render-terminated.ts`. PR #25 delivered owner-aware persistent-widget gating. Phase 5 completed the sessions-first Pi UI/type rename, kind badges, popup observer wording, settings copy, and render coverage.
 
-1. **[PARTIAL]** Rename TypeScript UI types:
-   - **[REMAINING]** `IssueRecord` → `TrackedSession` or `TrackedEntry`.
-   - **[REMAINING]** `IssueState` → `TrackedState`.
-   - **[PARTIAL]** `MasterState.issues` access goes through normalized entries helper. Delivered in PR #23 for key render paths through `readTrackedEntries`; remaining work is full type rename and core schema alignment.
-2. **[REMAINING]** UI copy changes:
-   - `issues` → `sessions` / `tracked sessions`.
-   - `Dashboard max issues` → `Dashboard max sessions`.
-   - `Conflicts & merges` tab hides or renames when no issue-mode entries exist.
-   - Rows render optional PR/worktree/scope metadata only when present.
+1. **[DONE]** Rename TypeScript UI types:
+   - **[DONE]** `IssueRecord` → `TrackedSession` with a `@deprecated` alias kept for one release cycle.
+   - **[DONE]** `IssueState` → `TrackedState` with a `@deprecated` alias kept for one release cycle.
+   - **[DONE]** Render consumers use `readTrackedEntries`; the seam now prefers schema-1.1 `.entries` and folds legacy `.issues` without duplicates.
+2. **[DONE]** UI copy changes:
+   - `issues` → `sessions` / `tracked sessions` in user-facing dashboard/popup/settings copy except explicit issue-mode labels.
+   - `Dashboard max issues` → `Dashboard max sessions` while preserving the existing `dashboardMaxItems` storage key.
+   - `Conflicts & merges` tab renames to `Conflicts & merges (issue mode)` and renders an issue-mode hint when no `kind=issue` entries exist.
+   - Rows render optional PR/worktree/scope metadata only from `domain.issue`.
 3. **[DONE]** Add owner-aware render behavior:
    - Persistent widget shows only in owner by default.
    - Child panes remain suppressed.
-   - Observer popup shows `Observed Flightdeck owned by <owner.pane_id>` in peer panes.
-4. **[PARTIAL]** Update render details:
+   - Observer popup shows `Observer view (owner: %pane · cwd)` in peer panes.
+4. **[DONE]** Update render details:
    - **[DONE]** Post-termination render fragments were extracted to `pi-extensions/pi-flightdeck/extensions/render-terminated.ts` and archive fallback now preserves completed-session context. Delivered in PR #23.
-   - **[REMAINING]** Header counts: sessions by state, plus issue count when issue-mode entries exist.
-   - **[REMAINING]** Row label: `title` first, fallback `id`.
-   - **[REMAINING]** `kind` badge: `adhoc`, `issue`, `workflow`.
-   - **[REMAINING]** Issue-specific PR/worktree details in child rows only.
-5. **[REMAINING]** Update package settings, README, and extension manager descriptions.
+   - **[DONE]** Header counts show total sessions, state breakdown, and issue count only when issue-mode entries exist.
+   - **[DONE]** Row label uses `title` first and falls back to `id`.
+   - **[DONE]** `kind` badge: `AH` (`adhoc`), `ISS` (`issue`), `WF` (`workflow`).
+   - **[DONE]** Issue-specific PR/worktree/scope details render in child rows only when `domain.issue` is present.
+5. **[DONE]** Update package settings, README, and extension-manager descriptions in `pi-extensions/pi-flightdeck/package.json` / README.
 
 Validation:
 
-- Render tests/harness snapshots for:
+- **[DONE]** Render tests/harness snapshots for:
    - no sessions
    - one ad-hoc session
    - one issue session
    - mixed ad-hoc + issue
    - owner vs peer Pi session
    - stale daemon
+- **[DONE]** Verified `pi-extensions/pi-flightdeck` tests under clean and polluted Pi settings environments.
 
 ### Phase 6 — Documentation and repo guidance
 

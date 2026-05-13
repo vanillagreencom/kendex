@@ -41,9 +41,10 @@ export function renderObserverHeader(snapshot: FlightdeckSnapshot, theme: Theme,
 	if (!isFlightdeckObserverPane(snapshot)) return undefined;
 	const ownerPane = snapshot.master?.owner?.pane_id;
 	if (!ownerPane) return undefined;
+	const cwd = snapshot.master?.owner?.cwd ? ` ${theme.fg("dim", "·")} ${theme.fg("text", snapshot.master.owner.cwd)}` : "";
 	const current = snapshot.tmux.paneId ? ` ${theme.fg("dim", `(current ${snapshot.tmux.paneId})`)}` : "";
 	const discovery = typeof snapshot.master?.owner?.discovery_error === "string" && snapshot.master.owner.discovery_error.trim()
 		? ` ${theme.fg("dim", "·")} ${theme.fg("warning", "owner metadata warning")}`
 		: "";
-	return truncateToWidth(`${theme.fg("warning", "Observed Flightdeck")} ${theme.fg("dim", "owned by")} ${theme.fg("accent", ownerPane)}${current}${discovery}`, width, "");
+	return truncateToWidth(`${theme.fg("warning", "Observer view")} ${theme.fg("dim", "(owner:")} ${theme.fg("accent", ownerPane)}${cwd}${theme.fg("dim", ")")}${current}${discovery}`, width, "");
 }

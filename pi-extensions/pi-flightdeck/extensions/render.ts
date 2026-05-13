@@ -9,7 +9,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 
 type ThemeColor = Parameters<Theme["fg"]>[0];
 
-import type { IssueState } from "./state.js";
+import type { TrackedState } from "./state.js";
 
 export const ANSI_GREEN_FG = "\x1b[32m";
 export const ANSI_YELLOW_FG = "\x1b[33m";
@@ -135,33 +135,39 @@ export function formatShortcutHint(shortcut: string): string {
 		.join("+");
 }
 
-export function stateColor(state: IssueState | string | undefined): "success" | "warning" | "error" | "accent" | "muted" | "dim" {
+export function stateColor(state: TrackedState | string | undefined | null): "success" | "warning" | "error" | "accent" | "muted" | "dim" {
 	switch (state) {
+		case "complete": return "success";
 		case "merged": return "success";
+		case "ready": return "success";
 		case "merge-ready": return "accent";
 		case "submitting": return "accent";
 		case "prompting": return "warning";
 		case "waiting": return "warning";
+		case "cancelled": return "error";
 		case "aborted": return "error";
 		case "dead": return "error";
 		default: return "dim";
 	}
 }
 
-export function stateGlyph(state: IssueState | string | undefined): string {
+export function stateGlyph(state: TrackedState | string | undefined | null): string {
 	switch (state) {
+		case "complete": return "✓";
 		case "merged": return "✓";
+		case "ready": return "●";
 		case "merge-ready": return "▲";
 		case "submitting": return "◆";
 		case "prompting": return "?";
 		case "waiting": return COG_GLYPH;
+		case "cancelled": return "✗";
 		case "aborted": return "✗";
 		case "dead": return "×";
 		default: return "·";
 	}
 }
 
-export function stateBadge(theme: Theme, state: IssueState | string | undefined): string {
+export function stateBadge(theme: Theme, state: TrackedState | string | undefined | null): string {
 	const text = state ?? "?";
 	return theme.fg(stateColor(state), `${stateGlyph(state)} ${text}`);
 }

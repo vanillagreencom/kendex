@@ -1,0 +1,226 @@
+// Phase 5 sessions-first render coverage. Compact render assertions act as
+// snapshots without pinning ANSI/color noise: no sessions, ad-hoc, issue,
+// mixed mode, owner vs peer popup header, and stale daemon state.
+
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { afterEach, beforeEach } from "node:test";
+
+import { dashboardVisibleInPane, renderObserverHeader } from "../extensions/dashboard-visibility.js";
+import {
+	makeInitialPopupState,
+	renderConflictsTab,
+	renderDashboardLines,
+	renderOverviewTab,
+	renderStaleHintLine,
+	type DashboardState,
+} from "../extensions/flightdeck.js";
+import { flightdeckSessionStatus, type FlightdeckSnapshot, type TrackedSession } from "../extensions/state.js";
+
+type ThemeLike = {
+	fg(_color: string, text: string): string;
+	bg(_color: string, text: string): string;
+	bold(text: string): string;
+	italic(text: string): string;
+	underline(text: string): string;
+	inverse(text: string): string;
+	strikethrough(text: string): string;
+};
+
+function plainTheme(): ThemeLike {
+	const passthrough = (_c: string, t: string) => t;
+	const wrap = (t: string) => t;
+	return {
+		bg: passthrough,
+		bold: wrap,
+		fg: passthrough,
+		inverse: wrap,
+		italic: wrap,
+		strikethrough: wrap,
+		underline: wrap,
+	};
+}
+
+function stripAnsi(s: string): string {
+	return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x07/g, "");
+}
+
+function joinRendered(lines: string[]): string {
+	return lines.map(stripAnsi).join("\n");
+}
+
+const SAVED_ENV: Record<string, string | undefined> = {};
+let ENV_PI_DIR = "";
+let ENV_HOME = "";
+let ENV_CWD = "";
+
+beforeEach(() => {
+	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE"]) {
+		SAVED_ENV[key] = process.env[key];
+	}
+	ENV_PI_DIR = mkdtempSync(join(tmpdir(), "pi-flightdeck-sessions-piconf-"));
+	ENV_HOME = mkdtempSync(join(tmpdir(), "pi-flightdeck-sessions-home-"));
+	ENV_CWD = mkdtempSync(join(ENV_HOME, "isolated-cwd-"));
+	process.env.PI_CODING_AGENT_DIR = ENV_PI_DIR;
+	process.env.HOME = ENV_HOME;
+	process.env.XDG_CONFIG_HOME = ENV_HOME;
+	process.env.USERPROFILE = ENV_HOME;
+});
+
+afterEach(() => {
+	for (const [key, value] of Object.entries(SAVED_ENV)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	if (ENV_PI_DIR) rmSync(ENV_PI_DIR, { force: true, recursive: true });
+	if (ENV_HOME) rmSync(ENV_HOME, { force: true, recursive: true });
+});
+
+function adhoc(overrides: Partial<TrackedSession> = {}): TrackedSession {
+	return {
+		decisions_log: [],
+		harness: "pi",
+		id: "adhoc-1",
+		issue: "adhoc-1",
+		kind: "adhoc",
+		last_polled_at: "2026-05-13T00:10:00Z",
+		pane_id: "%21",
+		pane_target: "HT:adhoc.0",
+		spawned_at: "2026-05-13T00:00:00Z",
+		state: "ready",
+		title: "Explore docs",
+		...overrides,
+	};
+}
+
+function issue(overrides: Partial<TrackedSession> = {}): TrackedSession {
+	return {
+		decisions_log: [{ answer: "merge", prompt_tag: "merge-now", ts: "2026-05-13T00:12:00Z" }],
+		domain: {
+			issue: {
+				id: "CC-777",
+				merge_commit: "abcdef1234567890",
+				pr_number: 88,
+				scope_files_actual: 3,
+				scope_files_declared: 2,
+				worktree: "/repo/wt/CC-777",
+			},
+		},
+		harness: "claude",
+		id: "CC-777",
+		issue: "CC-777",
+		kind: "issue",
+		last_polled_at: "2026-05-13T00:12:00Z",
+		pane_id: "%22",
+		pane_target: "HT:CC-777.0",
+		spawned_at: "2026-05-13T00:01:00Z",
+		state: "merge-ready",
+		title: "Fix bug",
+		...overrides,
+	};
+}
+
+function snapshot(entries: TrackedSession[], overrides: Partial<FlightdeckSnapshot> = {}): FlightdeckSnapshot {
+	const entryMap = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
+	return {
+		daemon: {
+			heartbeatAgeSec: 1,
+			heartbeatExists: true,
+			pid: 1234,
+			pidAlive: true,
+			stateDir: "/tmp/pi-flightdeck-daemon",
+			subscriberCounts: { claude: 0, codex: 0, opencode: 0, pi: 0 },
+			subscribers: [],
+		},
+		master: {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: entryMap,
+			issues: Object.fromEntries(entries.filter((entry) => entry.kind === "issue").map((entry) => [entry.domain?.issue?.id ?? entry.id, entry])),
+			merge_queue: entries.some((entry) => entry.kind === "issue") ? ["CC-777"] : [],
+			owner: { cwd: "/repo", harness: "pi", pane_id: "%1" },
+			paused_for_user: null,
+			session_id: "HT",
+			started_at: "2026-05-13T00:00:00Z",
+			terminated: false,
+		},
+		pendingEvents: [],
+		stateDir: "/tmp/pi-flightdeck-daemon",
+		tmux: { paneId: "%1", sessionId: "$1", sessionKey: "s1", sessionName: "HT" },
+		wakeEvents: [],
+		...overrides,
+	};
+}
+
+function dashboardText(entries: TrackedSession[], state: DashboardState = "compact"): string {
+	return joinRendered(renderDashboardLines(snapshot(entries), plainTheme() as never, 140, state, ENV_CWD, new Map()));
+}
+
+test("no sessions overview uses sessions-first empty copy", () => {
+	const text = joinRendered(renderOverviewTab(snapshot([]), makeInitialPopupState(), 120, plainTheme() as never, 30, new Map()));
+	assert.match(text, /No sessions tracked yet/);
+	assert.doesNotMatch(text, /No issues tracked/);
+});
+
+test("one ad-hoc session renders AH badge, title-first label, and no issue metadata", () => {
+	const text = dashboardText([adhoc()]);
+	assert.match(text, /1 session/);
+	assert.match(text, /AH\s+Explore docs/);
+	assert.match(text, /ready/);
+	assert.doesNotMatch(text, /issue/);
+	assert.doesNotMatch(text, /PR#/);
+	assert.doesNotMatch(text, /wt\s+/);
+});
+
+test("one issue session renders ISS badge and issue-domain child metadata", () => {
+	const text = dashboardText([issue()], "expanded");
+	assert.match(text, /1 session/);
+	assert.match(text, /1 issue/);
+	assert.match(text, /ISS\s+Fix bug/);
+	assert.match(text, /PR#88/);
+	assert.match(text, /wt\s+\/repo\/wt\/CC-777/);
+	assert.match(text, /scope 3\/2/);
+});
+
+test("mixed ad-hoc plus issue sessions show session total plus issue count", () => {
+	const text = dashboardText([adhoc(), issue()]);
+	assert.match(text, /2 sessions/);
+	assert.match(text, /1 issue/);
+	assert.match(text, /AH\s+Explore docs/);
+	assert.match(text, /ISS\s+Fix bug/);
+	assert.match(text, /PR#88/);
+	const conflicts = joinRendered(renderConflictsTab(snapshot([adhoc(), issue()]), makeInitialPopupState(), 120, plainTheme() as never));
+	assert.match(conflicts, /Merge queue/);
+	assert.doesNotMatch(conflicts, /No issue-mode sessions are tracked/);
+});
+
+test("Conflicts tab is issue-mode-labeled when no issue sessions exist", () => {
+	const text = joinRendered(renderConflictsTab(snapshot([adhoc()]), makeInitialPopupState(), 120, plainTheme() as never));
+	assert.match(text, /Conflicts & merges \(issue mode\)/);
+	assert.match(text, /No issue-mode sessions are tracked/);
+});
+
+test("owner pane renders dashboard while peer pane gets observer popup header", () => {
+	const snap = snapshot([adhoc()], { tmux: { paneId: "%2", sessionId: "$1", sessionKey: "s1", sessionName: "HT" } });
+	assert.equal(dashboardVisibleInPane({ currentPaneId: "%1", ownerPaneId: "%1", visibility: "owner" }), true);
+	assert.equal(dashboardVisibleInPane({ currentPaneId: "%2", ownerPaneId: "%1", visibility: "owner" }), false);
+	const header = stripAnsi(renderObserverHeader(snap, plainTheme() as never, 120) ?? "");
+	assert.match(header, /Observer view \(owner: %1 · \/repo\)/);
+});
+
+test("stale daemon renders stale session-state copy", () => {
+	const snap = snapshot([adhoc({ last_polled_at: "2026-05-13T00:00:00Z" })], {
+		daemon: {
+			heartbeatExists: false,
+			pidAlive: false,
+			stateDir: "/tmp/pi-flightdeck-daemon",
+			subscriberCounts: { claude: 0, codex: 0, opencode: 0, pi: 0 },
+			subscribers: [],
+		},
+	});
+	assert.equal(flightdeckSessionStatus(snap, { now: Date.parse("2026-05-13T00:30:00Z") }), "stale");
+	const text = joinRendered(renderStaleHintLine(snap, plainTheme() as never, 120));
+	assert.match(text, /stale session state/);
+	assert.doesNotMatch(text, /issue tree/);
+});

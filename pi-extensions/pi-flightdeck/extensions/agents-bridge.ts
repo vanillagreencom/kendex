@@ -1,7 +1,7 @@
 /**
  * Cross-extension bridge to pi-agents-tmux. Other extensions register an
  * object on `globalThis[Symbol.for("vstack.pi.agents")]` exposing per-pane
- * usage stats; we look it up at render time so flightdeck issue rows can
+ * usage stats; we look it up at render time so flightdeck session rows can
  * surface the same cost/turns/tokens that pi-agents-tmux's dashboard shows.
  *
  * Bridge contract is duck-typed across package boundaries so the two
@@ -45,12 +45,12 @@ export function getAgentsBridge(): AgentsBridge | undefined {
  * Resolve tmux pane-target strings (`session:window.pane`) to tmux pane ids
  * (`%N`) via a single `tmux list-panes -a` call. Empty Map on tmux failure.
  *
- * Caching: the result is only useful for joining tracked-issue
+ * Caching: the result is only useful for joining tracked-session
  * pane_target strings against pi-agents-tmux's stats bridge. Refresh
- * cadence is tied to the caller's `issueKey` (joined string of
- * pane_targets) so a poll tick that sees the same tracked-issue set
+ * cadence is tied to the caller's cache key (joined string of
+ * pane_targets) so a poll tick that sees the same tracked-session set
  * reuses the cached map. A coarse TTL guards against drift when a pane
- * dies / is replaced inside an unchanged issue set (perf review
+ * dies / is replaced inside an unchanged session set (perf review
  * finding #2).
  */
 let PANE_MAP_CACHE: { map: Map<string, string>; key: string; expires: number } | undefined;

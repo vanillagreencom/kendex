@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-flightdeck",
   "version": "0.1.0",
-  "description": "Read-only mission-control dashboard for the flightdeck skill: live overview of tracked issues, daemon health, decisions log, and a prominent pause-banner when master is awaiting the user.",
+  "description": "Read-only session-control dashboard for the flightdeck skill: live overview of tracked sessions, daemon health, decisions log, and a prominent pause-banner when master is awaiting the user.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -33,7 +33,7 @@
         {
           "key": "popupShortcut",
           "label": "Popup shortcut",
-          "description": "Keyboard shortcut that opens the full flightdeck mission-control popup. Use none to disable.",
+          "description": "Keyboard shortcut that opens the full flightdeck session-control popup. Use none to disable.",
           "type": "string",
           "default": "f6",
           "category": "Keyboard",
@@ -89,8 +89,8 @@
         },
         {
           "key": "dashboardMaxItems",
-          "label": "Dashboard max issues",
-          "description": "Maximum issue rows shown in the persistent dashboard widget.",
+          "label": "Dashboard max sessions",
+          "description": "Maximum tracked-session rows shown in the persistent dashboard widget. Existing dashboardMaxItems settings continue to apply; only the label changed.",
           "type": "number",
           "default": 8,
           "category": "Dashboard",
@@ -99,7 +99,7 @@
         {
           "key": "dashboardStaleAfterMin",
           "label": "Dashboard stale-after (min)",
-          "description": "Treat the dashboard as stale (suppress issue tree, show a one-line hint) when the daemon is dead AND the most recent issue poll is older than this many minutes. Set 0 to disable stale detection and always render leftover state as live.",
+          "description": "Treat the dashboard as stale (suppress session tree, show a one-line hint) when the daemon is dead AND the most recent session poll is older than this many minutes. Set 0 to disable stale detection and always render leftover state as live.",
           "type": "number",
           "default": 5,
           "category": "Dashboard",
@@ -163,7 +163,7 @@
         {
           "key": "conversationsHistory",
           "label": "Conversations turns kept",
-          "description": "Number of recent assistant turns retained per pane in the Conversations tab.",
+          "description": "Number of recent assistant turns retained per pane in the Conversations tab. Rows resolve to tracked-session titles when available.",
           "type": "number",
           "default": 5,
           "category": "Popup",
@@ -207,7 +207,7 @@
         {
           "kind": "command",
           "name": "/flightdeck",
-          "description": "Open the flightdeck mission-control popup."
+          "description": "Open the flightdeck session-control popup."
         },
         {
           "kind": "command",
