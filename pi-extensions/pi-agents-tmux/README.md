@@ -17,6 +17,18 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Bg agents use fresh one-shot lanes by default; explicit `sessionKey` opts into memory reuse with a context-budget guard.
 - Large parallel calls are auto-batched internally, and pane idle waits are first-class via `wait_for_subagent_idle`.
 
+## Closes parts of issue #27
+
+This package implements the pi-agents-tmux portions of vanillagreencom/vstack#27:
+
+- #1 — fresh one-shot bg subagent sessions by default.
+- #2 — distinct ephemeral lanes for same-agent parallel and chain items.
+- #3 — one retry on `context_length_exceeded` with structured attempt details.
+- #6 — reused-session context-budget preflight guard.
+- #10 — inventory-aware launch guard for single, parallel, and chain dispatch.
+- #12 — first-class pane idle wait via `wait_for_subagent_idle` / `waitFor: "idle"`.
+- #13 — transparent auto-batching above the internal parallel cap.
+
 ## Install
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-agents-tmux):
@@ -164,7 +176,7 @@ Wait for a pane agent to become idle without shell polling:
 { "agent": "iced", "timeoutMs": 30000 }
 ```
 
-Use the `wait_for_subagent_idle` tool for this. `get_subagent_result` also accepts `waitFor: "idle"` for compatibility with existing result lookups.
+Use the `wait_for_subagent_idle` tool for this. It reports `idle-after-busy` only after observing the pane leave idle first; if the pane never becomes busy it returns `never-busy` instead of a false completion. `get_subagent_result` also accepts `waitFor: "idle"` for compatibility with existing result lookups.
 
 Use `steer_subagent` for mid-run correction. It targets `pi-session-bridge` when available; otherwise it queues a steering note for the pane to read when idle.
 
@@ -188,7 +200,7 @@ All settings live in the extension manager under **Agents (tmux)**.
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 | Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |
-| Reused session budget policy | `refuse` (default) blocks near-limit reused lanes; `warn` logs and continues. |
+| Reused session budget policy | `refuse-and-warn` (default) blocks near-limit reused lanes with a warning; `warn` logs and continues; `compact-then-resume` archives/truncates the lane before launch. |
 | Reused session context limit tokens | Context limit used by the session-file-size heuristic. |
 
 ### Rendering

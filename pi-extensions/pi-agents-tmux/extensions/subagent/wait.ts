@@ -6,6 +6,7 @@ export interface BridgeStateSnapshot {
 export interface IdleTransitionResult {
 	lastState?: BridgeStateSnapshot;
 	samples: number;
+	status: "idle-after-busy" | "never-busy" | "timeout";
 	timedOut: boolean;
 	transitioned: boolean;
 }
@@ -28,18 +29,20 @@ export async function waitForIdleTransition(
 ): Promise<IdleTransitionResult> {
 	const deadline = Date.now() + Math.max(0, Math.floor(timeoutMs));
 	const interval = Math.max(50, Math.floor(pollMs));
-	let previousIdle = false;
+	let observedBusy = false;
 	let samples = 0;
 	let lastState: BridgeStateSnapshot | undefined;
 	while (true) {
 		lastState = await readState();
 		samples += 1;
 		const currentIdle = lastState?.isIdle === true;
-		if (currentIdle && previousIdle !== true) {
-			return { lastState, samples, timedOut: false, transitioned: true };
+		if (currentIdle && observedBusy) {
+			return { lastState, samples, status: "idle-after-busy", timedOut: false, transitioned: true };
 		}
-		if (typeof lastState?.isIdle === "boolean") previousIdle = lastState.isIdle;
-		if (Date.now() >= deadline) return { lastState, samples, timedOut: true, transitioned: false };
+		if (lastState?.isIdle === false) observedBusy = true;
+		if (Date.now() >= deadline) {
+			return { lastState, samples, status: observedBusy ? "timeout" : "never-busy", timedOut: true, transitioned: false };
+		}
 		await new Promise((resolve) => setTimeout(resolve, Math.min(interval, Math.max(0, deadline - Date.now()))));
 	}
 }

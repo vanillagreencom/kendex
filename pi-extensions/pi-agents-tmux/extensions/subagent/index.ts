@@ -51,9 +51,9 @@ import {
 	wrappedText,
 } from "./format.js";
 import {
-	assignEphemeralSessionKeys,
 	formatInventoryValidationError,
-	mapInBatchesWithConcurrencyLimit,
+	runChainDispatch,
+	runParallelDispatch,
 	validateAgentInventory,
 	type AgentInventory,
 } from "./dispatch.js";
@@ -96,12 +96,9 @@ import {
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
 import {
-	cloneMessagesForDetails,
 	prepareSingleResultForReturn,
 	runSingleAgent,
-	truncateForDetails,
 	detailsWithTruncation,
-	type OnUpdateCallback,
 } from "./runner.js";
 import {
 	dashboardDefaultCollapsed,
@@ -154,7 +151,6 @@ import {
 	type GetSubagentResultDetails,
 	ICONS,
 	INSTALL_SYMBOL,
-	MAX_CONCURRENCY,
 	MAX_PARALLEL_TASKS,
 	type PaneCompletionMessageDetails,
 	type PaneRegistry,
@@ -1386,21 +1382,21 @@ export default function (pi: ExtensionAPI) {
 		if (!entry) {
 			return {
 				text: `No persistent pane registry entry for ${agentName} in runtime ${runtimeRoot}.`,
-				details: { agent: agentName, runtimeRoot, samples: 0, timedOut: false, transitioned: false },
+				details: { agent: agentName, runtimeRoot, samples: 0, status: "timeout", timedOut: false, transitioned: false },
 				isError: true,
 			};
 		}
 		if (!paneSessionBelongsToRuntime(runtimeRoot, entry)) {
 			return {
 				text: `Refusing to wait for ${agentName}: pane session file is outside this runtime. Session: ${entry.sessionFile}. Runtime: ${runtimeRoot}`,
-				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, status: "timeout", timedOut: false, transitioned: false },
 				isError: true,
 			};
 		}
 		if (!(await paneExists(entry.paneId))) {
 			return {
 				text: `Agent ${agentName} is not live.`,
-				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, status: "timeout", timedOut: false, transitioned: false },
 				isError: true,
 			};
 		}
@@ -1410,7 +1406,7 @@ export default function (pi: ExtensionAPI) {
 		if (!bridgeBin || targetArgs.length === 0) {
 			return {
 				text: `No live pi-bridge target for ${agentName}; cannot wait for isIdle transition.`,
-				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, timedOut: false, transitioned: false },
+				details: { agent: agentName, paneId: entry.paneId, runtimeRoot, samples: 0, sessionFile: entry.sessionFile, status: "timeout", timedOut: false, transitioned: false },
 				isError: true,
 			};
 		}
@@ -1428,13 +1424,16 @@ export default function (pi: ExtensionAPI) {
 			runtimeRoot,
 			samples: wait.samples,
 			sessionFile: entry.sessionFile,
+			status: wait.status,
 			timedOut: wait.timedOut,
 			transitioned: wait.transitioned,
 		};
 		return {
-			text: wait.transitioned
-				? `${agentName} is idle (pane ${entry.paneId}).`
-				: `Timed out waiting for ${agentName} idle transition after ${timeoutMs}ms.`,
+			text: wait.status === "idle-after-busy"
+				? `${agentName} is idle after busy transition (pane ${entry.paneId}).`
+				: wait.status === "never-busy"
+					? `${agentName} never became busy before idle wait timeout (${timeoutMs}ms).`
+					: `Timed out waiting for ${agentName} idle transition after it became busy (${timeoutMs}ms).`,
 			details,
 			isError: !wait.transitioned,
 		};
@@ -1759,6 +1758,7 @@ export default function (pi: ExtensionAPI) {
 			"Delegate tasks to specialized agents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
 			"Bg agents use fresh one-shot sessions by default; pass sessionKey only when you want continuity.",
+			"Agent names are checked against selected inventory before launch; unknown names fail with available agents.",
 			`Parallel calls above ${MAX_PARALLEL_TASKS} items are internally batched; callers do not need to split requests.`,
 			`Results are truncated by default to ${DEFAULT_RESULT_MAX_LINES} lines or ${formatSize(DEFAULT_RESULT_MAX_BYTES)}; full oversized output is saved under the session runtime when enabled.`,
 			'Default agent scope is "project" (.pi/agents plus .claude/agents compatibility).',
@@ -1830,254 +1830,46 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.chain && params.chain.length > 0) {
-				const chainSteps = assignEphemeralSessionKeys(params.chain as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>);
-				const results: SingleResult[] = [];
-				let previousOutput = "";
-
-				for (let i = 0; i < chainSteps.length; i++) {
-					const step = chainSteps[i];
-					const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
-
-					const chainUpdate: OnUpdateCallback | undefined = onUpdate
-						? (partial) => {
-								const currentResult = partial.details?.results[0];
-								if (currentResult) {
-									const allResults = [...results, currentResult].map((result) => {
-										const rawOutput = getFinalOutput(result.messages);
-										return {
-											...result,
-											messages: cloneMessagesForDetails(
-												result.messages,
-												rawOutput ? truncateForDetails(rawOutput, ctx.cwd) : undefined,
-												ctx.cwd,
-											),
-										};
-									});
-									onUpdate({
-										content: partial.content,
-										details: makeDetails("chain")(allResults),
-									});
-								}
-							}
-						: undefined;
-
-					const stepAgent = agents.find((agent) => agent.name === step.agent);
-					const result = stepAgent?.pane
-						? await runPersistentPaneAgent(
-								ctx.cwd,
-								runtimeRoot,
-								parentSessionId,
-								agents,
-								step.agent,
-								taskWithContext,
-								step.cwd,
-								parentModel,
-								parentThinkingLevel,
-								i + 1,
-								pi,
-								params.forceSpawn ?? false,
-								params.resumeSession,
-								removeDashboardAgent,
-							)
-						: await runSingleAgent(
-								ctx.cwd,
-								runtimeRoot,
-								agents,
-								step.agent,
-								taskWithContext,
-								step.cwd,
-								parentModel,
-								parentThinkingLevel,
-								i + 1,
-								pi,
-								signal,
-								chainUpdate,
-								makeDetails("chain"),
-								step.sessionKey,
-							);
-					results.push(result);
-					if (!stepAgent?.pane) {
-						updateDashboard({
-							agent: result.agent,
-							kind: "oneshot",
-							message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
-							model: result.model,
-							status: result.exitCode === 0 ? "completed" : "failed",
-							task: result.task,
-							taskId: result.taskId ?? `${result.agent}-step-${i + 1}`,
-							transcriptPath: result.transcriptPath,
-							updatedAt: new Date().toISOString(),
-							usage: result.usage,
-						});
-					}
-
-					const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-					if (isError) {
-						const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
-						const preparedResults = await Promise.all(
-							results.map((candidate, index) =>
-								prepareSingleResultForReturn(
-									candidate,
-									runtimeRoot,
-									ctx.cwd,
-									`chain-step-${candidate.step ?? index + 1}`,
-									candidate === result ? errorMsg : undefined,
-								),
-							),
-						);
-						const failed = preparedResults[preparedResults.length - 1];
-						failed.result.errorMessage = failed.text || errorMsg;
-						const details = makeDetails("chain")(preparedResults.map((prepared) => prepared.result));
-						return {
-							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${failed.text || "(no output)"}` }],
-							details: detailsWithTruncation(details, failed),
-							isError: true,
-						};
-					}
-					previousOutput = getFinalOutput(result.messages);
-				}
-				const preparedResults = await Promise.all(
-					results.map((result, index) =>
-						prepareSingleResultForReturn(result, runtimeRoot, ctx.cwd, `chain-step-${result.step ?? index + 1}`),
-					),
-				);
-				const last = preparedResults[preparedResults.length - 1];
-				const details = makeDetails("chain")(preparedResults.map((prepared) => prepared.result));
-				return {
-					content: [{ type: "text", text: last.text || "(no output)" }],
-					details: detailsWithTruncation(details, last),
-				};
+				return runChainDispatch({
+					agents,
+					chain: params.chain as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>,
+					cwd: ctx.cwd,
+					forceSpawn: params.forceSpawn ?? false,
+					makeDetails,
+					onUpdate,
+					parentModel,
+					parentSessionId,
+					parentThinkingLevel,
+					pi,
+					removeDashboardAgent,
+					resumeSession: params.resumeSession,
+					runtimeRoot,
+					signal,
+					updateDashboard,
+				});
 			}
 
 			if (params.tasks && params.tasks.length > 0) {
-				const parallelTasks = assignEphemeralSessionKeys(params.tasks as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>);
-				const parallelBatchSize = Math.max(1, Math.floor(settingNumber("maxParallelTasks", MAX_PARALLEL_TASKS, ctx.cwd)));
-
-				const allResults: SingleResult[] = new Array(params.tasks.length);
-				for (let i = 0; i < params.tasks.length; i++) {
-					allResults[i] = {
-						agent: parallelTasks[i].agent,
-						agentSource: "unknown",
-						task: parallelTasks[i].task,
-						exitCode: -1,
-						messages: [],
-						stderr: "",
-						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-					};
-				}
-
-				const emitParallelUpdate = () => {
-					if (onUpdate) {
-						const running = allResults.filter((r) => r.exitCode === -1).length;
-						const done = allResults.filter((r) => r.exitCode !== -1).length;
-						const updateResults = allResults.map((result) => {
-							const rawOutput = getFinalOutput(result.messages);
-							return {
-								...result,
-								messages: cloneMessagesForDetails(
-									result.messages,
-									rawOutput ? truncateForDetails(rawOutput, ctx.cwd) : undefined,
-									ctx.cwd,
-								),
-							};
-						});
-						onUpdate({
-							content: [{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` }],
-							details: makeDetails("parallel")(updateResults),
-						});
-					}
-				};
-
-				const maxConcurrency = Math.max(1, Math.floor(settingNumber("maxConcurrency", MAX_CONCURRENCY, ctx.cwd)));
-				const results = await mapInBatchesWithConcurrencyLimit(parallelTasks, parallelBatchSize, maxConcurrency, async (t: { agent: string; task: string; cwd?: string; sessionKey?: string }, index) => {
-					const updateOneshotDashboard = (item: SingleResult) => {
-						updateDashboard({
-							agent: item.agent,
-							kind: "oneshot",
-							message: oneLinePreview(getFinalOutput(item.messages), 120) || item.task,
-							model: item.model,
-							status: item.exitCode === -1 ? "running" : item.exitCode === 0 ? "completed" : "failed",
-							task: item.task,
-							taskId: item.taskId ?? `${item.agent}-${index}`,
-							transcriptPath: item.transcriptPath,
-							updatedAt: new Date().toISOString(),
-							usage: item.usage,
-						});
-					};
-					const taskAgent = agents.find((agent) => agent.name === t.agent);
-					const result = taskAgent?.pane
-						? await runPersistentPaneAgent(
-								ctx.cwd,
-								runtimeRoot,
-								parentSessionId,
-								agents,
-								t.agent,
-								t.task,
-								t.cwd,
-								parentModel,
-								parentThinkingLevel,
-								undefined,
-								pi,
-								params.forceSpawn ?? false,
-								params.resumeSession,
-								removeDashboardAgent,
-							)
-						: await runSingleAgent(
-								ctx.cwd,
-								runtimeRoot,
-								agents,
-								t.agent,
-								t.task,
-								t.cwd,
-								parentModel,
-								parentThinkingLevel,
-								undefined,
-								pi,
-								signal,
-								(partial) => {
-									if (partial.details?.results[0]) {
-										allResults[index] = partial.details.results[0];
-										updateOneshotDashboard(partial.details.results[0]);
-										emitParallelUpdate();
-									}
-								},
-								makeDetails("parallel"),
-								t.sessionKey,
-							);
-					allResults[index] = result;
-					if (!taskAgent?.pane) updateOneshotDashboard(result);
-					emitParallelUpdate();
-					return result;
+				return runParallelDispatch({
+					agents,
+					cwd: ctx.cwd,
+					forceSpawn: params.forceSpawn ?? false,
+					makeDetails,
+					onUpdate,
+					parentModel,
+					parentSessionId,
+					parentThinkingLevel,
+					pi,
+					removeDashboardAgent,
+					resumeSession: params.resumeSession,
+					runtimeRoot,
+					signal,
+					tasks: params.tasks as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>,
+					updateDashboard,
 				});
-
-				const successCount = results.filter((r) => r.exitCode === 0).length;
-				const perResultLimits = (() => {
-					const total = { maxBytes: Math.max(1, Math.floor(settingNumber("resultMaxBytes", DEFAULT_RESULT_MAX_BYTES, ctx.cwd))), maxLines: Math.max(1, Math.floor(settingNumber("resultMaxLines", DEFAULT_RESULT_MAX_LINES, ctx.cwd))) };
-					const count = Math.max(1, results.length);
-					return { maxBytes: Math.max(1024, Math.floor(total.maxBytes / count)), maxLines: Math.max(40, Math.floor(total.maxLines / count)) };
-				})();
-				const preparedResults = await Promise.all(
-					results.map((result, index) =>
-						prepareSingleResultForReturn(
-							result,
-							runtimeRoot,
-							ctx.cwd,
-							`parallel-${index + 1}-${result.agent}`,
-							undefined,
-							perResultLimits,
-						),
-					),
-				);
-				const sections = preparedResults.map((prepared) => {
-					const r = prepared.result;
-					const status = r.exitCode === 0 ? "completed" : r.exitCode === -1 ? "running" : "failed";
-					return `## ${r.agent} (${status})\n${prepared.text || "(no output)"}`;
-				});
-				return {
-					content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded\n\n${sections.join("\n\n")}` }],
-					details: makeDetails("parallel")(preparedResults.map((prepared) => prepared.result)),
-				};
 			}
+
+			// TODO(structure): move single-dispatch into dispatch.ts next.
 
 			if (params.agent && params.task) {
 				const agent = agents.find((candidate) => candidate.name === params.agent);

@@ -80,13 +80,14 @@
         {
           "key": "reusedSessionBudgetPolicy",
           "label": "Reused session budget policy",
-          "description": "Behavior when an explicit bg sessionKey is near context limit. refuse blocks launch; warn allows launch with a warning.",
+          "description": "Behavior when an explicit bg sessionKey is near context limit. refuse-and-warn blocks launch with a warning; warn allows launch with a warning; compact-then-resume archives/truncates the lane before launch.",
           "type": "enum",
           "enumValues": [
-            "refuse",
-            "warn"
+            "refuse-and-warn",
+            "warn",
+            "compact-then-resume"
           ],
-          "default": "refuse",
+          "default": "refuse-and-warn",
           "category": "Execution",
           "apply": "live"
         },
@@ -276,7 +277,7 @@
         {
           "kind": "tool",
           "name": "subagent",
-          "description": "Delegate tasks to isolated Pi agents."
+          "description": "Delegate tasks to isolated Pi agents. Bg calls use fresh one-shot sessions unless sessionKey is explicit; unknown agent names are rejected with available inventory; parallel calls above the internal cap are auto-batched."
         },
         {
           "kind": "tool",

@@ -30,6 +30,8 @@ import {
 } from "./settings.js";
 import {
 	guardReusedSessionBudget,
+	isContextLengthExceededEnvelope,
+	isContextLengthExceededText,
 	resolveBgSession,
 	resultHasContextLengthExceeded,
 	summarizeAttempt,
@@ -352,9 +354,11 @@ export async function runSingleAgent(
 	const firstError = first.errorMessage || first.stderr || "first attempt failed without output";
 	const combinedError = [
 		`Context length exceeded for ${agent.name}; retry with fresh session also failed.`,
+		first.errorEnvelope ? `First raw error envelope: ${first.errorEnvelope}` : "",
+		retry.errorEnvelope ? `Retry raw error envelope: ${retry.errorEnvelope}` : "",
 		`First attempt (${first.sessionKey ?? firstSession.key}) exit ${first.exitCode}: ${firstError}`,
 		`Retry attempt (${retry.sessionKey ?? retrySession.key}) exit ${retry.exitCode}: ${retryError}`,
-	].join("\n");
+	].filter(Boolean).join("\n");
 	retry.exitCode = retry.exitCode === 0 ? 1 : retry.exitCode;
 	retry.errorMessage = combinedError;
 	retry.stderr = [warning, combinedError, retry.stderr].filter(Boolean).join("\n");
@@ -504,10 +508,13 @@ async function runSingleAgentAttempt(
 					emitUpdate();
 				}
 
-				if (event.type === "error") {
+				const hasContextOverflowEnvelope = isContextLengthExceededEnvelope(event) || isContextLengthExceededText(line);
+				if (event.type === "error" || hasContextOverflowEnvelope) {
+					const rawEnvelope = line;
 					const errorText = typeof event.error === "string" ? event.error : JSON.stringify(event.error ?? event);
+					currentResult.errorEnvelope = rawEnvelope;
 					currentResult.errorMessage = errorText;
-					currentResult.stderr += `${errorText}\n`;
+					currentResult.stderr += `${rawEnvelope}\n`;
 					emitUpdate();
 				}
 

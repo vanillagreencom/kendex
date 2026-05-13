@@ -162,6 +162,7 @@ export interface UsageStats {
 
 export interface AttemptSummary {
 	attempt: number;
+	errorEnvelope?: string;
 	errorMessage?: string;
 	exitCode: number;
 	sessionKey?: string;
@@ -179,6 +180,7 @@ export interface SingleResult {
 	exitCode: number;
 	attempt?: number;
 	attempts?: AttemptSummary[];
+	errorEnvelope?: string;
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
@@ -404,6 +406,7 @@ export interface WaitForSubagentIdleDetails {
 	runtimeRoot: string;
 	samples: number;
 	sessionFile?: string;
+	status: "idle-after-busy" | "never-busy" | "timeout";
 	timedOut: boolean;
 	transitioned: boolean;
 }

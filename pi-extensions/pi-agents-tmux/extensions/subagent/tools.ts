@@ -55,14 +55,14 @@ export const GetSubagentResultParams = Type.Object({
 	taskId: Type.Optional(Type.String({ description: "Persistent pane task ID to retrieve" })),
 	agent: Type.Optional(Type.String({ description: "Persistent pane agent name; selects that agent's latest task when taskId is omitted" })),
 	wait: Type.Optional(Type.Boolean({ description: "Poll for completion until timeout before returning", default: false })),
-	waitFor: Type.Optional(StringEnum(["completion", "idle"] as const, { description: "Wait target when wait=true. completion polls task status; idle waits for pane bridge isIdle=true transition.", default: "completion" })),
+	waitFor: Type.Optional(StringEnum(["completion", "idle"] as const, { description: "Wait target when wait=true. completion polls task status; idle waits for pane bridge isIdle=true after an observed busy state and reports never-busy distinctly.", default: "completion" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time when wait=true", default: 30000 })),
 	verbose: Type.Optional(Type.Boolean({ description: "Include registry and artifact paths", default: false })),
 });
 
 export const WaitForSubagentIdleParams = Type.Object({
 	agent: Type.String({ description: "Persistent pane agent name to wait for" }),
-	timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time for an isIdle=true transition", default: 30000 })),
+	timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time for isIdle=true after an observed busy state; returns never-busy if pane never leaves idle", default: 30000 })),
 });
 
 export const SteerSubagentParams = Type.Object({
