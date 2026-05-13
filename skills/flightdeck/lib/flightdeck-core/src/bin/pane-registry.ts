@@ -353,6 +353,12 @@ function trackedEntries(): Record<string, Record<string, unknown>> {
 function registryMapHas(map: "entries" | "issues", id: string): boolean {
 	const idJson = JSON.stringify(id);
 	const r = fdState(["get", `has(${JSON.stringify(map)}) and .${map}[${idJson}] != null`]);
+	const status = r.status ?? 0;
+	if (status >= 2 || r.stderr.trim()) {
+		process.stderr.write(`pane-registry: registry read failed (flightdeck-state exit=${status}): ${r.stderr}`);
+		if (!r.stderr.endsWith("\n")) process.stderr.write("\n");
+		process.exit(6);
+	}
 	return r.status === 0 && r.stdout.trim() === "true";
 }
 

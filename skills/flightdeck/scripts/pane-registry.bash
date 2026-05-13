@@ -99,9 +99,19 @@ read_registry_field() {
 }
 
 registry_map_has() {
-  local map="$1" id="$2" id_json out
+  local map="$1" id="$2" id_json out status stderr_file
   id_json=$(jq -Rn --arg v "$id" '$v')
-  out=$("$FD_STATE" get "has(\"$map\") and .$map[$id_json] != null" 2>/dev/null || echo "false")
+  stderr_file=$(mktemp -t fd-registry-read-stderr.XXXXXX)
+  out=$("$FD_STATE" get "has(\"$map\") and .$map[$id_json] != null" 2>"$stderr_file")
+  status=$?
+  if (( status >= 2 )) || [[ -s "$stderr_file" ]]; then
+    printf 'pane-registry: registry read failed (flightdeck-state exit=%s): ' "$status" >&2
+    cat "$stderr_file" >&2
+    echo >&2
+    rm -f "$stderr_file"
+    exit 6
+  fi
+  rm -f "$stderr_file"
   [[ "$out" == "true" ]]
 }
 

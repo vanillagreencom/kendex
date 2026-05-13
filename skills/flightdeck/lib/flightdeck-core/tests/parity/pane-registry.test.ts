@@ -157,6 +157,23 @@ describe("pane-registry parity", () => {
 		}
 	});
 
+	test("set-state corrupt registry state → exit 6 without touching state file", () => {
+		const fs = require("node:fs") as typeof import("node:fs");
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, baseShim("test-session"));
+			runShim(useTs, repo, statePath, ["init-entry", "CORRUPT-SET", "--title", "Corrupt", "--kind", "adhoc", "--cwd", "/tmp/c", "--window", "1", "--harness", "pi"]);
+			const registryPath = stateFilePath(repo, "test-session");
+			const corrupt = "{not valid json at all,,,";
+			fs.writeFileSync(registryPath, corrupt);
+			const r = runShim(useTs, repo, statePath, ["set-state", "CORRUPT-SET", "dead"]);
+			expect(r.status).toBe(6);
+			expect(r.stderr).toContain("registry read failed");
+			expect(r.stderr).not.toContain("not found in .entries or .issues");
+			expect(fs.readFileSync(registryPath, "utf8")).toBe(corrupt);
+		}
+	});
+
 	test("log-decision appends to decisions_log", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
