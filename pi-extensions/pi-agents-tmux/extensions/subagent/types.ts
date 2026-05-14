@@ -80,17 +80,17 @@ export const AGENTS_POPUP_PADDING_Y = 1;
 export const AGENTS_POPUP_FRAME_ROWS = 2 + AGENTS_POPUP_PADDING_Y * 2;
 export const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 
-export type AgentBrowserTabId = "agents" | "active" | "history" | AgentScope;
+export type AgentBrowserTabId = "agents" | "active" | "monitor" | AgentScope;
 export type AgentBrowserTabDef = { id: AgentBrowserTabId; label: string };
 export const AGENTS_BROWSER_TAB: AgentBrowserTabDef = { id: "agents", label: "Agents" };
 export const ACTIVE_BROWSER_TAB: AgentBrowserTabDef = { id: "active", label: "Active" };
-export const HISTORY_BROWSER_TAB: AgentBrowserTabDef = { id: "history", label: "History" };
+export const MONITOR_BROWSER_TAB: AgentBrowserTabDef = { id: "monitor", label: "Monitor" };
 export const AGENT_SCOPE_TABS: Array<{ id: AgentScope; label: string }> = [
 	{ id: "project", label: "Project" },
 	{ id: "user", label: "User" },
 	{ id: "both", label: "Both" },
 ];
-export const HISTORY_SUBTAB_LABELS = ["Summary", "Completion", "Task"] as const;
+export const MONITOR_SUBTAB_LABELS = ["Summary", "Completion", "Task"] as const;
 
 export type AgentBrowserAction =
 	| { type: "attach"; agentName: string }
@@ -114,12 +114,12 @@ export interface AgentBrowserUiState {
 	agentSubtab: number;
 	activeSelected: number;
 	activeScroll: number;
-	historySelected: number;
-	historyScroll: number;
-	historySubtab: number;
+	monitorSelected: number;
+	monitorScroll: number;
+	monitorSubtab: number;
 }
 
-export type HistoryDetailEntry = { items?: TraceViewerItem[]; loading?: boolean; error?: string };
+export type MonitorDetailEntry = { items?: TraceViewerItem[]; loading?: boolean; error?: string };
 
 export interface AgentBrowserLayout {
 	bodyRows: number;

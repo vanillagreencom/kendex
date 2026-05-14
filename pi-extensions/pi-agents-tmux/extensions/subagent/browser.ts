@@ -63,8 +63,8 @@ import {
 	AGENTS_POPUP_PADDING_X,
 	AGENTS_POPUP_PADDING_Y,
 	AGENT_EDIT_CONFIRM_WIDTH,
-	HISTORY_BROWSER_TAB,
-	HISTORY_SUBTAB_LABELS,
+	MONITOR_BROWSER_TAB,
+	MONITOR_SUBTAB_LABELS,
 	ICONS,
 	TRACE_VIEWER_MAX_HEIGHT,
 	TRACE_VIEWER_WIDTH,
@@ -78,7 +78,7 @@ import {
 	type AgentPaneStatus,
 	type ChatMessage,
 	type CompletionMessageProvenance,
-	type HistoryDetailEntry,
+	type MonitorDetailEntry,
 	type PaneTaskRecord,
 	type PaneTaskRegistry,
 	type PaneTaskStatus,
@@ -432,7 +432,7 @@ function agentSearchText(agent: AgentConfig, status?: AgentPaneStatus): string {
 }
 
 function tabNext(current: AgentBrowserTabId, _hasActive: boolean, delta: number): AgentBrowserTabId {
-	const tabs: AgentBrowserTabId[] = ["agents", "history"];
+	const tabs: AgentBrowserTabId[] = ["agents", "monitor"];
 	const index = Math.max(0, tabs.indexOf(current));
 	return tabs[(index + delta + tabs.length) % tabs.length]!;
 }
@@ -509,7 +509,7 @@ function agentEntityTitle(theme: Theme, label: string): string {
 
 function renderAgentBrowserTabs(active: AgentBrowserTabId, hasActive: boolean, width: number, theme: Theme): string {
 	void hasActive;
-	const tabs = [AGENTS_BROWSER_TAB, HISTORY_BROWSER_TAB];
+	const tabs = [AGENTS_BROWSER_TAB, MONITOR_BROWSER_TAB];
 	const partFor = (tab: AgentBrowserTabDef): string => {
 		const label = ` ${truncateToWidth(tab.label, 18, "…")} `;
 		if (tab.id === active) return agentActivePill(theme, label);
@@ -786,7 +786,7 @@ export function readTranscriptTail(transcriptPath: string | undefined, maxLines:
 export function dashboardDisplayLabels(items: SubagentDashboardItem[], persistentTaskNumbers?: Map<string, number>): Map<string, string> {
 	// Numbering source order:
 	//   1. persistent taskNumberById (from tasks.json) when supplied. This is
-	//      the canonical per-agent #N the History tab and Detail header use,
+	//      the canonical per-agent #N the Monitor tab and Detail header use,
 	//      so a task reads identically across task-centric surfaces (mini
 	//      widget, active-list, Detail header, Chat attribution).
 	//   2. In-memory occurrence counter as a fallback for items dispatched
@@ -833,7 +833,7 @@ export function formatRelativeTime(iso: string | undefined): string {
 	return new Date(ts).toISOString().slice(0, 10);
 }
 
-function historyStatusIcon(status: PaneTaskStatus, theme: Theme): string {
+function monitorStatusIcon(status: PaneTaskStatus, theme: Theme): string {
 	if (status === "completed") return theme.fg("success", ICONS.check);
 	if (status === "failed") return theme.fg("error", ICONS.times);
 	if (status === "blocked") return theme.fg("warning", ICONS.times);
@@ -842,11 +842,11 @@ function historyStatusIcon(status: PaneTaskStatus, theme: Theme): string {
 	return theme.fg("muted", "·");
 }
 
-function historyStatusText(status: PaneTaskStatus, theme: Theme): string {
+function monitorStatusText(status: PaneTaskStatus, theme: Theme): string {
 	return theme.fg(paneCompletionTone(status), status);
 }
 
-function sortedHistoryRecords(registry: PaneTaskRegistry): PaneTaskRecord[] {
+function sortedMonitorRecords(registry: PaneTaskRegistry): PaneTaskRecord[] {
 	return Object.values(registry)
 		.filter((record) => record.taskId && record.agent)
 		.sort((a, b) => recordTimestampLocal(b) - recordTimestampLocal(a));
@@ -880,7 +880,7 @@ function recordClockTime(record: PaneTaskRecord): string {
 	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function historyRecordLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
+export function monitorRecordLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
 	const number = taskNumbers.get(record.taskId);
 	const numberText = number ? ` #${number}` : "";
 	return `${record.agent}${numberText} · ${recordClockTime(record)} · ${shortTaskSuffix(record.taskId)}`;
@@ -891,24 +891,24 @@ function recordTimestampLocal(record: PaneTaskRecord): number {
 	return Number.isFinite(value) ? value : 0;
 }
 
-function renderHistoryList(records: PaneTaskRecord[], ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
+function renderMonitorList(records: PaneTaskRecord[], ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
 	const lines = [`${agentPaneTitle(theme, "Tasks", ui.pane === "list")} ${theme.fg("dim", `(${records.length})`)}`, ""];
 	if (records.length === 0) {
-		lines.push(theme.fg("dim", "No agent task history yet."));
+		lines.push(theme.fg("dim", "No agent task records yet."));
 		return lines;
 	}
-	if (ui.historyScroll > 0) lines.push(theme.fg("dim", `↑ ${ui.historyScroll} earlier`));
+	if (ui.monitorScroll > 0) lines.push(theme.fg("dim", `↑ ${ui.monitorScroll} earlier`));
 	const taskNumbers = taskNumberById(records);
-	for (const [visibleIndex, record] of records.slice(ui.historyScroll, ui.historyScroll + listRows).entries()) {
-		const index = ui.historyScroll + visibleIndex;
-		const selected = index === ui.historySelected;
-		const icon = historyStatusIcon(record.status, theme);
-		const label = historyRecordLabel(record, taskNumbers);
+	for (const [visibleIndex, record] of records.slice(ui.monitorScroll, ui.monitorScroll + listRows).entries()) {
+		const index = ui.monitorScroll + visibleIndex;
+		const selected = index === ui.monitorSelected;
+		const icon = monitorStatusIcon(record.status, theme);
+		const label = monitorRecordLabel(record, taskNumbers);
 		const name = ansiMagenta(selected ? theme.bold(label) : label);
 		const row = truncateToWidth(`${icon} ${name}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
 	}
-	const hidden = Math.max(0, records.length - (ui.historyScroll + listRows));
+	const hidden = Math.max(0, records.length - (ui.monitorScroll + listRows));
 	if (hidden > 0) lines.push(theme.fg("dim", `↓ ${hidden} more`));
 	return lines;
 }
@@ -968,9 +968,9 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	return wrapTextWithAnsi(theme.fg(type === "summary" ? "text" : "toolOutput", backtick), width);
 }
 
-function renderHistoryDetail(
+function renderMonitorDetail(
 	record: PaneTaskRecord | undefined,
-	cache: Map<string, HistoryDetailEntry>,
+	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
 	width: number,
 	rows: number,
@@ -983,11 +983,11 @@ function renderHistoryDetail(
 	const entry = cache.get(record.taskId);
 	const items = entry?.items;
 	const placeholderText = entry?.error ? `Error: ${entry.error}` : entry?.loading || !items ? "Loading…" : "(empty)";
-	const subtabs: TraceViewerItem[] = items ?? HISTORY_SUBTAB_LABELS.map((label) => ({ label, text: placeholderText, type: label.toLowerCase() as TraceViewerItem["type"] }));
-	const subtabIndex = Math.max(0, Math.min(ui.historySubtab, subtabs.length - 1));
-	ui.historySubtab = subtabIndex;
+	const subtabs: TraceViewerItem[] = items ?? MONITOR_SUBTAB_LABELS.map((label) => ({ label, text: placeholderText, type: label.toLowerCase() as TraceViewerItem["type"] }));
+	const subtabIndex = Math.max(0, Math.min(ui.monitorSubtab, subtabs.length - 1));
+	ui.monitorSubtab = subtabIndex;
 	const when = formatRelativeTime(record.completedAt ?? record.createdAt);
-	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(record.agent))} ${historyStatusText(record.status, theme)} ${theme.fg("dim", `· ${when}`)}`;
+	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(record.agent))} ${monitorStatusText(record.status, theme)} ${theme.fg("dim", `· ${when}`)}`;
 	const subtabLine = renderTraceTabBar(subtabs, subtabIndex, safeWidth, theme);
 	const item = subtabs[subtabIndex];
 	const fileLines = item?.path
@@ -1043,7 +1043,7 @@ export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDas
 	// file-based scan never sees them. Synthesize delegation+completion records
 	// from the dashboard item itself; the data we need is already on it.
 	// Use the persistent task registry's #N so chat row attribution matches
-	// the History tab and Detail header (not the in-memory counter).
+	// the Monitor tab and Detail header (not the in-memory counter).
 	const persistentTaskNumbers = taskNumberById(Object.values(taskRegistry));
 	const labels = dashboardDisplayLabels(items, persistentTaskNumbers);
 	for (const item of items) {
@@ -1078,9 +1078,9 @@ export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDas
 	}
 }
 
-function renderHistoryTabBody(
+function renderMonitorTabBody(
 	records: PaneTaskRecord[],
-	cache: Map<string, HistoryDetailEntry>,
+	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
 	width: number,
 	theme: Theme,
@@ -1091,9 +1091,9 @@ function renderHistoryTabBody(
 	const leftWidth = Math.max(10, Math.min(maxLeftWidth, Math.max(Math.min(AGENTS_LEFT_MIN_WIDTH, maxLeftWidth), desiredLeftWidth)));
 	const rightWidth = Math.max(1, width - leftWidth - 3);
 	const bodyRows = layout.bodyRows;
-	const left = renderHistoryList(records, ui, leftWidth, theme, layout.listRows);
-	const record = records[ui.historySelected];
-	const right = renderHistoryDetail(record, cache, ui, rightWidth, bodyRows, theme);
+	const left = renderMonitorList(records, ui, leftWidth, theme, layout.listRows);
+	const record = records[ui.monitorSelected];
+	const right = renderMonitorDetail(record, cache, ui, rightWidth, bodyRows, theme);
 	const lines: string[] = [agentDivider(width, theme)];
 	for (let i = 0; i < bodyRows; i += 1) {
 		lines.push(`${agentPad(left[i] ?? "", leftWidth)} ${theme.fg("dim", "│")} ${truncateToWidth(right[i] ?? "", rightWidth, "")}`);
@@ -1198,42 +1198,42 @@ function createAgentsBrowserComponent(
 		if (ui.selected >= ui.scroll + layout.listRows) ui.scroll = ui.selected - layout.listRows + 1;
 		ui.scroll = Math.max(0, Math.min(ui.scroll, Math.max(0, list.length - layout.listRows)));
 	};
-	const historyRecords = sortedHistoryRecords(taskRegistry);
-	const historyCache = new Map<string, HistoryDetailEntry>();
-	const historyTaskNumbers = taskNumberById(historyRecords);
-	const loadHistoryRecord = (record: PaneTaskRecord | undefined) => {
+	const monitorRecords = sortedMonitorRecords(taskRegistry);
+	const monitorCache = new Map<string, MonitorDetailEntry>();
+	const monitorTaskNumbers = taskNumberById(monitorRecords);
+	const loadMonitorRecord = (record: PaneTaskRecord | undefined) => {
 		if (!record) return;
-		const entry = historyCache.get(record.taskId);
+		const entry = monitorCache.get(record.taskId);
 		if (entry?.items || entry?.loading) return;
-		historyCache.set(record.taskId, { loading: true });
-		void traceViewerItems(record, historyTaskNumbers.get(record.taskId), discovery).then((items) => {
-			historyCache.set(record.taskId, { items });
+		monitorCache.set(record.taskId, { loading: true });
+		void traceViewerItems(record, monitorTaskNumbers.get(record.taskId), discovery).then((items) => {
+			monitorCache.set(record.taskId, { items });
 			requestRender();
 		}).catch((error) => {
-			historyCache.set(record.taskId, { error: error instanceof Error ? error.message : String(error) });
+			monitorCache.set(record.taskId, { error: error instanceof Error ? error.message : String(error) });
 			requestRender();
 		});
 	};
-	const clampHistory = () => {
+	const clampMonitor = () => {
 		const layout = getLayout();
-		const total = historyRecords.length;
-		ui.historySelected = Math.max(0, Math.min(ui.historySelected, Math.max(0, total - 1)));
-		if (ui.historySelected < ui.historyScroll) ui.historyScroll = ui.historySelected;
-		if (ui.historySelected >= ui.historyScroll + layout.listRows) ui.historyScroll = ui.historySelected - layout.listRows + 1;
-		ui.historyScroll = Math.max(0, Math.min(ui.historyScroll, Math.max(0, total - layout.listRows)));
+		const total = monitorRecords.length;
+		ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, total - 1)));
+		if (ui.monitorSelected < ui.monitorScroll) ui.monitorScroll = ui.monitorSelected;
+		if (ui.monitorSelected >= ui.monitorScroll + layout.listRows) ui.monitorScroll = ui.monitorSelected - layout.listRows + 1;
+		ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, total - layout.listRows)));
 	};
 
 	const hasActiveTab = () => getActiveItems().length > 0;
 	const switchTab = (delta: number) => {
 		const next = tabNext(ui.tab, hasActiveTab(), delta);
-		if (next === "history") {
-			ui.tab = "history";
-			ui.historySelected = 0;
-			ui.historyScroll = 0;
-			ui.historySubtab = 0;
+		if (next === "monitor") {
+			ui.tab = "monitor";
+			ui.monitorSelected = 0;
+			ui.monitorScroll = 0;
+			ui.monitorSubtab = 0;
 			ui.inspectorScroll = 0;
 			ui.pane = "list";
-			loadHistoryRecord(historyRecords[0]);
+			loadMonitorRecord(monitorRecords[0]);
 			requestRender();
 			return;
 		}
@@ -1280,11 +1280,11 @@ function createAgentsBrowserComponent(
 				requestRender();
 				return;
 			}
-			if (ui.tab === "history" && ui.pane === "inspector") {
-				if (ui.historySubtab === 0) {
+			if (ui.tab === "monitor" && ui.pane === "inspector") {
+				if (ui.monitorSubtab === 0) {
 					ui.pane = "list";
 				} else {
-					ui.historySubtab -= 1;
+					ui.monitorSubtab -= 1;
 					ui.inspectorScroll = 0;
 				}
 				requestRender();
@@ -1304,10 +1304,10 @@ function createAgentsBrowserComponent(
 				ui.agentSubtab = 0;
 				return;
 			}
-			if (ui.tab === "history" && ui.pane === "inspector") {
-				const total = HISTORY_SUBTAB_LABELS.length;
-				if (ui.historySubtab < total - 1) {
-					ui.historySubtab += 1;
+			if (ui.tab === "monitor" && ui.pane === "inspector") {
+				const total = MONITOR_SUBTAB_LABELS.length;
+				if (ui.monitorSubtab < total - 1) {
+					ui.monitorSubtab += 1;
 					ui.inspectorScroll = 0;
 					requestRender();
 				}
@@ -1333,15 +1333,15 @@ function createAgentsBrowserComponent(
 					ui.activeScroll = Math.max(0, Math.min(ui.activeScroll, Math.max(0, totalRows - layout.listRows)));
 					ui.inspectorScroll = 0;
 				}
-			} else if (ui.tab === "history") {
+			} else if (ui.tab === "monitor") {
 				if (ui.pane === "inspector") {
 					ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
 				} else {
-					ui.historySelected = Math.max(0, ui.historySelected + delta);
-					ui.historySubtab = 0;
+					ui.monitorSelected = Math.max(0, ui.monitorSelected + delta);
+					ui.monitorSubtab = 0;
 					ui.inspectorScroll = 0;
-					clampHistory();
-					loadHistoryRecord(historyRecords[ui.historySelected]);
+					clampMonitor();
+					loadMonitorRecord(monitorRecords[ui.monitorSelected]);
 				}
 			} else if (ui.pane === "inspector") {
 				ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
@@ -1391,36 +1391,36 @@ function createAgentsBrowserComponent(
 			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.activeSelected = Math.max(0, totalRows - 1); clampActive(); } requestRender(); return; }
 			return;
 		}
-		if (ui.tab === "history") {
+		if (ui.tab === "monitor") {
 			const layout = getLayout();
 			if (matchesKey(data, "up")) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - 1);
-				else { ui.historySelected = Math.max(0, ui.historySelected - 1); ui.historySubtab = 0; ui.inspectorScroll = 0; clampHistory(); loadHistoryRecord(historyRecords[ui.historySelected]); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - 1); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "down")) {
 				if (ui.pane === "inspector") ui.inspectorScroll += 1;
-				else { ui.historySelected += 1; ui.historySubtab = 0; ui.inspectorScroll = 0; clampHistory(); loadHistoryRecord(historyRecords[ui.historySelected]); }
+				else { ui.monitorSelected += 1; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pageup" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - Math.max(1, layout.bodyRows));
-				else { ui.historySelected = Math.max(0, ui.historySelected - layout.listRows); ui.historySubtab = 0; ui.inspectorScroll = 0; clampHistory(); loadHistoryRecord(historyRecords[ui.historySelected]); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - layout.listRows); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pagedown" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll += Math.max(1, layout.bodyRows);
-				else { ui.historySelected += layout.listRows; ui.historySubtab = 0; ui.inspectorScroll = 0; clampHistory(); loadHistoryRecord(historyRecords[ui.historySelected]); }
+				else { ui.monitorSelected += layout.listRows; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
 				requestRender();
 				return;
 			}
-			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.historySelected = 0; ui.historyScroll = 0; ui.historySubtab = 0; loadHistoryRecord(historyRecords[0]); } requestRender(); return; }
-			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.historySelected = Math.max(0, historyRecords.length - 1); ui.historySubtab = 0; clampHistory(); loadHistoryRecord(historyRecords[ui.historySelected]); } requestRender(); return; }
+			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.monitorSelected = 0; ui.monitorScroll = 0; ui.monitorSubtab = 0; loadMonitorRecord(monitorRecords[0]); } requestRender(); return; }
+			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.monitorSelected = Math.max(0, monitorRecords.length - 1); ui.monitorSubtab = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); } requestRender(); return; }
 			if (matchesKey(data, "enter") || matchesKey(data, "return")) {
-				if (ui.pane === "list") { ui.pane = "inspector"; loadHistoryRecord(historyRecords[ui.historySelected]); requestRender(); return; }
+				if (ui.pane === "list") { ui.pane = "inspector"; loadMonitorRecord(monitorRecords[ui.monitorSelected]); requestRender(); return; }
 				return;
 			}
 			return;
@@ -1469,13 +1469,13 @@ function createAgentsBrowserComponent(
 		const bodyWidth = agentFrameContentWidth(safeWidth);
 		const activeItems = getActiveItems();
 		const tabLine = renderAgentBrowserTabs(ui.tab, activeItems.length > 0, bodyWidth, theme);
-		if (ui.tab === "history") {
-			clampHistory();
-			loadHistoryRecord(historyRecords[ui.historySelected]);
+		if (ui.tab === "monitor") {
+			clampMonitor();
+			loadMonitorRecord(monitorRecords[ui.monitorSelected]);
 			const arrowsLabel = ui.pane === "inspector" ? "sections · " : "pane · ";
 			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel.replace(/ +$/, ""))}`;
-			const lines = [tabLine, "", ...renderHistoryTabBody(historyRecords, historyCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
-			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
+			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, monitorCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
+			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
 		clamp();
 		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("alt+m")} ${theme.fg("dim", "edit frontmatter · ")}${ansiYellow("alt+p")} ${theme.fg("dim", "start pane · ")}${ansiYellow("alt+o")} ${theme.fg("dim", "attach · ")}${ansiYellow("alt+x")} ${theme.fg("dim", "stop")}`;
@@ -1517,9 +1517,9 @@ export async function openAgentsBrowser(
 		agentSubtab: 0,
 		activeSelected: 0,
 		activeScroll: 0,
-		historySelected: 0,
-		historyScroll: 0,
-		historySubtab: 0,
+		monitorSelected: 0,
+		monitorScroll: 0,
+		monitorSubtab: 0,
 	};
 	while (true) {
 		const discovery = discoverAgents(ctx.cwd, "both");

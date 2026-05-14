@@ -13,7 +13,7 @@ Three layers, used consistently across tool output, mini dashboard widget, full 
 Relationships:
 
 - 1 agent → N sessions (over a project's lifetime). 1 session → M tasks. For pane agents `M >> 1`; for bg one-shot agents `M = 1` per session; for bg agents reusing a `sessionKey` lane `M >= 1`.
-- A **prompt** is the input text of a task. A task is not just a prompt — it's the whole invocation record including lifecycle and result. The History tab's `Task` subtab specifically shows the input prompt of a completed task.
+- A **prompt** is the input text of a task. A task is not just a prompt — it's the whole invocation record including lifecycle and result. The Monitor tab's `Task` subtab specifically shows the input prompt of a completed task.
 - `taskId` is globally unique. `sessionId` is per-runtime. `agent.name` is the static identifier.
 
 Session-mode fields on task records use normalized user-facing values:
@@ -28,8 +28,8 @@ Do not confuse normalized record `sessionMode` (`fresh|resumed|new`) with runtim
 Where the UI surfaces each layer:
 
 - **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task-centric detail surfaces expose individual `taskId`s.
-- **`/agents` popup → Agents tab** — agent profiles only: static frontmatter/config, source path, and system prompt. No task children, task ids, transcripts, completion summaries, or latest-message surfaces. The Inspector is intentionally static; execution data lives on History (later Monitor).
-- **`/agents` popup → History tab** — completed tasks, latest first, labelled `agent #N · time · short taskId`. Detail subtabs are `Summary` (status/usage/paths), `Completion` (final response), and `Task` (the prompt that was submitted). After PR3 this tab becomes Monitor and owns active sessions and transcripts too.
+- **`/agents` popup → Agents tab** — agent profiles only: static frontmatter/config, source path, and system prompt. No task children, task ids, transcripts, completion summaries, or latest-message surfaces. The Inspector is intentionally static; execution data lives on Monitor.
+- **`/agents` popup → Monitor tab** — completed tasks, latest first, labelled `agent #N · time · short taskId`. Detail subtabs are `Summary` (status/usage/paths), `Completion` (final response), and `Task` (the prompt that was submitted). This tab owns active sessions and transcripts too.
 - **Tool output rendering** — per-task status rows (`● Agent <name> <status> · bg|pane · ctrl+o expand`) with a `Task: <prompt>` body line when echoing the prompt and a JSON/markdown-aware preview when showing the result.
 
 When reading code, prefer the layer names above over ambiguous terms like "run" or "invocation". `PaneTaskRecord` is per-task; `PaneSession*` types refer to the session runtime; `discoveredAgent` / `agentConfig` refer to the static profile.
@@ -100,14 +100,14 @@ Each row shows agent name, kind (`pane`/`bg`), turn count, input/output tokens, 
 
 Rows are bucketed for stability: queued/running/waiting agents stay above attention states; attention stays above completed. Within each bucket, rows preserve start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts even when one side is zero. Missing pane artifacts render as `stale`; stale bg-only records are dropped (bg agents do not use pane handoff files).
 
-The popup has two top-level tabs: **Agents** (unified project/user agent profiles, static Inspector only) and **History** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Agents rows are flat and do not expose task children, transcripts, or task-scoped summaries; they may show a live-pane dot only as a pointer that execution state exists on History/Monitor.
+The popup has two top-level tabs: **Agents** (unified project/user agent profiles, static Inspector only) and **Monitor** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Agents rows are flat and do not expose task children, transcripts, or task-scoped summaries; they may show a live-pane dot only as a pointer that execution state exists on Monitor.
 
-Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, History Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
+Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, Monitor Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
 
 ## Browser keys
 
 - Type to search by name, description, source, path, model, denied tools, or pane status.
-- `Tab` / `Shift+Tab` switches between **Agents** and **History**.
+- `Tab` / `Shift+Tab` switches between **Agents** and **Monitor**.
 - `↑/↓`, `-/=`, `Home/End` navigate. `←/→` switches list/detail focus and cycles right-pane subtabs.
 - `Enter` inserts `Use agent <name> to: ` into the editor.
 - `Alt+M` edits the selected agent's frontmatter.

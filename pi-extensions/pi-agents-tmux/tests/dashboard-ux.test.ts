@@ -7,7 +7,7 @@ import type { AgentConfig } from "../extensions/subagent/agents.js";
 import {
 	appendBgChatMessages,
 	buildAgentRows,
-	historyRecordLabel,
+	monitorRecordLabel,
 	readTranscriptTail,
 	renderAgentInspector,
 	taskNumberById,
@@ -65,9 +65,9 @@ function uiState(patch: Partial<AgentBrowserUiState> = {}): AgentBrowserUiState 
 		agentSubtab: 0,
 		activeSelected: 0,
 		activeScroll: 0,
-		historySelected: 0,
-		historyScroll: 0,
-		historySubtab: 0,
+		monitorSelected: 0,
+		monitorScroll: 0,
+		monitorSubtab: 0,
 		...patch,
 	};
 }
@@ -334,14 +334,14 @@ test("task echo fallback is suppressed but different fallback renders", () => {
 	assert.equal(messages.find((message) => message.taskId === differentItem.taskId && message.kind === "completion")?.body, "actual completion body");
 });
 
-test("history labels number repeated same-agent tasks latest-first friendly", () => {
+test("monitor labels number repeated same-agent tasks latest-first friendly", () => {
 	const first = record("reviewer-arch", "reviewer-arch-1700000000-11111111", "2026-05-14T05:00:00.000Z");
 	const second = record("reviewer-arch", "reviewer-arch-1700000120-77abfc41", "2026-05-14T05:02:00.000Z");
 	const numbers = taskNumberById([second, first]);
 
 	assert.equal(numbers.get(first.taskId), 1);
 	assert.equal(numbers.get(second.taskId), 2);
-	assert.match(historyRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
+	assert.match(monitorRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
 });
 
 test("Agents tab rows are flat static catalog entries", () => {
@@ -393,7 +393,7 @@ test("Agents Inspector shows static config only for agent with active tasks", ()
 	assert.doesNotMatch(rendered, /Task ID|Transcript|Latest Message|completion summary unavailable|Last task|Pane session/i);
 });
 
-test("History tab task rendering still exposes task trace metadata", async () => {
+test("Monitor tab task rendering still exposes task trace metadata", async () => {
 	const taskId = "planner-1700000120-bbbbbbbb";
 	const taskRecord = record("planner", taskId, "2026-05-14T05:02:00.000Z", {
 		summary: "completed planner summary",
@@ -402,7 +402,7 @@ test("History tab task rendering still exposes task trace metadata", async () =>
 	const numbers = taskNumberById([taskRecord]);
 	const items = await traceViewerItems(taskRecord, numbers.get(taskId), { agents: [agent("planner", true, { effort: "xhigh" })] });
 
-	assert.match(historyRecordLabel(taskRecord, numbers), /planner #1 · \d{2}:\d{2} · bbbbbbbb/);
+	assert.match(monitorRecordLabel(taskRecord, numbers), /planner #1 · \d{2}:\d{2} · bbbbbbbb/);
 	assert.match(items[0]!.text, /Task ID  planner-1700000120-bbbbbbbb/);
 	assert.match(items[0]!.text, /Transcript  \/tmp\/planner-transcript\.jsonl/);
 	assert.match(items[0]!.text, /completed planner summary/);

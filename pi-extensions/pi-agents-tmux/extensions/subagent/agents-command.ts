@@ -188,7 +188,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 							})
 							.join("\n"),
 						"",
-						"Commands: `/agents show <name>`, `/agents:start <name>` (resume/reuse), `/agents:new <name>` (fresh session), `/agents:resume <name> [latest|archive-file]`, `/agents:send <name> <task>`, `/agents:attach <name>`, `/agents:stop <name>`, `/agents status`, `/agents:trace <ref>`, `/agents:toggle`. The popup's History tab browses past tasks visually.",
+						"Commands: `/agents show <name>`, `/agents:start <name>` (resume/reuse), `/agents:new <name>` (fresh session), `/agents:resume <name> [latest|archive-file]`, `/agents:send <name> <task>`, `/agents:attach <name>`, `/agents:stop <name>`, `/agents status`, `/agents:trace <ref>`, `/agents:toggle`. The popup's Monitor tab browses past tasks visually.",
 					].join("\n");
 					messageDetails = { action: "list", count: scopedDiscovery.agents.length };
 				}
