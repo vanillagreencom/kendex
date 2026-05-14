@@ -60,6 +60,9 @@ mock.module("@earendil-works/pi-tui", () => {
 	return {
 		Container,
 		Markdown: Container,
+		matchesKey() {
+			return false;
+		},
 		Spacer,
 		truncateToWidth(text: string, width: number, suffix = "") {
 			return text.length > width ? `${text.slice(0, Math.max(0, width - suffix.length))}${suffix}` : text;
