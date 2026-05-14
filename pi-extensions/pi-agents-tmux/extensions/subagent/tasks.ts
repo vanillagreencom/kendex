@@ -13,6 +13,7 @@ import {
 	taskRegistryPath,
 	transcriptDir,
 } from "./paths.js";
+import { randomHex } from "./random.js";
 import {
 	type DashboardKind,
 	MALFORMED_COMPLETION_GRACE_MS,
@@ -579,7 +580,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 }
 
 export function createTaskId(agentName: string): string {
-	return `${safeFileName(agentName)}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	return `${safeFileName(agentName)}-${Date.now()}-${randomHex(8)}`;
 }
 
 export function normalizedTaskForDedup(task: string): string {

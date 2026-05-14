@@ -83,6 +83,7 @@ import {
 	inboxDir,
 	processingDir,
 } from "./paths.js";
+import { randomHex } from "./random.js";
 import { registerPaneSupportTools } from "./pane-support-tools.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
@@ -267,7 +268,7 @@ async function createFollowUpTask(runtimeRoot: string, agentName: string, entry:
 }
 
 async function queueSteeringFallback(runtimeRoot: string, agentName: string, message: string, deliverAs: string = "steer", followUpTask?: FollowUpTask): Promise<string> {
-	const steeringId = followUpTask?.taskId ?? `${safeFileName(`${agentName}-steer`)}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	const steeringId = followUpTask?.taskId ?? `${safeFileName(`${agentName}-steer`)}-${Date.now()}-${randomHex(8)}`;
 	const filePath = path.join(inboxDir(runtimeRoot, agentName), `${safeFileName(steeringId)}.md`);
 	const content = formatSteeringForChild(agentName, message, false, deliverAs, followUpTask);
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });

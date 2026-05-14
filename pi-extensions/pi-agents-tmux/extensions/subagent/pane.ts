@@ -17,6 +17,7 @@ import {
 	legacyProjectRuntimeDirs,
 	paneSessionPath,
 } from "./paths.js";
+import { randomHex } from "./random.js";
 import {
 	legacyPackageSessionRuntimeDir,
 	piUserDir,
@@ -673,7 +674,7 @@ export async function migrateLegacyProjectRuntime(cwd: string, runtimeRoot: stri
 		if (legacyRoot === path.resolve(runtimeRoot) || !fs.existsSync(legacyRoot)) continue;
 		await stopLegacyPanes(legacyRoot);
 		await fs.promises.mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
-		const target = path.join(runtimeRoot, `legacy-project-runtime-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+		const target = path.join(runtimeRoot, `legacy-project-runtime-${Date.now()}-${randomHex(8)}`);
 		try {
 			await fs.promises.rename(legacyRoot, target);
 		} catch {

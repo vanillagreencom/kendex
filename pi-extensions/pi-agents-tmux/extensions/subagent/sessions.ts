@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { safeFileName } from "./names.js";
+import { randomHex } from "./random.js";
 import { settingNumber, settingString } from "./settings.js";
 import type { AttemptSummary, SingleResult } from "./types.js";
 
@@ -69,7 +70,7 @@ export function setSessionCompactorForTests(compactor?: SessionCompactor): void 
 }
 
 export function createOneShotSessionKey(): string {
-	return `${ONESHOT_SESSION_PREFIX}${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+	return `${ONESHOT_SESSION_PREFIX}${Date.now().toString(36)}-${randomHex(4)}`;
 }
 
 export function bgSessionPath(runtimeRoot: string, agentName: string, sessionKey: string): string {

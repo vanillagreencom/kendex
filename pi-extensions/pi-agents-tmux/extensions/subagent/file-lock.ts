@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { randomHex, randomJitter } from "./random.js";
 
 interface LockOptions {
 	staleMs?: number;
@@ -102,7 +103,7 @@ export async function acquireFileLock(filePath: string, opts: LockOptions = {}):
 		if (Date.now() - start > timeoutMs) {
 			throw new Error(`Timed out acquiring file lock for ${filePath} after ${timeoutMs}ms`);
 		}
-		const jitter = Math.floor(Math.random() * retryMs);
+		const jitter = randomJitter(retryMs);
 		await new Promise((resolve) => setTimeout(resolve, retryMs + jitter));
 	}
 }
@@ -143,7 +144,7 @@ export async function atomicWriteFile(
 	mode: number = 0o600,
 ): Promise<void> {
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-	const tmpPath = `${filePath}.tmp.${process.pid}.${Math.random().toString(16).slice(2)}`;
+	const tmpPath = `${filePath}.tmp.${process.pid}.${randomHex(8)}`;
 	await fs.promises.writeFile(tmpPath, content, { encoding: typeof content === "string" ? "utf-8" : undefined, mode });
 	try {
 		await fs.promises.rename(tmpPath, filePath);

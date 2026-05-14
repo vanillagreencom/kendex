@@ -21,6 +21,7 @@ import {
 import {
 	oneShotTranscriptPath,
 } from "./paths.js";
+import { randomHex } from "./random.js";
 import {
 	resultLimits,
 	selectedModelForAgent,
@@ -83,7 +84,7 @@ export async function writeFullOutputArtifact(
 	const dir = path.join(runtimeRoot, "outputs", safeFileName(agentName || "subagent"));
 	const filePath = path.join(
 		dir,
-		`${Date.now()}-${Math.random().toString(16).slice(2)}-${safeFileName(label || "output")}.txt`,
+		`${Date.now()}-${randomHex(8)}-${safeFileName(label || "output")}.txt`,
 	);
 	try {
 		await withFileMutationQueue(filePath, async () => {
