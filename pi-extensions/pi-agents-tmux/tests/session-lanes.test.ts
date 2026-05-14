@@ -202,6 +202,40 @@ test("context_length_exceeded detection triggers one retry with fresh session", 
 	}
 });
 
+test("aborted oneshot emits failed event with summary", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([{ code: 0 }]);
+	const controller = new AbortController();
+	controller.abort();
+	try {
+		await assert.rejects(
+			runSingleAgent(
+				process.cwd(),
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				"review code",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents(emitted),
+				controller.signal,
+				undefined,
+				makeDetails,
+			),
+			/Agent was aborted/,
+		);
+		assert.equal(calls.length, 1);
+		const failed = emitted.find((event) => event.name === "subagents:failed");
+		assert.ok(failed);
+		assert.equal(failed.payload.summary, "Agent was aborted before completion.");
+		assert.equal(failed.payload.error, "Agent was aborted");
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
 test("session_compact followed by empty agent_end emits synthetic needs_completion", async () => {
 	const cwd = tempGitRepo();
 	const emitted: Array<{ name: string; payload: any }> = [];

@@ -164,6 +164,51 @@ test("full persisted one-shot summary feeds chat history and result formatting",
 	assert.match(formatTaskRecordResult(taskRecord), new RegExp(longSummary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
+test("persisted summary equal to task text is not suppressed", () => {
+	const taskId = "reviewer-arch-echo";
+	const task = "repeat this exact sentence";
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { task, summary: task });
+	const item: SubagentDashboardItem = {
+		agent: "reviewer-arch",
+		kind: "oneshot",
+		message: task,
+		messageProvenance: "persisted",
+		status: "completed",
+		task,
+		taskId,
+		startedAt: taskRecord.createdAt,
+		completedAt: taskRecord.completedAt,
+		updatedAt: taskRecord.updatedAt!,
+	};
+	const messages: ChatMessage[] = [];
+	appendBgChatMessages(messages, [item], { [taskId]: taskRecord });
+
+	assert.equal(messages.find((message) => message.kind === "completion")?.body, task);
+});
+
+test("task echo fallback is suppressed but different fallback renders", () => {
+	const taskId = "reviewer-arch-fallback";
+	const task = "review this exact text";
+	const echoItem: SubagentDashboardItem = {
+		agent: "reviewer-arch",
+		kind: "oneshot",
+		message: task,
+		messageProvenance: "task-echo-fallback",
+		status: "completed",
+		task,
+		taskId,
+		startedAt: "2026-05-14T05:00:00.000Z",
+		completedAt: "2026-05-14T05:01:00.000Z",
+		updatedAt: "2026-05-14T05:01:00.000Z",
+	};
+	const differentItem = { ...echoItem, taskId: "reviewer-arch-different", message: "actual completion body" };
+	const messages: ChatMessage[] = [];
+	appendBgChatMessages(messages, [echoItem, differentItem]);
+
+	assert.equal(messages.find((message) => message.taskId === echoItem.taskId && message.kind === "completion")?.body, COMPLETION_SUMMARY_UNAVAILABLE);
+	assert.equal(messages.find((message) => message.taskId === differentItem.taskId && message.kind === "completion")?.body, "actual completion body");
+});
+
 test("history labels number repeated same-agent tasks latest-first friendly", () => {
 	const first = record("reviewer-arch", "reviewer-arch-1700000000-11111111", "2026-05-14T05:00:00.000Z");
 	const second = record("reviewer-arch", "reviewer-arch-1700000120-77abfc41", "2026-05-14T05:02:00.000Z");

@@ -81,6 +81,7 @@ import {
 	type AgentFrontmatterEdit,
 	type AgentPaneStatus,
 	type ChatMessage,
+	type CompletionMessageProvenance,
 	type HistoryDetailEntry,
 	type PaneTaskRecord,
 	type PaneTaskRegistry,
@@ -597,17 +598,20 @@ function dashboardItemSearchText(item: SubagentDashboardItem, label: string): st
 
 function dashboardItemFromTaskRecord(record: PaneTaskRecord): SubagentDashboardItem {
 	const terminal = record.status === "completed" || record.status === "failed" || record.status === "blocked" || record.status === "needs_completion";
+	const hasSummary = Boolean(record.summary?.trim());
 	const message = record.summary?.trim()
 		? record.summary
 		: terminal
 			? COMPLETION_SUMMARY_UNAVAILABLE
 			: record.task || record.diagnostics?.at(-1);
+	const messageProvenance: CompletionMessageProvenance = hasSummary ? "persisted" : terminal ? "placeholder" : record.task ? "task-echo-fallback" : "diagnostic";
 	return {
 		agent: record.agent,
 		artifacts: Boolean(record.transcriptPath || record.completionArchivePath || record.outboxFile || record.doneFile),
 		completedAt: record.completedAt,
 		kind: record.kind ?? (record.paneId || record.inboxFile || record.outboxFile || record.doneFile ? "pane" : "oneshot"),
 		message,
+		messageProvenance,
 		model: record.model,
 		paneId: record.paneId,
 		startedAt: record.createdAt,
@@ -1213,9 +1217,9 @@ function loadTaskRegistrySync(runtimeRoot: string): PaneTaskRegistry {
 	}
 }
 
-function completionBodyFromRecord(record: PaneTaskRecord | undefined, fallback: string | undefined, task: string | undefined): string {
-	const persisted = record?.summary?.trim() ? record.summary : undefined;
-	return completionBodyWithoutPromptEcho(persisted ?? fallback, record?.task ?? task);
+function completionBodyFromRecord(record: PaneTaskRecord | undefined, fallback: string | undefined, task: string | undefined, fallbackProvenance: CompletionMessageProvenance = "fallback"): string {
+	if (record?.summary?.trim()) return completionBodyWithoutPromptEcho(record.summary, record.task ?? task, "persisted");
+	return completionBodyWithoutPromptEcho(fallback, record?.task ?? task, fallbackProvenance);
 }
 
 function extractDelegationBody(raw: string): string {
@@ -1283,7 +1287,7 @@ export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDas
 			kind: "completion",
 			from: `@${label}`,
 			to: "@orch",
-			body: completionBodyFromRecord(taskRegistry[item.taskId], item.message, item.task),
+			body: completionBodyFromRecord(taskRegistry[item.taskId], item.message, item.task, item.messageProvenance ?? "task-echo-fallback"),
 			status: item.status,
 		});
 	}
@@ -1323,7 +1327,7 @@ function loadChatMessages(runtimeRoot: string, agentNames: string[], taskRegistr
 		try { parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>; } catch { return; }
 		const taskId = deriveTaskIdFromFile(filePath);
 		const record = taskId ? taskRegistry[taskId] : undefined;
-		const summary = completionBodyFromRecord(record, typeof parsed?.summary === "string" ? parsed.summary : undefined, record?.task);
+		const summary = completionBodyFromRecord(record, typeof parsed?.summary === "string" ? parsed.summary : undefined, record?.task, "fallback");
 		const status = typeof parsed?.status === "string" ? parsed.status : undefined;
 		const notes = typeof parsed?.notes === "string" ? parsed.notes : undefined;
 		const filesChanged = Array.isArray(parsed?.filesChanged)

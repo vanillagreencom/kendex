@@ -340,6 +340,7 @@ export type PaneTaskRegistry = Record<string, PaneTaskRecord>;
 
 export type DashboardDisplayMode = "compact" | "normal" | "expanded";
 export type DashboardKind = "pane" | "oneshot";
+export type CompletionMessageProvenance = "persisted" | "task-echo-fallback" | "fallback" | "placeholder" | "diagnostic";
 
 export type SubagentDashboardStatus = PaneTaskStatus | "running" | "waiting";
 
@@ -350,6 +351,7 @@ export interface SubagentDashboardItem {
 	completedAt?: string;
 	kind: DashboardKind;
 	message?: string;
+	messageProvenance?: CompletionMessageProvenance;
 	paneId?: string;
 	startedAt?: string;
 	status: SubagentDashboardStatus;

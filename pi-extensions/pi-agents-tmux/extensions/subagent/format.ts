@@ -9,6 +9,7 @@ import { subagentTreeStyle } from "./settings.js";
 import {
 	AGENT_ASCII_COLOR_SEQUENCE,
 	type AgentAsciiColor,
+	type CompletionMessageProvenance,
 	type DisplayItem,
 	ICONS,
 	type SubagentStatuslineInfo,
@@ -92,9 +93,9 @@ export function completionSummaryForDisplay(summary: string | undefined): string
 	return normalizeSummaryText(summary) ?? COMPLETION_SUMMARY_UNAVAILABLE;
 }
 
-export function completionBodyWithoutPromptEcho(summary: string | undefined, task: string | undefined): string {
+export function completionBodyWithoutPromptEcho(summary: string | undefined, task: string | undefined, provenance: CompletionMessageProvenance = "persisted"): string {
 	const body = completionSummaryForDisplay(summary);
-	if (normalizeComparableText(body) && normalizeComparableText(body) === normalizeComparableText(task)) return COMPLETION_SUMMARY_UNAVAILABLE;
+	if (provenance === "task-echo-fallback" && normalizeComparableText(body) && normalizeComparableText(body) === normalizeComparableText(task)) return COMPLETION_SUMMARY_UNAVAILABLE;
 	return body;
 }
 

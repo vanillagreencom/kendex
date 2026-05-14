@@ -161,6 +161,11 @@ function dashboardMessageForOneShotResult(result: SingleResult, persistedSummary
 	return singleResultStatus(result) === "running" ? result.task : COMPLETION_SUMMARY_UNAVAILABLE;
 }
 
+function dashboardMessageProvenanceForOneShotResult(result: SingleResult, persistedSummary?: string): SubagentDashboardItem["messageProvenance"] {
+	if (normalizeSummaryText(persistedSummary) || getFinalOutput(result.messages).trim()) return "persisted";
+	return singleResultStatus(result) === "running" ? "task-echo-fallback" : "placeholder";
+}
+
 async function persistedSummaryForOneShotResult(runtimeRoot: string, result: SingleResult): Promise<string | undefined> {
 	if (!result.taskId) return undefined;
 	try {
@@ -253,6 +258,7 @@ export async function runChainDispatch(
 				agent: result.agent,
 				kind: "oneshot",
 				message: await dashboardMessageForCompletedOneShotResult(flow.runtimeRoot, result),
+				messageProvenance: dashboardMessageProvenanceForOneShotResult(result, await persistedSummaryForOneShotResult(flow.runtimeRoot, result)),
 				model: result.model,
 				status: singleResultStatus(result),
 				task: result.task,
@@ -366,10 +372,12 @@ export async function runParallelDispatch(
 	const maxConcurrency = Math.max(1, Math.floor(settingNumber("maxConcurrency", MAX_CONCURRENCY, flow.cwd)));
 	const results = await mapInBatchesWithConcurrencyLimit(parallelTasks, parallelBatchSize, maxConcurrency, async (t, index) => {
 		const updateOneshotDashboard = async (item: SingleResult, usePersistedSummary = false) => {
+			const persistedSummary = usePersistedSummary ? await persistedSummaryForOneShotResult(flow.runtimeRoot, item) : undefined;
 			flow.updateDashboard({
 				agent: item.agent,
 				kind: "oneshot",
-				message: usePersistedSummary ? await dashboardMessageForCompletedOneShotResult(flow.runtimeRoot, item) : dashboardMessageForOneShotResult(item),
+				message: dashboardMessageForOneShotResult(item, persistedSummary),
+				messageProvenance: dashboardMessageProvenanceForOneShotResult(item, persistedSummary),
 				model: item.model,
 				status: singleResultStatus(item),
 				task: item.task,
@@ -499,6 +507,7 @@ export async function runSingleDispatch(
 			agent: result.agent,
 			kind: "oneshot",
 			message: await dashboardMessageForCompletedOneShotResult(flow.runtimeRoot, result),
+			messageProvenance: dashboardMessageProvenanceForOneShotResult(result, await persistedSummaryForOneShotResult(flow.runtimeRoot, result)),
 			model: result.model,
 			status: singleResultStatus(result),
 			task: result.task,

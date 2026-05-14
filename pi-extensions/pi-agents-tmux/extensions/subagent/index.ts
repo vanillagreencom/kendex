@@ -569,6 +569,12 @@ export default function (pi: ExtensionAPI) {
 		if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
 		return record.diagnostics?.at(-1) ?? record.task;
 	};
+	const taskRecordDashboardMessageProvenance = (record: PaneTaskRecord): SubagentDashboardItem["messageProvenance"] => {
+		if (normalizeSummaryText(record.summary)) return "persisted";
+		if (record.status === "needs_completion") return record.diagnostics?.length ? "diagnostic" : "placeholder";
+		if (isTerminalTaskStatus(record.status)) return "placeholder";
+		return record.diagnostics?.length ? "diagnostic" : "task-echo-fallback";
+	};
 
 	const updateDashboardFromTaskRecord = (record: PaneTaskRecord, runtimeRoot: string) => {
 		const kind = inferTaskRecordKind(runtimeRoot, record);
@@ -592,6 +598,7 @@ export default function (pi: ExtensionAPI) {
 			completedAt: record.completedAt,
 			kind,
 			message: taskRecordDashboardMessage(record),
+			messageProvenance: taskRecordDashboardMessageProvenance(record),
 			model: record.model ?? existing?.model,
 			paneId: record.paneId,
 			startedAt: record.createdAt,
