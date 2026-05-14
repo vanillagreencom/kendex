@@ -37,10 +37,12 @@ import {
 	divider,
 	formatUsageStats,
 	inactivePill,
+	sessionModeChipLabel,
 	sessionModeDetailLabel,
 	shortTaskSuffix,
 	simpleFrame,
 	textFromMessageContent,
+	truncateSessionKeyForChip,
 } from "./format.js";
 import {
 	ensurePersistentPane,
@@ -79,12 +81,14 @@ import {
 	type ChatMessage,
 	type CompletionMessageProvenance,
 	type MonitorDetailEntry,
+	type MonitorFilter,
 	type PaneTaskRecord,
 	type PaneTaskRegistry,
 	type PaneTaskStatus,
 	type SubagentDashboardItem,
 	type TraceViewerItem,
 	type TraceViewerState,
+	type UsageStats,
 	type VstackModalLock,
 } from "./types.js";
 
@@ -507,7 +511,7 @@ function agentEntityTitle(theme: Theme, label: string): string {
 	return ansiMagenta(theme.bold(label));
 }
 
-function renderAgentBrowserTabs(active: AgentBrowserTabId, hasActive: boolean, width: number, theme: Theme): string {
+export function renderAgentBrowserTabs(active: AgentBrowserTabId, hasActive: boolean, width: number, theme: Theme): string {
 	void hasActive;
 	const tabs = [AGENTS_BROWSER_TAB, MONITOR_BROWSER_TAB];
 	const partFor = (tab: AgentBrowserTabDef): string => {
@@ -846,6 +850,33 @@ function monitorStatusText(status: PaneTaskStatus, theme: Theme): string {
 	return theme.fg(paneCompletionTone(status), status);
 }
 
+export type MonitorSessionType = "pane" | "bg-lane" | "bg-one-shot";
+
+export interface MonitorSessionGroup {
+	agent: string;
+	createdAt: string;
+	id: string;
+	isActive: boolean;
+	isCompleted: boolean;
+	kind: "pane" | "oneshot";
+	latestAt: string;
+	paneId?: string;
+	records: PaneTaskRecord[];
+	sessionKey?: string;
+	sessionMode?: PaneTaskRecord["sessionMode"];
+	taskCount: number;
+	transcriptPath?: string;
+	type: MonitorSessionType;
+	usage?: UsageStats;
+}
+
+export type MonitorTreeRow =
+	| { key: string; kind: "section"; label: string }
+	| { group: MonitorSessionGroup; key: string; kind: "session" }
+	| { group: MonitorSessionGroup; key: string; kind: "task"; record: PaneTaskRecord };
+
+const MONITOR_FILTERS: MonitorFilter[] = ["active", "completed", "all"];
+
 function sortedMonitorRecords(registry: PaneTaskRegistry): PaneTaskRecord[] {
 	return Object.values(registry)
 		.filter((record) => record.taskId && record.agent)
@@ -886,29 +917,208 @@ export function monitorRecordLabel(record: PaneTaskRecord, taskNumbers: Map<stri
 	return `${record.agent}${numberText} · ${recordClockTime(record)} · ${shortTaskSuffix(record.taskId)}`;
 }
 
+export function monitorTaskRowLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
+	const number = taskNumbers.get(record.taskId);
+	const numberText = number ? `#${number}` : "Task";
+	return `${numberText} · ${recordClockTime(record)} · ${shortTaskSuffix(record.taskId)}`;
+}
+
 function recordTimestampLocal(record: PaneTaskRecord): number {
 	const value = Date.parse(record.completedAt ?? record.createdAt ?? "");
 	return Number.isFinite(value) ? value : 0;
 }
 
-function renderMonitorList(records: PaneTaskRecord[], ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
-	const lines = [`${agentPaneTitle(theme, "Tasks", ui.pane === "list")} ${theme.fg("dim", `(${records.length})`)}`, ""];
-	if (records.length === 0) {
+function recordLatestTimestamp(record: PaneTaskRecord): number {
+	const value = Date.parse(record.completedAt ?? record.updatedAt ?? record.createdAt ?? "");
+	return Number.isFinite(value) ? value : 0;
+}
+
+function recordMonitorKind(record: PaneTaskRecord): "pane" | "oneshot" {
+	if (record.kind === "pane" || record.kind === "oneshot") return record.kind;
+	if (record.paneId || record.inboxFile || record.processingFile || record.doneFile || record.outboxFile || record.completionSourcePath || record.completionArchivePath) return "pane";
+	return "oneshot";
+}
+
+function monitorStatusIsActive(status: PaneTaskStatus | string | undefined): boolean {
+	return status === "queued" || status === "running";
+}
+
+function monitorStatusIsTerminal(status: PaneTaskStatus | string | undefined): boolean {
+	return status === "completed" || status === "failed" || status === "blocked" || status === "needs_completion" || status === "cancelled";
+}
+
+function monitorSessionKey(record: PaneTaskRecord): { id: string; type: MonitorSessionType } {
+	const kind = recordMonitorKind(record);
+	if (kind === "pane") {
+		if (record.paneId?.trim()) return { id: `pane:${record.paneId.trim()}`, type: "pane" };
+		if (record.transcriptPath?.trim()) return { id: `pane-transcript:${path.dirname(record.transcriptPath.trim())}`, type: "pane" };
+		return { id: `pane-task:${record.taskId}`, type: "pane" };
+	}
+	if (record.sessionKey?.trim()) return { id: `bg-lane:${record.agent}:${record.sessionKey.trim()}`, type: "bg-lane" };
+	return { id: `bg-one-shot:${record.taskId}`, type: "bg-one-shot" };
+}
+
+function usageSum(records: PaneTaskRecord[]): UsageStats | undefined {
+	const total: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+	let seen = false;
+	for (const usage of records.map((record) => record.usage).filter(Boolean) as UsageStats[]) {
+		seen = true;
+		total.input += usage.input || 0;
+		total.output += usage.output || 0;
+		total.cacheRead += usage.cacheRead || 0;
+		total.cacheWrite += usage.cacheWrite || 0;
+		total.cost += usage.cost || 0;
+		total.contextTokens += usage.contextTokens || 0;
+		total.turns += usage.turns || 0;
+	}
+	return seen ? total : undefined;
+}
+
+export function buildMonitorSessionGroups(records: PaneTaskRecord[]): MonitorSessionGroup[] {
+	const bySession = new Map<string, { records: PaneTaskRecord[]; type: MonitorSessionType }>();
+	for (const record of records.filter((item) => item.taskId && item.agent)) {
+		const session = monitorSessionKey(record);
+		const bucket = bySession.get(session.id) ?? { records: [], type: session.type };
+		bucket.records.push(record);
+		bySession.set(session.id, bucket);
+	}
+	const groups: MonitorSessionGroup[] = [];
+	for (const [id, bucket] of bySession) {
+		const groupRecords = [...bucket.records].sort((a, b) => {
+			const delta = recordLatestTimestamp(b) - recordLatestTimestamp(a);
+			return delta !== 0 ? delta : b.taskId.localeCompare(a.taskId);
+		});
+		const latest = groupRecords[0];
+		if (!latest) continue;
+		const created = groupRecords.reduce((min, record) => Math.min(min, Date.parse(record.createdAt) || min), Number.POSITIVE_INFINITY);
+		const latestAtTs = groupRecords.reduce((max, record) => Math.max(max, recordLatestTimestamp(record)), 0);
+		const kind = bucket.type === "pane" ? "pane" : "oneshot";
+		groups.push({
+			agent: latest.agent,
+			createdAt: Number.isFinite(created) ? new Date(created).toISOString() : latest.createdAt,
+			id,
+			isActive: groupRecords.some((record) => monitorStatusIsActive(record.status)),
+			isCompleted: groupRecords.every((record) => monitorStatusIsTerminal(record.status)),
+			kind,
+			latestAt: latestAtTs ? new Date(latestAtTs).toISOString() : latest.completedAt ?? latest.updatedAt ?? latest.createdAt,
+			paneId: groupRecords.find((record) => record.paneId)?.paneId,
+			records: groupRecords,
+			sessionKey: groupRecords.find((record) => record.sessionKey)?.sessionKey,
+			sessionMode: latest.sessionMode,
+			taskCount: groupRecords.length,
+			transcriptPath: groupRecords.find((record) => record.transcriptPath)?.transcriptPath,
+			type: bucket.type,
+			usage: usageSum(groupRecords),
+		});
+	}
+	return groups.sort((a, b) => {
+		const delta = Date.parse(b.latestAt) - Date.parse(a.latestAt);
+		return delta !== 0 ? delta : a.id.localeCompare(b.id);
+	});
+}
+
+export function filteredMonitorSessionGroups(groups: MonitorSessionGroup[], filter: MonitorFilter): MonitorSessionGroup[] {
+	if (filter === "active") return groups.filter((group) => group.isActive);
+	if (filter === "completed") return groups.filter((group) => group.isCompleted);
+	return groups;
+}
+
+export function monitorTreeRows(groups: MonitorSessionGroup[], filter: MonitorFilter, collapsedSessionIds: Set<string> = new Set()): MonitorTreeRow[] {
+	const filtered = filteredMonitorSessionGroups(groups, filter);
+	const rows: MonitorTreeRow[] = [];
+	const pushGroup = (group: MonitorSessionGroup) => {
+		rows.push({ group, key: group.id, kind: "session" });
+		if (!collapsedSessionIds.has(group.id)) {
+			for (const record of group.records) rows.push({ group, key: `${group.id}:${record.taskId}`, kind: "task", record });
+		}
+	};
+	const pushSection = (label: string, sectionGroups: MonitorSessionGroup[]) => {
+		if (filter === "all" && sectionGroups.length === 0) return;
+		rows.push({ key: `section:${label.toLowerCase()}`, kind: "section", label: `${label} (${sectionGroups.length})` });
+		for (const group of sectionGroups) pushGroup(group);
+	};
+	if (filter === "active") pushSection("Active", filtered);
+	else if (filter === "completed") pushSection("Completed", filtered);
+	else {
+		pushSection("Active", groups.filter((group) => group.isActive));
+		pushSection("Completed", groups.filter((group) => !group.isActive));
+	}
+	return rows;
+}
+
+function selectableMonitorRows(rows: MonitorTreeRow[]): MonitorTreeRow[] {
+	return rows.filter((row) => row.kind !== "section");
+}
+
+function selectedMonitorRow(rows: MonitorTreeRow[], ui: AgentBrowserUiState): MonitorTreeRow | undefined {
+	return selectableMonitorRows(rows)[ui.monitorSelected];
+}
+
+function selectedMonitorRowIndex(rows: MonitorTreeRow[], ui: AgentBrowserUiState): number {
+	const selected = selectedMonitorRow(rows, ui);
+	return selected ? rows.findIndex((row) => row.key === selected.key) : -1;
+}
+
+function monitorFilter(ui: AgentBrowserUiState): MonitorFilter {
+	return ui.monitorFilter ?? "all";
+}
+
+function cycleMonitorFilter(filter: MonitorFilter): MonitorFilter {
+	return MONITOR_FILTERS[(MONITOR_FILTERS.indexOf(filter) + 1) % MONITOR_FILTERS.length] ?? "all";
+}
+
+function renderMonitorFilterBar(filter: MonitorFilter, width: number, theme: Theme): string {
+	const parts = MONITOR_FILTERS.map((value) => {
+		const label = ` ${value} `;
+		return value === filter ? agentActivePill(theme, label) : agentInactivePill(theme, label);
+	});
+	return truncateToWidth(`${parts.join(" ")} ${theme.fg("dim", "f cycle")}`, width, "");
+}
+
+function monitorSessionKindLabel(group: MonitorSessionGroup): string {
+	if (group.type === "pane") return "pane";
+	if (group.type === "bg-lane") return `bg lane:${truncateSessionKeyForChip(group.sessionKey) ?? "?"}`;
+	return "bg";
+}
+
+function monitorSessionModeLabel(group: MonitorSessionGroup): string | undefined {
+	if (group.type === "bg-lane") return group.sessionMode === "fresh" ? "fresh" : "resumed";
+	return sessionModeChipLabel({ kind: group.kind, sessionMode: group.sessionMode, sessionKey: group.sessionKey });
+}
+
+function monitorSessionRowLabel(group: MonitorSessionGroup, theme: Theme): string {
+	const mode = monitorSessionModeLabel(group);
+	const modeSuffix = mode ? `${theme.fg("dim", " · ")}${theme.fg("muted", mode)}` : "";
+	const tasksText = group.taskCount === 1 ? "1 task" : `${group.taskCount} tasks`;
+	const meta = theme.fg("dim", ` (${tasksText} · last ${formatRelativeTime(group.latestAt)})`);
+	return `${theme.fg("muted", monitorSessionKindLabel(group))}${theme.fg("dim", " · ")}${ansiMagenta(group.agent)}${modeSuffix}${meta}`;
+}
+
+function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
+	const filter = monitorFilter(ui);
+	const groups = rows.filter((row) => row.kind === "session").length;
+	const lines = [`${agentPaneTitle(theme, "Monitor", ui.pane === "list")} ${theme.fg("dim", `(${groups})`)}`, renderMonitorFilterBar(filter, width, theme), ""];
+	if (rows.length === 0 || selectableMonitorRows(rows).length === 0) {
 		lines.push(theme.fg("dim", "No agent task records yet."));
 		return lines;
 	}
 	if (ui.monitorScroll > 0) lines.push(theme.fg("dim", `↑ ${ui.monitorScroll} earlier`));
 	const taskNumbers = taskNumberById(records);
-	for (const [visibleIndex, record] of records.slice(ui.monitorScroll, ui.monitorScroll + listRows).entries()) {
-		const index = ui.monitorScroll + visibleIndex;
-		const selected = index === ui.monitorSelected;
-		const icon = monitorStatusIcon(record.status, theme);
-		const label = monitorRecordLabel(record, taskNumbers);
-		const name = ansiMagenta(selected ? theme.bold(label) : label);
-		const row = truncateToWidth(`${icon} ${name}`, width, "…");
-		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
+	const selectedKey = selectedMonitorRow(rows, ui)?.key;
+	for (const row of rows.slice(ui.monitorScroll, ui.monitorScroll + listRows)) {
+		let rendered = "";
+		if (row.kind === "section") rendered = `${theme.fg("muted", "▼")} ${theme.fg("accent", row.label)}`;
+		else if (row.kind === "session") {
+			const expander = collapsedSessionIds.has(row.group.id) ? "▶" : "▼";
+			rendered = `  ${theme.fg("muted", expander)} ${monitorSessionRowLabel(row.group, theme)}`;
+		} else {
+			const label = monitorTaskRowLabel(row.record, taskNumbers);
+			rendered = `    ${monitorStatusIcon(row.record.status, theme)} ${theme.fg("text", `Task ${label}`)}${theme.fg("dim", " · ")}${monitorStatusText(row.record.status, theme)}`;
+		}
+		const line = truncateToWidth(rendered, width, "…");
+		lines.push(row.key === selectedKey ? theme.bg("selectedBg", agentPad(line, width)) : line);
 	}
-	const hidden = Math.max(0, records.length - (ui.monitorScroll + listRows));
+	const hidden = Math.max(0, rows.length - (ui.monitorScroll + listRows));
 	if (hidden > 0) lines.push(theme.fg("dim", `↓ ${hidden} more`));
 	return lines;
 }
@@ -1078,8 +1288,23 @@ export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDas
 	}
 }
 
+function renderMonitorSessionDetailPlaceholder(group: MonitorSessionGroup | undefined, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme): string[] {
+	if (!group) return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select a session or task.")}`];
+	const safeWidth = Math.max(8, width);
+	const header = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${monitorSessionRowLabel(group, theme)}`;
+	const lines = [
+		header,
+		"",
+		...wrapTextWithAnsi(theme.fg("dim", "Session aggregate view lands in next commit."), safeWidth),
+		...wrapTextWithAnsi(theme.fg("muted", "Select a task row for the existing Summary/Completion/Task trace."), safeWidth),
+	];
+	return lines.slice(0, rows);
+}
+
 function renderMonitorTabBody(
 	records: PaneTaskRecord[],
+	rows: MonitorTreeRow[],
+	collapsedSessionIds: Set<string>,
 	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
 	width: number,
@@ -1091,9 +1316,11 @@ function renderMonitorTabBody(
 	const leftWidth = Math.max(10, Math.min(maxLeftWidth, Math.max(Math.min(AGENTS_LEFT_MIN_WIDTH, maxLeftWidth), desiredLeftWidth)));
 	const rightWidth = Math.max(1, width - leftWidth - 3);
 	const bodyRows = layout.bodyRows;
-	const left = renderMonitorList(records, ui, leftWidth, theme, layout.listRows);
-	const record = records[ui.monitorSelected];
-	const right = renderMonitorDetail(record, cache, ui, rightWidth, bodyRows, theme);
+	const left = renderMonitorTree(rows, records, collapsedSessionIds, ui, leftWidth, theme, layout.listRows);
+	const selection = selectedMonitorRow(rows, ui);
+	const right = selection?.kind === "task"
+		? renderMonitorDetail(selection.record, cache, ui, rightWidth, bodyRows, theme)
+		: renderMonitorSessionDetailPlaceholder(selection?.kind === "session" ? selection.group : undefined, ui, rightWidth, bodyRows, theme);
 	const lines: string[] = [agentDivider(width, theme)];
 	for (let i = 0; i < bodyRows; i += 1) {
 		lines.push(`${agentPad(left[i] ?? "", leftWidth)} ${theme.fg("dim", "│")} ${truncateToWidth(right[i] ?? "", rightWidth, "")}`);
@@ -1199,6 +1426,9 @@ function createAgentsBrowserComponent(
 		ui.scroll = Math.max(0, Math.min(ui.scroll, Math.max(0, list.length - layout.listRows)));
 	};
 	const monitorRecords = sortedMonitorRecords(taskRegistry);
+	const monitorGroups = buildMonitorSessionGroups(monitorRecords);
+	const monitorCollapsedSessions = new Set<string>();
+	const currentMonitorRows = () => monitorTreeRows(monitorGroups, monitorFilter(ui), monitorCollapsedSessions);
 	const monitorCache = new Map<string, MonitorDetailEntry>();
 	const monitorTaskNumbers = taskNumberById(monitorRecords);
 	const loadMonitorRecord = (record: PaneTaskRecord | undefined) => {
@@ -1214,13 +1444,19 @@ function createAgentsBrowserComponent(
 			requestRender();
 		});
 	};
+	const loadMonitorSelection = () => {
+		const row = selectedMonitorRow(currentMonitorRows(), ui);
+		if (row?.kind === "task") loadMonitorRecord(row.record);
+	};
 	const clampMonitor = () => {
 		const layout = getLayout();
-		const total = monitorRecords.length;
-		ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, total - 1)));
-		if (ui.monitorSelected < ui.monitorScroll) ui.monitorScroll = ui.monitorSelected;
-		if (ui.monitorSelected >= ui.monitorScroll + layout.listRows) ui.monitorScroll = ui.monitorSelected - layout.listRows + 1;
-		ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, total - layout.listRows)));
+		const rows = currentMonitorRows();
+		const selectable = selectableMonitorRows(rows);
+		ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, selectable.length - 1)));
+		const selectedIndex = selectedMonitorRowIndex(rows, ui);
+		if (selectedIndex >= 0 && selectedIndex < ui.monitorScroll) ui.monitorScroll = selectedIndex;
+		if (selectedIndex >= 0 && selectedIndex >= ui.monitorScroll + layout.listRows) ui.monitorScroll = selectedIndex - layout.listRows + 1;
+		ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, rows.length - layout.listRows)));
 	};
 
 	const hasActiveTab = () => getActiveItems().length > 0;
@@ -1233,7 +1469,8 @@ function createAgentsBrowserComponent(
 			ui.monitorSubtab = 0;
 			ui.inspectorScroll = 0;
 			ui.pane = "list";
-			loadMonitorRecord(monitorRecords[0]);
+			clampMonitor();
+			loadMonitorSelection();
 			requestRender();
 			return;
 		}
@@ -1341,7 +1578,7 @@ function createAgentsBrowserComponent(
 					ui.monitorSubtab = 0;
 					ui.inspectorScroll = 0;
 					clampMonitor();
-					loadMonitorRecord(monitorRecords[ui.monitorSelected]);
+					loadMonitorSelection();
 				}
 			} else if (ui.pane === "inspector") {
 				ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
@@ -1393,34 +1630,58 @@ function createAgentsBrowserComponent(
 		}
 		if (ui.tab === "monitor") {
 			const layout = getLayout();
+			if (matchesKey(data, "f")) {
+				ui.monitorFilter = cycleMonitorFilter(monitorFilter(ui));
+				ui.monitorSelected = 0;
+				ui.monitorScroll = 0;
+				ui.monitorSubtab = 0;
+				ui.inspectorScroll = 0;
+				clampMonitor();
+				loadMonitorSelection();
+				requestRender();
+				return;
+			}
 			if (matchesKey(data, "up")) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - 1);
-				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - 1); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - 1); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "down")) {
 				if (ui.pane === "inspector") ui.inspectorScroll += 1;
-				else { ui.monitorSelected += 1; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
+				else { ui.monitorSelected += 1; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pageup" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - Math.max(1, layout.bodyRows));
-				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - layout.listRows); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - layout.listRows); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pagedown" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll += Math.max(1, layout.bodyRows);
-				else { ui.monitorSelected += layout.listRows; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); }
+				else { ui.monitorSelected += layout.listRows; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
-			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.monitorSelected = 0; ui.monitorScroll = 0; ui.monitorSubtab = 0; loadMonitorRecord(monitorRecords[0]); } requestRender(); return; }
-			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.monitorSelected = Math.max(0, monitorRecords.length - 1); ui.monitorSubtab = 0; clampMonitor(); loadMonitorRecord(monitorRecords[ui.monitorSelected]); } requestRender(); return; }
+			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.monitorSelected = 0; ui.monitorScroll = 0; ui.monitorSubtab = 0; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
+			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.monitorSelected = Math.max(0, selectableMonitorRows(currentMonitorRows()).length - 1); ui.monitorSubtab = 0; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
 			if (matchesKey(data, "enter") || matchesKey(data, "return")) {
-				if (ui.pane === "list") { ui.pane = "inspector"; loadMonitorRecord(monitorRecords[ui.monitorSelected]); requestRender(); return; }
+				if (ui.pane === "list") {
+					const selected = selectedMonitorRow(currentMonitorRows(), ui);
+					if (selected?.kind === "session") {
+						if (monitorCollapsedSessions.has(selected.group.id)) monitorCollapsedSessions.delete(selected.group.id);
+						else monitorCollapsedSessions.add(selected.group.id);
+						clampMonitor();
+						requestRender();
+						return;
+					}
+					ui.pane = "inspector";
+					loadMonitorSelection();
+					requestRender();
+					return;
+				}
 				return;
 			}
 			return;
@@ -1471,10 +1732,10 @@ function createAgentsBrowserComponent(
 		const tabLine = renderAgentBrowserTabs(ui.tab, activeItems.length > 0, bodyWidth, theme);
 		if (ui.tab === "monitor") {
 			clampMonitor();
-			loadMonitorRecord(monitorRecords[ui.monitorSelected]);
-			const arrowsLabel = ui.pane === "inspector" ? "sections · " : "pane · ";
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel.replace(/ +$/, ""))}`;
-			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, monitorCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
+			loadMonitorSelection();
+			const rows = currentMonitorRows();
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "navigate · ")}${ansiYellow("←/→")} ${theme.fg("dim", "tree/detail panes · ")}${ansiYellow("enter")} ${theme.fg("dim", "expand/open · ")}${ansiYellow("f")} ${theme.fg("dim", "filter · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
 		clamp();
@@ -1520,6 +1781,7 @@ export async function openAgentsBrowser(
 		monitorSelected: 0,
 		monitorScroll: 0,
 		monitorSubtab: 0,
+		monitorFilter: "all",
 	};
 	while (true) {
 		const discovery = discoverAgents(ctx.cwd, "both");

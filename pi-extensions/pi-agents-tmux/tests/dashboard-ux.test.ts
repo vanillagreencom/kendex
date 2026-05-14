@@ -6,9 +6,13 @@ import test from "node:test";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import {
 	appendBgChatMessages,
+	buildMonitorSessionGroups,
 	buildAgentRows,
+	filteredMonitorSessionGroups,
 	monitorRecordLabel,
+	monitorTreeRows,
 	readTranscriptTail,
+	renderAgentBrowserTabs,
 	renderAgentInspector,
 	taskNumberById,
 	traceViewerItems,
@@ -68,6 +72,7 @@ function uiState(patch: Partial<AgentBrowserUiState> = {}): AgentBrowserUiState 
 		monitorSelected: 0,
 		monitorScroll: 0,
 		monitorSubtab: 0,
+		monitorFilter: "all",
 		...patch,
 	};
 }
@@ -342,6 +347,48 @@ test("monitor labels number repeated same-agent tasks latest-first friendly", ()
 	assert.equal(numbers.get(first.taskId), 1);
 	assert.equal(numbers.get(second.taskId), 2);
 	assert.match(monitorRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
+});
+
+test("Monitor tab line replaces History", () => {
+	const line = renderAgentBrowserTabs("monitor", false, 120, theme as any);
+
+	assert.match(line, /Monitor/);
+	assert.doesNotMatch(line, /History/);
+});
+
+test("Monitor session grouping derives pane, lane, and one-shot sessions", () => {
+	const paneFirst = record("reviewer-arch", "reviewer-arch-1700000000-11111111", "2026-05-14T05:00:00.000Z", { kind: "pane", paneId: "%9", status: "completed", sessionMode: "new" });
+	const paneSecond = record("reviewer-arch", "reviewer-arch-1700000060-22222222", "2026-05-14T05:01:00.000Z", { kind: "pane", paneId: "%9", status: "running", sessionMode: "resumed" });
+	const laneFirst = record("rust", "rust-1700000120-33333333", "2026-05-14T05:02:00.000Z", { kind: "oneshot", sessionKey: "review-issue-123", sessionMode: "resumed" });
+	const laneSecond = record("rust", "rust-1700000180-44444444", "2026-05-14T05:03:00.000Z", { kind: "oneshot", sessionKey: "review-issue-123", sessionMode: "resumed" });
+	const shotFirst = record("reviewer-doc", "reviewer-doc-1700000240-55555555", "2026-05-14T05:04:00.000Z", { kind: "oneshot", sessionMode: "fresh" });
+	const shotSecond = record("reviewer-doc", "reviewer-doc-1700000300-66666666", "2026-05-14T05:05:00.000Z", { kind: "oneshot", sessionMode: "fresh" });
+
+	const groups = buildMonitorSessionGroups([paneFirst, paneSecond, laneFirst, laneSecond, shotFirst, shotSecond]);
+
+	assert.equal(groups.length, 4);
+	assert.equal(groups.find((group) => group.type === "pane")?.records.length, 2);
+	assert.equal(groups.find((group) => group.type === "bg-lane")?.records.length, 2);
+	assert.equal(groups.filter((group) => group.type === "bg-one-shot").length, 2);
+	assert.equal(groups.find((group) => group.type === "pane")?.isActive, true);
+});
+
+test("Monitor active/completed filter and tree expansion work", () => {
+	const running = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", paneId: "%1", status: "running", sessionMode: "resumed" });
+	const done = record("reviewer-doc", "reviewer-doc-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", { kind: "oneshot", status: "completed", sessionMode: "fresh" });
+	const groups = buildMonitorSessionGroups([running, done]);
+
+	assert.deepEqual(filteredMonitorSessionGroups(groups, "active").map((group) => group.agent), ["planner"]);
+	assert.deepEqual(filteredMonitorSessionGroups(groups, "completed").map((group) => group.agent), ["reviewer-doc"]);
+
+	const rows = monitorTreeRows(groups, "all");
+	assert.equal(rows.filter((row) => row.kind === "section").length, 2);
+	assert.equal(rows.filter((row) => row.kind === "session").length, 2);
+	assert.equal(rows.filter((row) => row.kind === "task").length, 2);
+
+	const firstSession = rows.find((row) => row.kind === "session")!;
+	const collapsed = monitorTreeRows(groups, "all", new Set([firstSession.key]));
+	assert.equal(collapsed.filter((row) => row.kind === "task").length, 1);
 });
 
 test("Agents tab rows are flat static catalog entries", () => {

@@ -82,6 +82,7 @@ export const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 
 export type AgentBrowserTabId = "agents" | "active" | "monitor" | AgentScope;
 export type AgentBrowserTabDef = { id: AgentBrowserTabId; label: string };
+export type MonitorFilter = "active" | "completed" | "all";
 export const AGENTS_BROWSER_TAB: AgentBrowserTabDef = { id: "agents", label: "Agents" };
 export const ACTIVE_BROWSER_TAB: AgentBrowserTabDef = { id: "active", label: "Active" };
 export const MONITOR_BROWSER_TAB: AgentBrowserTabDef = { id: "monitor", label: "Monitor" };
@@ -117,6 +118,7 @@ export interface AgentBrowserUiState {
 	monitorSelected: number;
 	monitorScroll: number;
 	monitorSubtab: number;
+	monitorFilter: MonitorFilter;
 }
 
 export type MonitorDetailEntry = { items?: TraceViewerItem[]; loading?: boolean; error?: string };
