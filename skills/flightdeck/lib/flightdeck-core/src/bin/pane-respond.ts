@@ -146,7 +146,17 @@ function validate(args: Args): void {
 	}
 	if (/^%[0-9]+$/.test(args.target)) {
 		const resolved = resolvePaneTargetFromPaneId(args.target);
-		if (resolved) args.target = resolved;
+		switch (resolved.kind) {
+			case "ok":
+				args.target = resolved.target;
+				break;
+			case "registry_read":
+				die(`pane-respond: failed to look up pane '${args.target}' in registry (flightdeck-state exit=${resolved.rc})`);
+			case "not_registered":
+				die(`pane-respond: pane '${args.target}' is not registered as a flightdeck-tracked pane; pass the explicit pane target (e.g. <session>:<window>.<idx>) or register the pane first`);
+			case "missing_pane_target":
+				die(`pane-respond: registry entry for '${args.target}' is missing pane_target (registry drift); recover via pane-registry reconcile`);
+		}
 	}
 	if (!args.target.includes(".")) die("Error: target must include explicit pane index (e.g., HT:cc-463.0)");
 
@@ -196,14 +206,39 @@ function paneRegistry(args: string[]): string {
 // the SESSION:WINDOW.IDX pane_target. Resolve via the registry so the
 // downstream explicit-pane-index check (and every tmux/bridge call) sees
 // the canonical pane_target.
-function resolvePaneTargetFromPaneId(paneId: string): string {
-	const id = paneRegistry(["find-by-pane", paneId]);
-	if (!id) return "";
+//
+// Round-1 reviewer-error major (#37): distinguish three specific
+// failure modes so the caller can emit byte-identical error text to
+// the bash port instead of falling through to the generic
+// 'target must include explicit pane index' message.
+type PaneIdResolution =
+	| { kind: "ok"; target: string }
+	| { kind: "registry_read"; rc: number }
+	| { kind: "not_registered" }
+	| { kind: "missing_pane_target" };
+
+function resolvePaneTargetFromPaneId(paneId: string): PaneIdResolution {
+	const r = spawnSync(PANE_REGISTRY, ["find-by-pane", paneId], { encoding: "utf8" });
+	const status = typeof r.status === "number" ? r.status : 0;
+	if (status >= 2) return { kind: "registry_read", rc: status };
+	const raw = (r.stdout ?? "").trim();
+	let id = "";
+	if (raw.startsWith("{")) {
+		try {
+			const parsed = JSON.parse(raw) as { id?: unknown };
+			if (typeof parsed.id === "string") id = parsed.id;
+		} catch { /* malformed — treat as no id below */ }
+	} else {
+		id = raw;
+	}
+	if (!id) return { kind: "not_registered" };
 	const idJson = JSON.stringify(id);
 	const expr = `(.entries[${idJson}].pane_target // .issues[${idJson}].pane_target // empty)`;
-	const r = spawnSync(FLIGHTDECK_STATE, ["get", expr], { encoding: "utf8" });
-	if (r.status !== 0) return "";
-	return (r.stdout ?? "").trim().replace(/^"|"$/g, "");
+	const sr = spawnSync(FLIGHTDECK_STATE, ["get", expr], { encoding: "utf8" });
+	if (sr.status !== 0) return { kind: "missing_pane_target" };
+	const target = (sr.stdout ?? "").trim().replace(/^"|"$/g, "");
+	if (!target || target === "null") return { kind: "missing_pane_target" };
+	return { kind: "ok", target };
 }
 
 function extractFlag(s: string, flag: string): string {

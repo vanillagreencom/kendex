@@ -107,17 +107,61 @@ pane_registry_find_id() {
   fi
 }
 
-# Issue #37(A): callers may pass a stable tmux pane_id (%NNN) instead of
-# the human SESSION:WINDOW.IDX pane_target. Resolve via the registry so
-# every downstream tmux/bridge call still gets an explicit pane index.
+# Issue #37(A): callers may pass a stable tmux pane_id (%NNN) instead
+# of the human SESSION:WINDOW.IDX pane_target. Resolve via the registry
+# so every downstream tmux/bridge call still gets an explicit pane
+# index.
+#
+# Round-1 reviewer-error major (#37): the previous helper returned 1
+# for every failure mode, so the caller fell through to the generic
+# 'target must include explicit pane index' error. Distinguish three
+# specific failure shapes and emit byte-identical error text to the
+# TS port:
+#   1 = registry read failure (find-by-pane exit >= 2)
+#   2 = no tracked entry matches the pane id (find-by-pane exit 1
+#       OR exit 0 but missing id)
+#   3 = entry found but pane_target field is empty/null (registry
+#       drift; recover via pane-registry reconcile)
+# On success the resolved pane_target is printed to stdout, exit 0.
 resolve_pane_target_from_pane_id() {
-  local pane_id="$1" id id_json target
-  id=$(pane_registry_find_id "$pane_id")
-  [[ -n "$id" ]] || return 1
+  local pane_id="$1"
+  local raw fb_rc id id_json target sr_rc
+  # set -e is in effect for the script body; explicitly suspend it so
+  # find-by-pane and flightdeck-state can return non-zero (legitimate
+  # 'no match' or 'state read failure' signals) without aborting the
+  # caller before we can classify the failure.
+  set +e
+  raw=$("$SCRIPT_DIR/pane-registry" find-by-pane "$pane_id" 2>/dev/null)
+  fb_rc=$?
+  set -e
+  if (( fb_rc >= 2 )); then
+    printf '__PANE_RESPOND_ERR__:registry_read:%s' "$fb_rc"
+    return 1
+  fi
+  id=""
+  if [[ "$raw" == \{* ]]; then
+    id=$(jq -r '.id // empty' <<< "$raw" 2>/dev/null || true)
+  else
+    id="$raw"
+  fi
+  if [[ -z "$id" ]]; then
+    printf '__PANE_RESPOND_ERR__:not_registered'
+    return 2
+  fi
   id_json=$(jq -Rn --arg v "$id" '$v')
+  set +e
   target=$("$SCRIPT_DIR/flightdeck-state" get \
     "(.entries[$id_json].pane_target // .issues[$id_json].pane_target // empty)" 2>/dev/null | tr -d '"')
-  [[ -n "$target" ]] || return 1
+  sr_rc=$?
+  set -e
+  if (( sr_rc >= 2 )); then
+    printf '__PANE_RESPOND_ERR__:registry_read:%s' "$sr_rc"
+    return 1
+  fi
+  if [[ -z "$target" || "$target" == "null" ]]; then
+    printf '__PANE_RESPOND_ERR__:missing_pane_target'
+    return 3
+  fi
   printf '%s' "$target"
 }
 
@@ -250,12 +294,31 @@ case "$MODE" in
     ;;
 esac
 
-# Issue #37(A): accept stable pane_id (%NNN) by resolving to pane_target
-# via the registry before enforcing the explicit-pane-index check.
+# Issue #37(A): accept stable pane_id (%NNN) by resolving to
+# pane_target via the registry before enforcing the explicit-pane-
+# index check. Round-1 reviewer-error major: surface the specific
+# resolution failure rather than falling through to the generic
+# 'target must include explicit pane index' error.
 if [[ "$TARGET" =~ ^%[0-9]+$ ]]; then
-  if resolved=$(resolve_pane_target_from_pane_id "$TARGET"); then
-    TARGET="$resolved"
-  fi
+  resolved=$(resolve_pane_target_from_pane_id "$TARGET")
+  case "$resolved" in
+    __PANE_RESPOND_ERR__:registry_read:*)
+      _rc="${resolved#__PANE_RESPOND_ERR__:registry_read:}"
+      echo "pane-respond: failed to look up pane '$TARGET' in registry (flightdeck-state exit=$_rc)" >&2
+      exit 2
+      ;;
+    __PANE_RESPOND_ERR__:not_registered)
+      echo "pane-respond: pane '$TARGET' is not registered as a flightdeck-tracked pane; pass the explicit pane target (e.g. <session>:<window>.<idx>) or register the pane first" >&2
+      exit 2
+      ;;
+    __PANE_RESPOND_ERR__:missing_pane_target)
+      echo "pane-respond: registry entry for '$TARGET' is missing pane_target (registry drift); recover via pane-registry reconcile" >&2
+      exit 2
+      ;;
+    *)
+      TARGET="$resolved"
+      ;;
+  esac
 fi
 
 # Enforce explicit pane index.
