@@ -411,6 +411,149 @@ test("empty agent_end without session_compact preserves existing completion beha
 	}
 });
 
+test("bridge disconnect after session_compact does not classify compact-then-empty", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact")]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(emitted),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.notEqual(result.status, "needs_completion");
+		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
+		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("malformed agent_end content is logged and skipped", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: "bad-shape" })]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(emitted),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.notEqual(result.status, "needs_completion");
+		assert.match(result.diagnostics?.join("\n") ?? "", /malformed agent_end content/);
+		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
+		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("missing git binary omits cwdSnapshot but still emits compact-then-empty", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
+	]);
+	setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+		void command;
+		void args;
+		const cb = typeof options === "function" ? options : callback;
+		queueMicrotask(() => cb(Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }), "", "spawn git ENOENT"));
+		return new EventEmitter() as any;
+	}) as any);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(emitted),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(result.status, "needs_completion");
+		assert.equal(result.needsCompletionReason, "compact-then-empty");
+		assert.equal(result.cwdSnapshot, undefined);
+		assert.match(result.diagnostics?.join("\n") ?? "", /cwdSnapshot git failed/);
+		const needsCompletion = emitted.find((event) => event.name === "subagents:needs_completion");
+		assert.ok(needsCompletion);
+		assert.equal(needsCompletion.payload.reason, "compact-then-empty");
+		assert.equal(needsCompletion.payload.cwdSnapshot, undefined);
+		assert.match(needsCompletion.payload.diagnostics?.join("\n") ?? "", /cwdSnapshot git failed/);
+	} finally {
+		setGitExecFileForTests();
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("needs_completion emit failure is attached to result diagnostics", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempGitRepo(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{
+				getActiveTools: () => [],
+				events: {
+					emit: (name: string, payload: unknown) => {
+						if (name === "subagents:needs_completion") throw new Error("bus disposed");
+						emitted.push({ name, payload });
+					},
+				},
+			} as any,
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(result.status, "needs_completion");
+		assert.match(result.diagnostics?.join("\n") ?? "", /Failed to emit subagents:needs_completion/);
+		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
 test("reused session budget guard refuses over-threshold explicit session by default without spawning", async () => {
 	const runtimeRoot = tempRuntime();
 	const cwd = tempRuntime();

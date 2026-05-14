@@ -357,7 +357,7 @@ export function latestTaskRecord(records: PaneTaskRegistry, agent?: string): Pan
 		.sort((a, b) => (b.updatedAt ?? b.completedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.completedAt ?? a.createdAt))[0];
 }
 
-export function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<string, unknown>): void {
+export function tryEmitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<string, unknown>): { error?: string; ok: boolean } {
 	try {
 		const bus = (pi as unknown as { events?: { emit?: (name: string, payload: unknown) => void } }).events;
 		bus?.emit?.(event, {
@@ -365,6 +365,15 @@ export function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Reco
 			...payload,
 			timestamp: new Date().toISOString(),
 		});
+		return { ok: true };
+	} catch (error) {
+		return { error: stringifyError(error), ok: false };
+	}
+}
+
+export function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<string, unknown>): void {
+	try {
+		tryEmitSubagentEvent(pi, event, payload);
 	} catch {
 		// Lifecycle events are best-effort extension integration signals.
 	}

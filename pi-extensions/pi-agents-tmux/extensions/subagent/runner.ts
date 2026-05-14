@@ -38,7 +38,7 @@ import {
 	summarizeAttempt,
 	type BgSessionSelection,
 } from "./sessions.js";
-import { createTaskId, emitSubagentEvent } from "./tasks.js";
+import { createTaskId, emitSubagentEvent, tryEmitSubagentEvent } from "./tasks.js";
 import {
 	DETAIL_STRING_MAX_CHARS,
 	type CwdSnapshot,
@@ -181,6 +181,12 @@ function agentEndHasTextlessContent(payload: any): boolean {
 	const content = eventContentValue(payload);
 	if (content == null) return true;
 	return Array.isArray(content) && !contentHasTextPart(content);
+}
+
+function malformedAgentEndContentDiagnostic(payload: any): string | undefined {
+	const content = eventContentValue(payload);
+	if (content == null || Array.isArray(content)) return undefined;
+	return `compact-then-empty detector skipped malformed agent_end content: expected array/null/undefined, got ${typeof content}`;
 }
 
 function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
@@ -633,6 +639,8 @@ async function runSingleAgentAttempt(
 				}
 
 				if (eventName === "agent_end") {
+					const malformedDiagnostic = malformedAgentEndContentDiagnostic(payload);
+					if (malformedDiagnostic) appendResultDiagnostic(currentResult, malformedDiagnostic);
 					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
 				}
 
@@ -744,7 +752,7 @@ async function runSingleAgentAttempt(
 			if (cwdSnapshot) currentResult.cwdSnapshot = cwdSnapshot;
 			const summary = compactThenEmptySummary(cwdSnapshot);
 			currentResult.errorMessage = summary;
-			emitSubagentEvent(pi, "subagents:needs_completion", {
+			const needsCompletionPayload = {
 				mode: "oneshot",
 				agent: agent.name,
 				taskId: oneShotTaskId,
@@ -762,7 +770,13 @@ async function runSingleAgentAttempt(
 				attempt,
 				diagnostics: currentResult.diagnostics,
 				...(cwdSnapshot ? { cwdSnapshot } : {}),
-			});
+			};
+			const emitted = tryEmitSubagentEvent(pi, "subagents:needs_completion", needsCompletionPayload);
+			if (!emitted.ok) {
+				const diagnostic = `Failed to emit subagents:needs_completion for ${agent.name} (${oneShotTaskId}): ${emitted.error ?? "unknown error"}`;
+				appendResultDiagnostic(currentResult, diagnostic);
+				appendTranscript({ type: "diagnostic", diagnostic, attempt });
+			}
 			return currentResult;
 		}
 		const failed = exitCode !== 0 || currentResult.stopReason === "error" || currentResult.stopReason === "aborted";
