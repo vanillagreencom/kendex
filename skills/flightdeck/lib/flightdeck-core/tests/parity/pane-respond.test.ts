@@ -119,4 +119,16 @@ describe("pane-respond parity (validation)", () => {
 		expect(b.status).toBe(a.status);
 		expect(a.status).toBe(2);
 	});
+
+	// Issue #37(A): pane_id (%NNN) target with no registry match should
+	// still error with the explicit-pane-index message — confirms both
+	// implementations attempt resolution and fall through identically.
+	test("%pane_id with no registry match → pane-index error", () => {
+		const a = run(false, ["%999999", "hi"]);
+		const b = run(true, ["%999999", "hi"]);
+		expect(b.status).toBe(a.status);
+		expect(a.status).toBe(2);
+		expect(a.stderr).toContain("target must include explicit pane index");
+		expect(b.stderr).toContain("target must include explicit pane index");
+	});
 });

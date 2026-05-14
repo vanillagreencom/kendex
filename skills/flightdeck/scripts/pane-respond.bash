@@ -107,6 +107,20 @@ pane_registry_find_id() {
   fi
 }
 
+# Issue #37(A): callers may pass a stable tmux pane_id (%NNN) instead of
+# the human SESSION:WINDOW.IDX pane_target. Resolve via the registry so
+# every downstream tmux/bridge call still gets an explicit pane index.
+resolve_pane_target_from_pane_id() {
+  local pane_id="$1" id id_json target
+  id=$(pane_registry_find_id "$pane_id")
+  [[ -n "$id" ]] || return 1
+  id_json=$(jq -Rn --arg v "$id" '$v')
+  target=$("$SCRIPT_DIR/flightdeck-state" get \
+    "(.entries[$id_json].pane_target // .issues[$id_json].pane_target // empty)" 2>/dev/null | tr -d '"')
+  [[ -n "$target" ]] || return 1
+  printf '%s' "$target"
+}
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
   echo "Usage: pane-respond <pane-target> <payload>|--option N|--keys k1,k2,... [flags]" >&2
@@ -235,6 +249,14 @@ case "$MODE" in
     fi
     ;;
 esac
+
+# Issue #37(A): accept stable pane_id (%NNN) by resolving to pane_target
+# via the registry before enforcing the explicit-pane-index check.
+if [[ "$TARGET" =~ ^%[0-9]+$ ]]; then
+  if resolved=$(resolve_pane_target_from_pane_id "$TARGET"); then
+    TARGET="$resolved"
+  fi
+fi
 
 # Enforce explicit pane index.
 if [[ "$TARGET" != *"."* ]]; then

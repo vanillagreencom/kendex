@@ -18,6 +18,7 @@ import { cxBridgeRun, cxSpawnFile } from "../paths/codex.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PANE_REGISTRY = resolve(HERE, "../../../../scripts/pane-registry");
 const PANE_CLEAR_BELL = resolve(HERE, "../../../../scripts/pane-clear-bell");
+const FLIGHTDECK_STATE = resolve(HERE, "../../../../scripts/flightdeck-state");
 
 function die(msg: string, code = 2): never {
 	process.stderr.write(`${msg}\n`);
@@ -143,6 +144,10 @@ function validate(args: Args): void {
 			break;
 		}
 	}
+	if (/^%[0-9]+$/.test(args.target)) {
+		const resolved = resolvePaneTargetFromPaneId(args.target);
+		if (resolved) args.target = resolved;
+	}
 	if (!args.target.includes(".")) die("Error: target must include explicit pane index (e.g., HT:cc-463.0)");
 
 	if (args.mode === "payload" && args.tag === "rebase-multi-choice") {
@@ -185,6 +190,20 @@ function paneRegistry(args: string[]): string {
 	} catch {
 		return "";
 	}
+}
+
+// Issue #37(A): callers may pass a stable tmux pane_id (%NNN) instead of
+// the SESSION:WINDOW.IDX pane_target. Resolve via the registry so the
+// downstream explicit-pane-index check (and every tmux/bridge call) sees
+// the canonical pane_target.
+function resolvePaneTargetFromPaneId(paneId: string): string {
+	const id = paneRegistry(["find-by-pane", paneId]);
+	if (!id) return "";
+	const idJson = JSON.stringify(id);
+	const expr = `(.entries[${idJson}].pane_target // .issues[${idJson}].pane_target // empty)`;
+	const r = spawnSync(FLIGHTDECK_STATE, ["get", expr], { encoding: "utf8" });
+	if (r.status !== 0) return "";
+	return (r.stdout ?? "").trim().replace(/^"|"$/g, "");
 }
 
 function extractFlag(s: string, flag: string): string {
