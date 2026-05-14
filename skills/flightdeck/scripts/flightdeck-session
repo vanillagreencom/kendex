@@ -228,22 +228,43 @@ warn_pi_discovery_error() {
 }
 
 build_pi_prompt_cmd() {
-  local prompt="$1" session_id="${2:-session}" pi_bin ext_path bridge_args=()
-  pi_bin=$(pi_resolve_pi_bin) || { echo "Error: pi binary not found" >&2; exit 2; }
+  local prompt="$1" session_id="${2:-session}" out_var="${3:-}" tmp_var="${4:-}" pi_bin ext_path bridge_args=()
+  if ! pi_bin=$(pi_resolve_pi_bin); then
+    echo "Error: pi binary not found" >&2
+    return 1
+  fi
   ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
   [[ -n "$ext_path" ]] && bridge_args=(-e "$ext_path")
-  local runtime_dir prompt_dir safe_session prompt_file inner_cmd prompt_arg body
+  local runtime_dir prompt_dir safe_session prompt_file inner_cmd prompt_arg body built_cmd
   runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
   prompt_dir="$runtime_dir/flightdeck"
-  mkdir -p "$prompt_dir"
+  if ! mkdir -p "$prompt_dir"; then
+    echo "Error: failed to create Pi prompt temp dir: $prompt_dir" >&2
+    return 1
+  fi
   chmod 700 "$prompt_dir" 2>/dev/null || true
   safe_session=$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '_')
-  prompt_file=$(mktemp "$prompt_dir/prompt-${safe_session}-XXXXXX.txt")
-  printf '%s' "$prompt" > "$prompt_file"
+  if ! prompt_file=$(mktemp "$prompt_dir/prompt-${safe_session}-XXXXXX.txt"); then
+    echo "Error: failed to create Pi prompt temp file under: $prompt_dir" >&2
+    return 1
+  fi
+  if ! printf '%s' "$prompt" > "$prompt_file"; then
+    echo "Error: failed to write Pi prompt temp file: $prompt_file" >&2
+    rm -f "$prompt_file"
+    return 1
+  fi
   inner_cmd=$(shell_join "${FLIGHTDECK_CHILD_PANE_ENV[@]}" "$pi_bin" "${bridge_args[@]}")
   prompt_arg=$(shell_join "$prompt_file")
-  body="${inner_cmd} \"\$(< ${prompt_arg})\"; rm -f ${prompt_arg}"
-  shell_join bash -c "$body"
+  body="IFS= read -r -d '' p < ${prompt_arg} || true; rm -f ${prompt_arg}; exec ${inner_cmd} \"\$p\""
+  built_cmd=$(shell_join bash -c "$body")
+  if [[ -n "$out_var" ]]; then
+    printf -v "$out_var" '%s' "$built_cmd"
+  else
+    printf '%s\n' "$built_cmd"
+  fi
+  if [[ -n "$tmp_var" ]]; then
+    printf -v "$tmp_var" '%s' "$prompt_file"
+  fi
 }
 
 register_entry() {
@@ -292,7 +313,7 @@ cmd_start() {
   [[ -n "$cmd" || -n "$prompt" ]] || { echo "Error: start requires --cmd or --prompt" >&2; exit 2; }
   [[ -z "$cmd" || -z "$prompt" ]] || { echo "Error: --cmd and --prompt are mutually exclusive" >&2; exit 2; }
 
-  local abs_cwd launch_cmd pre_pids="[]"
+  local abs_cwd launch_cmd pre_pids="[]" prompt_tmpfile=""
   PI_DISCOVERY_ERROR=""
   PI_SNAPSHOT_ERROR=""
   PI_SNAPSHOT_PIDS="[]"
@@ -308,7 +329,9 @@ cmd_start() {
           fi
         fi
         pre_pids="$PI_SNAPSHOT_PIDS"
-        launch_cmd=$(build_pi_prompt_cmd "$prompt" "$session_id")
+        if ! build_pi_prompt_cmd "$prompt" "$session_id" launch_cmd prompt_tmpfile; then
+          exit 2
+        fi
         ;;
       *) echo "Error: --prompt launch currently supports --harness pi; use --cmd for $harness" >&2; exit 2 ;;
     esac
@@ -318,14 +341,28 @@ cmd_start() {
 
   local pane_id
   if ! pane_id=$(tmux new-window -d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd" 2>/dev/null); then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
     echo "Error: tmux new-window failed" >&2
     exit 2
   fi
-  [[ -n "$pane_id" ]] || { echo "Error: tmux new-window failed" >&2; exit 2; }
+  [[ -n "$pane_id" ]] || { [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"; echo "Error: tmux new-window failed" >&2; exit 2; }
+  if ! tmux send-keys -t "$pane_id" "clear" Enter; then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    echo "Error: tmux send-keys failed during pane clear" >&2
+    exit 2
+  fi
+  if ! tmux send-keys -t "$pane_id" -l "$launch_cmd"; then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    echo "Error: tmux send-keys failed during launch command" >&2
+    exit 2
+  fi
+  if ! tmux send-keys -t "$pane_id" Enter; then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    echo "Error: tmux send-keys failed during launch submit" >&2
+    exit 2
+  fi
+  prompt_tmpfile=""
   capture_pane_meta "$pane_id"
-  tmux send-keys -t "$pane_id" "clear" Enter
-  tmux send-keys -t "$pane_id" -l "$launch_cmd"
-  tmux send-keys -t "$pane_id" Enter
 
   if [[ -n "$prompt" && "$harness" == "pi" ]]; then
     pi_discover_after_launch "$abs_cwd" "$pre_pids" || true

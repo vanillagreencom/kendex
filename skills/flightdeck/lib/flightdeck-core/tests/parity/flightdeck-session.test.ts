@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -182,10 +182,29 @@ esac
 function makePiBinShim(repo: string): string {
 	const bin = join(repo, "pi-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
+if [[ -n "\${PI_PROMPT_CAPTURE:-}" ]]; then
+  last="\${@: -1}"
+  printf '%s' "$last" > "$PI_PROMPT_CAPTURE"
+fi
+if [[ -n "\${PI_EXPECT_PROMPT_FILE:-}" && ! -e "$PI_EXPECT_PROMPT_FILE" ]]; then
+  echo prompt-file-gone-before-pi
+fi
 echo pi-shim "$@"
 `);
 	chmodSync(bin, 0o755);
 	return bin;
+}
+
+function makeFailingMktempShim(repo: string): string {
+	const dir = join(repo, "mktemp-fail-bin");
+	mkdirSync(dir, { recursive: true });
+	const bin = join(dir, "mktemp");
+	writeFileSync(bin, `#!/usr/bin/env bash
+echo 'mktemp forced failure' >&2
+exit 1
+`);
+	chmodSync(bin, 0o755);
+	return dir;
 }
 
 function extractPromptTempfile(launchLine: string): string {
@@ -193,6 +212,12 @@ function extractPromptTempfile(launchLine: string): string {
 	const match = unescaped.match(/\S*\/flightdeck\/prompt-[^\s;)]+\.txt/);
 	expect(match).not.toBeNull();
 	return match![0];
+}
+
+function promptFiles(runtimeDir: string): string[] {
+	const dir = join(runtimeDir, "flightdeck");
+	if (!existsSync(dir)) return [];
+	return readdirSync(dir).filter((name) => name.startsWith("prompt-"));
 }
 
 let repos: string[] = [];
@@ -233,7 +258,7 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			repos.push(repo);
 			const runtimeDir = join(repo, "runtime");
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
-			const prompt = "line1\nline2 don't stop";
+			const prompt = "line1\nline2 don't stop\n\n";
 			const r = run(repo, shim, [
 				"start",
 				"--session-id", "fish-prompt",
@@ -252,12 +277,14 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(existsSync(promptFile)).toBe(true);
 			expect(readFileSync(promptFile, "utf8")).toBe(prompt);
 
+			const captureFile = join(repo, "captured-prompt.txt");
 			const fishPath = spawnSync("bash", ["-lc", "command -v fish || true"], { encoding: "utf8" }).stdout.trim();
 			const consumed = fishPath
-				? spawnSync(fishPath, ["-c", launchLine], { encoding: "utf8" })
-				: spawnSync("bash", ["-lc", launchLine], { encoding: "utf8" });
+				? spawnSync(fishPath, ["-c", launchLine], { encoding: "utf8", env: { ...process.env, PI_PROMPT_CAPTURE: captureFile, PI_EXPECT_PROMPT_FILE: promptFile } })
+				: spawnSync("bash", ["-lc", launchLine], { encoding: "utf8", env: { ...process.env, PI_PROMPT_CAPTURE: captureFile, PI_EXPECT_PROMPT_FILE: promptFile } });
 			expect(consumed.status).toBe(0);
-			expect(consumed.stdout).toContain("line2 don't stop");
+			expect(consumed.stdout).toContain("prompt-file-gone-before-pi");
+			expect(readFileSync(captureFile, "utf8")).toBe(prompt);
 			expect(existsSync(promptFile)).toBe(false);
 		});
 
@@ -303,6 +330,88 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toContain("tmux new-window failed");
 			expect(existsSync(stateFile(repo))).toBe(false);
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt cleans tempfile when tmux new-window fails (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-cleanup");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "fail-prompt-start",
+				"--title", "Fail prompt",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "cleanup me",
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeDir, TMUX_SHIM_FAIL_NEW_WINDOW: "1" });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("tmux new-window failed");
+			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt surfaces mkdir failure before tmux mutation (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeFile = join(repo, "runtime-file");
+			writeFileSync(runtimeFile, "not a dir");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "mkdir-fails",
+				"--title", "mkdir fails",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "mkdir fail",
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeFile });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("failed to create Pi prompt temp dir");
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt surfaces mktemp failure before tmux mutation (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-mktemp-fails");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const failingMktempDir = makeFailingMktempShim(repo);
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "mktemp-fails",
+				"--title", "mktemp fails",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "mktemp fail",
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeDir, PATH: `${failingMktempDir}:${SHIM_DIR}:${process.env.PATH ?? ""}` });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("failed to create Pi prompt temp file");
+			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt surfaces write failure and removes tempfile (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-write-fails");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "write-fails",
+				"--title", "write fails",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "force-write-fail",
+			], useTs, {
+				PI_BIN: makePiBinShim(repo),
+				PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo),
+				XDG_RUNTIME_DIR: runtimeDir,
+				"BASH_FUNC_printf%%": '() { if [[ "$1" == "%s" && "${2:-}" == *force-write-fail* ]]; then return 1; fi; builtin printf "$@"; }',
+			});
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("failed to write Pi prompt temp file");
+			expect(promptFiles(runtimeDir)).toEqual([]);
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		});
 
