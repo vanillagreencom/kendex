@@ -81,7 +81,7 @@ By default it uses the current tmux session, falling back to `VS` when no curren
 FD_LIVE_TMUX_SESSION=VS skills/flightdeck/tests/live-wake.sh
 ```
 
-The test creates `fdlive-*` tmux windows and kills stale `fdlive-*` windows in its `trap EXIT` cleanup. It also uses a visible `flightdeck-daemon-s<N>` window while the daemon is running, then kills it on exit.
+The test creates `fdlive-*` tmux windows and kills stale `fdlive-*` windows in its `trap EXIT` cleanup. It also uses a visible `[fd] daemon-s<N>` window while the daemon is running, then kills it on exit.
 
 ### CI-friendly shape mode
 

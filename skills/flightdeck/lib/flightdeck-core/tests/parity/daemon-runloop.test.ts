@@ -215,10 +215,14 @@ describe("daemon run-loop (TS)", () => {
 		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
 		await sleep(500);
 		expect(existsSync(logFile)).toBe(true);
+		const foundWindow = runDaemon("find-window");
+		expect(foundWindow.status).toBe(0);
+		const windowName = spawnSync("tmux", ["display-message", "-p", "-t", foundWindow.stdout.trim(), "#{window_name}"], { encoding: "utf8" }).stdout.trim();
+		expect(windowName).toBe(`[fd] daemon-${SESSION_KEY}`);
 		runDaemon("stop");
 		await sleep(300);
 		// Kill the tmux daemon window if it's still around.
-		spawnSync("tmux", ["kill-window", "-t", `flightdeck-daemon-${SESSION_KEY}`], { stdio: "ignore" });
+		spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
 	}, 15000);
 
 	test("FD_MAX_LIFETIME successor preserves state across handoff (round-5 #1 + round-4 #3)", async () => {

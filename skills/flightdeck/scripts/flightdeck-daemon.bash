@@ -2297,7 +2297,7 @@ case "$ACTION" in
           # Spawn a detached tmux window in the master's session running
           # 'start --foreground ...'. The window's lifetime ties to the
           # tmux session; killing the session reaps the daemon.
-          window_name="flightdeck-daemon-${SESSION_KEY}"
+          window_name="[fd] daemon-${SESSION_KEY}"
           # Build the command string for tmux to execute; quote each arg.
           cmd_str=$(printf '%q ' "$script_path" "${child_args[@]}")
           if ! tmux new-window -d -t "$SESSION_ID" -n "$window_name" "$cmd_str" 2>/dev/null; then
@@ -2500,9 +2500,9 @@ case "$ACTION" in
     # Print the tmux window-id of the daemon's window if it was spawned in
     # tmux-window mode. Empty output (exit 1) when not found.
     [[ -z "$SESSION_ID" ]] && { echo "Error: tmux session '$SESSION_NAME' not found" >&2; exit 1; }
-    window_name="flightdeck-daemon-${SESSION_KEY}"
-    wid=$(tmux list-windows -t "$SESSION_ID" -F '#{window_id} #{window_name}' 2>/dev/null \
-          | awk -v n="$window_name" '$2==n {print $1; exit}')
+    window_name="[fd] daemon-${SESSION_KEY}"
+    wid=$(tmux list-windows -t "$SESSION_ID" -F '#{window_id}	#{window_name}' 2>/dev/null \
+          | awk -F '\t' -v n="$window_name" '$2==n {print $1; exit}')
     if [[ -z "$wid" ]]; then
       exit 1
     fi

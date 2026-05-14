@@ -69,7 +69,7 @@ async function dispatchSpawn(opts: StartOpts): Promise<never> {
 	const childArgs = ["start", ...opts.origArgs.filter((a) => !SKIP_FLAGS.has(a)), "--foreground"];
 
 	if (opts.spawnMode === "tmux-window") {
-		const windowName = `flightdeck-daemon-${opts.sessionKey}`;
+		const windowName = `[fd] daemon-${opts.sessionKey}`;
 		// tmux server doesn't inherit caller env (round-4 #4 fix).
 		// Prepend `env KEY=VALUE ...` carrying the daemon-state knobs
 		// so the child window writes state to the right directory and

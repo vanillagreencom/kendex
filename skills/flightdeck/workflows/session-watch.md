@@ -48,19 +48,21 @@ Issue mode may keep legacy states for compatibility, but the issue workflow maps
    REGISTRY_JSON=$(.agents/skills/flightdeck/scripts/pane-registry list --format json)
    ```
    Do not read `.issues` directly in this workflow. `pane-registry list --format json` is backed by `flightdeck-state tracked-entries`, overlays `.entries` over legacy `.issues`, and preserves `kind` for domain routing.
-4. Spawn or attach the daemon idempotently:
+4. Spawn or attach the daemon idempotently after checking daemon status for live work:
    ```bash
-   MASTER_PANE="$SESSION:1.<base-pane-index>"
+   MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
    INNER_PANES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-panes)"
    INNER_HARNESSES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-harnesses)"
-   .agents/skills/flightdeck/scripts/flightdeck-daemon start \
-     --session "$SESSION" \
-     --master "$MASTER_PANE" \
-     --master-harness "$MASTER_HARNESS" \
-     --inner "$INNER_PANES" \
-     --inner-harnesses "$INNER_HARNESSES"
+   if [[ -n "$INNER_PANES" ]] && ! .agents/skills/flightdeck/scripts/flightdeck-daemon status --session "$SESSION" >/dev/null 2>&1; then
+     .agents/skills/flightdeck/scripts/flightdeck-daemon start \
+       --session "$SESSION" \
+       --master "$MASTER_PANE" \
+       --master-harness "$MASTER_HARNESS" \
+       --inner "$INNER_PANES" \
+       --inner-harnesses "$INNER_HARNESSES"
+   fi
    ```
-   `flightdeck-daemon start` remains bash-default unless its opt-in TS gate is set; other daemon actions may run through the TS port.
+   On every watch tick with live tracked entries, master MUST check `flightdeck-daemon status --session "$SESSION"`. If it reports `no daemon`, master MUST respawn with the current alive inner pane list from `pane-registry list --format inner-panes` / `inner-harnesses`, then log the respawn in the cycle notes. `flightdeck-daemon start` remains bash-default unless its opt-in TS gate is set; other daemon actions may run through the TS port.
 5. Acquire the master-busy lock before processing:
    ```bash
    .agents/skills/flightdeck/scripts/flightdeck-state master-busy lock --owner-pid "$MASTER_OWNER_PID"
@@ -178,7 +180,9 @@ If `paused_for_user` is set, do not release/yield as a normal cycle; wait for th
 
 ## § 6: Compaction recovery
 
-On re-entry, `flightdeck-state init` is idempotent. Reconcile entries, re-poll through `pane-registry list --format json`, treat persisted state as a hint, and resume at § 2. The daemon may have stayed alive; `flightdeck-daemon start` is idempotent and safe on every re-entry.
+On re-entry, `flightdeck-state init` is idempotent. Reconcile entries, re-poll through `pane-registry list --format json`, treat persisted state as a hint, and resume at § 2.
+
+Compaction recovery MUST verify daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with the current alive inner pane list and matching harness list. Log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
 
 ---
 

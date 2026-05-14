@@ -297,11 +297,11 @@ function cmdStatus(): void {
 
 function cmdFindWindow(): void {
 	if (!sessionId) die(`Error: tmux session '${sessionName}' not found`, 1);
-	const windowName = `flightdeck-daemon-${sessionKey}`;
-	const r = spawnSync("tmux", ["list-windows", "-t", sessionId, "-F", "#{window_id} #{window_name}"], { encoding: "utf8" });
+	const windowName = `[fd] daemon-${sessionKey}`;
+	const r = spawnSync("tmux", ["list-windows", "-t", sessionId, "-F", "#{window_id}\t#{window_name}"], { encoding: "utf8" });
 	if (r.status !== 0) process.exit(1);
 	for (const line of (r.stdout ?? "").split("\n")) {
-		const [wid, wname] = line.split(" ");
+		const [wid, wname] = line.split("\t");
 		if (wname === windowName && wid) {
 			process.stdout.write(`${wid}\n`);
 			process.exit(0);

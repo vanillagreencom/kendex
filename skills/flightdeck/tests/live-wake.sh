@@ -224,7 +224,7 @@ fi
   --inner "$INNER_PANE" \
   --inner-harnesses bash \
   --in-tmux-window
-DAEMON_WINDOW="$VS_SESSION:flightdeck-daemon-$SESSION_KEY"
+DAEMON_WINDOW="$VS_SESSION:[fd] daemon-$SESSION_KEY"
 if (( USE_TS )); then
   pass "TS daemon started for $SESSION_KEY"
 else
