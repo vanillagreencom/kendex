@@ -15,6 +15,7 @@ import {
 import {
 	ICONS,
 	type GetSubagentResultDetails,
+	type PaneTaskRecord,
 	type SteerSubagentDetails,
 	type WaitForSubagentIdleDetails,
 } from "./types.js";
@@ -28,7 +29,9 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 	const {
 		bridgeTargetArgs,
 		createFollowUpTask,
+		dashboardStatusFor,
 		emitSubagentEvent,
+		ensurePaneBridgeMetadata,
 		execCapture,
 		formatSteeringForChild,
 		formatTaskRecordResult,

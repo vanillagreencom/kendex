@@ -137,6 +137,26 @@ export function formatInventoryValidationError(validation: InventoryValidationRe
 	].join("\n");
 }
 
+function singleResultStatus(result: SingleResult): "running" | "completed" | "failed" | "needs_completion" {
+	if (result.status === "needs_completion") return "needs_completion";
+	if (result.exitCode === -1) return "running";
+	if (result.exitCode === 0) return "completed";
+	return "failed";
+}
+
+function singleResultIsError(result: SingleResult): boolean {
+	return singleResultStatus(result) === "failed" || result.stopReason === "error" || result.stopReason === "aborted";
+}
+
+function singleResultNeedsCompletion(result: SingleResult): boolean {
+	return singleResultStatus(result) === "needs_completion";
+}
+
+function needsCompletionMessage(result: SingleResult): string {
+	const reason = result.needsCompletionReason ? ` (${result.needsCompletionReason})` : "";
+	return result.errorMessage || `Agent needs completion${reason}; inspect result details and worker cwd state.`;
+}
+
 export async function runChainDispatch(
 	flow: DispatchFlowContext & { chain: DispatchTask[] },
 ): Promise<ToolTextResult> {
@@ -212,7 +232,7 @@ export async function runChainDispatch(
 				kind: "oneshot",
 				message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
 				model: result.model,
-				status: result.exitCode === 0 ? "completed" : "failed",
+				status: singleResultStatus(result),
 				task: result.task,
 				taskId: result.taskId ?? `${result.agent}-step-${i + 1}`,
 				transcriptPath: result.transcriptPath,
@@ -221,7 +241,28 @@ export async function runChainDispatch(
 			});
 		}
 
-		const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+		if (singleResultNeedsCompletion(result)) {
+			const message = needsCompletionMessage(result);
+			const preparedResults = await Promise.all(
+				results.map((candidate, index) =>
+					prepareSingleResultForReturn(
+						candidate,
+						flow.runtimeRoot,
+						flow.cwd,
+						`chain-step-${candidate.step ?? index + 1}`,
+						candidate === result ? message : undefined,
+					),
+				),
+			);
+			const blocked = preparedResults[preparedResults.length - 1];
+			const details = flow.makeDetails("chain")(preparedResults.map((prepared) => prepared.result));
+			return {
+				content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent} needs completion): ${blocked.text || message}` }],
+				details: detailsWithTruncation(details, blocked),
+			};
+		}
+
+		const isError = singleResultIsError(result);
 		if (isError) {
 			const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
 			const preparedResults = await Promise.all(
@@ -308,7 +349,7 @@ export async function runParallelDispatch(
 				kind: "oneshot",
 				message: oneLinePreview(getFinalOutput(item.messages), 120) || item.task,
 				model: item.model,
-				status: item.exitCode === -1 ? "running" : item.exitCode === 0 ? "completed" : "failed",
+				status: singleResultStatus(item),
 				task: item.task,
 				taskId: item.taskId ?? `${item.agent}-${index}`,
 				transcriptPath: item.transcriptPath,
@@ -362,7 +403,8 @@ export async function runParallelDispatch(
 		return result;
 	});
 
-	const successCount = results.filter((r) => r.exitCode === 0).length;
+	const successCount = results.filter((r) => singleResultStatus(r) === "completed").length;
+	const needsCompletionCount = results.filter(singleResultNeedsCompletion).length;
 	const perResultLimits = (() => {
 		const total = { maxBytes: Math.max(1, Math.floor(settingNumber("resultMaxBytes", DEFAULT_RESULT_MAX_BYTES, flow.cwd))), maxLines: Math.max(1, Math.floor(settingNumber("resultMaxLines", DEFAULT_RESULT_MAX_LINES, flow.cwd))) };
 		const count = Math.max(1, results.length);
@@ -382,11 +424,13 @@ export async function runParallelDispatch(
 	);
 	const sections = preparedResults.map((prepared) => {
 		const r = prepared.result;
-		const status = r.exitCode === 0 ? "completed" : r.exitCode === -1 ? "running" : "failed";
-		return `## ${r.agent} (${status})\n${prepared.text || "(no output)"}`;
+		const status = singleResultStatus(r);
+		const text = singleResultNeedsCompletion(r) ? prepared.text || needsCompletionMessage(r) : prepared.text || "(no output)";
+		return `## ${r.agent} (${status})\n${text}`;
 	});
+	const needsCompletionSuffix = needsCompletionCount > 0 ? `, ${needsCompletionCount} needs completion` : "";
 	return {
-		content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded\n\n${sections.join("\n\n")}` }],
+		content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded${needsCompletionSuffix}\n\n${sections.join("\n\n")}` }],
 		details: flow.makeDetails("parallel")(preparedResults.map((prepared) => prepared.result)),
 	};
 }
@@ -434,7 +478,7 @@ export async function runSingleDispatch(
 			kind: "oneshot",
 			message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
 			model: result.model,
-			status: result.exitCode === 0 ? "completed" : "failed",
+			status: singleResultStatus(result),
 			task: result.task,
 			taskId: result.taskId ?? result.agent,
 			transcriptPath: result.transcriptPath,
@@ -442,7 +486,16 @@ export async function runSingleDispatch(
 			usage: result.usage,
 		});
 	}
-	const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	if (singleResultNeedsCompletion(result)) {
+		const message = needsCompletionMessage(result);
+		const prepared = await prepareSingleResultForReturn(result, flow.runtimeRoot, flow.cwd, "single-needs-completion", message);
+		const details = flow.makeDetails("single")([prepared.result]);
+		return {
+			content: [{ type: "text", text: prepared.text || message }],
+			details: detailsWithTruncation(details, prepared),
+		};
+	}
+	const isError = singleResultIsError(result);
 	if (isError) {
 		const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
 		const prepared = await prepareSingleResultForReturn(result, flow.runtimeRoot, flow.cwd, "single-error", errorMsg);

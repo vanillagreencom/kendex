@@ -6,6 +6,7 @@ import { ensurePersistentPane, hasSavedPaneSession, paneExists, queuePersistentP
 import { formatTraceView, recordTraceRef, resolveTraceRecord } from "./renderers.js";
 import { pollPaneCompletions, readPaneRegistry, readTaskRegistry, emitSubagentEvent } from "./tasks.js";
 import { runtimeSessionId, sessionRuntimeDir } from "./settings.js";
+import type { SubagentDashboardItem } from "./types.js";
 
 interface AgentsCommandDeps {
 	[key: string]: any;
@@ -217,7 +218,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 
 	const traceRefCompletions = (prefix: string) => {
 		const query = prefix.trimStart().toLowerCase();
-		const records = Object.values(dashboardState.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		const records = (Object.values(dashboardState.items) as SubagentDashboardItem[]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 		const completions = records
 			.filter((item) => !query || item.taskId.toLowerCase().includes(query) || item.agent.toLowerCase().includes(query))
 			.slice(0, 20)

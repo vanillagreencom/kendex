@@ -193,7 +193,10 @@ function messageText(result: SingleResult): string {
 	const parts: string[] = [];
 	for (const message of result.messages ?? []) {
 		for (const part of message.content ?? []) {
-			if (part.type === "text") parts.push(part.text);
+			if (part && typeof part === "object" && (part as { type?: unknown }).type === "text") {
+				const text = (part as { text?: unknown }).text;
+				if (typeof text === "string") parts.push(text);
+			}
 		}
 	}
 	return parts.join("\n");

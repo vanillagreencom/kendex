@@ -163,8 +163,9 @@ export const subagentToolRenderers = {
 			// emitting streaming partials; only a positive exitCode (or a terminal
 			// stopReason) is a real failure.
 			const isRunning = r.exitCode === -1;
-			const isError = !isRunning && (r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted");
-			const isQueued = !isError && !isRunning && Boolean(r.taskId && r.paneId);
+			const needsCompletion = r.status === "needs_completion";
+			const isError = !needsCompletion && !isRunning && (r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted");
+			const isQueued = !needsCompletion && !isError && !isRunning && Boolean(r.taskId && r.paneId);
 			const displayItems = getDisplayItems(r.messages);
 			const finalOutput = getFinalOutput(r.messages);
 			const queued = queuedPaneLine(r);
@@ -173,13 +174,15 @@ export const subagentToolRenderers = {
 			if (expanded) {
 				if (isQueued) return expandedQueuedTaskComponent(r);
 				const container = new Container();
-				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : isError ? "failed" : "completed";
-				const statusTone = isQueued || isRunning ? "warning" : isError ? "error" : "success";
+				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : isError ? "failed" : "completed";
+				const statusTone = isQueued || isRunning || needsCompletion ? "warning" : isError ? "error" : "success";
 				let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, theme.fg("dim", ` · ${isQueued ? "pane" : "bg"}`));
 				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+				if (needsCompletion && r.needsCompletionReason) header += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 				header += truncationBadge(r);
 				container.addChild(wrappedText(header));
 				if (isError && r.errorMessage) container.addChild(wrappedText(theme.fg("error", `Error: ${r.errorMessage}`)));
+				if (needsCompletion && r.errorMessage) container.addChild(wrappedText(theme.fg("warning", r.errorMessage)));
 				container.addChild(new Spacer(1));
 				container.addChild(wrappedText(theme.fg("muted", "─── Task ───")));
 				container.addChild(wrappedText(theme.fg("dim", r.task)));
@@ -212,7 +215,7 @@ export const subagentToolRenderers = {
 
 			if (queued) return queuedTaskPreviewComponent(r, quietDashboard);
 
-			if (quietDashboard && !queued && !isError) {
+			if (quietDashboard && !queued && !isError && !needsCompletion) {
 				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
 				const preview = finalOutput && !finalOutputLooksLikeToolEcho(finalOutput, toolCalls)
 					? oneLinePreview(finalOutput, 180)
@@ -226,13 +229,15 @@ export const subagentToolRenderers = {
 				return wrappedText(text);
 			}
 
-			const compactStatusLabel = isRunning ? "working" : isError ? "failed" : "completed";
-			const compactStatusTone = isRunning ? "warning" : isError ? "error" : "success";
+			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : isError ? "failed" : "completed";
+			const compactStatusTone = isRunning || needsCompletion ? "warning" : isError ? "error" : "success";
 			let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${theme.fg("dim", " · bg")}${theme.fg("dim", " · ctrl+o")}`);
 			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+			if (needsCompletion && r.needsCompletionReason) text += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 			text += truncationBadge(r);
 			if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? oneLinePreview(r.task, 120) : "queued task")}`;
 			else if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
+			else if (needsCompletion && r.errorMessage) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("warning", r.errorMessage)}`;
 			else if (displayItems.length === 0) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? oneLinePreview(r.task, 120) : "(no output)")}`;
 			else {
 				if (r.task) text += `\n${subagentBranch(theme, "├", cwd)}${theme.fg("dim", oneLinePreview(r.task, 120))}`;
@@ -261,16 +266,21 @@ export const subagentToolRenderers = {
 		};
 
 		if (details.mode === "chain") {
-			const successCount = details.results.filter((r) => r.exitCode === 0).length;
+			const successCount = details.results.filter((r) => r.exitCode === 0 && r.status !== "needs_completion").length;
 			const runningCount = details.results.filter((r) => r.exitCode === -1).length;
+			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
 			const chainStepIcon = (r: SingleResult) =>
-				r.exitCode === -1
+				r.status === "needs_completion"
+					? theme.fg("warning", ICONS.warning)
+					: r.exitCode === -1
 					? theme.fg("warning", ICONS.cog)
 					: r.exitCode === 0
 						? theme.fg("success", ICONS.check)
 						: theme.fg("error", ICONS.times);
 			const icon = runningCount > 0
 				? theme.fg("warning", ICONS.cog)
+				: needsCompletionCount > 0
+					? theme.fg("warning", ICONS.warning)
 				: successCount === details.results.length
 					? theme.fg("success", ICONS.check)
 					: theme.fg("error", ICONS.times);
@@ -352,7 +362,8 @@ export const subagentToolRenderers = {
 
 		if (details.mode === "parallel") {
 			const running = details.results.filter((r) => r.exitCode === -1).length;
-			const successCount = details.results.filter((r) => r.exitCode === 0).length;
+			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
+			const successCount = details.results.filter((r) => r.exitCode === 0 && r.status !== "needs_completion").length;
 			const failCount = details.results.filter((r) => r.exitCode > 0).length;
 			const queuedPaneCount = details.results.filter((r) => r.exitCode === 0 && r.taskId && r.paneId).length;
 			const oneshotCompletedCount = successCount - queuedPaneCount;
@@ -361,6 +372,8 @@ export const subagentToolRenderers = {
 			const pluralN = (n: number) => (n === 1 ? "" : "s");
 			const headerLabel = isRunning
 				? `${total} agent${pluralN(total)} running`
+				: needsCompletionCount > 0
+					? `${needsCompletionCount}/${total} agent${pluralN(total)} need completion`
 				: failCount > 0
 					? `${successCount}/${total} agent${pluralN(total)} completed`
 					: queuedPaneCount === total

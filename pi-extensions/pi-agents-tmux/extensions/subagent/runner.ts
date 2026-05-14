@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -41,6 +41,7 @@ import {
 import { createTaskId, emitSubagentEvent } from "./tasks.js";
 import {
 	DETAIL_STRING_MAX_CHARS,
+	type CwdSnapshot,
 	type PreparedSingleResult,
 	type ResultLimits,
 	type SingleResult,
@@ -51,9 +52,79 @@ export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => vo
 
 type SpawnProcess = typeof spawn;
 let spawnProcess: SpawnProcess = spawn;
+const GIT_SNAPSHOT_TIMEOUT_MS = 1_000;
+const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
 	spawnProcess = spawner ?? spawn;
+}
+
+function execGit(cwd: string, args: string[]): Promise<string> {
+	return new Promise((resolve, reject) => {
+		execFile(
+			"git",
+			["-C", cwd, ...args],
+			{ encoding: "utf8", maxBuffer: GIT_SNAPSHOT_MAX_BUFFER, timeout: GIT_SNAPSHOT_TIMEOUT_MS },
+			(error, stdout) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve(String(stdout).trimEnd());
+			},
+		);
+	});
+}
+
+async function snapshotCwdGitState(cwd: string | undefined): Promise<CwdSnapshot | undefined> {
+	if (!cwd) return undefined;
+	const resolvedCwd = path.resolve(cwd);
+	try {
+		const insideWorkTree = (await execGit(resolvedCwd, ["rev-parse", "--is-inside-work-tree"])).trim();
+		if (insideWorkTree !== "true") return undefined;
+		const [head, dirtyStatus, lastCommitSubject] = await Promise.all([
+			execGit(resolvedCwd, ["rev-parse", "HEAD"]),
+			execGit(resolvedCwd, ["status", "--porcelain=v1"]),
+			execGit(resolvedCwd, ["log", "-1", "--pretty=%s"]),
+		]);
+		if (!head.trim()) return undefined;
+		return { cwd: resolvedCwd, head: head.trim(), dirtyStatus, lastCommitSubject };
+	} catch {
+		return undefined;
+	}
+}
+
+function streamEventName(event: any): string | undefined {
+	if (typeof event?.event === "string") return event.event;
+	if (typeof event?.type === "string") return event.type;
+	return undefined;
+}
+
+function streamEventPayload(event: any): any {
+	if (event?.type === "event" && event?.data && typeof event.data === "object") return event.data;
+	return event;
+}
+
+function eventContentParts(payload: any): unknown[] | undefined {
+	if (Array.isArray(payload?.content)) return payload.content;
+	if (Array.isArray(payload?.message?.content)) return payload.message.content;
+	return undefined;
+}
+
+function contentHasTextPart(content: unknown[]): boolean {
+	return content.some((part) => Boolean(part && typeof part === "object" && (part as { type?: unknown }).type === "text"));
+}
+
+function agentEndHasTextlessContent(payload: any): boolean {
+	const content = eventContentParts(payload);
+	return Array.isArray(content) && !contentHasTextPart(content);
+}
+
+function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
+	const base = "Subagent compacted and exited without a final text message; inspect the worker cwd before assuming failure.";
+	if (!cwdSnapshot) return base;
+	const dirty = cwdSnapshot.dirtyStatus ? "dirty" : "clean";
+	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirty}) ${cwdSnapshot.lastCommitSubject}`;
 }
 
 export function formatTruncationNotice(
@@ -304,6 +375,7 @@ export async function runSingleAgent(
 		makeDetails,
 		firstSession,
 		1,
+		true,
 	);
 	if (budgetGuard?.warning) first.stderr = [budgetGuard.warning, first.stderr].filter(Boolean).join("\n");
 
@@ -342,6 +414,7 @@ export async function runSingleAgent(
 		makeDetails,
 		retrySession,
 		2,
+		false,
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
 	retry.attempts = attempts;
@@ -382,6 +455,7 @@ async function runSingleAgentAttempt(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	session: BgSessionSelection,
 	attempt: number,
+	allowCompactThenEmptyNeedsCompletion: boolean,
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
@@ -475,6 +549,8 @@ async function runSingleAgentAttempt(
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let buffer = "";
+			let sawSessionCompact = false;
+			let compactThenEmptyAgentEnd = false;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -486,9 +562,20 @@ async function runSingleAgentAttempt(
 					appendTranscript({ stream: "stdout", raw: line, parseError: true });
 					return;
 				}
+				const eventName = streamEventName(event);
+				const payload = streamEventPayload(event);
 
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
+				if (eventName === "session_compact") {
+					sawSessionCompact = true;
+					compactThenEmptyAgentEnd = false;
+				}
+
+				if (eventName === "agent_end") {
+					compactThenEmptyAgentEnd = sawSessionCompact && agentEndHasTextlessContent(payload);
+				}
+
+				if (eventName === "message_end" && payload.message) {
+					const msg = payload.message as Message;
 					currentResult.messages.push(msg);
 
 					if (msg.role === "assistant") {
@@ -509,17 +596,17 @@ async function runSingleAgentAttempt(
 					emitUpdate();
 				}
 
-				const hasContextOverflowEnvelope = isContextLengthExceededEnvelope(event) || isContextLengthExceededText(line);
-				if (event.type === "error" || hasContextOverflowEnvelope) {
+				const hasContextOverflowEnvelope = isContextLengthExceededEnvelope(event) || isContextLengthExceededEnvelope(payload) || isContextLengthExceededText(line);
+				if (eventName === "error" || hasContextOverflowEnvelope) {
 					const rawEnvelope = line;
-					const errorText = typeof event.error === "string" ? event.error : JSON.stringify(event.error ?? event);
+					const errorText = typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error ?? payload ?? event);
 					currentResult.errorEnvelope = rawEnvelope;
 					currentResult.errorMessage = errorText;
 					currentResult.stderr += `${rawEnvelope}\n`;
 					emitUpdate();
 				}
 
-				if (event.type === "tool_result_end") {
+				if (eventName === "tool_result_end") {
 					emitUpdate();
 				}
 			};
@@ -539,6 +626,7 @@ async function runSingleAgentAttempt(
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
+				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
 				appendTranscript({ type: "exit", code: code ?? 0, attempt });
 				Promise.allSettled(transcriptWrites).finally(() => resolve(code ?? 0));
 			});
@@ -582,6 +670,38 @@ async function runSingleAgentAttempt(
 				attempt,
 			});
 			throw new Error("Agent was aborted");
+		}
+		if (
+			allowCompactThenEmptyNeedsCompletion &&
+			currentResult.needsCompletionReason === "compact-then-empty" &&
+			!resultHasContextLengthExceeded(currentResult) &&
+			!getFinalOutput(currentResult.messages)
+		) {
+			currentResult.status = "needs_completion";
+			currentResult.stopReason = "needs_completion";
+			const cwdSnapshot = await snapshotCwdGitState(cwd ?? defaultCwd);
+			if (cwdSnapshot) currentResult.cwdSnapshot = cwdSnapshot;
+			const summary = compactThenEmptySummary(cwdSnapshot);
+			currentResult.errorMessage = summary;
+			emitSubagentEvent(pi, "subagents:needs_completion", {
+				mode: "oneshot",
+				agent: agent.name,
+				taskId: oneShotTaskId,
+				task,
+				status: "needs_completion",
+				reason: "compact-then-empty",
+				summary,
+				runtimeRoot,
+				transcriptPath,
+				model: currentResult.model,
+				usage: currentResult.usage,
+				sessionKey: session.key,
+				sessionPath: session.path,
+				ephemeralSession: session.ephemeral,
+				attempt,
+				...(cwdSnapshot ? { cwdSnapshot } : {}),
+			});
+			return currentResult;
 		}
 		const failed = exitCode !== 0 || currentResult.stopReason === "error" || currentResult.stopReason === "aborted";
 		emitSubagentEvent(pi, failed ? "subagents:failed" : "subagents:completed", {

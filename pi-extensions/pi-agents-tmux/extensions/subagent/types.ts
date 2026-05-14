@@ -173,10 +173,20 @@ export interface AttemptSummary {
 	transcriptPath?: string;
 }
 
+export interface CwdSnapshot {
+	cwd: string;
+	head: string;
+	dirtyStatus: string;
+	lastCommitSubject: string;
+}
+
 export interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
 	task: string;
+	status?: PaneTaskStatus;
+	needsCompletionReason?: string;
+	cwdSnapshot?: CwdSnapshot;
 	exitCode: number;
 	attempt?: number;
 	attempts?: AttemptSummary[];

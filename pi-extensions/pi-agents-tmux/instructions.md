@@ -15,5 +15,6 @@ Calling rules:
 - Persistent-pane (`pane: true`) dispatches return immediately with a `taskId` for follow-up collection. **End your turn after dispatching.** The completion arrives as a follow-up message that wakes you in a new turn — do not call `get_subagent_result` with `wait: true` to block, unless the user asked.
 - Save the `taskId`; use `get_subagent_result` only if you suspect a missed wake event. For pane-idle waits, use `wait_for_subagent_idle` (or `get_subagent_result` with `waitFor: "idle"`) instead of shell polling loops; it distinguishes `idle-after-busy` from `never-busy`.
 - If a bg subagent hits `context_length_exceeded`, the extension retries once in a fresh one-shot lane and returns both attempt summaries if the retry also fails.
+- If a bg subagent returns `needs_completion` with `reason: "compact-then-empty"`, upstream Pi disposed the runtime during compact recovery before a final message persisted. Inspect the worker `cwdSnapshot` / git state before assuming failure.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. Pass `forceSpawn: true` only when the user wants a fresh session.
 - `confirmProjectAgents: true` gates project-defined agents behind explicit user approval.
