@@ -105,18 +105,24 @@ function streamEventPayload(event: any): any {
 	return event;
 }
 
-function eventContentParts(payload: any): unknown[] | undefined {
-	if (Array.isArray(payload?.content)) return payload.content;
-	if (Array.isArray(payload?.message?.content)) return payload.message.content;
+function eventContentValue(payload: any): unknown {
+	if (payload && typeof payload === "object" && "content" in payload) return payload.content;
+	if (payload?.message && typeof payload.message === "object" && "content" in payload.message) return payload.message.content;
 	return undefined;
 }
 
-function contentHasTextPart(content: unknown[]): boolean {
-	return content.some((part) => Boolean(part && typeof part === "object" && (part as { type?: unknown }).type === "text"));
+function contentHasTextPart(content: unknown): boolean {
+	if (!Array.isArray(content)) return false;
+	return content.some((part) => {
+		if (!part || typeof part !== "object") return false;
+		const candidate = part as { text?: unknown; type?: unknown };
+		return candidate.type === "text" && typeof candidate.text === "string" && candidate.text.length > 0;
+	});
 }
 
 function agentEndHasTextlessContent(payload: any): boolean {
-	const content = eventContentParts(payload);
+	const content = eventContentValue(payload);
+	if (content == null) return true;
 	return Array.isArray(content) && !contentHasTextPart(content);
 }
 
@@ -375,7 +381,6 @@ export async function runSingleAgent(
 		makeDetails,
 		firstSession,
 		1,
-		true,
 	);
 	if (budgetGuard?.warning) first.stderr = [budgetGuard.warning, first.stderr].filter(Boolean).join("\n");
 
@@ -414,7 +419,6 @@ export async function runSingleAgent(
 		makeDetails,
 		retrySession,
 		2,
-		false,
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
 	retry.attempts = attempts;
@@ -455,7 +459,6 @@ async function runSingleAgentAttempt(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	session: BgSessionSelection,
 	attempt: number,
-	allowCompactThenEmptyNeedsCompletion: boolean,
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
@@ -551,6 +554,7 @@ async function runSingleAgentAttempt(
 			let buffer = "";
 			let sawSessionCompact = false;
 			let compactThenEmptyAgentEnd = false;
+			let postCompactAssistantHasText = false;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -568,10 +572,11 @@ async function runSingleAgentAttempt(
 				if (eventName === "session_compact") {
 					sawSessionCompact = true;
 					compactThenEmptyAgentEnd = false;
+					postCompactAssistantHasText = false;
 				}
 
 				if (eventName === "agent_end") {
-					compactThenEmptyAgentEnd = sawSessionCompact && agentEndHasTextlessContent(payload);
+					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
 				}
 
 				if (eventName === "message_end" && payload.message) {
@@ -579,6 +584,7 @@ async function runSingleAgentAttempt(
 					currentResult.messages.push(msg);
 
 					if (msg.role === "assistant") {
+						if (sawSessionCompact && contentHasTextPart(msg.content)) postCompactAssistantHasText = true;
 						currentResult.usage.turns++;
 						const usage = msg.usage;
 						if (usage) {
@@ -672,10 +678,8 @@ async function runSingleAgentAttempt(
 			throw new Error("Agent was aborted");
 		}
 		if (
-			allowCompactThenEmptyNeedsCompletion &&
 			currentResult.needsCompletionReason === "compact-then-empty" &&
-			!resultHasContextLengthExceeded(currentResult) &&
-			!getFinalOutput(currentResult.messages)
+			!resultHasContextLengthExceeded(currentResult)
 		) {
 			currentResult.status = "needs_completion";
 			currentResult.stopReason = "needs_completion";

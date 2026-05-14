@@ -243,6 +243,109 @@ test("session_compact followed by empty agent_end emits synthetic needs_completi
 	}
 });
 
+test("pre-compact assistant text does not mask compact-then-empty", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{
+			code: 0,
+			stdout: bridgeStdout([
+				bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "pre-compact progress" }] } }),
+				bridgeEvent("session_compact"),
+				bridgeEvent("agent_end", { content: [] }),
+			]),
+		},
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(emitted),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(result.status, "needs_completion");
+		assert.equal(result.needsCompletionReason, "compact-then-empty");
+		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("compact-then-empty detection applies after context retry", async () => {
+	const emitted: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 1, stdout: `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n` },
+		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(emitted),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 2);
+		assert.equal(result.attempt, 2);
+		assert.equal(result.attempts?.length, 2);
+		assert.equal(result.status, "needs_completion");
+		assert.equal(result.needsCompletionReason, "compact-then-empty");
+		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
+		assert.equal(emitted.some((event) => event.name === "subagents:completed"), false);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("compact-then-empty treats null and omitted agent_end content as empty", async () => {
+	for (const data of [{ content: null }, {}]) {
+		const emitted: Array<{ name: string; payload: any }> = [];
+		const calls = installMockSpawn([
+			{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", data)]) },
+		]);
+		try {
+			const result = await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				"review code",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents(emitted),
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			assert.equal(calls.length, 1);
+			assert.equal(result.status, "needs_completion");
+			assert.equal(result.needsCompletionReason, "compact-then-empty");
+			assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	}
+});
+
 test("session_compact followed by text agent_end completes normally", async () => {
 	const emitted: Array<{ name: string; payload: any }> = [];
 	const calls = installMockSpawn([
