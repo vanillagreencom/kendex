@@ -1338,8 +1338,19 @@ pi_subscriber_loop() {
   #     directly so a bg_task terminal state lands even if the agent's follow-up
   #     turn never fires (vstack#15).
   #   - normal assistant turn-end text events, classified through prompt-classify.
+  #
+  # Issue #37 round-1 reviewer-arch major: re-drain after stream
+  # connect closes the race where a question opens between the
+  # initial drain (above) and the stream subscription registering
+  # with the bridge. pi-bridge sends `{type:"bridge_hello",...}`
+  # the instant the socket is accepted; passing that line through
+  # the jq filter lets the while loop fire one re-drain on the
+  # very first emitted message. seen_qids is shared into the pipe
+  # subshell so prior drain ids dedupe automatically.
   "$pi_bin" stream "${pi_target_args[@]}" 2>/dev/null \
     | jq --unbuffered -c 'select(
+        (.type == "bridge_hello")
+        or
         (.type == "event" and .event == "question" and (.data.action // "") == "opened")
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
@@ -1351,6 +1362,16 @@ pi_subscriber_loop() {
     | while IFS= read -r line; do
       if ! kill -0 "$parent_pid" 2>/dev/null; then exit 0; fi
       [[ -z "$line" ]] && continue
+
+      local msg_type
+      msg_type=$(jq -r '.type // ""' <<< "$line" 2>/dev/null)
+      if [[ "$msg_type" == "bridge_hello" ]]; then
+        printf '%s [pi-sub-stream-connected] pane=%s\n' \
+          "$(date -Iseconds)" "$pane_id" \
+          >> "$sub_log" 2>/dev/null || true
+        pi_subscriber_drain_questions "$pane_id" "$pi_bin" "$sub_log" pi_target_args seen_qids
+        continue
+      fi
 
       local event_name
       event_name=$(jq -r '.event // ""' <<< "$line" 2>/dev/null)
