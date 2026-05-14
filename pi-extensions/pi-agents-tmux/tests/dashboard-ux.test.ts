@@ -25,7 +25,7 @@ import {
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
 import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
-import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, oneLinePreview } from "../extensions/subagent/format.js";
+import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, highlightInlinePreview, oneLinePreview } from "../extensions/subagent/format.js";
 import { oneShotTranscriptPath } from "../extensions/subagent/paths.js";
 import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
@@ -660,6 +660,60 @@ test("Monitor transcript banner is stable across filter/search/scroll state", as
 	const summary = (await traceViewerItems(taskRecord, undefined, undefined, { transcriptExpanded: true }))[0]!.text;
 	assert.equal((summary.match(/⚠ COMPACTION/g) ?? []).length, 1);
 	assert.match(summary, /after/);
+});
+
+test("Monitor compaction banner stays pinned when detail content is scrolled", async () => {
+	const runtimeRoot = tempRuntime();
+	const transcriptPath = join(runtimeRoot, "monitor-banner-scroll.jsonl");
+	const lines = [
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "message_end", message: { role: "user", content: [{ type: "text", text: "before" }] } } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:01.000Z", event: { type: "session_compact" } }),
+		...Array.from({ length: 100 }, (_value, index) => JSON.stringify({ ts: "2026-05-14T05:00:02.000Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `line ${index}` }] } } })),
+	];
+	writeFileSync(transcriptPath, lines.join("\n"));
+	const taskRecord = record("planner", "planner-1700000120-scroll", "2026-05-14T05:00:00.000Z", { transcriptPath });
+	const items = await traceViewerItems(taskRecord, undefined, undefined, { transcriptExpanded: true });
+	const ui = uiState({ inspectorScroll: 999, monitorTranscriptExpanded: true, pane: "inspector", tab: "monitor" });
+
+	const rendered = renderMonitorDetail(taskRecord, new Map([[taskRecord.taskId, { items }]]), ui, 1, { agents: [agent("planner", true)] } as any, 160, 22, theme as any).join("\n");
+	assert.match(rendered, /⚠ COMPACTION — context window full/);
+	assert.match(rendered, /line 99/);
+});
+
+test("Monitor transcript empty messages render placeholders and keep task fallback", () => {
+	const runtimeRoot = tempRuntime();
+	const transcriptPath = join(runtimeRoot, "monitor-empty-messages.jsonl");
+	writeFileSync(transcriptPath, [
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "message_end", message: { role: "user", content: "" } } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:01.000Z", event: { type: "message_end", message: { role: "assistant", content: [] } } }),
+	].join("\n"));
+	const taskRecord = record("planner", "planner-1700000120-empty", "2026-05-14T05:00:00.000Z", { task: "Fallback task prompt", transcriptPath });
+
+	assert.deepEqual(transcriptCompactRows(taskRecord), [
+		"05:00:00 → prompt Fallback task prompt",
+		"05:00:00 → prompt (empty)",
+		"05:00:01 ← assistant (empty)",
+	]);
+	const expanded = transcriptExpandedRows(taskRecord).join("\n");
+	assert.match(expanded, /05:00:00 → prompt\nFallback task prompt/);
+	assert.match(expanded, /05:00:00 → prompt\n\(empty\)/);
+	assert.match(expanded, /05:00:01 ← assistant\n\(empty\)/);
+	assert.doesNotMatch(expanded, /05:00:01 ← assistant\n\n/);
+});
+
+test("inline JSON highlighter protects keys before status value coloring", () => {
+	const malformed = highlightInlinePreview('{"ok": "passed', ansiTheme as any);
+	assert.match(malformed, /\x1b\[36m"ok"\x1b\[39m/);
+	assert.doesNotMatch(malformed, /\x1b\[32mok\x1b\[39m/);
+	assert.doesNotMatch(malformed, /\x1b\[32mpassed\x1b\[39m/);
+
+	const dangling = highlightInlinePreview('{"passed": }', ansiTheme as any);
+	assert.match(dangling, /\x1b\[36m"passed"\x1b\[39m/);
+	assert.doesNotMatch(dangling, /\x1b\[32mpassed\x1b\[39m/);
+
+	const validValue = highlightInlinePreview('{"status": "passed"}', ansiTheme as any);
+	assert.match(validValue, /\x1b\[36m"status"\x1b\[39m/);
+	assert.match(validValue, /\x1b\[32mpassed\x1b\[39m/);
 });
 
 test("Monitor transcript legacy events do not false-positive compaction banners", async () => {

@@ -820,6 +820,7 @@ type TranscriptEntry =
 
 const TRANSCRIPT_COMPACTION_BANNER = "⚠ COMPACTION — context window full, history compressed before continuation";
 const TRANSCRIPT_COMPACTION_BODY = "(Pi runtime compacted context. Subsequent messages start from the compacted state.)";
+const TRANSCRIPT_EMPTY_PLACEHOLDER = "(empty)";
 
 function transcriptCompactRow(timestamp: string | undefined, arrow: "→" | "←", type: TranscriptEntryType, text: string): string {
 	return `${transcriptRowTime(timestamp)} ${arrow} ${type} ${firstTranscriptLine(text)}`.trimEnd();
@@ -873,6 +874,10 @@ function formatTranscriptJson(value: unknown): string {
 	try { return JSON.stringify(value ?? {}, null, 2); } catch { return String(value); }
 }
 
+function transcriptTextOrPlaceholder(text: string): string {
+	return text.trim() ? text : TRANSCRIPT_EMPTY_PLACEHOLDER;
+}
+
 function toolCallPreview(tool: any): string {
 	const name = tool?.name ?? tool?.toolName ?? "tool";
 	const args = tool?.arguments ?? tool?.args;
@@ -915,12 +920,15 @@ function parseTranscriptEntries(record: PaneTaskRecord): TranscriptEntry[] {
 				}
 				const text = textFromMessageContent(msg.content);
 				if (role === "user") {
-					sawPrompt = true;
-					entries.push({ arrow: "→", body: text, preview: text, timestamp, type: "prompt" });
+					if (text.trim()) sawPrompt = true;
+					const body = transcriptTextOrPlaceholder(text);
+					entries.push({ arrow: "→", body, preview: body, timestamp, type: "prompt" });
 				} else if (role === "assistant") {
-					entries.push({ arrow: "←", body: text, preview: text || innerType || "assistant", timestamp, type: "assistant" });
-				} else if (text.trim()) {
-					entries.push({ arrow: "←", body: text, preview: `${role || innerType || "message"} ${text}`, timestamp, type: "turn" });
+					const body = transcriptTextOrPlaceholder(text);
+					entries.push({ arrow: "←", body, preview: body, timestamp, type: "assistant" });
+				} else {
+					const body = transcriptTextOrPlaceholder(text);
+					entries.push({ arrow: "←", body, preview: `${role || innerType || "message"} ${body}`, timestamp, type: "turn" });
 				}
 				continue;
 			}
@@ -1375,6 +1383,34 @@ function traceLineLooksJsonLike(line: string, type: TraceViewerItem["type"] | un
 		|| /^[}\]],?$/.test(trimmed);
 }
 
+function monitorStickyTranscriptRawLines(rawLines: string[], type: TraceViewerItem["type"] | undefined): { scrollRawLines: string[]; stickyRawLines: string[] } {
+	if (type !== "summary") return { scrollRawLines: rawLines, stickyRawLines: [] };
+	const stickyIndexes = new Set<number>();
+	const stickyRawLines: string[] = [];
+	for (let index = 0; index < rawLines.length; index += 1) {
+		const line = rawLines[index] ?? "";
+		if (!line.includes(TRANSCRIPT_COMPACTION_BANNER)) continue;
+		stickyIndexes.add(index);
+		stickyRawLines.push(line);
+		const next = rawLines[index + 1] ?? "";
+		if (next.trim() === TRANSCRIPT_COMPACTION_BODY) {
+			stickyIndexes.add(index + 1);
+			stickyRawLines.push(next);
+		}
+	}
+	if (stickyRawLines.length === 0) return { scrollRawLines: rawLines, stickyRawLines };
+	return { scrollRawLines: rawLines.filter((_line, index) => !stickyIndexes.has(index)), stickyRawLines };
+}
+
+function renderTraceContentLines(rawLines: string[], type: TraceViewerItem["type"] | undefined, width: number, theme: Theme): string[] {
+	const wrapped: string[] = [];
+	for (const raw of rawLines) {
+		const chunk = renderTraceContentLine(raw, type, width, theme);
+		wrapped.push(...(chunk.length > 0 ? chunk : [""]));
+	}
+	return wrapped;
+}
+
 function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | undefined, width: number, theme: Theme): string[] {
 	const line = raw.replace(/\t/g, "  ");
 	const trimmed = line.trim();
@@ -1450,15 +1486,13 @@ export function renderMonitorDetail(
 		]
 			: [];
 	const rawLines = (item?.text || "(empty)").split(/\r?\n/);
-	const wrapped: string[] = [];
-	for (const raw of rawLines) {
-		const chunk = renderTraceContentLine(raw, item?.type, safeWidth, theme);
-		wrapped.push(...(chunk.length > 0 ? chunk : [""]));
-	}
+	const { scrollRawLines, stickyRawLines } = monitorStickyTranscriptRawLines(rawLines, item?.type);
+	const stickyWrapped = renderTraceContentLines(stickyRawLines, item?.type, safeWidth, theme);
+	const wrapped = renderTraceContentLines(scrollRawLines, item?.type, safeWidth, theme);
 	const header: string[] = [titleLine, "", subtabLine, "", ...fileLines];
 	const headerRows = header.length;
 	const footerRows = 1;
-	const visibleRows = Math.max(1, rows - headerRows - footerRows);
+	const visibleRows = Math.max(1, rows - headerRows - stickyWrapped.length - footerRows);
 	const maxScroll = Math.max(0, wrapped.length - visibleRows);
 	ui.inspectorScroll = Math.max(0, Math.min(ui.inspectorScroll, maxScroll));
 	const slice = wrapped.slice(ui.inspectorScroll, ui.inspectorScroll + visibleRows);
@@ -1467,6 +1501,7 @@ export function renderMonitorDetail(
 	const after = afterCount > 0 ? `↓ ${afterCount}` : "";
 	const scrollHint = [before, after].filter(Boolean).join(" · ");
 	const out: string[] = [...header];
+	out.push(...stickyWrapped);
 	out.push(...slice);
 	if (scrollHint) out.push(ansiYellow(scrollHint));
 	else out.push("");

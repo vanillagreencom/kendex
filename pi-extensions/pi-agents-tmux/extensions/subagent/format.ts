@@ -110,9 +110,15 @@ export function formatTokens(count: number): string {
 export function highlightInlinePreview(text: string, theme: Theme): string {
 	if (!text) return text;
 	let result = text;
+	const protectedSpans: string[] = [];
+	const protect = (span: string) => {
+		const token = `\uE000${protectedSpans.length}\uE001`;
+		protectedSpans.push(span);
+		return token;
+	};
 	// JSON keys: "name":
 	result = result.replace(/"([A-Za-z_][\w-]*)"(\s*):/g, (_full, key: string, ws: string) =>
-		`${theme.fg("accent", `"${key}"`)}${ws}${theme.fg("dim", ":")}`,
+		protect(`${theme.fg("accent", `"${key}"`)}${ws}${theme.fg("dim", ":")}`),
 	);
 	// Success-tone status values inside quoted strings.
 	result = result.replace(/"(approve|approved|success|completed|merged|ok|done|clean|passed)"/g, (_full, w: string) =>
@@ -126,6 +132,7 @@ export function highlightInlinePreview(text: string, theme: Theme): string {
 	result = result.replace(/"(failed|failure|error|aborted|blocked|rejected)"/g, (_full, w: string) =>
 		`${theme.fg("dim", '"')}${theme.fg("error", w)}${theme.fg("dim", '"')}`,
 	);
+	result = result.replace(/\uE000(\d+)\uE001/g, (_full, index: string) => protectedSpans[Number(index)] ?? "");
 	return result;
 }
 
