@@ -14,6 +14,7 @@
 #   WORKTREE_SYMLINKS        - space-separated paths to symlink from main into worktrees
 #   WORKTREE_RELATIVE_SYMLINKS - space-separated path=target symlinks created inside worktrees
 #   WORKTREE_COPIES          - space-separated paths to copy from main into worktrees
+#   WORKTREE_MKDIRS          - space-separated paths to mkdir -p inside each worktree (e.g. tmp scratch dirs)
 #   BOT_NAME                 - git user.name for worktree commits
 #   BOT_EMAIL                - git user.email for worktree commits
 #   BOT_SIGNING_KEY          - SSH signing key path
@@ -124,6 +125,12 @@ remove_symlinks() {
 # Apply all symlinks and copies to a worktree
 setup_worktree_links() {
   local wt="$1"
+
+  # Project-configured mkdirs (run first so subsequent symlinks/copies can
+  # land inside them if needed). Idempotent; ignores empty entries.
+  for path in ${WORKTREE_MKDIRS:-}; do
+    [[ -n "$path" ]] && mkdir -p "$wt/$path"
+  done
 
   # Project-configured symlinks
   for path in ${WORKTREE_SYMLINKS:-}; do
