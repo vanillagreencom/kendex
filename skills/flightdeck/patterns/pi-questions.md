@@ -33,6 +33,27 @@ Pi's `pi-questions` extension renders questions inline in the editor area and ex
 
 The daemon normalizes this to a canonical `pi-question` wake event with `question` set to the request payload.
 
+## Subscriber attach: drain + re-drain
+
+`pi-bridge stream` only delivers **future** events, and `pane-poll` can't see questions (they live in bridge state, not the tmux pane buffer). To avoid wake-starvation when a question is already open at attach time, the daemon's pi subscriber drains pending questions twice on startup:
+
+1. **Initial drain** — immediately before opening the stream, the subscriber calls `pi-bridge questions` and synthesizes a `pi-question` wake row for every entry in `data.questions[]`, seeding a per-pane `seen_qids` dedup string.
+2. **Re-drain on `bridge_hello`** — `pi-session-bridge` sends `{"type":"bridge_hello","protocol":"pi-session-bridge.v1"}` the instant the stream socket is accepted. The subscriber treats that line as the deterministic "stream connected" signal and runs the same drain again, closing the race window between the initial snapshot and the stream subscription registering with the bridge. `seen_qids` carries forward, so a question seen by both drains (or by a drain and the live `event:"question" action:"opened"`) wakes master exactly once.
+
+The drain is **fail-open**: a broken bridge must never block the live-stream branch from running. `pi-bridge questions` is wrapped in `timeout` bounded by `FD_ADAPTER_READ_TIMEOUT_SEC` (default 2s, matching `pane-poll`); rc and stderr are captured and classified, and the subscriber proceeds to the stream regardless. Operators can grep the per-pane `daemon.log.pi-sub-<paneid>` sub-log for these tags:
+
+| Tag | Meaning |
+| --- | --- |
+| `[pi-sub-stream-connected]` | `bridge_hello` arrived; re-drain about to fire. |
+| `[pi-question-emit] ... drain=1` | Drain (initial or re-drain) wrote a `pi-question` wake row for the listed `request_id`. |
+| `[pi-sub-drain-empty]` | Bridge returned an empty response body — distinguishes drain-quiet from drain-broken. |
+| `[pi-sub-drain-error]` | `pi-bridge questions` exited non-zero (or hit `rc=124` from the timeout). Line carries `rc=` and a `stderr=` tail (200 chars). |
+| `[pi-sub-drain-malformed]` | Response failed the `.success == true` / `.data.questions \| type == "array"` shape probe. Line carries a 200-char `excerpt=` of the body. |
+
+A drain failure is not a daemon failure: master still sees subsequent live `event:"question"` opens through the stream. The tags exist so operators can distinguish "the bridge is fine, no questions were pending" from "the bridge call kept failing and we relied on the live stream alone".
+
+## Inner-pane subagent completions
+
 `pi-agents-tmux` may also emit `subagent-completion` custom messages from inner persistent panes. The daemon treats blocked/failed/needs-completion completions as `pi-subagent-completion` advisory wake events and logs successful completions without waking. Flightdeck must re-poll the outer orchestration pane and let that orchestrator consume the inner result. Do not call `subagent`, `steer_subagent`, or `get_subagent_result` for the orchestrator's inner panes from Flightdeck, and never target them by shared cwd/session metadata. If the orchestrator needs a decision about an inner result, it will surface a normal outer `pi-question` or prompt; answer that outer prompt only.
 
 ## Answering
