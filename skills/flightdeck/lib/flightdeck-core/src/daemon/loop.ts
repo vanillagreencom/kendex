@@ -45,7 +45,7 @@ import { clearStaleWakePending, isMasterBusy } from "./busy.ts";
 import { clearBellForWindow, wakeMaster, resolvePiMasterPid } from "./wake.ts";
 import { PaneCache, capturePane, captureHash12, classifyBuffer, resolvePaneId, sessionAlive, stabilityForHarness } from "./pane-meta.ts";
 import { daemonLog, daemonWarn } from "./log.ts";
-import { touchHeartbeat } from "./lifecycle.ts";
+import { setDaemonExitReason, setDaemonMasterId, touchHeartbeat } from "./lifecycle.ts";
 import { drainOcWakeEvents } from "./subscribers/drain.ts";
 import {
 	spawnOcSubscriber,
@@ -169,6 +169,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		process.stderr.write(`Error: cannot resolve master pane '${opts.masterTarget}'\n`);
 		process.exit(2);
 	}
+	setDaemonMasterId(masterId);
 	const innerIds: string[] = [];
 	const seenInner = new Set<string>();
 	for (let i = 0; i < opts.innerTargets.length; i += 1) {
@@ -334,6 +335,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 
 		if (!paneCache.alive(masterId)) {
 			log("master-gone", `master ${masterId} gone; exiting`);
+			setDaemonExitReason("master-gone");
 			break;
 		}
 

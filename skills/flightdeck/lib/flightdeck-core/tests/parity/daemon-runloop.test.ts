@@ -36,6 +36,15 @@ function pidAlive(pid: number): boolean {
 }
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return true;
+		await sleep(100);
+	}
+	return predicate();
+}
+
 let stateDir = "";
 let innerPaneId = "";
 const SESSION = process.env.TMUX ? spawnSync("tmux", ["display-message", "-p", "#{session_id}"], { encoding: "utf8" }).stdout.trim() : "";
@@ -78,6 +87,28 @@ describe("daemon run-loop (TS)", () => {
 			expect(r.stderr).toContain("error: master pane '%999999' does not exist; pass --master \"$TMUX_PANE\" or run 'tmux list-panes -a'");
 			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
 			expect(existsSync(pidFile)).toBe(false);
+		}
+	});
+
+	test("daemon writes daemon-exited event when the master pane disappears", async () => {
+		for (const useTs of [false, true]) {
+			const masterPane = tmuxNewWindow(SESSION, `fd-master-gone-${Date.now()}-${useTs ? "ts" : "bash"}`);
+			try {
+				const r = runDaemon("start", ["--master", masterPane, "--inner", innerPaneId], useTs);
+				expect(r.status).toBe(0);
+				tmuxKillPaneFor(masterPane);
+				const wakeEventsLog = join(stateDir, `fd-wake-events-${SESSION_KEY}.log`);
+				const sawExit = await waitFor(() => existsSync(wakeEventsLog) && readFileSync(wakeEventsLog, "utf8").includes('"event_type":"daemon-exited"'));
+				expect(sawExit).toBe(true);
+				const lines = readFileSync(wakeEventsLog, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+				const event = lines.find((line) => line.event_type === "daemon-exited");
+				expect(event).toMatchObject({ event_type: "daemon-exited", reason: "master-gone", master_id: masterPane });
+				expect(typeof event.pid).toBe("number");
+				expect(event.hash).toMatch(/^[0-9a-f]{12}$/);
+			} finally {
+				tmuxKillPaneFor(masterPane);
+				runDaemon("stop", [], useTs);
+			}
 		}
 	});
 

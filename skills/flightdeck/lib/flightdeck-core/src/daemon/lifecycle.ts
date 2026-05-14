@@ -40,6 +40,7 @@
 // pi-flightdeck dashboard.
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, openSync, utimesSync } from "node:fs";
 
 export function touchHeartbeat(file: string): void {
@@ -57,9 +58,11 @@ export interface ShutdownOpts {
 	pidFile: string;
 	heartbeatFile: string;
 	wakeEventsLog: string;
+	sessionLock: string;
 	killSubscribers: () => void;
 	lockedCleanup: () => void;
 	log: (tag: string, msg: string) => void;
+	masterId: () => string;
 }
 
 // Handoff mode: when set, the EXIT cleanup MUST NOT remove PID_FILE /
@@ -67,6 +70,24 @@ export interface ShutdownOpts {
 // inherits all of these as part of Option A's contract.
 let handoffMode = false;
 export function setHandoffMode(on: boolean): void { handoffMode = on; }
+
+let daemonExitReason = "other";
+export function setDaemonExitReason(reason: "master-gone" | "signal-term" | "signal-int" | "other"): void {
+	daemonExitReason = reason;
+}
+
+let daemonMasterId = "";
+export function setDaemonMasterId(masterId: string): void { daemonMasterId = masterId; }
+
+function emitDaemonExitedEvent(opts: ShutdownOpts): void {
+	if (!opts.wakeEventsLog || !opts.sessionLock) return;
+	const ts = new Date().toISOString();
+	const reason = daemonExitReason || "other";
+	const masterId = daemonMasterId || opts.masterId();
+	const hash = createHash("sha256").update(`${ts}|${reason}|${masterId}|${process.pid}`).digest("hex").slice(0, 12);
+	const row = JSON.stringify({ ts, event_type: "daemon-exited", reason, master_id: masterId, pid: process.pid, hash });
+	spawnSync("bash", ["-c", "exec 219>\"$1\"; flock 219; printf '%s\\n' \"$2\" >> \"$3\"", "_", opts.sessionLock, row, opts.wakeEventsLog], { stdio: "ignore" });
+}
 
 // Install EXIT + SIGINT/TERM/HUP handlers. Idempotent.
 //
@@ -91,16 +112,18 @@ export function installShutdownHandlers(opts: ShutdownOpts): void {
 		}
 		opts.log("stop", `pid=${process.pid}`);
 		try { opts.killSubscribers(); } catch { /* */ }
-		for (const f of [opts.pidFile, opts.heartbeatFile, opts.wakeEventsLog]) {
+		for (const f of [opts.pidFile, opts.heartbeatFile]) {
 			if (!f) continue;
 			try { const { unlinkSync } = require("node:fs") as typeof import("node:fs"); unlinkSync(f); }
 			catch { /* missing OK */ }
 		}
 		try { opts.lockedCleanup(); } catch { /* */ }
+		try { emitDaemonExitedEvent(opts); } catch { /* */ }
 	};
 	process.on("exit", cleanup);
 	const sigStatus: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 	const sigHandler = (sig: NodeJS.Signals): void => {
+		setDaemonExitReason(sig === "SIGINT" ? "signal-int" : "signal-term");
 		cleanup();
 		process.exit(sigStatus[sig] ?? 0);
 	};

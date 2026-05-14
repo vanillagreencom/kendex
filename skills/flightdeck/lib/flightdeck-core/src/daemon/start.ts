@@ -260,6 +260,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 		pidFile,
 		heartbeatFile,
 		wakeEventsLog,
+		sessionLock,
 		killSubscribers: () => killAllSubscribers({
 			stateDir: opts.stateDir,
 			sessionKey: opts.sessionKey,
@@ -294,6 +295,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 			});
 		},
 		log,
+		masterId: () => opts.masterTarget,
 	});
 
 	// Fresh-start state wipe under SESSION_LOCK. Round-5 #1: skip

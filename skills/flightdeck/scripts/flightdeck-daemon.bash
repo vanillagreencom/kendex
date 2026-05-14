@@ -273,12 +273,14 @@ log() {
   printf -v line '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2"
   printf '%s' "$line" >> "$LOG"
   [[ -t 1 ]] && printf '%s' "$line"
+  return 0
 }
 warn() {
   local line
   printf -v line '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2"
   printf '%s' "$line" >> "$LOG"
   printf '%s' "$line" >&2
+  return 0
 }
 
 # Startup GC for orphaned daemon state files (sessions that no longer exist).
@@ -395,6 +397,26 @@ pane_alive() {
   # not yet refreshed; refresh_pane_cache is called at the top of every
   # tick so this is reliable inside run_loop).
   [[ -n "${PANE_TARGET_CACHE[$pid]:-}" ]]
+}
+
+emit_daemon_exited_event() {
+  [[ -n "${WAKE_EVENTS_LOG:-}" && -n "${SESSION_LOCK:-}" ]] || return 0
+  local reason="${DAEMON_EXIT_REASON:-other}" ts master_id_for_event hash
+  ts=$(date -Iseconds)
+  master_id_for_event="${master_id:-${MASTER_TARGET:-}}"
+  hash=$(printf '%s|%s|%s|%s' "$ts" "$reason" "$master_id_for_event" "$$" | sha256sum | awk '{print substr($1,1,12)}')
+  (
+    exec 219>"$SESSION_LOCK"
+    flock 219
+    jq -nc --arg ts "$ts" \
+           --arg event_type "daemon-exited" \
+           --arg reason "$reason" \
+           --arg master_id "$master_id_for_event" \
+           --arg hash "$hash" \
+           --argjson pid "$$" \
+           '{ts:$ts,event_type:$event_type,reason:$reason,master_id:$master_id,pid:$pid,hash:$hash}' \
+           >> "$WAKE_EVENTS_LOG"
+  ) 2>/dev/null || true
 }
 
 validate_master_target_alive() {
@@ -847,7 +869,13 @@ locked_rm_wake_pending() {
 # Subshell-test for exec to avoid permanent stderr redirection.
 locked_state_cleanup() {
   local nonblock=""
-  [[ "${1:-}" == "--nonblock" ]] && nonblock="-n"
+  local keep_wake_events=0
+  for arg in "$@"; do
+    case "$arg" in
+      --nonblock) nonblock="-n" ;;
+      --keep-wake-events) keep_wake_events=1 ;;
+    esac
+  done
 
   if ! ( exec 207>"$SESSION_LOCK" ) 2>/dev/null; then
     return 0
@@ -858,7 +886,9 @@ locked_state_cleanup() {
     return 0
   fi
   rm -f "$WAKE_PENDING" "$EVENTS_FILE"
-  [[ -n "${WAKE_EVENTS_LOG:-}" ]] && rm -f "$WAKE_EVENTS_LOG"
+  if (( keep_wake_events == 0 )); then
+    [[ -n "${WAKE_EVENTS_LOG:-}" ]] && rm -f "$WAKE_EVENTS_LOG"
+  fi
   shopt -s nullglob
   local f
   for f in "$EVENTS_FILE".draining.*; do
@@ -1893,15 +1923,20 @@ run_loop() {
   # WAKE_EVENTS_LOG are bound, the trap fires under set -u and
   # `unbound variable` masks the real failure. Use defaults so the trap
   # is always safe to run.
+  DAEMON_EXIT_REASON="other"
+  DAEMON_CLEANED=0
   _on_exit() {
+    [[ "${DAEMON_CLEANED:-0}" == "1" ]] && return 0
+    DAEMON_CLEANED=1
     kill_all_oc_subscribers || true
     rm -f "${PID_FILE:-}" "${HEARTBEAT_FILE:-}" 2>/dev/null || true
-    rm -f "${WAKE_EVENTS_LOG:-}" 2>/dev/null || true
-    locked_state_cleanup --nonblock || true
+    locked_state_cleanup --nonblock --keep-wake-events || true
+    emit_daemon_exited_event || true
     log stop "pid=$$"
   }
   trap '_on_exit' EXIT
-  trap '_on_exit; exit 0' INT TERM
+  trap 'DAEMON_EXIT_REASON="signal-int"; _on_exit; exit 0' INT
+  trap 'DAEMON_EXIT_REASON="signal-term"; _on_exit; exit 0' TERM HUP
 
   while true; do
     # Watchdog: touch the heartbeat file every tick. Master can read its
@@ -1941,6 +1976,7 @@ run_loop() {
 
     if ! pane_alive "$master_id"; then
       log master-gone "master $master_id gone; exiting"
+      DAEMON_EXIT_REASON="master-gone"
       break
     fi
 
