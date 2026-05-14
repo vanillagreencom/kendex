@@ -344,25 +344,19 @@ test("history labels number repeated same-agent tasks latest-first friendly", ()
 	assert.match(historyRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
 });
 
-test("Agents tab rows are flat even when pane tasks share one transcript", () => {
-	const sessionFile = join(tempRuntime(), "sessions", "planner.jsonl");
-	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", paneId: "%1", transcriptPath: sessionFile });
-	const second = record("planner", "planner-1700000120-bbbbbbbb", "2026-05-14T05:02:00.000Z", { kind: "pane", paneId: "%1", transcriptPath: sessionFile });
-	const active = dashboardItem({ agent: "planner", kind: "pane", status: "running", taskId: second.taskId, transcriptPath: sessionFile });
-	const rows = buildAgentRows([agent("planner", true)], "", new Map(), [active], { [first.taskId]: first, [second.taskId]: second });
+test("Agents tab rows are flat static catalog entries", () => {
+	const rows = buildAgentRows([agent("planner", true), agent("scout")], "", new Map());
 
-	assert.deepEqual(rows.map((row) => row.rowType), ["agent"]);
-	assert.deepEqual(rows.map((row) => row.label), ["planner"]);
+	assert.deepEqual(rows.map((row) => row.label), ["planner", "scout"]);
 });
 
-test("Agents tab search ignores task ids and summaries", () => {
-	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { summary: "find this completion summary" });
-	const second = record("planner", "planner-1700000120-bbbbbbbb", "2026-05-14T05:02:00.000Z", { task: "find this task prompt" });
-	const registry = { [first.taskId]: first, [second.taskId]: second };
+test("Agents tab search only matches static agent metadata", () => {
+	const config = agent("planner", true, { description: "Plans implementation work.", model: "openai-codex/gpt-5.5" });
 
-	assert.equal(buildAgentRows([agent("planner", true)], "", new Map(), [], registry).length, 1);
-	assert.equal(buildAgentRows([agent("planner", true)], "bbbbbbbb", new Map(), [], registry).length, 0);
-	assert.equal(buildAgentRows([agent("planner", true)], "completion summary", new Map(), [], registry).length, 0);
+	assert.equal(buildAgentRows([config], "", new Map()).length, 1);
+	assert.equal(buildAgentRows([config], "implementation", new Map()).length, 1);
+	assert.equal(buildAgentRows([config], "bbbbbbbb", new Map()).length, 0);
+	assert.equal(buildAgentRows([config], "completion summary", new Map()).length, 0);
 });
 
 test("Agents Inspector shows static config only for agent with active tasks", () => {
