@@ -221,6 +221,7 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 - **Docs and instruction payloads ship with the code change.** Any change to a hook, skill, agent, or Pi extension must update — in the same commit — affected READMEs, AGENTS.md, `vstack.toml`, `.env.local.example`, `package.json`, agent instruction payloads (`appendSystem` files / before_agent_start hook prose), and any cross-referencing docs. A behavior change without its docs/instructions update is incomplete.
 - **Edit skills directly.** Edit `skills/<name>/SKILL.md` in place. No separate `rules/` directories or per-skill `AGENTS.md` files.
 - **Always create vstack worktrees via the worktree skill.** Use `skills/worktree/scripts/worktree create <id>` (not raw `git worktree add`) so `.env.local`, harness mirror dirs, bot identity, and per-worktree config are wired in.
+- **READMEs are user-facing only.** Describe what the thing is, how to use it, features, settings/options, and install/setup. Technical/development detail goes in `DEVELOPMENT.md`; agent skill instructions live in the matching `SKILL.md`.
 - **Pi hook parity.** Pi gets its hooks via the `pi-extensions/pi-hooks` extension (native TS port of `hooks/*.sh` against Pi's `tool_call`/`tool_result`/`turn_end` events). Any change to a hook script must land in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
 
 ## Updating Pi Extensions
