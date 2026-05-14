@@ -10,9 +10,11 @@ import {
 	historyRecordLabel,
 	readTranscriptTail,
 	taskNumberById,
+	traceViewerItems,
 } from "../extensions/subagent/browser.js";
-import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent } from "../extensions/subagent/format.js";
+import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, oneLinePreview } from "../extensions/subagent/format.js";
 import { oneShotTranscriptPath } from "../extensions/subagent/paths.js";
+import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
 import {
 	backfillTaskSummaryFromTranscript,
 	readTaskRegistry,
@@ -79,6 +81,33 @@ test("chat completion synthesis never echoes delegation prompt and annotates tas
 	const completion = messages.find((message) => message.kind === "completion");
 	assert.equal(completion?.body, COMPLETION_SUMMARY_UNAVAILABLE);
 	assert.equal(completion?.taskId, taskId);
+});
+
+test("full persisted one-shot summary feeds chat history and result formatting", async () => {
+	const taskId = "reviewer-arch-1700000000-77abfc41";
+	const longSummary = Array.from({ length: 80 }, (_, index) => `finding-${index}`).join(" ");
+	assert.ok(longSummary.length > 600);
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", {
+		summary: longSummary,
+		transcriptPath: "/tmp/reviewer-arch.jsonl",
+	});
+	const item: SubagentDashboardItem = {
+		agent: "reviewer-arch",
+		kind: "oneshot",
+		message: oneLinePreview(longSummary, 120),
+		status: "completed",
+		task: taskRecord.task,
+		taskId,
+		startedAt: taskRecord.createdAt,
+		completedAt: taskRecord.completedAt,
+		updatedAt: taskRecord.updatedAt!,
+	};
+	const messages: ChatMessage[] = [];
+	appendBgChatMessages(messages, [item], { [taskId]: taskRecord });
+
+	assert.equal(messages.find((message) => message.kind === "completion")?.body, longSummary);
+	assert.match((await traceViewerItems(taskRecord))[0]!.text, new RegExp(longSummary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(formatTaskRecordResult(taskRecord), new RegExp(longSummary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("history labels number repeated same-agent tasks latest-first friendly", () => {

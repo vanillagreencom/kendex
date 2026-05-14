@@ -55,6 +55,7 @@ import {
 import { readPaneRegistry, readTaskRegistry } from "./tasks.js";
 import { paneCompletionTone, readTextFileIfExists } from "./renderers.js";
 import { recordTraceRef } from "./renderers.js";
+import { taskRegistryPath } from "./paths.js";
 import {
 	AGENTS_BROWSER_TAB,
 	AGENTS_BROWSER_HEIGHT_RATIO,
@@ -1199,6 +1200,24 @@ function trimChatBody(text: string, max = 4_000): string {
 	return `${compact.slice(0, max)}\n\u2026(truncated)`;
 }
 
+function normalizeTaskRegistryShape(parsed: unknown): PaneTaskRegistry {
+	if (Array.isArray(parsed)) return Object.fromEntries(parsed.filter((record) => record?.taskId).map((record) => [record.taskId, record])) as PaneTaskRegistry;
+	return parsed && typeof parsed === "object" ? parsed as PaneTaskRegistry : {};
+}
+
+function loadTaskRegistrySync(runtimeRoot: string): PaneTaskRegistry {
+	try {
+		return normalizeTaskRegistryShape(JSON.parse(fs.readFileSync(taskRegistryPath(runtimeRoot), "utf-8")));
+	} catch {
+		return {};
+	}
+}
+
+function completionBodyFromRecord(record: PaneTaskRecord | undefined, fallback: string | undefined, task: string | undefined): string {
+	const persisted = record?.summary?.trim() ? record.summary : undefined;
+	return completionBodyWithoutPromptEcho(persisted ?? fallback, record?.task ?? task);
+}
+
 function extractDelegationBody(raw: string): string {
 	const lines = raw.split(/\r?\n/);
 	const out: string[] = [];
@@ -1233,7 +1252,7 @@ function extractSteeringBody(raw: string): string {
 	return out.join("\n").trim();
 }
 
-export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardItem[]): void {
+export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardItem[], taskRegistry: PaneTaskRegistry = {}): void {
 	// Bg/oneshot agents skip the file bus (no inbox/outbox/.md/.json), so the
 	// file-based scan never sees them. Synthesize delegation+completion records
 	// from the dashboard item itself; the data we need is already on it.
@@ -1264,13 +1283,13 @@ export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDas
 			kind: "completion",
 			from: `@${label}`,
 			to: "@orch",
-			body: completionBodyWithoutPromptEcho(item.message, item.task),
+			body: completionBodyFromRecord(taskRegistry[item.taskId], item.message, item.task),
 			status: item.status,
 		});
 	}
 }
 
-function loadChatMessages(runtimeRoot: string, agentNames: string[]): ChatMessage[] {
+function loadChatMessages(runtimeRoot: string, agentNames: string[], taskRegistry: PaneTaskRegistry): ChatMessage[] {
 	const messages: ChatMessage[] = [];
 	const seen = new Set<string>();
 	const pushMd = (filePath: string, agent: string): void => {
@@ -1302,7 +1321,9 @@ function loadChatMessages(runtimeRoot: string, agentNames: string[]): ChatMessag
 		try { stat = fs.statSync(filePath); } catch { return; }
 		let parsed: Record<string, unknown> | undefined;
 		try { parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>; } catch { return; }
-		const summary = typeof parsed?.summary === "string" ? parsed.summary : "(no summary)";
+		const taskId = deriveTaskIdFromFile(filePath);
+		const record = taskId ? taskRegistry[taskId] : undefined;
+		const summary = completionBodyFromRecord(record, typeof parsed?.summary === "string" ? parsed.summary : undefined, record?.task);
 		const status = typeof parsed?.status === "string" ? parsed.status : undefined;
 		const notes = typeof parsed?.notes === "string" ? parsed.notes : undefined;
 		const filesChanged = Array.isArray(parsed?.filesChanged)
@@ -1311,7 +1332,7 @@ function loadChatMessages(runtimeRoot: string, agentNames: string[]): ChatMessag
 		messages.push({
 			timestamp: stat.mtimeMs,
 			agent,
-			taskId: deriveTaskIdFromFile(filePath),
+			taskId,
 			kind: "completion",
 			from: `@${agent}`,
 			to: "@orch",
@@ -1388,8 +1409,9 @@ function renderChatRoomDetail(runtimeRoot: string, items: SubagentDashboardItem[
 	const taskIds = new Set(items.map((item) => item.taskId).filter(Boolean));
 	const scopeLabel = items.length === 1 ? `@${items[0]!.agent}` : `${agentNames.length} agent${agentNames.length === 1 ? "" : "s"}`;
 	const titleLine = `${agentPaneTitle(theme, "Chat", ui.pane === "inspector")} ${theme.fg("dim", `(${scopeLabel})`)}`;
-	const messages = loadChatMessages(runtimeRoot, agentNames).filter((message) => taskIds.size === 0 || !message.taskId || taskIds.has(message.taskId));
-	appendBgChatMessages(messages, items);
+	const taskRegistry = loadTaskRegistrySync(runtimeRoot);
+	const messages = loadChatMessages(runtimeRoot, agentNames, taskRegistry).filter((message) => taskIds.size === 0 || !message.taskId || taskIds.has(message.taskId));
+	appendBgChatMessages(messages, items, taskRegistry);
 	messages.sort((a, b) => a.timestamp - b.timestamp);
 	const body: string[] = [];
 	if (messages.length === 0) {
