@@ -27,9 +27,9 @@ Do not confuse normalized record `sessionMode` (`fresh|resumed|new`) with runtim
 
 Where the UI surfaces each layer:
 
-- **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task children expose individual `taskId`s.
-- **`/agents` popup → Agents tab** — agent profiles + currently active tasks. Selecting an agent defaults to its latest task; expanding shows task children for multi-task agents (repeated bg launches or pane reuse).
-- **`/agents` popup → History tab** — completed tasks only, latest first, labelled `agent #N · time · short taskId`. Detail subtabs are `Summary` (status/usage/paths), `Completion` (final response), and `Task` (the prompt that was submitted).
+- **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task-centric detail surfaces expose individual `taskId`s.
+- **`/agents` popup → Agents tab** — agent profiles only: static frontmatter/config, source path, and system prompt. No task children, task ids, transcripts, completion summaries, or latest-message surfaces. The Inspector is intentionally static; execution data lives on History (later Monitor).
+- **`/agents` popup → History tab** — completed tasks only today, latest first, labelled `agent #N · time · short taskId`. Detail subtabs are `Summary` (status/usage/paths), `Completion` (final response), and `Task` (the prompt that was submitted). After PR3 this tab becomes Monitor and owns active sessions and transcripts too.
 - **Tool output rendering** — per-task status rows (`● Agent <name> <status> · bg|pane · ctrl+o expand`) with a `Task: <prompt>` body line when echoing the prompt and a JSON/markdown-aware preview when showing the result.
 
 When reading code, prefer the layer names above over ambiguous terms like "run" or "invocation". `PaneTaskRecord` is per-task; `PaneSession*` types refer to the session runtime; `discoveredAgent` / `agentConfig` refer to the static profile.
@@ -100,7 +100,7 @@ Each row shows agent name, kind (`pane`/`bg`), turn count, input/output tokens, 
 
 Rows are bucketed for stability: queued/running/waiting agents stay above attention states; attention stays above completed. Within each bucket, rows preserve start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts even when one side is zero. Missing pane artifacts render as `stale`; stale bg-only records are dropped (bg agents do not use pane handoff files).
 
-The popup has two top-level tabs: **Agents** (unified project/user/active list, sorted by current status, Live/Chat/Inspector subtabs) and **History** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Agents rows include recent task children keyed by `taskId`; selecting an agent defaults to its latest task, while selecting a child pins Live/Chat to that task. Chat is scoped to the selected task row, or to all recent rows for the selected agent row. Repeated launches of the same bg agent render as task children; resumed pane work can share one transcript row while still exposing individual task ids.
+The popup has two top-level tabs: **Agents** (unified project/user agent profiles, static Inspector only) and **History** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Agents rows are flat and do not expose task children, transcripts, or task-scoped summaries; they may show a live-pane dot only as a pointer that execution state exists on History/Monitor.
 
 Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, History Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
 

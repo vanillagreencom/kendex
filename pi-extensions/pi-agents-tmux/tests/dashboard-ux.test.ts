@@ -9,6 +9,7 @@ import {
 	buildAgentRows,
 	historyRecordLabel,
 	readTranscriptTail,
+	renderAgentInspector,
 	taskNumberById,
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
@@ -22,7 +23,7 @@ import {
 	readTaskRegistry,
 	updateTaskRegistry,
 } from "../extensions/subagent/tasks.js";
-import type { ChatMessage, PaneTaskRecord, SingleResult, SubagentDashboardItem, SubagentDetails } from "../extensions/subagent/types.js";
+import type { AgentBrowserUiState, AgentPaneStatus, ChatMessage, PaneTaskRecord, SingleResult, SubagentDashboardItem, SubagentDetails } from "../extensions/subagent/types.js";
 
 const theme = {
 	bg: (_tone: string, text: string) => text,
@@ -48,8 +49,44 @@ function record(agent: string, taskId: string, createdAt: string, patch: Partial
 	};
 }
 
-function agent(name: string, pane = false): AgentConfig {
-	return { name, pane, description: `${name} agent`, systemPrompt: "", source: "project", filePath: `${name}.md` };
+function agent(name: string, pane = false, patch: Partial<AgentConfig> = {}): AgentConfig {
+	return { name, pane, description: `${name} agent`, systemPrompt: "", source: "project", filePath: `${name}.md`, ...patch };
+}
+
+function uiState(patch: Partial<AgentBrowserUiState> = {}): AgentBrowserUiState {
+	return {
+		inspectorScroll: 0,
+		pane: "inspector",
+		tab: "agents",
+		scope: "both",
+		search: "",
+		selected: 0,
+		scroll: 0,
+		agentSubtab: 0,
+		activeSelected: 0,
+		activeScroll: 0,
+		historySelected: 0,
+		historyScroll: 0,
+		historySubtab: 0,
+		...patch,
+	};
+}
+
+function livePaneStatus(agentName: string, patch: Partial<NonNullable<AgentPaneStatus["entry"]>> = {}): AgentPaneStatus {
+	return {
+		live: true,
+		entry: {
+			agent: agentName,
+			paneId: "%1",
+			windowName: `agent-${agentName}`,
+			cwd: process.cwd(),
+			sessionFile: "/tmp/transcript.jsonl",
+			promptFile: "/tmp/prompt.md",
+			launcherFile: "/tmp/launcher.sh",
+			startedAt: "2026-05-14T05:00:00.000Z",
+			...patch,
+		},
+	};
 }
 
 function singleResult(patch: Partial<SingleResult> = {}): SingleResult {
@@ -307,18 +344,74 @@ test("history labels number repeated same-agent tasks latest-first friendly", ()
 	assert.match(historyRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
 });
 
-test("agent rows include pane task children sharing one transcript", () => {
+test("Agents tab rows are flat even when pane tasks share one transcript", () => {
 	const sessionFile = join(tempRuntime(), "sessions", "planner.jsonl");
 	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", paneId: "%1", transcriptPath: sessionFile });
 	const second = record("planner", "planner-1700000120-bbbbbbbb", "2026-05-14T05:02:00.000Z", { kind: "pane", paneId: "%1", transcriptPath: sessionFile });
-	const rows = buildAgentRows([agent("planner", true)], "", new Map(), [], { [first.taskId]: first, [second.taskId]: second });
+	const active = dashboardItem({ agent: "planner", kind: "pane", status: "running", taskId: second.taskId, transcriptPath: sessionFile });
+	const rows = buildAgentRows([agent("planner", true)], "", new Map(), [active], { [first.taskId]: first, [second.taskId]: second });
 
-	assert.equal(rows[0]?.rowType, "agent");
-	const taskRows = rows.filter((row) => row.rowType === "task");
-	assert.equal(taskRows.length, 2);
-	assert.deepEqual(taskRows.map((row) => row.item?.transcriptPath), [sessionFile, sessionFile]);
-	assert.match(taskRows[0]!.label, /#2/);
-	assert.match(taskRows[1]!.label, /#1/);
+	assert.deepEqual(rows.map((row) => row.rowType), ["agent"]);
+	assert.deepEqual(rows.map((row) => row.label), ["planner"]);
+});
+
+test("Agents tab search ignores task ids and summaries", () => {
+	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { summary: "find this completion summary" });
+	const second = record("planner", "planner-1700000120-bbbbbbbb", "2026-05-14T05:02:00.000Z", { task: "find this task prompt" });
+	const registry = { [first.taskId]: first, [second.taskId]: second };
+
+	assert.equal(buildAgentRows([agent("planner", true)], "", new Map(), [], registry).length, 1);
+	assert.equal(buildAgentRows([agent("planner", true)], "bbbbbbbb", new Map(), [], registry).length, 0);
+	assert.equal(buildAgentRows([agent("planner", true)], "completion summary", new Map(), [], registry).length, 0);
+});
+
+test("Agents Inspector shows static config only for agent with active tasks", () => {
+	const taskId = "planner-1700000120-bbbbbbbb";
+	const config = agent("planner", true, {
+		color: "orange",
+		denyTools: ["subagent", "question"],
+		description: "Plans implementation work.",
+		effort: "xhigh",
+		filePath: ".pi/agents/planner.md",
+		model: "openai-codex/gpt-5.5",
+		systemPrompt: "Planner system prompt body.",
+	});
+	const statuses = new Map<string, AgentPaneStatus>([["planner", livePaneStatus("planner", {
+		lastTaskAt: "2026-05-14T05:02:00.000Z",
+		lastTaskId: taskId,
+		sessionFile: "/tmp/planner-transcript.jsonl",
+	})]]);
+
+	const rendered = renderAgentInspector(config, statuses, uiState(), 120, 40, theme as any).join("\n");
+
+	assert.match(rendered, /planner/);
+	assert.match(rendered, /Plans implementation work\./);
+	assert.match(rendered, /Model: openai-codex\/gpt-5\.5/);
+	assert.match(rendered, /Effort: xhigh/);
+	assert.match(rendered, /Kind: persistent pane/);
+	assert.match(rendered, /Deny tools: subagent, question/);
+	assert.match(rendered, /Color: orange/);
+	assert.match(rendered, /Source path: \.pi\/agents\/planner\.md/);
+	assert.match(rendered, /Pane: running \(started \d{2}:\d{2}\)/);
+	assert.match(rendered, /System Prompt/);
+	assert.match(rendered, /Planner system prompt body\./);
+	assert.doesNotMatch(rendered, new RegExp(taskId));
+	assert.doesNotMatch(rendered, /Task ID|Transcript|Latest Message|completion summary unavailable|Last task|Pane session/i);
+});
+
+test("History tab task rendering still exposes task trace metadata", async () => {
+	const taskId = "planner-1700000120-bbbbbbbb";
+	const taskRecord = record("planner", taskId, "2026-05-14T05:02:00.000Z", {
+		summary: "completed planner summary",
+		transcriptPath: "/tmp/planner-transcript.jsonl",
+	});
+	const numbers = taskNumberById([taskRecord]);
+	const items = await traceViewerItems(taskRecord, numbers.get(taskId), { agents: [agent("planner", true, { effort: "xhigh" })] });
+
+	assert.match(historyRecordLabel(taskRecord, numbers), /planner #1 · \d{2}:\d{2} · bbbbbbbb/);
+	assert.match(items[0]!.text, /Task ID  planner-1700000120-bbbbbbbb/);
+	assert.match(items[0]!.text, /Transcript  \/tmp\/planner-transcript\.jsonl/);
+	assert.match(items[0]!.text, /completed planner summary/);
 });
 
 test("transcript tail preserves multiline assistant text and tool JSON structure", () => {
