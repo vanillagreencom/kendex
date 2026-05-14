@@ -337,6 +337,19 @@ export function extractLastAssistantTextFromTranscriptContent(content: string): 
 	return finalText;
 }
 
+function assertTranscriptJsonlValid(content: string): void {
+	let lineNumber = 0;
+	for (const line of content.split(/\r?\n/)) {
+		lineNumber += 1;
+		if (!line.trim()) continue;
+		try {
+			JSON.parse(line);
+		} catch (error) {
+			throw new Error(`Invalid transcript JSONL at line ${lineNumber}: ${stringifyError(error)}`);
+		}
+	}
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeout = new Promise<never>((_resolve, reject) => {
@@ -376,6 +389,7 @@ export async function readLastAssistantTextFromTranscript(
 ): Promise<string | undefined> {
 	if (!transcriptPath) return undefined;
 	const content = await readFileTailBounded(transcriptPath, options.maxBytes ?? 2 * 1024 * 1024, options.timeoutMs ?? 5_000);
+	assertTranscriptJsonlValid(content);
 	return extractLastAssistantTextFromTranscriptContent(content);
 }
 

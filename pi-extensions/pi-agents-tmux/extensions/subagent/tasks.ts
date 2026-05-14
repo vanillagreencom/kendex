@@ -186,6 +186,17 @@ export function taskNeedsSummaryBackfill(record: PaneTaskRecord): boolean {
 	return isTerminalTaskStatus(record.status) && !record.summary?.trim() && Boolean(record.transcriptPath);
 }
 
+function hasBlankSummaryField(record: PaneTaskRecord): boolean {
+	if (!Object.prototype.hasOwnProperty.call(record, "summary")) return false;
+	const value = (record as { summary?: unknown }).summary;
+	return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+}
+
+function omitSummary(record: PaneTaskRecord): PaneTaskRecord {
+	const { summary: _summary, ...rest } = record;
+	return rest;
+}
+
 export async function backfillTaskSummaryFromTranscript(
 	runtimeRoot: string,
 	record: PaneTaskRecord,
@@ -195,21 +206,23 @@ export async function backfillTaskSummaryFromTranscript(
 	let summary: string | undefined;
 	try {
 		summary = await readLastAssistantTextFromTranscript(record.transcriptPath, { timeoutMs: options.timeoutMs ?? 5_000, maxBytes: options.maxBytes });
-	} catch (error) {
-		const diagnostic = `Summary backfill failed for ${record.taskId}: ${stringifyError(error)}`;
-		let updated = record;
+	} catch {
+		return { record, updated: false };
+	}
+	if (!summary) {
+		if (!hasBlankSummaryField(record)) return { record, updated: false };
+		let updated = omitSummary(record);
 		await updateTaskRegistry(runtimeRoot, (records) => {
 			const existing = records[record.taskId] ?? record;
-			updated = {
-				...existing,
-				diagnostics: appendUniqueDiagnostic(existing.diagnostics, diagnostic),
-				updatedAt: new Date().toISOString(),
-			};
+			if (!hasBlankSummaryField(existing)) {
+				updated = existing;
+				return;
+			}
+			updated = { ...omitSummary(existing), updatedAt: new Date().toISOString() };
 			records[record.taskId] = updated;
 		});
-		return { diagnostic, record: updated, updated: true };
+		return { record: updated, updated: updated.summary === undefined };
 	}
-	if (!summary) return { record, updated: false };
 	let updated = record;
 	await updateTaskRegistry(runtimeRoot, (records) => {
 		const existing = records[record.taskId] ?? record;

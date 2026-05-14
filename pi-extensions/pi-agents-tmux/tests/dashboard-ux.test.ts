@@ -62,6 +62,60 @@ test("completed one-shot record backfills summary from transcript final assistan
 	assert.equal((await readTaskRegistry(runtimeRoot))[taskId]?.summary, "Final summary\nwith details");
 });
 
+test("summary backfill skips corrupt transcript without changing record", async () => {
+	const runtimeRoot = tempRuntime();
+	const taskId = "reviewer-arch-corrupt";
+	const transcriptPath = join(runtimeRoot, "corrupt.jsonl");
+	writeFileSync(transcriptPath, "{not json\n");
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { transcriptPath });
+	await updateTaskRegistry(runtimeRoot, (records) => { records[taskId] = taskRecord; });
+
+	const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
+	assert.equal(result.updated, false);
+	assert.deepEqual(result.record, taskRecord);
+	assert.deepEqual((await readTaskRegistry(runtimeRoot))[taskId], taskRecord);
+});
+
+test("summary backfill skips missing transcript without changing record", async () => {
+	const runtimeRoot = tempRuntime();
+	const taskId = "reviewer-arch-missing";
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { transcriptPath: join(runtimeRoot, "missing.jsonl") });
+	await updateTaskRegistry(runtimeRoot, (records) => { records[taskId] = taskRecord; });
+
+	const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
+	assert.equal(result.updated, false);
+	assert.deepEqual(result.record, taskRecord);
+	assert.deepEqual((await readTaskRegistry(runtimeRoot))[taskId], taskRecord);
+});
+
+test("blank summary with valid transcript but no assistant text is removed", async () => {
+	const runtimeRoot = tempRuntime();
+	const taskId = "reviewer-arch-blank";
+	const transcriptPath = join(runtimeRoot, "no-assistant.jsonl");
+	writeFileSync(transcriptPath, JSON.stringify({ type: "message", message: { role: "user", content: "hello" } }));
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { summary: "   ", transcriptPath });
+	await updateTaskRegistry(runtimeRoot, (records) => { records[taskId] = taskRecord; });
+
+	const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
+	assert.equal(result.updated, true);
+	assert.equal(Object.prototype.hasOwnProperty.call(result.record, "summary"), false);
+	assert.equal(Object.prototype.hasOwnProperty.call((await readTaskRegistry(runtimeRoot))[taskId]!, "summary"), false);
+});
+
+test("existing nonblank summary is not overwritten by transcript backfill", async () => {
+	const runtimeRoot = tempRuntime();
+	const taskId = "reviewer-arch-existing";
+	const transcriptPath = join(runtimeRoot, "assistant.jsonl");
+	writeFileSync(transcriptPath, JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "transcript text" }] } }));
+	const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { summary: "some text", transcriptPath });
+	await updateTaskRegistry(runtimeRoot, (records) => { records[taskId] = taskRecord; });
+
+	const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
+	assert.equal(result.updated, false);
+	assert.equal(result.record.summary, "some text");
+	assert.equal((await readTaskRegistry(runtimeRoot))[taskId]?.summary, "some text");
+});
+
 test("chat completion synthesis never echoes delegation prompt and annotates task id data", () => {
 	const taskId = "reviewer-test-1700000000-77abfc41";
 	const item: SubagentDashboardItem = {
