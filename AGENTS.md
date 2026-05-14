@@ -79,7 +79,7 @@ skill-templates/         Templates for new skills
 - **Pi extensions are npm-shaped.** vstack copies them to `<scope>/packages/<name>` and registers the path in Pi's `settings.json` `packages` array.
 - **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install; users add/remove and refresh. Agents get `skills:` frontmatter and a "Required Skills" body section.
 - **Reconciliation is automatic.** After every `vstack add`, all installed agents are regenerated with the current full set of installed skills and hooks.
-- **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parents. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state.
+- **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parents. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state.
 
 ## Formats
 
@@ -106,7 +106,7 @@ dependencies:
 ```bash
 # ---
 # name: block-bare-cd
-# event: PreToolUse       # PreToolUse | PostToolUse | PostCompact | TaskCompleted | Stop | SessionStart | UserPromptSubmit | PermissionRequest
+# event: PreToolUse       # PreToolUse | PostToolUse | PreCompact | PostCompact | PermissionRequest | SessionStart | UserPromptSubmit | Stop | TaskCompleted
 # matcher: Bash           # Bash | Edit|Write | (empty for all)
 # description: ...
 # safety: ...
