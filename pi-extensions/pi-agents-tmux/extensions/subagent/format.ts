@@ -19,6 +19,10 @@ import {
 
 export const SESSION_KEY_CHIP_MAX_CHARS = 14;
 
+function normalizeSessionMode(value: unknown): SessionMode | undefined {
+	return value === "fresh" || value === "resumed" || value === "new" ? value : undefined;
+}
+
 export function paneSessionModeToRecordMode(mode: "live" | "resumed" | "new" | undefined): SessionMode | undefined {
 	if (!mode) return undefined;
 	return mode === "new" ? "new" : "resumed";
@@ -27,27 +31,30 @@ export function paneSessionModeToRecordMode(mode: "live" | "resumed" | "new" | u
 export function truncateSessionKeyForChip(sessionKey: string | undefined, maxChars = SESSION_KEY_CHIP_MAX_CHARS): string | undefined {
 	const trimmed = sessionKey?.trim();
 	if (!trimmed) return undefined;
+	if (trimmed.length > maxChars) return `${trimmed.slice(0, 6)}…${trimmed.slice(-4)}`;
 	return oneLinePreview(trimmed, maxChars);
 }
 
-export function sessionModeChipLabel(value: { kind?: string; sessionKey?: string; sessionMode?: SessionMode } | undefined): string | undefined {
-	if (!value?.sessionMode) return undefined;
+export function sessionModeChipLabel(value: { kind?: string; sessionKey?: string; sessionMode?: unknown } | undefined): string | undefined {
+	const sessionMode = normalizeSessionMode(value?.sessionMode);
+	if (!value || !sessionMode) return undefined;
 	const kindLabel = value.kind === "oneshot" ? "bg" : value.kind === "pane" ? "pane" : undefined;
-	if (value.kind === "oneshot" && value.sessionMode === "resumed" && value.sessionKey?.trim()) return `lane:${truncateSessionKeyForChip(value.sessionKey)}`;
-	if (value.kind === "oneshot" && value.sessionMode === "fresh") return "fresh";
-	if (value.kind === "pane" && (value.sessionMode === "new" || value.sessionMode === "resumed")) return value.sessionMode;
-	return kindLabel ? value.sessionMode : undefined;
+	if (value.kind === "oneshot" && sessionMode === "resumed" && value.sessionKey?.trim()) return `lane:${truncateSessionKeyForChip(value.sessionKey)}`;
+	if (value.kind === "oneshot" && sessionMode === "fresh") return "fresh";
+	if (value.kind === "pane" && (sessionMode === "new" || sessionMode === "resumed")) return sessionMode;
+	return kindLabel ? sessionMode : undefined;
 }
 
-export function sessionModeChipSuffix(theme: Theme, value: { kind?: string; sessionKey?: string; sessionMode?: SessionMode } | undefined): string {
+export function sessionModeChipSuffix(theme: Theme, value: { kind?: string; sessionKey?: string; sessionMode?: unknown } | undefined): string {
 	const label = sessionModeChipLabel(value);
 	return label ? theme.fg("dim", ` · ${label}`) : "";
 }
 
-export function sessionModeDetailLabel(value: { sessionKey?: string; sessionMode?: SessionMode } | undefined): string | undefined {
-	if (!value?.sessionMode) return undefined;
+export function sessionModeDetailLabel(value: { sessionKey?: string; sessionMode?: unknown } | undefined): string | undefined {
+	const sessionMode = normalizeSessionMode(value?.sessionMode);
+	if (!value || !sessionMode) return undefined;
 	const key = value.sessionKey?.trim();
-	return key ? `${value.sessionMode} · lane: ${key}` : value.sessionMode;
+	return key ? `${sessionMode} · lane: ${key}` : sessionMode;
 }
 
 export function normalizeAgentAsciiColor(value: string | undefined): AgentAsciiColor | undefined {

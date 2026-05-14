@@ -84,9 +84,29 @@ function dashboardItem(patch: Partial<SubagentDashboardItem> = {}): SubagentDash
 
 test("subagent renderer shows session-mode chips", () => {
 	assert.match(renderSubagentSingle(singleResult({ sessionMode: "fresh" })), /completed · bg · fresh/);
-	assert.match(renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "very-long-session-key", sessionKeyExplicit: true })), /completed · bg · lane:very-long-ses…/);
+	assert.match(renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "very-long-session-key", sessionKeyExplicit: true })), /completed · bg · lane:very-l…-key/);
 	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "new", sessionMode: "new" })), /Queued task · pane · new/);
 	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "live", sessionMode: "resumed" })), /Queued task · pane · resumed/);
+});
+
+test("session-mode rendering ignores corrupt mode values", async () => {
+	assert.match(renderSubagentSingle(singleResult({ sessionMode: "foo" as any })), /completed · bg · ctrl\+o expand/);
+	assert.doesNotMatch(renderSubagentSingle(singleResult({ sessionMode: "foo" as any })), / · foo/);
+
+	const dashboard = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ sessionMode: "foo" as any }) } }, theme as any, process.cwd(), 220).join("\n");
+	assert.match(dashboard, /completed · bg/);
+	assert.doesNotMatch(dashboard, / · foo/);
+
+	const trace = await traceViewerItems(record("reviewer-arch", "reviewer-arch-corrupt-session", "2026-05-14T05:00:00.000Z", { sessionMode: "foo" as any, sessionKey: "feature-x" }));
+	assert.doesNotMatch(trace[0]!.text, /^Session\s+/m);
+});
+
+test("long sessionKey chip keeps suffix to avoid collisions", () => {
+	const first = renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "feature-x-iss-12345", sessionKeyExplicit: true }));
+	const second = renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "feature-x-iss-12399", sessionKeyExplicit: true }));
+	assert.match(first, /lane:featur…2345/);
+	assert.match(second, /lane:featur…2399/);
+	assert.notEqual(first.match(/lane:[^ ·\n]+/)?.[0], second.match(/lane:[^ ·\n]+/)?.[0]);
 });
 
 test("dashboard mini widget shows session-mode chips", () => {
@@ -94,7 +114,7 @@ test("dashboard mini widget shows session-mode chips", () => {
 	assert.match(fresh, /completed · bg · fresh/);
 
 	const lane = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ sessionMode: "resumed", sessionKey: "very-long-session-key" }) } }, theme as any, process.cwd(), 220).join("\n");
-	assert.match(lane, /completed · bg · lane:very-long-ses…/);
+	assert.match(lane, /completed · bg · lane:very-l…-key/);
 
 	const paneNew = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ kind: "pane", sessionMode: "new" }) } }, theme as any, process.cwd(), 220).join("\n");
 	assert.match(paneNew, /completed · pane · new/);

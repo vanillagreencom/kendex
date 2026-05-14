@@ -418,6 +418,7 @@ export async function runSingleAgent(
 			stderr: errorMessage,
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: budgetGuard.estimate.tokens, turns: 0 },
 			model: selectedModel,
+			sessionMode: "resumed",
 			sessionKey: firstSession.key,
 			sessionKeyExplicit: true,
 			sessionPath: firstSession.path,

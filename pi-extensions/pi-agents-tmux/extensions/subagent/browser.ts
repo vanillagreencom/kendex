@@ -2247,7 +2247,8 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 	const modelLine = record.model
 		? `Model    ${record.model}${effort ? ` ${effort}` : ""}`
 		: "";
-	const sessionLine = record.sessionMode ? `Session  ${sessionModeDetailLabel(record)}` : "";
+	const sessionDetail = sessionModeDetailLabel(record);
+	const sessionLine = sessionDetail ? `Session  ${sessionDetail}` : "";
 	// `" "` (single space) is a sentinel for an intentional blank line; it
 	// survives the `.filter(Boolean)` pass below that drops conditionally
 	// empty entries (e.g. record.completedAt missing -> no `Done` line).

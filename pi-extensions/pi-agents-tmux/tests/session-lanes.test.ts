@@ -615,6 +615,8 @@ test("reused session budget guard refuses over-threshold explicit session by def
 		assert.equal(calls.length, 0);
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.stopReason, "session_budget_exceeded");
+		assert.equal(result.sessionMode, "resumed");
+		assert.equal(result.sessionKey, "reuse");
 		assert.match(result.errorMessage ?? "", /Refusing reused session/);
 		assert.match(result.errorMessage ?? "", /exceeds 80% guard threshold/);
 	} finally {
