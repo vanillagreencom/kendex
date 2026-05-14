@@ -42,6 +42,9 @@ import {
 	formatUsageStatsForDashboard,
 	inactivePill,
 	oneLinePreview,
+	sessionModeChipLabel,
+	sessionModeChipSuffix,
+	sessionModeDetailLabel,
 	shortTaskSuffix,
 	simpleFrame,
 	textFromMessageContent,
@@ -592,6 +595,8 @@ function dashboardItemSearchText(item: SubagentDashboardItem, label: string): st
 		item.taskId,
 		item.task ?? "",
 		item.message ?? "",
+		item.sessionMode ?? "",
+		item.sessionKey ?? "",
 		item.transcriptPath ?? "",
 	].join(" ").toLowerCase();
 }
@@ -614,6 +619,8 @@ function dashboardItemFromTaskRecord(record: PaneTaskRecord): SubagentDashboardI
 		messageProvenance,
 		model: record.model,
 		paneId: record.paneId,
+		sessionMode: record.sessionMode,
+		sessionKey: record.sessionKey,
 		startedAt: record.createdAt,
 		status: record.status,
 		task: record.task,
@@ -718,7 +725,7 @@ function renderAgentList(rows: AgentBrowserRow[], statuses: Map<string, AgentPan
 			: ansiMagenta(selected ? theme.bold(rowInfo.label) : rowInfo.label);
 		const icon = rowInfo.item ? dashboardStatusIcon(rowInfo.item.status, theme) : agentStatusIcon(status, theme);
 		const meta = rowInfo.rowType === "task"
-			? rowInfo.item?.kind === "pane" && rowInfo.item.transcriptPath ? theme.fg("dim", " · shared transcript") : ""
+			? rowInfo.item ? `${theme.fg("dim", ` · ${dashboardKindLabel(rowInfo.item.kind)}`)}${sessionModeChipSuffix(theme, rowInfo.item)}${rowInfo.item.kind === "pane" && rowInfo.item.transcriptPath ? theme.fg("dim", " · shared transcript") : ""}` : ""
 			: rowInfo.item ? `${theme.fg("dim", " · ")}${dashboardStatusText(rowInfo.item, theme)}` : "";
 		const row = truncateToWidth(`${marker}${icon} ${name}${meta}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
@@ -934,7 +941,9 @@ function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserU
 		const icon = dashboardStatusIcon(item.status, theme);
 		const displayName = labels.get(item.taskId) ?? item.agent;
 		const name = selected ? ansiMagenta(theme.bold(displayName)) : ansiMagenta(displayName);
-		const row = `${icon} ${name}`;
+		const sessionChip = sessionModeChipLabel(item);
+		const meta = `${theme.fg("dim", ` · ${dashboardKindLabel(item.kind)}`)}${sessionChip ? theme.fg("dim", ` · ${sessionChip}`) : ""}`;
+		const row = `${icon} ${name}${meta}`;
 		const prefix = selected ? theme.fg("accent", "> ") : "  ";
 		lines.push(truncateToWidth(`${prefix}${row}`, width, ""));
 	}
@@ -951,7 +960,7 @@ function renderActiveAgentDetail(item: SubagentDashboardItem | undefined, displa
 		return wrapped.length > 0 ? wrapped : [""];
 	};
 	const nameForTitle = displayLabel ?? item.agent;
-	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(nameForTitle))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", dashboardKindLabel(item.kind))}`;
+	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(nameForTitle))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", `· ${dashboardKindLabel(item.kind)}`)}${sessionModeChipSuffix(theme, item)}`;
 	const body: string[] = [];
 	body.push(...wrap(`${theme.fg("muted", "Task ID")}: ${theme.fg("dim", item.taskId)}`));
 	// Show the full transcript file path at the top so users always have
@@ -1137,7 +1146,7 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	if (/^(Overview|Metadata|Summary|Files changed|Validation|Notes|Task|Artifacts)$/i.test(trimmed)) {
 		return wrapTextWithAnsi(theme.fg("accent", theme.bold(trimmed)), width);
 	}
-	const labelMatch = line.match(/^(Ref|Agent|Task #|Status|Task ID|Created|Done|Model|Usage|Transcript|Completion|Archive|Source)\s{2,}(.+)$/);
+	const labelMatch = line.match(/^(Ref|Agent|Task #|Status|Task ID|Created|Done|Model|Session|Usage|Transcript|Completion|Archive|Source)\s{2,}(.+)$/);
 	if (labelMatch) return wrapTextWithAnsi(colorTraceValue(labelMatch[1], labelMatch[2], theme), width);
 	if (type === "completion" || type === "transcript") {
 		const jsonKey = line.match(/^(\s*)"([^"]+)"(\s*:\s*)(.*)$/);
@@ -2238,6 +2247,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 	const modelLine = record.model
 		? `Model    ${record.model}${effort ? ` ${effort}` : ""}`
 		: "";
+	const sessionLine = record.sessionMode ? `Session  ${sessionModeDetailLabel(record)}` : "";
 	// `" "` (single space) is a sentinel for an intentional blank line; it
 	// survives the `.filter(Boolean)` pass below that drops conditionally
 	// empty entries (e.g. record.completedAt missing -> no `Done` line).
@@ -2251,6 +2261,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		`Status   ${record.status}`,
 		`Task ID  ${record.taskId}`,
 		modelLine,
+		sessionLine,
 		usage ? `Usage    ${usage}` : "",
 		record.transcriptPath ? `Transcript  ${record.transcriptPath}` : "",
 		completionPath ? `Completion  ${completionPath}` : "",

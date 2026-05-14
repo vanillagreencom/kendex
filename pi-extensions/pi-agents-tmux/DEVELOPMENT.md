@@ -16,6 +16,15 @@ Relationships:
 - A **prompt** is the input text of a task. A task is not just a prompt — it's the whole invocation record including lifecycle and result. The History tab's `Task` subtab specifically shows the input prompt of a completed task.
 - `taskId` is globally unique. `sessionId` is per-runtime. `agent.name` is the static identifier.
 
+Session-mode fields on task records use normalized user-facing values:
+
+- `sessionMode: "new"` — pane task that launched the first task on a fresh pane session.
+- `sessionMode: "resumed"` — task continuing prior context: live/reopened pane, restored archived pane, or explicit bg `sessionKey` lane.
+- `sessionMode: "fresh"` — independent bg one-shot with no user-supplied `sessionKey`.
+- `sessionKey` is stored only for explicit bg memory lanes. Row chips render `lane:<key>` truncated to about 14 characters; Inspector Summary renders the full key.
+
+Do not confuse normalized record `sessionMode` (`fresh|resumed|new`) with runtime-only pane `paneSessionMode` (`live|resumed|new`); `live` and `resumed` both normalize to `resumed`.
+
 Where the UI surfaces each layer:
 
 - **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task children expose individual `taskId`s.

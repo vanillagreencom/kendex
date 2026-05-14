@@ -12,15 +12,24 @@ import {
 	taskNumberById,
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
+import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
 import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, oneLinePreview } from "../extensions/subagent/format.js";
 import { oneShotTranscriptPath } from "../extensions/subagent/paths.js";
 import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
+import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
 import {
 	backfillTaskSummaryFromTranscript,
 	readTaskRegistry,
 	updateTaskRegistry,
 } from "../extensions/subagent/tasks.js";
-import type { ChatMessage, PaneTaskRecord, SubagentDashboardItem } from "../extensions/subagent/types.js";
+import type { ChatMessage, PaneTaskRecord, SingleResult, SubagentDashboardItem, SubagentDetails } from "../extensions/subagent/types.js";
+
+const theme = {
+	bg: (_tone: string, text: string) => text,
+	bold: (text: string) => text,
+	fg: (_tone: string, text: string) => text,
+	inverse: (text: string) => text,
+};
 
 function tempRuntime(): string {
 	return mkdtempSync(join(tmpdir(), "pi-agents-dashboard-ux-"));
@@ -42,6 +51,65 @@ function record(agent: string, taskId: string, createdAt: string, patch: Partial
 function agent(name: string, pane = false): AgentConfig {
 	return { name, pane, description: `${name} agent`, systemPrompt: "", source: "project", filePath: `${name}.md` };
 }
+
+function singleResult(patch: Partial<SingleResult> = {}): SingleResult {
+	return {
+		agent: "reviewer-arch",
+		agentSource: "project",
+		exitCode: 0,
+		messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: Date.now() } as any],
+		stderr: "",
+		task: "Review architecture.",
+		taskId: "reviewer-arch-1700000000-aaaaaaaa",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		...patch,
+	};
+}
+
+function renderSubagentSingle(result: SingleResult): string {
+	const details: SubagentDetails = { mode: "single", agentScope: "project", projectAgentsDir: null, results: [result] };
+	return subagentToolRenderers.renderResult({ content: [{ type: "text", text: "done" }], details }, {}, theme, { cwd: process.cwd() }).render(220).join("\n");
+}
+
+function dashboardItem(patch: Partial<SubagentDashboardItem> = {}): SubagentDashboardItem {
+	return {
+		agent: "reviewer-arch",
+		kind: "oneshot",
+		status: "completed",
+		taskId: "reviewer-arch-1700000000-aaaaaaaa",
+		updatedAt: "2026-05-14T05:02:00.000Z",
+		...patch,
+	};
+}
+
+test("subagent renderer shows session-mode chips", () => {
+	assert.match(renderSubagentSingle(singleResult({ sessionMode: "fresh" })), /completed · bg · fresh/);
+	assert.match(renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "very-long-session-key", sessionKeyExplicit: true })), /completed · bg · lane:very-long-ses…/);
+	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "new", sessionMode: "new" })), /Queued task · pane · new/);
+	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "live", sessionMode: "resumed" })), /Queued task · pane · resumed/);
+});
+
+test("dashboard mini widget shows session-mode chips", () => {
+	const fresh = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ sessionMode: "fresh" }) } }, theme as any, process.cwd(), 220).join("\n");
+	assert.match(fresh, /completed · bg · fresh/);
+
+	const lane = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ sessionMode: "resumed", sessionKey: "very-long-session-key" }) } }, theme as any, process.cwd(), 220).join("\n");
+	assert.match(lane, /completed · bg · lane:very-long-ses…/);
+
+	const paneNew = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ kind: "pane", sessionMode: "new" }) } }, theme as any, process.cwd(), 220).join("\n");
+	assert.match(paneNew, /completed · pane · new/);
+
+	const paneResumed = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ kind: "pane", sessionMode: "resumed" }) } }, theme as any, process.cwd(), 220).join("\n");
+	assert.match(paneResumed, /completed · pane · resumed/);
+});
+
+test("trace summary includes session line only when sessionMode is persisted", async () => {
+	const withSession = await traceViewerItems(record("reviewer-arch", "reviewer-arch-session", "2026-05-14T05:00:00.000Z", { sessionMode: "resumed", sessionKey: "feature-x" }));
+	assert.match(withSession[0]!.text, /^Session\s+resumed · lane: feature-x$/m);
+
+	const withoutSession = await traceViewerItems(record("reviewer-arch", "reviewer-arch-no-session", "2026-05-14T05:00:00.000Z"));
+	assert.doesNotMatch(withoutSession[0]!.text, /^Session\s+/m);
+});
 
 test("completed one-shot record backfills summary from transcript final assistant text", async () => {
 	const runtimeRoot = tempRuntime();

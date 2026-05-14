@@ -191,6 +191,7 @@ export interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
 	task: string;
+	sessionMode?: SessionMode;
 	status?: PaneTaskStatus;
 	needsCompletionReason?: string;
 	cwdSnapshot?: CwdSnapshot;
@@ -264,6 +265,7 @@ export interface PaneRegistryEntry {
 }
 
 export type PaneTaskStatus = "queued" | "running" | "completed" | "blocked" | "failed" | "needs_completion" | "unknown";
+export type SessionMode = "fresh" | "resumed" | "new";
 
 export interface PaneCompletion {
 	agent?: string;
@@ -314,6 +316,8 @@ export interface PaneTaskRecord {
 	agent: string;
 	task: string;
 	status: PaneTaskStatus;
+	sessionMode?: SessionMode;
+	sessionKey?: string;
 	kind?: DashboardKind;
 	paneId?: string;
 	inboxFile?: string;
@@ -353,6 +357,8 @@ export interface SubagentDashboardItem {
 	message?: string;
 	messageProvenance?: CompletionMessageProvenance;
 	paneId?: string;
+	sessionMode?: SessionMode;
+	sessionKey?: string;
 	startedAt?: string;
 	status: SubagentDashboardStatus;
 	task?: string;

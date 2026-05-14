@@ -6,7 +6,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { atomicWriteFile } from "./file-lock.js";
 import type { AgentConfig } from "./agents.js";
-import { delay } from "./format.js";
+import { delay, paneSessionModeToRecordMode } from "./format.js";
 import { safeFileName, shellQuote } from "./names.js";
 import {
 	archivedPaneSessionDir,
@@ -583,6 +583,7 @@ export async function queuePersistentPaneTask(
 		agent: agent.name,
 		task,
 		status: "queued",
+		sessionMode: paneSessionModeToRecordMode(sessionMode),
 		kind: "pane",
 		paneId: pane.paneId,
 		inboxFile: taskFile,
@@ -601,6 +602,7 @@ export async function queuePersistentPaneTask(
 		runtimeRoot,
 		transcriptPath: pane.sessionFile,
 		completionPath: outboxFile,
+		sessionMode: paneSessionModeToRecordMode(sessionMode),
 	});
 	return { pane, taskId, outboxFile, taskFile, sessionMode };
 }
@@ -804,6 +806,7 @@ export async function runPersistentPaneAgent(
 		agent: agent.name,
 		agentSource: agent.source,
 		task,
+		sessionMode: paneSessionModeToRecordMode(queued.sessionMode),
 		exitCode: 0,
 		messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: Date.now() } as Message],
 		stderr: "",

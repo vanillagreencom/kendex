@@ -227,6 +227,15 @@ function timestampMs(value: string | undefined): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeEventSessionMode(value: unknown): "fresh" | "resumed" | "new" | undefined {
+	return value === "fresh" || value === "resumed" || value === "new" ? value : undefined;
+}
+
+function normalizeEventSessionKey(value: unknown): string | undefined {
+	const trimmed = typeof value === "string" ? value.trim() : "";
+	return trimmed || undefined;
+}
+
 function isPersistedSubagentRuntimeState(value: unknown): value is PersistedSubagentRuntimeState {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const candidate = value as Partial<PersistedSubagentRuntimeState>;
@@ -262,6 +271,7 @@ async function createFollowUpTask(runtimeRoot: string, agentName: string, entry:
 		agent: agentName,
 		task: message,
 		status: "running",
+		sessionMode: "resumed",
 		kind: "pane",
 		paneId: entry.paneId,
 		outboxFile,
@@ -411,12 +421,16 @@ export default function (pi: ExtensionAPI) {
 			const usage = normalizeUsageStats(event.usage) ?? existing?.usage;
 			const model = typeof event.model === "string" ? event.model : existing?.model;
 			const summary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined) ?? existing?.summary;
+			const sessionMode = normalizeEventSessionMode(event.sessionMode) ?? existing?.sessionMode;
+			const sessionKey = normalizeEventSessionKey(event.sessionKey) ?? existing?.sessionKey;
 			records[taskId] = {
 				...existing,
 				taskId,
 				agent,
 				task: typeof event.task === "string" ? event.task : existing?.task ?? "",
 				status,
+				sessionMode,
+				sessionKey,
 				kind,
 				paneId: kind === "pane" ? (typeof event.paneId === "string" ? event.paneId : existing?.paneId) : undefined,
 				inboxFile: kind === "pane" ? existing?.inboxFile : undefined,
@@ -450,6 +464,7 @@ export default function (pi: ExtensionAPI) {
 			setMiniDashboardWidget(ctx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, undefined);
 			return;
 		}
+		const widgetRuntimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
 		setMiniDashboardWidget(ctx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, (tui, theme) => {
 			const animationTimer = (() => {
 				if (!Object.values(dashboardState.items).some((item) => isDashboardWorkingStatus(item.status))) return undefined;
@@ -463,7 +478,7 @@ export default function (pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					return clampAboveEditorWidget(renderDashboardWidgetLines(dashboardState, theme, ctx.cwd, width, runtimeRoot), tui.terminal.rows, theme);
+					return clampAboveEditorWidget(renderDashboardWidgetLines(dashboardState, theme, ctx.cwd, width, widgetRuntimeRoot), tui.terminal.rows, theme);
 				},
 			};
 		}, { placement: "aboveEditor" });
@@ -519,6 +534,8 @@ export default function (pi: ExtensionAPI) {
 			...item,
 			startedAt: item.startedAt ?? existing?.startedAt,
 			completedAt: item.completedAt ?? existing?.completedAt,
+			sessionMode: item.sessionMode ?? existing?.sessionMode,
+			sessionKey: item.sessionKey ?? existing?.sessionKey,
 			usage: item.usage ?? existing?.usage,
 			model: item.model ?? existing?.model,
 		};
@@ -601,6 +618,8 @@ export default function (pi: ExtensionAPI) {
 			messageProvenance: taskRecordDashboardMessageProvenance(record),
 			model: record.model ?? existing?.model,
 			paneId: record.paneId,
+			sessionMode: record.sessionMode ?? existing?.sessionMode,
+			sessionKey: record.sessionKey ?? existing?.sessionKey,
 			startedAt: record.createdAt,
 			status: dashboardStatusFor(record.status, kind),
 			task: record.task,
@@ -723,6 +742,8 @@ export default function (pi: ExtensionAPI) {
 		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
 		if (!taskId || !agent) return;
+		const sessionMode = normalizeEventSessionMode(event.sessionMode);
+		const sessionKey = normalizeEventSessionKey(event.sessionKey);
 		persistTaskEvent(event, "queued");
 		dashboardState.visible = true;
 		updateDashboard({
@@ -731,6 +752,8 @@ export default function (pi: ExtensionAPI) {
 			kind: event.mode === "oneshot" ? "oneshot" : "pane",
 			message: typeof event.task === "string" ? event.task : undefined,
 			paneId: typeof event.paneId === "string" ? event.paneId : undefined,
+			sessionMode,
+			sessionKey,
 			status: "queued",
 			startedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
 			task: typeof event.task === "string" ? event.task : undefined,
@@ -746,6 +769,8 @@ export default function (pi: ExtensionAPI) {
 		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
 		if (!taskId || !agent) return;
+		const sessionMode = normalizeEventSessionMode(event.sessionMode);
+		const sessionKey = normalizeEventSessionKey(event.sessionKey);
 		persistTaskEvent(event, "running");
 		dashboardState.visible = true;
 		updateDashboard({
@@ -753,6 +778,8 @@ export default function (pi: ExtensionAPI) {
 			kind: event.mode === "pane" ? "pane" : "oneshot",
 			message: typeof event.task === "string" ? event.task : undefined,
 			paneId: typeof event.paneId === "string" ? event.paneId : undefined,
+			sessionMode,
+			sessionKey,
 			status: "running",
 			startedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
 			task: typeof event.task === "string" ? event.task : undefined,
@@ -778,6 +805,8 @@ export default function (pi: ExtensionAPI) {
 		const transcriptPath = typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath;
 		const eventUsage = normalizeUsageStats(event.usage);
 		const eventModel = typeof event.model === "string" ? event.model : undefined;
+		const sessionMode = normalizeEventSessionMode(event.sessionMode) ?? existing?.sessionMode;
+		const sessionKey = normalizeEventSessionKey(event.sessionKey) ?? existing?.sessionKey;
 		const eventSummary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined);
 		const kind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? "pane";
 		const payloadStatus = ((): PaneTaskStatus => {
@@ -795,6 +824,8 @@ export default function (pi: ExtensionAPI) {
 			kind,
 			message: eventSummary ?? (isTerminalTaskStatus(eventStatus) || eventStatus === "needs_completion" ? completionBodyWithoutPromptEcho(existing?.message, existing?.task) : existing?.message),
 			paneId: kind === "pane" ? existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined) : undefined,
+			sessionMode,
+			sessionKey,
 			startedAt: existing?.startedAt,
 			status: effectiveStatus,
 			task: existing?.task ?? (typeof event.task === "string" ? event.task : undefined),
