@@ -368,6 +368,15 @@ test("monitor labels number repeated same-agent tasks latest-first friendly", ()
 	assert.match(monitorRecordLabel(second, numbers), /reviewer-arch #2 · \d{2}:\d{2} · 77abfc41/);
 });
 
+test("task numbers stay stable when older same-agent task completes later", () => {
+	const first = record("reviewer-arch", "reviewer-arch-1700000000-11111111", "2026-05-14T05:00:00.000Z", { completedAt: "2026-05-14T05:10:00.000Z" });
+	const second = record("reviewer-arch", "reviewer-arch-1700000120-77abfc41", "2026-05-14T05:02:00.000Z", { completedAt: "2026-05-14T05:03:00.000Z" });
+	const numbers = taskNumberById([second, first]);
+
+	assert.equal(numbers.get(first.taskId), 1);
+	assert.equal(numbers.get(second.taskId), 2);
+});
+
 test("Monitor tab line replaces History", () => {
 	const line = renderAgentBrowserTabs("monitor", false, 120, theme as any);
 

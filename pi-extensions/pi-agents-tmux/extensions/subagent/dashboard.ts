@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { loadTaskRegistrySync, taskNumberById } from "./browser.js";
+import { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
 import {
 	ansiMagenta,
 	formatUsageStatsForDashboard,
@@ -228,12 +228,12 @@ export function dashboardTranscriptLabel(items: SubagentDashboardItem[], cwd: st
 // Disambiguate repeat bg launches: the 2nd "reviewer-arch" of the session
 // renders as "reviewer-arch 2" so two rows with the same agent name aren't
 // indistinguishable. Uses taskId for identity and start-time for occurrence
-// order; mirrors browser.ts dashboardDisplayLabels.
+// order; mirrors browser/dashboard-integration.ts dashboardDisplayLabels.
 function dashboardLabelsForItems(items: SubagentDashboardItem[], persistentTaskNumbers?: Map<string, number>): Map<string, string> {
-	// Mirror browser.ts dashboardDisplayLabels: when a persistent #N is
+	// Mirror dashboardDisplayLabels: when a persistent #N is
 	// available from the task registry, use it so the same task reads as
-	// the same `<agent> #N` in the mini widget, the /agents popup's
-	// active-list, its task-children rows, and the Inspector header.
+	// the same `<agent> #N` in the mini widget and the /agents popup's
+	// Monitor tree/detail surfaces.
 	// Fall back to in-memory occurrence count for items that haven't been
 	// persisted yet (rare; mid-dispatch).
 	const total = new Map<string, number>();

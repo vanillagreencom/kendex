@@ -102,6 +102,20 @@ Rows are bucketed for stability: queued/running/waiting agents stay above attent
 
 The popup has two top-level tabs: **Agents** (unified project/user agent profiles, static Inspector only) and **Monitor** (session-grouped execution tree). Monitor groups task records by pane session, explicit bg lane, or bg one-shot. Session rows show aggregate metadata; task rows keep Summary/Completion/Task detail, with Summary embedding Transcript rows. Agents rows are flat and do not expose task children, transcripts, or task-scoped summaries; they may show a live-pane dot only as a pointer that execution state exists on Monitor.
 
+Popup browser internals are split by concern:
+
+- `browser.ts` owns modal lifecycle, input dispatch, and top-level tab layout.
+- `browser/shared.ts` holds popup frame, key, modal-lock, and layout helpers.
+- `browser/agents-tab.ts` renders agent rows and the static Inspector.
+- `browser/monitor-tree.ts` builds Monitor session groups, filters, task numbering, and tree rows.
+- `browser/monitor-session-detail.ts` renders selected-session metadata, usage, and task lists.
+- `browser/monitor-task-detail.ts` renders task detail panes, trace content, and task trace items.
+- `browser/transcript.ts` parses JSONL transcripts into compact/expanded rows and compaction banners.
+- `browser/frontmatter-editor.ts` owns the agent metadata editor and confirmation popup.
+- `browser/dashboard-integration.ts` bridges task registry records into dashboard/chat labels.
+- `browser/trace-viewer.ts` owns the standalone trace popup opened from commands.
+- `task-records.ts` provides neutral task numbering shared by dashboard and popup, plus sync registry reads for dashboard labels.
+
 Monitor task Transcript defaults to compact: one row per prompt/assistant/tool/turn/exit/error message. When the task detail pane is focused, `x` toggles compact ↔ expanded for the selected task detail view; switching to a different task resets to compact so scans stay dense by default. Expanded Transcript keeps full multiline bodies, formats tool-call args/results as JSON when structured, and lets the detail renderer apply inline JSON highlighting.
 
 Compaction events render as structural Transcript rows, never as normal messages. Detection accepts the same `session_compact` bridge-stream shape used by the compact-then-empty detector (PR #46 / issue #38), plus compatibility variants like `{ event: "compact" }` and `message.customType: "session-compact"`. The visual treatment is a red full-width `⚠ COMPACTION — context window full, history compressed before continuation` banner; expanded mode adds a body note explaining that subsequent messages start from compacted state. The banner is derived from JSONL only and is not subject to transcript message filtering/deduplication, and it is pinned outside the detail-pane scroll window so it stays visible no matter how far the user scrolls inside the Transcript.
