@@ -228,11 +228,22 @@ warn_pi_discovery_error() {
 }
 
 build_pi_prompt_cmd() {
-  local prompt="$1" pi_bin ext_path bridge_args=()
+  local prompt="$1" session_id="${2:-session}" pi_bin ext_path bridge_args=()
   pi_bin=$(pi_resolve_pi_bin) || { echo "Error: pi binary not found" >&2; exit 2; }
   ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
   [[ -n "$ext_path" ]] && bridge_args=(-e "$ext_path")
-  shell_join "${FLIGHTDECK_CHILD_PANE_ENV[@]}" "$pi_bin" "${bridge_args[@]}" "$prompt"
+  local runtime_dir prompt_dir safe_session prompt_file inner_cmd prompt_arg body
+  runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
+  prompt_dir="$runtime_dir/flightdeck"
+  mkdir -p "$prompt_dir"
+  chmod 700 "$prompt_dir" 2>/dev/null || true
+  safe_session=$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '_')
+  prompt_file=$(mktemp "$prompt_dir/prompt-${safe_session}-XXXXXX.txt")
+  printf '%s' "$prompt" > "$prompt_file"
+  inner_cmd=$(shell_join "${FLIGHTDECK_CHILD_PANE_ENV[@]}" "$pi_bin" "${bridge_args[@]}")
+  prompt_arg=$(shell_join "$prompt_file")
+  body="${inner_cmd} \"\$(< ${prompt_arg})\"; rm -f ${prompt_arg}"
+  shell_join bash -c "$body"
 }
 
 register_entry() {
@@ -297,7 +308,7 @@ cmd_start() {
           fi
         fi
         pre_pids="$PI_SNAPSHOT_PIDS"
-        launch_cmd=$(build_pi_prompt_cmd "$prompt")
+        launch_cmd=$(build_pi_prompt_cmd "$prompt" "$session_id")
         ;;
       *) echo "Error: --prompt launch currently supports --harness pi; use --cmd for $harness" >&2; exit 2 ;;
     esac

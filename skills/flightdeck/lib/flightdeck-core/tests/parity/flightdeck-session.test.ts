@@ -152,6 +152,33 @@ esac
 	return bin;
 }
 
+function makePromptLaunchPiBridgeShim(repo: string): string {
+	const bin = join(repo, "pi-bridge-prompt-launch-shim");
+	const countFile = join(repo, "pi-bridge-prompt-launch.count");
+	writeFileSync(bin, `#!/usr/bin/env bash
+count_file=${JSON.stringify(countFile)}
+count=0
+[[ -f "$count_file" ]] && count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+case "$1" in
+  list)
+    if [[ "$count" == "1" ]]; then
+      echo '[]'
+    else
+      printf '[{"pid":6161,"socketPath":"/tmp/pi-prompt.sock","sessionId":"pi-prompt-session","cwd":%s}]\\n' ${JSON.stringify(JSON.stringify(repo))}
+    fi
+    ;;
+  state)
+    echo '{"data":{"protocol":"pi-session-bridge.v1","socketPath":"/tmp/pi-prompt.sock","sessionId":"pi-prompt-session"}}'
+    ;;
+  *) echo '{}' ;;
+esac
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makePiBinShim(repo: string): string {
 	const bin = join(repo, "pi-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -159,6 +186,13 @@ echo pi-shim "$@"
 `);
 	chmodSync(bin, 0o755);
 	return bin;
+}
+
+function extractPromptTempfile(launchLine: string): string {
+	const unescaped = launchLine.replace(/\\/g, "");
+	const match = unescaped.match(/\S*\/flightdeck\/prompt-[^\s;)]+\.txt/);
+	expect(match).not.toBeNull();
+	return match![0];
 }
 
 let repos: string[] = [];
@@ -194,6 +228,39 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 	});
 
 	for (const useTs of [false, true]) {
+		test(`start --prompt launches Pi through a tempfile without ANSI-C shell quoting (${useTs ? "ts registry" : "bash registry"})`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const prompt = "line1\nline2 don't stop";
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "fish-prompt",
+				"--title", "Fish prompt",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", prompt,
+			], useTs, { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makePromptLaunchPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeDir });
+			expect(r.status).toBe(0);
+			const shimState = readShimState(shim);
+			const launchLine = shimState.panes["%1"]!.sent_keys!.find((line) => line.includes("bash") && line.includes("pi-shim"))!;
+			expect(launchLine).toContain("bash");
+			expect(launchLine).not.toContain("$'");
+			expect(launchLine).not.toContain(prompt);
+			const promptFile = extractPromptTempfile(launchLine);
+			expect(existsSync(promptFile)).toBe(true);
+			expect(readFileSync(promptFile, "utf8")).toBe(prompt);
+
+			const fishPath = spawnSync("bash", ["-lc", "command -v fish || true"], { encoding: "utf8" }).stdout.trim();
+			const consumed = fishPath
+				? spawnSync(fishPath, ["-c", launchLine], { encoding: "utf8" })
+				: spawnSync("bash", ["-lc", launchLine], { encoding: "utf8" });
+			expect(consumed.status).toBe(0);
+			expect(consumed.stdout).toContain("line2 don't stop");
+			expect(existsSync(promptFile)).toBe(false);
+		});
+
 		test(`start creates tmux window and registers entry (${useTs ? "ts registry" : "bash registry"})`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
