@@ -449,7 +449,7 @@ Wire producers:
   - `agent.task_started`
   - `agent.task_completed|failed|blocked|needs_completion`
   - `agent.steered`
-  - `agent.empty_after_compact` (vstack#38 — synthetic, emitted when the subagent's bridge stream shows `session_compact` followed by `agent_end{content:[]}`; surfaced as `severity: warning`, `importance: important`)
+  - `agent.empty_after_compact` (vstack#38 — synthetic, sourced from `pi-agents-tmux` event `subagents:needs_completion { reason: "compact-then-empty", cwdSnapshot: { head, dirty, lastCommit: { subject, ... } } }`; preserve those fields under `details`; surfaced as `severity: warning`, `importance: important`)
 - `pi-questions` / question-service path publishes:
   - `question.opened`
   - `question.answered`
