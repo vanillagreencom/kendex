@@ -8,6 +8,8 @@ import { pollPaneCompletions, readPaneRegistry, readTaskRegistry, emitSubagentEv
 import { runtimeSessionId, sessionRuntimeDir } from "./settings.js";
 import type { SubagentDashboardItem } from "./types.js";
 
+type AgentCommandCompletion = { value: string; label: string; description?: string; pane?: boolean };
+
 interface AgentsCommandDeps {
 	[key: string]: any;
 	pi: ExtensionAPI;
@@ -209,7 +211,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 	const paneAgentNameCompletions = (subcommand: string) => (prefix: string) => {
 		const query = prefix.trimStart().toLowerCase();
 		const needsPane = subcommand !== "show";
-		const items = agentCommandCompletions
+		const items = (agentCommandCompletions as AgentCommandCompletion[])
 			.filter((agent) => (!needsPane || agent.pane) && (!query || agent.value.toLowerCase().startsWith(query)))
 			.slice(0, 20)
 			.map((agent) => ({ value: agent.value, label: agent.label, description: agent.description }));

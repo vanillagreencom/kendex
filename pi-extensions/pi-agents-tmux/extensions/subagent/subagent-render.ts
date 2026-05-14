@@ -31,7 +31,7 @@ import {
 } from "./types.js";
 
 export const subagentToolRenderers = {
-	renderCall(args, theme, _context) {
+	renderCall(args: any, theme: any, _context: any) {
 		const scope: AgentScope = args.agentScope ?? "project";
 		if (args.chain && args.chain.length > 0) {
 			let text =
@@ -69,7 +69,7 @@ export const subagentToolRenderers = {
 		return wrappedText(text);
 	},
 
-	renderResult(result, { expanded }, theme, context) {
+	renderResult(result: any, { expanded }: { expanded?: boolean }, theme: any, context: any) {
 		const cwd = context?.cwd;
 		const collapsedItemCount = Math.max(1, Math.floor(settingNumber("collapsedItemCount", COLLAPSED_ITEM_COUNT, context?.cwd)));
 		const details = result.details as SubagentDetails | undefined;

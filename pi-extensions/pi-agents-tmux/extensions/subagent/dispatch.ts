@@ -1,6 +1,6 @@
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentScope } from "./agents.js";
-import { getFinalOutput, oneLinePreview } from "./format.js";
+import { COMPLETION_SUMMARY_UNAVAILABLE, getFinalOutput, oneLinePreview } from "./format.js";
 import { runPersistentPaneAgent } from "./pane.js";
 import {
 	cloneMessagesForDetails,
@@ -152,6 +152,12 @@ function singleResultNeedsCompletion(result: SingleResult): boolean {
 	return singleResultStatus(result) === "needs_completion";
 }
 
+function dashboardMessageForOneShotResult(result: SingleResult): string {
+	const finalOutput = getFinalOutput(result.messages);
+	if (finalOutput.trim()) return oneLinePreview(finalOutput, 120);
+	return singleResultStatus(result) === "running" ? result.task : COMPLETION_SUMMARY_UNAVAILABLE;
+}
+
 function needsCompletionMessage(result: SingleResult): string {
 	const reason = result.needsCompletionReason ? ` (${result.needsCompletionReason})` : "";
 	return result.errorMessage || `Agent needs completion${reason}; inspect result details and worker cwd state.`;
@@ -230,7 +236,7 @@ export async function runChainDispatch(
 			flow.updateDashboard({
 				agent: result.agent,
 				kind: "oneshot",
-				message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+				message: dashboardMessageForOneShotResult(result),
 				model: result.model,
 				status: singleResultStatus(result),
 				task: result.task,
@@ -347,7 +353,7 @@ export async function runParallelDispatch(
 			flow.updateDashboard({
 				agent: item.agent,
 				kind: "oneshot",
-				message: oneLinePreview(getFinalOutput(item.messages), 120) || item.task,
+				message: dashboardMessageForOneShotResult(item),
 				model: item.model,
 				status: singleResultStatus(item),
 				task: item.task,
@@ -476,7 +482,7 @@ export async function runSingleDispatch(
 		flow.updateDashboard({
 			agent: result.agent,
 			kind: "oneshot",
-			message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+			message: dashboardMessageForOneShotResult(result),
 			model: result.model,
 			status: singleResultStatus(result),
 			task: result.task,

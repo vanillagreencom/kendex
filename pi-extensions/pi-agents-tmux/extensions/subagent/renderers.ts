@@ -8,6 +8,9 @@ import {
 	agentStatusLine,
 	agentsCommandBullet,
 	compactPath,
+	COMPLETION_SUMMARY_UNAVAILABLE,
+	completionBodyWithoutPromptEcho,
+	formatUsageStats,
 	framedComponent,
 	framedMessage,
 	oneLinePreview,
@@ -159,16 +162,27 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 	const files = record.filesChanged?.length ? record.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported";
 	const validation = record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported";
 	const diagnostics = record.diagnostics?.length ? record.diagnostics.map((item) => `- ${item}`).join("\n") : "";
+	const terminal = record.status === "completed" || record.status === "failed" || record.status === "blocked";
+	const summary = record.summary?.trim()
+		? completionBodyWithoutPromptEcho(record.summary, record.task)
+		: record.status === "needs_completion"
+			? "Task turn ended without a valid completion record; see diagnostics."
+			: terminal
+				? COMPLETION_SUMMARY_UNAVAILABLE
+				: "No summary yet.";
+	const usage = record.usage ? formatUsageStats(record.usage, record.model) : "";
 	const metaParts = [
 		`Status: **${record.status}**`,
+		record.model ? `Model: ${record.model}` : "",
+		usage ? `Usage: ${usage}` : "",
 		record.completedAt ? `Completed: ${record.completedAt}` : record.updatedAt ? `Updated: ${record.updatedAt}` : `Created: ${record.createdAt}`,
-	];
+	].filter(Boolean);
 	const lines = [
 		`## ${record.agent} · ${record.taskId}`,
 		metaParts.join(" · "),
 		"",
 		"### Summary",
-		record.summary || (record.status === "needs_completion" ? "Task turn ended without a valid completion record; see diagnostics." : "No summary yet."),
+		summary,
 		"",
 		"### Files Changed",
 		files,

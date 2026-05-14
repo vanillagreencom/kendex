@@ -4,6 +4,7 @@ import {
 	addArtifactPathSection,
 	addWrappedSection,
 	agentStatusLine,
+	completionBodyWithoutPromptEcho,
 	wrappedText,
 } from "./format.js";
 import {
@@ -28,6 +29,7 @@ interface PaneSupportToolDeps {
 export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 	const {
 		bridgeTargetArgs,
+		backfillTaskSummaryFromTranscript,
 		createFollowUpTask,
 		dashboardStatusFor,
 		emitSubagentEvent,
@@ -48,6 +50,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 		readPaneRegistry,
 		readTaskRegistry,
 		refreshTaskDiagnostics,
+		taskNeedsSummaryBackfill,
 		removeDashboardAgent,
 		resolvePiBridgeBin,
 		runtimeSessionId,
@@ -116,12 +119,17 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 				const selector = params.taskId ? `taskId ${params.taskId}` : `agent ${params.agent}`;
 				return { content: [{ type: "text", text: `No persistent agent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
 			}
-			updateDashboardFromTaskRecord({ ...record, updatedAt: new Date().toISOString() }, runtimeRoot);
+			if (typeof taskNeedsSummaryBackfill === "function" && typeof backfillTaskSummaryFromTranscript === "function" && taskNeedsSummaryBackfill(record)) {
+				const backfilled = await backfillTaskSummaryFromTranscript(runtimeRoot, record);
+				record = backfilled.record;
+			}
+			const finalRecord = record as PaneTaskRecord;
+			updateDashboardFromTaskRecord({ ...finalRecord, updatedAt: new Date().toISOString() }, runtimeRoot);
 			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
-				content: [{ type: "text", text: `${formatTaskRecordResult(record, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: record.agent, paneId: record.paneId, summary: record.summary, status: record.status, taskId: record.taskId, notes: record.notes, diagnostics: record.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
+				content: [{ type: "text", text: `${formatTaskRecordResult(finalRecord, params.verbose ?? false)}${diagnosticBlock}` }],
+				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
 			};
 		},
 		renderCall(_args, _theme, _context) {
@@ -187,7 +195,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 					artifacts: steerKind === "pane" ? Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath) : Boolean(record.transcriptPath),
 					completedAt: record.completedAt,
 					kind: steerKind,
-					message: record.summary || record.task,
+					message: completionBodyWithoutPromptEcho(record.summary, record.task),
 					model: record.model,
 					paneId: record.paneId,
 					startedAt: record.createdAt,

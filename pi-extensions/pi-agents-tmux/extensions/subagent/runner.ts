@@ -780,12 +780,14 @@ async function runSingleAgentAttempt(
 			return currentResult;
 		}
 		const failed = exitCode !== 0 || currentResult.stopReason === "error" || currentResult.stopReason === "aborted";
+		const finalOutput = getFinalOutput(currentResult.messages);
 		emitSubagentEvent(pi, failed ? "subagents:failed" : "subagents:completed", {
 			mode: "oneshot",
 			agent: agent.name,
 			taskId: oneShotTaskId,
 			task,
 			status: failed ? "failed" : "completed",
+			...(finalOutput ? { summary: finalOutput, finalOutput } : {}),
 			runtimeRoot,
 			transcriptPath,
 			model: currentResult.model,

@@ -35,7 +35,9 @@ import {
 	agentsCommandBullet,
 	agentWord,
 	ansiMagenta,
+	COMPLETION_SUMMARY_UNAVAILABLE,
 	compactPath,
+	completionBodyWithoutPromptEcho,
 	finalOutputLooksLikeToolEcho,
 	finalResponseSuppressedLine,
 	formatToolCall,
@@ -44,6 +46,7 @@ import {
 	framedMessage,
 	getDisplayItems,
 	getFinalOutput,
+	normalizeSummaryText,
 	oneLinePreview,
 	parseTranscriptUsage,
 	resolveSubagentStatuslineInfo,
@@ -120,6 +123,7 @@ import {
 } from "./settings.js";
 import {
 	appendUniqueDiagnostic,
+	backfillTaskSummaryFromTranscript,
 	completionParseErrorMessage,
 	createTaskId,
 	emitSubagentEvent,
@@ -134,6 +138,7 @@ import {
 	readPaneRegistry,
 	readTaskRegistry,
 	refreshTaskDiagnostics,
+	taskNeedsSummaryBackfill,
 	updateTaskRegistry,
 	upsertTaskRecord,
 	writePaneRegistry,
@@ -405,6 +410,7 @@ export default function (pi: ExtensionAPI) {
 			const kind: DashboardKind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? (typeof event.paneId === "string" ? "pane" : "oneshot");
 			const usage = normalizeUsageStats(event.usage) ?? existing?.usage;
 			const model = typeof event.model === "string" ? event.model : existing?.model;
+			const summary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined) ?? existing?.summary;
 			records[taskId] = {
 				...existing,
 				taskId,
@@ -422,7 +428,7 @@ export default function (pi: ExtensionAPI) {
 				transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath,
 				usage,
 				model,
-				summary: typeof event.summary === "string" ? event.summary : existing?.summary,
+				summary,
 				createdAt: existing?.createdAt ?? (typeof event.timestamp === "string" ? event.timestamp : now),
 				updatedAt: now,
 				...(isTerminalTaskStatus(status) ? { completedAt: now } : {}),
@@ -556,6 +562,14 @@ export default function (pi: ExtensionAPI) {
 		syncDashboard();
 	};
 
+	const taskRecordDashboardMessage = (record: PaneTaskRecord): string | undefined => {
+		const summary = normalizeSummaryText(record.summary);
+		if (summary) return summary;
+		if (record.status === "needs_completion") return record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
+		if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
+		return record.diagnostics?.at(-1) ?? record.task;
+	};
+
 	const updateDashboardFromTaskRecord = (record: PaneTaskRecord, runtimeRoot: string) => {
 		const kind = inferTaskRecordKind(runtimeRoot, record);
 		const candidateKey = dashboardItemKey({ agent: record.agent, kind, taskId: record.taskId, transcriptPath: record.transcriptPath, paneId: record.paneId });
@@ -577,7 +591,7 @@ export default function (pi: ExtensionAPI) {
 			bridge: existing?.bridge,
 			completedAt: record.completedAt,
 			kind,
-			message: record.summary || record.diagnostics?.at(-1) || record.task,
+			message: taskRecordDashboardMessage(record),
 			model: record.model ?? existing?.model,
 			paneId: record.paneId,
 			startedAt: record.createdAt,
@@ -599,8 +613,11 @@ export default function (pi: ExtensionAPI) {
 				if (!record.taskId || !record.agent) continue;
 				if (inferTaskRecordKind(runtimeRoot, record) === "pane" && record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
 				const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-				if (refreshed.record.status === "needs_completion") dashboardState.visible = true;
-				updateDashboardFromTaskRecord(refreshed.record, runtimeRoot);
+				const backfilled = taskNeedsSummaryBackfill(refreshed.record)
+					? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
+					: { record: refreshed.record, updated: false };
+				if (backfilled.record.status === "needs_completion") dashboardState.visible = true;
+				updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
 			}
 		});
 		await persistRuntimeSnapshot(ctx, runtimeRoot);
@@ -754,6 +771,7 @@ export default function (pi: ExtensionAPI) {
 		const transcriptPath = typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath;
 		const eventUsage = normalizeUsageStats(event.usage);
 		const eventModel = typeof event.model === "string" ? event.model : undefined;
+		const eventSummary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined);
 		const kind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? "pane";
 		const payloadStatus = ((): PaneTaskStatus => {
 			const raw = event.status;
@@ -768,7 +786,7 @@ export default function (pi: ExtensionAPI) {
 			bridge: existing?.bridge,
 			completedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
 			kind,
-			message: typeof event.summary === "string" ? event.summary : existing?.message,
+			message: eventSummary ?? (isTerminalTaskStatus(eventStatus) || eventStatus === "needs_completion" ? completionBodyWithoutPromptEcho(existing?.message, existing?.task) : existing?.message),
 			paneId: kind === "pane" ? existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined) : undefined,
 			startedAt: existing?.startedAt,
 			status: effectiveStatus,
@@ -972,10 +990,13 @@ export default function (pi: ExtensionAPI) {
 				for (const record of sortedRecords) {
 					if (!record.taskId || !record.agent) continue;
 					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-					updateDashboardFromTaskRecord(refreshed.record, runtimeRoot);
-					if (refreshed.record.transcriptPath && (refreshed.record.status === "completed" || refreshed.record.status === "failed" || refreshed.record.status === "blocked")) {
-						const capturedTaskId = refreshed.record.taskId;
-						parseTranscriptUsage(refreshed.record.transcriptPath)
+					const backfilled = taskNeedsSummaryBackfill(refreshed.record)
+						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
+						: { record: refreshed.record, updated: false };
+					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
+					if (backfilled.record.transcriptPath && (backfilled.record.status === "completed" || backfilled.record.status === "failed" || backfilled.record.status === "blocked")) {
+						const capturedTaskId = backfilled.record.taskId;
+						parseTranscriptUsage(backfilled.record.transcriptPath)
 							.then((parsed) => patchDashboardUsage(runtimeRoot, capturedTaskId, parsed))
 							.catch(() => undefined);
 					}
@@ -1221,6 +1242,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	registerPaneSupportTools({
+		backfillTaskSummaryFromTranscript,
 		bridgeTargetArgs,
 		createFollowUpTask,
 		emitSubagentEvent,
@@ -1246,6 +1268,7 @@ export default function (pi: ExtensionAPI) {
 		sessionRuntimeDir,
 		steerDiagnostics,
 		stopPersistentPane,
+		taskNeedsSummaryBackfill,
 		updateDashboard,
 		updateDashboardFromTaskRecord,
 		persistRuntimeSnapshot,

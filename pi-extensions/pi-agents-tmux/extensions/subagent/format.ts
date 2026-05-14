@@ -64,6 +64,40 @@ export function oneLinePreview(text: string | undefined, maxChars: number): stri
 	return compact.length > maxChars ? `${compact.slice(0, Math.max(0, maxChars - 1))}…` : compact;
 }
 
+export const COMPLETION_SUMMARY_UNAVAILABLE = "completion summary unavailable; see transcript";
+
+export function shortTaskSuffix(taskId: string | undefined, maxChars = 8): string {
+	const raw = taskId?.trim();
+	if (!raw) return "";
+	const parts = raw.split(/[-_/]+/).filter(Boolean);
+	const suffix = parts.at(-1) ?? raw;
+	return oneLinePreview(suffix, maxChars);
+}
+
+export function normalizeSummaryText(text: string | undefined): string | undefined {
+	const trimmed = text?.replace(/\r\n/g, "\n").trim();
+	return trimmed ? trimmed : undefined;
+}
+
+export function normalizeComparableText(value: string | undefined): string {
+	return (value ?? "")
+		.toLowerCase()
+		.replace(/\x1b\[[0-9;]*m/g, "")
+		.replace(/[`*_#>]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+export function completionSummaryForDisplay(summary: string | undefined): string {
+	return normalizeSummaryText(summary) ?? COMPLETION_SUMMARY_UNAVAILABLE;
+}
+
+export function completionBodyWithoutPromptEcho(summary: string | undefined, task: string | undefined): string {
+	const body = completionSummaryForDisplay(summary);
+	if (normalizeComparableText(body) && normalizeComparableText(body) === normalizeComparableText(task)) return COMPLETION_SUMMARY_UNAVAILABLE;
+	return body;
+}
+
 export function compactPath(filePath: string | undefined, options?: { baseDir?: string; maxChars?: number }): string {
 	const raw = filePath?.trim();
 	if (!raw) return "";
@@ -254,12 +288,95 @@ export function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
-			}
+			const text = textFromMessageContent(msg.content);
+			if (text) return text;
 		}
 	}
 	return "";
+}
+
+export function textFromMessageContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const parts = content
+		.map((part) => {
+			if (!part || typeof part !== "object") return "";
+			const candidate = part as Record<string, unknown>;
+			return candidate.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+		})
+		.filter((text) => text.trim());
+	return parts.join("\n\n");
+}
+
+function assistantTextFromTranscriptRecord(record: unknown): string | undefined {
+	if (!record || typeof record !== "object") return undefined;
+	const raw = record as Record<string, unknown>;
+	const event = raw.event && typeof raw.event === "object" ? raw.event as Record<string, unknown> : raw;
+	const message = event.message && typeof event.message === "object"
+		? event.message as Record<string, unknown>
+		: event.role === "assistant"
+			? event
+			: undefined;
+	if (!message || message.role !== "assistant") return undefined;
+	return normalizeSummaryText(textFromMessageContent(message.content));
+}
+
+export function extractLastAssistantTextFromTranscriptContent(content: string): string | undefined {
+	let finalText: string | undefined;
+	for (const line of content.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const text = assistantTextFromTranscriptRecord(parsed);
+		if (text) finalText = text;
+	}
+	return finalText;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+		timer.unref?.();
+	});
+	try {
+		return await Promise.race([promise, timeout]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+async function readFileTailBounded(filePath: string, maxBytes: number, timeoutMs: number): Promise<string> {
+	const read = (async () => {
+		const stat = await fs.promises.stat(filePath);
+		const size = Math.max(0, stat.size);
+		const start = Math.max(0, size - maxBytes);
+		const length = size - start;
+		const handle = await fs.promises.open(filePath, "r");
+		try {
+			const buffer = Buffer.alloc(length);
+			await handle.read(buffer, 0, length, start);
+			const text = buffer.toString("utf-8");
+			if (start === 0) return text;
+			return text.replace(/^[^\n]*(?:\n|$)/, "");
+		} finally {
+			await handle.close().catch(() => undefined);
+		}
+	})();
+	return withTimeout(read, timeoutMs, `read ${filePath}`);
+}
+
+export async function readLastAssistantTextFromTranscript(
+	transcriptPath: string | undefined,
+	options: { maxBytes?: number; timeoutMs?: number } = {},
+): Promise<string | undefined> {
+	if (!transcriptPath) return undefined;
+	const content = await readFileTailBounded(transcriptPath, options.maxBytes ?? 2 * 1024 * 1024, options.timeoutMs ?? 5_000);
+	return extractLastAssistantTextFromTranscriptContent(content);
 }
 
 export function getDisplayItems(messages: Message[]): DisplayItem[] {
