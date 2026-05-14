@@ -361,6 +361,33 @@ describe("pane-registry parity", () => {
 		expect(readIssues(tsRepo)).toEqual({});
 		expect(readIssues(bashRepo)).toEqual({});
 	});
+
+	// Issue #37(C): adhoc entries live only in .entries; pre-fix `remove`
+	// touched .issues only and silently left the .entries row behind.
+	test("remove drops adhoc entries from .entries too", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init-entry", "RM-ADHOC", "--title", "Adhoc Rm", "--kind", "adhoc", "--cwd", "/tmp/a", "--window", "7", "--harness", "pi", "--pane-id", "%707"]);
+			const before = readEntries(repo) as Record<string, unknown>;
+			expect(before["RM-ADHOC"]).toBeDefined();
+			const r = run(useTs, repo, ["remove", "RM-ADHOC"]);
+			expect(r.status).toBe(0);
+			expect((readEntries(repo) as Record<string, unknown>)["RM-ADHOC"]).toBeUndefined();
+		}
+	});
+
+	// Issue #37(C): both deletes must be idempotent. Removing twice (or
+	// removing an id present in only one map) must not error.
+	test("remove is idempotent across .issues and .entries", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			run(useTs, repo, ["init", "RM-IDEM", "--window", "wI", "--harness", "opencode", "--worktree", "/tmp/wt"]);
+			const r1 = run(useTs, repo, ["remove", "RM-IDEM"]);
+			expect(r1.status).toBe(0);
+			const r2 = run(useTs, repo, ["remove", "RM-IDEM"]);
+			expect(r2.status).toBe(0);
+		}
+	});
 });
 
 // --- teardown-window + reconcile (#16) ------------------------------------

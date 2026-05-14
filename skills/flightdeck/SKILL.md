@@ -69,7 +69,7 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 | `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
 | `session prompt routing` | nested from `session watch` | `workflows/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries`/legacy `.issues` snapshot. |
-| `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id`; issue remove remains the legacy cleanup path. Generic removal cleanup is still being expanded. |
+| `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id` and accepts legacy (`merged|aborted|dead`) plus generic (`complete|cancelled`) terminal states. `remove` drops both legacy `.issues` and generic `.entries` rows in one call. |
 
 ### Issue workflows
 

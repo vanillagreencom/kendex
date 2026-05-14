@@ -496,7 +496,12 @@ function cmdRemove(issue: string): void {
 	safeUnlink(piSpawnFile(issue));
 	// CX: drop spawn (server is per-session; terminate.md handles it)
 	safeUnlink(cxSpawnFile(issue));
+	// Issue #37(C): drop both the legacy .issues row AND the generic
+	// .entries row. Pre-fix, adhoc entries written only to .entries
+	// survived `remove` and required a manual flightdeck-state chase.
+	// Each `del` is idempotent on missing keys.
 	fdStateOrDie(["set", ".issues", `(.issues | del(.["${issue}"]))`]);
+	fdStateOrDie(["set", ".entries", `(.entries | del(.["${issue}"]))`]);
 }
 
 function readField(issue: string, field: string): string {

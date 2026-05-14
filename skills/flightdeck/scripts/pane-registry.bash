@@ -457,7 +457,14 @@ case "$ACTION" in
     # pane); kept alive via codex-app-server-spawn idempotency until
     # terminate.md § 5 calls codex-app-server-stop.
     rm -f "$(cx_spawn_file "$ISSUE")" 2>/dev/null || true
+    # Issue #37(C): drop both the legacy .issues row AND the generic
+    # .entries row. Pre-fix, adhoc entries written only to .entries
+    # survived `remove` forever and required a manual
+    # `flightdeck-state set .entries '(.entries | del(...))'` chase.
+    # Each `del` is idempotent on missing keys, so calling both in
+    # sequence is safe regardless of which map the id lives in.
     "$FD_STATE" set ".issues" "(.issues | del(.[\"$ISSUE\"]))"
+    "$FD_STATE" set ".entries" "(.entries | del(.[\"$ISSUE\"]))"
     ;;
 
   oc-attach-args)
