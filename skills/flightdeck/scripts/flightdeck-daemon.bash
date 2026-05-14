@@ -397,6 +397,16 @@ pane_alive() {
   [[ -n "${PANE_TARGET_CACHE[$pid]:-}" ]]
 }
 
+validate_master_target_alive() {
+  local target="$1" master_id=""
+  refresh_pane_cache
+  master_id=$(resolve_pane_id "$target" 2>/dev/null || true)
+  if [[ -z "$master_id" ]] || ! pane_alive "$master_id"; then
+    echo "error: master pane '$target' does not exist; pass --master \"\$TMUX_PANE\" or run 'tmux list-panes -a'" >&2
+    exit 2
+  fi
+}
+
 session_alive() {
   # Use stable session_id rather than name (rename-safe).
   tmux list-sessions -F '#{session_id}' 2>/dev/null | grep -qx "$SESSION_ID"
@@ -2218,6 +2228,7 @@ case "$ACTION" in
   start)
     [[ -z "$MASTER_TARGET" || -z "$INNER_TARGETS" ]] && { echo "start needs --master and --inner" >&2; usage; }
     [[ -z "$SESSION_ID" ]] && { echo "Error: tmux session '$SESSION_NAME' not found" >&2; exit 2; }
+    validate_master_target_alive "$MASTER_TARGET"
 
     # --- Spawn mode dispatch:
     #   detach (default)  → re-exec self with --foreground via setsid + nohup.
@@ -2344,6 +2355,8 @@ case "$ACTION" in
         warn path-mismatch "legacy busy file at $legacy (current: $BUSY_FILE) — remove it; pre-#41 install"
       fi
     done
+
+    validate_master_target_alive "$MASTER_TARGET"
 
     echo $$ > "$PID_FILE"
     # Fresh start: clear any stale wake/event state under SESSION_LOCK.

@@ -58,8 +58,8 @@ afterEach(() => {
 	if (stateDir) { rmSync(stateDir, { recursive: true, force: true }); stateDir = ""; }
 });
 
-function runDaemon(action: string, extra: string[] = []): { status: number | null; stdout: string; stderr: string } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_USE_TS_FLIGHTDECK_DAEMON: "1", FLIGHTDECK_USE_TS_DAEMON_START: "1", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
+function runDaemon(action: string, extra: string[] = [], useTs = true): { status: number | null; stdout: string; stderr: string } {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_USE_TS_FLIGHTDECK_DAEMON: useTs ? "1" : "0", FLIGHTDECK_USE_TS_DAEMON_START: "1", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
 	delete env.FLIGHTDECK_USE_TS;
 	const r = spawnSync(SCRIPT, [action, "--session", SESSION_NAME, ...extra], { encoding: "utf8", env });
 	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
@@ -70,6 +70,16 @@ describe("daemon run-loop (TS)", () => {
 		test.skip("requires tmux", () => undefined);
 		return;
 	}
+
+	test("start refuses a stale master pane before entering the run loop", () => {
+		for (const useTs of [false, true]) {
+			const r = runDaemon("start", ["--master", "%999999", "--inner", innerPaneId, "--foreground"], useTs);
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("error: master pane '%999999' does not exist; pass --master \"$TMUX_PANE\" or run 'tmux list-panes -a'");
+			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+			expect(existsSync(pidFile)).toBe(false);
+		}
+	});
 
 	test("spawn + status round-trip + heartbeat updates", async () => {
 		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId]);

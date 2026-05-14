@@ -29,6 +29,7 @@ import { gcOrphanState } from "./gc.ts";
 import { installShutdownHandlers, killAllSubscribers } from "./lifecycle.ts";
 import { lockedCleanupState } from "../state/locking.ts";
 import { runLoop, type RunLoopOpts } from "./loop.ts";
+import { PaneCache, resolvePaneId } from "./pane-meta.ts";
 
 export interface StartOpts extends Omit<RunLoopOpts, "scriptPath" | "origArgs"> {
 	foreground: boolean;
@@ -46,7 +47,18 @@ function sleepMs(ms: number): Promise<void> {
 	return new Promise((res) => setTimeout(res, ms));
 }
 
+function validateMasterTargetAlive(target: string): void {
+	const cache = new PaneCache();
+	cache.refresh();
+	const masterId = resolvePaneId(target);
+	if (!masterId || !cache.alive(masterId)) {
+		process.stderr.write(`error: master pane '${target}' does not exist; pass --master "$TMUX_PANE" or run 'tmux list-panes -a'\n`);
+		process.exit(2);
+	}
+}
+
 async function dispatchSpawn(opts: StartOpts): Promise<never> {
+	validateMasterTargetAlive(opts.masterTarget);
 	const pidFile = fdPidFile(opts.stateDir, opts.sessionKey);
 	const logFile = fdLogFile(opts.stateDir, opts.sessionKey);
 	// Build child args. opts.origArgs is the post-action argv slice
@@ -235,6 +247,8 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 			warn("path-mismatch", `legacy busy file at ${legacy} (current: ${busyFile}) — remove it; pre-#41 install`);
 		}
 	}
+
+	validateMasterTargetAlive(opts.masterTarget);
 
 	// Write own pid into the PID_FILE.
 	writeFileSync(pidFile, `${process.pid}\n`);
