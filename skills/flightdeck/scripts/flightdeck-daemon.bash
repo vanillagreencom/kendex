@@ -400,23 +400,38 @@ pane_alive() {
 }
 
 emit_daemon_exited_event() {
-  [[ -n "${WAKE_EVENTS_LOG:-}" && -n "${SESSION_LOCK:-}" ]] || return 0
-  local reason="${DAEMON_EXIT_REASON:-other}" ts master_id_for_event hash
+  if [[ -z "${EVENTS_FILE:-}" || -z "${SESSION_LOCK:-}" ]]; then
+    warn daemon-exited-emit-failed "missing EVENTS_FILE or SESSION_LOCK"
+    printf '[daemon-exited-emit-failed] missing EVENTS_FILE or SESSION_LOCK\n' >&2
+    return 1
+  fi
+  local reason="${DAEMON_EXIT_REASON:-other}" ts master_id_for_event hash err_file err_tail
   ts=$(date -Iseconds)
   master_id_for_event="${master_id:-${MASTER_TARGET:-}}"
   hash=$(printf '%s|%s|%s|%s' "$ts" "$reason" "$master_id_for_event" "$$" | sha256sum | awk '{print substr($1,1,12)}')
-  (
+  err_file=$(mktemp -t fd-daemon-exited-err.XXXXXX 2>/dev/null || true)
+  if ! (
     exec 219>"$SESSION_LOCK"
     flock 219
     jq -nc --arg ts "$ts" \
+           --arg pane_id "$master_id_for_event" \
            --arg event_type "daemon-exited" \
            --arg reason "$reason" \
            --arg master_id "$master_id_for_event" \
+           --arg tag "daemon-exited" \
            --arg hash "$hash" \
            --argjson pid "$$" \
-           '{ts:$ts,event_type:$event_type,reason:$reason,master_id:$master_id,pid:$pid,hash:$hash}' \
-           >> "$WAKE_EVENTS_LOG"
-  ) 2>/dev/null || true
+           '{ts:$ts,pane_id:$pane_id,event_type:$event_type,reason:$reason,master_id:$master_id,pid:$pid,hash:$hash,tag:$tag,stable_age_sec:0,details:{event_type:$event_type,reason:$reason,master_id:$master_id,pid:$pid}}' \
+           >> "$EVENTS_FILE"
+  ) 2>"${err_file:-/dev/null}"; then
+    err_tail="unknown"
+    [[ -n "$err_file" && -f "$err_file" ]] && err_tail=$(tail -c 300 "$err_file" | tr '\n' ' ')
+    rm -f "${err_file:-}" 2>/dev/null || true
+    warn daemon-exited-emit-failed "events_file=$EVENTS_FILE reason=$reason error=${err_tail:-unknown}"
+    printf '[daemon-exited-emit-failed] events_file=%s reason=%s error=%s\n' "$EVENTS_FILE" "$reason" "${err_tail:-unknown}" >&2
+    return 1
+  fi
+  rm -f "${err_file:-}" 2>/dev/null || true
 }
 
 validate_master_target_alive() {
@@ -869,10 +884,12 @@ locked_rm_wake_pending() {
 # Subshell-test for exec to avoid permanent stderr redirection.
 locked_state_cleanup() {
   local nonblock=""
+  local keep_events=0
   local keep_wake_events=0
   for arg in "$@"; do
     case "$arg" in
       --nonblock) nonblock="-n" ;;
+      --keep-events) keep_events=1 ;;
       --keep-wake-events) keep_wake_events=1 ;;
     esac
   done
@@ -885,15 +902,20 @@ locked_state_cleanup() {
     exec 207>&-
     return 0
   fi
-  rm -f "$WAKE_PENDING" "$EVENTS_FILE"
+  rm -f "$WAKE_PENDING"
+  if (( keep_events == 0 )); then
+    rm -f "$EVENTS_FILE"
+  fi
   if (( keep_wake_events == 0 )); then
     [[ -n "${WAKE_EVENTS_LOG:-}" ]] && rm -f "$WAKE_EVENTS_LOG"
   fi
   shopt -s nullglob
   local f
-  for f in "$EVENTS_FILE".draining.*; do
-    rm -f "$f"
-  done
+  if (( keep_events == 0 )); then
+    for f in "$EVENTS_FILE".draining.*; do
+      rm -f "$f"
+    done
+  fi
   if [[ -n "${WAKE_EVENTS_LOG:-}" ]]; then
     for f in "$WAKE_EVENTS_LOG".draining.*; do
       rm -f "$f"
@@ -2395,8 +2417,8 @@ case "$ACTION" in
     validate_master_target_alive "$MASTER_TARGET"
 
     echo $$ > "$PID_FILE"
-    # Fresh start: clear any stale wake/event state under SESSION_LOCK.
-    locked_state_cleanup
+    # Fresh start: keep prior daemon-exited rows for the master to drain on recovery.
+    locked_state_cleanup --keep-events
     run_loop
     ;;
 

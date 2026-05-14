@@ -11,8 +11,8 @@
 //      delivered on the next ack
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,10 +68,15 @@ afterEach(() => {
 });
 
 function runDaemon(action: string, extra: string[] = [], useTs = true): { status: number | null; stdout: string; stderr: string } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_USE_TS_FLIGHTDECK_DAEMON: useTs ? "1" : "0", FLIGHTDECK_USE_TS_DAEMON_START: "1", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
-	delete env.FLIGHTDECK_USE_TS;
+	const env = daemonEnv(useTs);
 	const r = spawnSync(SCRIPT, [action, "--session", SESSION_NAME, ...extra], { encoding: "utf8", env });
 	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function daemonEnv(useTs = true): Record<string, string> {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_USE_TS_FLIGHTDECK_DAEMON: useTs ? "1" : "0", FLIGHTDECK_USE_TS_DAEMON_START: "1", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
+	delete env.FLIGHTDECK_USE_TS;
+	return env;
 }
 
 describe("daemon run-loop (TS)", () => {
@@ -97,18 +102,49 @@ describe("daemon run-loop (TS)", () => {
 				const r = runDaemon("start", ["--master", masterPane, "--inner", innerPaneId], useTs);
 				expect(r.status).toBe(0);
 				tmuxKillPaneFor(masterPane);
-				const wakeEventsLog = join(stateDir, `fd-wake-events-${SESSION_KEY}.log`);
-				const sawExit = await waitFor(() => existsSync(wakeEventsLog) && readFileSync(wakeEventsLog, "utf8").includes('"event_type":"daemon-exited"'));
+				const eventsFile = join(stateDir, `fd-daemon-events-${SESSION_KEY}.jsonl`);
+				const sawExit = await waitFor(() => existsSync(eventsFile) && readFileSync(eventsFile, "utf8").includes('"event_type":"daemon-exited"'));
 				expect(sawExit).toBe(true);
-				const lines = readFileSync(wakeEventsLog, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+				const drained = runDaemon("events", [], useTs);
+				expect(drained.status).toBe(0);
+				const lines = drained.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 				const event = lines.find((line) => line.event_type === "daemon-exited");
-				expect(event).toMatchObject({ event_type: "daemon-exited", reason: "master-gone", master_id: masterPane });
+				expect(event).toMatchObject({ pane_id: masterPane, event_type: "daemon-exited", reason: "master-gone", master_id: masterPane, tag: "daemon-exited" });
 				expect(typeof event.pid).toBe("number");
 				expect(event.hash).toMatch(/^[0-9a-f]{12}$/);
 			} finally {
 				tmuxKillPaneFor(masterPane);
 				runDaemon("stop", [], useTs);
 			}
+		}
+	});
+
+	test("daemon-exited emit failure is observable in stderr and daemon log", async () => {
+		for (const useTs of [false, true]) {
+			const masterPane = tmuxNewWindow(SESSION, `fd-emit-fail-${Date.now()}-${useTs ? "ts" : "bash"}`);
+			const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+			rmSync(logFile, { force: true });
+			let stderr = "";
+			const child = spawn(SCRIPT, ["start", "--session", SESSION_NAME, "--master", masterPane, "--inner", innerPaneId, "--foreground"], { env: daemonEnv(useTs), stdio: ["ignore", "ignore", "pipe"] });
+			child.stderr.on("data", (b: Buffer) => { stderr += b.toString(); });
+			try {
+				const started = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[start]"));
+				expect(started).toBe(true);
+				const exitPromise = new Promise<number | null>((resolveExit) => {
+					const timer = setTimeout(() => resolveExit(null), 5000);
+					child.on("exit", (code) => { clearTimeout(timer); resolveExit(code); });
+				});
+				chmodSync(stateDir, 0o500);
+				tmuxKillPaneFor(masterPane);
+				const exited = await exitPromise;
+				expect(exited).not.toBeNull();
+			} finally {
+				chmodSync(stateDir, 0o700);
+				tmuxKillPaneFor(masterPane);
+				try { child.kill("SIGTERM"); } catch { /* */ }
+			}
+			expect(stderr).toContain("[daemon-exited-emit-failed]");
+			expect(readFileSync(logFile, "utf8")).toContain("[daemon-exited-emit-failed]");
 		}
 	});
 

@@ -94,6 +94,7 @@ For each tracked entry:
 1. Prefer structured pending events from `PENDING` when present:
    - `oc-question` / `pi-question`: set `state=prompting`, `substate=<tag>`, and pass `details.request_id`, `details.question`, and `details.harness` to `session-handle-prompt.md`.
    - `pi-bg-task-exit`: set `state=prompting`, `substate=pi-bg-task-exit`, and pass `details.task` to `session-handle-prompt.md`.
+   - `daemon-exited`: treat as a daemon lifecycle event, not an inner-pane prompt. Record the reason, verify `flightdeck-daemon status --session <S>`, and follow the respawn contract in § 1 / § 6 before yielding.
 2. Otherwise read the entry's row from `POLL_JSONL` by stable `pane_id`/`pane_target` and update:
 
    | tag | new state | route |
@@ -108,6 +109,7 @@ For each tracked entry:
    | `oc-question` | `prompting` | structured question handler |
    | `pi-question` | `prompting` | structured question handler |
    | `pi-bg-task-exit` | `prompting` | background-task exit handler |
+   | `daemon-exited` | unchanged | daemon lifecycle respawn path (§ 1 / § 6), no pane handler |
    | `domain-mismatch` | `prompting` | guard escalation, no destructive action |
 
 3. Hash debounce still applies: if `capture_hash == last_capture_hash` and `bell == false`, skip handler routing for that row.

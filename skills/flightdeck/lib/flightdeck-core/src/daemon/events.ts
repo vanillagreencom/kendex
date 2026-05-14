@@ -122,6 +122,7 @@ const CANONICAL_TAGS = new Set<string>([
 	"pi-question",
 	"pi-subagent-completion",
 	BG_TASK_EXIT_CLASSIFIER_TAG,
+	"daemon-exited",
 	"domain-mismatch",
 ]);
 

@@ -259,6 +259,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 	installShutdownHandlers({
 		pidFile,
 		heartbeatFile,
+		eventsFile,
 		wakeEventsLog,
 		sessionLock,
 		killSubscribers: () => killAllSubscribers({
@@ -306,7 +307,8 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 	if (opts.fromHandoff) {
 		log("from-handoff", `pid=${process.pid} (preserving wake-pending/events/wake-events.log from predecessor)`);
 	} else {
-		lockedCleanupState(sessionLock, { wakePending, eventsFile, wakeEventsLog });
+		// Preserve previous daemon-exited rows so the master can drain them after respawn.
+		lockedCleanupState(sessionLock, { wakePending, wakeEventsLog });
 	}
 
 	void resolve;
