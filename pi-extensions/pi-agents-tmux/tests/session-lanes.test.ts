@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
 } from "../extensions/subagent/sessions.js";
 import {
 	runSingleAgent,
+	setGitExecFileForTests,
 	setSingleAgentSpawnForTests,
 } from "../extensions/subagent/runner.js";
 import { waitForIdleTransition } from "../extensions/subagent/wait.js";
@@ -228,9 +229,11 @@ test("session_compact followed by empty agent_end emits synthetic needs_completi
 		assert.equal(result.status, "needs_completion");
 		assert.equal(result.needsCompletionReason, "compact-then-empty");
 		assert.equal(result.cwdSnapshot?.cwd, cwd);
-		assert.match(result.cwdSnapshot?.head ?? "", /^[0-9a-f]{40,64}$/);
-		assert.match(result.cwdSnapshot?.dirtyStatus ?? "", /\?\? dirty\.txt/);
-		assert.equal(result.cwdSnapshot?.lastCommitSubject, "initial commit");
+		assert.match(result.cwdSnapshot?.head ?? "", /^[0-9a-f]{40}$/);
+		assert.equal(result.cwdSnapshot?.dirty, true);
+		assert.match(result.cwdSnapshot?.status ?? "", /\?\? dirty\.txt/);
+		assert.equal(result.cwdSnapshot?.lastCommit.subject, "initial commit");
+		assert.equal(existsSync(join(cwd, ".git", "index.lock")), false);
 
 		const needsCompletion = emitted.find((event) => event.name === "subagents:needs_completion");
 		assert.ok(needsCompletion);

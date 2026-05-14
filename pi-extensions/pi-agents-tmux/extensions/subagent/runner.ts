@@ -51,47 +51,104 @@ import {
 export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 type SpawnProcess = typeof spawn;
+type ExecFileProcess = typeof execFile;
 let spawnProcess: SpawnProcess = spawn;
-const GIT_SNAPSHOT_TIMEOUT_MS = 1_000;
+let execFileProcess: ExecFileProcess = execFile;
+const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
+const MAX_RESULT_DIAGNOSTICS = 12;
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
 	spawnProcess = spawner ?? spawn;
 }
 
-function execGit(cwd: string, args: string[]): Promise<string> {
+export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
+	execFileProcess = execFileOverride ?? execFile;
+}
+
+function appendResultDiagnostic(result: Pick<SingleResult, "diagnostics">, diagnostic: string): void {
+	const compact = diagnostic.replace(/\s+/g, " ").trim();
+	if (!compact) return;
+	const diagnostics = [...(result.diagnostics ?? [])];
+	if (!diagnostics.includes(compact)) diagnostics.push(compact);
+	result.diagnostics = diagnostics.slice(-MAX_RESULT_DIAGNOSTICS);
+}
+
+interface GitCommandResult {
+	error?: unknown;
+	stderr: string;
+	stdout: string;
+}
+
+function execGit(cwd: string, args: string[]): Promise<GitCommandResult> {
 	return new Promise((resolve, reject) => {
-		execFile(
-			"git",
-			["-C", cwd, ...args],
-			{ encoding: "utf8", maxBuffer: GIT_SNAPSHOT_MAX_BUFFER, timeout: GIT_SNAPSHOT_TIMEOUT_MS },
-			(error, stdout) => {
-				if (error) {
-					reject(error);
-					return;
-				}
-				resolve(String(stdout).trimEnd());
-			},
-		);
+		try {
+			execFileProcess(
+				"git",
+				["--no-optional-locks", "-C", cwd, ...args],
+				{
+					encoding: "utf8",
+					env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+					maxBuffer: GIT_SNAPSHOT_MAX_BUFFER,
+					timeout: GIT_SNAPSHOT_TIMEOUT_MS,
+				},
+				(error, stdout, stderr) => {
+					resolve({ error: error ?? undefined, stderr: String(stderr ?? "").trimEnd(), stdout: String(stdout ?? "").trimEnd() });
+				},
+			);
+		} catch (error) {
+			reject(error);
+		}
 	});
 }
 
-async function snapshotCwdGitState(cwd: string | undefined): Promise<CwdSnapshot | undefined> {
-	if (!cwd) return undefined;
-	const resolvedCwd = path.resolve(cwd);
+function gitFailureDiagnostic(cwd: string, args: string[], result: GitCommandResult | { error: unknown; stderr?: string }): string {
+	const stderr = result.stderr?.trim();
+	const detail = stderr || stringifyError(result.error);
+	return `cwdSnapshot git failed in ${cwd}: git --no-optional-locks ${args.join(" ")} (${detail})`;
+}
+
+async function readGit(cwd: string, args: string[], addDiagnostic: (diagnostic: string) => void): Promise<string | undefined> {
 	try {
-		const insideWorkTree = (await execGit(resolvedCwd, ["rev-parse", "--is-inside-work-tree"])).trim();
-		if (insideWorkTree !== "true") return undefined;
-		const [head, dirtyStatus, lastCommitSubject] = await Promise.all([
-			execGit(resolvedCwd, ["rev-parse", "HEAD"]),
-			execGit(resolvedCwd, ["status", "--porcelain=v1"]),
-			execGit(resolvedCwd, ["log", "-1", "--pretty=%s"]),
-		]);
-		if (!head.trim()) return undefined;
-		return { cwd: resolvedCwd, head: head.trim(), dirtyStatus, lastCommitSubject };
-	} catch {
+		const result = await execGit(cwd, args);
+		if (result.error) {
+			addDiagnostic(gitFailureDiagnostic(cwd, args, result));
+			return undefined;
+		}
+		return result.stdout;
+	} catch (error) {
+		addDiagnostic(gitFailureDiagnostic(cwd, args, { error }));
 		return undefined;
 	}
+}
+
+async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic: (diagnostic: string) => void): Promise<CwdSnapshot | undefined> {
+	if (!cwd) return undefined;
+	const resolvedCwd = path.resolve(cwd);
+	const insideWorkTree = (await readGit(resolvedCwd, ["rev-parse", "--is-inside-work-tree"], addDiagnostic))?.trim();
+	if (insideWorkTree !== "true") return undefined;
+	// Snapshot commands are read-only and run with --no-optional-locks plus GIT_OPTIONAL_LOCKS=0
+	// so agent triage never creates .git/index.lock or blocks concurrent worker git operations.
+	const [rawHead, dirtyStatus, lastCommitSubject] = await Promise.all([
+		readGit(resolvedCwd, ["rev-parse", "HEAD"], addDiagnostic),
+		readGit(resolvedCwd, ["status", "--porcelain=v1"], addDiagnostic),
+		readGit(resolvedCwd, ["log", "-1", "--pretty=%s"], addDiagnostic),
+	]);
+	if (rawHead == null || dirtyStatus == null || lastCommitSubject == null) return undefined;
+	const head = rawHead.trim();
+	if (!/^[0-9a-f]{40}$/.test(head)) {
+		addDiagnostic(`cwdSnapshot git returned malformed HEAD for ${resolvedCwd}: ${JSON.stringify(rawHead)}`);
+		return undefined;
+	}
+	return {
+		cwd: resolvedCwd,
+		dirty: dirtyStatus.length > 0,
+		dirtyStatus,
+		head,
+		lastCommit: { subject: lastCommitSubject },
+		lastCommitSubject,
+		status: dirtyStatus,
+	};
 }
 
 function streamEventName(event: any): string | undefined {
@@ -129,8 +186,8 @@ function agentEndHasTextlessContent(payload: any): boolean {
 function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
 	const base = "Subagent compacted and exited without a final text message; inspect the worker cwd before assuming failure.";
 	if (!cwdSnapshot) return base;
-	const dirty = cwdSnapshot.dirtyStatus ? "dirty" : "clean";
-	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirty}) ${cwdSnapshot.lastCommitSubject}`;
+	const dirty = cwdSnapshot.dirty ? "dirty" : "clean";
+	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirty}) ${cwdSnapshot.lastCommit.subject}`;
 }
 
 export function formatTruncationNotice(
@@ -683,7 +740,7 @@ async function runSingleAgentAttempt(
 		) {
 			currentResult.status = "needs_completion";
 			currentResult.stopReason = "needs_completion";
-			const cwdSnapshot = await snapshotCwdGitState(cwd ?? defaultCwd);
+			const cwdSnapshot = await snapshotCwdGitState(cwd ?? defaultCwd, (diagnostic) => appendResultDiagnostic(currentResult, diagnostic));
 			if (cwdSnapshot) currentResult.cwdSnapshot = cwdSnapshot;
 			const summary = compactThenEmptySummary(cwdSnapshot);
 			currentResult.errorMessage = summary;
@@ -703,6 +760,7 @@ async function runSingleAgentAttempt(
 				sessionPath: session.path,
 				ephemeralSession: session.ephemeral,
 				attempt,
+				diagnostics: currentResult.diagnostics,
 				...(cwdSnapshot ? { cwdSnapshot } : {}),
 			});
 			return currentResult;
