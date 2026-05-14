@@ -476,14 +476,19 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		}
 	});
 
-	for (const terminal of ["merged", "aborted", "dead"]) {
+	// Issue #37(B): generic adhoc terminal states (complete|cancelled)
+	// must teardown without --force, matching the legacy issue-flow
+	// vocabulary (merged|aborted|dead). Generic states are written via
+	// `set` (bypassing the legacy set-state enum) because the issue-mode
+	// state setter is intentionally legacy-only.
+	for (const terminal of ["merged", "aborted", "dead", "complete", "cancelled"]) {
 		test(`pane_id gone + state=${terminal} → no-op success`, () => {
 			for (const repo of [bashRepo, tsRepo]) {
 				const useTs = repo === tsRepo;
 				const statePath = makeShimState(repo, baseShim("test-session"));
 				runShim(useTs, repo, statePath, ["init", "TD-3", "--window", "issue-a", "--harness", "opencode", "--worktree", "/tmp/wt-a"]);
 				runShim(useTs, repo, statePath, ["set", "TD-3", "pane_id", JSON.stringify("%999999")]);
-				runShim(useTs, repo, statePath, ["set-state", "TD-3", terminal]);
+				runShim(useTs, repo, statePath, ["set", "TD-3", "state", JSON.stringify(terminal)]);
 				const r = runShim(useTs, repo, statePath, ["teardown-window", "TD-3"]);
 				expect(r.status).toBe(0);
 				expect(r.stdout).toContain("already closed");
@@ -504,6 +509,27 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		}
 	});
 
+	// Issue #37(B): alive pane + generic terminal state (complete)
+	// kills without --force, mirroring the legacy 'merged' behavior.
+	test("pane_id alive + state=complete → kills without --force", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%200": { pane_index: 0, path: "/tmp/wt-a", window_id: "@20", window_index: 1, window_name: "adhoc-a" },
+				},
+				session: "test-session",
+				windows: { "@20": { index: 1, name: "adhoc-a" } },
+			});
+			runShim(useTs, repo, statePath, ["init", "TD-COMPLETE", "--window", "adhoc-a", "--harness", "pi", "--worktree", "/tmp/wt-a"]);
+			runShim(useTs, repo, statePath, ["set", "TD-COMPLETE", "pane_id", JSON.stringify("%200")]);
+			runShim(useTs, repo, statePath, ["set", "TD-COMPLETE", "state", JSON.stringify("complete")]);
+			const r = runShim(useTs, repo, statePath, ["teardown-entry", "TD-COMPLETE"]);
+			expect(r.status).toBe(0);
+			expect(readShimState(statePath).panes["%200"]).toBeUndefined();
+		}
+	});
+
 	test("pane_id alive + non-terminal state → exit 4 (policy refusal); --force kills", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;
@@ -520,6 +546,9 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 			const r1 = runShim(useTs, repo, statePath, ["teardown-window", "TD-FORCE"]);
 			expect(r1.status).toBe(4);
 			expect(r1.stderr).toContain("policy refusal");
+			// Issue #37(B): error must list both legacy and generic terminal
+			// vocab so callers learn the right state names.
+			expect(r1.stderr).toContain("complete|cancelled");
 			// Pane still alive after refusal.
 			expect(readShimState(statePath).panes["%100"]).toBeDefined();
 			const r2 = runShim(useTs, repo, statePath, ["teardown-window", "TD-FORCE", "--force"]);

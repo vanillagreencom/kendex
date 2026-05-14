@@ -701,7 +701,10 @@ function cmdReconcile(): void {
 //   5 - tmux kill failed: pane still alive after kill attempt
 //   6 - registry read failure
 
-const TERMINAL_STATES = new Set(["merged", "aborted", "dead"]);
+// Issue #37(B): legacy issue-flow terminal states (merged|aborted|dead)
+// plus generic session-lifecycle terminal states (complete|cancelled)
+// so adhoc entries can teardown without --force.
+const TERMINAL_STATES = new Set(["merged", "aborted", "dead", "complete", "cancelled"]);
 
 function cmdTeardownWindow(args: string[]): void {
 	let issue = "";
@@ -751,7 +754,7 @@ function cmdTeardownWindow(args: string[]): void {
 	if (paneAlive) {
 		if (!TERMINAL_STATES.has(state) && !force) {
 			process.stderr.write(
-				`teardown-window: policy refusal — pane_id '${paneId}' is alive but state is '${state}' (not merged|aborted|dead); set a terminal state first or rerun with --force\n`,
+				`teardown-window: policy refusal — pane_id '${paneId}' is alive but state is '${state}' (not merged|aborted|dead|complete|cancelled); set a terminal state first or rerun with --force\n`,
 			);
 			process.exit(4);
 		}
@@ -787,7 +790,7 @@ function cmdTeardownWindow(args: string[]): void {
 		return;
 	}
 	process.stderr.write(
-		`teardown-window: registry drift — pane_id '${paneId || "<none>"}' is gone but state is '${state}' (not merged|aborted|dead); refusing to derive kill target from pane_target (#16)\n`,
+		`teardown-window: registry drift — pane_id '${paneId || "<none>"}' is gone but state is '${state}' (not merged|aborted|dead|complete|cancelled); refusing to derive kill target from pane_target (#16)\n`,
 	);
 	process.exit(3);
 }

@@ -828,10 +828,14 @@ case "$ACTION" in
     fi
     if (( pane_alive == 1 )); then
       case "$state" in
-        merged|aborted|dead) ;;
+        # Issue #37(B): accept legacy issue-flow terminal states
+        # (merged|aborted|dead) and the generic session-lifecycle
+        # terminal states (complete|cancelled) so adhoc entries can
+        # clean up without --force.
+        merged|aborted|dead|complete|cancelled) ;;
         *)
           if (( FORCE != 1 )); then
-            echo "teardown-window: policy refusal — pane_id '$pane_id' is alive but state is '$state' (not merged|aborted|dead); set a terminal state first or rerun with --force" >&2
+            echo "teardown-window: policy refusal — pane_id '$pane_id' is alive but state is '$state' (not merged|aborted|dead|complete|cancelled); set a terminal state first or rerun with --force" >&2
             exit 4
           fi
           ;;
@@ -867,13 +871,14 @@ case "$ACTION" in
       exit 0
     fi
     # pane_id missing or already dead — gate teardown on terminal state.
+    # Issue #37(B): accept legacy + generic terminal vocabularies.
     case "$state" in
-      merged|aborted|dead)
+      merged|aborted|dead|complete|cancelled)
         printf 'teardown-window: window already closed (pane_id=%s gone, state=%s)\n' "${pane_id:-<none>}" "$state"
         exit 0
         ;;
       *)
-        echo "teardown-window: registry drift — pane_id '${pane_id:-<none>}' is gone but state is '${state}' (not merged|aborted|dead); refusing to derive kill target from pane_target (#16)" >&2
+        echo "teardown-window: registry drift — pane_id '${pane_id:-<none>}' is gone but state is '${state}' (not merged|aborted|dead|complete|cancelled); refusing to derive kill target from pane_target (#16)" >&2
         exit 3
         ;;
     esac
