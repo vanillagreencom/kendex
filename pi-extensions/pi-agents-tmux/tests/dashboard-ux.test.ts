@@ -16,6 +16,7 @@ import {
 	renderAgentInspector,
 	renderMonitorSessionDetail,
 	taskNumberById,
+	transcriptCompactRows,
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
 import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
@@ -483,6 +484,29 @@ test("Monitor tab task rendering still exposes task trace metadata", async () =>
 	assert.match(items[0]!.text, /Task ID  planner-1700000120-bbbbbbbb/);
 	assert.match(items[0]!.text, /Transcript  \/tmp\/planner-transcript\.jsonl/);
 	assert.match(items[0]!.text, /completed planner summary/);
+});
+
+test("Monitor task Summary includes compact Transcript rows", async () => {
+	const runtimeRoot = tempRuntime();
+	const transcriptPath = join(runtimeRoot, "monitor-transcript.jsonl");
+	writeFileSync(transcriptPath, [
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "message_end", message: { role: "user", content: [{ type: "text", text: "Please inspect this\nwith detail" }] } } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:01.000Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Working on it\nsecond line" }] } } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:02.000Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "echo hi" } }] } } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:03.000Z", event: { type: "exit", code: 0 } }),
+	].join("\n"));
+	const taskRecord = record("planner", "planner-1700000120-bbbbbbbb", "2026-05-14T05:00:00.000Z", { transcriptPath });
+
+	const rows = transcriptCompactRows(taskRecord);
+	assert.deepEqual(rows, [
+		"05:00:00 → prompt Please inspect this",
+		"05:00:01 ← assistant Working on it",
+		"05:00:02 ← tool bash {\"command\":\"echo hi\"}",
+		"05:00:03 ← exit code 0",
+	]);
+
+	const summary = (await traceViewerItems(taskRecord))[0]!.text;
+	assert.match(summary, /Transcript\n----------\n05:00:00 → prompt Please inspect this\n05:00:01 ← assistant Working on it\n05:00:02 ← tool bash/);
 });
 
 test("transcript tail preserves multiline assistant text and tool JSON structure", () => {

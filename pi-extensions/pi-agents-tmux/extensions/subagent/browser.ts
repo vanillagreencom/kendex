@@ -783,6 +783,94 @@ export function readTranscriptTail(transcriptPath: string | undefined, maxLines:
 	}
 }
 
+function transcriptRowTime(raw: string | undefined): string {
+	if (!raw) return "--:--:--";
+	const date = new Date(raw);
+	if (!Number.isFinite(date.getTime())) return raw.slice(0, 8).padEnd(8, "-");
+	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+}
+
+function transcriptEventTimestamp(outer: any, inner: any): string | undefined {
+	return typeof outer?.ts === "string"
+		? outer.ts
+		: typeof inner?.timestamp === "string"
+			? inner.timestamp
+			: typeof outer?.timestamp === "string"
+				? outer.timestamp
+				: undefined;
+}
+
+function firstTranscriptLine(value: unknown): string {
+	const text = typeof value === "string" ? value : value === undefined ? "" : JSON.stringify(value);
+	return text.replace(/\r\n/g, "\n").split("\n")[0]?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+function transcriptCompactRow(timestamp: string | undefined, arrow: "→" | "←", type: "prompt" | "assistant" | "tool" | "error" | "exit" | "turn", text: string): string {
+	return `${transcriptRowTime(timestamp)} ${arrow} ${type} ${firstTranscriptLine(text)}`.trimEnd();
+}
+
+function toolCallPreview(tool: any): string {
+	const name = tool?.name ?? tool?.toolName ?? "tool";
+	const args = tool?.arguments ?? tool?.args;
+	if (!args || (typeof args === "object" && Object.keys(args).length === 0)) return String(name);
+	return `${name} ${firstTranscriptLine(args)}`;
+}
+
+export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): string[] {
+	const rows: string[] = [];
+	let sawPrompt = false;
+	try {
+		const raw = record.transcriptPath ? fs.readFileSync(record.transcriptPath, "utf-8") : "";
+		for (const line of raw.split(/\r?\n/)) {
+			if (!line.trim()) continue;
+			let event: any;
+			try { event = JSON.parse(line); } catch { rows.push(transcriptCompactRow(undefined, "←", "error", line)); continue; }
+			const inner = event?.event && typeof event.event === "object" ? event.event : event;
+			const innerType = typeof inner?.type === "string" ? inner.type : undefined;
+			const timestamp = transcriptEventTimestamp(event, inner);
+			const msg = inner?.message;
+			if (msg && typeof msg === "object") {
+				const role = String(msg.role ?? "");
+				const content = Array.isArray(msg.content) ? msg.content : [];
+				const tool = content.find((item: any) => item?.type === "toolCall" || item?.type === "tool_call");
+				if (tool) {
+					rows.push(transcriptCompactRow(timestamp, "←", "tool", toolCallPreview(tool)));
+					continue;
+				}
+				const text = textFromMessageContent(msg.content);
+				if (role === "user") {
+					sawPrompt = true;
+					rows.push(transcriptCompactRow(timestamp, "→", "prompt", text));
+				} else if (role === "assistant") {
+					rows.push(transcriptCompactRow(timestamp, "←", "assistant", text || innerType || "assistant"));
+				} else if (text.trim()) {
+					rows.push(transcriptCompactRow(timestamp, "←", "turn", `${role || innerType || "message"} ${text}`));
+				}
+				continue;
+			}
+			if (innerType && typeof inner?.toolName === "string") {
+				const phase = innerType === "tool_execution_start" ? "start" : innerType === "tool_execution_end" ? "end" : innerType === "tool_result_end" ? "result" : innerType;
+				const result = inner.result ?? inner.output ?? inner.content;
+				rows.push(transcriptCompactRow(timestamp, "←", "tool", `${inner.toolName} ${phase}${result ? ` ${firstTranscriptLine(result)}` : ""}`));
+				continue;
+			}
+			if (innerType === "turn_start" || innerType === "turn_end") {
+				rows.push(transcriptCompactRow(timestamp, "←", "turn", innerType.replace("_", " ")));
+				continue;
+			}
+			if (innerType === "exit") {
+				rows.push(transcriptCompactRow(timestamp, "←", "exit", typeof inner?.code === "number" ? `code ${inner.code}` : "exit"));
+				continue;
+			}
+			if (innerType && (innerType.includes("error") || inner?.error)) rows.push(transcriptCompactRow(timestamp, "←", "error", inner.error ?? innerType));
+		}
+	} catch {
+		// Missing transcript still shows the submitted prompt below.
+	}
+	if (!sawPrompt && record.task?.trim()) rows.unshift(transcriptCompactRow(record.createdAt, "→", "prompt", record.task));
+	return rows.slice(-maxRows);
+}
+
 // Multiple bg launches of the same agent name produce distinct dashboard rows
 // (keyed by taskId). Disambiguate the rendered label with a 1-based occurrence
 // suffix in start-time order: "reviewer-arch", "reviewer-arch 2", ... Pane
@@ -1178,10 +1266,24 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	return wrapTextWithAnsi(theme.fg(type === "summary" ? "text" : "toolOutput", backtick), width);
 }
 
+function monitorTaskTitle(record: PaneTaskRecord, taskNumber: number | undefined, discovery: ReturnType<typeof discoverAgents>, theme: Theme, active: boolean): string {
+	const agentConfig = discovery.agents.find((agent) => agent.name === record.agent);
+	const taskNumberText = taskNumber ? ` #${taskNumber}` : "";
+	const kind = recordMonitorKind(record) === "pane" ? "pane" : "bg";
+	const session = sessionModeChipLabel({ kind: recordMonitorKind(record), sessionMode: record.sessionMode, sessionKey: record.sessionKey });
+	const sessionPart = session ? `${theme.fg("dim", " · ")}${theme.fg("muted", session)}` : "";
+	const model = record.model ?? agentConfig?.model;
+	const effort = agentConfig?.effort?.trim();
+	const modelPart = model ? `${theme.fg("dim", " · ")}${theme.fg("muted", `${model}${effort ? ` ${effort}` : ""}`)}` : "";
+	return `${agentPaneTitle(theme, "Detail", active)} ${ansiMagenta(theme.bold(`${record.agent}${taskNumberText}`))}${theme.fg("dim", " · ")}${monitorStatusText(record.status, theme)}${theme.fg("dim", " · ")}${theme.fg("muted", kind)}${sessionPart}${modelPart}`;
+}
+
 function renderMonitorDetail(
 	record: PaneTaskRecord | undefined,
 	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
+	taskNumber: number | undefined,
+	discovery: ReturnType<typeof discoverAgents>,
 	width: number,
 	rows: number,
 	theme: Theme,
@@ -1196,8 +1298,7 @@ function renderMonitorDetail(
 	const subtabs: TraceViewerItem[] = items ?? MONITOR_SUBTAB_LABELS.map((label) => ({ label, text: placeholderText, type: label.toLowerCase() as TraceViewerItem["type"] }));
 	const subtabIndex = Math.max(0, Math.min(ui.monitorSubtab, subtabs.length - 1));
 	ui.monitorSubtab = subtabIndex;
-	const when = formatRelativeTime(record.completedAt ?? record.createdAt);
-	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(record.agent))} ${monitorStatusText(record.status, theme)} ${theme.fg("dim", `· ${when}`)}`;
+	const titleLine = monitorTaskTitle(record, taskNumber, discovery, theme, ui.pane === "inspector");
 	const subtabLine = renderTraceTabBar(subtabs, subtabIndex, safeWidth, theme);
 	const item = subtabs[subtabIndex];
 	const fileLines = item?.path
@@ -1373,6 +1474,7 @@ function renderMonitorTabBody(
 	rows: MonitorTreeRow[],
 	collapsedSessionIds: Set<string>,
 	cache: Map<string, MonitorDetailEntry>,
+	discovery: ReturnType<typeof discoverAgents>,
 	ui: AgentBrowserUiState,
 	width: number,
 	theme: Theme,
@@ -1387,7 +1489,7 @@ function renderMonitorTabBody(
 	const selection = selectedMonitorRow(rows, ui);
 	const taskNumbers = taskNumberById(records);
 	const right = selection?.kind === "task"
-		? renderMonitorDetail(selection.record, cache, ui, rightWidth, bodyRows, theme)
+		? renderMonitorDetail(selection.record, cache, ui, taskNumbers.get(selection.record.taskId), discovery, rightWidth, bodyRows, theme)
 		: renderMonitorSessionDetail(selection?.kind === "session" ? selection.group : undefined, taskNumbers, ui, rightWidth, bodyRows, theme);
 	const lines: string[] = [agentDivider(width, theme)];
 	for (let i = 0; i < bodyRows; i += 1) {
@@ -1803,7 +1905,7 @@ function createAgentsBrowserComponent(
 			loadMonitorSelection();
 			const rows = currentMonitorRows();
 			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "navigate · ")}${ansiYellow("←/→")} ${theme.fg("dim", "tree/detail panes · ")}${ansiYellow("enter")} ${theme.fg("dim", "expand/open · ")}${ansiYellow("f")} ${theme.fg("dim", "filter · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
-			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
+			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
 		clamp();
@@ -2107,6 +2209,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		: "";
 	const sessionDetail = sessionModeDetailLabel(record);
 	const sessionLine = sessionDetail ? `Session  ${sessionDetail}` : "";
+	const compactTranscript = transcriptCompactRows(record);
 	// `" "` (single space) is a sentinel for an intentional blank line; it
 	// survives the `.filter(Boolean)` pass below that drops conditionally
 	// empty entries (e.g. record.completedAt missing -> no `Done` line).
@@ -2128,6 +2231,10 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		record.completionSourcePath ? `Source   ${record.completionSourcePath}` : "",
 		`Created  ${record.createdAt}`,
 		record.completedAt ? `Done     ${record.completedAt}` : "",
+		BLANK,
+		"Transcript",
+		"----------",
+		compactTranscript.length ? compactTranscript.join("\n") : "Transcript unavailable.",
 		BLANK,
 		"Summary",
 		"-------",
