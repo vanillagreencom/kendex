@@ -165,7 +165,7 @@ export function resolveOwnerMetadata(): FlightdeckOwner {
 	if (discoveryError) {
 		process.stderr.write(`Warning: pi-bridge metadata discovery failed (${discoveryError}); proceeding with null pi_session_id/pi_bridge_socket.\n`);
 	}
-	const paneId = nonEmptyEnv("FLIGHTDECK_OWNER_PANE_ID") || tmuxDisplay("#{pane_id}");
+	const paneId = nonEmptyEnv("FLIGHTDECK_OWNER_PANE_ID") || nonEmptyEnv("TMUX_PANE") || tmuxDisplay("#{pane_id}");
 	const paneTarget = nonEmptyEnv("FLIGHTDECK_OWNER_PANE_TARGET") || tmuxDisplay("#S:#{window_index}.#{pane_index}");
 	return {
 		harness,

@@ -151,7 +151,7 @@ resolve_owner_pane_id() {
     return
   fi
   if [[ -n "${TMUX:-}" ]]; then
-    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+    printf '%s\n' "${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)}"
   fi
 }
 
@@ -673,7 +673,7 @@ case "$ACTION" in
         done
         if [[ -z "$master_pane" ]]; then
           # Auto-resolve from the current pane this script runs from.
-          master_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null || echo "")
+          master_pane="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null || echo "")}"
         fi
         [[ -z "$master_pane" ]] && { echo "Error: cannot resolve master pane id" >&2; exit 2; }
         started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

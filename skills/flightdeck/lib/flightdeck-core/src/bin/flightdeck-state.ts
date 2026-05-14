@@ -264,8 +264,11 @@ function runMasterBusy(args: string[]): void {
 				else if (args[i] === "--owner-pid") ownerPid = args[++i] ?? "";
 			}
 			if (!masterPane) {
-				const r = spawnSync("tmux", ["display-message", "-p", "#{pane_id}"], { encoding: "utf8" });
-				masterPane = (r.stdout ?? "").trim();
+				masterPane = (process.env.TMUX_PANE ?? "").trim();
+				if (!masterPane) {
+					const r = spawnSync("tmux", ["display-message", "-p", "#{pane_id}"], { encoding: "utf8" });
+					masterPane = (r.stdout ?? "").trim();
+				}
 			}
 			if (!masterPane) die("Error: cannot resolve master pane id");
 			const startedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");

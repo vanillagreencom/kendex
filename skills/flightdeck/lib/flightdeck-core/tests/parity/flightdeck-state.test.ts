@@ -180,6 +180,14 @@ describe("flightdeck-state parity", () => {
 		expect(readOwnerViaJq(tsRepo, true)).toBe(readOwnerViaJq(bashRepo, true));
 	});
 
+	test("init prefers TMUX_PANE when owner pane override is absent", () => {
+		run(false, bashRepo, ["init"], { FLIGHTDECK_OWNER_PANE_ID: undefined, TMUX: "/tmp/tmux-fake", TMUX_PANE: "%tmux-env" });
+		run(true, tsRepo, ["init"], { FLIGHTDECK_OWNER_PANE_ID: undefined, TMUX: "/tmp/tmux-fake", TMUX_PANE: "%tmux-env" });
+		expect((readState(bashRepo) as { owner?: { pane_id?: unknown } }).owner?.pane_id).toBe("%tmux-env");
+		expect((readState(tsRepo) as { owner?: { pane_id?: unknown } }).owner?.pane_id).toBe("%tmux-env");
+		expect(readOwnerViaJq(tsRepo)).toBe(readOwnerViaJq(bashRepo));
+	});
+
 	test("init records schema_version and additive entries map", () => {
 		run(false, bashRepo, ["init"]);
 		run(true, tsRepo, ["init"]);
