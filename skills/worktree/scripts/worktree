@@ -65,23 +65,43 @@ worktree_path() {
 }
 
 # Symlink a path from main repo into worktree (handles tracked dirs with assume-unchanged)
+# Idempotently append a worktree-relative path to the COMMON git-dir's
+# info/exclude so git treats the symlink we lay down as ignored content.
+# Required because .gitignore patterns with a trailing slash (e.g. `.agents/`)
+# match only real directories, not symlinks pointing at directories — without
+# the exclude entry, `git status` lists the symlink as untracked and
+# `worktree remove` refuses without --force. Git does NOT consult the
+# per-worktree git-dir's info/exclude; only the common dir's is read
+# (https://git-scm.com/docs/gitignore#_pattern_format), so we must write
+# there. The shared exclude file is harmless for the main checkout because
+# the same paths exist there as real gitignored directories.
+exclude_from_worktree_index() {
+  local wt="$1" path="$2"
+  [[ -z "$path" ]] && return 0
+  local common_dir info_exclude
+  common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  info_exclude="$common_dir/info/exclude"
+  mkdir -p "$(dirname "$info_exclude")"
+  grep -qxF "$path" "$info_exclude" 2>/dev/null || echo "$path" >> "$info_exclude"
+}
+
 symlink_into_worktree() {
   local src="$PROJECT_ROOT/$1"
   local dst="$2/$1"
+
+  # Every worktree-local symlink we create should be invisible to git status
+  # in this worktree, regardless of whether the source dir has tracked files.
+  exclude_from_worktree_index "$2" "$1"
 
   if [[ -f "$src" ]]; then
     # File symlink
     mkdir -p "$(dirname "$dst")"
     ln -sf "$src" "$dst"
   elif [[ -d "$src" ]]; then
-    # Directory symlink — if tracked by git, needs assume-unchanged to prevent staging issues
+    # Directory symlink — if tracked by git, also mark files assume-unchanged
+    # to prevent staging issues. (The exclude entry above already hides the
+    # symlink itself; assume-unchanged covers the path's tracked contents.)
     if git -C "$2" ls-files "$1/" 2>/dev/null | grep -q .; then
-      # Tracked directory: exclude from worktree index, mark files assume-unchanged
-      local wt_git_dir
-      wt_git_dir="$(git -C "$2" rev-parse --git-dir 2>/dev/null)"
-      local info_exclude="$wt_git_dir/info/exclude"
-      mkdir -p "$(dirname "$info_exclude")"
-      grep -qxF "$1" "$info_exclude" 2>/dev/null || echo "$1" >> "$info_exclude"
       git -C "$2" ls-files "$1/" 2>/dev/null | \
         xargs -r git -C "$2" update-index --assume-unchanged 2>/dev/null
     fi
@@ -162,6 +182,7 @@ setup_worktree_links() {
     mkdir -p "$(dirname "$wt/$path")"
     rm -rf "$wt/$path" 2>/dev/null
     ln -sfn "$target" "$wt/$path"
+    exclude_from_worktree_index "$wt" "$path"
   done
 }
 
