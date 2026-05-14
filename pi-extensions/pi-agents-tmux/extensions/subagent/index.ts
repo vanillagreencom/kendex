@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { formatSize, getMarkdownTheme, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { discoverAgents, formatAgentList, type AgentConfig, type AgentScope } from "./agents.js";
+import { registerAgentsCommands } from "./agents-command.js";
 import {
 	activeDashboardItems,
 	editAgentFrontmatterOverrides,
@@ -54,6 +55,7 @@ import {
 	formatInventoryValidationError,
 	runChainDispatch,
 	runParallelDispatch,
+	runSingleDispatch,
 	validateAgentInventory,
 	type AgentInventory,
 } from "./dispatch.js";
@@ -81,6 +83,7 @@ import {
 	inboxDir,
 	processingDir,
 } from "./paths.js";
+import { registerPaneSupportTools } from "./pane-support-tools.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
 	formatTaskRecordResult,
@@ -95,6 +98,7 @@ import {
 	sessionFileTailMatchesLeaf,
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
+import { subagentToolRenderers } from "./subagent-render.js";
 import {
 	prepareSingleResultForReturn,
 	runSingleAgent,
@@ -1098,239 +1102,15 @@ export default function (pi: ExtensionAPI) {
 		dashboardCtx = undefined;
 	});
 
-	const agentsHandler = async (args: string, ctx: ExtensionCommandContext) => {
-		const parts = args.trim().split(/\s+/).filter(Boolean);
-		const scopes = new Set<AgentScope>(["user", "project", "both"]);
-		const command = parts[0];
-		let scope: AgentScope = "project";
-		let content = "";
-		let messageDetails: Record<string, unknown> | undefined;
-
-		const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
-		const parentThinkingLevel = pi.getThinkingLevel();
-		const parentSessionId = runtimeSessionId(ctx);
-		const runtimeRoot = sessionRuntimeDir(parentSessionId);
-		const discovery = discoverAgents(ctx.cwd, scopes.has(parts.at(-1) as AgentScope) ? (parts.at(-1) as AgentScope) : scope);
-		const findAgent = (name: string | undefined) => discovery.agents.find((candidate) => candidate.name === name);
-		const sendMarkdown = (markdown: string) => {
-			pi.sendMessage({ customType: "subagent-trace", content: markdown, display: true });
-		};
-
-		try {
-			if (command === "start" || command === "new" || command === "resume") {
-				const agent = findAgent(parts[1]);
-				if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
-				if (!agent.pane) throw new Error(`Agent ${agent.name} is not configured for persistent panes. Add \`pane: true\` to its frontmatter to enable.`);
-				const beforeRegistry = await readPaneRegistry(runtimeRoot);
-				const before = beforeRegistry[agent.name];
-				const hadLivePane = Boolean(before && (await paneExists(before.paneId)));
-				const hadSavedSessionFlag = hasSavedPaneSession(runtimeRoot, agent.name);
-				if (command === "new") {
-					if (hadLivePane) await stopPersistentPane(runtimeRoot, agent.name);
-					removeDashboardAgent(agent.name);
-					await resetPersistentPaneSession(runtimeRoot, agent.name);
-				} else if (command === "resume") {
-					if (hadLivePane) await stopPersistentPane(runtimeRoot, agent.name);
-					removeDashboardAgent(agent.name);
-					await restoreArchivedPaneSession(runtimeRoot, agent.name, parts[2] ?? "latest");
-				}
-				const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, pi.getActiveTools());
-				if (!hadLivePane || command === "new") {
-					emitSubagentEvent(pi, "subagents:created", {
-						mode: "pane",
-						agent: agent.name,
-						paneId: pane.paneId,
-						runtimeRoot,
-						transcriptPath: pane.sessionFile,
-					});
-				}
-				const startLabel = command === "new" ? "Started new" : command === "resume" ? "Resumed archived" : hadLivePane ? "Reused live" : hadSavedSessionFlag ? "Resumed saved" : "Started new";
-				content = `${startLabel} ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
-				messageDetails = { action: "start", agent: agent.name, sessionFile: pane.sessionFile, windowName: pane.windowName, status: startLabel };
-				await persistRuntimeSnapshot(ctx, runtimeRoot);
-			} else if (command === "send") {
-				const agent = findAgent(parts[1]);
-				if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
-				if (!agent.pane) throw new Error(`Agent ${agent.name} is not configured for persistent panes. Add \`pane: true\` to its frontmatter to enable.`);
-				const task = parts.slice(2).join(" ").trim();
-				if (!task) throw new Error("Usage: /agents:send <name> <task>");
-				const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
-				const sessionText = queued.sessionMode === "live" ? "reused live pane" : queued.sessionMode === "resumed" ? "resumed saved pane session" : "started new pane session";
-				content = `Queued task for ${agent.name} (${sessionText}).\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
-				messageDetails = { action: "send", agent: agent.name, inboxFile: queued.taskFile, outboxFile: queued.outboxFile, taskId: queued.taskId, transcriptPath: queued.pane.sessionFile, status: sessionText };
-				await persistRuntimeSnapshot(ctx, runtimeRoot);
-			} else if (command === "attach") {
-				const registry = await readPaneRegistry(runtimeRoot);
-				const entry = registry[parts[1] ?? ""];
-				if (!entry || !(await paneExists(entry.paneId))) throw new Error(`No live pane for agent: ${parts[1] ?? "(missing)"}`);
-				const result = await tmux(["select-pane", "-t", entry.paneId]);
-				if (result.code !== 0) throw new Error(result.stderr || result.stdout || "tmux select-pane failed");
-				content = `Attached to ${entry.agent}.`;
-				messageDetails = { action: "attach", agent: entry.agent };
-			} else if (command === "stop") {
-				const stopped = await stopPersistentPane(runtimeRoot, parts[1] ?? "");
-				const stoppedAgent = stopped.agent;
-				removeDashboardAgent(stoppedAgent);
-				content = `Stopped ${stoppedAgent}.`;
-				messageDetails = { action: "stop", agent: stoppedAgent };
-				await persistRuntimeSnapshot(ctx, runtimeRoot);
-			} else if (command === "collect") {
-				const collected = await pollPaneCompletions(runtimeRoot, pi, false);
-				content = `Collected ${collected} agent completion file${collected === 1 ? "" : "s"}.`;
-				messageDetails = { action: "collect", count: collected };
-				await persistRuntimeSnapshot(ctx, runtimeRoot);
-			} else if (command === "status") {
-				const registry = await readPaneRegistry(runtimeRoot);
-				const lines = await Promise.all(
-					Object.values(registry).map(async (entry) => {
-						const live = await paneExists(entry.paneId);
-						return `- ${entry.agent}: ${live ? "live" : "dead"} ${entry.windowName} model=${entry.model ?? "default"} lastTask=${entry.lastTaskAt ?? "never"}`;
-					}),
-				);
-				content = [`# Persistent agent panes`, "", lines.join("\n") || "No persistent panes registered."].join("\n");
-				messageDetails = { action: "status", count: lines.length };
-			} else if (command === "trace") {
-				const ref = parts.slice(1).join(" ").trim();
-				if (!ref) throw new Error("Usage: /agents:trace <ref>");
-				const records = await readTaskRegistry(runtimeRoot);
-				const record = resolveTraceRecord(records, ref);
-				if (!record) throw new Error(`No agent trace matched: ${ref}`);
-				if (ctx.hasUI) {
-					await openTraceViewer(ctx as ExtensionContext, `Trace ${recordTraceRef(record)}`, await traceViewerItems(record));
-					return;
-				}
-				sendMarkdown(await formatTraceView(record, parts.includes("--verbose")));
-				return;
-			} else if (command === "toggle") {
-				dashboardState.visible = !dashboardState.visible;
-				syncDashboard(ctx as ExtensionContext);
-				content = `Agent dashboard ${dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden"}.`;
-				messageDetails = { action: "toggle", status: dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden" };
-			} else {
-				let showName: string | undefined;
-				if (command === "show") {
-					showName = parts[1];
-					if (scopes.has(parts[2] as AgentScope)) scope = parts[2] as AgentScope;
-				} else if (scopes.has(command as AgentScope)) {
-					scope = command as AgentScope;
-				} else if (command) {
-					throw new Error(`Unknown /agents action: ${command}`);
-				}
-
-				if (ctx.hasUI) {
-					await openAgentsBrowser(ctx, scope, showName, runtimeRoot, parentSessionId, parentModel, parentThinkingLevel, pi.getActiveTools(), () => activeDashboardItems(Object.values(dashboardState.items)), removeDashboardAgent);
-					return;
-				}
-
-				const scopedDiscovery = discoverAgents(ctx.cwd, scope);
-				if (showName) {
-					const agent = scopedDiscovery.agents.find((candidate) => candidate.name === showName);
-					content = agent
-						? [
-								`# Agent: ${agent.name}`,
-								`Source: ${agent.source}`,
-								`Path: ${agent.filePath}`,
-								`Model: ${agent.model ?? "default"}`,
-								`Deny tools: ${agent.denyTools && agent.denyTools.length > 0 ? agent.denyTools.join(", ") : "none"}`,
-								`Persistent pane: ${agent.pane ? "yes" : "no"}`,
-								"",
-								agent.description,
-								"",
-								"---",
-								"",
-								agent.systemPrompt.trim(),
-							]
-							.join("\n")
-						: `Unknown agent "${showName}" for scope "${scope}". Available: ${scopedDiscovery.agents
-								.map((agent) => agent.name)
-								.join(", ") || "none"}.`;
-					messageDetails = { action: "show", agent: showName };
-				} else {
-					const formatted = formatAgentList(scopedDiscovery.agents);
-					content = [
-						`# Available agents (${scope})`,
-						`Project agent dirs: ${scopedDiscovery.projectAgentsDir ?? "none"}`,
-						"",
-						formatted.text
-							.split("; ")
-							.map((line) => {
-								const name = line.match(/^-?\s*([^ ]+)/)?.[1];
-								const agent = scopedDiscovery.agents.find((candidate) => candidate.name === name);
-								return `- ${line}${agent?.pane ? " [pane]" : ""}`;
-							})
-							.join("\n"),
-						"",
-						"Commands: `/agents show <name>`, `/agents:start <name>` (resume/reuse), `/agents:new <name>` (fresh session), `/agents:send <name> <task>`, `/agents:attach <name>`, `/agents:stop <name>`, `/agents status`, `/agents:trace <ref>`, `/agents:toggle`. The popup's History tab browses past tasks visually.",
-					].join("\n");
-					messageDetails = { action: "list", count: scopedDiscovery.agents.length };
-				}
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			content = `Error: ${message}`;
-			messageDetails = { action: "error", error: message };
-		}
-
-		pi.sendMessage({ customType: "subagent-agents", content, details: messageDetails, display: true });
-	};
-
-	pi.registerCommand("agents", {
-		description: "Agent browser and persistent pane manager.",
-		getArgumentCompletions: agentsArgumentCompletions,
-		handler: agentsHandler,
-	});
-
-	const paneAgentNameCompletions = (subcommand: string) => (prefix: string) => {
-		const query = prefix.trimStart().toLowerCase();
-		const needsPane = subcommand !== "show";
-		const items = agentCommandCompletions
-			.filter((agent) => (!needsPane || agent.pane) && (!query || agent.value.toLowerCase().startsWith(query)))
-			.slice(0, 20)
-			.map((agent) => ({ value: agent.value, label: agent.label, description: agent.description }));
-		return items.length > 0 ? items : null;
-	};
-
-	const traceRefCompletions = (prefix: string) => {
-		const query = prefix.trimStart().toLowerCase();
-		const records = Object.values(dashboardState.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-		const completions = records
-			.filter((item) => !query || item.taskId.toLowerCase().includes(query) || item.agent.toLowerCase().includes(query))
-			.slice(0, 20)
-			.map((item) => {
-				const when = formatRelativeTime(item.completedAt ?? item.startedAt ?? item.updatedAt);
-				const summary = oneLinePreview(item.message, 60);
-				return {
-					value: item.taskId,
-					label: `${item.agent} · ${when}`,
-					description: summary ? `${item.status} · ${summary}` : item.status,
-				};
-			});
-		return completions.length > 0 ? completions : null;
-	};
-
-	pi.registerCommand("agents:toggle", {
-		description: "Toggle the agent dashboard",
-		handler: async (_args, ctx) => agentsHandler("toggle", ctx),
-	});
-
-	for (const sub of ["start", "new", "send", "attach", "stop"] as const) {
-		const description =
-			sub === "start" ? "Start or reuse a persistent pane: /agents:start <name>" :
-			sub === "new" ? "Start a persistent pane with a fresh session: /agents:new <name>" :
-			sub === "send" ? "Queue a task for a persistent pane: /agents:send <name> <task>" :
-			sub === "attach" ? "Focus an existing agent pane: /agents:attach <name>" :
-			"Stop an agent pane: /agents:stop <name>";
-		pi.registerCommand(`agents:${sub}`, {
-			description,
-			getArgumentCompletions: paneAgentNameCompletions(sub),
-			handler: async (args, ctx) => agentsHandler(`${sub} ${args}`.trim(), ctx),
-		});
-	}
-
-	pi.registerCommand("agents:trace", {
-		description: "View an agent trace by ref/task id: /agents:trace <ref>",
-		getArgumentCompletions: traceRefCompletions,
-		handler: async (args, ctx) => agentsHandler(`trace ${args}`.trim(), ctx),
+	registerAgentsCommands({
+		agentCommandCompletions,
+		agentsArgumentCompletions,
+		dashboardState,
+		formatRelativeTime,
+		persistRuntimeSnapshot,
+		pi,
+		removeDashboardAgent,
+		syncDashboard,
 	});
 
 	const toggleDashboardMode = async (ctx: ExtensionContext) => {
@@ -1439,295 +1219,36 @@ export default function (pi: ExtensionAPI) {
 		};
 	};
 
-	pi.registerTool({
-		renderShell: "self",
-		name: "get_subagent_result",
-		label: "Get Agent Result",
-		description: "Retrieve status/results for persistent pane agent tasks by taskId or latest agent task. Use waitFor: \"idle\" to wait for pane isIdle transition without shell polling. This is a recovery/status tool for pane tasks and does not change Flightdeck or Orchestration ownership.",
-		parameters: GetSubagentResultParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!params.taskId && !params.agent) {
-				return {
-					content: [{ type: "text", text: "Provide either taskId or agent." }],
-					details: {} satisfies GetSubagentResultDetails,
-					isError: true,
-				};
-			}
-			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
-			if ((params.waitFor ?? "completion") === "idle") {
-				let agentName = params.agent;
-				if (!agentName && params.taskId) {
-					const records = await readTaskRegistry(runtimeRoot);
-					agentName = records[params.taskId]?.agent;
-				}
-				if (!agentName) {
-					return {
-						content: [{ type: "text", text: `No task record found for ${params.taskId}; provide agent to wait for pane idle.` }],
-						details: { taskId: params.taskId, waitFor: "idle" } satisfies GetSubagentResultDetails,
-						isError: true,
-					};
-				}
-				const waited = await waitForPaneIdle(ctx, agentName, params.timeoutMs ?? 30000);
-				return {
-					content: [{ type: "text", text: waited.text }],
-					details: { agent: agentName, paneId: waited.details.paneId, taskId: params.taskId, waitFor: "idle", waitTimedOut: waited.details.timedOut } satisfies GetSubagentResultDetails,
-					isError: waited.isError,
-				};
-			}
-			const deadline = Date.now() + Math.max(0, Math.floor(params.timeoutMs ?? 30000));
-			let record: PaneTaskRecord | undefined;
-			let diagnostics: string[] = [];
-			let completionMessageEmitted = false;
-			do {
-				completionMessageEmitted = (await pollPaneCompletions(runtimeRoot, pi, false)) > 0 || completionMessageEmitted;
-				const records = await readTaskRegistry(runtimeRoot);
-				record = params.taskId ? records[params.taskId] : latestTaskRecord(records, params.agent);
-				if (record) {
-					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-					record = refreshed.record;
-					diagnostics = refreshed.diagnostics;
-				}
-				if (!params.wait || (record && (isTerminalTaskStatus(record.status) || record.status === "needs_completion"))) break;
-				if (Date.now() >= deadline) break;
-				await new Promise((resolve) => setTimeout(resolve, 500));
-			} while (true);
-
-			if (!record) {
-				const selector = params.taskId ? `taskId ${params.taskId}` : `agent ${params.agent}`;
-				return { content: [{ type: "text", text: `No persistent agent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
-			}
-			updateDashboardFromTaskRecord({ ...record, updatedAt: new Date().toISOString() }, runtimeRoot);
-			await persistRuntimeSnapshot(ctx, runtimeRoot);
-			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
-			return {
-				content: [{ type: "text", text: `${formatTaskRecordResult(record, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: record.agent, paneId: record.paneId, summary: record.summary, status: record.status, taskId: record.taskId, notes: record.notes, diagnostics: record.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
-			};
-		},
-		renderCall(_args, _theme, _context) {
-			return new Container();
-		},
-		renderResult(result, _options, theme, context) {
-			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
-			const details = result.details as GetSubagentResultDetails | undefined;
-			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Agent result lookup failed")}\n${theme.fg("muted", raw)}`);
-			if (details?.completionMessageEmitted) return new Container();
-			const target = details?.agent ? details.agent : "unknown";
-			const tone = details?.status === "completed" ? "success" : details?.status === "failed" ? "error" : "warning";
-			return wrappedText(agentStatusLine(theme, target, details?.status ?? "result", tone));
-		},
-	});
-
-	pi.registerTool({
-		renderShell: "self",
-		name: "wait_for_subagent_idle",
-		label: "Wait Agent Idle",
-		description: "Wait for a persistent pane agent's pi-bridge state to transition to isIdle=true. Use this instead of polling pi-bridge state in shell loops.",
-		parameters: WaitForSubagentIdleParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const waited = await waitForPaneIdle(ctx, params.agent, params.timeoutMs ?? 30000);
-			return {
-				content: [{ type: "text", text: waited.text }],
-				details: waited.details,
-				isError: waited.isError,
-			};
-		},
-		renderCall(_args, _theme, _context) {
-			return new Container();
-		},
-		renderResult(result, _options, theme, context) {
-			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
-			const details = result.details as WaitForSubagentIdleDetails | undefined;
-			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Agent idle wait failed")}\n${theme.fg("muted", raw)}`);
-			return wrappedText(agentStatusLine(theme, details?.agent ?? "agent", "idle", "success"));
-		},
-	});
-
-	pi.registerTool({
-		renderShell: "self",
-		name: "steer_subagent",
-		label: "Steer Agent",
-		description: "Send a steering message to a persistent pane agent via pi-session-bridge. Bridge targeting requires the agent's child session to live under this parent session's runtime; otherwise an inbox-file fallback is queued instead.",
-		parameters: SteerSubagentParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
-			const records = await readTaskRegistry(runtimeRoot);
-			let agentName = params.agent;
-			let record: PaneTaskRecord | undefined;
-			if (params.taskId) {
-				record = records[params.taskId];
-				if (!record && !agentName) return { content: [{ type: "text", text: `No task record found for ${params.taskId}; provide agent to steer directly.` }], details: {}, isError: true };
-				agentName = agentName ?? record?.agent;
-			}
-			if (!agentName) return { content: [{ type: "text", text: "Provide either agent or taskId." }], details: {}, isError: true };
-			if (params.taskId && record) {
-				const steerKind = inferTaskRecordKind(runtimeRoot, record);
-				updateDashboard({
-					agent: record.agent,
-					artifacts: steerKind === "pane" ? Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath) : Boolean(record.transcriptPath),
-					completedAt: record.completedAt,
-					kind: steerKind,
-					message: record.summary || record.task,
-					model: record.model,
-					paneId: record.paneId,
-					startedAt: record.createdAt,
-					status: dashboardStatusFor(record.status, steerKind),
-					task: record.task,
-					taskId: record.taskId,
-					transcriptPath: record.transcriptPath,
-					updatedAt: new Date().toISOString(),
-					usage: record.usage,
-				});
-			}
-
-			const registry = await readPaneRegistry(runtimeRoot);
-			const entry = registry[agentName];
-			if (!entry) return { content: [{ type: "text", text: `No persistent pane registry entry for ${agentName} in runtime ${runtimeRoot}.` }], details: {}, isError: true };
-			if (!paneSessionBelongsToRuntime(runtimeRoot, entry)) return { content: [{ type: "text", text: `Refusing to steer ${agentName}: pane session file is outside this runtime. Session: ${entry.sessionFile}. Runtime: ${runtimeRoot}` }], details: {}, isError: true };
-			if (!(await paneExists(entry.paneId))) return { content: [{ type: "text", text: `Agent ${agentName} is not live.` }], details: {}, isError: true };
-
-			const deliverAs = params.deliverAs ?? "steer";
-			const followUpTask = isFollowUpDelivery(deliverAs) ? await createFollowUpTask(runtimeRoot, agentName, entry, params.message) : undefined;
-			const metadata = await ensurePaneBridgeMetadata(runtimeRoot, entry);
-			const bridgeBin = metadata ? await resolvePiBridgeBin() : undefined;
-			const targetArgs = metadata ? bridgeTargetArgs(metadata) : [];
-			const baseDetails = {
-				agent: agentName,
-				bridge: Boolean(bridgeBin && targetArgs.length > 0),
-				bridgePid: metadata?.pid,
-				bridgeSocket: metadata?.socket,
-				deliverAs,
-				paneId: entry.paneId,
-				runtimeRoot,
-				sessionFile: entry.sessionFile,
-				taskId: followUpTask?.taskId ?? params.taskId ?? record?.taskId,
-				outboxFile: followUpTask?.outboxFile,
-			} satisfies SteerSubagentDetails;
-
-			if (bridgeBin && targetArgs.length > 0) {
-				const command = deliverAs === "follow-up" ? "follow-up" : deliverAs === "send" ? "send" : "steer";
-				const args = [command, ...targetArgs];
-				if (command === "send") args.push("--auto");
-				args.push(formatSteeringForChild(agentName, params.message, true, deliverAs, followUpTask));
-				const result = await execCapture(bridgeBin, args, { cwd: entry.cwd });
-				if (result.code === 0) {
-					patchDashboard(followUpTask?.taskId ?? params.taskId ?? record?.taskId, { bridge: true, paneId: entry.paneId });
-					emitSubagentEvent(pi, "subagents:steered", {
-						mode: "pane",
-						agent: agentName,
-						taskId: followUpTask?.taskId ?? params.taskId ?? record?.taskId,
-						paneId: entry.paneId,
-						bridge: true,
-						bridgePid: metadata?.pid,
-						bridgeSocket: metadata?.socket,
-						deliverAs,
-						runtimeRoot,
-						transcriptPath: entry.sessionFile,
-					});
-					await persistRuntimeSnapshot(ctx, runtimeRoot);
-					return {
-						content: [{ type: "text", text: [`Steered ${agentName} via bridge (${deliverAs}).`, ...steerDiagnostics(baseDetails)].join("\n") }],
-						details: baseDetails,
-					};
-				}
-				const fallbackFile = await queueSteeringFallback(runtimeRoot, agentName, params.message, deliverAs, followUpTask);
-				const details = { ...baseDetails, bridge: false, fallbackFile } satisfies SteerSubagentDetails;
-				patchDashboard(followUpTask?.taskId ?? params.taskId ?? record?.taskId, { bridge: false, paneId: entry.paneId });
-				emitSubagentEvent(pi, "subagents:steered", {
-					mode: "pane",
-					agent: agentName,
-					taskId: followUpTask?.taskId ?? params.taskId ?? record?.taskId,
-					paneId: entry.paneId,
-					bridge: false,
-					deliverAs,
-					runtimeRoot,
-					transcriptPath: entry.sessionFile,
-				});
-				await persistRuntimeSnapshot(ctx, runtimeRoot);
-				return {
-					content: [{ type: "text", text: [`Bridge for ${agentName} found, but pi-bridge ${command} failed (exit ${result.code}); queued inbox fallback instead.`, result.stderr || result.stdout ? `Bridge output: ${(result.stderr || result.stdout).trim()}` : "", ...steerDiagnostics(details)].filter(Boolean).join("\n") }],
-					details,
-				};
-			}
-
-			const fallbackFile = await queueSteeringFallback(runtimeRoot, agentName, params.message, deliverAs, followUpTask);
-			const details = { ...baseDetails, bridge: false, fallbackFile } satisfies SteerSubagentDetails;
-			patchDashboard(followUpTask?.taskId ?? params.taskId ?? record?.taskId, { bridge: false, paneId: entry.paneId });
-			emitSubagentEvent(pi, "subagents:steered", {
-				mode: "pane",
-				agent: agentName,
-				taskId: followUpTask?.taskId ?? params.taskId ?? record?.taskId,
-				paneId: entry.paneId,
-				bridge: false,
-				deliverAs,
-				runtimeRoot,
-				transcriptPath: entry.sessionFile,
-			});
-			await persistRuntimeSnapshot(ctx, runtimeRoot);
-			return {
-				content: [
-					{
-						type: "text",
-						text: [`No live bridge for ${agentName}; no bridge message was sent. Queued inbox fallback instead, which is not true mid-run steering and will be read when the pane is idle.`, ...steerDiagnostics(details)].join("\n"),
-					},
-				],
-				details,
-			};
-		},
-		renderCall(_args, _theme, _context) {
-			return new Container();
-		},
-		renderResult(result, { expanded }, theme, context) {
-			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
-			const details = result.details as SteerSubagentDetails | undefined;
-			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Steer agent failed")}\n${theme.fg("muted", raw)}`);
-			if (!details) return wrappedText(raw);
-			const status = details.bridge ? "steered" : "queued steering";
-			const via = details.bridge ? theme.fg("success", "bridge") : theme.fg("warning", "inbox fallback");
-			if (expanded) {
-				const container = new Container();
-				container.addChild(wrappedText(`${agentStatusLine(theme, details.agent, status, details.bridge ? "success" : "warning")} ${theme.fg("dim", "via")} ${via}`));
-				addWrappedSection(container, theme, "Delivery", details.deliverAs, "toolOutput");
-				if (details.taskId) addWrappedSection(container, theme, "Task ID", details.taskId, "dim");
-				addWrappedSection(container, theme, "Bridge", details.bridge ? "active" : "not used", details.bridge ? "toolOutput" : "muted");
-				if (details.bridgePid) addWrappedSection(container, theme, "Bridge PID", details.bridgePid, "dim");
-				addWrappedSection(container, theme, "Pane ID", details.paneId, "dim");
-				addArtifactPathSection(container, theme, "Bridge socket", details.bridgeSocket);
-				addArtifactPathSection(container, theme, "Child session", details.sessionFile);
-				addArtifactPathSection(container, theme, "Runtime root", details.runtimeRoot);
-				addArtifactPathSection(container, theme, "Inbox fallback", details.fallbackFile);
-				addArtifactPathSection(container, theme, "Expected outbox", details.outboxFile);
-				return container;
-			}
-			return wrappedText(`${agentStatusLine(theme, details.agent, status, details.bridge ? "success" : "warning")} ${theme.fg("dim", "via")} ${via}`);
-		},
-	});
-
-	pi.registerTool({
-		renderShell: "self",
-		name: "stop_subagent",
-		label: "Stop Agent",
-		description: "Stop a persistent pane agent, kill its tmux pane, remove it from the live pane registry/dashboard, and mark any non-terminal active task as blocked. The pane session file is preserved; a later subagent call or /agents start resumes it unless forceSpawn or /agents new is used.",
-		parameters: StopSubagentParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
-			const stopped = await stopPersistentPane(runtimeRoot, params.agent);
-			removeDashboardAgent(stopped.agent);
-			await persistRuntimeSnapshot(ctx, runtimeRoot);
-			return {
-				content: [{ type: "text", text: `Stopped ${stopped.agent}. Pane ${stopped.paneId} was killed and removed from the active registry. Session preserved at ${stopped.sessionFile}; default start/subagent will resume it. Use forceSpawn or /agents new for a fresh session.` }],
-				details: { agent: stopped.agent, paneId: stopped.paneId, sessionFile: stopped.sessionFile },
-			};
-		},
-		renderCall(_args, _theme, _context) {
-			return new Container();
-		},
-		renderResult(result, _options, theme, context) {
-			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
-			const details = result.details as { agent?: string } | undefined;
-			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Stop agent failed")}\n${theme.fg("muted", raw)}`);
-			return wrappedText(agentStatusLine(theme, details?.agent ?? "agent", "stopped", "success"));
-		},
+	registerPaneSupportTools({
+		bridgeTargetArgs,
+		createFollowUpTask,
+		emitSubagentEvent,
+		execCapture,
+		formatSteeringForChild,
+		formatTaskRecordResult,
+		inferTaskRecordKind,
+		isFollowUpDelivery,
+		isTerminalTaskStatus,
+		latestTaskRecord,
+		paneExists,
+		paneSessionBelongsToRuntime,
+		patchDashboard,
+		pi,
+		pollPaneCompletions,
+		queueSteeringFallback,
+		readPaneRegistry,
+		readTaskRegistry,
+		refreshTaskDiagnostics,
+		removeDashboardAgent,
+		resolvePiBridgeBin,
+		runtimeSessionId,
+		sessionRuntimeDir,
+		steerDiagnostics,
+		stopPersistentPane,
+		updateDashboard,
+		updateDashboardFromTaskRecord,
+		persistRuntimeSnapshot,
+		waitForPaneIdle,
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
@@ -1869,75 +1390,27 @@ export default function (pi: ExtensionAPI) {
 				});
 			}
 
-			// TODO(structure): move single-dispatch into dispatch.ts next.
-
 			if (params.agent && params.task) {
-				const agent = agents.find((candidate) => candidate.name === params.agent);
-				const result = agent?.pane
-					? await runPersistentPaneAgent(
-							ctx.cwd,
-							runtimeRoot,
-							parentSessionId,
-							agents,
-							params.agent,
-							params.task,
-							params.cwd,
-							parentModel,
-							parentThinkingLevel,
-							undefined,
-							pi,
-							params.forceSpawn ?? false,
-							params.resumeSession,
-							removeDashboardAgent,
-						)
-					: await runSingleAgent(
-							ctx.cwd,
-							runtimeRoot,
-							agents,
-							params.agent,
-							params.task,
-							params.cwd,
-							parentModel,
-							parentThinkingLevel,
-							undefined,
-							pi,
-							signal,
-							onUpdate,
-							makeDetails("single"),
-							params.sessionKey,
-						);
-				if (!agent?.pane) {
-					updateDashboard({
-						agent: result.agent,
-						kind: "oneshot",
-						message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
-						model: result.model,
-						status: result.exitCode === 0 ? "completed" : "failed",
-						task: result.task,
-						taskId: result.taskId ?? result.agent,
-						transcriptPath: result.transcriptPath,
-						updatedAt: new Date().toISOString(),
-						usage: result.usage,
-					});
-				}
-				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-				if (isError) {
-					const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
-					const prepared = await prepareSingleResultForReturn(result, runtimeRoot, ctx.cwd, "single-error", errorMsg);
-					prepared.result.errorMessage = prepared.text || errorMsg;
-					const details = makeDetails("single")([prepared.result]);
-					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${prepared.text || "(no output)"}` }],
-						details: detailsWithTruncation(details, prepared),
-						isError: true,
-					};
-				}
-				const prepared = await prepareSingleResultForReturn(result, runtimeRoot, ctx.cwd, "single");
-				const details = makeDetails("single")([prepared.result]);
-				return {
-					content: [{ type: "text", text: prepared.text || "(no output)" }],
-					details: detailsWithTruncation(details, prepared),
-				};
+				return runSingleDispatch({
+					agent: params.agent,
+					agents,
+					cwd: ctx.cwd,
+					cwdOverride: params.cwd,
+					forceSpawn: params.forceSpawn ?? false,
+					makeDetails,
+					onUpdate,
+					parentModel,
+					parentSessionId,
+					parentThinkingLevel,
+					pi,
+					removeDashboardAgent,
+					resumeSession: params.resumeSession,
+					runtimeRoot,
+					sessionKey: params.sessionKey,
+					signal,
+					task: params.task,
+					updateDashboard,
+				});
 			}
 
 			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
@@ -1947,373 +1420,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "project";
-			if (args.chain && args.chain.length > 0) {
-				let text =
-					theme.fg("toolTitle", theme.bold("agents ")) +
-					theme.fg("accent", `chain (${args.chain.length} steps)`) +
-					theme.fg("muted", ` [${scope}]`);
-				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
-					const step = args.chain[i];
-					const cleanTask = step.task.replace(/\{previous\}/g, "").trim();
-					const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
-					text +=
-						"\n  " +
-						theme.fg("muted", `${i + 1}.`) +
-						" " +
-						theme.fg("accent", step.agent) +
-						theme.fg("dim", ` ${preview}`);
-				}
-				if (args.chain.length > 3) text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
-				return wrappedText(text);
-			}
-			if (args.tasks && args.tasks.length > 0) {
-				return new Container();
-			}
-			const agentName = args.agent || "...";
-			try {
-				const agent = discoverAgents(_context?.cwd ?? process.cwd(), scope).agents.find((candidate) => candidate.name === agentName);
-				if (agent?.pane) return new Container();
-			} catch {
-				// Keep the generic call preview if discovery fails.
-			}
-			const preview = args.task ? oneLinePreview(args.task, 56) : "...";
-			let text = `${agentsCommandBullet(theme)}${agentWord(theme)} ${ansiMagenta(theme.bold(agentName))}`;
-			if (scope !== "project") text += theme.fg("dim", ` · ${scope}`);
-			text += `\n${subagentBranch(theme, "└", _context?.cwd)}${theme.fg("dim", preview)}`;
-			return wrappedText(text);
-		},
-
-		renderResult(result, { expanded }, theme, context) {
-			const cwd = context?.cwd;
-			const collapsedItemCount = Math.max(1, Math.floor(settingNumber("collapsedItemCount", COLLAPSED_ITEM_COUNT, context?.cwd)));
-			const details = result.details as SubagentDetails | undefined;
-			if (!details || details.results.length === 0) {
-				const text = result.content[0];
-				return wrappedText(text?.type === "text" ? text.text : "(no output)");
-			}
-
-			const mdTheme = getMarkdownTheme();
-			const truncationBadge = (r: SingleResult) => (r.truncation?.truncated ? theme.fg("warning", " · truncated") : "");
-			const fullOutputLine = (r: SingleResult) =>
-				r.fullOutputPath
-					? theme.fg("dim", `Full output: ${compactPath(r.fullOutputPath)}`)
-					: r.fullOutputError
-						? theme.fg("warning", `Full output unavailable: ${r.fullOutputError}`)
-						: "";
-			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
-			const queuedPaneLine = (r: SingleResult, _dashboard = false) => {
-				if (!r.taskId || !r.paneId) return "";
-				const mode = r.paneSessionMode === "live" ? "reused live pane" : r.paneSessionMode === "resumed" ? "resumed pane" : "new pane";
-				const suffix = `${theme.fg("dim", ` · ${mode}`)}${theme.fg("dim", " · ctrl+o expand")}`;
-				return agentStatusLine(theme, r.agent, "Queued task", "warning", suffix);
-			};
-			const queuedTaskPreviewComponent = (r: SingleResult, dashboard = false) => ({
-				invalidate() {},
-				render(width: number): string[] {
-					const header = queuedPaneLine(r, dashboard);
-					const task = r.task.replace(/\s+/g, " ").trim() || "queued task";
-					const firstPrefix = subagentBranch(theme, "└", cwd);
-					const nextPrefix = " ".repeat(Math.max(0, visibleWidth(firstPrefix)));
-					const textWidth = Math.max(20, width - Math.max(visibleWidth(firstPrefix), visibleWidth(nextPrefix)));
-					const wrapped = wrapTextWithAnsi(task, textWidth);
-					const shown = wrapped.slice(0, 2);
-					if (wrapped.length > shown.length && shown.length > 0) shown[shown.length - 1] = truncateToWidth(`${shown[shown.length - 1]}…`, textWidth, "…");
-					return [
-						header,
-						`${firstPrefix}${theme.fg("dim", shown[0] ?? "queued task")}`,
-						...(shown[1] ? [`${nextPrefix}${theme.fg("dim", shown[1])}`] : []),
-					];
-				},
-			});
-			const expandedQueuedTaskComponent = (r: SingleResult) => {
-				const container = new Container();
-				container.addChild(wrappedText(queuedPaneLine(r)));
-				addSectionHeading(container, theme, "Queued task");
-				container.addChild(new Markdown(r.task.trim() || "(empty task)", 0, 0, mdTheme));
-				if (r.taskId || r.queuedTaskFile || r.queuedOutboxFile || r.transcriptPath) {
-					if (r.paneSessionMode) addWrappedSection(container, theme, "Pane session", r.paneSessionMode === "live" ? "Reused live pane" : r.paneSessionMode === "resumed" ? "Resumed saved pane session" : "Started new pane session", "dim");
-					if (r.taskId) addWrappedSection(container, theme, "Task ID", r.taskId, "dim");
-					addArtifactPathSection(container, theme, "Inbox", r.queuedTaskFile);
-					addArtifactPathSection(container, theme, "Completion", r.queuedOutboxFile);
-					addArtifactPathSection(container, theme, "Transcript", r.transcriptPath);
-				}
-				return container;
-			};
-			const addFinalResponseMarkdown = (container: Container, finalOutput: string, toolCalls: DisplayItem[]) => {
-				if (!finalOutput.trim()) {
-					container.addChild(wrappedText(theme.fg("muted", "(no final response)")));
-					return;
-				}
-				if (finalOutputLooksLikeToolEcho(finalOutput, toolCalls)) {
-					container.addChild(wrappedText(finalResponseSuppressedLine(theme)));
-					return;
-				}
-				container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
-			};
-
-			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
-				const toShow = limit ? items.slice(-limit) : items;
-				const skipped = limit && items.length > limit ? items.length - limit : 0;
-				let text = "";
-				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-				for (const [index, item] of toShow.entries()) {
-					const branch = subagentBranch(theme, index === toShow.length - 1 ? "└" : "├", cwd);
-					if (item.type === "text") {
-						const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-						const lines = preview.split(/\r?\n/);
-						text += `${branch}${theme.fg("toolOutput", lines[0] ?? "")}\n`;
-						for (const line of lines.slice(1)) text += `${subagentBranch(theme, "│", cwd)}${theme.fg("toolOutput", line)}\n`;
-					} else {
-						text += `${branch}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
-					}
-				}
-				return text.trimEnd();
-			};
-
-			if (details.mode === "single" && details.results.length === 1) {
-				const r = details.results[0];
-				if (r.duplicateQueued) return new Container();
-				// runSingleAgent uses exitCode -1 as the still-running sentinel while
-				// emitting streaming partials; only a positive exitCode (or a terminal
-				// stopReason) is a real failure.
-				const isRunning = r.exitCode === -1;
-				const isError = !isRunning && (r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted");
-				const isQueued = !isError && !isRunning && Boolean(r.taskId && r.paneId);
-				const displayItems = getDisplayItems(r.messages);
-				const finalOutput = getFinalOutput(r.messages);
-				const queued = queuedPaneLine(r);
-				const quietDashboard = !expanded && dashboardEnabled(cwd) && quietInline(cwd);
-
-				if (expanded) {
-					if (isQueued) return expandedQueuedTaskComponent(r);
-					const container = new Container();
-					const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : isError ? "failed" : "completed";
-					const statusTone = isQueued || isRunning ? "warning" : isError ? "error" : "success";
-					let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, theme.fg("dim", ` · ${isQueued ? "pane" : "bg"}`));
-					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-					header += truncationBadge(r);
-					container.addChild(wrappedText(header));
-					if (isError && r.errorMessage) container.addChild(wrappedText(theme.fg("error", `Error: ${r.errorMessage}`)));
-					container.addChild(new Spacer(1));
-					container.addChild(wrappedText(theme.fg("muted", "─── Task ───")));
-					container.addChild(wrappedText(theme.fg("dim", r.task)));
-					container.addChild(new Spacer(1));
-					const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-					container.addChild(wrappedText(theme.fg("muted", "─── Tools used ───")));
-					if (toolCalls.length === 0) container.addChild(wrappedText(theme.fg("muted", "(none)")));
-					else {
-						for (const item of toolCalls) {
-							container.addChild(
-								wrappedText(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))),
-							);
-						}
-					}
-					container.addChild(new Spacer(1));
-					container.addChild(wrappedText(theme.fg("muted", "─── Final response ───")));
-					addFinalResponseMarkdown(container, finalOutput, toolCalls);
-					const outputPath = fullOutputLine(r);
-					if (outputPath) container.addChild(wrappedText(outputPath));
-					const transcript = transcriptLine(r);
-					if (transcript) container.addChild(wrappedText(transcript));
-					const usageStr = queued ? "" : formatUsageStats(r.usage, r.model);
-					if (usageStr) {
-						container.addChild(new Spacer(1));
-						container.addChild(wrappedText(theme.fg("dim", usageStr)));
-					}
-					return container;
-				}
-
-
-				if (queued) return queuedTaskPreviewComponent(r, quietDashboard);
-
-				if (quietDashboard && !queued && !isError) {
-					const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-					const preview = finalOutput && !finalOutputLooksLikeToolEcho(finalOutput, toolCalls)
-						? oneLinePreview(finalOutput, 180)
-						: r.task
-							? oneLinePreview(r.task, 140)
-							: "completed";
-					let text = `${theme.fg("toolTitle", theme.bold("Result from"))} ${ansiMagenta(theme.bold(r.agent))}${theme.fg("dim", " · bg · ctrl+o")}${truncationBadge(r)}`;
-					if (preview) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("toolOutput", preview)}`;
-					const outputPath = fullOutputLine(r);
-					if (outputPath) text += `\n${outputPath}`;
-					return wrappedText(text);
-				}
-
-				const compactStatusLabel = isRunning ? "working" : isError ? "failed" : "completed";
-				const compactStatusTone = isRunning ? "warning" : isError ? "error" : "success";
-				let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${theme.fg("dim", " · bg")}${theme.fg("dim", " · ctrl+o")}`);
-				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				text += truncationBadge(r);
-				if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? oneLinePreview(r.task, 120) : "queued task")}`;
-				else if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-				else if (displayItems.length === 0) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? oneLinePreview(r.task, 120) : "(no output)")}`;
-				else {
-					if (r.task) text += `\n${subagentBranch(theme, "├", cwd)}${theme.fg("dim", oneLinePreview(r.task, 120))}`;
-					text += `\n${renderDisplayItems(displayItems, collapsedItemCount)}`;
-					if (displayItems.length > collapsedItemCount) text += `\n${theme.fg("muted", "… more in ctrl+o")}`;
-				}
-				const outputPath = queued ? "" : fullOutputLine(r);
-				if (outputPath) text += `\n${outputPath}`;
-				const usageStr = formatUsageStats(r.usage, r.model);
-				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
-				return wrappedText(text);
-			}
-
-			const aggregateUsage = (results: SingleResult[]) => {
-				const total: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
-				for (const r of results) {
-					total.input += r.usage.input;
-					total.output += r.usage.output;
-					total.cacheRead += r.usage.cacheRead;
-					total.cacheWrite += r.usage.cacheWrite;
-					total.cost += r.usage.cost;
-					total.contextTokens = Math.max(total.contextTokens, r.usage.contextTokens || 0);
-					total.turns += r.usage.turns;
-				}
-				return total;
-			};
-
-			if (details.mode === "chain") {
-				const successCount = details.results.filter((r) => r.exitCode === 0).length;
-				const runningCount = details.results.filter((r) => r.exitCode === -1).length;
-				const chainStepIcon = (r: SingleResult) =>
-					r.exitCode === -1
-						? theme.fg("warning", ICONS.cog)
-						: r.exitCode === 0
-							? theme.fg("success", ICONS.check)
-							: theme.fg("error", ICONS.times);
-				const icon = runningCount > 0
-					? theme.fg("warning", ICONS.cog)
-					: successCount === details.results.length
-						? theme.fg("success", ICONS.check)
-						: theme.fg("error", ICONS.times);
-
-				if (expanded) {
-					const container = new Container();
-					container.addChild(
-						wrappedText(
-							icon +
-								" " +
-								theme.fg("toolTitle", theme.bold("chain ")) +
-								theme.fg("accent", `${successCount}/${details.results.length} steps`),
-						),
-					);
-
-					for (const r of details.results) {
-						const rIcon = chainStepIcon(r);
-						const displayItems = getDisplayItems(r.messages);
-						const finalOutput = getFinalOutput(r.messages);
-
-						container.addChild(new Spacer(1));
-						container.addChild(
-							wrappedText(
-								`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}${truncationBadge(r)}`,
-							),
-						);
-						container.addChild(wrappedText(theme.fg("muted", "Task: ") + theme.fg("dim", r.task)));
-						const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-						container.addChild(wrappedText(theme.fg("muted", "Tools used:")));
-						if (toolCalls.length === 0) container.addChild(wrappedText(theme.fg("muted", "(none)")));
-						else {
-							for (const item of toolCalls) {
-								container.addChild(
-									wrappedText(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))),
-								);
-							}
-						}
-
-						container.addChild(wrappedText(theme.fg("muted", "Final response:")));
-						addFinalResponseMarkdown(container, finalOutput, toolCalls);
-
-						const outputPath = fullOutputLine(r);
-						if (outputPath) container.addChild(wrappedText(outputPath));
-						const transcript = transcriptLine(r);
-						if (transcript) container.addChild(wrappedText(transcript));
-						const stepUsage = formatUsageStats(r.usage, r.model);
-						if (stepUsage) container.addChild(wrappedText(theme.fg("dim", stepUsage)));
-					}
-
-					const usageStr = formatUsageStats(aggregateUsage(details.results));
-					if (usageStr) {
-						container.addChild(new Spacer(1));
-						container.addChild(wrappedText(theme.fg("dim", `Total: ${usageStr}`)));
-					}
-					return container;
-				}
-
-				let text =
-					icon +
-					" " +
-					theme.fg("toolTitle", theme.bold("chain ")) +
-					theme.fg("accent", `${successCount}/${details.results.length} steps`);
-				for (const r of details.results) {
-					const rIcon = chainStepIcon(r);
-					const displayItems = getDisplayItems(r.messages);
-					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}${truncationBadge(r)}`;
-					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
-					else text += `\n${renderDisplayItems(displayItems, 5)}`;
-					const outputPath = fullOutputLine(r);
-					if (outputPath) text += `\n${outputPath}`;
-					const transcript = transcriptLine(r);
-					if (transcript) text += `\n${transcript}`;
-				}
-				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-				text += `\n${theme.fg("muted", "(ctrl+o to expand)")}`;
-				return wrappedText(text);
-			}
-
-			if (details.mode === "parallel") {
-				const running = details.results.filter((r) => r.exitCode === -1).length;
-				const successCount = details.results.filter((r) => r.exitCode === 0).length;
-				const failCount = details.results.filter((r) => r.exitCode > 0).length;
-				const queuedPaneCount = details.results.filter((r) => r.exitCode === 0 && r.taskId && r.paneId).length;
-				const oneshotCompletedCount = successCount - queuedPaneCount;
-				const isRunning = running > 0;
-				const total = details.results.length;
-				const pluralN = (n: number) => (n === 1 ? "" : "s");
-				const headerLabel = isRunning
-					? `${total} agent${pluralN(total)} running`
-					: failCount > 0
-						? `${successCount}/${total} agent${pluralN(total)} completed`
-						: queuedPaneCount === total
-							? `${total} agent${pluralN(total)} launched`
-							: queuedPaneCount > 0
-								? `${total} agents launched (${oneshotCompletedCount} bg, ${queuedPaneCount} pane)`
-								: `${total} agent${pluralN(total)} completed`;
-				const hint = isRunning
-					? ""
-					: queuedPaneCount > 0
-						? theme.fg("muted", " · see dashboard for live status")
-						: dashboardEnabled(cwd) && quietInline(cwd) && !expanded
-							? theme.fg("muted", " · lifecycle in dashboard")
-						: expanded
-							? ""
-							: theme.fg("muted", " (ctrl+o to inspect)");
-				const headerText =
-					theme.fg("accent", "● ") +
-					theme.fg("toolTitle", theme.bold(headerLabel)) +
-					hint;
-				const nameWidth = Math.min(28, Math.max(0, ...details.results.map((r) => visibleWidth(r.agent))));
-				const rowTaskPreview = (r: SingleResult, maxChars: number) =>
-					r.task ? theme.fg("dim", ` · ${oneLinePreview(r.task, maxChars)}`) : "";
-				const treeText = details.results
-					.map((r, index) => {
-						const prefix = index === details.results.length - 1 ? "└" : "├";
-						const name = ((text: string, width: number) => `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`)(ansiMagenta(theme.bold(r.agent)), nameWidth);
-						return `${subagentBranch(theme, prefix, cwd)}${name}${rowTaskPreview(r, 100)}${truncationBadge(r)}`;
-					})
-					.join("\n");
-
-				return wrappedText(`${headerText}\n${treeText}`);
-			}
-
-			const text = result.content[0];
-			return wrappedText(text?.type === "text" ? text.text : "(no output)");
-		},
+		...subagentToolRenderers,
 	});
 
 	emitSubagentEvent(pi, "subagents:ready", { mode: "extension" });

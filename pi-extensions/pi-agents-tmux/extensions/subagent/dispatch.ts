@@ -390,3 +390,74 @@ export async function runParallelDispatch(
 		details: flow.makeDetails("parallel")(preparedResults.map((prepared) => prepared.result)),
 	};
 }
+
+export async function runSingleDispatch(
+	flow: DispatchFlowContext & { agent: string; task: string; cwdOverride?: string; sessionKey?: string },
+): Promise<ToolTextResult> {
+	const agent = flow.agents.find((candidate) => candidate.name === flow.agent);
+	const result = agent?.pane
+		? await runPersistentPaneAgent(
+				flow.cwd,
+				flow.runtimeRoot,
+				flow.parentSessionId,
+				flow.agents,
+				flow.agent,
+				flow.task,
+				flow.cwdOverride,
+				flow.parentModel,
+				flow.parentThinkingLevel,
+				undefined,
+				flow.pi,
+				flow.forceSpawn ?? false,
+				flow.resumeSession,
+				flow.removeDashboardAgent,
+			)
+		: await runSingleAgent(
+				flow.cwd,
+				flow.runtimeRoot,
+				flow.agents,
+				flow.agent,
+				flow.task,
+				flow.cwdOverride,
+				flow.parentModel,
+				flow.parentThinkingLevel,
+				undefined,
+				flow.pi,
+				flow.signal,
+				flow.onUpdate,
+				flow.makeDetails("single"),
+				flow.sessionKey,
+			);
+	if (!agent?.pane) {
+		flow.updateDashboard({
+			agent: result.agent,
+			kind: "oneshot",
+			message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+			model: result.model,
+			status: result.exitCode === 0 ? "completed" : "failed",
+			task: result.task,
+			taskId: result.taskId ?? result.agent,
+			transcriptPath: result.transcriptPath,
+			updatedAt: new Date().toISOString(),
+			usage: result.usage,
+		});
+	}
+	const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	if (isError) {
+		const errorMsg = result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+		const prepared = await prepareSingleResultForReturn(result, flow.runtimeRoot, flow.cwd, "single-error", errorMsg);
+		prepared.result.errorMessage = prepared.text || errorMsg;
+		const details = flow.makeDetails("single")([prepared.result]);
+		return {
+			content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${prepared.text || "(no output)"}` }],
+			details: detailsWithTruncation(details, prepared),
+			isError: true,
+		};
+	}
+	const prepared = await prepareSingleResultForReturn(result, flow.runtimeRoot, flow.cwd, "single");
+	const details = flow.makeDetails("single")([prepared.result]);
+	return {
+		content: [{ type: "text", text: prepared.text || "(no output)" }],
+		details: detailsWithTruncation(details, prepared),
+	};
+}
