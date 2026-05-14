@@ -36,6 +36,7 @@ import {
 	completionBodyWithoutPromptEcho,
 	divider,
 	formatUsageStats,
+	highlightInlinePreview,
 	inactivePill,
 	sessionModeChipLabel,
 	sessionModeDetailLabel,
@@ -689,6 +690,7 @@ export function readTranscriptTail(transcriptPath: string | undefined, maxLines:
 		"start",
 		"agent_start",
 		"session",
+		"session_compact",
 		"turn_start",
 		"turn_end",
 		"message_end",
@@ -733,10 +735,14 @@ export function readTranscriptTail(transcriptPath: string | undefined, maxLines:
 			if (!line.trim()) continue;
 			let event: any;
 			try { event = JSON.parse(line); } catch { push(line); continue; }
-			const inner = event?.event && typeof event.event === "object" ? event.event : event;
+			const inner = transcriptInnerEvent(event);
 			const innerType = typeof inner?.type === "string" ? inner.type : undefined;
-			if (innerType && !INCLUDED_EVENT_TYPES.has(innerType)) continue;
 			const ts = eventTime(event, inner);
+			if (isTranscriptCompactionEvent(event, inner)) {
+				push(transcriptCompactionBanner(ts));
+				continue;
+			}
+			if (innerType && !INCLUDED_EVENT_TYPES.has(innerType)) continue;
 			const msg = inner?.message;
 			if (msg && typeof msg === "object") {
 				const role = msg.role || innerType || "?";
@@ -795,18 +801,76 @@ function transcriptEventTimestamp(outer: any, inner: any): string | undefined {
 		? outer.ts
 		: typeof inner?.timestamp === "string"
 			? inner.timestamp
-			: typeof outer?.timestamp === "string"
-				? outer.timestamp
-				: undefined;
+			: typeof inner?.ts === "string"
+				? inner.ts
+				: typeof outer?.timestamp === "string"
+					? outer.timestamp
+					: undefined;
 }
 
 function firstTranscriptLine(value: unknown): string {
-	const text = typeof value === "string" ? value : value === undefined ? "" : JSON.stringify(value);
+	const text = typeof value === "string" ? value : value === undefined ? "" : JSON.stringify(value) ?? "";
 	return text.replace(/\r\n/g, "\n").split("\n")[0]?.replace(/\s+/g, " ").trim() ?? "";
 }
 
-function transcriptCompactRow(timestamp: string | undefined, arrow: "→" | "←", type: "prompt" | "assistant" | "tool" | "error" | "exit" | "turn", text: string): string {
+type TranscriptEntryType = "prompt" | "assistant" | "tool" | "error" | "exit" | "turn";
+type TranscriptEntry =
+	| { arrow: "→" | "←"; body?: string; compaction?: false; preview: string; timestamp?: string; type: TranscriptEntryType }
+	| { body: string; compaction: true; preview: string; timestamp?: string };
+
+const TRANSCRIPT_COMPACTION_BANNER = "⚠ COMPACTION — context window full, history compressed before continuation";
+const TRANSCRIPT_COMPACTION_BODY = "(Pi runtime compacted context. Subsequent messages start from the compacted state.)";
+
+function transcriptCompactRow(timestamp: string | undefined, arrow: "→" | "←", type: TranscriptEntryType, text: string): string {
 	return `${transcriptRowTime(timestamp)} ${arrow} ${type} ${firstTranscriptLine(text)}`.trimEnd();
+}
+
+function transcriptHeaderRow(timestamp: string | undefined, arrow: "→" | "←", type: TranscriptEntryType): string {
+	return `${transcriptRowTime(timestamp)} ${arrow} ${type}`;
+}
+
+function transcriptCompactionBanner(timestamp: string | undefined): string {
+	return `${transcriptRowTime(timestamp)} ${TRANSCRIPT_COMPACTION_BANNER}`;
+}
+
+function transcriptInnerEvent(event: any): any {
+	const inner = event?.event && typeof event.event === "object" ? event.event : event;
+	if (inner?.type === "event" && inner?.data && typeof inner.data === "object") return inner.data;
+	return inner;
+}
+
+function isCompactionToken(value: unknown): boolean {
+	return value === "session_compact" || value === "session-compact" || value === "compact";
+}
+
+function isTranscriptCompactionEvent(outer: any, inner: any): boolean {
+	return isCompactionToken(outer?.type)
+		|| isCompactionToken(inner?.type)
+		|| isCompactionToken(outer?.event)
+		|| isCompactionToken(inner?.event)
+		|| isCompactionToken(outer?.customType)
+		|| isCompactionToken(inner?.customType)
+		|| isCompactionToken(outer?.message?.customType)
+		|| isCompactionToken(inner?.message?.customType);
+}
+
+function hasTranscriptValue(value: unknown): boolean {
+	if (value == null) return false;
+	if (typeof value === "string") return value.trim().length > 0;
+	if (Array.isArray(value)) return value.length > 0;
+	if (typeof value === "object") return Object.keys(value).length > 0;
+	return true;
+}
+
+function formatTranscriptJson(value: unknown): string {
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+			try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch { /* keep raw */ }
+		}
+		return value;
+	}
+	try { return JSON.stringify(value ?? {}, null, 2); } catch { return String(value); }
 }
 
 function toolCallPreview(tool: any): string {
@@ -816,8 +880,15 @@ function toolCallPreview(tool: any): string {
 	return `${name} ${firstTranscriptLine(args)}`;
 }
 
-export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): string[] {
-	const rows: string[] = [];
+function toolCallBody(tool: any): string {
+	const name = String(tool?.name ?? tool?.toolName ?? "tool");
+	const args = tool?.arguments ?? tool?.args;
+	if (!hasTranscriptValue(args)) return name;
+	return `${name}\n${formatTranscriptJson(args)}`;
+}
+
+function parseTranscriptEntries(record: PaneTaskRecord): TranscriptEntry[] {
+	const entries: TranscriptEntry[] = [];
 	let sawPrompt = false;
 	let sawMalformedLine = false;
 	try {
@@ -826,7 +897,11 @@ export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): st
 			if (!line.trim()) continue;
 			let event: any;
 			try { event = JSON.parse(line); } catch { sawMalformedLine = true; continue; }
-			const inner = event?.event && typeof event.event === "object" ? event.event : event;
+			const inner = transcriptInnerEvent(event);
+			if (isTranscriptCompactionEvent(event, inner)) {
+				entries.push({ body: TRANSCRIPT_COMPACTION_BODY, compaction: true, preview: TRANSCRIPT_COMPACTION_BANNER, timestamp: transcriptEventTimestamp(event, inner) });
+				continue;
+			}
 			const innerType = typeof inner?.type === "string" ? inner.type : undefined;
 			const timestamp = transcriptEventTimestamp(event, inner);
 			const msg = inner?.message;
@@ -835,42 +910,78 @@ export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): st
 				const content = Array.isArray(msg.content) ? msg.content : [];
 				const tool = content.find((item: any) => item?.type === "toolCall" || item?.type === "tool_call");
 				if (tool) {
-					rows.push(transcriptCompactRow(timestamp, "←", "tool", toolCallPreview(tool)));
+					entries.push({ arrow: "←", body: toolCallBody(tool), preview: toolCallPreview(tool), timestamp, type: "tool" });
 					continue;
 				}
 				const text = textFromMessageContent(msg.content);
 				if (role === "user") {
 					sawPrompt = true;
-					rows.push(transcriptCompactRow(timestamp, "→", "prompt", text));
+					entries.push({ arrow: "→", body: text, preview: text, timestamp, type: "prompt" });
 				} else if (role === "assistant") {
-					rows.push(transcriptCompactRow(timestamp, "←", "assistant", text || innerType || "assistant"));
+					entries.push({ arrow: "←", body: text, preview: text || innerType || "assistant", timestamp, type: "assistant" });
 				} else if (text.trim()) {
-					rows.push(transcriptCompactRow(timestamp, "←", "turn", `${role || innerType || "message"} ${text}`));
+					entries.push({ arrow: "←", body: text, preview: `${role || innerType || "message"} ${text}`, timestamp, type: "turn" });
 				}
 				continue;
 			}
 			if (innerType && typeof inner?.toolName === "string") {
 				const phase = innerType === "tool_execution_start" ? "start" : innerType === "tool_execution_end" ? "end" : innerType === "tool_result_end" ? "result" : innerType;
 				const result = inner.result ?? inner.output ?? inner.content;
-				rows.push(transcriptCompactRow(timestamp, "←", "tool", `${inner.toolName} ${phase}${result ? ` ${firstTranscriptLine(result)}` : ""}`));
+				const args = inner.arguments ?? inner.args ?? inner.input;
+				const bodyParts = [`${inner.toolName} ${phase}`];
+				if (hasTranscriptValue(args)) bodyParts.push(formatTranscriptJson(args));
+				if (hasTranscriptValue(result)) bodyParts.push(formatTranscriptJson(result));
+				entries.push({
+					arrow: "←",
+					body: bodyParts.join("\n"),
+					preview: `${inner.toolName} ${phase}${result ? ` ${firstTranscriptLine(result)}` : ""}`,
+					timestamp,
+					type: "tool",
+				});
 				continue;
 			}
 			if (innerType === "turn_start" || innerType === "turn_end") {
-				rows.push(transcriptCompactRow(timestamp, "←", "turn", innerType.replace("_", " ")));
+				entries.push({ arrow: "←", body: innerType.replace("_", " "), preview: innerType.replace("_", " "), timestamp, type: "turn" });
 				continue;
 			}
 			if (innerType === "exit") {
-				rows.push(transcriptCompactRow(timestamp, "←", "exit", typeof inner?.code === "number" ? `code ${inner.code}` : "exit"));
+				const text = typeof inner?.code === "number" ? `code ${inner.code}` : "exit";
+				entries.push({ arrow: "←", body: text, preview: text, timestamp, type: "exit" });
 				continue;
 			}
-			if (innerType && (innerType.includes("error") || inner?.error)) rows.push(transcriptCompactRow(timestamp, "←", "error", inner.error ?? innerType));
+			if (innerType && (innerType.includes("error") || inner?.error)) {
+				const text = String(inner.error ?? innerType);
+				entries.push({ arrow: "←", body: text, preview: text, timestamp, type: "error" });
+			}
 		}
 	} catch {
-		rows.push(transcriptCompactRow(undefined, "←", "error", "(transcript unavailable)"));
+		entries.push({ arrow: "←", body: "(transcript unavailable)", preview: "(transcript unavailable)", timestamp: undefined, type: "error" });
 	}
-	if (sawMalformedLine) rows.push(transcriptCompactRow(undefined, "←", "error", "(malformed transcript JSONL)"));
-	if (!sawPrompt && record.task?.trim()) rows.unshift(transcriptCompactRow(record.createdAt, "→", "prompt", record.task));
-	return rows.slice(-maxRows);
+	if (sawMalformedLine) entries.push({ arrow: "←", body: "(malformed transcript JSONL)", preview: "(malformed transcript JSONL)", timestamp: undefined, type: "error" });
+	if (!sawPrompt && record.task?.trim()) entries.unshift({ arrow: "→", body: record.task, preview: record.task, timestamp: record.createdAt, type: "prompt" });
+	return entries;
+}
+
+export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): string[] {
+	return parseTranscriptEntries(record).slice(-maxRows).map((entry) => entry.compaction
+		? transcriptCompactionBanner(entry.timestamp)
+		: transcriptCompactRow(entry.timestamp, entry.arrow, entry.type, entry.preview));
+}
+
+function expandedTranscriptEntryLines(entry: TranscriptEntry): string[] {
+	if (entry.compaction) return [transcriptCompactionBanner(entry.timestamp), entry.body];
+	const body = entry.body ?? entry.preview;
+	const bodyLines = body.replace(/\r\n/g, "\n").split("\n");
+	return [transcriptHeaderRow(entry.timestamp, entry.arrow, entry.type), ...bodyLines];
+}
+
+export function transcriptExpandedRows(record: PaneTaskRecord, maxRows = 200): string[] {
+	const out: string[] = [];
+	for (const entry of parseTranscriptEntries(record).slice(-maxRows)) {
+		if (out.length > 0) out.push("");
+		out.push(...expandedTranscriptEntryLines(entry));
+	}
+	return out;
 }
 
 // Multiple bg launches of the same agent name produce distinct dashboard rows
@@ -1254,10 +1365,22 @@ function colorTraceValue(label: string, value: string, theme: Theme): string {
 	return `${theme.fg("muted", `${label}: `.padEnd(12))}${renderedValue}`;
 }
 
+function traceLineLooksJsonLike(line: string, type: TraceViewerItem["type"] | undefined): boolean {
+	const trimmed = line.trim();
+	return type === "completion"
+		|| type === "transcript"
+		|| trimmed.startsWith("{")
+		|| trimmed.startsWith("[")
+		|| /^"[^"\\]+"\s*:/.test(trimmed)
+		|| /^[}\]],?$/.test(trimmed);
+}
+
 function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | undefined, width: number, theme: Theme): string[] {
 	const line = raw.replace(/\t/g, "  ");
 	const trimmed = line.trim();
 	if (!trimmed) return [""];
+	if (trimmed.includes("⚠ COMPACTION")) return [theme.fg("error", agentPad(truncateToWidth(line, width, ""), width))];
+	if (trimmed === TRANSCRIPT_COMPACTION_BODY) return wrapTextWithAnsi(theme.fg("error", line), width);
 	if (/^── .+ ──$/.test(trimmed)) return wrapTextWithAnsi(theme.fg("muted", trimmed.replace(/(assistant|user|tool call|tool start|tool end|turn start|turn end|exit)/i, (match) => theme.fg("accent", theme.bold(match)))), width);
 	if (/^-{3,}$/.test(trimmed)) return [];
 	if (/^(Overview|Metadata|Summary|Files changed|Validation|Notes|Task|Artifacts)$/i.test(trimmed)) {
@@ -1265,10 +1388,7 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	}
 	const labelMatch = line.match(/^(Ref|Agent|Task #|Status|Task ID|Created|Done|Model|Session|Session type|Start|Latest|Duration|Tasks|Usage|Pane ID|SessionKey|Transcript|Completion|Archive|Source)\s{2,}(.+)$/);
 	if (labelMatch) return wrapTextWithAnsi(colorTraceValue(labelMatch[1], labelMatch[2], theme), width);
-	if (type === "completion" || type === "transcript") {
-		const jsonKey = line.match(/^(\s*)"([^"]+)"(\s*:\s*)(.*)$/);
-		if (jsonKey) return wrapTextWithAnsi(`${jsonKey[1]}${theme.fg("accent", `"${jsonKey[2]}"`)}${theme.fg("dim", jsonKey[3])}${theme.fg("toolOutput", jsonKey[4])}`, width);
-	}
+	if (traceLineLooksJsonLike(line, type)) return wrapTextWithAnsi(highlightInlinePreview(line, theme), width);
 	const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
 	if (bullet) return wrapTextWithAnsi(`${bullet[1]}${theme.fg("accent", bullet[2])} ${theme.fg("toolOutput", bullet[3])}`, width);
 	const markdownHeading = line.match(/^(#{1,6})\s+(.*)$/);
@@ -1289,7 +1409,18 @@ function monitorTaskTitle(record: PaneTaskRecord, taskNumber: number | undefined
 	return `${agentPaneTitle(theme, "Detail", active)} ${ansiMagenta(theme.bold(`${record.agent}${taskNumberText}`))}${theme.fg("dim", " · ")}${monitorStatusText(record.status, theme)}${theme.fg("dim", " · ")}${theme.fg("muted", kind)}${sessionPart}${modelPart}`;
 }
 
-function renderMonitorDetail(
+function monitorDetailCacheKey(taskId: string, transcriptExpanded: boolean): string {
+	return `${taskId}:${transcriptExpanded ? "expanded" : "compact"}`;
+}
+
+export function monitorFooterHint(ui: AgentBrowserUiState, theme: Theme, taskDetailFocused = false): string {
+	const xHint = taskDetailFocused
+		? `${theme.fg("dim", " · ")}${ansiYellow("x")} ${theme.fg("dim", ui.monitorTranscriptExpanded ? "compact" : "expand")}`
+		: "";
+	return `${ansiYellow("tab")} ${theme.fg("dim", "switch · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "tree↔detail · ")}${ansiYellow("enter")} ${theme.fg("dim", "open · ")}${ansiYellow("f")} ${theme.fg("dim", "filter")}${xHint}${theme.fg("dim", " · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+}
+
+export function renderMonitorDetail(
 	record: PaneTaskRecord | undefined,
 	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
@@ -1303,7 +1434,7 @@ function renderMonitorDetail(
 		return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select a task to view its trace.")}`];
 	}
 	const safeWidth = Math.max(8, width);
-	const entry = cache.get(record.taskId);
+	const entry = cache.get(monitorDetailCacheKey(record.taskId, ui.monitorTranscriptExpanded)) ?? cache.get(record.taskId);
 	const items = entry?.items;
 	const placeholderText = entry?.error ? `Error: ${entry.error}` : entry?.loading || !items ? "Loading…" : "(empty)";
 	const subtabs: TraceViewerItem[] = items ?? MONITOR_SUBTAB_LABELS.map((label) => ({ label, text: placeholderText, type: label.toLowerCase() as TraceViewerItem["type"] }));
@@ -1614,14 +1745,15 @@ function createAgentsBrowserComponent(
 	const monitorTaskNumbers = taskNumberById(monitorRecords);
 	const loadMonitorRecord = (record: PaneTaskRecord | undefined) => {
 		if (!record) return;
-		const entry = monitorCache.get(record.taskId);
+		const cacheKey = monitorDetailCacheKey(record.taskId, ui.monitorTranscriptExpanded);
+		const entry = monitorCache.get(cacheKey);
 		if (entry?.items || entry?.loading) return;
-		monitorCache.set(record.taskId, { loading: true });
-		void traceViewerItems(record, monitorTaskNumbers.get(record.taskId), discovery).then((items) => {
-			monitorCache.set(record.taskId, { items });
+		monitorCache.set(cacheKey, { loading: true });
+		void traceViewerItems(record, monitorTaskNumbers.get(record.taskId), discovery, { transcriptExpanded: ui.monitorTranscriptExpanded }).then((items) => {
+			monitorCache.set(cacheKey, { items });
 			requestRender();
 		}).catch((error) => {
-			monitorCache.set(record.taskId, { error: error instanceof Error ? error.message : String(error) });
+			monitorCache.set(cacheKey, { error: error instanceof Error ? error.message : String(error) });
 			requestRender();
 		});
 	};
@@ -1643,6 +1775,7 @@ function createAgentsBrowserComponent(
 			ui.monitorSelected = 0;
 			ui.monitorScroll = 0;
 			ui.monitorSubtab = 0;
+			ui.monitorTranscriptExpanded = false;
 			ui.inspectorScroll = 0;
 			ui.pane = "list";
 			clampMonitor();
@@ -1752,6 +1885,7 @@ function createAgentsBrowserComponent(
 				} else {
 					ui.monitorSelected = Math.max(0, ui.monitorSelected + delta);
 					ui.monitorSubtab = 0;
+					ui.monitorTranscriptExpanded = false;
 					ui.inspectorScroll = 0;
 					clampMonitor();
 					loadMonitorSelection();
@@ -1811,6 +1945,7 @@ function createAgentsBrowserComponent(
 				ui.monitorSelected = 0;
 				ui.monitorScroll = 0;
 				ui.monitorSubtab = 0;
+				ui.monitorTranscriptExpanded = false;
 				ui.inspectorScroll = 0;
 				clampMonitor();
 				loadMonitorSelection();
@@ -1819,30 +1954,40 @@ function createAgentsBrowserComponent(
 			}
 			if (matchesKey(data, "up")) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - 1);
-				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - 1); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - 1); ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "down")) {
 				if (ui.pane === "inspector") ui.inspectorScroll += 1;
-				else { ui.monitorSelected += 1; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
+				else { ui.monitorSelected += 1; ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pageup" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - Math.max(1, layout.bodyRows));
-				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - layout.listRows); ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
+				else { ui.monitorSelected = Math.max(0, ui.monitorSelected - layout.listRows); ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
 			if (matchesKey(data, "pagedown" as any)) {
 				if (ui.pane === "inspector") ui.inspectorScroll += Math.max(1, layout.bodyRows);
-				else { ui.monitorSelected += layout.listRows; ui.monitorSubtab = 0; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
+				else { ui.monitorSelected += layout.listRows; ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; ui.inspectorScroll = 0; clampMonitor(); loadMonitorSelection(); }
 				requestRender();
 				return;
 			}
-			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.monitorSelected = 0; ui.monitorScroll = 0; ui.monitorSubtab = 0; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
-			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.monitorSelected = Math.max(0, selectableMonitorRows(currentMonitorRows()).length - 1); ui.monitorSubtab = 0; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
+			if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.monitorSelected = 0; ui.monitorScroll = 0; ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
+			if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.monitorSelected = Math.max(0, selectableMonitorRows(currentMonitorRows()).length - 1); ui.monitorSubtab = 0; ui.monitorTranscriptExpanded = false; clampMonitor(); loadMonitorSelection(); } requestRender(); return; }
+			if (data === "x" && ui.pane === "inspector") {
+				const selected = selectedMonitorRow(currentMonitorRows(), ui);
+				if (selected?.kind === "task") {
+					ui.monitorTranscriptExpanded = !ui.monitorTranscriptExpanded;
+					ui.inspectorScroll = 0;
+					loadMonitorSelection();
+					requestRender();
+				}
+				return;
+			}
 			if (matchesKey(data, "enter") || matchesKey(data, "return")) {
 				if (ui.pane === "list") {
 					const selected = selectedMonitorRow(currentMonitorRows(), ui);
@@ -1910,7 +2055,8 @@ function createAgentsBrowserComponent(
 			clampMonitor();
 			loadMonitorSelection();
 			const rows = currentMonitorRows();
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "navigate · ")}${ansiYellow("←/→")} ${theme.fg("dim", "tree/detail panes · ")}${ansiYellow("enter")} ${theme.fg("dim", "expand/open · ")}${ansiYellow("f")} ${theme.fg("dim", "filter · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const selected = selectedMonitorRow(rows, ui);
+			const footer = monitorFooterHint(ui, theme, ui.pane === "inspector" && selected?.kind === "task");
 			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
@@ -1957,6 +2103,7 @@ export async function openAgentsBrowser(
 		monitorSelected: 0,
 		monitorScroll: 0,
 		monitorSubtab: 0,
+		monitorTranscriptExpanded: false,
 		monitorFilter: "all",
 	};
 	while (true) {
@@ -2193,7 +2340,7 @@ export async function showAgentEditConfirmation(ctx: ExtensionContext, message: 
 	}), { overlay: true, overlayOptions: { anchor: "center", width: AGENT_EDIT_CONFIRM_WIDTH, maxHeight: "40%" } });
 }
 
-export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number, discovery?: { agents: AgentConfig[] }): Promise<TraceViewerItem[]> {
+export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number, discovery?: { agents: AgentConfig[] }, options: { transcriptExpanded?: boolean } = {}): Promise<TraceViewerItem[]> {
 	const ref = recordTraceRef(record);
 	const usage = record.usage ? formatUsageStats(record.usage, record.model) : "";
 	const completionPath = record.completionArchivePath ?? record.completionSourcePath;
@@ -2215,7 +2362,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		: "";
 	const sessionDetail = sessionModeDetailLabel(record);
 	const sessionLine = sessionDetail ? `Session  ${sessionDetail}` : "";
-	const compactTranscript = transcriptCompactRows(record);
+	const transcriptRows = options.transcriptExpanded ? transcriptExpandedRows(record) : transcriptCompactRows(record);
 	// `" "` (single space) is a sentinel for an intentional blank line; it
 	// survives the `.filter(Boolean)` pass below that drops conditionally
 	// empty entries (e.g. record.completedAt missing -> no `Done` line).
@@ -2240,7 +2387,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		BLANK,
 		"Transcript",
 		"----------",
-		compactTranscript.length ? compactTranscript.join("\n") : "Transcript unavailable.",
+		transcriptRows.length ? transcriptRows.join("\n") : "Transcript unavailable.",
 		BLANK,
 		"Summary",
 		"-------",

@@ -118,6 +118,7 @@ export interface AgentBrowserUiState {
 	monitorSelected: number;
 	monitorScroll: number;
 	monitorSubtab: number;
+	monitorTranscriptExpanded: boolean;
 	monitorFilter: MonitorFilter;
 }
 

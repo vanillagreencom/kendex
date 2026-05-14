@@ -12,6 +12,8 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Monitor groups tasks by session (pane, bg lane, bg one-shot) with active/completed/all filters.
 - Chat completion rows show actual results, never a repeat of the original request.
 - Task detail shows compact Transcript rows plus Summary, Completion, and Task sections.
+- Monitor transcripts have a compact ↔ expanded toggle (`x`) — compact for scanning, expanded for full bodies + JSON highlighting.
+- Compaction events surface as a clear red banner row in transcripts so you can tell when Pi compressed context.
 - Dashboard widget shows live state, model, turns, tokens, and cost for every spawned agent.
 - Dashboard participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Grouped completion notifications batch multiple agents finishing together.
