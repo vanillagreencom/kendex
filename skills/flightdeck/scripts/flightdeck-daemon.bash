@@ -1321,6 +1321,16 @@ pi_subscriber_loop() {
     pi_target_args=(--pid "$pi_pid")
   fi
 
+  # Issue #37(D): drain pi-questions that were opened before the
+  # subscriber attached. `pi-bridge stream` only delivers future
+  # events, so a question opened before the daemon subscribed would
+  # be invisible to master and pane-poll alike (questions live in
+  # the bridge state, not the tmux pane buffer). The helper emits
+  # the same pi-question-emit log + WAKE_EVENTS_LOG row that the
+  # live-stream branch below emits, then seeds seen_qids so the
+  # future stream event for the same id dedupes.
+  pi_subscriber_drain_questions "$pane_id" "$pi_bin" "$sub_log" pi_target_args seen_qids
+
   # Stream bridge events. We emit four classes:
   #   - pi-question: structured pi-questions prompts opened by the child pane.
   #   - pi-subagent-completion: blocked/failed/needs-completion inner persistent-subagent completions.

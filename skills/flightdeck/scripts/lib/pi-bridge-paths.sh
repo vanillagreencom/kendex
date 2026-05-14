@@ -155,6 +155,59 @@ pi_bridge_is_fresh() {
   [[ "$proto" == "pi-session-bridge.v1" ]]
 }
 
+# Issue #37(D): drain pi-questions that are already open in the bridge
+# when a subscriber attaches. The live `pi-bridge stream` only emits
+# future events; a question opened before the daemon subscribed would
+# otherwise be invisible to master (the classifier can't see it either,
+# since questions live in bridge state, not the tmux pane buffer).
+#
+# Synthesizes the same `pi-question-emit` sub_log line and
+# WAKE_EVENTS_LOG row that the live-stream branch emits, then seeds
+# the caller's seen_qids dedup string so the future stream event is
+# treated as already-handled.
+#
+# Usage:
+#   pi_subscriber_drain_questions <pane_id> <pi_bin> <sub_log> \
+#                                 <pi_target_args_arrayname> \
+#                                 <seen_qids_varname>
+# Requires WAKE_EVENTS_LOG and SESSION_LOCK in env.
+pi_subscriber_drain_questions() {
+  local pane_id="$1" pi_bin="$2" sub_log="$3"
+  local -n _pi_drain_target_args="$4"
+  local -n _pi_drain_seen="$5"
+  local resp pending
+  resp=$("$pi_bin" questions "${_pi_drain_target_args[@]}" 2>/dev/null || true)
+  [[ -z "$resp" ]] && return 0
+  pending=$(jq -c '.data.questions // []' <<< "$resp" 2>/dev/null || echo '[]')
+  [[ -z "$pending" || "$pending" == "null" || "$pending" == "[]" ]] && return 0
+  local item qid payload qhash
+  while IFS= read -r item; do
+    [[ -z "$item" || "$item" == "null" ]] && continue
+    qid=$(jq -r '.requestId // .request.id // ""' <<< "$item" 2>/dev/null)
+    [[ -z "$qid" || "$qid" == "null" ]] && continue
+    if [[ "$_pi_drain_seen" == *",$qid,"* ]]; then continue; fi
+    payload=$(jq -c '.request // .' <<< "$item" 2>/dev/null)
+    [[ -z "$payload" || "$payload" == "null" ]] && continue
+    qhash=$(printf '%s' "$qid" | sha256sum | awk '{print substr($1,1,12)}')
+    printf '%s [pi-question-emit] pane=%s request_id=%s drain=1\n' \
+      "$(date -Iseconds)" "$pane_id" "$qid" \
+      >> "$sub_log" 2>/dev/null || true
+    ( exec 218>"$SESSION_LOCK"
+      flock 218
+      jq -nc --arg ts "$(date -Iseconds)" \
+             --arg pid "$pane_id" \
+             --arg harness "pi" \
+             --arg req "$qid" \
+             --arg tag "pi-question" \
+             --arg h "$qhash" \
+             --argjson q "$payload" \
+             '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"question", request_id:$req, question:$q, classifier_tag:$tag, hash:$h}' \
+             >> "$WAKE_EVENTS_LOG"
+    )
+    _pi_drain_seen+="$qid,"
+  done < <(jq -c '.[]' <<< "$pending" 2>/dev/null || true)
+}
+
 # jq filter that extracts the last assistant message text from
 # `pi-bridge history` output. Pi events shape:
 #   {type:"event", event:"message_update", data:{message:{role:"assistant",

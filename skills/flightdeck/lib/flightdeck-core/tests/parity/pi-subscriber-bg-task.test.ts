@@ -223,6 +223,116 @@ sleep 30
 	});
 });
 
+describe("Pi subscriber question drain on attach (#37 D)", () => {
+	// The bridge stub returns one already-open question from
+	// `pi-bridge questions` and a stream that never emits, so the
+	// only path that can land a pi-question wake row is the new
+	// on-attach drain.
+	test("emits pi-question wake row for questions opened before subscribe", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then
+  cat <<'JSON'
+{"type":"response","id":1,"command":"questions","success":true,"data":{"available":true,"questions":[{"requestId":"que_drain_1","openedAt":"2026-05-13T00:00:00Z","request":{"id":"que_drain_1","header":"H","questions":[{"header":"H","question":"Q?","options":[{"label":"yes"},{"label":"no"}]}]}}]}}
+JSON
+  exit 0
+fi
+if [[ "\${1:-}" == "stream" ]]; then
+  sleep 30
+fi
+exit 0
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%42", "99999", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+
+			const deadline = Date.now() + 5000;
+			let lines: string[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					lines = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean);
+					if (lines.length > 0) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			expect(lines.length).toBeGreaterThan(0);
+			const ev = JSON.parse(lines[0]!);
+			expect(ev.pane_id).toBe("%42");
+			expect(ev.harness).toBe("pi");
+			expect(ev.event_type).toBe("question");
+			expect(ev.classifier_tag).toBe("pi-question");
+			expect(ev.request_id).toBe("que_drain_1");
+			expect(ev.question?.id).toBe("que_drain_1");
+			expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("empty questions response yields no wake row", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-empty-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then
+  echo '{"type":"response","id":1,"command":"questions","success":true,"data":{"available":true,"questions":[]}}'
+  exit 0
+fi
+if [[ "\${1:-}" == "stream" ]]; then
+  sleep 30
+fi
+exit 0
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%43", "99999", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			await sleep(800);
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			const lines = existsSync(wakeLog)
+				? readFileSync(wakeLog, "utf8").split("\n").filter(Boolean)
+				: [];
+			expect(lines.length).toBe(0);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+});
+
 // Compile-time use of pidAlive helper to avoid unused-import warnings in
 // future refactors. The runtime tests above intentionally don't poll the
 // fake parent's liveness since the watchdog isn't under test here.
