@@ -8,12 +8,14 @@ import {
 	appendBgChatMessages,
 	buildMonitorSessionGroups,
 	buildAgentRows,
+	clampMonitorUiToRows,
 	filteredMonitorSessionGroups,
 	monitorRecordLabel,
 	monitorTreeRows,
 	readTranscriptTail,
 	renderAgentBrowserTabs,
 	renderAgentInspector,
+	renderMonitorTree,
 	renderMonitorSessionDetail,
 	taskNumberById,
 	transcriptCompactRows,
@@ -375,22 +377,81 @@ test("Monitor session grouping derives pane, lane, and one-shot sessions", () =>
 	assert.equal(groups.find((group) => group.type === "pane")?.isActive, true);
 });
 
+test("Monitor pane fallback grouping uses full transcript path", () => {
+	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", {
+		kind: "pane",
+		paneId: undefined,
+		transcriptPath: "/tmp/pi-runtime/sessions/planner.jsonl",
+	});
+	const second = record("reviewer-arch", "reviewer-arch-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", {
+		kind: "pane",
+		paneId: undefined,
+		transcriptPath: "/tmp/pi-runtime/sessions/reviewer-arch.jsonl",
+	});
+
+	const groups = buildMonitorSessionGroups([first, second]);
+
+	assert.equal(groups.filter((group) => group.type === "pane").length, 2);
+	assert.deepEqual(groups.map((group) => group.records.length), [1, 1]);
+});
+
+test("Monitor corrupt records default to one-shot grouping without crashing", () => {
+	const corrupt = {
+		taskId: "reviewer-error-1700000000-aaaaaaaa",
+		agent: "reviewer-error",
+		task: "Inspect errors",
+		status: "completed",
+		createdAt: "2026-05-14T05:00:00.000Z",
+		sessionKey: "",
+	} as PaneTaskRecord;
+
+	const groups = buildMonitorSessionGroups([corrupt]);
+
+	assert.equal(groups.length, 1);
+	assert.equal(groups[0]!.type, "bg-one-shot");
+	assert.equal(groups[0]!.kind, "oneshot");
+});
+
 test("Monitor active/completed filter and tree expansion work", () => {
 	const running = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", paneId: "%1", status: "running", sessionMode: "resumed" });
 	const done = record("reviewer-doc", "reviewer-doc-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", { kind: "oneshot", status: "completed", sessionMode: "fresh" });
-	const groups = buildMonitorSessionGroups([running, done]);
+	const unknown = record("reviewer-error", "reviewer-error-1700000120-cccccccc", "2026-05-14T05:02:00.000Z", { kind: "oneshot", status: "unknown", sessionMode: "fresh" });
+	const groups = buildMonitorSessionGroups([running, done, unknown]);
 
-	assert.deepEqual(filteredMonitorSessionGroups(groups, "active").map((group) => group.agent), ["planner"]);
+	assert.deepEqual(filteredMonitorSessionGroups(groups, "active").map((group) => group.agent), ["reviewer-error", "planner"]);
 	assert.deepEqual(filteredMonitorSessionGroups(groups, "completed").map((group) => group.agent), ["reviewer-doc"]);
 
 	const rows = monitorTreeRows(groups, "all");
 	assert.equal(rows.filter((row) => row.kind === "section").length, 2);
-	assert.equal(rows.filter((row) => row.kind === "session").length, 2);
-	assert.equal(rows.filter((row) => row.kind === "task").length, 2);
+	assert.equal(rows.filter((row) => row.kind === "session").length, 3);
+	assert.equal(rows.filter((row) => row.kind === "task").length, 3);
 
 	const firstSession = rows.find((row) => row.kind === "session")!;
 	const collapsed = monitorTreeRows(groups, "all", new Set([firstSession.key]));
-	assert.equal(collapsed.filter((row) => row.kind === "task").length, 1);
+	assert.equal(collapsed.filter((row) => row.kind === "task").length, 2);
+});
+
+test("Monitor filter cycle reset moves selection to first visible row", () => {
+	const running = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", status: "running" });
+	const done = record("reviewer-doc", "reviewer-doc-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", { kind: "oneshot", status: "completed" });
+	const groups = buildMonitorSessionGroups([running, done]);
+	const rows = monitorTreeRows(groups, "active");
+	const ui = uiState({ monitorSelected: 3, monitorScroll: 99 });
+
+	ui.monitorSelected = 0;
+	ui.monitorScroll = 0;
+	ui.monitorSubtab = 0;
+	ui.inspectorScroll = 0;
+	clampMonitorUiToRows(ui, rows, 10);
+
+	assert.equal(ui.monitorSelected, 0);
+	assert.equal(ui.monitorScroll, 0);
+});
+
+test("Monitor empty tree renders dispatch hint", () => {
+	const rendered = renderMonitorTree([], [], new Set(), uiState({ tab: "monitor", pane: "list" }), 120, theme as any, 10).join("\n");
+
+	assert.match(rendered, /No tasks yet\. Dispatch via `subagent` or `\/agents`\./);
 });
 
 test("Monitor session selection shows aggregate detail", () => {
@@ -507,6 +568,28 @@ test("Monitor task Summary includes compact Transcript rows", async () => {
 
 	const summary = (await traceViewerItems(taskRecord))[0]!.text;
 	assert.match(summary, /Transcript\n----------\n05:00:00 → prompt Please inspect this\n05:00:01 ← assistant Working on it\n05:00:02 ← tool bash/);
+});
+
+test("Monitor compact Transcript handles missing and malformed JSONL", async () => {
+	const runtimeRoot = tempRuntime();
+	const missingPath = join(runtimeRoot, "missing.jsonl");
+	const missingRecord = record("planner", "planner-1700000000-missing", "2026-05-14T05:00:00.000Z", { task: "Missing transcript task", transcriptPath: missingPath });
+
+	assert.deepEqual(transcriptCompactRows(missingRecord), [
+		"05:00:00 → prompt Missing transcript task",
+		"--:--:-- ← error (transcript unavailable)",
+	]);
+	assert.match((await traceViewerItems(missingRecord))[0]!.text, /\(transcript unavailable\)/);
+
+	const malformedPath = join(runtimeRoot, "malformed.jsonl");
+	writeFileSync(malformedPath, "{not json\n");
+	const malformedRecord = record("planner", "planner-1700000000-malformed", "2026-05-14T05:00:00.000Z", { task: "Malformed transcript task", transcriptPath: malformedPath });
+
+	assert.deepEqual(transcriptCompactRows(malformedRecord), [
+		"05:00:00 → prompt Malformed transcript task",
+		"--:--:-- ← error (malformed transcript JSONL)",
+	]);
+	assert.match((await traceViewerItems(malformedRecord))[0]!.text, /\(malformed transcript JSONL\)/);
 });
 
 test("transcript tail preserves multiline assistant text and tool JSON structure", () => {

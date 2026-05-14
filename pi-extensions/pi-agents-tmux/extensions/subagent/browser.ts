@@ -819,12 +819,13 @@ function toolCallPreview(tool: any): string {
 export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): string[] {
 	const rows: string[] = [];
 	let sawPrompt = false;
+	let sawMalformedLine = false;
 	try {
 		const raw = record.transcriptPath ? fs.readFileSync(record.transcriptPath, "utf-8") : "";
 		for (const line of raw.split(/\r?\n/)) {
 			if (!line.trim()) continue;
 			let event: any;
-			try { event = JSON.parse(line); } catch { rows.push(transcriptCompactRow(undefined, "←", "error", line)); continue; }
+			try { event = JSON.parse(line); } catch { sawMalformedLine = true; continue; }
 			const inner = event?.event && typeof event.event === "object" ? event.event : event;
 			const innerType = typeof inner?.type === "string" ? inner.type : undefined;
 			const timestamp = transcriptEventTimestamp(event, inner);
@@ -865,8 +866,9 @@ export function transcriptCompactRows(record: PaneTaskRecord, maxRows = 200): st
 			if (innerType && (innerType.includes("error") || inner?.error)) rows.push(transcriptCompactRow(timestamp, "←", "error", inner.error ?? innerType));
 		}
 	} catch {
-		// Missing transcript still shows the submitted prompt below.
+		rows.push(transcriptCompactRow(undefined, "←", "error", "(transcript unavailable)"));
 	}
+	if (sawMalformedLine) rows.push(transcriptCompactRow(undefined, "←", "error", "(malformed transcript JSONL)"));
 	if (!sawPrompt && record.task?.trim()) rows.unshift(transcriptCompactRow(record.createdAt, "→", "prompt", record.task));
 	return rows.slice(-maxRows);
 }
@@ -1028,7 +1030,7 @@ function recordMonitorKind(record: PaneTaskRecord): "pane" | "oneshot" {
 }
 
 function monitorStatusIsActive(status: PaneTaskStatus | string | undefined): boolean {
-	return status === "queued" || status === "running";
+	return !monitorStatusIsTerminal(status);
 }
 
 function monitorStatusIsTerminal(status: PaneTaskStatus | string | undefined): boolean {
@@ -1039,7 +1041,7 @@ function monitorSessionKey(record: PaneTaskRecord): { id: string; type: MonitorS
 	const kind = recordMonitorKind(record);
 	if (kind === "pane") {
 		if (record.paneId?.trim()) return { id: `pane:${record.paneId.trim()}`, type: "pane" };
-		if (record.transcriptPath?.trim()) return { id: `pane-transcript:${path.dirname(record.transcriptPath.trim())}`, type: "pane" };
+		if (record.transcriptPath?.trim()) return { id: `pane-transcript:${record.transcriptPath.trim()}`, type: "pane" };
 		return { id: `pane-task:${record.taskId}`, type: "pane" };
 	}
 	if (record.sessionKey?.trim()) return { id: `bg-lane:${record.agent}:${record.sessionKey.trim()}`, type: "bg-lane" };
@@ -1129,7 +1131,7 @@ export function monitorTreeRows(groups: MonitorSessionGroup[], filter: MonitorFi
 	else if (filter === "completed") pushSection("Completed", filtered);
 	else {
 		pushSection("Active", groups.filter((group) => group.isActive));
-		pushSection("Completed", groups.filter((group) => !group.isActive));
+		pushSection("Completed", groups.filter((group) => group.isCompleted));
 	}
 	return rows;
 }
@@ -1145,6 +1147,15 @@ function selectedMonitorRow(rows: MonitorTreeRow[], ui: AgentBrowserUiState): Mo
 function selectedMonitorRowIndex(rows: MonitorTreeRow[], ui: AgentBrowserUiState): number {
 	const selected = selectedMonitorRow(rows, ui);
 	return selected ? rows.findIndex((row) => row.key === selected.key) : -1;
+}
+
+export function clampMonitorUiToRows(ui: AgentBrowserUiState, rows: MonitorTreeRow[], listRows: number): void {
+	const selectable = selectableMonitorRows(rows);
+	ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, selectable.length - 1)));
+	const selectedIndex = selectedMonitorRowIndex(rows, ui);
+	if (selectedIndex >= 0 && selectedIndex < ui.monitorScroll) ui.monitorScroll = selectedIndex;
+	if (selectedIndex >= 0 && selectedIndex >= ui.monitorScroll + listRows) ui.monitorScroll = selectedIndex - listRows + 1;
+	ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, rows.length - listRows)));
 }
 
 function monitorFilter(ui: AgentBrowserUiState): MonitorFilter {
@@ -1182,12 +1193,12 @@ function monitorSessionRowLabel(group: MonitorSessionGroup, theme: Theme): strin
 	return `${theme.fg("muted", monitorSessionKindLabel(group))}${theme.fg("dim", " · ")}${ansiMagenta(group.agent)}${modeSuffix}${meta}`;
 }
 
-function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
+export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
 	const filter = monitorFilter(ui);
 	const groups = rows.filter((row) => row.kind === "session").length;
 	const lines = [`${agentPaneTitle(theme, "Monitor", ui.pane === "list")} ${theme.fg("dim", `(${groups})`)}`, renderMonitorFilterBar(filter, width, theme), ""];
 	if (rows.length === 0 || selectableMonitorRows(rows).length === 0) {
-		lines.push(theme.fg("dim", "No agent task records yet."));
+		lines.push(theme.fg("dim", "No tasks yet. Dispatch via `subagent` or `/agents`."));
 		return lines;
 	}
 	if (ui.monitorScroll > 0) lines.push(theme.fg("dim", `↑ ${ui.monitorScroll} earlier`));
@@ -1621,12 +1632,7 @@ function createAgentsBrowserComponent(
 	const clampMonitor = () => {
 		const layout = getLayout();
 		const rows = currentMonitorRows();
-		const selectable = selectableMonitorRows(rows);
-		ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, selectable.length - 1)));
-		const selectedIndex = selectedMonitorRowIndex(rows, ui);
-		if (selectedIndex >= 0 && selectedIndex < ui.monitorScroll) ui.monitorScroll = selectedIndex;
-		if (selectedIndex >= 0 && selectedIndex >= ui.monitorScroll + layout.listRows) ui.monitorScroll = selectedIndex - layout.listRows + 1;
-		ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, rows.length - layout.listRows)));
+		clampMonitorUiToRows(ui, rows, layout.listRows);
 	};
 
 	const hasActiveTab = () => getActiveItems().length > 0;
