@@ -19,7 +19,7 @@ Ran 106 tests across 14 files.
 
 ## Status (session 1, retained)
 
-81 parity tests pass across 9 files. All eight bash scripts targeted for porting now have a TS sibling under the trampoline gate; default remains bash for every script. Daemon's `start` action is the only piece still routed to bash (intentional — see below).
+81 parity tests pass across 9 files. All eight bash scripts targeted for porting now have a TS sibling under the trampoline gate; default remains bash for every script. The daemon `start` action has since landed as a parity-tested TS run-loop + subscriber lifecycle (see below); its **runtime default** still forwards to the bash sibling until one full production cycle on TS, gated by `FLIGHTDECK_USE_TS_DAEMON_START=1` (or global `FLIGHTDECK_USE_TS=1`).
 
 ## Ports landed (with commit + parity scope)
 
@@ -38,7 +38,7 @@ Adds up to ~6000 LOC bash → ~3500 LOC TS so far.
 
 ## Out of scope this session
 
-**Daemon `start` action — bash remains canonical.** The TS daemon's `start` action does `exec` to the bash sibling. The run_loop (~470 LOC), per-harness subscriber lifecycle (~600 LOC), wake delivery (~150 LOC), signal traps, heartbeat, and max-lifetime self-exec aren't ported yet. This is intentional: keeping the running production poller on bash leaves zero risk to live flightdeck sessions while the lightweight CLI surfaces (status/events/ack/find-window/health/stop) flip independently.
+**Daemon `start` action — TS port landed, bash still the runtime default.** Session 2 left the run-loop unported; subsequent sessions completed it. `src/daemon/loop.ts`, `src/daemon/lifecycle.ts`, and `src/daemon/subscribers/{spawn,drain,index}.ts` are on `main` with parity tests, and the TS `start` action runs end-to-end when `FLIGHTDECK_USE_TS_DAEMON_START=1` is set. The bash sibling remains the unflagged default until one full production cycle on TS validates the port — same opt-in / opt-out pattern every other script uses. See `SKILL.md` § Scripts for the current gating language.
 
 ## Infrastructure landed
 
@@ -75,14 +75,14 @@ Adds up to ~6000 LOC bash → ~3500 LOC TS so far.
 - `5239b22` — .env loader parity + project-root memoization. Shells out to `set -a; source ...; env -0` for true bash parity (\${VAR:-fallback}, \$VAR). Caches project root per-process.
 - `fe5b3eb` — dep preflight + SIGINT/SIGTERM/SIGHUP handlers + state-dir memoization. New `src/shared/preflight.ts` with `preflightDeps()` and `onShutdown()`; wired into flightdeck-daemon CLI startup.
 - `53e1256` — doc-audit punchlist (21 findings across SKILL.md, README.md, tests/README.md, two pattern docs, two workflow docs, pi-flightdeck README, AGENTS.md).
-- `<this>` — daemon helper foundation: `src/daemon/{log,gc,wake-payload}.ts` with unit tests. Not yet reachable from the running daemon (still forwards to bash); next session composes them into a TS run loop.
+- `<this>` — daemon helper foundation: `src/daemon/{log,gc,wake-payload}.ts` with unit tests. Not yet reachable from the running daemon (still forwards to bash); later sessions composed them into the TS run loop now living at `src/daemon/{loop,lifecycle}.ts` + `src/daemon/subscribers/{spawn,drain,index}.ts` (gated on `FLIGHTDECK_USE_TS_DAEMON_START=1`).
 
 ## Remaining work
 
 | Phase | Task | Notes |
 |---|---|---|
-| execute | Daemon run_loop + subscribers + wake delivery | The other ~1500 LOC of daemon. Highest risk port. The foundation modules under `src/daemon/` are now in place; next session composes them into `src/daemon/loop.ts` + four `subscribers/<harness>.ts` files. |
-| execute | Async pane-poll batch (review-perf critical) | Pair with the daemon run-loop port — needs `Bun.spawn` async refactor that the same session will write. |
+| landed | Daemon run_loop + subscribers + wake delivery | TS port lives at `src/daemon/{loop,lifecycle}.ts` + `src/daemon/subscribers/{spawn,drain,index}.ts` with parity tests. Subscribers delegate the long-running bodies to `scripts/lib/subscribers.bash` so bash and TS daemons share one canonical implementation. Runtime default still forwards to bash until one full production cycle on `FLIGHTDECK_USE_TS_DAEMON_START=1`. |
+| execute | Async pane-poll batch (review-perf critical) | Needs the `Bun.spawn` async refactor; the daemon run-loop port made the structural changes that unblock this. |
 | execute | Native jq replacement for `*_LAST_ASSISTANT_JQ` (review-perf important) | Pair with async refactor; keep jq constants exported for parity-test corpus. |
 | execute | Freshness probe fold into read (review-perf important) | Same async refactor. |
 | test | Integration smoke under `FLIGHTDECK_USE_TS=1` | Extend `tests/live-wake.sh` to assert against TS path. Needs a live pi + tmux session. |
@@ -93,18 +93,16 @@ Adds up to ~6000 LOC bash → ~3500 LOC TS so far.
 
 ```bash
 cd /mnt/Tertiary/dev/vstack/flightdeck-ts-port/skills/flightdeck/lib/flightdeck-core
-bun test          # confirm 81 tests still green
+bun test          # confirm parity suite still green
 bun run typecheck # confirm clean
 
-# Continue daemon port: pick up the run_loop. Start by reading the bash
-# run_loop body and the four subscriber loops; sketch the TS structure
-# (state machine + cooperative async over child processes) before
-# writing code.
-
-# When all ports done, flip defaults one-by-one and run the live
-# integration test under each flip:
+# The daemon run-loop port has landed; remaining work is the
+# async pane-poll refactor + flipping per-script defaults to TS.
+# Run the live integration test under each individual flip before
+# changing the trampoline default:
 FLIGHTDECK_USE_TS_PROMPT_CLASSIFY=1 ./tests/live-wake.sh
 FLIGHTDECK_USE_TS_FLIGHTDECK_STATE=1 FLIGHTDECK_USE_TS_PROMPT_CLASSIFY=1 ./tests/live-wake.sh
+FLIGHTDECK_USE_TS_DAEMON_START=1 ./tests/live-wake.sh
 # ... etc
 ```
 
