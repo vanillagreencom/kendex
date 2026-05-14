@@ -166,19 +166,59 @@ pi_bridge_is_fresh() {
 # the caller's seen_qids dedup string so the future stream event is
 # treated as already-handled.
 #
+# Round-1 reviewer-error blocker (#37): fail open with explicit
+# diagnostics. Timeout the bridge call so a hung pi-bridge cannot
+# block the subscriber before it reaches `pi-bridge stream`; capture
+# exit code + stderr; validate the JSON envelope before iterating;
+# log structured tags on every failure mode so the operator can tell
+# drain-quiet from drain-broken.
+#
 # Usage:
 #   pi_subscriber_drain_questions <pane_id> <pi_bin> <sub_log> \
 #                                 <pi_target_args_arrayname> \
 #                                 <seen_qids_varname>
+#
+# Honors FD_ADAPTER_READ_TIMEOUT_SEC (default 2, matching pane-poll).
 # Requires WAKE_EVENTS_LOG and SESSION_LOCK in env.
 pi_subscriber_drain_questions() {
   local pane_id="$1" pi_bin="$2" sub_log="$3"
   local -n _pi_drain_target_args="$4"
   local -n _pi_drain_seen="$5"
-  local resp pending
-  resp=$("$pi_bin" questions "${_pi_drain_target_args[@]}" 2>/dev/null || true)
-  [[ -z "$resp" ]] && return 0
-  pending=$(jq -c '.data.questions // []' <<< "$resp" 2>/dev/null || echo '[]')
+  local drain_timeout="${FD_ADAPTER_READ_TIMEOUT_SEC:-2}"
+  local err_file resp rc stderr_tail excerpt pending
+  err_file=$(mktemp -t fd-pi-drain-err.XXXXXX)
+  # `timeout(1)` SIGTERMs the bridge after the deadline (exit 124),
+  # bounding the worst-case attach delay so even a hung pi-bridge
+  # falls through to the live stream. stderr is captured separately
+  # so a non-zero rc has actionable diagnostics.
+  resp=$(timeout "${drain_timeout}s" "$pi_bin" questions "${_pi_drain_target_args[@]}" 2>"$err_file")
+  rc=$?
+  if (( rc != 0 )); then
+    stderr_tail=$(tail -c 200 "$err_file" 2>/dev/null | tr '\n' ' ' || true)
+    rm -f "$err_file"
+    printf '%s [pi-sub-drain-error] pane=%s rc=%s stderr=%s\n' \
+      "$(date -Iseconds)" "$pane_id" "$rc" "${stderr_tail:-<empty>}" \
+      >> "$sub_log" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$err_file"
+  if [[ -z "$resp" ]]; then
+    printf '%s [pi-sub-drain-empty] pane=%s\n' \
+      "$(date -Iseconds)" "$pane_id" \
+      >> "$sub_log" 2>/dev/null || true
+    return 0
+  fi
+  # Validate JSON envelope shape before walking it. A malformed body
+  # would otherwise be silently swallowed by the inner `jq -c`.
+  if ! jq -e '.success == true' <<< "$resp" >/dev/null 2>&1 \
+     || ! jq -e '.data.questions | type == "array"' <<< "$resp" >/dev/null 2>&1; then
+    excerpt=$(printf '%s' "$resp" | head -c 200 | tr '\n' ' ')
+    printf '%s [pi-sub-drain-malformed] pane=%s excerpt=%s\n' \
+      "$(date -Iseconds)" "$pane_id" "${excerpt:-<empty>}" \
+      >> "$sub_log" 2>/dev/null || true
+    return 0
+  fi
+  pending=$(jq -c '.data.questions' <<< "$resp" 2>/dev/null || echo '[]')
   [[ -z "$pending" || "$pending" == "null" || "$pending" == "[]" ]] && return 0
   local item qid payload qhash
   while IFS= read -r item; do

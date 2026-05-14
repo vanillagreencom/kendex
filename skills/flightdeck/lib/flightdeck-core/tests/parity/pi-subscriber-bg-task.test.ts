@@ -289,6 +289,146 @@ exit 0
 		}
 	});
 
+	// Round-1 reviewer-error blocker (#37): drain must fail open with
+	// observable diagnostics when the bridge call errors, hangs, or
+	// returns malformed JSON. Each case writes a structured tag to the
+	// per-pane sub_log and never blocks the live stream branch.
+	test("non-zero pi-bridge questions exit → [pi-sub-drain-error], no wake row", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-err-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const subLog = join(stateDir, "daemon.log.pi-sub-44");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then
+  echo "bridge unreachable: ECONNREFUSED" >&2
+  exit 2
+fi
+if [[ "\${1:-}" == "stream" ]]; then sleep 30; fi
+exit 0
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%44", "99999", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			while (Date.now() < deadline) {
+				if (existsSync(subLog) && readFileSync(subLog, "utf8").includes("[pi-sub-drain-error]")) break;
+				await sleep(50);
+			}
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			const logBody = existsSync(subLog) ? readFileSync(subLog, "utf8") : "";
+			expect(logBody).toContain("[pi-sub-drain-error]");
+			expect(logBody).toContain("pane=%44");
+			expect(logBody).toContain("rc=2");
+			expect(logBody).toContain("ECONNREFUSED");
+			const wake = existsSync(wakeLog) ? readFileSync(wakeLog, "utf8").split("\n").filter(Boolean) : [];
+			expect(wake.length).toBe(0);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("hanging pi-bridge questions → timeout, [pi-sub-drain-error] rc=124", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-hang-"));
+		stateDirs.push(stateDir);
+		const subLog = join(stateDir, "daemon.log.pi-sub-45");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then sleep 30; fi
+if [[ "\${1:-}" == "stream" ]]; then sleep 30; fi
+exit 0
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			// Cap the drain timeout to 1s so the test completes quickly.
+			const env = subscriberEnv(bridgeDir, stateDir, { FD_ADAPTER_READ_TIMEOUT_SEC: "1" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%45", "99999", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 4000;
+			while (Date.now() < deadline) {
+				if (existsSync(subLog) && readFileSync(subLog, "utf8").includes("[pi-sub-drain-error]")) break;
+				await sleep(50);
+			}
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			const logBody = existsSync(subLog) ? readFileSync(subLog, "utf8") : "";
+			expect(logBody).toContain("[pi-sub-drain-error]");
+			expect(logBody).toContain("rc=124");
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("malformed JSON from pi-bridge questions → [pi-sub-drain-malformed], no wake row", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-malformed-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const subLog = join(stateDir, "daemon.log.pi-sub-46");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then
+  # Valid JSON but wrong envelope: success=false, missing data.questions array.
+  echo '{"type":"response","success":false,"error":"no bridge"}'
+  exit 0
+fi
+if [[ "\${1:-}" == "stream" ]]; then sleep 30; fi
+exit 0
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%46", "99999", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			while (Date.now() < deadline) {
+				if (existsSync(subLog) && readFileSync(subLog, "utf8").includes("[pi-sub-drain-malformed]")) break;
+				await sleep(50);
+			}
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			const logBody = existsSync(subLog) ? readFileSync(subLog, "utf8") : "";
+			expect(logBody).toContain("[pi-sub-drain-malformed]");
+			expect(logBody).toContain("no bridge");
+			const wake = existsSync(wakeLog) ? readFileSync(wakeLog, "utf8").split("\n").filter(Boolean) : [];
+			expect(wake.length).toBe(0);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
 	test("empty questions response yields no wake row", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-drain-empty-"));
 		stateDirs.push(stateDir);
