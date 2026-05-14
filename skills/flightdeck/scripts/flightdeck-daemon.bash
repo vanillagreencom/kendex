@@ -171,6 +171,11 @@ start spawn modes:
                        harnesses where backgrounding is unreliable.
   --foreground       — keep the process attached. Used internally by both
                        spawn modes; pass directly for ops debugging.
+
+start exit codes:
+  1 lock/spawn/runtime failure
+  2 usage, missing dependency/session, or inner-pane validation failure
+  4 stale --master pane (re-resolve from $TMUX_PANE and retry once)
 EOF
 exit 2; }
 
@@ -440,7 +445,7 @@ validate_master_target_alive() {
   master_id=$(resolve_pane_id "$target" 2>/dev/null || true)
   if [[ -z "$master_id" ]] || ! pane_alive "$master_id"; then
     echo "error: master pane '$target' does not exist; pass --master \"\$TMUX_PANE\" or run 'tmux list-panes -a'" >&2
-    exit 2
+    exit 4
   fi
 }
 

@@ -53,7 +53,7 @@ function validateMasterTargetAlive(target: string): void {
 	const masterId = resolvePaneId(target);
 	if (!masterId || !cache.alive(masterId)) {
 		process.stderr.write(`error: master pane '${target}' does not exist; pass --master "$TMUX_PANE" or run 'tmux list-panes -a'\n`);
-		process.exit(2);
+		process.exit(4);
 	}
 }
 

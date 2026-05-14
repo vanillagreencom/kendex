@@ -418,18 +418,29 @@ function cmdList(args: string[]): void {
 		if (args[i] === "--format") format = args[++i] ?? "json";
 		else die(`Unknown flag: ${args[i]}`);
 	}
+	const rows = entryRows();
+	const liveRows = (): Record<string, unknown>[] => {
+		const live = tmuxLivePaneIds();
+		return rows.filter((row) => typeof row.pane_id === "string" && live.has(row.pane_id));
+	};
 	switch (format) {
 		case "json":
-			process.stdout.write(`${JSON.stringify(entryRows())}\n`);
+			process.stdout.write(`${JSON.stringify(rows)}\n`);
 			break;
 		case "inner-panes":
-			process.stdout.write(`${entryRows().map((row) => row.pane_id ?? row.pane_target ?? "").filter(Boolean).join(",")}\n`);
+			process.stdout.write(`${rows.map((row) => row.pane_id ?? row.pane_target ?? "").filter(Boolean).join(",")}\n`);
+			break;
+		case "inner-panes-live":
+			process.stdout.write(`${liveRows().map((row) => row.pane_id ?? "").filter(Boolean).join(",")}\n`);
 			break;
 		case "inner-harnesses":
-			process.stdout.write(`${entryRows().map((row) => String(row.harness ?? "")).join(",")}\n`);
+			process.stdout.write(`${rows.map((row) => String(row.harness ?? "")).join(",")}\n`);
+			break;
+		case "inner-harnesses-live":
+			process.stdout.write(`${liveRows().map((row) => String(row.harness ?? "")).join(",")}\n`);
 			break;
 		default:
-			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses)`);
+			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses, inner-panes-live, inner-harnesses-live)`);
 	}
 }
 

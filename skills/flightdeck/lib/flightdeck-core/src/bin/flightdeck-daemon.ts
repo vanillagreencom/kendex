@@ -97,6 +97,11 @@ function usage(): never {
   flightdeck-daemon find-window --session <S>
   flightdeck-daemon events      --session <S>
   flightdeck-daemon ack         --session <S>
+
+start exit codes:
+  1 lock/spawn/runtime failure
+  2 usage, missing dependency/session, or inner-pane validation failure
+  4 stale --master pane (re-resolve from $TMUX_PANE and retry once)
 `);
 	process.exit(2);
 }

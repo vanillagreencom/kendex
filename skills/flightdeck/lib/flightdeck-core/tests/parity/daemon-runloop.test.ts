@@ -88,7 +88,7 @@ describe("daemon run-loop (TS)", () => {
 	test("start refuses a stale master pane before entering the run loop", () => {
 		for (const useTs of [false, true]) {
 			const r = runDaemon("start", ["--master", "%999999", "--inner", innerPaneId, "--foreground"], useTs);
-			expect(r.status).not.toBe(0);
+			expect(r.status).toBe(4);
 			expect(r.stderr).toContain("error: master pane '%999999' does not exist; pass --master \"$TMUX_PANE\" or run 'tmux list-panes -a'");
 			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
 			expect(existsSync(pidFile)).toBe(false);

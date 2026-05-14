@@ -215,6 +215,33 @@ describe("pane-registry parity", () => {
 		expect(b.stdout.trim().split(",").sort()).toEqual(a.stdout.trim().split(",").sort());
 	});
 
+	test("list --format inner-panes-live filters stale pane_ids and keeps harnesses aligned", () => {
+		for (const repo of [bashRepo, tsRepo]) {
+			const useTs = repo === tsRepo;
+			const statePath = makeShimState(repo, {
+				panes: {
+					"%210": { pane_index: 0, path: "/tmp/live-a", window_id: "@21", window_index: 21, window_name: "live-a" },
+					"%211": { pane_index: 0, path: "/tmp/live-b", window_id: "@22", window_index: 22, window_name: "live-b" },
+				},
+				session: "test-session",
+				windows: { "@21": { index: 21, name: "live-a" }, "@22": { index: 22, name: "live-b" } },
+			});
+			runShim(useTs, repo, statePath, ["init-entry", "LIVE-A", "--title", "Live A", "--kind", "adhoc", "--cwd", "/tmp/live-a", "--window", "21", "--harness", "pi", "--pane-id", "%210", "--pane-target", "test-session:21.0"]);
+			runShim(useTs, repo, statePath, ["init-entry", "STALE", "--title", "Stale", "--kind", "adhoc", "--cwd", "/tmp/stale", "--window", "23", "--harness", "claude", "--pane-id", "%999", "--pane-target", "test-session:23.0"]);
+			runShim(useTs, repo, statePath, ["init-entry", "LIVE-B", "--title", "Live B", "--kind", "adhoc", "--cwd", "/tmp/live-b", "--window", "22", "--harness", "codex", "--pane-id", "%211", "--pane-target", "test-session:22.0"]);
+		}
+		const bashState = join(bashRepo, "shim-state.json");
+		const tsState = join(tsRepo, "shim-state.json");
+		const aPanes = runShim(false, bashRepo, bashState, ["list", "--format", "inner-panes-live"]);
+		const bPanes = runShim(true, tsRepo, tsState, ["list", "--format", "inner-panes-live"]);
+		const aHarnesses = runShim(false, bashRepo, bashState, ["list", "--format", "inner-harnesses-live"]);
+		const bHarnesses = runShim(true, tsRepo, tsState, ["list", "--format", "inner-harnesses-live"]);
+		expect(aPanes.stdout.trim()).toBe("%210,%211");
+		expect(bPanes.stdout.trim()).toBe("%210,%211");
+		expect(aHarnesses.stdout.trim()).toBe("pi,codex");
+		expect(bHarnesses.stdout.trim()).toBe("pi,codex");
+	});
+
 	test("init-entry writes normalized adhoc entry without legacy issue projection", () => {
 		for (const repo of [bashRepo, tsRepo]) {
 			const useTs = repo === tsRepo;

@@ -6,7 +6,7 @@
 #   pane-registry init-entry <ENTRY_ID> --title <T> --kind adhoc|issue|workflow --cwd <path> --window <N> --harness <h> [--worktree <path>] [--pr <N>]
 #   pane-registry init <ISSUE> --window <name> --harness <h> --worktree <path> [--pane-index <N>] [--pr <N>]
 #                                  [--oc-url <URL> --oc-session-id <ID> [--oc-port <N>]]
-#   pane-registry list [--format json|inner-panes|inner-harnesses]
+#   pane-registry list [--format json|inner-panes|inner-harnesses|inner-panes-live|inner-harnesses-live]
 #   pane-registry get <ISSUE>
 #   pane-registry set-state <ISSUE> <state>             # waiting|prompting|submitting|merge-ready|merged|aborted|dead
 #   pane-registry set-substate <ISSUE> <substate>      # tag string from prompt-classify
@@ -357,12 +357,33 @@ case "$ACTION" in
         # `flightdeck-daemon start --inner`. Prefer immutable pane_id.
         "$FD_STATE" tracked-entries | jq -r 'to_entries | map(.value.pane_id // .value.pane_target // empty) | join(",")'
         ;;
+      inner-panes-live)
+        # Same wire format as inner-panes, but only rows whose stable
+        # pane_id is currently present in tmux. Respawn paths use this so
+        # stale/dead registry rows cannot abort supervision of live panes.
+        live_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)
+        live_ids=$(jq -Rsc 'split("\n") | map(select(length > 0))' <<< "$live_panes")
+        "$FD_STATE" tracked-entries | jq -r --argjson live "$live_ids" '
+          to_entries
+          | map(select((.value.pane_id // "") as $pid | ($pid != "" and (($live | index($pid)) != null))) | .value.pane_id)
+          | join(",")'
+        ;;
       inner-harnesses)
         # Comma-separated harness list in the same order as `inner-panes`.
         "$FD_STATE" tracked-entries | jq -r 'to_entries | map(.value.harness // "") | join(",")'
         ;;
+      inner-harnesses-live)
+        # Harness list matching inner-panes-live order; pass together to
+        # `flightdeck-daemon start --inner/--inner-harnesses`.
+        live_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)
+        live_ids=$(jq -Rsc 'split("\n") | map(select(length > 0))' <<< "$live_panes")
+        "$FD_STATE" tracked-entries | jq -r --argjson live "$live_ids" '
+          to_entries
+          | map(select((.value.pane_id // "") as $pid | ($pid != "" and (($live | index($pid)) != null))) | (.value.harness // ""))
+          | join(",")'
+        ;;
       *)
-        echo "Unknown format: $FORMAT (supported: json, inner-panes, inner-harnesses)" >&2
+        echo "Unknown format: $FORMAT (supported: json, inner-panes, inner-harnesses, inner-panes-live, inner-harnesses-live)" >&2
         exit 2
         ;;
     esac

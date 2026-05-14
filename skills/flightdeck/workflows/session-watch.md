@@ -51,18 +51,45 @@ Issue mode may keep legacy states for compatibility, but the issue workflow maps
 4. Spawn or attach the daemon idempotently after checking daemon status for live work:
    ```bash
    MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
-   INNER_PANES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-panes)"
-   INNER_HARNESSES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-harnesses)"
+   INNER_PANES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-panes-live)"
+   INNER_HARNESSES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-harnesses-live)"
    if [[ -n "$INNER_PANES" ]] && ! .agents/skills/flightdeck/scripts/flightdeck-daemon status --session "$SESSION" >/dev/null 2>&1; then
+     daemon_start_err="$(mktemp -t flightdeck-daemon-start.XXXXXX)"
+     daemon_start_rc=0
+     daemon_respawn_failed=0
      .agents/skills/flightdeck/scripts/flightdeck-daemon start \
        --session "$SESSION" \
        --master "$MASTER_PANE" \
        --master-harness "$MASTER_HARNESS" \
        --inner "$INNER_PANES" \
-       --inner-harnesses "$INNER_HARNESSES"
+       --inner-harnesses "$INNER_HARNESSES" 2>"$daemon_start_err" || daemon_start_rc=$?
+     if (( daemon_start_rc == 4 )); then
+       MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
+       daemon_start_rc=0
+       .agents/skills/flightdeck/scripts/flightdeck-daemon start \
+         --session "$SESSION" \
+         --master "$MASTER_PANE" \
+         --master-harness "$MASTER_HARNESS" \
+         --inner "$INNER_PANES" \
+         --inner-harnesses "$INNER_HARNESSES" 2>"$daemon_start_err" || daemon_start_rc=$?
+     fi
+     if (( daemon_start_rc == 1 )) && .agents/skills/flightdeck/scripts/flightdeck-daemon status --session "$SESSION" >/dev/null 2>&1; then
+       echo "daemon-respawn-raced session=$SESSION"
+       daemon_start_rc=0
+     fi
+     if (( daemon_start_rc != 0 )); then
+       cat "$daemon_start_err" >&2
+       echo "daemon-respawn-failed session=$SESSION rc=$daemon_start_rc" >&2
+       daemon_respawn_failed=1
+     fi
+     rm -f "$daemon_start_err"
+     if (( daemon_respawn_failed == 1 )); then
+       # Do NOT yield/end this turn. The master loop is not armed for wakes.
+       return 1 2>/dev/null || exit 1
+     fi
    fi
    ```
-   On every watch tick with live tracked entries, master MUST check `flightdeck-daemon status --session "$SESSION"`. If it reports `no daemon`, master MUST respawn with the current alive inner pane list from `pane-registry list --format inner-panes` / `inner-harnesses`, then log the respawn in the cycle notes. `flightdeck-daemon start` remains bash-default unless its opt-in TS gate is set; other daemon actions may run through the TS port.
+   On every watch tick with live tracked entries, master MUST check `flightdeck-daemon status --session "$SESSION"`. If it reports `no daemon`, master MUST respawn with the current alive inner pane list from `pane-registry list --format inner-panes-live` / `inner-harnesses-live`, capture the `flightdeck-daemon start` exit code + stderr, and log the respawn in the cycle notes. Exit `4` means stale `--master`: re-resolve from `$TMUX_PANE` and retry once. Exit `1` may be a lock race: if `flightdeck-daemon status` then reports running, log `daemon-respawn-raced` and continue. Any remaining non-zero exit must surface `daemon-respawn-failed` to the user; do NOT yield/end the turn because the master loop is not armed for wakes. `flightdeck-daemon start` remains bash-default unless its opt-in TS gate is set; other daemon actions may run through the TS port.
 5. Acquire the master-busy lock before processing:
    ```bash
    .agents/skills/flightdeck/scripts/flightdeck-state master-busy lock --owner-pid "$MASTER_OWNER_PID"
@@ -184,7 +211,7 @@ If `paused_for_user` is set, do not release/yield as a normal cycle; wait for th
 
 On re-entry, `flightdeck-state init` is idempotent. Reconcile entries, re-poll through `pane-registry list --format json`, treat persisted state as a hint, and resume at § 2.
 
-Compaction recovery MUST verify daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with the current alive inner pane list and matching harness list. Log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
+Compaction recovery MUST verify daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with `pane-registry list --format inner-panes-live` and the matching `inner-harnesses-live` list. Capture `flightdeck-daemon start` exit code + stderr using the § 1 contract: exit `4` → re-resolve master from `$TMUX_PANE` and retry once; exit `1` + `flightdeck-daemon status` running → log `daemon-respawn-raced` and proceed; any remaining failure → surface `daemon-respawn-failed` and do NOT yield/end the turn. On success, log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
 
 ---
 
