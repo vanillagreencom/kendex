@@ -14,6 +14,7 @@ import {
 	readTranscriptTail,
 	renderAgentBrowserTabs,
 	renderAgentInspector,
+	renderMonitorSessionDetail,
 	taskNumberById,
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
@@ -389,6 +390,35 @@ test("Monitor active/completed filter and tree expansion work", () => {
 	const firstSession = rows.find((row) => row.kind === "session")!;
 	const collapsed = monitorTreeRows(groups, "all", new Set([firstSession.key]));
 	assert.equal(collapsed.filter((row) => row.kind === "task").length, 1);
+});
+
+test("Monitor session selection shows aggregate detail", () => {
+	const first = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", {
+		kind: "pane",
+		paneId: "%1",
+		sessionMode: "resumed",
+		status: "completed",
+		transcriptPath: "/tmp/planner-session.jsonl",
+		usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.01, contextTokens: 50, turns: 1 },
+	});
+	const second = record("planner", "planner-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", {
+		kind: "pane",
+		paneId: "%1",
+		sessionMode: "resumed",
+		status: "running",
+		usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.02, contextTokens: 5, turns: 2 },
+	});
+	const group = buildMonitorSessionGroups([first, second])[0]!;
+	const rendered = renderMonitorSessionDetail(group, taskNumberById([first, second]), uiState({ tab: "monitor" }), 140, 40, theme as any).join("\n");
+	const plain = rendered.replace(/\x1b\[[0-9;]*m/g, "");
+
+	assert.match(plain, /pane · planner · resumed/);
+	assert.match(plain, /Session type:\s+pane/);
+	assert.match(plain, /Tasks:\s+2 tasks · completed:1 · running:1/);
+	assert.match(plain, /Usage:/);
+	assert.match(plain, /Pane ID:\s+%1/);
+	assert.match(plain, /Transcript:\s+\/tmp\/planner-session\.jsonl/);
+	assert.match(plain, /Task #2 · \d{2}:\d{2} · bbbbbbbb · running/);
 });
 
 test("Agents tab rows are flat static catalog entries", () => {
