@@ -2,42 +2,6 @@
 
 Cross-harness distribution system for AI coding skills, agents, hooks, and Pi extensions. Installs into Claude Code, Cursor, OpenCode, Codex, and Pi via a Rust CLI.
 
-## Active worktree: `flightdeck-ts-port`
-
-This worktree is the in-progress TypeScript port of the flightdeck skill
-scripts (`skills/flightdeck/lib/flightdeck-core/`). Context lives in
-`docs/work-in-progress/flightdeck-ts-port.md` and the review reports
-(`review-{perf,bugs,xharness,docs}.md`, `review-triage.md`,
-`CONTINUATION-HANDOFF.md`) under the same folder.
-
-Rules for any agent landing here:
-
-- **Default remains bash.** Every ported script ships behind
-  `FLIGHTDECK_USE_TS=1` (global) or `FLIGHTDECK_USE_TS_<SCRIPT>=1`
-  (per-script). Do NOT flip per-script defaults to TS without live
-  `tests/live-wake.sh` green under the same gate.
-- **`flightdeck-daemon start` always forwards to bash** until the
-  run-loop + subscriber lifecycle port lands.
-- **Parity tests are mandatory** for every TS port. Before any commit
-  that touches `lib/flightdeck-core/`, run
-  `cd skills/flightdeck/lib/flightdeck-core && bun test && bun run typecheck`.
-- **Do not delete the `.bash` siblings.** They are the canonical bodies
-  while the port stabilizes. Removal happens after one full production
-  cycle on TS defaults.
-- **Never touch harness mirrors.** Never search, read, or modify files in
-  `.agents/`, `.claude/`, `.opencode/`, or `.pi/`; they are installed
-  harness directories for repo use, not canonical packages. Work in
-  `agents/`, `skills/`, `hooks/`, and `pi-extensions/` only.
-- **New tmux tab/window requests.** Create a new tmux window in the current
-  session, never split the active pane. Use Flightdeck session tooling for
-  launch/attach and harness IO; persist `%pane_id`/`#{window_id}` and talk via
-  harness adapters (`pi-bridge`, OpenCode HTTP, Claude channels, Codex bridge)
-  before tmux fallback.
-- **flock semantics.** Use the helpers in
-  `lib/flightdeck-core/src/state/locking.ts`. The naive
-  `spawnSync("flock", ["-x", String(fd), "true"])` pattern is a no-op;
-  read the file header before adding new locked critical sections.
-
 ## Repo Layout
 
 ```
@@ -220,6 +184,10 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 - **Verify after refresh.** `vstack refresh -v` prints per-item `old→new` hash. `vstack verify [-g] [name…]` confirms source matches lock and byte-matches install dir for Pi packages. Use both before claiming a change is live.
 - **Docs and instruction payloads ship with the code change.** Any change to a hook, skill, agent, or Pi extension must update — in the same commit — affected READMEs, AGENTS.md, `vstack.toml`, `.env.local.example`, `package.json`, agent instruction payloads (`appendSystem` files / before_agent_start hook prose), and any cross-referencing docs. A behavior change without its docs/instructions update is incomplete.
 - **Edit skills directly.** Edit `skills/<name>/SKILL.md` in place. No separate `rules/` directories or per-skill `AGENTS.md` files.
+- **Never touch harness mirror dirs.** `.agents/`, `.claude/`, `.opencode/`, `.pi/`, and `.codex/` are installed harness outputs, not canonical packages. Edit only `agents/`, `skills/`, `hooks/`, and `pi-extensions/`; harness mirrors regenerate on `vstack add` / `vstack refresh`.
+- **New tmux windows, never split the active pane.** Create a new tmux window in the current session for any spawned work. Use Flightdeck session tooling for launch/attach and harness adapters (`pi-bridge`, OpenCode HTTP, Claude channels, Codex bridge) before falling back to raw tmux.
+- **Parity tests mandatory for `lib/flightdeck-core/`.** Before any commit touching `skills/flightdeck/lib/flightdeck-core/`, run `cd skills/flightdeck/lib/flightdeck-core && bun test && bun run typecheck`. Bash and TS siblings must stay in lock-step until the bash siblings are formally retired.
+- **flock semantics in flightdeck.** Use the helpers in `skills/flightdeck/lib/flightdeck-core/src/state/locking.ts`. The naive `spawnSync("flock", ["-x", String(fd), "true"])` pattern is a no-op; read the file header before adding new locked critical sections.
 - **Always create vstack worktrees via the worktree skill.** Use `skills/worktree/scripts/worktree create <id>` (not raw `git worktree add`) so `.env.local`, harness mirror dirs, bot identity, and per-worktree config are wired in.
 - **READMEs are user-facing only.** Describe what the thing is, how to use it, features, settings/options, and install/setup. Technical/development detail goes in `DEVELOPMENT.md`; agent skill instructions live in the matching `SKILL.md`.
 - **Pi hook parity.** Pi gets its hooks via the `pi-extensions/pi-hooks` extension (native TS port of `hooks/*.sh` against Pi's `tool_call`/`tool_result`/`turn_end` events). Any change to a hook script must land in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
