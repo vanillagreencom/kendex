@@ -34,12 +34,17 @@ import {
 	ansiGreen,
 	ansiMagenta,
 	ansiYellow,
+	COMPLETION_SUMMARY_UNAVAILABLE,
 	compactPath,
+	completionBodyWithoutPromptEcho,
 	divider,
+	formatUsageStats,
 	formatUsageStatsForDashboard,
 	inactivePill,
 	oneLinePreview,
+	shortTaskSuffix,
 	simpleFrame,
+	textFromMessageContent,
 } from "./format.js";
 import {
 	ensurePersistentPane,
@@ -569,7 +574,12 @@ interface AgentBrowserRow {
 	agent: AgentConfig;
 	item?: SubagentDashboardItem;
 	label: string;
+	record?: PaneTaskRecord;
+	rowType: "agent" | "task";
+	taskNumber?: number;
 }
+
+const RECENT_TASK_CHILD_LIMIT = 5;
 
 function dashboardItemSearchText(item: SubagentDashboardItem, label: string): string {
 	return [
@@ -584,25 +594,71 @@ function dashboardItemSearchText(item: SubagentDashboardItem, label: string): st
 	].join(" ").toLowerCase();
 }
 
-function buildAgentRows(agents: AgentConfig[], query: string, statuses: Map<string, AgentPaneStatus>, activeItems: SubagentDashboardItem[]): AgentBrowserRow[] {
-	const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	const agentByName = new Map(agents.map((agent) => [agent.name, agent]));
-	const labels = dashboardDisplayLabels(activeItems);
-	const rows: AgentBrowserRow[] = [];
-	const agentsWithActivity = new Set<string>();
-	for (const item of sortDashboardItems(activeItems)) {
-		const agent = agentByName.get(item.agent);
-		if (!agent) continue;
-		const label = labels.get(item.taskId) ?? item.agent;
-		const searchText = `${agentSearchText(agent, statuses.get(agent.name))} ${dashboardItemSearchText(item, label)}`;
-		if (tokens.length > 0 && !tokens.every((token) => searchText.includes(token))) continue;
-		agentsWithActivity.add(agent.name);
-		rows.push({ agent, item, label });
+function dashboardItemFromTaskRecord(record: PaneTaskRecord): SubagentDashboardItem {
+	const terminal = record.status === "completed" || record.status === "failed" || record.status === "blocked" || record.status === "needs_completion";
+	const message = record.summary?.trim()
+		? record.summary
+		: terminal
+			? COMPLETION_SUMMARY_UNAVAILABLE
+			: record.task || record.diagnostics?.at(-1);
+	return {
+		agent: record.agent,
+		artifacts: Boolean(record.transcriptPath || record.completionArchivePath || record.outboxFile || record.doneFile),
+		completedAt: record.completedAt,
+		kind: record.kind ?? (record.paneId || record.inboxFile || record.outboxFile || record.doneFile ? "pane" : "oneshot"),
+		message,
+		model: record.model,
+		paneId: record.paneId,
+		startedAt: record.createdAt,
+		status: record.status,
+		task: record.task,
+		taskId: record.taskId,
+		transcriptPath: record.transcriptPath,
+		updatedAt: record.updatedAt ?? record.completedAt ?? record.createdAt,
+		usage: record.usage,
+	};
+}
+
+function taskRecordsByAgent(taskRegistry: PaneTaskRegistry): Map<string, PaneTaskRecord[]> {
+	const out = new Map<string, PaneTaskRecord[]>();
+	for (const record of sortedHistoryRecords(taskRegistry)) {
+		const list = out.get(record.agent) ?? [];
+		list.push(record);
+		out.set(record.agent, list);
 	}
-	const catalogAgents = sortAgentsForUnifiedView(filterAgentsForBrowser(agents, query, statuses), statuses, activeItems);
+	return out;
+}
+
+export function buildAgentRows(agents: AgentConfig[], query: string, statuses: Map<string, AgentPaneStatus>, activeItems: SubagentDashboardItem[], taskRegistry: PaneTaskRegistry = {}): AgentBrowserRow[] {
+	const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	const activeByTask = new Map(activeItems.map((item) => [item.taskId, item]));
+	const activeByAgent = activeItemsByAgent(activeItems);
+	const recordsByAgent = taskRecordsByAgent(taskRegistry);
+	const taskNumbers = taskNumberById(Object.values(taskRegistry));
+	const rows: AgentBrowserRow[] = [];
+	const catalogAgents = sortAgentsForUnifiedView(agents, statuses, activeItems);
 	for (const agent of catalogAgents) {
-		if (agentsWithActivity.has(agent.name)) continue;
-		rows.push({ agent, label: agent.name });
+		const records = recordsByAgent.get(agent.name) ?? [];
+		const latestRecord = records[0];
+		const activeItem = activeByAgent.get(agent.name);
+		const agentItem = activeItem ?? (latestRecord ? dashboardItemFromTaskRecord(latestRecord) : undefined);
+		const childRows = records.slice(0, RECENT_TASK_CHILD_LIMIT).map((record): AgentBrowserRow => ({
+			agent,
+			item: activeByTask.get(record.taskId) ?? dashboardItemFromTaskRecord(record),
+			label: `#${taskNumbers.get(record.taskId) ?? "?"} · ${recordClockTime(record)} · ${shortTaskSuffix(record.taskId)}`,
+			record,
+			rowType: "task",
+			taskNumber: taskNumbers.get(record.taskId),
+		}));
+		const agentSearch = `${agentSearchText(agent, statuses.get(agent.name))} ${agentItem ? dashboardItemSearchText(agentItem, agent.name) : ""}`.toLowerCase();
+		const matchingChildren = childRows.filter((row) => {
+			const text = `${row.label} ${row.record?.task ?? ""} ${row.record?.summary ?? ""} ${row.record?.taskId ?? ""} ${row.record?.transcriptPath ?? ""}`.toLowerCase();
+			return tokens.length === 0 || tokens.every((token) => text.includes(token) || agentSearch.includes(token));
+		});
+		const includeAgent = tokens.length === 0 || tokens.every((token) => agentSearch.includes(token)) || matchingChildren.length > 0;
+		if (!includeAgent) continue;
+		rows.push({ agent, item: agentItem, label: agent.name, record: latestRecord, rowType: "agent", taskNumber: latestRecord ? taskNumbers.get(latestRecord.taskId) : undefined });
+		rows.push(...matchingChildren);
 	}
 	return rows;
 }
@@ -651,10 +707,14 @@ function renderAgentList(rows: AgentBrowserRow[], statuses: Map<string, AgentPan
 		const selected = index === ui.selected;
 		const agent = rowInfo.agent;
 		const status = agentStatus(agent, statuses.get(agent.name));
-		const marker = " ";
-		const name = ansiMagenta(selected ? theme.bold(rowInfo.label) : rowInfo.label);
+		const marker = rowInfo.rowType === "task" ? theme.fg("dim", "  └ ") : " ";
+		const name = rowInfo.rowType === "task"
+			? theme.fg("muted", selected ? theme.bold(rowInfo.label) : rowInfo.label)
+			: ansiMagenta(selected ? theme.bold(rowInfo.label) : rowInfo.label);
 		const icon = rowInfo.item ? dashboardStatusIcon(rowInfo.item.status, theme) : agentStatusIcon(status, theme);
-		const meta = rowInfo.item ? `${theme.fg("dim", " · ")}${dashboardStatusText(rowInfo.item, theme)}` : "";
+		const meta = rowInfo.rowType === "task"
+			? rowInfo.item?.kind === "pane" && rowInfo.item.transcriptPath ? theme.fg("dim", " · shared transcript") : ""
+			: rowInfo.item ? `${theme.fg("dim", " · ")}${dashboardStatusText(rowInfo.item, theme)}` : "";
 		const row = truncateToWidth(`${marker}${icon} ${name}${meta}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
 	}
@@ -715,7 +775,7 @@ export function activeDashboardItems(items: SubagentDashboardItem[]): SubagentDa
 	return sortDashboardItems(items);
 }
 
-function readTranscriptTail(transcriptPath: string | undefined, maxLines: number): string[] {
+export function readTranscriptTail(transcriptPath: string | undefined, maxLines: number): string[] {
 	if (!transcriptPath) return [];
 	// Pi's --mode json stream emits ~50-100x more streaming-delta events
 	// (message_update, tool_execution_update) than terminal ones, and the
@@ -741,10 +801,32 @@ function readTranscriptTail(transcriptPath: string | undefined, maxLines: number
 		const lines = raw.split(/\r?\n/);
 		const rendered: string[] = [];
 		let lastRendered: string | undefined;
-		const push = (text: string) => {
-			if (text === lastRendered) return;
-			lastRendered = text;
-			rendered.push(text);
+		const push = (text: string | undefined) => {
+			if (text === undefined) return;
+			const parts = String(text).replace(/\r\n/g, "\n").split("\n");
+			for (const part of parts) {
+				if (part === lastRendered) continue;
+				lastRendered = part;
+				rendered.push(part);
+			}
+		};
+		const pushSection = (label: string, ts?: string) => {
+			push(`── ${label}${ts ? ` · ${ts}` : ""} ──`);
+		};
+		const eventTime = (outer: any, inner: any): string | undefined => {
+			const rawTs = typeof outer?.ts === "string" ? outer.ts : typeof inner?.timestamp === "string" ? inner.timestamp : undefined;
+			if (!rawTs) return undefined;
+			const date = new Date(rawTs);
+			if (!Number.isFinite(date.getTime())) return rawTs;
+			return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+		};
+		const pushJson = (value: unknown) => {
+			try {
+				const text = JSON.stringify(value ?? {}, null, 2);
+				for (const line of text.split(/\r?\n/)) push(line);
+			} catch {
+				push(String(value));
+			}
 		};
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -753,20 +835,23 @@ function readTranscriptTail(transcriptPath: string | undefined, maxLines: number
 			const inner = event?.event && typeof event.event === "object" ? event.event : event;
 			const innerType = typeof inner?.type === "string" ? inner.type : undefined;
 			if (innerType && !INCLUDED_EVENT_TYPES.has(innerType)) continue;
+			const ts = eventTime(event, inner);
 			const msg = inner?.message;
 			if (msg && typeof msg === "object") {
 				const role = msg.role || innerType || "?";
 				const content = Array.isArray(msg.content) ? msg.content : [];
-				const textPart = content.find((c: any) => c?.type === "text");
 				const tool = content.find((c: any) => c?.type === "toolCall");
 				if (tool) {
 					const args = tool.arguments ?? tool.args ?? {};
-					const argText = JSON.stringify(args);
-					const argSuffix = argText && argText !== "{}" ? ` ${argText.slice(0, 120)}` : "";
-					push(`${role}: [tool] ${tool.name ?? "?"}${argSuffix}`);
-				} else if (textPart?.text) push(`${role}: ${oneLinePreview(String(textPart.text), 200)}`);
-				else if (typeof msg.content === "string") push(`${role}: ${oneLinePreview(msg.content, 200)}`);
-				else if (innerType) push(`${role}: (${innerType})`);
+					pushSection(`${role} tool call ${tool.name ?? "?"}`, ts);
+					if (Object.keys(args).length > 0) pushJson(args);
+				} else {
+					const text = textFromMessageContent(msg.content);
+					if (text.trim()) {
+						pushSection(String(role), ts);
+						push(text);
+					} else if (innerType) pushSection(`${role} (${innerType})`, ts);
+				}
 				continue;
 			}
 			// tool_execution_start/end carry identity in inner.toolName + inner.toolCallId
@@ -777,11 +862,16 @@ function readTranscriptTail(transcriptPath: string | undefined, maxLines: number
 				const rawId = typeof inner.toolCallId === "string" ? inner.toolCallId : "";
 				const id = rawId ? rawId.split("|").pop()?.slice(-8) : undefined;
 				const suffix = id ? ` · ${id}` : "";
-				push(`${innerType} ${inner.toolName}${suffix}`);
+				const phase = innerType === "tool_execution_start" ? "tool start" : innerType === "tool_execution_end" ? "tool end" : innerType;
+				pushSection(`${phase} ${inner.toolName}${suffix}`, ts);
+				const result = inner.result ?? inner.output ?? inner.content;
+				if (innerType === "tool_result_end" && result) push(typeof result === "string" ? result : JSON.stringify(result, null, 2));
 				continue;
 			}
 			if (innerType) {
-				push(innerType);
+				if (innerType === "turn_start" || innerType === "turn_end") pushSection(innerType.replace("_", " "), ts);
+				else if (innerType === "exit") pushSection(`exit${typeof inner?.code === "number" ? ` ${inner.code}` : ""}`, ts);
+				else pushSection(innerType, ts);
 				continue;
 			}
 			push(line);
@@ -847,6 +937,9 @@ function renderActiveAgentDetail(item: SubagentDashboardItem | undefined, displa
 	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(nameForTitle))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", dashboardKindLabel(item.kind))}`;
 	const body: string[] = [];
 	body.push(...wrap(`${theme.fg("muted", "Task ID")}: ${theme.fg("dim", item.taskId)}`));
+	if (item.kind === "pane" && item.transcriptPath) {
+		body.push(...wrap(`${theme.fg("muted", "Transcript")}: ${theme.fg("dim", "shared transcript for pane tasks")}`));
+	}
 	body.push("");
 	if (item.task) {
 		body.push(...wrap(theme.fg("accent", theme.bold("Task:"))));
@@ -926,6 +1019,40 @@ function sortedHistoryRecords(registry: PaneTaskRegistry): PaneTaskRecord[] {
 		.sort((a, b) => recordTimestampLocal(b) - recordTimestampLocal(a));
 }
 
+export function taskNumberById(records: PaneTaskRecord[]): Map<string, number> {
+	const byAgent = new Map<string, PaneTaskRecord[]>();
+	for (const record of records) {
+		if (!record.taskId || !record.agent) continue;
+		const list = byAgent.get(record.agent) ?? [];
+		list.push(record);
+		byAgent.set(record.agent, list);
+	}
+	const out = new Map<string, number>();
+	for (const list of byAgent.values()) {
+		list
+			.sort((a, b) => {
+				const delta = recordTimestampLocal(a) - recordTimestampLocal(b);
+				return delta !== 0 ? delta : a.taskId.localeCompare(b.taskId);
+			})
+			.forEach((record, index) => out.set(record.taskId, index + 1));
+	}
+	return out;
+}
+
+function recordClockTime(record: PaneTaskRecord): string {
+	const raw = record.completedAt ?? record.updatedAt ?? record.createdAt;
+	if (!raw) return "--:--";
+	const date = new Date(raw);
+	if (!Number.isFinite(date.getTime())) return "--:--";
+	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function historyRecordLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
+	const number = taskNumbers.get(record.taskId);
+	const numberText = number ? ` #${number}` : "";
+	return `${record.agent}${numberText} · ${recordClockTime(record)} · ${shortTaskSuffix(record.taskId)}`;
+}
+
 function recordTimestampLocal(record: PaneTaskRecord): number {
 	const value = Date.parse(record.completedAt ?? record.createdAt ?? "");
 	return Number.isFinite(value) ? value : 0;
@@ -938,11 +1065,13 @@ function renderHistoryList(records: PaneTaskRecord[], ui: AgentBrowserUiState, w
 		return lines;
 	}
 	if (ui.historyScroll > 0) lines.push(theme.fg("dim", `↑ ${ui.historyScroll} earlier`));
+	const taskNumbers = taskNumberById(records);
 	for (const [visibleIndex, record] of records.slice(ui.historyScroll, ui.historyScroll + listRows).entries()) {
 		const index = ui.historyScroll + visibleIndex;
 		const selected = index === ui.historySelected;
 		const icon = historyStatusIcon(record.status, theme);
-		const name = ansiMagenta(selected ? theme.bold(record.agent) : record.agent);
+		const label = historyRecordLabel(record, taskNumbers);
+		const name = ansiMagenta(selected ? theme.bold(label) : label);
 		const row = truncateToWidth(`${icon} ${name}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
 	}
@@ -987,13 +1116,14 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	const line = raw.replace(/\t/g, "  ");
 	const trimmed = line.trim();
 	if (!trimmed) return [""];
+	if (/^── .+ ──$/.test(trimmed)) return wrapTextWithAnsi(theme.fg("muted", trimmed.replace(/(assistant|user|tool call|tool start|tool end|turn start|turn end|exit)/i, (match) => theme.fg("accent", theme.bold(match)))), width);
 	if (/^-{3,}$/.test(trimmed)) return [];
-	if (/^(Overview|Summary|Files changed|Validation|Notes|Task|Artifacts)$/i.test(trimmed)) {
+	if (/^(Overview|Metadata|Summary|Files changed|Validation|Notes|Task|Artifacts)$/i.test(trimmed)) {
 		return wrapTextWithAnsi(theme.fg("accent", theme.bold(trimmed)), width);
 	}
-	const labelMatch = line.match(/^(Ref|Agent|Status|Task ID|Created|Done|Transcript)\s{2,}(.+)$/);
+	const labelMatch = line.match(/^(Ref|Agent|Task #|Status|Task ID|Created|Done|Model|Usage|Transcript|Completion|Archive|Source)\s{2,}(.+)$/);
 	if (labelMatch) return wrapTextWithAnsi(colorTraceValue(labelMatch[1], labelMatch[2], theme), width);
-	if (type === "completion") {
+	if (type === "completion" || type === "transcript") {
 		const jsonKey = line.match(/^(\s*)"([^"]+)"(\s*:\s*)(.*)$/);
 		if (jsonKey) return wrapTextWithAnsi(`${jsonKey[1]}${theme.fg("accent", `"${jsonKey[2]}"`)}${theme.fg("dim", jsonKey[3])}${theme.fg("toolOutput", jsonKey[4])}`, width);
 	}
@@ -1103,7 +1233,7 @@ function extractSteeringBody(raw: string): string {
 	return out.join("\n").trim();
 }
 
-function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardItem[]): void {
+export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardItem[]): void {
 	// Bg/oneshot agents skip the file bus (no inbox/outbox/.md/.json), so the
 	// file-based scan never sees them. Synthesize delegation+completion records
 	// from the dashboard item itself; the data we need is already on it.
@@ -1134,7 +1264,7 @@ function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardI
 			kind: "completion",
 			from: `@${label}`,
 			to: "@orch",
-			body: item.message || "(no summary)",
+			body: completionBodyWithoutPromptEcho(item.message, item.task),
 			status: item.status,
 		});
 	}
@@ -1274,8 +1404,10 @@ function renderChatRoomDetail(runtimeRoot: string, items: SubagentDashboardItem[
 			const sep = theme.fg("dim", "\u00b7");
 			const kindBadge = chatKindBadge(msg.kind, theme);
 			const statusIcon = chatStatusIcon(msg.status, theme);
+			const taskBadge = msg.taskId ? theme.fg("muted", `#${shortTaskSuffix(msg.taskId)}`) : undefined;
 			const headerParts = [time, fromLabel, arrow, toLabel, sep, kindBadge];
 			if (statusIcon) headerParts.push(sep, statusIcon);
+			if (taskBadge) headerParts.push(sep, taskBadge);
 			body.push(...wrapTextWithAnsi(headerParts.join(" "), safeWidth));
 			const indent = theme.fg("dim", "\u2502 ");
 			const bodyText = msg.body || theme.fg("dim", "(empty)");
@@ -1355,9 +1487,7 @@ function renderHistoryTabBody(
 }
 
 function renderUnifiedAgentDetail(
-	agent: AgentConfig | undefined,
-	activeItem: SubagentDashboardItem | undefined,
-	displayLabel: string | undefined,
+	row: AgentBrowserRow | undefined,
 	statuses: Map<string, AgentPaneStatus>,
 	activeItems: SubagentDashboardItem[],
 	runtimeRoot: string,
@@ -1366,7 +1496,9 @@ function renderUnifiedAgentDetail(
 	rows: number,
 	theme: Theme,
 ): string[] {
-	void activeItems;
+	const agent = row?.agent;
+	const activeItem = row?.item;
+	const displayLabel = row?.rowType === "task" && agent ? `${agent.name} ${row.label}` : row?.label;
 	if (!activeItem) {
 		ui.agentSubtab = 0;
 		return renderAgentInspector(agent, statuses, ui, width, rows, theme);
@@ -1377,10 +1509,12 @@ function renderUnifiedAgentDetail(
 		{ label: "Inspector", text: "", type: "summary" },
 	];
 	ui.agentSubtab = Math.max(0, Math.min(ui.agentSubtab, tabs.length - 1));
+	const agentChatItems = activeItems.filter((item) => item.agent === activeItem.agent);
+	const chatItems = row?.rowType === "agent" ? (agentChatItems.length > 0 ? agentChatItems : [activeItem]) : [activeItem];
 	const base = ui.agentSubtab === 0
 		? renderActiveAgentDetail(activeItem, displayLabel, ui, width, rows, theme)
 		: ui.agentSubtab === 1
-			? renderChatRoomDetail(runtimeRoot, [activeItem], ui, width, rows, theme)
+			? renderChatRoomDetail(runtimeRoot, chatItems, ui, width, rows, theme)
 			: renderAgentInspector(agent, statuses, ui, width, rows, theme);
 	const tabLine = renderTraceTabBar(tabs, ui.agentSubtab, Math.max(8, width), theme);
 	return [base[0] ?? "", "", tabLine, "", ...base.slice(2)].slice(0, rows);
@@ -1398,8 +1532,6 @@ function renderAgentsBody(
 	layout: AgentBrowserLayout,
 ): string[] {
 	const selectedRow = rowsForList[ui.selected];
-	const selected = selectedRow?.agent;
-	const activeItem = selectedRow?.item;
 	const maxLeftWidth = Math.max(10, width - 13);
 	const desiredLeftWidth = Math.min(AGENTS_LEFT_MAX_WIDTH, Math.floor(width * 0.38), maxLeftWidth);
 	const leftWidth = Math.max(10, Math.min(maxLeftWidth, Math.max(Math.min(AGENTS_LEFT_MIN_WIDTH, maxLeftWidth), desiredLeftWidth)));
@@ -1408,7 +1540,7 @@ function renderAgentsBody(
 	const liveCount = [...statuses.values()].filter((status) => status.live).length;
 	const paneCount = discovery.agents.filter((agent) => agent.pane).length;
 	const left = renderAgentList(rowsForList, statuses, ui, leftWidth, theme, layout.listRows);
-	const right = renderUnifiedAgentDetail(selected, activeItem, selectedRow?.label, statuses, activeItems, runtimeRoot, ui, rightWidth, bodyRows, theme);
+	const right = renderUnifiedAgentDetail(selectedRow, statuses, activeItems, runtimeRoot, ui, rightWidth, bodyRows, theme);
 	const rows = bodyRows;
 	const searchLine = theme.bg("toolPendingBg", agentPad(` > ${ui.search}${theme.inverse(" ")}`, width));
 	const workingCount = activeItems.filter((item) => isDashboardWorkingStatus(item.status)).length;
@@ -1463,7 +1595,7 @@ function createAgentsBrowserComponent(
 		done(action);
 	};
 	process.on("SIGWINCH", scheduleResizeRender);
-	const filtered = () => buildAgentRows(discovery.agents, ui.search, statuses, getActiveItems());
+	const filtered = () => buildAgentRows(discovery.agents, ui.search, statuses, getActiveItems(), taskRegistry);
 	const selectedRow = () => filtered()[ui.selected];
 	const selectedAgent = () => selectedRow()?.agent;
 	const clamp = () => {
@@ -1476,12 +1608,13 @@ function createAgentsBrowserComponent(
 	};
 	const historyRecords = sortedHistoryRecords(taskRegistry);
 	const historyCache = new Map<string, HistoryDetailEntry>();
+	const historyTaskNumbers = taskNumberById(historyRecords);
 	const loadHistoryRecord = (record: PaneTaskRecord | undefined) => {
 		if (!record) return;
 		const entry = historyCache.get(record.taskId);
 		if (entry?.items || entry?.loading) return;
 		historyCache.set(record.taskId, { loading: true });
-		void traceViewerItems(record).then((items) => {
+		void traceViewerItems(record, historyTaskNumbers.get(record.taskId)).then((items) => {
 			historyCache.set(record.taskId, { items });
 			requestRender();
 		}).catch((error) => {
@@ -2039,22 +2172,37 @@ export async function showAgentEditConfirmation(ctx: ExtensionContext, message: 
 	}), { overlay: true, overlayOptions: { anchor: "center", width: AGENT_EDIT_CONFIRM_WIDTH, maxHeight: "40%" } });
 }
 
-export async function traceViewerItems(record: PaneTaskRecord): Promise<TraceViewerItem[]> {
+export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number): Promise<TraceViewerItem[]> {
 	const ref = recordTraceRef(record);
+	const usage = record.usage ? formatUsageStats(record.usage, record.model) : "";
+	const completionPath = record.completionArchivePath ?? record.completionSourcePath;
+	const summaryText = record.summary?.trim()
+		? completionBodyWithoutPromptEcho(record.summary, record.task)
+		: record.status === "completed" || record.status === "failed" || record.status === "blocked"
+			? COMPLETION_SUMMARY_UNAVAILABLE
+			: "No summary yet.";
 	const metadata = [
 		"Overview",
 		"",
+		"Metadata",
+		"--------",
 		`Ref      ${ref}`,
 		`Agent    ${record.agent}`,
+		taskNumber ? `Task #   ${taskNumber}` : "",
 		`Status   ${record.status}`,
 		`Task ID  ${record.taskId}`,
+		record.model ? `Model    ${record.model}` : "",
+		usage ? `Usage    ${usage}` : "",
 		record.transcriptPath ? `Transcript  ${record.transcriptPath}` : "",
+		completionPath ? `Completion  ${completionPath}` : "",
+		record.completionArchivePath ? `Archive  ${record.completionArchivePath}` : "",
+		record.completionSourcePath ? `Source   ${record.completionSourcePath}` : "",
 		`Created  ${record.createdAt}`,
 		record.completedAt ? `Done     ${record.completedAt}` : "",
 		"",
 		"Summary",
 		"-------",
-		record.summary || "No summary yet.",
+		summaryText,
 		"",
 		"Files changed",
 		"-------------",
@@ -2066,10 +2214,19 @@ export async function traceViewerItems(record: PaneTaskRecord): Promise<TraceVie
 		record.notes ? `\nNotes\n-----\n${record.notes}` : "",
 	].filter(Boolean).join("\n");
 	const completion = await readTextFileIfExists(record.completionArchivePath ?? record.completionSourcePath, 24_000);
-	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: record.summary || record.task };
+	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: summaryText };
+	const taskText = [
+		`Task ID  ${record.taskId}`,
+		`Created  ${record.createdAt}`,
+		taskNumber ? `Task #   ${taskNumber}` : "",
+		"",
+		"Task",
+		"----",
+		record.task || "Task unavailable.",
+	].filter(Boolean).join("\n");
 	return [
 		{ ...common, label: "Summary", text: metadata, type: "summary" },
 		{ ...common, label: "Completion", path: record.completionArchivePath ?? record.completionSourcePath, text: completion || "Completion JSON unavailable.", type: "completion" },
-		{ ...common, label: "Task", path: record.inboxFile, text: record.task || "Task unavailable.", type: "task" },
+		{ ...common, label: "Task", path: record.inboxFile, text: taskText, type: "task" },
 	];
 }
