@@ -68,7 +68,9 @@ Each row shows agent name, kind (`pane`/`bg`), turn count, input/output tokens, 
 
 Rows are bucketed for stability: queued/running/waiting agents stay above attention states; attention stays above completed. Within each bucket, rows preserve start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts even when one side is zero. Missing pane artifacts render as `stale`; stale bg-only records are dropped (bg agents do not use pane handoff files).
 
-The popup has two top-level tabs: **Agents** (unified project/user/active list, sorted by current status, Live/Chat/Inspector subtabs) and **History** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Chat is scoped to the selected dashboard row, usually `@orch` ↔ the selected agent. Repeated launches of the same agent render as stable session rows (`agent`, `agent 2`, …); resumed pane work in the same transcript stays on one row.
+The popup has two top-level tabs: **Agents** (unified project/user/active list, sorted by current status, Live/Chat/Inspector subtabs) and **History** (completed task traces, Summary/Completion/Task subtabs; transcript paths in Summary). Agents rows include recent task children keyed by `taskId`; selecting an agent defaults to its latest task, while selecting a child pins Live/Chat to that task. Chat is scoped to the selected task row, or to all recent rows for the selected agent row. Repeated launches of the same bg agent render as task children; resumed pane work can share one transcript row while still exposing individual task ids.
+
+Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, History Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
 
 ## Browser keys
 

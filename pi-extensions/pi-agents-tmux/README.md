@@ -9,6 +9,9 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - `subagent` tool delegates one task, parallel tasks, or sequential chains.
 - Agents with `pane: true` open a visible tmux pane that persists across turns. Other agents run in the background.
 - `/agents` browser lists project and user agents with search, live detail, chat, history, and one-key launch.
+- History shows task numbers, short task IDs, times, summaries, usage, and transcript paths.
+- Chat completion rows show actual results, never a repeat of the original request.
+- Live transcript tails keep message line breaks and separate messages, tools, and exits.
 - Dashboard widget shows live state, model, turns, tokens, and cost for every spawned agent.
 - Dashboard participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Grouped completion notifications batch multiple agents finishing together.
