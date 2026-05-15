@@ -91,8 +91,10 @@ function recordClockTime(record: PaneTaskRecord): string {
 
 export function monitorTaskRowLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
 	const number = taskNumbers.get(record.taskId);
-	const numberText = number ? `#${number}` : "Task";
-	return `${numberText} · ${recordClockTime(record)}`;
+	const clock = recordClockTime(record);
+	// `#1` is suppressed so the first task per session reads as plain `Task · <time>`.
+	// Numbers only appear from the second task onward.
+	return number && number > 1 ? `#${number} · ${clock}` : `· ${clock}`;
 }
 
 export function buildMonitorSessionGroups(records: PaneTaskRecord[]): MonitorSessionGroup[] {

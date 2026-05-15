@@ -1,6 +1,7 @@
 import type { ExtensionCommandContext, ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatAgentList, type AgentScope } from "./agents.js";
 import { activeDashboardItems, openAgentsBrowser, openTraceViewer, traceViewerItems } from "./browser.js";
+import { taskNumberById } from "./task-records.js";
 import { compactPath, oneLinePreview } from "./format.js";
 import { ensurePersistentPane, hasSavedPaneSession, paneExists, queuePersistentPaneTask, resetPersistentPaneSession, restoreArchivedPaneSession, stopPersistentPane, tmux } from "./pane.js";
 import { formatTraceView, recordTraceRef, resolveTraceRecord } from "./renderers.js";
@@ -124,7 +125,8 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 				const record = resolveTraceRecord(records, ref);
 				if (!record) throw new Error(`No agent trace matched: ${ref}`);
 				if (ctx.hasUI) {
-					await openTraceViewer(ctx as ExtensionContext, `Trace ${recordTraceRef(record)}`, await traceViewerItems(record));
+					const taskNumber = taskNumberById(Object.values(records)).get(record.taskId);
+					await openTraceViewer(ctx as ExtensionContext, `Trace ${recordTraceRef(record)}`, await traceViewerItems(record, taskNumber));
 					return;
 				}
 				sendMarkdown(await formatTraceView(record, parts.includes("--verbose")));

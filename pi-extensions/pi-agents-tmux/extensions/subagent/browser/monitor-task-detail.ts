@@ -199,7 +199,9 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 	].filter(Boolean);
 	const summary = [
 		`Ref      ${ref}`,
-		taskNumber ? `Task #   ${taskNumber}` : "",
+		// `#1` is suppressed so first-task summaries read cleanly; numbers
+		// only appear from task #2 onward.
+		taskNumber && taskNumber > 1 ? `Task #   ${taskNumber}` : "",
 		`Status   ${record.status}`,
 		`Task ID  ${record.taskId}`,
 		usage ? `Usage    ${usage}` : "",

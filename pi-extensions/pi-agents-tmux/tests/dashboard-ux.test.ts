@@ -186,6 +186,55 @@ test("long sessionKey chip keeps suffix to avoid collisions", () => {
 	assert.notEqual(first.match(/lane:[^ ·\n]+/)?.[0], second.match(/lane:[^ ·\n]+/)?.[0]);
 });
 
+test("dashboard label suppresses #1 and only numbers tasks from the second onward", () => {
+	const cwd = tempRuntime();
+	writeManagerConfig(cwd, { dashboard: true });
+	const lone = renderDashboardWidgetLines({
+		collapsed: false, mode: "normal", visible: true,
+		items: { a: dashboardItem({ taskId: "reviewer-arch-1700000000-aaaaaaaa", startedAt: "2026-05-14T05:00:00.000Z" }) },
+	}, theme as any, cwd, 220).join("\n");
+	assert.match(stripAnsi(lone), /reviewer-arch · completed/);
+	assert.doesNotMatch(stripAnsi(lone), /reviewer-arch #\d/);
+
+	const twin = renderDashboardWidgetLines({
+		collapsed: false, mode: "normal", visible: true,
+		items: {
+			a: dashboardItem({ taskId: "reviewer-arch-1700000000-aaaaaaaa", startedAt: "2026-05-14T05:00:00.000Z" }),
+			b: dashboardItem({ taskId: "reviewer-arch-1700000060-bbbbbbbb", startedAt: "2026-05-14T05:01:00.000Z" }),
+		},
+	}, theme as any, cwd, 220).join("\n");
+	assert.match(stripAnsi(twin), /reviewer-arch #2 /);
+	assert.doesNotMatch(stripAnsi(twin), /reviewer-arch #1\b/);
+});
+
+test("dashboard label uses occurrence number even when persisted task numbers are session-local 1", async () => {
+	const cwd = tempRuntime();
+	writeManagerConfig(cwd, { dashboard: true });
+	// Two bg one-shot launches of the same agent each become their own
+	// session in `taskNumberById` and both get persisted `#1`. The label
+	// helpers must fall through to in-memory occurrence so the second row
+	// reads `<agent> #2`, not a second copy of `<agent>`.
+	const recordA = record("reviewer-arch", "reviewer-arch-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "oneshot", status: "completed", completedAt: "2026-05-14T05:00:30.000Z" });
+	const recordB = record("reviewer-arch", "reviewer-arch-1700000060-bbbbbbbb", "2026-05-14T05:01:00.000Z", { kind: "oneshot", status: "running" });
+	await updateTaskRegistry(cwd, (records) => { records[recordA.taskId] = recordA; records[recordB.taskId] = recordB; });
+	const persisted = await readTaskRegistry(cwd);
+	const numbers = taskNumberById(Object.values(persisted));
+	assert.equal(numbers.get(recordA.taskId), 1);
+	assert.equal(numbers.get(recordB.taskId), 1);
+
+	const rendered = renderDashboardWidgetLines({
+		collapsed: false, mode: "normal", visible: true,
+		items: {
+			a: dashboardItem({ taskId: recordA.taskId, startedAt: recordA.createdAt, status: "completed" }),
+			b: dashboardItem({ taskId: recordB.taskId, startedAt: recordB.createdAt, status: "running" }),
+		},
+	}, theme as any, cwd, 220, cwd).join("\n");
+	const plain = stripAnsi(rendered);
+	assert.match(plain, /reviewer-arch #2 +· working/);
+	assert.doesNotMatch(plain, /reviewer-arch #1\b/);
+	assert.match(plain, /reviewer-arch +· completed/);
+});
+
 test("dashboard mini widget shows session-mode chips", () => {
 	const cwd = tempRuntime();
 	writeManagerConfig(cwd, { dashboard: true });
@@ -497,7 +546,9 @@ test("Monitor numbers repeated agent launches as sessions and resets task number
 
 	const tree = renderMonitorTree(monitorTreeRows(groups), records, new Set(), uiState({ tab: "monitor", pane: "list" }), 180, theme as any, 20).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 	assert.match(tree, /reviewer-arch · 1 task · /);
-	assert.match(tree, /Task #1 · \d{2}:\d{2} · completed/);
+	// `#1` is suppressed everywhere; only `#2+` should appear.
+	assert.match(tree, /Task · \d{2}:\d{2} · completed/);
+	assert.doesNotMatch(tree, /Task #1\b/);
 	assert.doesNotMatch(tree, /bg · reviewer-arch|session #2 · fresh|reviewer-arch #2/);
 
 	const items = await traceViewerItems(second, numbers.get(second.taskId), { agents: [agent("reviewer-arch")] }, latestReviewerGroup.sessionNumber);
@@ -508,7 +559,8 @@ test("Monitor numbers repeated agent launches as sessions and resets task number
 	assert.doesNotMatch(items[0]!.text, /^(Agent|Session #|Model|Effort|Session)\s+/m);
 	assert.match(sessionDetail, /^Agent:\s+reviewer-arch$/m);
 	assert.match(sessionDetail, /^Session #:\s+2$/m);
-	assert.match(items[0]!.text, /Task #   1/);
+	// `#1` is suppressed; the trace summary skips the `Task #   1` line entirely.
+	assert.doesNotMatch(items[0]!.text, /Task #   1\b/);
 	assert.doesNotMatch(detail, /reviewer-arch #2/);
 });
 
