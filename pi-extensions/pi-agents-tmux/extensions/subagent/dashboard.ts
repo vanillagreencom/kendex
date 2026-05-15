@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { loadTaskRegistrySync, taskNumberById } from "./browser.js";
+import { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
 import {
 	ansiGreen,
 	ansiMagenta,

@@ -104,6 +104,19 @@ The popup has two top-level tabs: **Agents** (scoped project/user agent profiles
 
 Compaction events are not rendered in the Monitor popup. The transcript parser still recognizes the same `session_compact` bridge-stream shape used by the compact-then-empty detector (PR #46 / issue #38), plus compatibility variants like `{ event: "compact" }` and `message.customType: "session-compact"`, for callers that open raw trace views.
 
+Popup browser internals are split by concern:
+
+- `browser.ts` owns modal lifecycle, input dispatch, top-level tab layout, and re-exports the public surface used by tests and sibling modules.
+- `browser/shared.ts` holds popup frame, key, modal-lock, tab strip, layout, and the cancel-input fallback.
+- `browser/agents-tab.ts` builds agent rows and renders the static Inspector pane (including the system-prompt viewport).
+- `browser/monitor-tree.ts` derives Monitor session groups, session/task tree rows, selection clamping, and the left tree renderer.
+- `browser/monitor-session-detail.ts` renders the right-pane Detail when a session row is selected (aggregate metadata, usage, task list).
+- `browser/monitor-task-detail.ts` renders the right-pane Detail when a task row is selected, plus the shared trace tab bar, line highlighter, and `traceViewerItems` builder.
+- `browser/frontmatter-editor.ts` owns YAML/TOML parse + upsert for agent overrides, the modal editor flow, and the post-edit confirmation popup.
+- `browser/dashboard-integration.ts` bridges task records into dashboard labels and synthesizes bg chat delegation/completion rows.
+- `browser/trace-viewer.ts` owns the standalone trace popup invoked from `/agents` slash commands.
+- `task-records.ts` provides neutral task numbering, session-key derivation, active/terminal status checks, usage roll-up, and a sync registry reader. Dashboard and Monitor share this without going through `browser.ts`.
+
 `highlightInlinePreview` in `format.ts` is the shared inline JSON / status-token highlighter used by dashboard previews and tool output. After the round-2 fix it tokenizes in two passes: highlight JSON keys (`"name":`) first, replace each colored span with a placeholder sentinel before running the status-value passes (`approve` / `failed` / etc), and restore the key spans afterwards. This prevents malformed or truncated JSON from re-coloring inside an already-styled key span, which otherwise produced nested ANSI escapes and wrong-color output. Empty message content renders an `(empty)` placeholder rather than a blank row, and an empty leading user prompt does not consume the task-text fallback.
 
 Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, Monitor Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
