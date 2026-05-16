@@ -73,6 +73,20 @@ export function trimOuterBlankLines(lines: string[]): string[] {
 	return start > end ? [] : lines.slice(start, end + 1);
 }
 
+export function trimTrailingWhitespaceBeforeAnsi(text: string): string {
+	let body = text;
+	let suffix = "";
+	const trailingAnsiRe = /(?:\x1b(?:\[[0-9;:]*m|\]133;[ABC]\x07))+$/;
+	while (body.length > 0) {
+		const match = body.match(trailingAnsiRe);
+		if (!match) break;
+		const ansi = match[0];
+		suffix = `${ansi}${suffix}`;
+		body = body.slice(0, -ansi.length);
+	}
+	return `${body.trimEnd()}${suffix}`;
+}
+
 export function isHorizontalRuleLine(line: string | undefined): boolean {
 	const stripped = stripAnsi(line ?? "").trim();
 	return stripped.length > 0 && /^[─━-]+$/.test(stripped);

@@ -6,6 +6,7 @@ import {
 	stripAnsi,
 	stripLeadingBackgroundLayer,
 	trimOuterBlankLines,
+	trimTrailingWhitespaceBeforeAnsi,
 	wrapTextWithAnsi,
 } from "./ansi.js";
 import { captureDiffBackgroundTheme } from "./diff.js";
@@ -146,10 +147,11 @@ export function installToolChromePatch(): void {
 		const effectiveCwd = this?.cwd ?? process.cwd();
 		const renderWidth = stableRenderWidth(width, effectiveCwd);
 		const core = rendered.slice(start, end + 1).flatMap((line) => {
-			// Pi's Text component pads rows to the full render width. The right-margin
-			// guard intentionally wraps at width - 1, so padded rows otherwise spill a
-			// trailing space onto a blank continuation line after every row.
-			const wrapped = wrapTextWithAnsi(stripLeadingBackgroundLayer(line).trimEnd(), renderWidth);
+			// Pi's Text/Box components pad rows before trailing SGR reset codes.
+			// Plain trimEnd() cannot see those spaces when ANSI comes after them;
+			// if they survive, the right-margin guard wraps each padded row into a
+			// blank continuation line. Trim visually trailing spaces before wrapping.
+			const wrapped = wrapTextWithAnsi(trimTrailingWhitespaceBeforeAnsi(stripLeadingBackgroundLayer(line)), renderWidth);
 			return wrapped.length > 0 ? wrapped : [""];
 		});
 		if (mode === "transparent") return core;
