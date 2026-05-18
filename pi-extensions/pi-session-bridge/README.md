@@ -102,7 +102,7 @@ interface PiActivityBroker {
 
 - Plain text keeps the normal `sendUserMessage` path.
 - `/skill:<name> ...` expands client-side from the loaded skill's `sourceInfo.path`, inlining the same `<skill ...>` block Pi's editor would produce the first time a skill is loaded in a Pi session.
-- Repeated `/skill:<name> ...` sends in the same Pi session skip the `SKILL.md` body and send `Skill <name> (previously loaded). Invocation: ...` instead. Changing the `SKILL.md` file content changes its hash and forces a fresh full expansion; restarting the bridge loses the in-memory cache, so the next send expands fully again.
+- Repeated `/skill:<name> ...` sends in the same Pi session skip the `SKILL.md` body and send `Skill <name> (previously loaded). Invocation: ...` instead. Changing the `SKILL.md` file content changes its hash and forces a fresh full expansion; session shutdown evicts that session, bridge restart loses the in-memory cache, and the bridge keeps only the 100 most recent sessions.
 - Prompt templates (`/<name> ...` from loaded prompt paths) expand client-side with Pi-compatible `$1`, `$@`, `$ARGUMENTS`, and `${@:N[:L]}` substitution; unquoted spaces, tabs, and newlines split arguments, while quoted newlines stay inside the argument.
 - Extension/TUI commands (for example `/bridge:ping`, `/tasks:add`, `/flightdeck`) are pasted into Pi's own tmux pane with `send-keys -l` + enter after resolving the pane by walking parent processes from `process.pid`. This briefly shows text in the editor and always delivers immediately (`deliverAs` does not apply to this route).
 - If tmux pane resolution or paste fails, the bridge falls back to the old raw `sendUserMessage` behavior instead of failing the request.

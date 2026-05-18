@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import {
+import sessionBridge, {
 	expandLoadedSlashContent,
+	loadedSkillHashesBySession,
 	parseCommandArgs,
 	pasteAndSubmitToPane,
 	resolveOwnTmuxPaneByParentChain,
@@ -12,18 +13,63 @@ import {
 	type SlashCommandInfoLike,
 } from "../extensions/session-bridge.ts";
 
+type EventHandler = (event: any, ctx?: any) => unknown | Promise<unknown>;
+
+interface FakePi {
+	handlers: Map<string, EventHandler>;
+	pi: any;
+}
+
+function fakePi(): FakePi {
+	const handlers = new Map<string, EventHandler>();
+	return {
+		handlers,
+		pi: {
+			exec: async () => ({ code: 0, stdout: "" }),
+			getCommands: () => [],
+			getSessionName: () => undefined,
+			getThinkingLevel: () => undefined,
+			on: (eventName: string, handler: EventHandler) => handlers.set(eventName, handler),
+			registerCommand: () => undefined,
+			sendUserMessage: () => undefined,
+		},
+	};
+}
+
+function writeEnabledProjectSettings(root: string): void {
+	const settingsPath = join(root, ".pi/settings.json");
+	mkdirSync(dirname(settingsPath), { recursive: true });
+	writeFileSync(settingsPath, JSON.stringify({
+		vstack: {
+			extensionManager: {
+				config: {
+					"@vanillagreen/pi-session-bridge": { enabled: true },
+				},
+			},
+		},
+	}));
+}
+
 let dir = "";
 let oldTmux: string | undefined;
+let oldBridgeDir: string | undefined;
+let oldCwd = "";
 function p(name: string): string { return join(dir, name); }
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "pi-session-bridge-slash-"));
 	oldTmux = process.env.TMUX;
+	oldBridgeDir = process.env.PI_BRIDGE_DIR;
+	oldCwd = process.cwd();
 });
 
 afterEach(() => {
 	if (oldTmux === undefined) delete process.env.TMUX;
 	else process.env.TMUX = oldTmux;
+	if (oldBridgeDir === undefined) delete process.env.PI_BRIDGE_DIR;
+	else process.env.PI_BRIDGE_DIR = oldBridgeDir;
+	process.chdir(oldCwd);
+	loadedSkillHashesBySession.clear();
 	if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -139,6 +185,44 @@ describe("slash expansion", () => {
 			skillExpansionCache: cache,
 		});
 		expect(otherSession.text).toContain(`<skill name="flightdeck" location="${skillPath}">`);
+	});
+
+	test("evicts only the shutting-down session from the skill expansion cache", async () => {
+		writeEnabledProjectSettings(dir);
+		process.chdir(dir);
+		process.env.PI_BRIDGE_DIR = p("bridge-dir");
+		loadedSkillHashesBySession.set("session-a", new Map([["alpha", "hash-a"]]));
+		loadedSkillHashesBySession.set("session-b", new Map([["beta", "hash-b"]]));
+
+		const { pi, handlers } = fakePi();
+		sessionBridge(pi);
+		const shutdown = handlers.get("session_shutdown");
+		expect(typeof shutdown).toBe("function");
+
+		await shutdown?.({ reason: "quit" }, { sessionManager: { getSessionId: () => "session-a" } });
+
+		expect(loadedSkillHashesBySession.has("session-a")).toBe(false);
+		expect(loadedSkillHashesBySession.get("session-b")?.get("beta")).toBe("hash-b");
+	});
+
+	test("bounds skill expansion cache to the 100 most recent sessions", () => {
+		const skillPath = p("skills/flightdeck/SKILL.md");
+		mkdirSync(dirname(skillPath), { recursive: true });
+		writeFileSync(skillPath, "---\nname: flightdeck\n---\n# Flightdeck\nWatch sessions.\n");
+		const commands = [{ name: "skill:flightdeck", source: "skill", sourceInfo: { path: skillPath } }] as SlashCommandInfoLike[];
+		const cache = new Map<string, Map<string, string>>();
+
+		for (let index = 0; index < 101; index++) {
+			expandLoadedSlashContent("/skill:flightdeck watch", commands, readFileSync, {
+				sessionId: `session-${index}`,
+				skillExpansionCache: cache,
+			});
+		}
+
+		expect(cache.size).toBe(100);
+		expect(cache.has("session-0")).toBe(false);
+		expect(cache.has("session-1")).toBe(true);
+		expect(cache.has("session-100")).toBe(true);
 	});
 
 	test("re-expands skill after SKILL.md content changes", () => {

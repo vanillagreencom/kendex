@@ -29,6 +29,7 @@ const QUESTION_SERVICE_SYMBOL = Symbol.for("vstack.pi-questions.service");
 const CONFIG_ID = "@vanillagreen/pi-session-bridge";
 const DEFAULT_HISTORY_LIMIT = 500;
 const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
+const MAX_SKILL_EXPANSION_CACHE_SESSIONS = 100;
 
 type JsonObject = Record<string, unknown>;
 type VstackConfig = Record<string, unknown>;
@@ -65,7 +66,7 @@ interface BridgeClient {
 	events: boolean;
 }
 
-const loadedSkillHashesBySession: SkillExpansionCache = new Map();
+export const loadedSkillHashesBySession: SkillExpansionCache = new Map();
 
 interface InstanceInfo {
 	protocol: string;
@@ -578,7 +579,11 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		await start(ctx, event.reason ?? "session_start");
 	});
 
-	pi.on("session_shutdown", async (event) => {
+	pi.on("session_shutdown", async (event, ctx) => {
+		evictLoadedSkillExpansionSession(
+			loadedSkillHashesBySession,
+			readStringProperty(event, "sessionId") ?? sessionIdFromContext(ctx) ?? currentInfo?.sessionId,
+		);
 		await stop(event.reason ?? "session_shutdown");
 	});
 
@@ -645,7 +650,7 @@ export function expandLoadedSlashContent(
 			const sessionId = options.sessionId?.trim();
 			const cache = options.skillExpansionCache;
 			if (sessionId && cache) {
-				const sessionCache = cache.get(sessionId);
+				const sessionCache = touchLoadedSkillExpansionSession(cache, sessionId);
 				const cachedHash = sessionCache?.get(skillName);
 				if (cachedHash === contentHash) {
 					const invocation = parsed.argsString.trim();
@@ -661,11 +666,7 @@ export function expandLoadedSlashContent(
 			const body = stripFrontmatter(raw).trim();
 			const baseDir = skill.sourceInfo?.baseDir || path.dirname(sourcePath);
 			const block = `<skill name="${skillName}" location="${sourcePath}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`;
-			if (sessionId && cache) {
-				const sessionCache = cache.get(sessionId) ?? new Map<string, string>();
-				sessionCache.set(skillName, contentHash);
-				cache.set(sessionId, sessionCache);
-			}
+			if (sessionId && cache) rememberLoadedSkillExpansion(cache, sessionId, skillName, contentHash);
 			return {
 				expanded: true,
 				kind: "skill",
@@ -691,6 +692,57 @@ export function expandLoadedSlashContent(
 	} catch (error) {
 		return { expanded: false, error: stringifyError(error) };
 	}
+}
+
+export function evictLoadedSkillExpansionSession(cache: SkillExpansionCache, sessionId?: string): boolean {
+	const normalized = sessionId?.trim();
+	return normalized ? cache.delete(normalized) : false;
+}
+
+export function rememberLoadedSkillExpansion(
+	cache: SkillExpansionCache,
+	sessionId: string,
+	skillName: string,
+	contentHash: string,
+	maxSessions = MAX_SKILL_EXPANSION_CACHE_SESSIONS,
+): void {
+	const normalized = sessionId.trim();
+	if (!normalized) return;
+	const sessionCache = cache.get(normalized) ?? new Map<string, string>();
+	cache.delete(normalized);
+	sessionCache.set(skillName, contentHash);
+	cache.set(normalized, sessionCache);
+	trimLoadedSkillExpansionSessions(cache, maxSessions);
+}
+
+function touchLoadedSkillExpansionSession(cache: SkillExpansionCache, sessionId: string): Map<string, string> | undefined {
+	const normalized = sessionId.trim();
+	if (!normalized) return undefined;
+	const sessionCache = cache.get(normalized);
+	if (!sessionCache) return undefined;
+	cache.delete(normalized);
+	cache.set(normalized, sessionCache);
+	return sessionCache;
+}
+
+function trimLoadedSkillExpansionSessions(cache: SkillExpansionCache, maxSessions: number): void {
+	const limit = Math.max(0, Math.floor(maxSessions));
+	while (cache.size > limit) {
+		const oldest = cache.keys().next().value;
+		if (typeof oldest !== "string") return;
+		cache.delete(oldest);
+	}
+}
+
+function sessionIdFromContext(ctx?: ExtensionContext): string | undefined {
+	const defaultId = callOptional(ctx?.sessionManager, "getSessionId");
+	return resolveSessionId({ defaultId, pid: process.pid }).sessionId;
+}
+
+function readStringProperty(value: unknown, key: string): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const nested = (value as Record<string, unknown>)[key];
+	return typeof nested === "string" && nested.trim().length > 0 ? nested.trim() : undefined;
 }
 
 function shortSha256(content: string): string {
