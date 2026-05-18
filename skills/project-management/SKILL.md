@@ -13,7 +13,7 @@ metadata:
 
 # Project Management
 
-User-facing wrappers and TPM-execution workflows for project-level planning, audit, roadmap, and research-driven decomposition. Loaded by the master (flightdeck) when surfacing planning commands from the dashboard, and by per-issue review (orchestration) when reviewers escalate audit findings.
+User-facing wrappers and TPM-execution workflows for project-level planning, audit, roadmap, and research-driven decomposition. Invoke these commands through the project-management skill; flightdeck no longer surfaces them as flightdeck commands. Per-issue review (orchestration) also loads this skill when reviewers escalate audit findings.
 
 ## Commands
 

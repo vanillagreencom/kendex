@@ -1,4 +1,4 @@
-# Start Session Workflow
+# Linear Start Session Workflow
 
 Initialize development session, display status, select work, evaluate research, create worktree, and hand off to worktree session.
 
@@ -37,7 +37,7 @@ fi
 
 ### 1.3 Select Work
 
-**Skip if** `start [ISSUE_ID]` provided → § 1.4
+**Skip if** `linear start [ISSUE_ID]` provided → § 1.4
 
 1. **Check recommendation**: The `Recommended` line shows the priority action.
 
@@ -49,7 +49,7 @@ fi
    | Complete [Project]: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
    | Activate project: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
    | Plan cycle: audit-issues → cycle-plan | `⤵ .agents/skills/project-management/workflows/audit-issues.md project § 1-9`, then `⤵ .agents/skills/project-management/workflows/cycle-plan.md § 1-6 → § 1` |
-   | `parallel-check "Project"` | `⤵ workflows/linear/parallel-check.md "Project" § 1-11 → § 1` |
+   | `linear parallel-check "Project"` | `⤵ workflows/linear/parallel-check.md "Project" § 1-11 → § 1` |
    | Start in parallel: [ISSUE_ID], ... | Ask user: `Start [ISSUE_ID] only` (→ § 1.4) \| `Launch parallel group` (capture `[ISSUE_IDS]` → § 1.4) |
    | Start [ISSUE_ID] | Capture issue ID → § 1.4 |
 
@@ -87,7 +87,7 @@ After all issues processed → § 3.
 
 ### 2.2 Get Issue
 
-1. **Fetch issue data** (from `start [ISSUE_ID]` argument or § 1.3 selection):
+1. **Fetch issue data** (from `linear start [ISSUE_ID]` argument or § 1.3 selection):
    ```bash
    PARENT_ID=$(.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle | jq -r '.parent_id // empty')
    ```
@@ -337,7 +337,7 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    ```
    For each active worktree issue: `.agents/skills/linear/scripts/linear.sh cache issues get [WT_ISSUE] --format=compact` → compare `agent` with current issue.
    - **No overlap** → continue
-   - **Same agent** → `.agents/skills/flightdeck/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `flightdeck parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/linear/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
+   - **Same agent** → `.agents/skills/flightdeck/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `flightdeck linear parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/linear/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
 
 5. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 

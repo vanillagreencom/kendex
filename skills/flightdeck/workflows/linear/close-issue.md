@@ -1,4 +1,4 @@
-# Workflow: `close-issue` — Recognize Terminal State + Tear Down Pane
+# Workflow: `linear close-issue` — Recognize Terminal State + Tear Down Pane
 
 Inner pane has signaled it's done. Verify the signal, mark the issue terminal in master state, kill the window, leave the registry entry in place for the final report, and either advance to the next queued issue or let the watch loop's termination check fire.
 

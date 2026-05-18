@@ -1,4 +1,4 @@
-# Parallel Work Check
+# Linear Parallel Work Check
 
 Verify issues have zero cross-dependencies before parallel execution.
 
@@ -8,7 +8,7 @@ Issue-mode workflow only. Generic/ad-hoc sessions do not run Linear/GitHub/workt
 
 | Input | Source | Required |
 |-------|--------|----------|
-| `issues` | Command arguments (space-separated issue IDs or project name) | Yes (>=2 issues) |
+| `issues` | `linear parallel-check` arguments (space-separated issue IDs or project name) | Yes (>=2 issues) |
 
 ## 1. Resolve Arguments
 

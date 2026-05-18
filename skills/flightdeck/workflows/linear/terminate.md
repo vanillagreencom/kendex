@@ -1,4 +1,4 @@
-# Workflow: `terminate` — Final Summary + Mode-Aware Unwind
+# Workflow: `linear terminate` — Final Summary + Mode-Aware Unwind
 
 End-of-session unwind. Routes by tracked-entry kind, writes the summary file, marks master state terminated, archives state, and returns control to flightdeck's session loop. Issue entries keep the existing issue/PR/new-issue recommendation behavior from this markdown workflow; ad-hoc/workflow entries get a generic session summary with no issue-system side effects. Any TS helper under `lib/flightdeck-core/src/terminate/` owns the generic/empty summary path only — never replace the issue/PR/new-issue recommendation path with hard-coded TS output.
 
@@ -297,7 +297,7 @@ On launch:
    ```
    linear issues update <ISSUE_ID> --status Todo
    ```
-2. Invoke the spawn path: `⤵ workflows/linear/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck start <ISSUE_ID>` would take).
+2. Invoke the spawn path: `⤵ workflows/linear/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck linear start <ISSUE_ID>` would take).
 3. The new pane is added to the registry; the watch loop's next cycle picks it up.
 4. Re-enter `watch.md § 2`. Do NOT proceed to § 9 (Pane Lifecycle) — session continues.
 
@@ -309,7 +309,7 @@ On "Stick with planned cycle / Done": proceed to § 9.
 
 Do **not** close any additional panes here. Terminal issue windows were already closed by `close-issue.md` after the two-signal check; generic/ad-hoc windows remain available for transcript inspection or manual resume unless the user explicitly runs `session stop` / `session remove`.
 
-§ 6's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck start` (or bare `watch`) in the same tmux session creates a fresh master-state file — no stale entries, issue map, merge queue, or `terminated` flag carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` and the summary file. Dashboard snapshot loaders fall back to the newest `flightdeck-state-<SESSION>-*.json.archive` with `terminated: true` whenever the live file is missing for the current `$TMUX` session name, so the dashboard keeps rendering the completed session until a new `flightdeck start` writes a fresh live file.
+§ 6's `flightdeck-state archive` rotated the live state away, so a subsequent `flightdeck linear start` (or `flightdeck linear watch`) in the same tmux session creates a fresh master-state file — no stale entries, issue map, merge queue, or `terminated` flag carryover. Past sessions remain inspectable via `tmp/flightdeck-state-<SESSION>-<TS>.json.archive` and the summary file. Dashboard snapshot loaders fall back to the newest `flightdeck-state-<SESSION>-*.json.archive` with `terminated: true` whenever the live file is missing for the current `$TMUX` session name, so the dashboard keeps rendering the completed session until a new `flightdeck linear start` writes a fresh live file.
 
 ---
 

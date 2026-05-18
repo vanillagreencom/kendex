@@ -1,4 +1,4 @@
-# Workflow: `merge-plan` — Conflict Graph + Merge Order
+# Workflow: `linear merge-plan` — Conflict Graph + Merge Order
 
 Compute the file-intersection conflict graph for all `merge-ready` PRs, sort by smallest-scope-first, execute the next safe merge.
 

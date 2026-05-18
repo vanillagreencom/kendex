@@ -1,4 +1,4 @@
-# Start New Issue Workflow
+# Linear Start New Issue Workflow
 
 Create a new issue from scratch, set up worktree, and launch session.
 
@@ -6,8 +6,8 @@ Create a new issue from scratch, set up worktree, and launch session.
 
 | Command | Flow |
 |---------|------|
-| `start-new` | § 1 → § 2 → § 3 |
-| `start-new [TITLE]` | Skip title prompt → § 1 step 2 → § 2 → § 3 |
+| `linear start new` | § 1 → § 2 → § 3 |
+| `linear start new [TITLE]` | Skip title prompt → § 1 step 2 → § 2 → § 3 |
 
 ---
 

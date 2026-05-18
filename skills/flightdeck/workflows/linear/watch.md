@@ -1,4 +1,4 @@
-# Workflow: `watch` — Issue-Mode Extension
+# Workflow: `linear watch` — Issue-Mode Extension
 
 Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/Linear/worktree decisions, merge planning, issue cycle summaries, and the issue-specific lifecycle states.
 

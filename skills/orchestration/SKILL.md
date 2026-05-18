@@ -69,7 +69,7 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 
 **`start` routing logic:**
 1. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md`
-2. Otherwise (running from main repo) → emit a redirect message (`From main, use 'flightdeck start [ISSUE_ID]' — that command lives in the flightdeck skill.`) and stop. orchestration's role is per-issue inside-worktree work; master-side kickoff lives in flightdeck.
+2. Otherwise (running from main repo) → emit a redirect message (`From main, use 'flightdeck linear start [ISSUE_ID]' — that command lives in the flightdeck skill.`) and stop. orchestration's role is per-issue inside-worktree work; master-side kickoff lives in flightdeck.
 
 ### Development
 
@@ -97,7 +97,7 @@ The following commands moved to other skills:
 
 | Command | Now in |
 |---------|--------|
-| `start` (from main), `start new`, `parallel-check` | `flightdeck` |
+| `linear start` (from main), `linear start new`, `linear parallel-check` | `flightdeck` |
 | `audit-issues`, `cycle-plan`, `roadmap plan`/`create`, `research-spike`, `research-complete` | `project-management` |
 
 These are still callable when their owning skill is loaded.

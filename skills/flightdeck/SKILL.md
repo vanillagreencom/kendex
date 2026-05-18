@@ -20,7 +20,7 @@ metadata:
 1. Verify `$TMUX` is set for every Flightdeck command. If unset, **exit immediately with no-op**: print `Flightdeck requires tmux; skipping.` and return control to the caller. Flightdeck does nothing outside tmux.
 2. Determine the command mode before loading dependencies:
    - Generic session commands (`session start`, `session attach`, `session watch`, `session status`, `session stop`, `session remove`) require only tmux plus the selected harness adapter (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). Do **not** load `github`, `linear`, `project-management`, or `worktree` for generic session commands.
-   - Linear issue workflow commands (`start [ISSUE_ID]`, `start new`, `parallel-check`, issue `watch`, `merge-plan`, `close-issue`, `terminate` when entries use `domain.issue`) load `github`, `linear`, `project-management`, and `worktree` on demand. Redundant loads are no-ops.
+   - Linear issue workflow commands (`linear start [ISSUE_ID]`, `linear start new`, `linear start self`, `linear parallel-check`, `linear watch`, `linear merge-plan`, `linear close-issue`, `linear terminate` when entries use `domain.issue`) load `github`, `linear`, `project-management`, and `worktree` on demand. Redundant loads are no-ops.
    - GitHub issue workflow commands (`github start <N>`, `github start new`, `github watch`, `github close-issue`, `github terminate` when entries use `domain.github_issue`) load `github` and `worktree` only. Do **not** load `linear` or `project-management` for GitHub mode.
 3. If an issue workflow dependency cannot be loaded after entering issue mode, stop and tell the user. Do not proceed with issue/PR/worktree actions without it.
 
@@ -35,7 +35,7 @@ Core Flightdeck is a generic session manager. It requires tmux and the harness a
 - `github` — PR inspection, merge state, checks, review threads, file lists.
 - `linear` — issue metadata, created follow-ups, cycle/todo recommendation checks.
 - `worktree` — issue branch/worktree ownership and cleanup scope.
-- `project-management` — cycle planning, audits, roadmaps, research issue wrappers used by issue workflows.
+- `project-management` — Linear issue workflow planning/research context and follow-up recommendation support.
 
 ### GitHub issue-mode dependencies (load when entering GitHub issue workflows)
 
@@ -58,7 +58,7 @@ Issue-mode global arc begins only after entering a Linear or GitHub issue workfl
 
 ## Commands
 
-Use the session-management table for the core Flightdeck product: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Dashboard terms are distinct: TrackedEntry row = source-of-truth state; Rust dashboard/TUI = persistent visibility launched by default; cycle summary = chat-visible tick report, not a dashboard replacement. Use the issue-workflow table only after the user enters the issue/PR/worktree domain; those workflows layer on `session-watch.md` / `session-handle-prompt.md` rather than replacing them.
+Use the session-management table for the core Flightdeck product: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Dashboard terms are distinct: TrackedEntry row = source-of-truth state; Rust dashboard/TUI = persistent visibility launched by default; cycle summary = chat-visible tick report, not a dashboard replacement. Use a lane-specific issue-workflow table only after the user enters the issue/PR/worktree domain; those workflows layer on `session-watch.md` / `session-handle-prompt.md` rather than replacing them.
 
 ### Session management
 
@@ -75,18 +75,23 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 ### Linear issue workflows
 
-Linear issue/PR/worktree workflows. Entering these commands loads Linear issue-mode dependencies on demand. Command names stay unchanged in this phase.
+Linear issue/PR/worktree workflows. Entering these commands loads Linear issue-mode dependencies on demand. Use the GitHub table below for GitHub-tracked issues; use the session table for non-issue work.
 
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
-| `start` | `[ISSUE_ID]` | `workflows/linear/start.md` | From-main issue entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter issue watch loop. |
-| `start new` | `[title]` | `workflows/linear/start-new.md` | Create new issue + spawn through the issue workflow path. |
-| `start self` | — | inline | Initialize master issue session only, await further issue commands. |
-| `parallel-check` | `[ISSUE_IDS]` | `workflows/linear/parallel-check.md` | Verify a candidate issue set is safe to spawn in parallel. |
-| `watch` | `[ISSUE_IDS]` | `workflows/linear/watch.md` → `workflows/shared/session-watch.md` | Issue-mode extension over the generic loop. Tracks issue-specific lifecycle states, routes PR/Linear/worktree handlers, and resumes merge planning. |
-| `merge-plan` | — | `workflows/linear/merge-plan.md` | Build PR conflict graph and choose smallest-safe merge order for issue entries. |
-| `close-issue` | `<ISSUE_ID>` | `workflows/linear/close-issue.md` | Verify terminal issue outcome, record issue fields, and tear down the issue window safely. |
-| `terminate` | — | `workflows/linear/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
+| `linear start` | `[ISSUE_ID]` | `workflows/linear/start.md` | From-main issue entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter Linear watch loop. |
+| `linear start new` | `[title]` | `workflows/linear/start-new.md` | Create new issue + spawn through the Linear issue workflow path. |
+| `linear start self` | — | inline | Initialize master Linear issue session only, await further issue commands. |
+| `linear parallel-check` | `[ISSUE_IDS]` | `workflows/linear/parallel-check.md` | Verify a candidate issue set is safe to spawn in parallel. |
+| `linear watch` | `[ISSUE_IDS]` | `workflows/linear/watch.md` → `workflows/shared/session-watch.md` | Linear issue-mode extension over the generic loop. Tracks issue-specific lifecycle states, routes PR/Linear/worktree handlers, and resumes merge planning. |
+| `linear merge-plan` | — | `workflows/linear/merge-plan.md` | Build PR conflict graph and choose smallest-safe merge order for Linear issue entries. |
+| `linear close-issue` | `<ISSUE_ID>` | `workflows/linear/close-issue.md` | Verify terminal issue outcome, record issue fields, and tear down the issue window safely. |
+| `linear terminate` | — | `workflows/linear/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
+
+### Lane-agnostic status
+
+| Command | Arguments | Workflow | Notes |
+|---------|-----------|----------|-------|
 | `status` | — | inline | Print current pane registry + state machine snapshot from `tmp/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
 
 ### GitHub issue workflows
@@ -100,16 +105,6 @@ Plain GitHub issue/PR/worktree workflows. Entering these commands loads `github`
 | `github watch` | `[N...]` | `workflows/github/watch.md` → `workflows/shared/session-watch.md` | GitHub extension over the generic loop. Handles PR/CI/review prompts, `UNKNOWN` merge timers, and gh failure escalation. |
 | `github close-issue` | `<N>` | `workflows/github/close-issue.md` | Requires recorded PR number plus authoritative `gh pr view` `state === MERGED` and non-null merge commit before closing/no-oping issue. Missing merge commit pauses visibly. Pane text alone is never enough. |
 | `github terminate` | — | `workflows/github/terminate.md` | Summarizes GitHub entries partitioned by `domain.github_issue`; mixed sessions also include generic and Linear summaries. |
-
-### Planning (cross-call to `project-management`, Linear issue mode only)
-
-| Command | Workflow | Notes |
-|---------|----------|-------|
-| `cycle-plan` | `⤵ .agents/skills/project-management/workflows/cycle-plan.md` | TPM-driven cycle planning |
-| `audit-issues` | `⤵ .agents/skills/project-management/workflows/audit-issues.md` | Issue audit (project / project-order / issue [IDs] / --issues file) |
-| `roadmap plan` / `create` | `⤵ .agents/skills/project-management/workflows/roadmap-plan.md` / `roadmap-create.md` | Roadmap planning + execution |
-| `research-spike` | `⤵ .agents/skills/project-management/workflows/research-spike.md` | Initiate a research issue with assets |
-| `research-complete` | `⤵ .agents/skills/project-management/workflows/research-complete.md` | Route a completed research issue |
 
 ## Skill Rules
 
@@ -214,7 +209,7 @@ Activity sidecar: `flightdeck-state init` records `activity_path` beside the mas
 
 ## Schema — master state
 
-Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Activity history lives beside it as `flightdeck-activity-<TMUX_SESSION_NAME>.jsonl` and is exposed through `flightdeck-state activity path|append|tail|export`. Both survive compaction; terminate rotates state to `*-<terminated_at>.json.archive` and activity to `*-<terminated_at>.jsonl.archive` in the same `flightdeck-state archive` flow (see `terminate.md § 6`). The archive preserves the full session history (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. Dashboard snapshot loaders fall back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view keeps rendering until a new `flightdeck start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
+Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Activity history lives beside it as `flightdeck-activity-<TMUX_SESSION_NAME>.jsonl` and is exposed through `flightdeck-state activity path|append|tail|export`. Both survive compaction; terminate rotates state to `*-<terminated_at>.json.archive` and activity to `*-<terminated_at>.jsonl.archive` in the same `flightdeck-state archive` flow (see `terminate.md § 6`). The archive preserves the full session history (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. Dashboard snapshot loaders fall back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view keeps rendering until a new `flightdeck linear start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
 Auto-archive on session start: `flightdeck-session start` rolls the live file to a `.json.archive` sibling before fresh init when (a) `terminated == true` or (b) the file has tracked entries but ZERO `pane_id` is currently alive in tmux. Removes the need to manually prune leftover state from prior tmux sessions or crashed masters. `flightdeck-session start` also exports `FLIGHTDECK_ENTRY_ID` into the launched child environment (consumed by `github.sh` / `linear.sh` wrappers to auto-bind activity events to the right entry) and captures the current `git rev-parse --abbrev-ref HEAD` of the entry's cwd into `entry.branch` (informational; not refreshed when the agent switches branches mid-session) and onto every `pr.*` activity row's `refs.branch`.
 
@@ -404,16 +399,16 @@ Additional tuning:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/linear/start.md` | `start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter watch |
-| `workflows/linear/start-new.md` | `start new` | Create new issue from main + spawn |
-| `workflows/linear/parallel-check.md` | `parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
-| `workflows/shared/session-watch.md` | `session watch`, and core loop invoked by issue `watch` | Generic state init, entry reconciliation, daemon spawn/ack/yield, polling, generic prompt routing, compaction recovery |
-| `workflows/shared/session-handle-prompt.md` | Nested invocation from `session-watch` / issue `watch` for generic tags | Generic prompt response surface; no PR/Linear/GitHub/worktree dependency |
-| `workflows/linear/watch.md` | `watch` (issue entry) or invoked at end of `start.md` after spawn | Issue-mode extension over `session-watch`: load issue skills, track issue-specific lifecycle states, route issue-only handlers, plan merges, terminate |
-| `workflows/linear/handle-prompt.md` | Nested invocation from issue `watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
-| `workflows/linear/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
-| `workflows/linear/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
-| `workflows/linear/terminate.md` | Nested invocation from issue `watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
+| `workflows/linear/start.md` | `linear start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter Linear watch |
+| `workflows/linear/start-new.md` | `linear start new` | Create new issue from main + spawn |
+| `workflows/linear/parallel-check.md` | `linear parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
+| `workflows/shared/session-watch.md` | `session watch`, and core loop invoked by issue `linear watch` / `github watch` | Generic state init, entry reconciliation, daemon spawn/ack/yield, polling, generic prompt routing, compaction recovery |
+| `workflows/shared/session-handle-prompt.md` | Nested invocation from `session-watch` / issue `linear watch` / `github watch` for generic tags | Generic prompt response surface; no PR/Linear/GitHub/worktree dependency |
+| `workflows/linear/watch.md` | `linear watch` (issue entry) or invoked at end of `start.md` after spawn | Linear issue-mode extension over `session-watch`: load issue skills, track issue-specific lifecycle states, route issue-only handlers, plan merges, terminate |
+| `workflows/linear/handle-prompt.md` | Nested invocation from issue `linear watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
+| `workflows/linear/close-issue.md` | Nested invocation from `linear watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
+| `workflows/linear/merge-plan.md` | Nested invocation from `linear watch` § 4 | Conflict-graph build + smallest-first merge ordering |
+| `workflows/linear/terminate.md` | Nested invocation from issue `linear watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
 | `workflows/github/start.md` | `github start <N>` | Fetch GitHub issue context, compose self-contained child prompt, spawn branch `issue-<N>` with `open-terminal --tracker github`, register `domain.github_issue`, enter watch |
 | `workflows/github/start-new.md` | `github start new` | Create a GitHub issue, then launch it through `github/start.md` |
 | `workflows/github/watch.md` | `github watch` | GitHub issue extension over `session-watch`: PR/CI/review routing, UNKNOWN timer, gh failure escalation, termination debounce |
