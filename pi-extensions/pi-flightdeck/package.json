@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-flightdeck",
-  "version": "0.1.0",
-  "description": "Read-only sessions-first dashboard for the flightdeck skill: owner-scoped overview of tracked sessions, daemon health, decisions log, and a prominent pause banner when master is awaiting the user.",
+  "version": "0.1.1",
+  "description": "Read-only sessions-first dashboard for the flightdeck skill: owner-scoped overview of tracked sessions, daemon health, stale-pane filtering, decisions log, and a prominent pause banner when master is awaiting the user.",
   "license": "MIT",
   "keywords": [
     "pi-package",
