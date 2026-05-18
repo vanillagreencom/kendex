@@ -60,6 +60,8 @@ export interface TrackedEntryLaunch {
 	cmd?: string | null;
 	requested_model?: string | null;
 	requested_effort?: string | null;
+	resolved_model?: string | null;
+	resolved_effort?: string | null;
 	model_source?: string | null;
 	effort_source?: string | null;
 	argv?: string[] | null;

@@ -16,7 +16,7 @@ This is the issue-mode start workflow. For ad-hoc or workflow sessions that are 
 
 1. **Run**: `FLIGHTDECK_PREFLIGHT=1 .agents/skills/orchestration/scripts/session-init`
 
-   The `FLIGHTDECK_PREFLIGHT=1` signal tells session-init to also check the runtime deps flightdeck itself needs (currently: `bun`, the runtime for every trampolined script plus the claude-channel and codex-bridge transports). If bun is missing the dashboard adds a hard warning — trampolines fail without it.
+   The `FLIGHTDECK_PREFLIGHT=1` signal tells session-init to also check the runtime deps flightdeck itself needs (currently: `bun`, the runtime for every trampolined script plus the claude-channel and codex-bridge transports). If bun is missing, preflight output adds a hard warning — trampolines fail without it.
 
 2. **Output the result exactly as shown** — no reformatting, no additions, no commentary before/after the preflight status. Script output uses backticks and markdown syntax.
 
@@ -30,7 +30,8 @@ Run the Rust dashboard launch hook after session init and before the watch loop 
 
 ```bash
 if ! .agents/skills/flightdeck/scripts/flightdeck-dashboard launch 2>&1; then
-  echo "flightdeck-dashboard launch failed; continuing supervision but dashboard invariant is not satisfied" >&2
+  echo "flightdeck-dashboard launch failed; dashboard invariant is not satisfied" >&2
+  exit 1
 fi
 ```
 
@@ -58,7 +59,7 @@ fi
 
 ### 1.4 Handle Uncommitted Files
 
-**Skip if** no uncommitted files warning in dashboard → § 2
+**Skip if** no uncommitted files warning in preflight output → § 2
 
 1. **Present options**:
    - Stash first → `git stash -m "before [ISSUE_ID]"`
@@ -281,9 +282,9 @@ Use this whenever § 4.3 or § 4.4 launches a pane through `open-terminal`.
    | Normal/complex implementation | Claude Code, strongest reasoning | `--harness claude --model 'opus[1m]' --effort max` |
    | OpenAI/Codex-preferred implementation | Codex, strongest reasoning | `--harness codex --model gpt-5.5 --effort xhigh` |
    | Pi-native orchestration / Pi extension work | Pi, strongest OpenAI reasoning | `--harness pi --model openai-codex/gpt-5.5 --effort xhigh` |
-   | OpenCode-preferred implementation | OpenCode, strong model + variant | `--harness opencode --model openai/gpt-5.5 --effort xhigh` |
+   | OpenCode-preferred implementation | OpenCode, strong model (effort recorded unsupported) | `--harness opencode --model openai/gpt-5.5 --effort xhigh` |
    Notes:
-   - `open-terminal` maps effort per harness: Claude → `--effort`, Codex → `-c model_reasoning_effort=...`, Pi → `--thinking`, OpenCode → `--variant`. `max` maps to `xhigh` for Codex/Pi and OpenCode OpenAI/Codex models; OpenCode `off` maps to `none`.
+   - `open-terminal` maps effort per harness: Claude → `--effort`, Codex → `-c model_reasoning_effort=...`, Pi → `--thinking`. OpenCode validates the model via `opencode models`, passes `--model`, and records effort as unsupported because no validated top-level effort flag exists. `max` maps to `xhigh` for Codex/Pi; `minimal` maps to `low` for Codex/Pi.
    - If the user chooses a model/effort different from the recommendation, pass exactly their values.
    - Do not choose bare harness defaults for a fresh LLM pane; subagents generated with model/effort definitions are exempt.
 

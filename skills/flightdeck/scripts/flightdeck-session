@@ -97,11 +97,27 @@ validate_model_value() {
 }
 
 validate_effort_value() {
-  local effort="$1"
+  local harness="$1" effort="$2"
   [[ -z "$effort" ]] && return 0
-  case "$effort" in
-    minimal|low|medium|high|xhigh|max|off) return 0 ;;
-    *) echo "Error: invalid --effort/--thinking: $effort (expected minimal|low|medium|high|xhigh|max|off)" >&2; exit 2 ;;
+  case "$harness" in
+    claude)
+      case "$effort" in
+        low|medium|high|xhigh|max) return 0 ;;
+        *) echo "Error: invalid --effort for claude: $effort (expected low|medium|high|xhigh|max)" >&2; exit 2 ;;
+      esac
+      ;;
+    codex|pi|opencode)
+      case "$effort" in
+        minimal|low|medium|high|xhigh|max|off) return 0 ;;
+        *) echo "Error: invalid --effort/--thinking for $harness: $effort (expected minimal|low|medium|high|xhigh|max|off)" >&2; exit 2 ;;
+      esac
+      ;;
+    *)
+      case "$effort" in
+        minimal|low|medium|high|xhigh|max|off) return 0 ;;
+        *) echo "Error: invalid --effort/--thinking: $effort (expected minimal|low|medium|high|xhigh|max|off)" >&2; exit 2 ;;
+      esac
+      ;;
   esac
 }
 
@@ -163,7 +179,10 @@ validate_opencode_model() {
     echo "Error: opencode models failed; cannot validate --model $model" >&2
     return 1
   fi
-  if ! grep -Fq -- "$model" <<< "$out"; then
+  if ! awk -v model="$model" '
+    { for (i = 1; i <= NF; i++) { tok = $i; gsub(/^[[:space:]|│,;]+|[[:space:]|│,;]+$/, "", tok); if (tok == model) found = 1 } }
+    END { exit found ? 0 : 1 }
+  ' <<< "$out"; then
     echo "Error: opencode model is not configured: $model" >&2
     return 1
   fi
@@ -195,7 +214,7 @@ prepare_launch_metadata() {
   fi
 
   validate_model_value "$model"
-  validate_effort_value "$effort"
+  validate_effort_value "$harness" "$effort"
 
   if is_llm_harness "$harness"; then
     if [[ "$effort" == "off" ]]; then
@@ -205,6 +224,13 @@ prepare_launch_metadata() {
       LAUNCH_EFFORT_SOURCE="$effort_source"
       LAUNCH_REASONING_STATUS="unsupported"
       LAUNCH_UNSUPPORTED_REASON="effort explicitly disabled with --effort off"
+    elif [[ "$harness" == "opencode" && -n "$effort" ]]; then
+      LAUNCH_MODEL="$model"
+      LAUNCH_EFFORT=""
+      LAUNCH_MODEL_SOURCE="$model_source"
+      LAUNCH_EFFORT_SOURCE="$effort_source"
+      LAUNCH_REASONING_STATUS="unsupported"
+      LAUNCH_UNSUPPORTED_REASON="OpenCode top-level effort/variant is not supported by flightdeck-session; model only"
     elif [[ "$mode" == "prompt" ]]; then
       LAUNCH_MODEL="$model"
       LAUNCH_EFFORT=$(resolve_effort_for_harness "$harness" "$effort" "$model")
@@ -234,14 +260,15 @@ ensure_dashboard_launched() {
   [[ "${FLIGHTDECK_DASHBOARD:-1}" != "0" ]] || return 0
   [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" != "1" ]] || return 0
   dashboard_bin="${FLIGHTDECK_DASHBOARD_BIN:-$SCRIPT_DIR/flightdeck-dashboard}"
-  [[ -x "$dashboard_bin" ]] || { printf 'Warning: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 0; }
+  [[ -x "$dashboard_bin" ]] || { printf 'Error: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 1; }
   err=$(mktemp -t flightdeck-dashboard-launch.XXXXXX)
   rc=0
   FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" launch 2>"$err" || rc=$?
   if [[ -s "$err" ]]; then cat "$err" >&2; fi
   rm -f "$err"
   if (( rc != 0 )); then
-    printf 'Warning: flightdeck dashboard launch failed after registering %s (rc=%s)\n' "$entry_id" "$rc" >&2
+    printf 'Error: flightdeck dashboard launch failed after registering %s (rc=%s)\n' "$entry_id" "$rc" >&2
+    return "$rc"
   fi
 }
 
@@ -431,7 +458,6 @@ build_prompt_cmd() {
       validate_opencode_model "$bin" "${LAUNCH_MODEL:-}" || return 1
       harness_args=("$bin")
       [[ -n "${LAUNCH_MODEL:-}" ]] && harness_args+=(--model "$LAUNCH_MODEL")
-      [[ -n "${LAUNCH_EFFORT:-}" ]] && harness_args+=(--variant "$LAUNCH_EFFORT")
       prompt_mode="opencode-prompt-flag"
       ;;
     *)
@@ -490,6 +516,8 @@ register_entry() {
   [[ -n "${LAUNCH_EFFORT:-}" ]] && args+=(--launch-effort "$LAUNCH_EFFORT")
   [[ -n "${LAUNCH_REQUESTED_MODEL:-}" ]] && args+=(--launch-requested-model "$LAUNCH_REQUESTED_MODEL")
   [[ -n "${LAUNCH_REQUESTED_EFFORT:-}" ]] && args+=(--launch-requested-effort "$LAUNCH_REQUESTED_EFFORT")
+  [[ -n "${LAUNCH_MODEL:-}" ]] && args+=(--launch-resolved-model "$LAUNCH_MODEL")
+  [[ -n "${LAUNCH_EFFORT:-}" ]] && args+=(--launch-resolved-effort "$LAUNCH_EFFORT")
   [[ -n "${LAUNCH_MODEL_SOURCE:-}" ]] && args+=(--launch-model-source "$LAUNCH_MODEL_SOURCE")
   [[ -n "${LAUNCH_EFFORT_SOURCE:-}" ]] && args+=(--launch-effort-source "$LAUNCH_EFFORT_SOURCE")
   [[ -n "${LAUNCH_REASONING_STATUS:-}" ]] && args+=(--launch-reasoning-status "$LAUNCH_REASONING_STATUS")

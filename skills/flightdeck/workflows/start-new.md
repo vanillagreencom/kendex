@@ -131,7 +131,7 @@ Always create as a parent + sub-issue pair. Parent coordinates, child implements
    - Claude max: `--harness claude --model 'opus[1m]' --effort max`
    - Codex xhigh: `--harness codex --model gpt-5.5 --effort xhigh`
    - Pi xhigh: `--harness pi --model openai-codex/gpt-5.5 --effort xhigh`
-   - OpenCode xhigh: `--harness opencode --model openai/gpt-5.5 --effort xhigh` (`open-terminal` maps effort to `--variant`)
+   - OpenCode model: `--harness opencode --model openai/gpt-5.5 --effort xhigh` (`open-terminal` validates the model and records effort as unsupported)
    - `I'll launch it myself`
 
    If the user chooses custom values, pass exactly those flags. Do not choose harness defaults for a fresh LLM pane.

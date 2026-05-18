@@ -100,7 +100,7 @@ while [[ $# -gt 0 ]]; do
       echo "Harness launch commands (with permission bypass enabled by default):"
       echo "  claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
       echo "  codex    → codex -m MODEL -c model_reasoning_effort=EFFORT '\$orchestration start ISSUE'"
-      echo "  opencode → opencode --model MODEL --variant EFFORT --prompt '/orchestration start ISSUE'"
+      echo "  opencode → opencode --model MODEL --prompt '/orchestration start ISSUE' (effort unsupported by top-level opencode)"
       echo "  omp      → omp '/skill:orchestration start ISSUE'"
       echo "  pi       → pi --model MODEL --thinking EFFORT '/skill:orchestration start ISSUE'"
       echo ""
@@ -243,6 +243,8 @@ launch_effort_for_harness() {
 normalize_openai_effort() {
   case "$1" in
     max) echo "xhigh" ;;
+    minimal) echo "low" ;;
+    off) echo "" ;;
     *) echo "$1" ;;
   esac
 }
@@ -261,6 +263,25 @@ normalize_opencode_effort() {
   esac
 }
 
+validate_effort_for_harness() {
+  local harness="$1" effort="$2"
+  [[ -n "$effort" ]] || return 0
+  case "$harness" in
+    claude)
+      case "$effort" in
+        low|medium|high|xhigh|max) return 0 ;;
+        *) echo "Error: invalid --effort for claude: $effort (expected low|medium|high|xhigh|max)" >&2; return 1 ;;
+      esac
+      ;;
+    codex|pi|opencode)
+      case "$effort" in
+        minimal|low|medium|high|xhigh|max|off) return 0 ;;
+        *) echo "Error: invalid --effort for $harness: $effort (expected minimal|low|medium|high|xhigh|max|off)" >&2; return 1 ;;
+      esac
+      ;;
+  esac
+}
+
 validate_opencode_model_for_launch() {
   local model="$1" bin out
   [[ -n "$model" ]] || return 0
@@ -271,7 +292,10 @@ validate_opencode_model_for_launch() {
     echo "  opencode-model-unavailable: opencode models failed; cannot validate $model" >&2
     return 1
   fi
-  if ! grep -Fq -- "$model" <<< "$out"; then
+  if ! awk -v model="$model" '
+    { for (i = 1; i <= NF; i++) { tok = $i; gsub(/^[[:space:]|│,;]+|[[:space:]|│,;]+$/, "", tok); if (tok == model) found = 1 } }
+    END { exit found ? 0 : 1 }
+  ' <<< "$out"; then
     echo "  opencode-model-unavailable: model not configured: $model" >&2
     return 1
   fi
@@ -283,6 +307,7 @@ add_launch_args() {
   local model effort
   model="$(launch_model_for_harness "$harness")"
   effort="$(launch_effort_for_harness "$harness")"
+  validate_effort_for_harness "$harness" "$effort" || return 1
 
   case "$harness" in
     claude)
@@ -297,16 +322,15 @@ add_launch_args() {
       ;;
     pi)
       [[ -n "$model" ]] && out_args+=(--model "$model")
-      if [[ -n "$effort" ]]; then
-        out_args+=(--thinking "$(normalize_openai_effort "$effort")")
+      local pi_effort
+      pi_effort=$(normalize_openai_effort "$effort")
+      if [[ -n "$pi_effort" ]]; then
+        out_args+=(--thinking "$pi_effort")
       fi
       ;;
     opencode)
-      validate_opencode_model_for_launch "$model"
+      validate_opencode_model_for_launch "$model" || return 1
       [[ -n "$model" ]] && out_args+=(--model "$model")
-      if [[ -n "$effort" ]]; then
-        out_args+=(--variant "$(normalize_opencode_effort "$effort" "$model")")
-      fi
       ;;
     omp)
       # No standardized model/effort flags for omp in this launcher.
@@ -319,10 +343,49 @@ add_launch_args() {
 
 launch_metadata_json_args() {
   local harness="$1"
-  local model effort
+  local model effort source_model="" source_effort="" resolved_model="" resolved_effort="" status="configured" unsupported="" requested_model="" requested_effort=""
   model="$(launch_model_for_harness "$harness")"
   effort="$(launch_effort_for_harness "$harness")"
-  jq -nc --arg model "$model" --arg effort "$effort" '{model:$model, effort:$effort}'
+  validate_effort_for_harness "$harness" "$effort" || return 1
+  if [[ -n "$MODEL_OVERRIDE" ]]; then source_model="explicit"; requested_model="$MODEL_OVERRIDE";
+  elif [[ -n "${FLIGHTDECK_LAUNCH_MODEL:-}" ]]; then source_model="env"; requested_model="$FLIGHTDECK_LAUNCH_MODEL";
+  elif [[ -n "$model" ]]; then source_model="auto"; fi
+  if [[ -n "$EFFORT_OVERRIDE" ]]; then source_effort="explicit"; requested_effort="$EFFORT_OVERRIDE";
+  elif [[ -n "${FLIGHTDECK_LAUNCH_EFFORT:-}" ]]; then source_effort="env"; requested_effort="$FLIGHTDECK_LAUNCH_EFFORT";
+  elif [[ -n "$effort" ]]; then source_effort="auto"; fi
+  case "$harness" in
+    claude) resolved_model="$model"; resolved_effort="$effort" ;;
+    codex|pi) resolved_model="$model"; resolved_effort="$(normalize_openai_effort "$effort")" ;;
+    opencode)
+      resolved_model="$model"
+      resolved_effort=""
+      if [[ -n "$effort" ]]; then
+        status="unsupported"
+        unsupported="OpenCode top-level effort/variant is not used by open-terminal; model only"
+      fi
+      ;;
+    *)
+      status="not-applicable"
+      unsupported="harness $harness is not an LLM harness"
+      ;;
+  esac
+  if [[ "$effort" == "off" ]]; then
+    resolved_effort=""
+    status="unsupported"
+    unsupported="effort explicitly disabled with --effort off"
+  fi
+  jq -nc \
+    --arg model "$model" \
+    --arg effort "$resolved_effort" \
+    --arg requested_model "$requested_model" \
+    --arg requested_effort "$requested_effort" \
+    --arg resolved_model "$resolved_model" \
+    --arg resolved_effort "$resolved_effort" \
+    --arg model_source "$source_model" \
+    --arg effort_source "$source_effort" \
+    --arg reasoning_status "$status" \
+    --arg unsupported_reason "$unsupported" \
+    '{model:($model | if length > 0 then . else null end), effort:($effort | if length > 0 then . else null end), requested_model:($requested_model | if length > 0 then . else null end), requested_effort:($requested_effort | if length > 0 then . else null end), resolved_model:($resolved_model | if length > 0 then . else null end), resolved_effort:($resolved_effort | if length > 0 then . else null end), model_source:($model_source | if length > 0 then . else null end), effort_source:($effort_source | if length > 0 then . else null end), reasoning_status:$reasoning_status, unsupported_reason:($unsupported_reason | if length > 0 then . else null end)}'
 }
 
 # Env-prefix tokens that mark every flightdeck-spawned pane as managed live
@@ -335,7 +398,7 @@ detect_start_cmd() {
     return
   fi
   local cmd=() launch_args=() bypass
-  add_launch_args "$HARNESS" launch_args
+  add_launch_args "$HARNESS" launch_args || return 1
   bypass="$(bypass_flag_for_harness "$HARNESS")"
   case "$HARNESS" in
     claude)
@@ -477,7 +540,7 @@ create_oc_session() {
   local bin="$1" url="$2" wt_path="$3"
   local bootstrap="reply with READY and nothing else"
   local launch_args=()
-  add_launch_args opencode launch_args
+  add_launch_args opencode launch_args || return 1
   # FLIGHTDECK_MANAGED=1 also exports into this short-lived
   # session-creation invocation so any tool calls fired during the
   # bootstrap turn see the canonical signal.
@@ -526,7 +589,7 @@ fire_orchestration_async() {
     prompt="/orchestration start $issue"
   fi
   local launch_args=()
-  add_launch_args opencode launch_args
+  add_launch_args opencode launch_args || return 1
   # FLIGHTDECK_MANAGED=1 also exports into the fire-and-forget
   # `/orchestration start` invocation so any tool calls (e.g.
   # merge-pr.md § 5 running flightdeck-mode) see the canonical signal.
@@ -536,6 +599,18 @@ fire_orchestration_async() {
       "${launch_args[@]}" --session "$sid" --format json "$prompt" \
       </dev/null >>"$log".orch 2>&1 ) </dev/null >/dev/null 2>&1 &
   disown 2>/dev/null || true
+}
+
+register_precreated_tmux_entry() {
+  local pane_id="$1" issue="$2" harness="$3"
+  local model effort args
+  [[ -x "$SCRIPT_DIR/flightdeck-session" ]] || { echo "  flightdeck-session-unavailable: cannot register pre-created pane" >&2; return 1; }
+  model=$(launch_model_for_harness "$harness")
+  effort=$(launch_effort_for_harness "$harness")
+  args=(attach --pane "$pane_id" --harness "$harness" --title "$issue" --session-id "$issue" --kind issue)
+  [[ -n "$model" ]] && args+=(--model "$model")
+  [[ -n "$effort" ]] && args+=(--effort "$effort")
+  "$SCRIPT_DIR/flightdeck-session" "${args[@]}"
 }
 
 # Tmux-mode opencode spawn (two-step). Returns 0 on success with bridge
@@ -629,6 +704,15 @@ spawn_oc_attach_tmux() {
     --arg ts "$(date -Iseconds)" \
     '{url:$url, session_id:$sid, directory:$dir, port:$port, server_pid:$server_pid, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
+
+  if ! register_precreated_tmux_entry "$pane_id" "$issue" opencode; then
+    echo "  oc-attach-unavailable: failed to register tracked entry for $issue" >&2
+    rm -f "$spawn_file"
+    kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
+    tmux kill-pane -t "$pane_id" 2>/dev/null || true
+    oc_release_port "$port"
+    return 1
+  fi
 
   # Fire the actual orchestration workflow as a backgrounded follow-up.
   # The bootstrap above only created the session (with a "READY" reply);
@@ -737,7 +821,7 @@ build_claude_channel_cmd() {
   local cmd=("${FLIGHTDECK_PANE_ENV[@]}" "$bin" -n "$issue")
   local launch_args=()
   [[ -n "$bypass" ]] && cmd+=("$bypass")
-  add_launch_args claude launch_args
+  add_launch_args claude launch_args || return 1
   cmd+=("${launch_args[@]}" --session-id "$uuid" --mcp-config "$mcp_path" \
     --dangerously-load-development-channels server:webhook -- "/orchestration start $issue")
   shell_join "${cmd[@]}"
@@ -868,7 +952,7 @@ spawn_pi_bridge_tmux() {
   # expansion (`_expandSkillCommand` only matches `/skill:`). Bare
   # `/orchestration` would fall through to the LLM as raw text.
   local cmd launch_args=() bridge_args=()
-  add_launch_args pi launch_args
+  add_launch_args pi launch_args || return 1
   if [[ -n "$ext_path" ]]; then bridge_args=(-e "$ext_path"); fi
   # Mark this pane as a flightdeck-launched child so the pi-flightdeck
   # dashboard extension suppresses its persistent widget here (issue
@@ -970,7 +1054,7 @@ spawn_cx_remote_tmux() {
   # the top of this file) so orchestration's flightdeck-mode helper
   # detects the pane as Flightdeck-managed.
   local cmd launch_args=()
-  add_launch_args codex launch_args
+  add_launch_args codex launch_args || return 1
   cmd=$(shell_join "${FLIGHTDECK_PANE_ENV[@]}" "$cx_bin" "${launch_args[@]}" --remote "$ws_url")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
@@ -1133,6 +1217,13 @@ open_gui() {
   echo "  Opened terminal for $title in $dir"
 }
 
+if [[ -z "$CMD_TEMPLATE" && -n "$HARNESS" ]]; then
+  validate_effort_for_harness "$HARNESS" "$(launch_effort_for_harness "$HARNESS")"
+  if [[ "$HARNESS" == "opencode" ]]; then
+    validate_opencode_model_for_launch "$(launch_model_for_harness "$HARNESS")"
+  fi
+fi
+
 # --- Main loop ----------------------------------------------------------------
 
 if [[ ${#ISSUES[@]} -eq 1 ]]; then
@@ -1165,7 +1256,8 @@ for ISSUE in "${ISSUES[@]}"; do
   # pane-registry. Falls back to legacy spawn on any adapter failure so
   # the pane still launches — pane-respond / pane-poll detect the absent
   # spawn file and use the tmux send-keys / capture-pane fallback path.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "opencode" && -z "$CMD_TEMPLATE" ]]; then
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "opencode" && -z "$CMD_TEMPLATE" \
+        && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_oc_attach_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
       continue
@@ -1180,7 +1272,7 @@ for ISSUE in "${ISSUES[@]}"; do
   # spawn on any failure (claude < 2.1.80, wrong auth, no bun, port
   # exhausted, etc.) — pane stays launched, just on tmux-fallback.
   if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" \
-        && "$USE_CHANNELS" == "1" ]]; then
+        && "$USE_CHANNELS" == "1" && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_cc_channel_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
       continue
@@ -1195,7 +1287,8 @@ for ISSUE in "${ISSUES[@]}"; do
   # spawn metadata. Pre-open failures (no pi/pi-bridge/extension) fall
   # through to legacy spawn. Post-open discovery timeout keeps the
   # already-opened pane and uses tmux send-keys/capture-pane fallback.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "pi" && -z "$CMD_TEMPLATE" ]]; then
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "pi" && -z "$CMD_TEMPLATE" \
+        && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_pi_bridge_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
       continue
@@ -1207,7 +1300,8 @@ for ISSUE in "${ISSUES[@]}"; do
   # (one per flightdeck session, in its own tmux window), per-pane
   # `codex --remote ws://...` TUI, thread-id discovery via the
   # vendored bun bridge. Falls through on any failure.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "codex" && -z "$CMD_TEMPLATE" ]]; then
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "codex" && -z "$CMD_TEMPLATE" \
+        && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_cx_remote_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
       continue

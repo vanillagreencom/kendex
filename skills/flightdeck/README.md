@@ -46,7 +46,7 @@ If the daemon's master pane disappears (master agent crash, accidental window ki
 
 Ask the agent to track an ad-hoc tmux window (a scratch Pi pane, a log tail, an extra worker) and it will call `flightdeck session start` or `flightdeck session attach` for you. Useful when you want supervision and a dashboard row but no issue/worktree wiring. See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the script flag reference.
 
-Fresh LLM panes need an explicit launch profile. `flightdeck session start --prompt` accepts `--model` plus `--effort`/`--thinking` and translates them per harness: Pi uses `--model` + `--thinking`, Claude uses `--model` + `--effort`, Codex uses `-m` + `model_reasoning_effort`, and OpenCode uses `--model` + `--variant` after checking `opencode models`. If a custom command or attached pane cannot expose model/effort, the tracked entry records `launch.reasoning_status` and `launch.unsupported_reason` instead of pretending defaults were known.
+Fresh LLM panes need an explicit launch profile. `flightdeck session start --prompt` accepts `--model` plus `--effort`/`--thinking` and translates them per harness: Pi uses `--model` + `--thinking`, Claude uses `--model` + `--effort`, Codex uses `-m` + `model_reasoning_effort`, and OpenCode validates `--model` with `opencode models` but records effort as unsupported because top-level `opencode` has no validated effort flag. If a custom command or attached pane cannot expose model/effort, the tracked entry records `launch.reasoning_status` and `launch.unsupported_reason` instead of pretending defaults were known.
 
 ## Issue workflows
 

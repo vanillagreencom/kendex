@@ -76,6 +76,52 @@ pub struct LaunchInfo {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub cmd: Option<String>,
+    pub requested_model: Option<String>,
+    pub requested_effort: Option<String>,
+    pub resolved_model: Option<String>,
+    pub resolved_effort: Option<String>,
+    pub model_source: Option<String>,
+    pub effort_source: Option<String>,
+    pub reasoning_status: Option<String>,
+    pub unsupported_reason: Option<String>,
+    pub argv: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LaunchInfo;
+
+    #[test]
+    fn launch_info_accepts_resolved_metadata_fields() {
+        let launch = serde_json::from_str::<LaunchInfo>(
+            r#"{
+                "model": "openai-codex/gpt-5.5",
+                "effort": "xhigh",
+                "requested_model": "gpt-5.5",
+                "requested_effort": "max",
+                "resolved_model": "openai-codex/gpt-5.5",
+                "resolved_effort": "xhigh",
+                "model_source": "explicit",
+                "effort_source": "explicit",
+                "reasoning_status": "configured",
+                "unsupported_reason": null,
+                "argv": ["pi", "--model", "openai-codex/gpt-5.5"]
+            }"#,
+        )
+        .expect("launch metadata deserializes");
+        assert_eq!(launch.requested_model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(launch.resolved_effort.as_deref(), Some("xhigh"));
+        assert_eq!(
+            launch.argv.as_deref(),
+            Some(
+                &[
+                    "pi".to_owned(),
+                    "--model".to_owned(),
+                    "openai-codex/gpt-5.5".to_owned(),
+                ][..]
+            )
+        );
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]

@@ -197,6 +197,24 @@ echo pi-shim "$@"
 	return bin;
 }
 
+function makeClaudeBinShim(repo: string): string {
+	const bin = join(repo, "claude");
+	writeFileSync(bin, `#!/usr/bin/env bash
+echo claude-shim "$@"
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
+function makeCodexBinShim(repo: string): string {
+	const bin = join(repo, "codex");
+	writeFileSync(bin, `#!/usr/bin/env bash
+echo codex-shim "$@"
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makeOpencodeBinShim(repo: string, models = "openai/gpt-5.5\n"): string {
 	const bin = join(repo, "opencode");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -350,11 +368,69 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["pi-explicit"].launch.effort).toBe("high");
 			expect(state.entries["pi-explicit"].launch.requested_model).toBe("custom/pi:model");
 			expect(state.entries["pi-explicit"].launch.requested_effort).toBe("high");
+			expect(state.entries["pi-explicit"].launch.resolved_model).toBe("custom/pi:model");
+			expect(state.entries["pi-explicit"].launch.resolved_effort).toBe("high");
 			expect(state.entries["pi-explicit"].launch.model_source).toBe("explicit");
 			expect(state.entries["pi-explicit"].launch.effort_source).toBe("explicit");
 		});
 
-		test(`start --prompt validates OpenCode model and maps effort to variant`, () => {
+		test(`start --prompt launches Claude with model and effort metadata`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const claude = makeClaudeBinShim(repo);
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "claude-prompt",
+				"--title", "Claude prompt",
+				"--cwd", repo,
+				"--harness", "claude",
+				"--model", "opus[1m]",
+				"--effort", "max",
+				"--prompt", "say hi",
+			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}` });
+			expect(r.status).toBe(0);
+			const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes(claude))!;
+			expect(launchLine).toContain("--model");
+			expect(launchLine).toContain("opus");
+			expect(launchLine).toContain("--effort");
+			expect(launchLine).toContain("max");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["claude-prompt"].launch.model).toBe("opus[1m]");
+			expect(state.entries["claude-prompt"].launch.effort).toBe("max");
+			expect(state.entries["claude-prompt"].launch.resolved_effort).toBe("max");
+			expect(state.entries["claude-prompt"].launch.argv).toContain("--effort");
+		});
+
+		test(`start --prompt launches Codex with -m and model_reasoning_effort metadata`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const codex = makeCodexBinShim(repo);
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "codex-prompt",
+				"--title", "Codex prompt",
+				"--cwd", repo,
+				"--harness", "codex",
+				"--model", "gpt-5.5",
+				"--effort", "max",
+				"--prompt", "say hi",
+			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}` });
+			expect(r.status).toBe(0);
+			const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes(codex))!;
+			expect(launchLine).toContain("-m");
+			expect(launchLine).toContain("gpt-5.5");
+			expect(launchLine).toContain("model_reasoning_effort=xhigh");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["codex-prompt"].launch.model).toBe("gpt-5.5");
+			expect(state.entries["codex-prompt"].launch.effort).toBe("xhigh");
+			expect(state.entries["codex-prompt"].launch.requested_effort).toBe("max");
+			expect(state.entries["codex-prompt"].launch.resolved_effort).toBe("xhigh");
+			expect(state.entries["codex-prompt"].launch.argv).toContain("-m");
+		});
+
+		test(`start --prompt validates OpenCode model and records unsupported effort without variant`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
 			const runtimeDir = join(repo, "runtime-opencode");
@@ -375,13 +451,37 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes("bash") && line.includes("opencode"))!;
 			expect(launchLine).toContain("--model");
 			expect(launchLine).toContain("openai/gpt-5.5");
-			expect(launchLine).toContain("--variant");
-			expect(launchLine).toContain("xhigh");
+			expect(launchLine).not.toContain("--variant");
 			expect(launchLine).toContain("--prompt");
 			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
 			expect(state.entries["oc-prompt"].launch.model).toBe("openai/gpt-5.5");
-			expect(state.entries["oc-prompt"].launch.effort).toBe("xhigh");
-			expect(state.entries["oc-prompt"].launch.argv).toContain("--variant");
+			expect(state.entries["oc-prompt"].launch.effort).toBeNull();
+			expect(state.entries["oc-prompt"].launch.requested_effort).toBe("max");
+			expect(state.entries["oc-prompt"].launch.resolved_model).toBe("openai/gpt-5.5");
+			expect(state.entries["oc-prompt"].launch.resolved_effort).toBeNull();
+			expect(state.entries["oc-prompt"].launch.reasoning_status).toBe("unsupported");
+			expect(state.entries["oc-prompt"].launch.unsupported_reason).toContain("OpenCode top-level effort/variant");
+			expect(state.entries["oc-prompt"].launch.argv).not.toContain("--variant");
+		});
+
+		test(`start --prompt requires exact OpenCode model match before tmux mutation`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			makeOpencodeBinShim(repo, "openai/gpt-5.5-pro\n");
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "oc-prefix-invalid",
+				"--title", "OpenCode prefix invalid",
+				"--cwd", repo,
+				"--harness", "opencode",
+				"--model", "openai/gpt-5.5",
+				"--prompt", "say hi",
+			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}` });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("opencode model is not configured");
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
 		});
 
 		test(`start --prompt rejects unconfigured OpenCode model before tmux mutation`, () => {
@@ -401,6 +501,45 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}`, XDG_RUNTIME_DIR: runtimeDir });
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toContain("opencode model is not configured");
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
+		});
+
+		test(`start --prompt rejects Claude minimal/off effort before tmux mutation`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			for (const effort of ["minimal", "off"]) {
+				const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+				const r = run(repo, shim, [
+					"start",
+					"--session-id", `claude-${effort}`,
+					"--title", `Claude ${effort}`,
+					"--cwd", repo,
+					"--harness", "claude",
+					"--effort", effort,
+					"--prompt", "say hi",
+				]);
+				expect(r.status).not.toBe(0);
+				expect(r.stderr).toContain("invalid --effort for claude");
+				expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			}
+			expect(existsSync(stateFile(repo))).toBe(false);
+		});
+
+		test(`start --prompt rejects unsupported shell harness before tmux mutation`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "shell-prompt",
+				"--title", "Shell prompt",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--prompt", "say hi",
+			]);
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("--prompt launch does not support --harness shell");
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 			expect(existsSync(stateFile(repo))).toBe(false);
 		});
@@ -432,6 +571,31 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["adhoc-start"].cwd).toBe(repo);
 			expect(state.entries["adhoc-start"].launch.reasoning_status).toBe("unsupported");
 			expect(state.entries["adhoc-start"].launch.unsupported_reason).toContain("custom --cmd");
+		});
+
+		test(`start records model/effort overrides as not applicable for non-LLM shell cmd`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "shell-non-llm",
+				"--title", "Shell non LLM",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--model", "ignored/model",
+				"--effort", "high",
+				"--cmd", "printf ok",
+			]);
+			expect(r.status).toBe(0);
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["shell-non-llm"].launch.model).toBeNull();
+			expect(state.entries["shell-non-llm"].launch.effort).toBeNull();
+			expect(state.entries["shell-non-llm"].launch.requested_model).toBe("ignored/model");
+			expect(state.entries["shell-non-llm"].launch.requested_effort).toBe("high");
+			expect(state.entries["shell-non-llm"].launch.resolved_model).toBeNull();
+			expect(state.entries["shell-non-llm"].launch.resolved_effort).toBeNull();
+			expect(state.entries["shell-non-llm"].launch.reasoning_status).toBe("not-applicable");
 		});
 
 		test(`start launches dashboard hook and dashboard entry does not recurse`, () => {

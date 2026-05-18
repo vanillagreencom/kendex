@@ -167,6 +167,8 @@ interface InitFields {
 	launch_reasoning_status: string;
 	launch_requested_effort: string;
 	launch_requested_model: string;
+	launch_resolved_effort: string;
+	launch_resolved_model: string;
 	launch_unsupported_reason: string;
 	oc_port: string;
 	oc_session_id: string;
@@ -196,7 +198,8 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		kind,
 		launch_argv_json: "", launch_cmd: "", launch_effort: "", launch_effort_source: "",
 		launch_model: "", launch_model_source: "", launch_reasoning_status: "",
-		launch_requested_effort: "", launch_requested_model: "", launch_unsupported_reason: "",
+		launch_requested_effort: "", launch_requested_model: "",
+		launch_resolved_effort: "", launch_resolved_model: "", launch_unsupported_reason: "",
 		oc_port: "", oc_session_id: "", oc_url: "",
 		pane_id: "", pane_index: tmuxBasePaneIndex() || "0", pane_target: "",
 		pi_bridge_pid: "", pi_bridge_socket: "", pi_session_id: "",
@@ -228,6 +231,8 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--launch-reasoning-status": "launch_reasoning_status",
 	"--launch-requested-effort": "launch_requested_effort",
 	"--launch-requested-model": "launch_requested_model",
+	"--launch-resolved-effort": "launch_resolved_effort",
+	"--launch-resolved-model": "launch_resolved_model",
 	"--launch-unsupported-reason": "launch_unsupported_reason",
 	"--oc-port": "oc_port",
 	"--oc-session-id": "oc_session_id",
@@ -262,6 +267,8 @@ function hydrateLaunchFields(fields: InitFields, launch: Record<string, unknown>
 	if (!fields.launch_requested_effort) fields.launch_requested_effort = String(launch.requested_effort ?? "");
 	if (!fields.launch_model_source) fields.launch_model_source = String(launch.model_source ?? launch.source ?? "");
 	if (!fields.launch_effort_source) fields.launch_effort_source = String(launch.effort_source ?? launch.source ?? "");
+	if (!fields.launch_resolved_model) fields.launch_resolved_model = String(launch.resolved_model ?? launch.model ?? "");
+	if (!fields.launch_resolved_effort) fields.launch_resolved_effort = String(launch.resolved_effort ?? launch.effort ?? "");
 	if (!fields.launch_reasoning_status) fields.launch_reasoning_status = String(launch.reasoning_status ?? "");
 	if (!fields.launch_unsupported_reason) fields.launch_unsupported_reason = String(launch.unsupported_reason ?? "");
 	if (!fields.launch_argv_json && Array.isArray(launch.argv)) fields.launch_argv_json = JSON.stringify(launch.argv);
@@ -341,7 +348,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 	if (!paneId && tmuxPaneExists(paneTarget)) paneId = tmuxField(paneTarget, "#{pane_id}");
 
 	const launchArgv = parseArgvJson(fields.launch_argv_json);
-	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd || fields.launch_requested_model || fields.launch_requested_effort || fields.launch_reasoning_status || fields.launch_unsupported_reason || launchArgv)
+	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd || fields.launch_requested_model || fields.launch_requested_effort || fields.launch_resolved_model || fields.launch_resolved_effort || fields.launch_reasoning_status || fields.launch_unsupported_reason || launchArgv)
 		? {
 			argv: launchArgv,
 			cmd: fields.launch_cmd || null,
@@ -352,6 +359,8 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 			reasoning_status: fields.launch_reasoning_status || null,
 			requested_effort: fields.launch_requested_effort || null,
 			requested_model: fields.launch_requested_model || null,
+			resolved_effort: fields.launch_resolved_effort || fields.launch_effort || null,
+			resolved_model: fields.launch_resolved_model || fields.launch_model || null,
 			unsupported_reason: fields.launch_unsupported_reason || null,
 		}
 		: null;

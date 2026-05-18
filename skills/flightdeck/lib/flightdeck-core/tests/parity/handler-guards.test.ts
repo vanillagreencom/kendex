@@ -9,6 +9,7 @@ import { ISSUE_ONLY_TAGS } from "../../src/classifier/rules.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(HERE, "../fixtures/prompt-classify");
 const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
+const HANDLER_DOC = resolve(HERE, "../../../../workflows/session-handle-prompt.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -80,5 +81,15 @@ describe("handler domain guards", () => {
 
 	test("computed issue-only tags are present in the guard set", () => {
 		expect(ISSUE_ONLY_TAGS.has("scope-creep-detected")).toBe(true);
+	});
+
+	test("generic bash-permission allowlist is restricted to Flightdeck/read-only commands", () => {
+		const doc = readFileSync(HANDLER_DOC, "utf8");
+		expect(doc).toContain("(flightdeck-state|flightdeck-daemon|flightdeck-dashboard|flightdeck-session|pane-registry|pane-poll|pane-respond|pane-clear-bell)");
+		expect(doc).not.toContain(".agents/skills/.*/scripts");
+		expect(doc).not.toContain(".agents/skills/*/scripts");
+		expect(doc).toContain("generic mode does not require those CLIs");
+		expect(doc).toContain("gh pr view");
+		expect(doc).toContain("linear");
 	});
 });

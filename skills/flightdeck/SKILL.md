@@ -58,8 +58,8 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 | Command | Arguments | Workflow / Script | Notes |
 |---------|-----------|-------------------|-------|
-| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, records launch model/effort metadata, and records a generic `.entries[ID]` row. Prompt LLM launches pass harness-aware model/effort argv (Pi `--model` + `--thinking`, Claude `--model` + `--effort`, Codex `-m` + `model_reasoning_effort`, OpenCode `--model` + `--variant` after `opencode models` validation). Launches/verifies the Rust dashboard by default unless `FLIGHTDECK_DASHBOARD=0`. |
-| `session attach` | `--pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window, records supplied or unsupported model/effort metadata, and launches/verifies the Rust dashboard unless disabled. For Pi, probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
+| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, records launch model/effort metadata, and records a generic `.entries[ID]` row. Prompt LLM launches pass harness-aware model/effort argv (Pi `--model` + `--thinking`, Claude `--model` + `--effort`, Codex `-m` + `model_reasoning_effort`; OpenCode validates `--model` via `opencode models` and records effort unsupported). Launches/verifies the Rust dashboard by default unless `FLIGHTDECK_DASHBOARD=0`. |
+| `session attach` | `--pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window, records supplied or unsupported model/effort metadata, and launches/verifies the Rust dashboard unless disabled. Pi attach also probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
 | `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
 | `session prompt routing` | nested from `session watch` | `workflows/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries` snapshot. |
@@ -226,6 +226,8 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
         "effort": "<resolved-effort-or-thinking-or-null>",
         "requested_model": "<explicit-or-env-model-or-null>",
         "requested_effort": "<explicit-or-env-effort-or-null>",
+        "resolved_model": "<resolved-model-or-null>",
+        "resolved_effort": "<resolved-effort-or-thinking-or-null>",
         "model_source": "explicit|env|auto|null",
         "effort_source": "explicit|env|auto|null",
         "argv": ["<resolved>", "<harness>", "argv>"],

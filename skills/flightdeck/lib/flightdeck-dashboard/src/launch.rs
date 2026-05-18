@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{bail, Result, WrapErr};
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -32,22 +32,11 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
         return Ok(());
     }
 
-    let session = match resolve_session(args.session.as_deref()).await {
-        Ok(session) => session,
-        Err(error) => {
-            warn(format!("failed to resolve tmux session: {error}"));
-            return Ok(());
-        }
-    };
-    let session_key = match resolve_session_key(&session) {
-        Ok(key) => key,
-        Err(error) => {
-            warn(format!(
-                "failed to resolve session key for {session}: {error}"
-            ));
-            return Ok(());
-        }
-    };
+    let session = resolve_session(args.session.as_deref())
+        .await
+        .wrap_err("failed to resolve tmux session")?;
+    let session_key = resolve_session_key(&session)
+        .wrap_err_with(|| format!("failed to resolve session key for {session}"))?;
     let window_name = select_window_name(args.window_name.as_deref());
     let theme = select_theme(args.theme);
     let motion = select_motion(args.motion);
@@ -112,7 +101,16 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
         explicit_state_file.as_deref(),
         &project_root,
     )
-    .await;
+    .await?;
+    let Some(path) = state_file.as_deref() else {
+        bail!("flightdeck dashboard launch could not resolve state file for verification");
+    };
+    if !tracked_dashboard_alive(Some(path)).await? {
+        bail!(
+            "flightdeck dashboard launch did not register a live tracked entry in {}",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -338,10 +336,9 @@ async fn launch_window(
     motion: Option<MotionArg>,
     state_file: Option<&Path>,
     project_root: &Path,
-) {
+) -> Result<()> {
     let Some(session_bin) = resolve_flightdeck_session_bin(project_root) else {
-        warn("flightdeck-session not found; dashboard window not launched".to_owned());
-        return;
+        bail!("flightdeck-session not found; dashboard window not launched");
     };
     let cmd = tui_command(session, theme, motion, state_file);
     let mut command = Command::new(session_bin);
@@ -359,17 +356,18 @@ async fn launch_window(
     command.stdout(Stdio::null()).stderr(Stdio::piped());
     match command.output().await {
         Ok(output) if output.status.success() => {
-            tracing::info!(window = %window_name, "flightdeck dashboard window launched")
+            tracing::info!(window = %window_name, "flightdeck dashboard window launched");
+            Ok(())
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn(format!(
+            bail!(
                 "flightdeck-session start failed with status {}: {}",
                 output.status,
                 stderr.trim()
-            ));
+            )
         }
-        Err(error) => warn(format!("failed to spawn flightdeck-session: {error}")),
+        Err(error) => bail!("failed to spawn flightdeck-session: {error}"),
     }
 }
 

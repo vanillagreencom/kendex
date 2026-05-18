@@ -227,4 +227,4 @@ Compaction recovery MUST verify dashboard presence and daemon liveness before yi
 
 ## Returns
 
-To the caller's dashboard loop, or to `watch.md` when issue mode is extending the generic loop.
+To the caller's session loop, or to `watch.md` when issue mode is extending the generic loop.
