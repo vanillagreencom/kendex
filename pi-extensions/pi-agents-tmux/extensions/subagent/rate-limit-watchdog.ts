@@ -45,7 +45,7 @@ import {
 export type RateLimitOutcome =
 	| { kind: "scheduled-retry"; at: number; attempt: number }
 	| { kind: "exhausted"; attempt: number; reason: string }
-	| { kind: "not-rate-limited" }
+	| { kind: "not-rate-limited"; reason: string }
 	| { kind: "resolved"; previousAttempt: number }
 	| { kind: "skipped-disabled" };
 
@@ -150,12 +150,18 @@ export function createSubagentRateLimitWatchdog(
 			);
 
 			if (decision.kind === "not-rate-limited") {
+				emit("subagents:rate_limit_skipped", {
+					agent: state.agentName,
+					paneId,
+					reason: decision.reason,
+					taskId: state.taskId,
+				});
 				// Recovery branch: if the pane had been mid-rate-limit and just
 				// produced a healthy assistant turn, emit resolved + reset state.
 				// Non-assistant message_end events (toolResult/user echo of our own
 				// steer) are ignored so they cannot retrigger or falsely resolve the
 				// retry ladder.
-				if (!isAssistantMessageEvent(event)) return { kind: "not-rate-limited" };
+				if (!isAssistantMessageEvent(event)) return { kind: "not-rate-limited", reason: decision.reason };
 				if (state.pendingRetry === null && state.attempt > 0) {
 					const previousAttempt = state.attempt;
 					state.attempt = 0;
@@ -167,7 +173,7 @@ export function createSubagentRateLimitWatchdog(
 					});
 					return { kind: "resolved", previousAttempt };
 				}
-				return { kind: "not-rate-limited" };
+				return { kind: "not-rate-limited", reason: decision.reason };
 			}
 
 			if (decision.kind === "exhausted") {

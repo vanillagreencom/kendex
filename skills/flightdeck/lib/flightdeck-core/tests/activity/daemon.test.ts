@@ -210,6 +210,34 @@ describe("subscriber wake row activity mapping", () => {
 		expect(rows[0]).toMatchObject({ importance: "important", pane_id: "%24", severity: "warning", type: "daemon.warning" });
 	});
 
+	test("rate-limit skipped maps to noisy debug activity", () => {
+		emitActivityForWakeRow(ctx(), {
+			classifier_tag: "pi-rate-limit-skipped",
+			event_type: "rate_limit_skipped",
+			harness: "pi",
+			hash: "skiphash",
+			pane_id: "%24",
+			reason: "no-stopreason",
+			ts: "2026-05-15T00:00:00Z",
+		});
+		expect(wakeRows()).toHaveLength(0);
+		const rows = activityRows();
+		expect(rows[0]).toMatchObject({
+			harness: "pi",
+			importance: "noisy",
+			pane_id: "%24",
+			severity: "debug",
+			summary: "rate-limit skipped: no-stopreason",
+			type: "agent.rate_limit_skipped",
+		});
+		expect(rows[0]?.details).toMatchObject({
+			dedup_key: "%24:rate_limit_skipped:no-stopreason:skiphash",
+			event_type: "rate_limit_skipped",
+			hash: "skiphash",
+			reason: "no-stopreason",
+		});
+	});
+
 	test("question opened maps to question.opened", () => {
 		emitActivityForWakeRow(ctx(), {
 			classifier_tag: "pi-question",

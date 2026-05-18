@@ -10,6 +10,7 @@ import {
 	type RateLimitOutcome,
 	type SubagentRateLimitWatchdogDeps,
 } from "../extensions/subagent/rate-limit-watchdog.js";
+import { buildSubagentActivity } from "../extensions/subagent/activity.js";
 
 const CANONICAL_RATE_LIMIT_MESSAGE_END = {
 	message: {
@@ -41,6 +42,24 @@ const USER_STEER_ECHO_MESSAGE_END = {
 	message: {
 		content: [{ text: "API rate limit was detected. Try to continue from where you left off.", type: "text" }],
 		role: "user",
+	},
+	type: "message_end",
+};
+
+const ASSISTANT_NO_STOP_REASON_MESSAGE_END = {
+	message: {
+		content: [{ text: "Still working.", type: "text" }],
+		role: "assistant",
+	},
+	type: "message_end",
+};
+
+const ASSISTANT_ERROR_NO_RATE_LIMIT_PROSE_MESSAGE_END = {
+	message: {
+		content: [{ text: "Tool output attached below.", type: "text" }],
+		errorMessage: "Tool execution failed",
+		role: "assistant",
+		stopReason: "error",
 	},
 	type: "message_end",
 };
@@ -80,6 +99,51 @@ function makeDeps(overrides: Partial<SubagentRateLimitWatchdogDeps> = {}): {
 }
 
 describe("subagent rate-limit watchdog (vstack#108)", () => {
+	test("rate-limit skipped broker event maps to noisy debug activity", () => {
+		expect(buildSubagentActivity("subagents:rate_limit_skipped", {
+			agent: "rust",
+			paneId: "%41",
+			reason: "no-prose",
+			taskId: "task-1",
+		})).toMatchObject({
+			details: {
+				event_name: "subagents:rate_limit_skipped",
+				pane_id: "%41",
+				reason: "no-prose",
+			},
+			importance: "noisy",
+			refs: { agent: "rust", task_id: "task-1" },
+			severity: "debug",
+			source: "pi-agents",
+			summary: "rust rate-limit skipped: no-prose",
+			type: "agent.rate_limit_skipped",
+		});
+	});
+
+	for (const { event, reason } of [
+		{ event: USER_STEER_ECHO_MESSAGE_END, reason: "non-assistant" },
+		{ event: ASSISTANT_NO_STOP_REASON_MESSAGE_END, reason: "no-stopreason" },
+		{ event: HEALTHY_MESSAGE_END, reason: "stopreason-mismatch" },
+		{ event: ASSISTANT_ERROR_NO_RATE_LIMIT_PROSE_MESSAGE_END, reason: "no-prose" },
+	] as const) {
+		test(`classifier rejection emits subagents:rate_limit_skipped (${reason})`, () => {
+			const ctx = makeDeps();
+			const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+			const outcome = watchdog.onMessageEnd(event, "rust", "rust", "task-1");
+			expect(outcome).toEqual({ kind: "not-rate-limited", reason });
+			expect(ctx.activity).toHaveLength(1);
+			expect(ctx.activity[0]).toEqual({
+				event: "subagents:rate_limit_skipped",
+				payload: {
+					agent: "rust",
+					paneId: "rust",
+					reason,
+					taskId: "task-1",
+				},
+			});
+		});
+	}
+
 	test("first rate-limit detection schedules a retry and emits agent.rate_limited", () => {
 		const ctx = makeDeps();
 		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
@@ -157,7 +221,11 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(outcome.kind).toBe("resolved");
 		if (outcome.kind !== "resolved") throw new Error("expected resolved");
 		expect(outcome.previousAttempt).toBe(1);
-		expect(ctx.activity[0]?.event).toBe("subagents:rate_limit_resolved");
+		expect(ctx.activity.map((entry) => entry.event)).toEqual([
+			"subagents:rate_limit_skipped",
+			"subagents:rate_limit_resolved",
+		]);
+		expect(ctx.activity[0]?.payload.reason).toBe("stopreason-mismatch");
 		// Counter reset → a subsequent rate-limit starts at attempt 1 again.
 		const second = watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust");
 		if (second.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
@@ -172,7 +240,11 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		ctx.activity.length = 0;
 		const echo = watchdog.onMessageEnd(USER_STEER_ECHO_MESSAGE_END, "rust");
 		expect(echo.kind).toBe("not-rate-limited");
-		expect(ctx.activity).toHaveLength(0);
+		expect(ctx.activity).toHaveLength(1);
+		expect(ctx.activity[0]).toMatchObject({
+			event: "subagents:rate_limit_skipped",
+			payload: { reason: "non-assistant" },
+		});
 		const second = watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust");
 		if (second.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
 		expect(second.attempt).toBe(2);
@@ -184,7 +256,11 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		const outcome = watchdog.onMessageEnd(HEALTHY_MESSAGE_END, "rust");
 		expect(outcome.kind).toBe("not-rate-limited");
 		expect(ctx.scheduled).toHaveLength(0);
-		expect(ctx.activity).toHaveLength(0);
+		expect(ctx.activity).toHaveLength(1);
+		expect(ctx.activity[0]).toMatchObject({
+			event: "subagents:rate_limit_skipped",
+			payload: { reason: "stopreason-mismatch" },
+		});
 		expect(watchdog.isAwaitingRetry("rust")).toBe(false);
 	});
 

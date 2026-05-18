@@ -14,6 +14,7 @@ const {
 	RATE_LIMIT_DEFAULT_MAX_ATTEMPTS,
 	RATE_LIMIT_ERROR_REGEX,
 	RATE_LIMIT_STEER_MESSAGE,
+	classifyRateLimitEvent,
 	decideRateLimitRetry,
 	extractRetryAfterMs,
 	isRateLimitEvent,
@@ -59,7 +60,7 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 			now: 1_000_000,
 			paneId: "%41",
 		});
-		expect(decision).toEqual({ kind: "not-rate-limited" });
+		expect(decision).toEqual({ kind: "not-rate-limited", reason: "stopreason-mismatch" });
 	});
 
 	test("returns not-rate-limited when prose mentions 'rate' but stopReason is not 'error'", () => {
@@ -80,6 +81,7 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 			paneId: "%41",
 		});
 		expect(decision.kind).toBe("not-rate-limited");
+		expect(decision).toEqual({ kind: "not-rate-limited", reason: "stopreason-mismatch" });
 	});
 
 	test("schedules a retry-at on first detection using the default ladder", () => {
@@ -256,29 +258,49 @@ describe("rate-limit decision parity — false-positive regression coverage (vst
 			assistant: false,
 			event: toolResultMentionsRateLimit,
 			name: "toolResult message_end whose content mentions rate limit",
+			reason: "non-assistant",
 		},
 		{
 			assistant: false,
 			event: steerEchoUserMessage,
 			name: "user message_end echoing the steer text",
+			reason: "non-assistant",
 		},
 		{
 			assistant: true,
 			event: assistantStopMentions429,
 			name: "assistant message_end with stopReason=stop mentioning 429",
+			reason: "stopreason-mismatch",
 		},
 		{
 			assistant: true,
 			event: assistantErrorWithNestedToolTextOnly,
 			name: "assistant error whose rate-limit prose exists only outside the assistant envelope",
+			reason: "no-prose",
+		},
+	] as const satisfies ReadonlyArray<{
+		assistant: boolean;
+		event: unknown;
+		name: string;
+		reason: "non-assistant" | "no-stopreason" | "stopreason-mismatch" | "no-prose";
+	}>;
+
+	const rejectionReasonEvents = [
+		...regressionEvents,
+		{
+			assistant: true,
+			event: { message: { content: [{ text: "Still working.", type: "text" }], role: "assistant" }, type: "message_end" },
+			name: "assistant message_end with no stopReason",
+			reason: "no-stopreason",
 		},
 	] as const;
 
 	for (const { module, name } of DECISION_MODULES) {
-		for (const { assistant, event, name: eventName } of regressionEvents) {
+		for (const { assistant, event, name: eventName, reason } of rejectionReasonEvents) {
 			test(`${name}: ${eventName} returns not-rate-limited`, () => {
 				expect(module.isAssistantMessageEvent(event)).toBe(assistant);
 				expect(module.isRateLimitEvent(event)).toBe(false);
+				expect(module.classifyRateLimitEvent(event)).toEqual({ isRateLimitEvent: false, reason });
 				expect(
 					module.decideRateLimitRetry({
 						attempt: 0,
@@ -287,14 +309,14 @@ describe("rate-limit decision parity — false-positive regression coverage (vst
 						now: 1_000,
 						paneId: "%41",
 					}),
-				).toEqual({ kind: "not-rate-limited" });
+				).toEqual({ kind: "not-rate-limited", reason });
 			});
 		}
 	}
 
 	test("canonical and vendored decision modules stay behaviorally identical", () => {
 		for (const { event } of [
-			...regressionEvents,
+			...rejectionReasonEvents,
 			{ event: CANONICAL_RATE_LIMIT_EVENT, name: "canonical rate-limit event" },
 		]) {
 			const input = { attempt: 0, event, lastRetryAt: null, now: 10_000, paneId: "%41" };
@@ -305,8 +327,7 @@ describe("rate-limit decision parity — false-positive regression coverage (vst
 
 describe("isRateLimitEvent — defensive shape matching", () => {
 	test("rejects top-level data.error prose without an assistant message envelope", () => {
-		expect(
-			isRateLimitEvent({
+		const event = {
 				data: {
 					error: {
 						message: "API Error: Server is temporarily limiting requests · Rate limited",
@@ -314,8 +335,9 @@ describe("isRateLimitEvent — defensive shape matching", () => {
 				},
 				stopReason: "error",
 				type: "agent_end",
-			}),
-		).toBe(false);
+			};
+		expect(isRateLimitEvent(event)).toBe(false);
+		expect(classifyRateLimitEvent(event)).toEqual({ isRateLimitEvent: false, reason: "non-assistant" });
 	});
 
 	test("matches the canonical regex with several phrasings", () => {

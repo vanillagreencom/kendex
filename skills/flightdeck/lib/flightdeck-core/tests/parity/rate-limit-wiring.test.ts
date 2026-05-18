@@ -3,8 +3,8 @@
 //
 //   1. The bash subscriber source contains the jq filter that picks up
 //      the canonical rate-limit shape, plus both wake-event classifier
-//      tags (pi-rate-limit-retry / pi-rate-limit-exhausted) and a steer
-//      dispatch path. Source-level guards catch any future refactor that
+//      tags (pi-rate-limit-retry / pi-rate-limit-exhausted), the skipped
+//      activity tag, and a steer dispatch path. Source-level guards catch any future refactor that
 //      removes one of the contracts.
 //   2. The TS decision module's CLI (`bun rate-limit-watchdog.ts decide
 //      ...`) emits the exact JSON shape the bash branch consumes. Drives
@@ -80,17 +80,19 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		expect(bashSrc).toMatch(/VSTACK_RATE_LIMIT_MAX_ATTEMPTS:-5/);
 	});
 
-	test("jq filter matches message_end + assistant + stopReason=error + rate-limit prose", () => {
+	test("jq filter passes message_end events for positive and skipped rate-limit decisions", () => {
 		expect(bashSrc).toMatch(/\.event == "message_end"/);
+		expect(bashSrc).toContain('((.data.message.customType // "") == "")');
 		expect(bashSrc).toMatch(/\.data\.message\.role/);
 		expect(bashSrc).toMatch(/\.data\.message\.stopReason/);
 		expect(bashSrc).toMatch(/temporarily limiting requests/);
 		expect(bashSrc).toMatch(/too many requests/);
 	});
 
-	test("bash emits both retry and exhausted classifier tags", () => {
+	test("bash emits retry/exhausted wake tags and skipped activity tag", () => {
 		expect(bashSrc).toContain('--arg tag "pi-rate-limit-retry"');
 		expect(bashSrc).toContain('--arg tag "pi-rate-limit-exhausted"');
+		expect(bashSrc).toContain('--arg tag "pi-rate-limit-skipped"');
 	});
 
 	test("bash references the canonical TS module name for parity", () => {
@@ -120,7 +122,34 @@ describe("rate-limit decider CLI (vstack#108)", () => {
 	});
 
 	test("healthy event returns not-rate-limited", () => {
-		const { kind } = runDecider({ data: HEALTHY_DATA, event: "message_end", type: "event" }, 0);
+		const { kind, raw } = runDecider({ data: HEALTHY_DATA, event: "message_end", type: "event" }, 0);
 		expect(kind).toBe("not-rate-limited");
+		expect(raw.reason).toBe("stopreason-mismatch");
+	});
+
+	test("rejection reasons round-trip through the CLI", () => {
+		const cases = [
+			{
+				event: { message: { content: [{ text: "Rate limited", type: "text" }], role: "user" } },
+				reason: "non-assistant",
+			},
+			{
+				event: { message: { content: [{ text: "Rate limited", type: "text" }], role: "assistant" } },
+				reason: "no-stopreason",
+			},
+			{
+				event: HEALTHY_DATA,
+				reason: "stopreason-mismatch",
+			},
+			{
+				event: { message: { content: [{ text: "Tool failed", type: "text" }], role: "assistant", stopReason: "error" } },
+				reason: "no-prose",
+			},
+		] as const;
+		for (const { event, reason } of cases) {
+			const { kind, raw } = runDecider({ data: event, event: "message_end", type: "event" }, 0);
+			expect(kind).toBe("not-rate-limited");
+			expect(raw.reason).toBe(reason);
+		}
 	});
 });

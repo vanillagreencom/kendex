@@ -306,6 +306,7 @@ pi_subscriber_loop() {
   local rate_limit_enabled="${VSTACK_RATE_LIMIT_WATCHDOG:-1}"
   case "$rate_limit_enabled" in 0|false|FALSE|off|OFF) rate_limit_enabled=0 ;; *) rate_limit_enabled=1 ;; esac
   local rate_limit_attempt=0
+  local rate_limit_skip_seq=0
   local rate_limit_max="${VSTACK_RATE_LIMIT_MAX_ATTEMPTS:-5}"
   [[ "$rate_limit_max" =~ ^[1-9][0-9]*$ ]] || rate_limit_max=5
   local rate_limit_decider="${VSTACK_RATE_LIMIT_DECIDER_BIN:-}"
@@ -326,6 +327,8 @@ pi_subscriber_loop() {
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "vstack-background-tasks:event"))
         or
         (.type == "event" and .event == "tool_execution_end" and ((.data.toolName // "") == "edit") and (.data.isError == true))
+        or
+        (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == ""))
         or
         (.type == "event" and .data.message.role == "assistant" and (.data.message.stopReason // "") != "")
         or
@@ -403,23 +406,20 @@ pi_subscriber_loop() {
         continue
       fi
 
-      # vstack#108: rate-limit watchdog. The jq filter above keeps only
-      # message_end events whose assistant payload errored with a
-      # canonical rate-limit prose. Per-pane attempt counter advances
-      # through the env-driven backoff ladder; on retry-at we both
-      # write a wake-event row (so the daemon wakes master) and fork a
-      # detached background sleeper that delivers `pi-bridge send
-      # --steer` once the API window has plausibly reset. On exhausted
-      # we emit a distinct classifier_tag so master can operator-
-      # intervene without further mistaken retries.
+      # vstack#108/#126: rate-limit watchdog. The jq filter above keeps
+      # message_end events (excluding extension custom messages) so the
+      # canonical TS decider can classify both positive detections and
+      # skipped decisions. Per-pane attempt counter advances through the
+      # env-driven backoff ladder; on retry-at we both write a wake-event
+      # row (so the daemon wakes master) and fork a detached background
+      # sleeper that delivers `pi-bridge send --steer` once the API window
+      # has plausibly reset. On exhausted we emit a distinct classifier_tag
+      # so master can operator-intervene without further mistaken retries.
       if [[ "$event_name" == "message_end" && "$rate_limit_enabled" == "1" ]]; then
-        local rl_error rl_role rl_stop
-        rl_role=$(jq -r '.data.message.role // ""' <<< "$line" 2>/dev/null)
-        rl_stop=$(jq -r '.data.message.stopReason // ""' <<< "$line" 2>/dev/null)
-        rl_error=$(jq -r '.data.message.errorMessage // ""' <<< "$line" 2>/dev/null)
-        if [[ "$rl_role" == "assistant" && "$rl_stop" == "error" ]] \
-          && [[ "$rl_error" =~ (temporarily\ limiting\ requests|[Rr]ate.{0,5}[Ll]imit|429|too\ many\ requests) ]]; then
-          local rl_event_json rl_decision rl_kind rl_at rl_attempt_next
+        local rl_custom_type
+        rl_custom_type=$(jq -r '.data.message.customType // ""' <<< "$line" 2>/dev/null)
+        if [[ -z "$rl_custom_type" ]]; then
+          local rl_event_json rl_decision rl_kind rl_at rl_attempt_next rl_skip_reason
           rl_event_json=$(jq -c '.data // {}' <<< "$line" 2>/dev/null)
           if [[ -n "$rl_event_json" && -x "$(command -v bun 2>/dev/null)" && -f "$rate_limit_decider" ]]; then
             rl_decision=$(bun "$rate_limit_decider" decide \
@@ -430,9 +430,8 @@ pi_subscriber_loop() {
           fi
           if [[ -z "$rl_decision" ]]; then
             # Defensive fallback when bun / the decider script is missing:
-            # still emit a single wake-event row so master gets the signal,
-            # but do not schedule a steer (no decision module to compute the
-            # backoff).
+            # fail closed and do not schedule a steer without the decision
+            # module to compute classifier reason + backoff.
             rl_decision='{"kind":"not-rate-limited"}'
           fi
           rl_kind=$(jq -r '.kind // ""' <<< "$rl_decision" 2>/dev/null)
@@ -485,6 +484,27 @@ pi_subscriber_loop() {
               "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" \
               >> "$sub_log" 2>/dev/null || true
             continue
+          elif [[ "$rl_kind" == "not-rate-limited" ]]; then
+            rl_skip_reason=$(jq -r '.reason // ""' <<< "$rl_decision" 2>/dev/null)
+            if [[ -n "$rl_skip_reason" && "$rl_skip_reason" != "null" ]]; then
+              rate_limit_skip_seq=$((rate_limit_skip_seq + 1))
+              local rl_hash
+              rl_hash=$(printf '%s|rate-limit-skipped|%s|%s|%s' "$pane_id" "$rl_skip_reason" "$rate_limit_skip_seq" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,12)}')
+              ( exec 219>"$SESSION_LOCK"
+                flock 219
+                jq -nc --arg ts "$(date -Iseconds)" \
+                       --arg pid "$pane_id" \
+                       --arg harness "pi" \
+                       --arg tag "pi-rate-limit-skipped" \
+                       --arg h "$rl_hash" \
+                       --arg reason "$rl_skip_reason" \
+                       '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"rate_limit_skipped", reason:$reason, classifier_tag:$tag, hash:$h}' \
+                       >> "$WAKE_EVENTS_LOG"
+              )
+              printf '%s [pi-rate-limit-skipped] pane=%s reason=%s hash=%s\n' \
+                "$(date -Iseconds)" "$pane_id" "$rl_skip_reason" "$rl_hash" \
+                >> "$sub_log" 2>/dev/null || true
+            fi
           fi
         fi
       fi

@@ -178,6 +178,7 @@ export function activityInputsForWakeRow(row: WakeEventRow): ActivityEventInput[
 	if (tag === "pi-subagent-completion" || tag === "pi-subagent-completion-ok") return subagentActivities(row);
 	if (tag === BG_TASK_EXIT_CLASSIFIER_TAG || tag === "pi-bg-task-activity") return bgTaskActivities(row);
 	if (tag === "pi-activity-broker") return brokerActivities(row);
+	if (tag === "pi-rate-limit-skipped") return [rateLimitSkippedActivity(row)];
 	if (tag === "domain-mismatch") return [domainMismatchActivity(row)];
 	if (tag === "daemon-exited") return [daemonExitedActivity(row)];
 	if (isPromptTag(tag)) return [promptActivity(row, tag)];
@@ -320,6 +321,25 @@ function bgTaskActivities(row: WakeEventRow): ActivityEventInput[] {
 		ts: str(row.ts),
 		type,
 	}];
+}
+
+function rateLimitSkippedActivity(row: WakeEventRow): ActivityEventInput {
+	const paneId = str(row.pane_id);
+	const reason = str(row.reason) || "unknown";
+	const hash = str(row.hash) || str(row.ts) || Date.now().toString();
+	const dedup = `${paneId}:rate_limit_skipped:${reason}:${hash}`;
+	return {
+		details: { dedup_key: dedup, event_type: "rate_limit_skipped", hash, reason },
+		harness: str(row.harness) || "pi",
+		importance: "noisy",
+		natural_key: dedup,
+		pane_id: paneId,
+		severity: "debug",
+		source: "subscriber",
+		summary: `rate-limit skipped: ${reason}`,
+		ts: str(row.ts),
+		type: "agent.rate_limit_skipped",
+	};
 }
 
 function domainMismatchActivity(row: WakeEventRow): ActivityEventInput {

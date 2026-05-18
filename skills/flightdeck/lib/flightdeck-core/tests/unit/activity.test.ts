@@ -100,6 +100,7 @@ describe("activity event normalization", () => {
 		for (const type of [
 			"agent.rate_limited",
 			"agent.rate_limit_retry",
+			"agent.rate_limit_skipped",
 			"agent.rate_limit_resolved",
 			"agent.rate_limit_exhausted",
 		]) {

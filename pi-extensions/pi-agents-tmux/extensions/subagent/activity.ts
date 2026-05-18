@@ -70,6 +70,7 @@ function activityType(eventName: string, status?: string, reason?: string): stri
 	if (eventName === "subagents:needs_completion") return "agent.needs_completion";
 	if (eventName === "subagents:rate_limited") return "agent.rate_limited";
 	if (eventName === "subagents:rate_limit_retry") return "agent.rate_limit_retry";
+	if (eventName === "subagents:rate_limit_skipped") return "agent.rate_limit_skipped";
 	if (eventName === "subagents:rate_limit_resolved") return "agent.rate_limit_resolved";
 	if (eventName === "subagents:rate_limit_exhausted") return "agent.rate_limit_exhausted";
 	if (eventName === "subagents:completed" || status === "completed") return "agent.task_completed";
@@ -88,6 +89,7 @@ function severityFor(type: string): PiActivitySeverity {
 		|| type === "agent.steered"
 		|| type === "agent.rate_limit_retry"
 	) return "info";
+	if (type === "agent.rate_limit_skipped") return "debug";
 	return "warning";
 }
 
@@ -99,6 +101,7 @@ function importanceFor(type: string): PiActivityImportance {
 		|| type === "agent.rate_limit_resolved"
 	) return "normal";
 	if (type === "agent.spawned" || type === "agent.steered") return "noisy";
+	if (type === "agent.rate_limit_skipped") return "noisy";
 	return "important";
 }
 
@@ -118,10 +121,16 @@ function summaryFor(type: string, agent?: string, taskId?: string, payload: Reco
 		case "agent.steered": return `${who} task${suffix} steered`;
 		case "agent.rate_limited": return payloadSummary || `${who} rate-limited`;
 		case "agent.rate_limit_retry": return payloadSummary || `${who} rate-limit retry`;
+		case "agent.rate_limit_skipped": return payloadSummary || `${who} rate-limit skipped${reasonSuffix(payload)}`;
 		case "agent.rate_limit_resolved": return payloadSummary || `${who} rate-limit resolved`;
 		case "agent.rate_limit_exhausted": return payloadSummary || `${who} rate-limit exhausted`;
 		default: return payloadSummary || `${who} activity`;
 	}
+}
+
+function reasonSuffix(payload: Record<string, unknown>): string {
+	const reason = stringValue(payload.reason);
+	return reason ? `: ${reason}` : "";
 }
 
 function detailsFor(type: string, eventName: string, payload: Record<string, unknown>): Record<string, unknown> {
