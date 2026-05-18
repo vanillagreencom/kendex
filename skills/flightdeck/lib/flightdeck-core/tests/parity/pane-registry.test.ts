@@ -719,6 +719,17 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		expect(entries["name-probe-fail"].window_name_current).toBe("Keep me");
 	});
 
+	test("refresh-window-names fails nonzero when flightdeck-state cannot spawn", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"], {
+			FLIGHTDECK_TEST_STATE_SCRIPT: "/no/such/flightdeck-state",
+		});
+		expect(refresh.status).toBe(2);
+		expect(refresh.stdout).toBe("");
+		expect(refresh.stderr).toContain("flightdeck-state-spawn-failed");
+		expect(refresh.stderr).toContain("/no/such/flightdeck-state");
+	});
+
 	test("refresh-window-names clears stale names only after missing pane is verified", () => {
 		const statePath = makeShimState(tsRepo, baseShim("test-session"));
 		expect(runShim(tsRepo, statePath, [

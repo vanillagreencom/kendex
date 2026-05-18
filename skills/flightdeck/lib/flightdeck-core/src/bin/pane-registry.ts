@@ -20,16 +20,16 @@ import { decideShellAdhocWake } from "../daemon/shell-adhoc-wake.ts";
 import { validateTrackedEntryDomain } from "../state/tracked-entry.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FD_STATE_SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
+const FD_STATE_SCRIPT = process.env.FLIGHTDECK_TEST_STATE_SCRIPT || resolve(HERE, "../../../../scripts/flightdeck-state");
 
 function die(msg: string, code = 2): never {
 	process.stderr.write(`${msg}\n`);
 	process.exit(code);
 }
 
-function fdState(args: string[]): { status: number | null; stdout: string; stderr: string } {
+function fdState(args: string[]): { status: number | null; stdout: string; stderr: string; error?: Error } {
 	const r = spawnSync(FD_STATE_SCRIPT, args, { encoding: "utf8" });
-	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+	return { error: r.error, status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
 function fdStateOrDie(args: string[]): string {
@@ -566,7 +566,10 @@ function trackedEntries(): Record<string, Record<string, unknown>> {
 
 function trackedEntriesForRefresh(): Record<string, Record<string, unknown>> {
 	const r = fdState(["tracked-entries"]);
-	const status = r.status ?? 0;
+	if (r.error || r.status === null) {
+		die(`pane-registry: refresh-window-names flightdeck-state-spawn-failed: ${r.error?.message ?? "process exited without status"}`);
+	}
+	const status = r.status;
 	if (status !== 0) die(`pane-registry: refresh-window-names failed to read tracked entries (flightdeck-state exit=${status}): ${r.stderr.trim() || "no stderr"}`);
 	if (r.stderr.trim()) process.stderr.write(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
 	try {
