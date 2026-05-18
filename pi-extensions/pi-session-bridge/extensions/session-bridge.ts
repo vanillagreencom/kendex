@@ -13,6 +13,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -48,6 +49,13 @@ export interface SlashExpansion {
 	error?: string;
 }
 
+export type SkillExpansionCache = Map<string, Map<string, string>>;
+
+export interface SlashExpansionOptions {
+	sessionId?: string;
+	skillExpansionCache?: SkillExpansionCache;
+}
+
 interface ExecResultLike { stdout?: string; stderr?: string; code?: number | null; killed?: boolean }
 export type ExecLike = (command: string, args: string[], options?: { timeout?: number }) => Promise<ExecResultLike>;
 
@@ -56,6 +64,8 @@ interface BridgeClient {
 	buffer: string;
 	events: boolean;
 }
+
+const loadedSkillHashesBySession: SkillExpansionCache = new Map();
 
 interface InstanceInfo {
 	protocol: string;
@@ -485,7 +495,10 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		// ancestry. Never use `tmux display-message -p '#{pane_id}'` here:
 		// it returns the active client pane and can misroute to another tab.
 		if (typeof content === "string" && content.startsWith("/")) {
-			const expanded = expandLoadedSlashContent(content, pi.getCommands() as SlashCommandInfoLike[]);
+			const expanded = expandLoadedSlashContent(content, pi.getCommands() as SlashCommandInfoLike[], fs.readFileSync, {
+				sessionId: currentInfo?.sessionId ?? getState("slash_expansion").sessionId ?? `pid:${process.pid}`,
+				skillExpansionCache: loadedSkillHashesBySession,
+			});
 			if (expanded.expanded) {
 				pi.sendUserMessage(expanded.text as never, options as never);
 				sendResponse(client, id, commandName, true, {
@@ -611,6 +624,7 @@ export function expandLoadedSlashContent(
 	text: string,
 	commands: SlashCommandInfoLike[],
 	readFile: (filePath: string, encoding: BufferEncoding) => string = fs.readFileSync,
+	options: SlashExpansionOptions = {},
 ): SlashExpansion {
 	const parsed = parseSlashCommand(text);
 	if (!parsed) return { expanded: false };
@@ -625,10 +639,33 @@ export function expandLoadedSlashContent(
 		const sourcePath = skill?.sourceInfo?.path;
 		if (!skill || typeof sourcePath !== "string" || sourcePath.length === 0) return { expanded: false };
 		try {
-			const body = stripFrontmatter(readFile(sourcePath, "utf8")).trim();
 			const skillName = parsed.commandName.slice("skill:".length);
+			const raw = readFile(sourcePath, "utf8");
+			const contentHash = shortSha256(raw);
+			const sessionId = options.sessionId?.trim();
+			const cache = options.skillExpansionCache;
+			if (sessionId && cache) {
+				const sessionCache = cache.get(sessionId);
+				const cachedHash = sessionCache?.get(skillName);
+				if (cachedHash === contentHash) {
+					const invocation = parsed.argsString.trim();
+					return {
+						expanded: true,
+						kind: "skill",
+						command: parsed.commandName,
+						text: invocation ? `Skill ${skillName} (previously loaded). Invocation: ${invocation}` : `Skill ${skillName} (previously loaded).`,
+					};
+				}
+			}
+
+			const body = stripFrontmatter(raw).trim();
 			const baseDir = skill.sourceInfo?.baseDir || path.dirname(sourcePath);
 			const block = `<skill name="${skillName}" location="${sourcePath}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`;
+			if (sessionId && cache) {
+				const sessionCache = cache.get(sessionId) ?? new Map<string, string>();
+				sessionCache.set(skillName, contentHash);
+				cache.set(sessionId, sessionCache);
+			}
 			return {
 				expanded: true,
 				kind: "skill",
@@ -654,6 +691,10 @@ export function expandLoadedSlashContent(
 	} catch (error) {
 		return { expanded: false, error: stringifyError(error) };
 	}
+}
+
+function shortSha256(content: string): string {
+	return createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
 function parseSlashCommand(text: string): { commandName: string; argsString: string } | null {
