@@ -64,7 +64,7 @@ Options:
 
 Unknown agent names fail with a structured error listing missing and available agents. No similar-name redirect is attempted.
 
-Live pane reuse runs a cwd preflight before writing a new inbox task. The parent resolves the pane process pid from tmux, reads `/proc/<pid>/cwd`, and refuses dispatch with `stopReason: "pane-cwd-stale"` if the cwd is deleted, missing, or different from the requested task `cwd`. The failure emits `subagents:failed` with `reason: "pane-cwd-stale"`, cwd details, and no task record because no task was queued; callers should `stop_subagent` and retry with `forceSpawn: true`.
+Live pane reuse runs a Linux cwd preflight before returning an existing pane or writing a new inbox task. The parent resolves the pane process pid from tmux, reads `/proc/<pid>/cwd`, and refuses reuse with `stopReason: "pane-cwd-stale"` if the cwd is deleted, missing, or different from the requested task `cwd`. Queue failures emit `subagents:failed` with `reason: "pane-cwd-stale"`, cwd details, and no task record because no task was queued; callers should `stop_subagent` and retry with `forceSpawn: true`.
 
 Calls above the internal batch size (default 8) are split transparently.
 

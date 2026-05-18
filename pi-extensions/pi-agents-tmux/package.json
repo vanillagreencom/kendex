@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-agents-tmux",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Pi extension for delegating work to project or user agents, including persistent tmux agent panes.",
   "license": "MIT",
   "keywords": [

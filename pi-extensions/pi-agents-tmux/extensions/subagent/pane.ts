@@ -608,6 +608,7 @@ export async function ensurePersistentPane(
 
 		const existing = registry[agent.name];
 		if (existing && (await paneExists(existing.paneId))) {
+			await assertPaneCwdReusable(existing, cwd);
 			entry = existing;
 			reusedExisting = true;
 			return;
@@ -734,20 +735,21 @@ export async function queuePersistentPaneTask(
 	const existingRegistry = await readPaneRegistry(runtimeRoot);
 	const existing = existingRegistry[agent.name];
 	const liveExisting = existing && (await paneExists(existing.paneId)) ? existing : undefined;
-	if (liveExisting) {
-		try {
-			await assertPaneCwdReusable(liveExisting, effectiveCwd);
-		} catch (error) {
-			if (error instanceof PaneCwdStaleError) emitPaneCwdStale(pi, runtimeRoot, task, liveExisting, error.details, error.message);
-			throw error;
-		}
-	}
 	const activeDuplicate = Object.values(await readTaskRegistry(runtimeRoot))
 		.filter((record) => record.agent === agent.name && (record.status === "queued" || record.status === "running"))
 		.find((record) => normalizedTaskForDedup(record.task) === normalizedTaskForDedup(task));
+	const ensureReusablePane = async () => {
+		try {
+			return await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools);
+		} catch (error) {
+			if (error instanceof PaneCwdStaleError && liveExisting) emitPaneCwdStale(pi, runtimeRoot, task, liveExisting, error.details, error.message);
+			throw error;
+		}
+	};
 	if (activeDuplicate && liveExisting) {
+		const pane = await ensureReusablePane();
 		return {
-			pane: liveExisting,
+			pane,
 			taskId: activeDuplicate.taskId,
 			outboxFile: activeDuplicate.outboxFile ?? completionPath(runtimeRoot, agent.name, activeDuplicate.taskId),
 			taskFile: activeDuplicate.inboxFile ?? activeDuplicate.processingFile ?? path.join(inboxDir(runtimeRoot, agent.name), `${safeFileName(activeDuplicate.taskId)}.md`),
@@ -757,7 +759,7 @@ export async function queuePersistentPaneTask(
 	}
 	const hadLivePane = Boolean(liveExisting);
 	const hadSavedSession = hasSavedPaneSession(runtimeRoot, agent.name);
-	const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools);
+	const pane = await ensureReusablePane();
 	const effort = pane.effort ?? selectedEffortForAgent(agent, pane.model, pane.thinkingLevel);
 	const sessionMode: "live" | "resumed" | "new" = hadLivePane ? "live" : hadSavedSession ? "resumed" : "new";
 	if (!hadLivePane) {
