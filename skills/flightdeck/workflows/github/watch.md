@@ -116,7 +116,7 @@ When a prompt or poll classifies `merge-ready-but-unknown`:
 7. If elapsed `>= FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, auto-merge is enabled, and the force-merge predicate from `patterns/conflict-detection.md` holds, transition to `force-merge-confirm`.
 8. If elapsed passed threshold but predicate fails, set `paused_for_user` with the failed predicates.
 
-Force-merge predicate requires: approved or no pending reviewers, all required checks `SUCCESS` or `SKIPPED`, disjoint PR files from recent main changes, and no GitHub authoritative conflict state.
+Force-merge predicate requires: `reviewDecision == "APPROVED"` (strict; do not substitute unset review with "no pending reviewers"), all required checks `SUCCESS` or `SKIPPED`, disjoint PR files from recent main changes, `unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, and no GitHub authoritative conflict state.
 
 ---
 

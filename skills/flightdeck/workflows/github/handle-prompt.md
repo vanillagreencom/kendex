@@ -79,9 +79,10 @@ Applies to `gh pr view`, `gh pr edit`, `gh issue view`, and any label/check insp
 4. If elapsed is below `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` (default 240), answer wait/continue if the prompt offers it; otherwise log and yield.
 5. If elapsed exceeds threshold, re-check `FLIGHTDECK_AUTO_MERGE`; if it is `0`, set `paused_for_user.reason="auto-merge-disabled"` and return without transitioning to `force-merge-confirm`.
 6. If auto-merge is enabled, evaluate force-merge predicate from `patterns/conflict-detection.md`:
-   - approved or no pending reviewers;
+   - `reviewDecision == "APPROVED"` (strict; do not substitute unset review with "no pending reviewers");
    - all checks `SUCCESS` or `SKIPPED`;
    - disjoint from other live PRs and recent main changes;
+   - `unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS`;
    - no authoritative conflict state.
 7. Predicate true → transition to `force-merge-confirm`.
 8. Predicate false → set `paused_for_user` with the failed predicate list.

@@ -12,6 +12,7 @@ const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
 const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-prompt.md");
 const GITHUB_HANDLE_DOC = resolve(HERE, "../../../../workflows/github/handle-prompt.md");
 const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue.md");
+const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -120,5 +121,14 @@ describe("handler domain guards", () => {
 		expect(doc).toContain('If `FLIGHTDECK_AUTO_MERGE=0`, set `paused_for_user = {issue_id:<N>, reason:"auto-merge-disabled", prompt_text:<buffer>}` and return.');
 		expect(doc).toContain("Do not answer wait, Merge, force-merge, or transition to `force-merge-confirm` while auto-merge is disabled.");
 		expect(doc).toContain("do not answer the force-merge option");
+	});
+
+	test("github force-merge predicate requires strict approval and UNKNOWN timer", () => {
+		for (const doc of [readFileSync(GITHUB_HANDLE_DOC, "utf8"), readFileSync(GITHUB_WATCH_DOC, "utf8")]) {
+			expect(doc).toContain('reviewDecision == "APPROVED"');
+			expect(doc).toContain('do not substitute unset review with "no pending reviewers"');
+			expect(doc).toContain("disjoint");
+			expect(doc).toContain("unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS");
+		}
 	});
 });

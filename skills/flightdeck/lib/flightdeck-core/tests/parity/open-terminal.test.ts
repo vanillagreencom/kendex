@@ -382,4 +382,10 @@ printf '%s\n' ${JSON.stringify(repo)}
 		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" claude)"');
 		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" opencode)"');
 	});
+
+	test("codex remote adapter receives tracker prompt instead of idle attach", () => {
+		const source = readFileSync(SCRIPT, "utf8");
+		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" codex)"');
+		expect(source).toContain('cmd=$(shell_join "${FLIGHTDECK_PANE_ENV[@]}" "$cx_bin" "${launch_args[@]}" --remote "$ws_url" "$prompt")');
+	});
 });

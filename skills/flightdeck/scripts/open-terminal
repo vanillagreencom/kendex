@@ -1222,9 +1222,10 @@ spawn_cx_remote_tmux() {
   # canonical flightdeck managed-pane env (see FLIGHTDECK_PANE_ENV near
   # the top of this file) so orchestration's flightdeck-mode helper
   # detects the pane as Flightdeck-managed.
-  local cmd launch_args=()
+  local cmd launch_args=() prompt
   add_launch_args codex launch_args || return 1
-  cmd=$(shell_join "${FLIGHTDECK_PANE_ENV[@]}" "$cx_bin" "${launch_args[@]}" --remote "$ws_url")
+  prompt="$(start_prompt_for_harness "$TRACKER" "$issue" codex)"
+  cmd=$(shell_join "${FLIGHTDECK_PANE_ENV[@]}" "$cx_bin" "${launch_args[@]}" --remote "$ws_url" "$prompt")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
