@@ -16,7 +16,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
-  flightdeck-session attach --pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc|workflow] [--model <id>] [--effort <level>|--thinking <level>]
+  flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
 }
