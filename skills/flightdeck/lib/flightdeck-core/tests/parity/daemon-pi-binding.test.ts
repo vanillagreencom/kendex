@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
 	piSessionConnectedMismatch,
 	resolvePiSubscriberBinding,
 	type PiSubscriberBindingDeps,
 } from "../../src/daemon/pi-binding.ts";
+import { listTrackedEntriesForReconcile } from "../../src/daemon/pane-registry.ts";
 
 function depsForTwoPanes(): PiSubscriberBindingDeps {
 	return {
@@ -80,5 +84,48 @@ describe("Pi subscriber binding guard", () => {
 		expect(piSessionConnectedMismatch("pi-new", "pi-old")).toBe(true);
 		expect(piSessionConnectedMismatch("pi-new", "")).toBe(true);
 		expect(piSessionConnectedMismatch("", "pi-old")).toBe(false);
+	});
+
+	test("registry JSON carries cwd + pi_session_id into reconcile binding input", () => {
+		const dir = mkdtempSync(join(tmpdir(), "fd-pi-binding-registry-"));
+		try {
+			const registry = join(dir, "pane-registry");
+			const rows = [{
+				cwd: "/repo/trees/current-workflow",
+				harness: "pi",
+				kind: "workflow",
+				pane_id: "%1312",
+				pi_bridge_pid: 2169938,
+				pi_bridge_socket: "/tmp/pi-session-bridge-1000/pi-2169938.sock",
+				pi_session_id: "pi-new",
+			}];
+			writeFileSync(registry, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "list" ]]; then
+  printf '%s\n' '${JSON.stringify(rows)}'
+  exit 0
+fi
+exit 1
+`);
+			chmodSync(registry, 0o755);
+
+			const entries = listTrackedEntriesForReconcile(registry, "");
+			expect(entries).toHaveLength(1);
+			const entry = entries[0]!;
+			expect(entry.cwd).toBe("/repo/trees/current-workflow");
+			expect(entry.adapterMeta?.piPid).toBe("2169938");
+			expect(entry.adapterMeta?.piSocket).toBe("/tmp/pi-session-bridge-1000/pi-2169938.sock");
+			expect(entry.adapterMeta?.piSessionId).toBe("pi-new");
+
+			const binding = resolvePiSubscriberBinding({
+				paneId: entry.paneId,
+				piPid: entry.adapterMeta?.piPid,
+				piSocket: entry.adapterMeta?.piSocket,
+				expectedCwd: entry.cwd,
+				expectedSessionId: entry.adapterMeta?.piSessionId,
+			}, depsForTwoPanes());
+			expect(binding.ok).toBe(true);
+		} finally {
+			rmSync(dir, { force: true, recursive: true });
+		}
 	});
 });

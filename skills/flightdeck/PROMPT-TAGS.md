@@ -44,6 +44,7 @@ These tags come from harness events, not normal assistant text classification.
 | `pi-subagent-completion` | Pi subagent event | Inner Pi subagent completion surfaced to tracked pane. |
 | `pi-bg-task-exit` | Pi background task event | Background task exited; wake master through daemon path. |
 | `pi-activity-broker` | Pi activity broker | Activity-only broker row; copied to activity sidecar without waking master. |
+| `pi-session-connected` | Pi subscriber guard | Subscriber connected to a Pi bridge and reported its session id; daemon drops/respawns on mismatch. |
 | `pi-rate-limit-skipped` | Pi rate-limit watchdog | Activity-only classifier rejection row; maps to `agent.rate_limit_skipped` and includes skip reason. |
 | `pi-rate-limit-retry` | Pi rate-limit watchdog | Activity-only retry row; maps to `agent.rate_limit_retry` with attempt and `next_retry_at`. |
 | `pi-rate-limit-resolved` | Pi rate-limit watchdog | Activity-only recovery row; maps to `agent.rate_limit_resolved` after a healthy assistant turn resets the retry budget. |

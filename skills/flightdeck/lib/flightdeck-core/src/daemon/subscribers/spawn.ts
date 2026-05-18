@@ -138,6 +138,7 @@ export interface SpawnPiOpts extends BaseSpawnEnv {
 	piPid: string;
 	piSocket: string;
 	expectedSessionId?: string;
+	forceSpawn?: boolean;
 	piLastAssistantJq: string;
 	entryKind?: string;
 	entryHarness?: string;
@@ -146,11 +147,12 @@ export interface SpawnPiOpts extends BaseSpawnEnv {
 
 export function spawnPiSubscriber(opts: SpawnPiOpts): { pid: number; reattached: boolean } {
 	const pidFile = piSubscriberPidFile(opts.paneId, opts.sessionKey);
-	const existing = readExistingPid(pidFile);
+	const existing = opts.forceSpawn ? null : readExistingPid(pidFile);
 	if (existing !== null) {
 		opts.log("pi-subscriber", `pane=${opts.paneId} existing pid=${existing}; reattaching`);
 		return { pid: existing, reattached: true };
 	}
+	if (opts.forceSpawn) opts.log("pi-subscriber", `pane=${opts.paneId} force-spawn requested; ignoring existing pidfile`);
 	const env: NodeJS.ProcessEnv = {
 		...baseEnv(opts),
 		PI_LAST_ASSISTANT_JQ: opts.piLastAssistantJq,

@@ -232,7 +232,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			.find((entry) => entry.paneId === paneId);
 	}
 
-	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string, trackedEntry?: ReconcileEntry): boolean {
+	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string, trackedEntry?: ReconcileEntry, spawnOpts: { forceSpawn?: boolean } = {}): boolean {
 		switch (harness) {
 			case "opencode": {
 				const meta = resolveMeta(opts.paneRegistryBin, "oc-attach-args", target);
@@ -281,7 +281,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					piExpectedSession.set(paneId, binding.sessionId);
 				}
 				const entryKind = entryKindForPane(opts.paneRegistryBin, paneId);
-				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, expectedSessionId: piExpectedSession.get(paneId) ?? expectedSessionId, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
+				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, expectedSessionId: piExpectedSession.get(paneId) ?? expectedSessionId, forceSpawn: spawnOpts.forceSpawn, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
 				emitSubscriberLifecycle(activity, reattached, "pi", paneId, pid);
@@ -452,12 +452,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
 	}
 
-	function handlePiSessionConnected(row: WakeEventRow): void {
+	function handlePiSessionConnected(row: WakeEventRow): boolean {
 		const paneId = typeof row.pane_id === "string" ? row.pane_id : "";
-		if (!paneId) return;
+		if (!paneId) return false;
 		const expected = piExpectedSession.get(paneId) || (typeof row.expected_pi_session_id === "string" ? row.expected_pi_session_id : "");
 		const actual = typeof row.pi_session_id === "string" ? row.pi_session_id : "";
-		if (!piSessionConnectedMismatch(expected, actual)) return;
+		if (!piSessionConnectedMismatch(expected, actual)) return false;
+		if (subscriberRespawnNeeded.has(paneId)) return true;
 		const pid = subscriberPid.get(paneId);
 		const piPid = typeof row.pi_pid === "string" ? row.pi_pid : undefined;
 		const piSocket = typeof row.pi_socket === "string" ? row.pi_socket : undefined;
@@ -465,6 +466,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		emitPiSubscriberMismatch(activity, paneId, { pid, expectedSessionId: expected, actualSessionId: actual, piPid, piSocket });
 		reapSubscriberForPane(paneId, "pi-session-mismatch");
 		subscriberRespawnNeeded.add(paneId);
+		return true;
 	}
 
 	function ocBellMarkerFile(paneId: string): string {
@@ -571,6 +573,18 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		} catch {
 			wakeDrain = drainOcWakeEvents(sessionLock, wakeEventsLog);
 		}
+		const quarantinedPanes = new Set<string>();
+		for (const line of wakeDrain.lines) {
+			let ev: WakeEventRow;
+			try { ev = JSON.parse(line) as WakeEventRow; } catch { continue; }
+			const evPid = typeof ev.pane_id === "string" ? ev.pane_id : "";
+			const evHash = typeof ev.hash === "string" ? ev.hash : "";
+			const evTag = typeof ev.classifier_tag === "string" ? ev.classifier_tag : "rendering";
+			if (evTag !== "pi-session-connected" || !evPid || !evHash) continue;
+			if (!paneCache.alive(evPid)) continue;
+			if (handlePiSessionConnected(ev)) quarantinedPanes.add(evPid);
+			notifiedHash.set(evPid, evHash);
+		}
 		for (const line of wakeDrain.lines) {
 			let ev: WakeEventRow;
 			try { ev = JSON.parse(line) as WakeEventRow; } catch { continue; }
@@ -581,7 +595,11 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (!paneCache.alive(evPid)) continue;
 			if (!firstSeen.has(evPid)) firstSeen.set(evPid, now);
 			if (evTag === "pi-session-connected") {
-				handlePiSessionConnected(ev);
+				notifiedHash.set(evPid, evHash);
+				continue;
+			}
+			if (quarantinedPanes.has(evPid)) {
+				if (opts.verbose) log("pi-subscriber-quarantine-drop", `pane=${evPid} tag=${evTag} hash=${evHash}`);
 				notifiedHash.set(evPid, evHash);
 				continue;
 			}
@@ -686,10 +704,12 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const winId = paneCache.windowId(innerId);
 			const harness = paneHarness.get(innerId) ?? opts.defaultHarness;
 			if (subscriberRespawnNeeded.has(innerId)) {
-				subscriberRespawnNeeded.delete(innerId);
 				const entry = trackedEntryForPane(innerId);
 				const resolvedTarget = entry ? (resolvePaneTargetForEntry(opts.paneRegistryBin, entry.paneId) || target) : target;
-				if (harness && trySpawnSubscriberForPane(innerId, resolvedTarget, harness, entry)) continue;
+				if (harness && trySpawnSubscriberForPane(innerId, resolvedTarget, harness, entry, { forceSpawn: true })) {
+					subscriberRespawnNeeded.delete(innerId);
+					continue;
+				}
 			}
 			const bell = paneCache.bell(innerId);
 			const paneActivity = paneCache.activity(innerId);
