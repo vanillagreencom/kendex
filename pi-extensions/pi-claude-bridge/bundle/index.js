@@ -19184,8 +19184,9 @@ function readSession(jsonlPath, projectPath) {
 }
 
 // src/index.ts
+import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync as appendFileSync3, constants as fsConstants, mkdirSync as mkdirSync3, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
+import { accessSync, appendFileSync as appendFileSync3, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
 import { resolve as pathResolve } from "path";
 import { homedir as homedir5 } from "os";
 import { delimiter, dirname as dirname5, join as join5 } from "path";
@@ -34437,6 +34438,196 @@ function resolveClaudeExecutable(configured) {
   if (trimmed) return trimmed;
   return executableFromPath("claude") ?? executableFromPath("claude-code");
 }
+function errnoValue(err) {
+  return typeof err?.errno === "number" ? err.errno : void 0;
+}
+function syscallValue(err) {
+  return typeof err?.syscall === "string" ? err.syscall : void 0;
+}
+function pathValue(err) {
+  const value = err?.path;
+  return typeof value === "string" ? value : void 0;
+}
+function codeValue(err, fallback) {
+  const value = err?.code;
+  return typeof value === "string" ? value : fallback;
+}
+function displayValue(value) {
+  return value === void 0 || value === null || value === "" ? "<none>" : String(value);
+}
+function makeClaudePreflightError(summary, details) {
+  const detail = [
+    `code=${details.code}`,
+    `errno=${displayValue(details.errno)}`,
+    `syscall=${displayValue(details.syscall)}`,
+    `path=${details.path}`,
+    `cwd=${details.cwd}`,
+    ...details.fileType ? [`fileType=${details.fileType}`] : [],
+    ...details.realPath ? [`realPath=${details.realPath}`] : []
+  ].join(" ");
+  const error51 = new Error(`${summary} (${detail})`);
+  error51.name = "ClaudeExecutablePreflightError";
+  error51.code = details.code;
+  if (details.errno !== void 0) error51.errno = typeof details.errno === "number" ? details.errno : Number(details.errno);
+  if (details.syscall) error51.syscall = details.syscall;
+  error51.path = details.path;
+  error51.cwd = details.cwd;
+  if (details.fileType) error51.fileType = details.fileType;
+  if (details.realPath) error51.realPath = details.realPath;
+  if (details.cause !== void 0) error51.cause = details.cause;
+  return error51;
+}
+function classifyClaudeExecutableBytes(bytes) {
+  if (bytes.length === 0) return "empty";
+  if (bytes.length >= 2 && bytes[0] === 35 && bytes[1] === 33) return "shebang-script";
+  if (bytes.length >= 4 && bytes[0] === 127 && bytes[1] === 69 && bytes[2] === 76 && bytes[3] === 70) return "elf";
+  if (bytes.length >= 2 && bytes[0] === 77 && bytes[1] === 90) return "pe";
+  if (bytes.length >= 4) {
+    const magic = bytes[0] * 16777216 + bytes[1] * 65536 + bytes[2] * 256 + bytes[3];
+    if (magic === 4277009102 || magic === 4277009103 || magic === 3472551422 || magic === 3489328638 || magic === 3405691582 || magic === 3199925962) return "mach-o";
+  }
+  return "unknown";
+}
+function preflightClaudeExecutable(path, cwd) {
+  let realCwd = cwd;
+  try {
+    const cwdStat = statSync3(cwd);
+    if (!cwdStat.isDirectory()) {
+      throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not a directory.", {
+        code: "ENOTDIR",
+        syscall: "chdir",
+        path: cwd,
+        cwd
+      });
+    }
+    accessSync(cwd, fsConstants.X_OK);
+    realCwd = realpathSync3(cwd);
+  } catch (err) {
+    if (err.name === "ClaudeExecutablePreflightError") throw err;
+    throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not reachable before spawning Claude Code.", {
+      code: codeValue(err, "EACCES"),
+      errno: errnoValue(err),
+      syscall: syscallValue(err),
+      path: pathValue(err) ?? cwd,
+      cwd,
+      cause: err
+    });
+  }
+  let realPath = path;
+  try {
+    const stat = statSync3(path);
+    if (!stat.isFile()) {
+      throw makeClaudePreflightError("Claude Code executable preflight failed: resolved path is not a file.", {
+        code: "EACCES",
+        syscall: "exec",
+        path,
+        cwd
+      });
+    }
+    accessSync(path, fsConstants.X_OK);
+    realPath = realpathSync3(path);
+  } catch (err) {
+    if (err.name === "ClaudeExecutablePreflightError") throw err;
+    throw makeClaudePreflightError("Claude Code executable preflight failed: cannot access resolved executable before spawning Claude Code.", {
+      code: codeValue(err, "ENOENT"),
+      errno: errnoValue(err),
+      syscall: syscallValue(err),
+      path: pathValue(err) ?? path,
+      cwd,
+      cause: err
+    });
+  }
+  let fileType;
+  try {
+    fileType = classifyClaudeExecutableBytes(readFileSync7(realPath).subarray(0, 16));
+  } catch (err) {
+    throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
+      code: codeValue(err, "EACCES"),
+      errno: errnoValue(err),
+      syscall: syscallValue(err),
+      path: pathValue(err) ?? realPath,
+      cwd,
+      realPath,
+      cause: err
+    });
+  }
+  if (!["elf", "mach-o", "pe", "shebang-script"].includes(fileType)) {
+    throw makeClaudePreflightError("Claude Code executable preflight failed: executable header is not an ELF, Mach-O, PE, or shebang script.", {
+      code: "ENOEXEC",
+      syscall: "exec",
+      path,
+      cwd,
+      fileType,
+      realPath
+    });
+  }
+  return { path, realPath, cwd, realCwd, fileType };
+}
+function envFlagEnabled(value) {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+function wrapClaudeSpawnErrorForSdk(err, options) {
+  const originalCode = codeValue(err, "SPAWN_ERROR");
+  const spawnPath = pathValue(err) ?? options.command;
+  const cwd = options.cwd ?? process.cwd();
+  const detail = [
+    `code=${originalCode}`,
+    `errno=${displayValue(errnoValue(err))}`,
+    `syscall=${displayValue(syscallValue(err))}`,
+    `path=${spawnPath}`,
+    `cwd=${cwd}`,
+    `command=${options.command}`
+  ].join(" ");
+  const wrapped = new Error(`Claude Code spawn failed: ${err.message} (${detail})`);
+  wrapped.name = "ClaudeSpawnDiagnosticError";
+  wrapped.code = originalCode === "ENOENT" ? "CLAUDE_BRIDGE_SPAWN_FAILED" : originalCode;
+  wrapped.originalCode = originalCode;
+  const errno = errnoValue(err);
+  if (errno !== void 0) wrapped.errno = typeof errno === "number" ? errno : Number(errno);
+  const syscall = syscallValue(err);
+  if (syscall) wrapped.syscall = syscall;
+  wrapped.path = spawnPath;
+  wrapped.cwd = cwd;
+  wrapped.cause = err;
+  return wrapped;
+}
+function spawnClaudeCodeWithDiagnostics(options) {
+  const pipeStderr = DEBUG || envFlagEnabled(options.env.DEBUG_CLAUDE_AGENT_SDK);
+  const child = spawnProcess(options.command, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+    signal: options.signal,
+    stdio: ["pipe", "pipe", pipeStderr ? "pipe" : "ignore"],
+    windowsHide: true
+  });
+  if (pipeStderr) {
+    child.stderr?.on("data", (data) => {
+      for (const line of data.toString().split(/\r?\n/)) {
+        if (line) debug(`[cli-stderr spawn] ${line}`);
+      }
+    });
+  }
+  child.prependListener("error", (err) => {
+    const wrapped = wrapClaudeSpawnErrorForSdk(err, options);
+    err.name = wrapped.name;
+    err.message = wrapped.message;
+    Object.assign(err, wrapped);
+  });
+  return {
+    stdin: child.stdin,
+    stdout: child.stdout,
+    get killed() {
+      return child.killed;
+    },
+    get exitCode() {
+      return child.exitCode;
+    },
+    kill: child.kill.bind(child),
+    on: child.on.bind(child),
+    once: child.once.bind(child),
+    off: child.off.bind(child)
+  };
+}
 var nextCliDebugSeq = 1;
 function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
@@ -35164,7 +35355,6 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().latestCursor = 0;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
   const cwd = options?.cwd ?? process.cwd();
-  const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
   const promptBlocks = extractUserPromptBlocks(context.messages);
   let promptText = extractUserPrompt(context.messages) ?? "";
   if (!promptText && !promptBlocks) {
@@ -35192,6 +35382,8 @@ function streamClaudeAgentSdk(model, context, options) {
   const settingSources = appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
+  const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
+  const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
   const effort = options?.reasoning ? model.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const extraArgs = { model: model.id };
   if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
@@ -35214,6 +35406,7 @@ function streamClaudeAgentSdk(model, context, options) {
     ...mcpServers ? { mcpServers } : {},
     ...resumeSessionId ? { resume: resumeSessionId } : {},
     ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+    spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
     ...makeCliDebugOptions("provider")
   };
   debug(
@@ -35221,6 +35414,7 @@ function streamClaudeAgentSdk(model, context, options) {
     `model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
     `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
     `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled}`,
+    `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`
   );
   let wasAborted = false;
@@ -35390,8 +35584,12 @@ function index_default(pi) {
 export {
   CLAUDE_BRIDGE_TOOL_ISOLATION,
   DISALLOWED_BUILTIN_TOOLS,
+  classifyClaudeExecutableBytes,
   index_default as default,
   mapToolName,
+  preflightClaudeExecutable,
   restoreSharedSessionFromPi,
-  shouldRestorePersistedBridgeEntry
+  shouldRestorePersistedBridgeEntry,
+  spawnClaudeCodeWithDiagnostics,
+  wrapClaudeSpawnErrorForSdk
 };

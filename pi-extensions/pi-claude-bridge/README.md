@@ -79,3 +79,5 @@ Open `/extensions:settings`; settings appear under the **Claude Bridge** tab.
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
+
+Before starting Claude Code, the bridge preflights the resolved executable and working directory. Failures include the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type so spawn issues point at the real failing path instead of the Claude Agent SDK's generic native-binary message. If Node still emits a spawn error after preflight, the bridge wraps that error with the same context before handing it back to the SDK.
