@@ -47,6 +47,6 @@ These tags come from harness events, not normal assistant text classification.
 | `pi-rate-limit-skipped` | Pi rate-limit watchdog | Activity-only classifier rejection row; maps to `agent.rate_limit_skipped` and includes skip reason. |
 | `pi-rate-limit-retry` | Pi rate-limit watchdog | Activity-only retry row; maps to `agent.rate_limit_retry` with attempt and `next_retry_at`. |
 | `pi-rate-limit-resolved` | Pi rate-limit watchdog | Activity-only recovery row; maps to `agent.rate_limit_resolved` after a healthy assistant turn resets the retry budget. |
-| `pi-rate-limit-exhausted` | Pi rate-limit watchdog | Activity-only exhaustion row; maps to `agent.rate_limit_exhausted` and normal completion/blocking flow resumes. |
+| `pi-rate-limit-exhausted` | Pi rate-limit watchdog | Activity-only exhaustion/advisory row; maps to `agent.rate_limit_exhausted` without waking master or falling through to completion/blocking. Later independent events or polls handle completion/blocking. |
 | `pi-rate-limit-decider-error` | Pi rate-limit watchdog | Activity-only decider failure row; maps to `daemon.warning` with error/unavailable details. |
 | `daemon-exited` | Flightdeck daemon lifecycle | Daemon exited for master-gone, signal, or recorded reason; route through respawn/recovery flow. |
