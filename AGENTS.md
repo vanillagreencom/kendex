@@ -222,6 +222,7 @@ Worktree/feature branch dev: test via local project Pi settings for that checkou
 ### Pi slash-command expansion
 
 - `sendUserMessage` still skips slash/skill expansion (`expandPromptTemplates: false`). `pi-bridge send` compensates with hybrid dispatch: client-side expansion for `/skill:<name>` and prompt templates, own-pane `tmux send-keys -l` for extension/TUI commands, raw `sendUserMessage` for plain text/fallback.
+- Repeated `/skill:<name>` sends in the same Pi session emit a short `Skill <name> (previously loaded). Invocation: ...` reminder instead of re-expanding the full SKILL.md body. The cache is keyed by `(session_id, skill_name, SKILL.md content hash)`; content-hash changes force a fresh full expansion; pi-bridge restart clears the in-memory cache.
 - From an extension, `ctx.ui.pasteToEditor("/skill:foo\n")` pastes text; newline is bracketed-paste content, not a guaranteed submit. Prefer `pi-bridge send "/skill:foo ..."` when controlling another session.
 
 ## Build & Test

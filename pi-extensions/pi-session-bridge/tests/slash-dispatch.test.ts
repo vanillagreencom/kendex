@@ -175,6 +175,38 @@ describe("slash expansion", () => {
 		});
 		expect(dedupedAgain.text).toBe("Skill orchestration (previously loaded). Invocation: run");
 	});
+
+	test("dedup is independent per skill within a session (pins Map<sessionId, Map<skillName, hash>>)", () => {
+		const alphaPath = p("skills/alpha/SKILL.md");
+		const betaPath = p("skills/beta/SKILL.md");
+		mkdirSync(dirname(alphaPath), { recursive: true });
+		mkdirSync(dirname(betaPath), { recursive: true });
+		writeFileSync(alphaPath, "---\nname: alpha\n---\n# Alpha Skill\nA body.\n");
+		writeFileSync(betaPath, "---\nname: beta\n---\n# Beta Skill\nB body.\n");
+		const commands = [
+			{ name: "skill:alpha", source: "skill", sourceInfo: { path: alphaPath } },
+			{ name: "skill:beta", source: "skill", sourceInfo: { path: betaPath } },
+		] as SlashCommandInfoLike[];
+		const cache = new Map<string, Map<string, string>>();
+		const options = { sessionId: "session-a", skillExpansionCache: cache };
+
+		const firstAlpha = expandLoadedSlashContent("/skill:alpha run-a", commands, readFileSync, options);
+		expect(firstAlpha.text).toContain(`<skill name="alpha" location="${alphaPath}">`);
+		expect(firstAlpha.text).toContain("# Alpha Skill");
+
+		// Skill B in the same session must still get the FULL body, not the dedup reminder.
+		const firstBeta = expandLoadedSlashContent("/skill:beta run-b", commands, readFileSync, options);
+		expect(firstBeta.text).toContain(`<skill name="beta" location="${betaPath}">`);
+		expect(firstBeta.text).toContain("# Beta Skill");
+		expect(firstBeta.text).not.toContain("previously loaded");
+
+		// Re-expanding each skill independently now hits the short reminder for each.
+		const secondAlpha = expandLoadedSlashContent("/skill:alpha run-a", commands, readFileSync, options);
+		expect(secondAlpha.text).toBe("Skill alpha (previously loaded). Invocation: run-a");
+
+		const secondBeta = expandLoadedSlashContent("/skill:beta run-b", commands, readFileSync, options);
+		expect(secondBeta.text).toBe("Skill beta (previously loaded). Invocation: run-b");
+	});
 });
 
 describe("tmux pane dispatch", () => {
