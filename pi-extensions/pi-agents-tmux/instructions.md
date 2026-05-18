@@ -18,6 +18,6 @@ Calling rules:
 - If a bg subagent hits `context_length_exceeded`, the extension retries once in a fresh one-shot lane and returns both attempt summaries if the retry also fails.
 - If a bg subagent returns `needs_completion` with `reason: "compact-then-empty"`, inspect `cwdSnapshot.head`, `cwdSnapshot.dirty`, and `cwdSnapshot.lastCommit.subject` before deciding whether the subagent's work completed.
 - When `pi-session-bridge` is loaded, subagent lifecycle changes also publish structured `agent.*` activity broker events for external observers; these do not appear as chat messages.
-- Pane idle-stall probes cache `pi-bridge` resolution at extension load and suppress benign missing-binary races; inspect session runtime `subagent-diagnostics.jsonl` for probe diagnostics instead of expecting terminal warnings.
+- Pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to session runtime `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. Pass `forceSpawn: true` only when the user wants a fresh session.
 - `confirmProjectAgents: true` gates project-defined agents behind explicit user approval.

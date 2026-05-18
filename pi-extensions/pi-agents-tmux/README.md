@@ -20,7 +20,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
 - Large parallel calls are auto-batched. Pane idle waits use `wait_for_subagent_idle`.
-- Periodic pane idle-stall probes cache `pi-bridge` resolution at extension load; benign missing-binary races skip silently and write diagnostics to the session runtime instead of terminal warnings.
+- Periodic pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
 
 ## Install
 
