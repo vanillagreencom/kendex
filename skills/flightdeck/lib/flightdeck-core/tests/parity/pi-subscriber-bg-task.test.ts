@@ -110,6 +110,10 @@ describe("Pi subscriber connect metadata", () => {
 		mkdirSync(bridgeDir, { recursive: true });
 		const bridgeBin = join(bridgeDir, "pi-bridge");
 		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "state" ]]; then
+  echo '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"pi-new","socketPath":"/tmp/pi-new.sock"}}'
+  exit 0
+fi
 if [[ "\${1:-}" == "questions" ]]; then
   echo '{"success":true,"data":{"questions":[]}}'
   exit 0
@@ -146,8 +150,8 @@ exit 0
 			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
 			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
 
-			expect(lines.length).toBe(1);
-			const ev = JSON.parse(lines[0]!);
+			expect(lines.length).toBeGreaterThanOrEqual(1);
+			const ev = JSON.parse(lines.find((line) => line.includes('"classifier_tag":"pi-session-connected"'))!);
 			expect(ev.pane_id).toBe("%1312");
 			expect(ev.classifier_tag).toBe("pi-session-connected");
 			expect(ev.event_type).toBe("pi_session_connected");
@@ -159,6 +163,74 @@ exit 0
 			const subLog = readFileSync(`${log}.pi-sub-1312`, "utf8");
 			expect(subLog).toContain("pi_session_id=pi-new");
 		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("state preflight timeout fails open to stream attach", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-state-timeout-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const log = join(stateDir, "daemon.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "state" ]]; then
+  sleep 30
+  exit 0
+fi
+if [[ "\${1:-}" == "questions" ]]; then
+  echo '{"success":true,"data":{"questions":[]}}'
+  exit 0
+fi
+if [[ "\${1:-}" == "stream" ]]; then
+  echo '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"pi-new","socketPath":"/tmp/pi-new.sock"}}'
+  sleep 30
+fi
+exit 0
+`);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		let subPid = 0;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { FD_ADAPTER_READ_TIMEOUT_SEC: "1" });
+			const started = Date.now();
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%1313", "2169939", "/tmp/pi-new.sock", String(parentPid), "pi-new"], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			subPid = sub.pid!;
+
+			let lines: string[] = [];
+			const deadline = Date.now() + 8000;
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					lines = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean);
+					if (lines.some((line) => line.includes('"classifier_tag":"pi-session-connected"'))) break;
+				}
+				await sleep(100);
+			}
+
+			expect(Date.now() - started).toBeLessThan(5000);
+			expect(lines.length).toBeGreaterThan(0);
+			const ev = JSON.parse(lines.find((line) => line.includes('"classifier_tag":"pi-session-connected"'))!);
+			expect(ev.pi_session_id).toBe("pi-new");
+			expect(ev.expected_pi_session_id).toBe("pi-new");
+			const subLog = readFileSync(`${log}.pi-sub-1313`, "utf8");
+			expect(subLog).toContain("[pi-sub-session-preflight-error]");
+			expect(subLog).toContain("rc=124");
+			expect(subLog).toContain("expected_session=pi-new");
+			expect(subLog).toContain("[pi-sub-stream-connected]");
+		} finally {
+			if (subPid) {
+				try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+				try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			}
 			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
 			await sleep(50);
 		}

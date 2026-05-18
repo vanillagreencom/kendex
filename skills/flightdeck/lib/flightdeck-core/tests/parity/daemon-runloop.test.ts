@@ -361,6 +361,7 @@ exit 1
 			classifierBin: "",
 			debugPane: "",
 			defaultHarness: "pi",
+			fromHandoff: false,
 			graceSec: 0,
 			heartbeatTicks: 60,
 			innerHarnesses: ["pi"],
@@ -382,6 +383,9 @@ exit 1
 			wakePendingTtl: 60,
 		});
 		try {
+			const subLogFile = join(stateDir, `fd-daemon-${testSessionKey}.log.pi-sub-${innerPaneId.replace(/^%/, "")}`);
+			const sawExpectedSessionArg = await waitFor(() => existsSync(subLogFile) && readFileSync(subLogFile, "utf8").includes("[pi-sub-start]") && readFileSync(subLogFile, "utf8").includes("expected_session=pi-new"), 3000);
+			expect(sawExpectedSessionArg).toBe(true);
 			const sawRespawn = await waitFor(() => {
 				if (!existsSync(streamCountFile)) return false;
 				return Number.parseInt(readFileSync(streamCountFile, "utf8").trim() || "0", 10) >= 2;

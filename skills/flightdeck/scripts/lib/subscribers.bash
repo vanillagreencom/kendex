@@ -297,10 +297,19 @@ pi_subscriber_loop() {
   if [[ -z "$expected_pi_session_id" ]]; then
     pi_session_verified=1
   else
-    local preflight_state_rc preflight_state preflight_session_id
-    preflight_state=$("$pi_bin" state "${pi_target_args[@]}" 2>/dev/null)
+    local preflight_state_rc preflight_state preflight_session_id preflight_timeout preflight_err_file preflight_stderr_tail
+    preflight_timeout="${FD_ADAPTER_READ_TIMEOUT_SEC:-2}"
+    preflight_err_file=$(mktemp -t fd-pi-state-err.XXXXXX)
+    preflight_state=$(timeout "${preflight_timeout}s" "$pi_bin" state "${pi_target_args[@]}" 2>"$preflight_err_file")
     preflight_state_rc=$?
-    if (( preflight_state_rc == 0 )) && [[ -n "${preflight_state//[[:space:]]/}" ]]; then
+    if (( preflight_state_rc != 0 )); then
+      preflight_stderr_tail=$(tail -c 200 "$preflight_err_file" 2>/dev/null | tr '\n' ' ' || true)
+      rm -f "$preflight_err_file"
+      printf '%s [pi-sub-session-preflight-error] pane=%s rc=%s stderr=%s expected_session=%s; skip initial drain until bridge_hello\n' \
+        "$(date -Iseconds)" "$pane_id" "$preflight_state_rc" "${preflight_stderr_tail:-<empty>}" "$expected_pi_session_id" \
+        >> "$sub_log" 2>/dev/null || true
+    elif [[ -n "${preflight_state//[[:space:]]/}" ]]; then
+      rm -f "$preflight_err_file"
       preflight_session_id=$(pi_subscriber_extract_session_id <<< "$preflight_state")
       printf '%s [pi-sub-session-preflight] pane=%s pi_session_id=%s expected_session=%s\n' \
         "$(date -Iseconds)" "$pane_id" "$preflight_session_id" "$expected_pi_session_id" \
@@ -315,8 +324,9 @@ pi_subscriber_loop() {
         return 1
       fi
     else
-      printf '%s [pi-sub-session-preflight-error] pane=%s rc=%s expected_session=%s; skip initial drain until bridge_hello\n' \
-        "$(date -Iseconds)" "$pane_id" "$preflight_state_rc" "$expected_pi_session_id" \
+      rm -f "$preflight_err_file"
+      printf '%s [pi-sub-session-preflight-empty] pane=%s expected_session=%s; skip initial drain until bridge_hello\n' \
+        "$(date -Iseconds)" "$pane_id" "$expected_pi_session_id" \
         >> "$sub_log" 2>/dev/null || true
     fi
   fi
