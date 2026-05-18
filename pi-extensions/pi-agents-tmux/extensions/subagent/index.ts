@@ -367,7 +367,22 @@ export default function (pi: ExtensionAPI) {
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 	if (!settingBoolean("enabled", true)) return;
-	const resolveIdleProbeBridgeBin = createCachedPiBridgeResolver(resolvePiBridgeBin);
+
+	let currentRuntimeRoot: string | undefined;
+	const pendingRuntimeDiagnostics: Array<{ source: string; message: string }> = [];
+	const logRuntimeDiagnostic = (source: string, message: string) => {
+		if (!currentRuntimeRoot) {
+			pendingRuntimeDiagnostics.push({ source, message });
+			return;
+		}
+		appendRuntimeDiagnostic(currentRuntimeRoot, source, message);
+	};
+	const flushRuntimeDiagnostics = () => {
+		if (!currentRuntimeRoot || pendingRuntimeDiagnostics.length === 0) return;
+		for (const pending of pendingRuntimeDiagnostics.splice(0)) appendRuntimeDiagnostic(currentRuntimeRoot, pending.source, pending.message);
+	};
+	const logIdleStallDiagnostic = (message: string) => logRuntimeDiagnostic("idle-stall-watchdog", message);
+	const resolveIdleProbeBridgeBin = createCachedPiBridgeResolver(resolvePiBridgeBin, logIdleStallDiagnostic);
 
 	const childAgentName = process.env.PI_SUBAGENT_CHILD_AGENT;
 	const statuslineBridge: SubagentStatuslineBridge = {
@@ -448,8 +463,6 @@ export default function (pi: ExtensionAPI) {
 	// pi-core post-compaction stalls where agent_end never fires. Reuses
 	// the W5 O_EXCL writer so a racing real complete_subagent always wins.
 
-	let currentRuntimeRoot: string | undefined;
-	const logIdleStallDiagnostic = (message: string) => appendRuntimeDiagnostic(currentRuntimeRoot, "idle-stall-watchdog", message);
 	const idleStallWatchdog = createIdleStallWatchdog({
 		intervalMs: stallWatchdogIntervalMsFromEnv(),
 		thresholdMs: stallWatchdogThresholdMsFromEnv(),
@@ -1267,6 +1280,7 @@ export default function (pi: ExtensionAPI) {
 		// vstack#63 workaround: idle-stall watchdog rides on the parent
 		// session and polls active tasks for post-compaction stalls.
 		currentRuntimeRoot = runtimeRoot;
+		flushRuntimeDiagnostics();
 		idleStallWatchdog.start();
 	});
 

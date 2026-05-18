@@ -40,11 +40,20 @@ function entry(overrides: Partial<PaneRegistryEntry> = {}): PaneRegistryEntry {
 	};
 }
 
+function spawnEnoent(path = "/usr/bin/pi-bridge", overrides: Record<string, unknown> = {}): Error {
+	return Object.assign(new Error(`spawn ${path} ENOENT`), {
+		code: "ENOENT",
+		syscall: "spawn",
+		path,
+		...overrides,
+	});
+}
+
 function deps(opts: {
 	bridgeBin?: string | null;
 	registry?: Partial<PaneRegistryEntry> | null;
-	execResult?: { code: number; stdout: string; stderr: string };
-	execError?: Error;
+	execResult?: { code: number; stdout: string; stderr: string; error?: unknown };
+	execError?: unknown;
 }): { d: ProbePaneIdleDeps; calls: { args: string[]; cwd?: string }[]; warnings: string[] } {
 	const calls: { args: string[]; cwd?: string }[] = [];
 	const warnings: string[] = [];
@@ -97,7 +106,7 @@ test("flat state shape (no .data wrapper) is also accepted", async () => {
 
 test("bridge spawn ENOENT (exec throws) -> default-busy without warning toast", async () => {
 	const { d, warnings } = deps({
-		execError: new Error("spawn /home/user/.pi/agent/bin/pi-bridge ENOENT"),
+		execError: spawnEnoent(),
 	});
 	const result = await probePaneIdle(record(), d);
 	assert.equal(result.idle, false);
@@ -107,12 +116,32 @@ test("bridge spawn ENOENT (exec throws) -> default-busy without warning toast", 
 
 test("bridge spawn ENOENT (non-zero result) -> default-busy without warning toast", async () => {
 	const { d, warnings } = deps({
-		execResult: { code: 1, stdout: "", stderr: "Error: spawn /home/user/.pi/agent/bin/pi-bridge ENOENT" },
+		execResult: { code: 1, stdout: "", stderr: "Error: spawn /usr/bin/pi-bridge ENOENT", error: spawnEnoent() },
 	});
 	const result = await probePaneIdle(record(), d);
 	assert.equal(result.idle, false);
 	assert.equal(result.reason, "bridge-bin-not-found");
 	assert.equal(warnings.length, 0);
+});
+
+test("text-only spawn ENOENT is not treated as expected bridge-bin missing", async () => {
+	const { d, warnings } = deps({
+		execError: new Error("spawn /usr/bin/pi-bridge ENOENT"),
+	});
+	const result = await probePaneIdle(record(), d);
+	assert.equal(result.idle, false);
+	assert.equal(result.reason, "bridge-error");
+	assert.ok(warnings.some((w) => w.includes("exec threw")));
+});
+
+test("structured ENOENT for a different path is logged as a real failure", async () => {
+	const { d, warnings } = deps({
+		execError: spawnEnoent("/tmp/not-pi-bridge"),
+	});
+	const result = await probePaneIdle(record(), d);
+	assert.equal(result.idle, false);
+	assert.equal(result.reason, "bridge-error");
+	assert.ok(warnings.some((w) => w.includes("exec threw")));
 });
 
 test("bridge unreachable (non-ENOENT exec throws) -> default-busy with bridge-error", async () => {

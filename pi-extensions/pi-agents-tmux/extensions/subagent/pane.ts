@@ -67,7 +67,7 @@ import {
 	type SingleResult,
 } from "./types.js";
 
-export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string }> {
+export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
 	return new Promise((resolve) => {
 		const proc = spawn(command, args, { cwd: options?.cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
@@ -75,7 +75,7 @@ export async function execCapture(command: string, args: string[], options?: { c
 		proc.stdout.on("data", (data) => (stdout += data.toString()));
 		proc.stderr.on("data", (data) => (stderr += data.toString()));
 		proc.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
-		proc.on("error", (error) => resolve({ code: 1, stdout, stderr: String(error) }));
+		proc.on("error", (error) => resolve({ code: 1, stdout, stderr: String(error), error }));
 	});
 }
 
@@ -259,15 +259,45 @@ async function resolvePiBridgeBin(): Promise<string | undefined> {
 	return found || undefined;
 }
 
-export function createCachedPiBridgeResolver(resolve: () => Promise<string | undefined> = resolvePiBridgeBin): () => Promise<string | undefined> {
+type DiagnosticLogger = (message: string) => void;
+
+function formatResolverFailure(error: unknown): string {
+	if (!error || typeof error !== "object") return String(error);
+	const candidate = error as { code?: unknown; errno?: unknown; syscall?: unknown; path?: unknown; cwd?: unknown; message?: unknown };
+	const fields = ["code", "errno", "syscall", "path", "cwd"] as const;
+	const parts = fields.flatMap((field) => {
+		const value = candidate[field];
+		return value === undefined || value === null || value === "" ? [] : [`${field}=${String(value)}`];
+	});
+	if (typeof candidate.message === "string" && candidate.message.trim()) parts.push(`message=${candidate.message.trim()}`);
+	return parts.length ? parts.join(" ") : String(error);
+}
+
+export function createCachedPiBridgeResolver(
+	resolve: () => Promise<string | undefined> = resolvePiBridgeBin,
+	logDiagnostic?: DiagnosticLogger,
+): () => Promise<string | undefined> {
 	// vstack#122: interval probes must not re-run path discovery on every tick.
-	// Resolve once at extension-load; if the cached binary later disappears,
-	// probePaneIdle classifies spawn ENOENT as bridge-bin-not-found and skips
-	// silently instead of leaking a console.warn into the Pi TUI.
+	// Resolve once for the extension lifetime; if the initial lookup fails,
+	// emit one structured diagnostic before caching the missing result so later
+	// probes can short-circuit without spamming terminal warnings.
+	const report = (reason: string) => {
+		try { logDiagnostic?.(`pi-bridge resolver failed: ${reason}`); } catch { /* diagnostics are best-effort */ }
+	};
 	let cached: Promise<string | undefined>;
 	try {
-		cached = Promise.resolve(resolve()).catch(() => undefined);
-	} catch {
+		cached = Promise.resolve(resolve()).then(
+			(bin) => {
+				if (!bin) report("returned undefined");
+				return bin;
+			},
+			(error) => {
+				report(formatResolverFailure(error));
+				return undefined;
+			},
+		);
+	} catch (error) {
+		report(formatResolverFailure(error));
 		cached = Promise.resolve(undefined);
 	}
 	return () => cached;
