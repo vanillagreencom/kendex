@@ -8,6 +8,16 @@ import { spawnSync } from "node:child_process";
 
 import type { ReconcileAdapterMeta, ReconcileEntry } from "./reconcile.ts";
 
+export interface RefreshWindowNameWarning {
+	id?: string;
+	reason: string;
+	message: string;
+}
+
+export type RefreshTrackedWindowNamesResult =
+	| { ok: true; updated: string[]; cleared: string[]; warnings: RefreshWindowNameWarning[] }
+	| { ok: false; reason: string; message: string };
+
 export function paneRegistryArgs(bin: string, action: string, issue: string): string {
 	const r = spawnSync(bin, [action, issue], { encoding: "utf8" });
 	if (r.status !== 0) return "";
@@ -123,20 +133,39 @@ export function resolvePaneTargetForEntry(bin: string, paneId: string): string {
 	return paneId;
 }
 
-export function refreshTrackedWindowNames(bin: string): { updated: string[]; cleared: string[] } {
-	if (!bin) return { cleared: [], updated: [] };
+function spawnErrorMessage(r: ReturnType<typeof spawnSync>): string {
+	if (r.error) return r.error.message;
+	const stderr = String(r.stderr ?? "").trim();
+	return stderr || "no stderr";
+}
+
+export function refreshTrackedWindowNames(bin: string): RefreshTrackedWindowNamesResult {
+	if (!bin) return { ok: false, reason: "missing-command", message: "pane-registry command path is empty" };
 	const r = spawnSync(bin, ["refresh-window-names"], { encoding: "utf8" });
-	if (r.status !== 0) return { cleared: [], updated: [] };
+	if (r.error) return { ok: false, reason: "spawn-failed", message: `pane-registry refresh-window-names spawn failed: ${r.error.message}` };
+	if (r.status !== 0) return { ok: false, reason: "command-failed", message: `pane-registry refresh-window-names failed (status=${r.status}): ${spawnErrorMessage(r)}` };
 	try {
 		const parsed = JSON.parse(r.stdout ?? "{}") as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { cleared: [], updated: [] };
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, reason: "invalid-json", message: "pane-registry refresh-window-names returned non-object JSON" };
 		const obj = parsed as Record<string, unknown>;
+		const stderr = String(r.stderr ?? "").trim();
+		const warnings = Array.isArray(obj.warnings)
+			? obj.warnings.filter((warning): warning is Record<string, unknown> => !!warning && typeof warning === "object" && !Array.isArray(warning)).map((warning) => ({
+				id: typeof warning.id === "string" ? warning.id : undefined,
+				message: typeof warning.message === "string" ? warning.message : "missing warning message",
+				reason: typeof warning.reason === "string" ? warning.reason : "unknown",
+			}))
+			: [];
+		if (stderr) warnings.unshift({ id: undefined, message: stderr, reason: "command-stderr" });
 		return {
+			ok: true,
 			cleared: Array.isArray(obj.cleared) ? obj.cleared.filter((id): id is string => typeof id === "string") : [],
+			warnings,
 			updated: Array.isArray(obj.updated) ? obj.updated.filter((id): id is string => typeof id === "string") : [],
 		};
-	} catch {
-		return { cleared: [], updated: [] };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, reason: "invalid-json", message: `pane-registry refresh-window-names returned invalid JSON: ${message}` };
 	}
 }
 

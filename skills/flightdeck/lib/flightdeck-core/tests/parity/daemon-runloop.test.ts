@@ -77,6 +77,18 @@ function runDaemon(action: string, extra: string[] = [], useTs = true): { status
 	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
+function runDaemonIn(cwd: string, action: string, extra: string[] = [], extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
+	const env = { ...daemonEnv(true), ...extraEnv };
+	const r = spawnSync(SCRIPT, [action, "--session", SESSION_NAME, ...extra], { cwd, encoding: "utf8", env });
+	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function runPaneRegistry(cwd: string, args: string[], extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>), FLIGHTDECK_STATE_DIR: "tmp", ...extraEnv };
+	const r = spawnSync(PANE_REGISTRY, args, { cwd, encoding: "utf8", env });
+	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
 function daemonEnv(useTs = true): Record<string, string> {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_STATE_DIR: stateDir, FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
 	return env;
@@ -214,6 +226,51 @@ describe("daemon run-loop (TS)", () => {
 		expect(existsSync(pidFile)).toBe(false);
 		expect(pidAlive(pid)).toBe(false);
 	});
+
+	test("reconcile refreshes tracked window names and daemon stays healthy", async () => {
+		const repo = mkdtempSync(join(tmpdir(), "fd-runloop-registry-"));
+		spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+		const statePath = join(repo, "tmp", `flightdeck-state-${SESSION_NAME}.json`);
+		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+		try {
+			const paneTarget = spawnSync("tmux", ["display-message", "-p", "-t", innerPaneId, "#{session_name}:#{window_index}.#{pane_index}"], { encoding: "utf8" }).stdout.trim();
+			const windowIndex = spawnSync("tmux", ["display-message", "-p", "-t", innerPaneId, "#{window_index}"], { encoding: "utf8" }).stdout.trim();
+			const init = runPaneRegistry(repo, [
+				"init-entry", "name-refresh",
+				"--title", "Spawn title",
+				"--kind", "adhoc",
+				"--cwd", repo,
+				"--window", windowIndex,
+				"--harness", "shell",
+				"--pane-id", innerPaneId,
+				"--pane-target", paneTarget,
+			]);
+			if (init.status !== 0) throw new Error(`pane-registry init failed: status=${init.status} stdout=${init.stdout} stderr=${init.stderr}`);
+
+			const renamed = `fd-name-refresh-${Date.now()}`;
+			expect(spawnSync("tmux", ["rename-window", "-t", innerPaneId, renamed]).status).toBe(0);
+
+			const env = { FD_RECONCILE_INTERVAL_SEC: "1", FLIGHTDECK_STATE_DIR: "tmp" };
+			const started = runDaemonIn(repo, "start", ["--master", MASTER_PANE, "--inner", innerPaneId], env);
+			expect(started.status).toBe(0);
+			expect(started.stdout).toContain("daemon spawned pid=");
+
+			const refreshed = await waitFor(() => {
+				if (!existsSync(statePath) || !existsSync(logFile)) return false;
+				const state = JSON.parse(readFileSync(statePath, "utf8"));
+				const logged = readFileSync(logFile, "utf8").includes("[window-name-refresh]");
+				return state.entries?.["name-refresh"]?.window_name_current === renamed && logged;
+			}, 6000);
+			expect(refreshed).toBe(true);
+
+			const status = runDaemonIn(repo, "status", [], env);
+			expect(status.status).toBe(0);
+			expect(status.stdout).toMatch(/daemon=\d+ running/);
+		} finally {
+			runDaemonIn(repo, "stop", [], { FLIGHTDECK_STATE_DIR: "tmp" });
+			rmSync(repo, { force: true, recursive: true });
+		}
+	}, 12000);
 
 	test("stop cleans up subscriber pid files (no orphans)", async () => {
 		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId]);

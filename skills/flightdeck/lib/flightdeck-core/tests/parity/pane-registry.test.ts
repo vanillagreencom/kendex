@@ -690,6 +690,58 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		expect(entries["name-sync"].window_name_current).toBe("Pi renamed title");
 	});
 
+	test("refresh-window-names warns and preserves names when tmux live-pane probe fails", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: {
+				"%211": { pane_index: 0, path: "/tmp/name-sync-probe", window_id: "@22", window_index: 22, window_name: "Probe title" },
+			},
+			windows: { "@22": { index: 22, name: "Probe title" } },
+		}));
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "name-probe-fail",
+			"--title", "Probe spawn",
+			"--kind", "adhoc",
+			"--cwd", "/tmp/name-sync-probe",
+			"--window", "22",
+			"--harness", "pi",
+			"--pane-id", "%211",
+			"--pane-target", "test-session:22.0",
+		]).status).toBe(0);
+		expect(runShim(tsRepo, statePath, ["set", "name-probe-fail", "window_name_current", JSON.stringify("Keep me")]).status).toBe(0);
+
+		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"], { TMUX_SHIM_FAIL_LIST_PANES_A: "1" });
+		expect(refresh.status).toBe(0);
+		const parsed = JSON.parse(refresh.stdout);
+		expect(parsed.updated).toEqual([]);
+		expect(parsed.cleared).toEqual([]);
+		expect(parsed.warnings[0].reason).toBe("tmux-list-panes-failed");
+		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
+		expect(entries["name-probe-fail"].window_name_current).toBe("Keep me");
+	});
+
+	test("refresh-window-names clears stale names only after missing pane is verified", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "name-verified-missing",
+			"--title", "Missing spawn",
+			"--kind", "adhoc",
+			"--cwd", "/tmp/name-missing",
+			"--window", "23",
+			"--harness", "pi",
+			"--pane-id", "%999",
+			"--pane-target", "test-session:23.0",
+		]).status).toBe(0);
+		expect(runShim(tsRepo, statePath, ["set", "name-verified-missing", "window_name_current", JSON.stringify("Old title")]).status).toBe(0);
+
+		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"]);
+		expect(refresh.status).toBe(0);
+		const parsed = JSON.parse(refresh.stdout);
+		expect(parsed.cleared).toContain("name-verified-missing");
+		expect(parsed.warnings).toEqual([]);
+		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
+		expect(entries["name-verified-missing"].window_name_current).toBeNull();
+	});
+
 	test("pane_id alive + terminal + single-pane window → kills the window", () => {
 		for (const repo of [tsRepo]) {
 			const statePath = makeShimState(repo, {

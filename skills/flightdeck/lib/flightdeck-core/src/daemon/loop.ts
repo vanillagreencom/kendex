@@ -291,7 +291,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	let heartbeatCounter = 0;
 	const startEpoch = Math.floor(Date.now() / 1000);
 	const paneCache = new PaneCache();
-	void warn; void notifiedHash; void wakeEventsLog;
+	void notifiedHash; void wakeEventsLog;
 
 	// vstack#68: per-pane bell-wake rate limit + non-canonical drop. The
 	// state is in-memory only (a daemon restart starts fresh, which is
@@ -311,7 +311,14 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	let lastReconcileEpoch = Math.floor(Date.now() / 1000);
 	function reconcileNow(reason: string): void {
 		const nameRefresh = refreshTrackedWindowNames(opts.paneRegistryBin);
-		if (nameRefresh.updated.length > 0 || nameRefresh.cleared.length > 0) {
+		if (!nameRefresh.ok) {
+			warn("window-name-refresh-error", `reason=${nameRefresh.reason} message=${nameRefresh.message} reconcile_reason=${reason}`);
+		} else {
+			for (const warning of nameRefresh.warnings) {
+				warn("window-name-refresh-warn", `id=${warning.id ?? "-"} reason=${warning.reason} message=${warning.message} reconcile_reason=${reason}`);
+			}
+		}
+		if (nameRefresh.ok && (nameRefresh.updated.length > 0 || nameRefresh.cleared.length > 0)) {
 			log("window-name-refresh", `updated=${nameRefresh.updated.length} cleared=${nameRefresh.cleared.length} updated_ids=${nameRefresh.updated.join(",") || "-"} cleared_ids=${nameRefresh.cleared.join(",") || "-"} reason=${reason}`);
 		}
 		const entries = listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness);
