@@ -20,7 +20,8 @@ metadata:
 1. Verify `$TMUX` is set for every Flightdeck command. If unset, **exit immediately with no-op**: print `Flightdeck requires tmux; skipping.` and return control to the caller. Flightdeck does nothing outside tmux.
 2. Determine the command mode before loading dependencies:
    - Generic session commands (`session start`, `session attach`, `session watch`, `session status`, `session stop`, `session remove`) require only tmux plus the selected harness adapter (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). Do **not** load `github`, `linear`, `project-management`, or `worktree` for generic session commands.
-   - Issue workflow commands (`start [ISSUE_ID]`, `start new`, `parallel-check`, issue `watch`, `merge-plan`, `close-issue`, `terminate` when any tracked entry is `kind=issue`) load `github`, `linear`, `project-management`, and `worktree` on demand. Redundant loads are no-ops.
+   - Linear issue workflow commands (`start [ISSUE_ID]`, `start new`, `parallel-check`, issue `watch`, `merge-plan`, `close-issue`, `terminate` when any tracked entry is `kind=issue`) load `github`, `linear`, `project-management`, and `worktree` on demand. Redundant loads are no-ops.
+   - GitHub issue workflow commands (`github start <N>`, `github start new`, `github watch`, `github close-issue`, `github terminate`) load only `github` and `worktree` on demand. Do **not** load `linear` or `project-management` for GitHub mode.
 3. If an issue workflow dependency cannot be loaded after entering issue mode, stop and tell the user. Do not proceed with issue/PR/worktree actions without it.
 
 ---
@@ -29,12 +30,19 @@ metadata:
 
 Core Flightdeck is a generic session manager. It requires tmux and the harness adapters needed for the tracked panes only; it does not require GitHub, Linear, project-management, or worktree skills.
 
-### Issue-mode dependencies (load when entering issue workflows)
+### Linear issue-mode dependencies (load when entering Linear issue workflows)
 
 - `github` — PR inspection, merge state, checks, review threads, file lists.
 - `linear` — issue metadata, created follow-ups, cycle/todo recommendation checks.
 - `worktree` — issue branch/worktree ownership and cleanup scope.
 - `project-management` — cycle planning, audits, roadmaps, research issue wrappers used by issue workflows.
+
+### GitHub-mode dependencies (load when entering GitHub issue workflows)
+
+- `github` — issue lookup/closure plus PR inspection, merge state, checks, review threads, file lists.
+- `worktree` — issue branch/worktree ownership and cleanup scope.
+
+Do **not** load `linear` or `project-management` for GitHub mode.
 
 `decider` remains optional for agents that want an extra decision aid, but core session management does not require it.
 
@@ -46,7 +54,7 @@ You are in **master mode**. Master supervises: it routes prompts, updates state/
 
 Generic session mode is the core path: launch/attach with `flightdeck-session`, supervise with `session-watch.md`, answer generic prompts, and summarize sessions. It skips issue selection, research/plan evaluation, `open-terminal`, merge planning, GitHub/Linear/worktree actions, and project-management flows.
 
-Issue-mode global arc begins only after entering an Issue workflows command: dashboard verification → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind. Communicate with spawned agents through native channels (`pane-respond`): opencode HTTP, Claude Channels MCP/JSONL, Pi bridge, Codex JSON-RPC, with tmux capture/send-keys only as fallback (see `patterns/tmux-monitoring.md`). Pause for the user only on scope creep that requires reverting agent work, force-merging against a real content conflict, issue abort, direct `main` mutation when no orchestrator pane is alive, or a novel prompt shape no rule covers. Do not re-implement orchestration gates; answer surfaced prompts and add only cross-session conflict/scope facts.
+Linear issue-mode global arc begins only after entering a Linear issue workflow command: dashboard verification → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind. GitHub issue-mode arc begins after `github *`: dashboard verification → `gh issue view` / `gh issue create` → spawn (`open-terminal --tracker github`) → watch loop → PR/CI/review gates → unwind. Communicate with spawned agents through native channels (`pane-respond`): opencode HTTP, Claude Channels MCP/JSONL, Pi bridge, Codex JSON-RPC, with tmux capture/send-keys only as fallback (see `patterns/tmux-monitoring.md`). Pause for the user only on scope creep that requires reverting agent work, force-merging against a real content conflict, issue abort, direct `main` mutation when no orchestrator pane is alive, or a novel prompt shape no rule covers. Do not re-implement orchestration gates; answer surfaced prompts and add only cross-session conflict/scope facts.
 
 ## Commands
 
@@ -67,7 +75,7 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 ### Issue workflows
 
-Issue/PR/worktree workflows. Entering these commands loads the issue-mode dependencies on demand.
+Linear issue/PR/worktree workflows. Entering these commands loads the Linear issue-mode dependencies on demand.
 
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
@@ -81,7 +89,19 @@ Issue/PR/worktree workflows. Entering these commands loads the issue-mode depend
 | `terminate` | — | `workflows/linear/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
 | `status` | — | inline | Print current pane registry + state machine snapshot from `tmp/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
 
-### Planning (cross-call to `project-management`, issue mode only)
+### GitHub workflows
+
+GitHub issue/PR/worktree workflows. Entering these commands loads only `github` and `worktree` on demand.
+
+| Command | Arguments | Workflow | Notes |
+|---------|-----------|----------|-------|
+| `github start` | `<N>` | `workflows/github/start.md` | Entry: spawn worktree + pane for GitHub issue, enter watch. |
+| `github start new` | `[title]` | `workflows/github/start-new.md` | Create + spawn. |
+| `github watch` | `[Ns...]` | `workflows/github/watch.md` → `workflows/shared/session-watch.md` | Github-mode extension over the generic loop. |
+| `github close-issue` | `<N>` | `workflows/github/close-issue.md` | Terminal validation + teardown. |
+| `github terminate` | — | `workflows/github/terminate.md` | Session summary for github entries. |
+
+### Planning (cross-call to `project-management`, Linear issue mode only)
 
 | Command | Workflow | Notes |
 |---------|----------|-------|
@@ -383,6 +403,12 @@ Additional tuning:
 | `workflows/linear/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
 | `workflows/linear/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
 | `workflows/linear/terminate.md` | Nested invocation from issue `watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
+| `workflows/github/start.md` | `github start <N>` | Entry: dashboard, GitHub issue lookup, worktree spawn, enter GitHub watch |
+| `workflows/github/start-new.md` | `github start new` | Create GitHub issue, then run GitHub start |
+| `workflows/github/watch.md` | `github watch` | GitHub issue-mode extension over `session-watch`: PR/CI/review handlers, close issue, terminate |
+| `workflows/github/handle-prompt.md` | Nested invocation from GitHub watch for GitHub issue-only tags | PR/CI/review prompt response surface only |
+| `workflows/github/close-issue.md` | Nested invocation from GitHub watch on `terminal-state-reached` | Verify terminal state, close issue fallback, update master state, kill window |
+| `workflows/github/terminate.md` | Nested invocation from GitHub watch or generic session unwind | Generic session summary for ad-hoc/workflow entries; GitHub issue/PR/worktree summary when GitHub entries exist; master-state finalization |
 
 ## Workflow Execution
 
@@ -418,4 +444,4 @@ The user-visible output blocks at the end of `terminate.md` (`<generic_output_fo
 
 ## Compaction Recovery
 
-Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/shared/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/linear/watch.md` § 8.
+Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/shared/session-watch.md` § 6; issue-specific recovery lives in `workflows/linear/watch.md` § 8 and `workflows/github/watch.md` § 8.

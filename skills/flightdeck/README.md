@@ -1,6 +1,6 @@
 # Flightdeck
 
-Flightdeck supervises AI harness sessions in tmux windows. In core session mode it launches or attaches panes, tracks stable ids, routes prompts, and summarizes completion. Issue orchestration is a built-in domain mode layered on top: GitHub/Linear/worktree decisions, merge planning, and next-cycle recommendations.
+Flightdeck supervises AI harness sessions in tmux windows. In core session mode it launches or attaches panes, tracks stable ids, routes prompts, and summarizes completion. Issue orchestration is a built-in domain mode layered on top: Linear issue flows add merge planning and next-cycle recommendations; GitHub issue flows add PR/CI/review gates without Linear/project-management dependencies.
 
 > Agents reading this: you want `SKILL.md` instead. Hacking on flightdeck itself: see [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
@@ -8,18 +8,19 @@ Flightdeck supervises AI harness sessions in tmux windows. In core session mode 
 
 Running one agent at a time is fine. Running five at once is chaos — each one keeps stopping to ask questions, background tasks finish at odd times, and issue-mode merge order can turn into a guessing game. Flightdeck handles the supervisory layer so you can track generic sessions or spawn a whole issue cycle and walk away.
 
-Activates only inside tmux and only when you ask for it (`flightdeck session start|attach` for core sessions, `flightdeck start` for issue workflows). Outside tmux it's a no-op.
+Activates only inside tmux and only when you ask for it (`flightdeck session start|attach` for core sessions, `flightdeck start` for Linear issue workflows, or `flightdeck github start <N>` for GitHub issue workflows). Outside tmux it's a no-op.
 
 ## How it works
 
-Flightdeck launches generic sessions with `flightdeck session start` (or `attach`) or issue agents with `flightdeck start`, always into their own tmux windows, then watches them in parallel. Each Flightdeck session launches/verifies the Rust dashboard by default; set `FLIGHTDECK_DASHBOARD=0` to opt out. Each agent talks to flightdeck through its native channel (Claude Code MCP, OpenCode HTTP, Pi bridge, Codex app-server) and falls back to tmux when a channel isn't available.
+Flightdeck launches generic sessions with `flightdeck session start` (or `attach`), Linear issue agents with `flightdeck start`, or GitHub issue agents with `flightdeck github start <N>`, always into their own tmux windows, then watches them in parallel. Each Flightdeck session launches/verifies the Rust dashboard by default; set `FLIGHTDECK_DASHBOARD=0` to opt out. Each agent talks to flightdeck through its native channel (Claude Code MCP, OpenCode HTTP, Pi bridge, Codex app-server) and falls back to tmux when a channel isn't available.
 
 A background daemon detects when an agent has a question, the master agent classifies the prompt, auto-answers when there's a learned default, and pauses for the human when there isn't.
 
 There are two modes per tracked entry:
 
 - **Generic session mode** — structured questions, bash permission prompts, safe bounded choices, Pi background-task exits.
-- **Issue mode** — adds GitHub/Linear/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, merge planning, scope creep.
+- **Linear issue mode** — adds GitHub/Linear/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, merge planning, scope creep, and next-cycle recommendations.
+- **GitHub issue mode** — adds GitHub/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, merge gating, issue-close fallback, and session summary.
 
 When all tracked entries are terminal, flightdeck writes a summary and hands control back.
 
@@ -38,7 +39,7 @@ If the daemon's master pane disappears (master agent crash, accidental window ki
 
 ## Activation and termination
 
-- **Activates** on `flightdeck session start|attach` for generic tracked sessions, or `flightdeck start` for issue workflows, from inside tmux.
+- **Activates** on `flightdeck session start|attach` for generic tracked sessions, `flightdeck start` for Linear issue workflows, or `flightdeck github start <N>` for GitHub issue workflows, from inside tmux.
 - **Pauses** for you on: scope creep that wants reverting, force-merging against a real content conflict, an issue abort, a `main` mutation that needs human OK, domain mismatch, or a novel prompt shape no rule covers. Sets `paused_for_user` in state and stops polling. Resume by running `session watch` or issue `watch` again.
 - **Terminates** automatically when every tracked entry is terminal for the relevant mode. Generic-only sessions write a session summary with no GitHub/Linear/worktree calls. Issue sessions write the issue summary, archive the state file, and hand control back.
 
@@ -50,7 +51,7 @@ Fresh LLM panes need an explicit launch profile. `flightdeck session start --pro
 
 ## Issue workflows
 
-Issue orchestration remains first-class when the session is tied to a Linear/GitHub/worktree domain. Ask the agent to start an issue, check a parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session — it routes to the right flightdeck command for you.
+Issue orchestration remains first-class when the session is tied to an issue/worktree domain. Ask the agent to start a Linear issue, check a parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session. For GitHub-only repos, use `flightdeck github start <N>`, `github start new`, `github watch`, `github close-issue`, and `github terminate`; this lane is intentionally smaller and covers PR/CI/review handling without merge-order planning.
 
 The `github` skill ships `label-add` and `label-remove` wrappers around `gh pr edit` / `gh issue edit`. When flightdeck spawns a managed pane, those wrappers emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows alongside the existing `pr.*` events, so label-driven gates (`defer-ci`, custom workflow labels) show up in the activity sidecar and Rust dashboard.
 
@@ -65,7 +66,7 @@ vstack add vanillagreencom/vstack --skill flightdeck -y
 
 Core mode requires tmux only at the workflow/skill-dependency layer, plus the harness adapter you choose for a tracked pane (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). It does not require GitHub, Linear credentials, project-management, or worktree setup.
 
-Issue mode adds the optional `github`, `linear`, `worktree`, and `project-management` skills on demand for `flightdeck start <ISSUE>`, `start new`, `parallel-check`, `merge-plan`, `close-issue`, and issue termination/recommendation workflows.
+Linear issue mode adds the optional `github`, `linear`, `worktree`, and `project-management` skills on demand for `flightdeck start <ISSUE>`, `start new`, `parallel-check`, `merge-plan`, `close-issue`, and issue termination/recommendation workflows. GitHub issue mode loads only `github` and `worktree` for `flightdeck github start <N>`, `github start new`, `github watch`, `github close-issue`, and `github terminate`.
 
 Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, `jq`, `flock`, and `bun` (https://bun.sh). Issue mode additionally needs the GitHub/Linear CLIs or auth wrappers used by those skills, plus normal git worktree support. Mac users: install GNU coreutils for `sha256sum` and GNU date.
 
@@ -145,4 +146,4 @@ Daemon tuning (`FD_*` env vars) and contributor-only knobs are documented in [`D
 - Flightdeck does not abort issues for you — only you can.
 - Flightdeck does not respawn dead panes.
 - Flightdeck operates within one tmux session at a time. Multiple sessions are independent.
-- Flightdeck does not bypass the parallel-safety check that orchestration runs before spawn. If that check says no, flightdeck doesn't override.
+- Flightdeck does not bypass the Linear parallel-safety check before spawn. If that check says no, flightdeck doesn't override. GitHub mode has no parallel-check lane.

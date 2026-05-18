@@ -187,6 +187,35 @@ describe("open-terminal smoke", () => {
 		expect(state.entries["CC-6"].launch.requested_effort).toBe("high");
 	});
 
+	test("default tracker keeps linear issue IDs on orchestration start prompt", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["cc-7", "--tmux", "--harness", "pi"]);
+		expect(r.status).toBe(0);
+		const pane = readShimState(shim).panes["%1"]!;
+		expect(pane.window_name).toBe("CC-7");
+		const launchLine = pane.sent_keys!.find((line) => line.includes("pi"))!.replaceAll("\\ ", " ");
+		expect(launchLine).toContain("/skill:orchestration start CC-7");
+		expect(launchLine).not.toContain("/skill:flightdeck github start");
+	});
+
+	test("github tracker accepts numeric issue IDs and starts github lane", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["120", "--tracker", "github", "--tmux", "--harness", "pi"]);
+		expect(r.status).toBe(0);
+		const pane = readShimState(shim).panes["%1"]!;
+		expect(pane.window_name).toBe("120");
+		const launchLine = pane.sent_keys!.find((line) => line.includes("pi"))!.replaceAll("\\ ", " ");
+		expect(launchLine).toContain("/skill:flightdeck github start 120");
+		expect(launchLine).not.toContain("/skill:orchestration start");
+		const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+		expect(state.entries["120"].kind).toBe("issue");
+		expect(state.entries["120"].domain.issue.id).toBe("120");
+	});
+
 	test("claude minimal effort fails before worktree or tmux mutation", () => {
 		const repo = makeRepo();
 		repos.push(repo);

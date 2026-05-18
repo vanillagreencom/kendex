@@ -2,11 +2,12 @@
 # Launch worktree(s) for one or more issues with selected harness, model/effort overrides, and terminal.
 #
 # Usage:
-#   open-terminal ISSUE-1 [--tmux | --ghostty] [--harness claude] [--model MODEL] [--effort LEVEL]
-#   open-terminal ISSUE-1 ISSUE-2 ... [--tmux | --ghostty] [--harness codex] [--model MODEL] [--effort LEVEL]
+#   open-terminal ISSUE-1 [--tracker linear|github] [--tmux | --ghostty] [--harness claude] [--model MODEL] [--effort LEVEL]
+#   open-terminal ISSUE-1 ISSUE-2 ... [--tracker linear|github] [--tmux | --ghostty] [--harness codex] [--model MODEL] [--effort LEVEL]
 #   open-terminal <group_id> [--tmux | --ghostty] [--cmd "command {issue}"]
 #
 # Options:
+#   --tracker NAME  Issue tracker lane: linear (default, JIRA-style IDs) or github (numeric IDs)
 #   --harness NAME  Harness to launch: claude, codex, opencode, pi, omp
 #   --model MODEL   Model for this launch/session (defaults per harness)
 #   --effort LEVEL  Effort/thinking for this launch/session (defaults per harness)
@@ -17,7 +18,7 @@
 #   (default)       Auto-detect: tmux if $TMUX set, else ghostty/GUI terminal
 #
 # Environment:
-#   GH_ISSUE_PATTERN          - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
+#   GH_ISSUE_PATTERN          - Regex pattern matching Linear issue IDs (default: "[A-Z]+-[0-9]+")
 #   FLIGHTDECK_LAUNCH_MODEL   - Default model when --model is omitted
 #   FLIGHTDECK_LAUNCH_EFFORT  - Default effort/thinking when --effort is omitted
 #   OPEN_TERMINAL_NO_BYPASS=1 - Do not pass per-harness permission-bypass flags to spawned
@@ -60,8 +61,9 @@ fi
 # Resolve WORKTREE_CLI from sibling skill
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 
-# Configurable issue pattern (default: JIRA-style ABC-123)
+# Configurable issue pattern (default: JIRA-style ABC-123 for linear tracker)
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+TRACKER="linear"
 
 TERMINAL_MODE=""
 HARNESS=""
@@ -72,12 +74,35 @@ CMD_TEMPLATE=""
 MODEL_OVERRIDE=""
 EFFORT_OVERRIDE=""
 
+# Pre-scan tracker so positional numeric args can be interpreted correctly even
+# when callers put `--tracker github` after the issue number.
+SCAN_ARGS=("$@")
+for ((i = 0; i < ${#SCAN_ARGS[@]}; i++)); do
+  case "${SCAN_ARGS[$i]}" in
+    --tracker)
+      if (( i + 1 >= ${#SCAN_ARGS[@]} )); then
+        echo "Error: --tracker requires a value (linear|github)" >&2
+        exit 1
+      fi
+      TRACKER="${SCAN_ARGS[$((i + 1))]}"
+      ;;
+    --tracker=*) TRACKER="${SCAN_ARGS[$i]#--tracker=}" ;;
+  esac
+done
+
+case "$TRACKER" in
+  linear|github) ;;
+  *) echo "Error: invalid --tracker: $TRACKER (expected linear|github)" >&2; exit 1 ;;
+esac
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tmux) TERMINAL_MODE="tmux"; shift ;;
     --ghostty) TERMINAL_MODE="ghostty"; shift ;;
     --harness) HARNESS="$2"; shift 2 ;;
     --harness=*) HARNESS="${1#--harness=}"; shift ;;
+    --tracker) TRACKER="$2"; shift 2 ;;
+    --tracker=*) TRACKER="${1#--tracker=}"; shift ;;
     --model) MODEL_OVERRIDE="$2"; shift 2 ;;
     --model=*) MODEL_OVERRIDE="${1#--model=}"; shift ;;
     --effort|--thinking) EFFORT_OVERRIDE="$2"; shift 2 ;;
@@ -89,6 +114,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: open-terminal ISSUE-1 [ISSUE-2 ...] [options]"
       echo ""
       echo "Options:"
+      echo "  --tracker <name>   Issue tracker lane: linear (default) or github"
       echo "  --harness <name>    Harness to launch: claude, codex, opencode, pi, omp"
       echo "  --model <model>     Model for this launch/session (defaults per harness)"
       echo "  --effort <level>    Effort/thinking level (defaults per harness): minimal, low, medium, high, xhigh, max"
@@ -98,11 +124,13 @@ while [[ $# -gt 0 ]]; do
       echo "  (default terminal)  Auto-detect: tmux if \$TMUX set, else GUI terminal"
       echo ""
       echo "Harness launch commands (with permission bypass enabled by default):"
-      echo "  claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
-      echo "  codex    → codex -m MODEL -c model_reasoning_effort=EFFORT '\$orchestration start ISSUE'"
-      echo "  opencode → opencode --model MODEL --prompt '/orchestration start ISSUE' (effort unsupported by top-level opencode)"
-      echo "  omp      → omp '/skill:orchestration start ISSUE'"
-      echo "  pi       → pi --model MODEL --thinking EFFORT '/skill:orchestration start ISSUE'"
+      echo "  linear tracker (default) spawns orchestration:"
+      echo "    claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
+      echo "    codex    → codex -m MODEL -c model_reasoning_effort=EFFORT '\$orchestration start ISSUE'"
+      echo "    opencode → opencode --model MODEL --prompt '/orchestration start ISSUE' (effort unsupported by top-level opencode)"
+      echo "    omp      → omp '/skill:orchestration start ISSUE'"
+      echo "    pi       → pi --model MODEL --thinking EFFORT '/skill:orchestration start ISSUE'"
+      echo "  github tracker spawns Flightdeck github lane: /flightdeck github start N (Pi/OMP: /skill:flightdeck github start N; Codex: \$flightdeck github start N)"
       echo ""
       echo "Recommended defaults for implementation panes:"
       echo "  claude:   --model 'opus[1m]' --effort max"
@@ -111,16 +139,22 @@ while [[ $# -gt 0 ]]; do
       echo "  pi:       --model openai-codex/gpt-5.5 --effort xhigh"
       echo ""
       echo "Environment:"
-      echo "  GH_ISSUE_PATTERN          Regex for issue IDs (default: [A-Z]+-[0-9]+)"
+      echo "  GH_ISSUE_PATTERN          Regex for Linear issue IDs (default: [A-Z]+-[0-9]+)"
       echo "  FLIGHTDECK_LAUNCH_MODEL   Default model when --model is omitted"
       echo "  FLIGHTDECK_LAUNCH_EFFORT  Default effort/thinking when --effort is omitted"
       echo "  OPEN_TERMINAL_NO_BYPASS=1 Disable per-harness permission-bypass flags (default: off)"
       exit 0
       ;;
-    [0-9]*) GROUP_ID="$1"; shift ;;
     *)
-      # Match against configurable issue pattern
-      if echo "$1" | grep -qiE "^${GH_ISSUE_PATTERN}$"; then
+      if [[ "$TRACKER" == "github" ]]; then
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+          ISSUES+=("$1"); shift
+        else
+          echo "Error: github tracker expects numeric issue IDs: $1" >&2; exit 1
+        fi
+      elif [[ "$1" =~ ^[0-9]+$ ]]; then
+        GROUP_ID="$1"; shift
+      elif echo "$1" | grep -qiE "^${GH_ISSUE_PATTERN}$"; then
         ISSUES+=("$(echo "$1" | tr '[:lower:]' '[:upper:]')"); shift
       else
         echo "Error: unexpected argument: $1" >&2; exit 1
@@ -391,36 +425,55 @@ launch_metadata_json_args() {
 # Env-prefix tokens that mark every flightdeck-spawned pane as managed live
 # in lib/pane-env.sh. Use "${FLIGHTDECK_PANE_ENV[@]}" inside arrays or
 # `flightdeck_pane_env_str` for string-form tmux send-keys paths.
+start_prompt_for_harness() {
+  local issue="$1" harness="$2"
+  if [[ "$TRACKER" == "github" ]]; then
+    case "$harness" in
+      codex) echo "\$flightdeck github start $issue" ;;
+      pi|omp) echo "/skill:flightdeck github start $issue" ;;
+      *) echo "/flightdeck github start $issue" ;;
+    esac
+    return
+  fi
+
+  case "$harness" in
+    codex) echo "\$orchestration start $issue" ;;
+    pi|omp) echo "/skill:orchestration start $issue" ;;
+    *) echo "/orchestration start $issue" ;;
+  esac
+}
+
 detect_start_cmd() {
   local issue="$1"
   if [[ -n "$CMD_TEMPLATE" ]]; then
     echo "${CMD_TEMPLATE//\{issue\}/$issue}"
     return
   fi
-  local cmd=() launch_args=() bypass
+  local cmd=() launch_args=() bypass prompt
   add_launch_args "$HARNESS" launch_args || return 1
   bypass="$(bypass_flag_for_harness "$HARNESS")"
+  prompt="$(start_prompt_for_harness "$issue" "$HARNESS")"
   case "$HARNESS" in
     claude)
       cmd=("${FLIGHTDECK_PANE_ENV[@]}" claude -n "$issue")
       [[ -n "$bypass" ]] && cmd+=("$bypass")
-      cmd+=("${launch_args[@]}" "/orchestration start $issue")
+      cmd+=("${launch_args[@]}" "$prompt")
       shell_join "${cmd[@]}"
       ;;
     codex)
-      cmd=("${FLIGHTDECK_PANE_ENV[@]}" codex "${launch_args[@]}" "\$orchestration start $issue")
+      cmd=("${FLIGHTDECK_PANE_ENV[@]}" codex "${launch_args[@]}" "$prompt")
       shell_join "${cmd[@]}"
       ;;
     opencode)
-      cmd=("${FLIGHTDECK_PANE_ENV[@]}" opencode "${launch_args[@]}" --prompt "/orchestration start $issue")
+      cmd=("${FLIGHTDECK_PANE_ENV[@]}" opencode "${launch_args[@]}" --prompt "$prompt")
       shell_join "${cmd[@]}"
       ;;
     omp)
-      cmd=("${FLIGHTDECK_PANE_ENV[@]}" omp "/skill:orchestration start $issue")
+      cmd=("${FLIGHTDECK_PANE_ENV[@]}" omp "$prompt")
       shell_join "${cmd[@]}"
       ;;
     pi)
-      cmd=("${FLIGHTDECK_PANE_ENV[@]}" pi "${launch_args[@]}" "/skill:orchestration start $issue")
+      cmd=("${FLIGHTDECK_PANE_ENV[@]}" pi "${launch_args[@]}" "$prompt")
       shell_join "${cmd[@]}"
       ;;
     *)        echo "" ;;
@@ -531,9 +584,9 @@ start_oc_server() {
 
 # Step 1: create a session via run --attach with a minimal bootstrap
 # prompt. The bootstrap MUST complete quickly (single short reply) —
-# previously this was `/orchestration start $issue` which triggers the
-# full workflow and blocks past the 60s timeout, hanging the spawn.
-# Orchestration is fired as a backgrounded follow-up after the spawn
+# previously this was the full start prompt, which triggers the
+# workflow and blocks past the 60s timeout, hanging the spawn.
+# The tracker start prompt is fired as a backgrounded follow-up after the spawn
 # completes (see fire_orchestration_async below). Run from the worktree
 # so the session's cwd field reflects the worktree.
 create_oc_session() {
@@ -561,7 +614,7 @@ create_oc_session() {
   echo "$sid"
 }
 
-# Fire `/orchestration start <issue>` as a backgrounded follow-up. This
+# Fire the tracker-specific start prompt as a backgrounded follow-up. This
 # is what actually starts the per-issue agent's work; it can run for
 # minutes and is fire-and-forget from open-terminal's perspective. The
 # user-visible `opencode attach` TUI in step 2 will display the turn
@@ -569,8 +622,8 @@ create_oc_session() {
 # exit and doesn't pollute the launcher's stdio.
 #
 # Env overrides (intended for tests / alt workflows):
-#   FLIGHTDECK_OC_FOLLOWUP_PROMPT — replace the default `/orchestration
-#       start <ISSUE>` prompt entirely. Use literal `__ISSUE__` in the
+#   FLIGHTDECK_OC_FOLLOWUP_PROMPT — replace the default tracker prompt
+#       entirely. Use literal `__ISSUE__` in the
 #       value to substitute the issue id at fire time (multi-issue
 #       spawns share one env, but each issue gets its own substitution).
 #   FLIGHTDECK_OC_SKIP_FOLLOWUP=1 — skip the followup fire entirely;
@@ -586,12 +639,12 @@ fire_orchestration_async() {
   if [[ -n "${FLIGHTDECK_OC_FOLLOWUP_PROMPT:-}" ]]; then
     prompt="${FLIGHTDECK_OC_FOLLOWUP_PROMPT//__ISSUE__/$issue}"
   else
-    prompt="/orchestration start $issue"
+    prompt="$(start_prompt_for_harness "$issue" opencode)"
   fi
   local launch_args=()
   add_launch_args opencode launch_args || return 1
   # FLIGHTDECK_MANAGED=1 also exports into the fire-and-forget
-  # `/orchestration start` invocation so any tool calls (e.g.
+  # tracker start invocation so any tool calls (e.g.
   # merge-pr.md § 5 running flightdeck-mode) see the canonical signal.
   # Outer redirect detaches the subshell's FDs from anything the caller
   # might be capturing — same hazard as start_oc_server.
@@ -714,9 +767,9 @@ spawn_oc_attach_tmux() {
     return 1
   fi
 
-  # Fire the actual orchestration workflow as a backgrounded follow-up.
+  # Fire the actual tracker workflow as a backgrounded follow-up.
   # The bootstrap above only created the session (with a "READY" reply);
-  # this is what kicks off /orchestration start <issue>. Logs to
+  # this is what kicks off the tracker start prompt. Logs to
   # oc-serve-<port>.log.orch so the master can tail if needed.
   fire_orchestration_async "$bin" "http://127.0.0.1:$port" "$sid" "$issue" "$wt_path"
 
@@ -819,11 +872,13 @@ build_claude_channel_cmd() {
   # Canonical flightdeck managed-pane env prefix (see FLIGHTDECK_PANE_ENV
   # near the top of this file).
   local cmd=("${FLIGHTDECK_PANE_ENV[@]}" "$bin" -n "$issue")
+  local prompt
+  prompt="$(start_prompt_for_harness "$issue" claude)"
   local launch_args=()
   [[ -n "$bypass" ]] && cmd+=("$bypass")
   add_launch_args claude launch_args || return 1
   cmd+=("${launch_args[@]}" --session-id "$uuid" --mcp-config "$mcp_path" \
-    --dangerously-load-development-channels server:webhook -- "/orchestration start $issue")
+    --dangerously-load-development-channels server:webhook -- "$prompt")
   shell_join "${cmd[@]}"
 }
 
@@ -961,7 +1016,9 @@ spawn_pi_bridge_tmux() {
   # signal plus the legacy FLIGHTDECK_CHILD_PANE=1 retained for the
   # pi-flightdeck dashboard extension's child-pane widget suppression
   # (issue #8). See FLIGHTDECK_PANE_ENV near the top of this file.
-  cmd=$(shell_join "${FLIGHTDECK_PI_PANE_ENV[@]}" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
+  local prompt
+  prompt="$(start_prompt_for_harness "$issue" pi)"
+  cmd=$(shell_join "${FLIGHTDECK_PI_PANE_ENV[@]}" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "$prompt")
 
   # Snapshot existing pi-bridge pids BEFORE spawning so discovery can
   # exclude already-running pi processes in the same worktree (bugs
