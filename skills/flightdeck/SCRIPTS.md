@@ -1,0 +1,55 @@
+# Flightdeck scripts reference
+
+Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the load-bearing rules; this file holds detailed reference content for on-demand consultation.
+
+## Scripts
+
+```bash
+.agents/skills/flightdeck/scripts/<script> [args]
+```
+
+**Implementation:** Most scripts are TypeScript under
+`skills/flightdeck/lib/flightdeck-core/`. Trampolines under `scripts/`
+exec `bun .../src/bin/<script>.ts`; `flightdeck-dashboard` is the Rust dashboard trampoline under `lib/flightdeck-dashboard/`. `bun` remains a hard runtime dependency for the TypeScript scripts.
+Functional + integration tests live under `lib/flightdeck-core/tests/`.
+
+| Script | Purpose |
+|--------|---------|
+| `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll issue tmux/terminal commands — use this for issue workflow spawns.** Linear is default; `--tracker github` accepts numeric issues, creates branch `issue-<N>`, fetches `gh issue view`, and emits a self-contained child prompt (no supervisor slash-command recursion). Tmux fallback delegates to `flightdeck-session` in issue mode. |
+| `flightdeck-session` | Generic session launcher/attacher. `start` creates a tmux window and registers `.entries[id]`; `attach` records an existing Pi pane by stable pane id. |
+| `parallel-groups` | Read/manage parallel issue groups. |
+| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`tracked-entries`/`write-entry`/`archive`), activity JSONL sidecar commands (`activity path\|append\|tail\|export`), and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/shared/session-watch.md` § 1 for lock semantics. |
+| `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. `start` exits `4` for stale `--master` (distinct from usage/missing dependency exit `2`). Master respawn trigger: `status --session <S>` says `no daemon` while live entries exist; source panes via `pane-registry list --format inner-panes-live` / `inner-harnesses-live`, re-resolve `$TMUX_PANE` and retry once on exit `4`, and do not yield on unresolved start failure. Full contract: `workflows/shared/session-watch.md` § 1 / § 6; adapter freshness: `patterns/tmux-monitoring.md`. |
+| `flightdeck-dashboard` | Rust TUI dashboard binary. Subcommands: `tui`, `daemon {start,stop,status,health,tail}`, `launch`, `supervise`. The TUI has keyboard/mouse navigation, help/theme/filter/detail/confirm popups, dashboard badge/chip legend, cost/token totals, and two confirmation-gated writes that shell to canonical helpers (`pane-registry remove` for stale entries, `tmux select-window` for focus). Lives in `skills/flightdeck/lib/flightdeck-dashboard/`. See `DEVELOPMENT.md` for the build + test workflow. |
+| `codex-app-server-spawn` / `-stop` | Idempotent bring-up/teardown of the per-session codex `app-server --listen ws://...` shared by all `codex --remote` panes. |
+| `pane-registry` | TrackedEntry↔pane mapping CRUD. `init-entry` writes `.entries[id]`; `init <ISSUE>` is an alias for `init-entry --kind issue`. `find-by-pane` emits `{id,kind}` JSON. `list --format json\|inner-panes\|inner-harnesses\|inner-panes-live\|inner-harnesses-live` feeds `pane-poll --batch -` and `flightdeck-daemon start`; use the `*-live` pair for daemon respawn. |
+| `pane-poll` | Pane state read. Preferred: `--batch -` from `pane-registry list --format json` (one JSONL object per tracked entry). Passes `kind` to `prompt-classify` so issue-only tags on ad-hoc entries become `domain-mismatch`. Legacy single-pane mode for drift re-polls / manual debug. See `patterns/tmux-monitoring.md` for per-harness adapter routes. |
+| `pane-respond` | Send response to a pane. Modes: free-text payload, `--option N`, `--option-multi`, `--keys` (rejected without `--keys-allow-tmux`), `--question <reqID> --answer\|--answer-multi\|--answer-text\|--answers-json\|--reject`. Validates rebase-multi-choice payloads for the preserve/apply/verify triplet. See `patterns/prompt-handlers.md` for mode selection and `patterns/opencode-questions.md` / `patterns/pi-questions.md` for question routing. |
+| `pane-clear-bell` | Atomic chained-command bell clear (no flicker). |
+| `pr-conflict-graph` | File-intersection adjacency for a list of PR numbers via `gh pr view --json files`. |
+| `label-add` / `label-remove` (in `skills/github/scripts/commands/`) | Add/remove GitHub labels via `gh pr edit` / `gh issue edit`. Emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows when `FLIGHTDECK_MANAGED=1`; silent otherwise. Wrapped by the `github` skill — flightdeck issue workflows call them indirectly. |
+| `prompt-classify` | Regex/sentinel + computed-tag matcher that maps pane state to handler tags. `--entry-kind` guards issue-only tags on non-issue entries; omitted kind and `--entry-kind-unknown` fail closed as `domain-mismatch`. See [`PROMPT-TAGS.md`](./PROMPT-TAGS.md) for the full tag catalog, including `merge-ready-but-unknown`, `pi-bg-task-exit`, `pi-activity-broker`, and `daemon-exited`. |
+
+`pi-bg-task-exit` (vstack#15): the Pi subscriber matches `pi-bridge stream` events of shape `{ type: "event", event: "message_end", data.message.customType: "vstack-background-tasks:event", data.message.details.eventType: "exit" }` and appends a canonical wake row to `WAKE_EVENTS_LOG`:
+
+```
+{"ts":"<iso>","pane_id":"%18","harness":"pi","event_type":"bg-task-exit","sequence":17,"task":{"id":"bg-3","status":"failed","exitCode":null,"command":"...","outputBytes":89},"classifier_tag":"pi-bg-task-exit","hash":"<12hex>"}
+```
+
+The daemon (`lib/flightdeck-core/src/daemon/loop.ts`) treats the tag as canonical, appends to the per-session events file via `appendEvent`, extends `WAKE_PENDING.in_flight`, and wakes master before emitting structured activity. Non-exit bg-task subscriber signals (for example `details.eventType: "output"`) append activity-only `pi-bg-task-activity` rows with `activity_event_type` and `sequence`; the daemon records them as `bg_task.output_matched` activity without waking master. Master routes terminal rows through `workflows/shared/session-watch.md` § 2 → `workflows/shared/session-handle-prompt.md` § 7; issue mode may then resume `workflows/linear/handle-prompt.md` § 4 for PR/CI/bot-review recovery. The classifier never sees these messages — they are system-role customType messages, not assistant text — so `prompt-classify` has no matching tag and only the daemon path produces them.
+
+`pi-activity-broker`: Pi extensions publish through `globalThis[Symbol.for("vstack.pi.activity")]`; `pi-session-bridge` streams each publication as `{type:"event", event:"vstack_activity", data:{...}}`. The Pi subscriber appends an activity-only `pi-activity-broker` row to `WAKE_EVENTS_LOG`. The TS daemon copies the subset payload into `flightdeck-activity-<session>.jsonl` with the tracked pane id and never wakes master. Set `FLIGHTDECK_PI_ACTIVITY_BROKER=0` to disable this broker drain and rely on legacy custom-message wake paths only.
+
+Activity sidecar: `flightdeck-state init` records `activity_path` beside the master state as `flightdeck-activity-<TMUX_SESSION>.jsonl`. `flightdeck-state activity path|append|tail|export` exposes the path, appends a normalized event, tails recent rows, or exports JSONL/Markdown. `activity export` accepts `--session <name>` and `--state-file <path>` for parity with `path` / `tail` / `append`, so dashboards and post-mortems can resolve sidecars without an active tmux session. Retention caps are 5,000 events and 10 MiB per live sidecar; oversized `details` are truncated to a 16 KiB budget. Daemon emission is curated: daemon/subscriber lifecycle, wake-delivery failures, subagent completions, bg-task exit/output rows, questions, and Pi broker rows. Workflow/github/linear helper emission is gated by `FLIGHTDECK_MANAGED=1 || FLIGHTDECK_ACTIVITY_FILE` so standalone wrapper use stays silent.
+
+`daemon-exited`: the daemon emits this lifecycle row during cleanup when it exits for `master-gone`, `signal-term`, `signal-int`, or another recorded reason. It writes directly to the per-session `EVENTS_FILE` under `SESSION_LOCK` (not `WAKE_EVENTS_LOG`), with `pane_id` set to the master pane id so pane-keyed drains include it:
+
+```
+{"ts":"<iso>","pane_id":"%25","event_type":"daemon-exited","reason":"master-gone","master_id":"%25","pid":12345,"hash":"<12hex>","tag":"daemon-exited","stable_age_sec":0,"details":{"event_type":"daemon-exited","reason":"master-gone","master_id":"%25","pid":12345}}
+```
+
+`session-watch.md` routes `daemon-exited` as a daemon-lifecycle signal, not a pane-prompt classification. It records the reason and follows the master respawn flow in `workflows/shared/session-watch.md` § 1 / § 6 before yielding.
+
+## Prompt tag catalog
+
+See [`PROMPT-TAGS.md`](./PROMPT-TAGS.md).

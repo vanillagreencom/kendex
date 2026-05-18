@@ -197,4 +197,4 @@ To add an adapter for a new harness:
 4. Update both tables above with the mechanic.
 5. Add a functional test under `lib/flightdeck-core/tests/parity/`.
 6. Add a smoke test under `skills/flightdeck/tests/<harness>-smoke` and update `tests/live-wake.sh` if the wake path is affected.
-7. Reflect any new env var in `skills/flightdeck/README.md` (operator-facing table) and `skills/flightdeck/SKILL.md` (Configuration section).
+7. Reflect any new user-facing env var in `skills/flightdeck/README.md` and every env var in `skills/flightdeck/ENV.md`.
