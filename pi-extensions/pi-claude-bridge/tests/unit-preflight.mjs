@@ -63,6 +63,42 @@ describe("preflightClaudeExecutable", () => {
 		);
 	}));
 
+	it("reports errno details for a deleted cwd before checking the executable", () => withTempDir((dir) => {
+		rmSync(dir, { recursive: true, force: true });
+		assert.throws(
+			() => preflightClaudeExecutable(process.execPath, dir),
+			(error) => {
+				assert.equal(error.name, "ClaudeExecutablePreflightError");
+				assert.equal(error.code, "ENOENT");
+				assert.equal(error.path, dir);
+				assert.equal(error.cwd, dir);
+				assert.equal(error.syscall, "stat");
+				assert.match(error.message, /cwd is not reachable/);
+				assert.ok(error.message.includes(`cwd=${dir}`));
+				assert.doesNotMatch(error.message, /native binary not found/);
+				return true;
+			},
+		);
+	}));
+
+	it("reports structured details when cwd is a file", () => withTempDir((dir) => {
+		const fileCwd = join(dir, "not-a-directory");
+		writeFileSync(fileCwd, "not a directory\n");
+		assert.throws(
+			() => preflightClaudeExecutable(process.execPath, fileCwd),
+			(error) => {
+				assert.equal(error.name, "ClaudeExecutablePreflightError");
+				assert.equal(error.code, "ENOTDIR");
+				assert.equal(error.path, fileCwd);
+				assert.equal(error.cwd, fileCwd);
+				assert.equal(error.syscall, "chdir");
+				assert.match(error.message, /cwd is not a directory/);
+				assert.ok(error.message.includes(`cwd=${fileCwd}`));
+				return true;
+			},
+		);
+	}));
+
 	it("rewrites spawn ENOENT so SDK surfaces diagnostic context", async () => withTempDir(async (dir) => {
 		const missing = join(dir, "missing-claude");
 		const proc = spawnClaudeCodeWithDiagnostics({
