@@ -101,6 +101,10 @@ function registerPane(entryId: string, paneId: string): void {
 	expect(r.status).toBe(0);
 }
 
+function lastStartLine(logText: string): string {
+	return logText.split("\n").filter((line) => line.includes("[start]")).at(-1) ?? "";
+}
+
 describe("daemon run-loop (TS)", () => {
 	if (!INSIDE_TMUX) {
 		test.skip("requires tmux", () => undefined);
@@ -115,6 +119,12 @@ describe("daemon run-loop (TS)", () => {
 			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
 			expect(existsSync(pidFile)).toBe(false);
 		}
+	});
+
+	test("manual start refuses empty --inner outside handoff", () => {
+		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", "", "--foreground"]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("start needs --master and --inner");
 	});
 
 	test("daemon writes daemon-exited event when the master pane disappears", async () => {
@@ -421,10 +431,61 @@ describe("daemon run-loop (TS)", () => {
 		const successorPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
 		expect(successorPid).not.toBe(initialPid);
 		expect(pidAlive(successorPid)).toBe(true);
+		const successorLogged = await waitFor(() => lastStartLine(readFileSync(logFile, "utf8")).includes(`pid=${successorPid}`), 3000);
+		expect(successorLogged).toBe(true);
 		const logText = readFileSync(logFile, "utf8");
-		expect(logText).toContain(`[handoff-inner-live] panes=1 inner=${innerPaneId} harnesses=pi`);
+		expect(logText).toContain(`[handoff-inner-live] source=live panes=1 inner=${innerPaneId} harnesses=pi`);
+		const successorStart = lastStartLine(logText);
+		expect(successorStart).toContain(`inner_ids=${innerPaneId}`);
+		expect(successorStart).not.toContain(paneB);
+		expect(successorStart).not.toContain(paneC);
+		expect(logText).not.toContain("[handoff-inner-stale]");
 		expect(logText).not.toContain(`Error: cannot resolve inner pane '${paneB}'`);
 		expect(logText).not.toContain(`Error: cannot resolve inner pane '${paneC}'`);
+
+		runDaemon("stop");
+		await sleep(300);
+	}, 12000);
+
+	test("FD_MAX_LIFETIME handoff allows confirmed zero live panes", async () => {
+		const paneB = tmuxNewWindow(SESSION, `fd-handoff-zero-b-${Date.now()}`);
+		const paneC = tmuxNewWindow(SESSION, `fd-handoff-zero-c-${Date.now()}`);
+		extraPaneIds.push(paneB, paneC);
+		registerPane("handoff-zero-a", innerPaneId);
+		registerPane("handoff-zero-b", paneB);
+		registerPane("handoff-zero-c", paneC);
+
+		const env = { ...daemonEnv(true), FD_MAX_LIFETIME: "2", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "5" } as Record<string, string>;
+		const innerCsv = [innerPaneId, paneB, paneC].join(",");
+		const r = spawnSync(SCRIPT, ["start", "--session", SESSION_NAME, "--master", MASTER_PANE, "--inner", innerCsv, "--inner-harnesses", "pi,pi,pi"], { encoding: "utf8", env });
+		expect(r.status).toBe(0);
+		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+		const initialPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+		expect(initialPid).toBeGreaterThan(0);
+
+		tmuxKillPaneFor(innerPaneId);
+		tmuxKillPaneFor(paneB);
+		tmuxKillPaneFor(paneC);
+
+		const successorStarted = await waitFor(() => {
+			if (!existsSync(pidFile)) return false;
+			const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			return pid > 0 && pid !== initialPid && pidAlive(pid);
+		}, 9000);
+		expect(successorStarted).toBe(true);
+		const successorPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+		const successorLogged = await waitFor(() => lastStartLine(readFileSync(logFile, "utf8")).includes(`pid=${successorPid}`), 3000);
+		expect(successorLogged).toBe(true);
+
+		const logText = readFileSync(logFile, "utf8");
+		expect(logText).toContain("[handoff-inner-live] source=live panes=0 inner=(empty) harnesses=(empty)");
+		const successorStart = lastStartLine(logText);
+		expect(successorStart).toContain("inner_ids=");
+		expect(successorStart).not.toContain(innerPaneId);
+		expect(successorStart).not.toContain(paneB);
+		expect(successorStart).not.toContain(paneC);
+		expect(logText).not.toContain("[handoff-inner-stale]");
 
 		runDaemon("stop");
 		await sleep(300);

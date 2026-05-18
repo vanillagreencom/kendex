@@ -206,10 +206,29 @@ describe("pane-registry parity", () => {
 		const bPanes = runShim(tsRepo, tsState, ["list", "--format", "inner-panes-live"]);
 		const aHarnesses = runShim(tsRepo, bashState, ["list", "--format", "inner-harnesses-live"]);
 		const bHarnesses = runShim(tsRepo, tsState, ["list", "--format", "inner-harnesses-live"]);
+		const atomic = runShim(tsRepo, tsState, ["list", "--format", "inner-live-json"]);
 		expect(aPanes.stdout.trim()).toBe("%210,%211");
 		expect(bPanes.stdout.trim()).toBe("%210,%211");
 		expect(aHarnesses.stdout.trim()).toBe("pi,codex");
 		expect(bHarnesses.stdout.trim()).toBe("pi,codex");
+		expect(JSON.parse(atomic.stdout)).toEqual([
+			{ harness: "pi", pane_id: "%210" },
+			{ harness: "codex", pane_id: "%211" },
+		]);
+	});
+
+	test("list --format inner-live-json fails on tmux live-pane query failure", () => {
+		for (const repo of [tsRepo]) {
+			const statePath = makeShimState(repo, {
+				panes: { "%210": { pane_index: 0, path: "/tmp/live-a", window_id: "@21", window_index: 21, window_name: "live-a" } },
+				session: "test-session",
+				windows: { "@21": { index: 21, name: "live-a" } },
+			});
+			runShim(repo, statePath, ["init-entry", "LIVE-A", "--title", "Live A", "--kind", "adhoc", "--cwd", "/tmp/live-a", "--window", "21", "--harness", "pi", "--pane-id", "%210", "--pane-target", "test-session:21.0"]);
+			const r = runShim(repo, statePath, ["list", "--format", "inner-live-json"], { TMUX_SHIM_FAIL_LIST_PANES_A: "1" });
+			expect(r.status).toBe(1);
+			expect(r.stderr).toContain("tmux list-panes -a failed");
+		}
 	});
 
 	test("init-entry writes a normalized adhoc entry", () => {

@@ -179,7 +179,8 @@ if (action === "start") {
 				default: die(`unknown arg: ${a}`);
 			}
 		}
-		if (!masterTarget || !sawInner) die("start needs --master and --inner");
+		const innerTargets = innerTargetsCsv.split(",").map((item) => item.trim()).filter(Boolean);
+		if (!masterTarget || !sawInner || (!fromHandoff && innerTargets.length === 0)) die("start needs --master and --inner");
 		if (!sessionId) die(`Error: tmux session '${sessionName}' not found`);
 
 		const pollSec = Number.parseInt(process.env.FD_POLL_SEC ?? "2", 10) || 2;
@@ -209,8 +210,8 @@ if (action === "start") {
 			sessionName,
 			masterTarget,
 			masterHarness,
-			innerTargets: innerTargetsCsv.split(",").filter(Boolean),
-			innerHarnesses: innerHarnessesCsv ? innerHarnessesCsv.split(",") : [],
+			innerTargets,
+			innerHarnesses: innerHarnessesCsv ? innerHarnessesCsv.split(",").map((item) => item.trim()) : [],
 			classifierBin,
 			defaultHarness,
 			pollSec, stabilitySec, captureLines, graceSec,

@@ -434,9 +434,12 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const elapsed = Math.floor(Date.now() / 1000) - startEpoch;
 			if (elapsed >= opts.maxLifetime) {
 				log("max-lifetime", `elapsed=${elapsed}s >= MAX_LIFETIME=${opts.maxLifetime}s; spawn successor (TS option-A divergence from bash's exec-in-place)`);
-				const handoff = liveInnerArgsForHandoff(opts.paneRegistryBin);
+				const handoff = liveInnerArgsForHandoff(opts.paneRegistryBin, {
+					innerTargets: innerIds.slice(),
+					innerHarnesses: innerIds.map((id) => paneHarness.get(id) ?? ""),
+				});
 				for (const message of handoff.warnings) warn("handoff-inner-live-warn", message);
-				log("handoff-inner-live", `panes=${handoff.innerTargets.length} inner=${handoff.innerTargets.join(",") || "(empty)"} harnesses=${handoff.innerHarnesses.join(",") || "(empty)"}`);
+				log("handoff-inner-live", `source=${handoff.source} panes=${handoff.innerTargets.length} inner=${handoff.innerTargets.join(",") || "(empty)"} harnesses=${handoff.innerHarnesses.join(",") || "(empty)"}`);
 				const { maxLifetimeExec } = require("./lifecycle.ts") as typeof import("./lifecycle.ts");
 				maxLifetimeExec({
 					activity,

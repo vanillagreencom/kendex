@@ -843,6 +843,11 @@ function cmdList(args: string[]): void {
 		const live = tmuxLivePaneIds();
 		return rows.filter((row) => typeof row.pane_id === "string" && live.has(row.pane_id));
 	};
+	const strictLiveRows = (): Record<string, unknown>[] => {
+		const live = tmuxLivePaneIdsResult();
+		if (!live.ok) die(live.error, 1);
+		return rows.filter((row) => typeof row.pane_id === "string" && live.panes.has(row.pane_id));
+	};
 	switch (format) {
 		case "json":
 			process.stdout.write(`${JSON.stringify(rows)}\n`);
@@ -859,8 +864,14 @@ function cmdList(args: string[]): void {
 		case "inner-harnesses-live":
 			process.stdout.write(`${liveRows().map((row) => String(row.harness ?? "")).join(",")}\n`);
 			break;
+		case "inner-live-json":
+			process.stdout.write(`${JSON.stringify(strictLiveRows().map((row) => ({
+				harness: String(row.harness ?? ""),
+				pane_id: row.pane_id,
+			})))}\n`);
+			break;
 		default:
-			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses, inner-panes-live, inner-harnesses-live)`);
+			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses, inner-panes-live, inner-harnesses-live, inner-live-json)`);
 	}
 }
 
