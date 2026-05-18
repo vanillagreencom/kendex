@@ -73,18 +73,12 @@ export function trimOuterBlankLines(lines: string[]): string[] {
 	return start > end ? [] : lines.slice(start, end + 1);
 }
 
+const TRAILING_ANSI_RE = /(?:\x1b(?:\[[0-9;:]*m|\]133;[ABC]\x07))+$/;
+
 export function trimTrailingWhitespaceBeforeAnsi(text: string): string {
-	let body = text;
-	let suffix = "";
-	const trailingAnsiRe = /(?:\x1b(?:\[[0-9;:]*m|\]133;[ABC]\x07))+$/;
-	while (body.length > 0) {
-		const match = body.match(trailingAnsiRe);
-		if (!match) break;
-		const ansi = match[0];
-		suffix = `${ansi}${suffix}`;
-		body = body.slice(0, -ansi.length);
-	}
-	return `${body.trimEnd()}${suffix}`;
+	const match = text.match(TRAILING_ANSI_RE);
+	if (!match) return text.trimEnd();
+	return `${text.slice(0, -match[0].length).trimEnd()}${match[0]}`;
 }
 
 export function isHorizontalRuleLine(line: string | undefined): boolean {
