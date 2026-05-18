@@ -13,6 +13,7 @@ Read-only, sessions-first dashboard for the [`flightdeck`](../../skills/flightde
 - **`/flightdeck` popup** — six tabs: Overview, Live feed, Conversations, Conflicts & merges, Decisions, Daemon.
 - **Session-complete view** — keeps the completed session visible until you dismiss the widget.
 - **Owner-scoped by default** — dashboard renders only in the flightdeck owner pane. Peer panes get a read-only observer popup. Child panes always suppressed. Visibility configurable.
+- **Stale-pane guard** — standby/watch hints ignore state files whose tracked entries only point at tmux pane ids that no longer exist.
 - Optional terminal bell and auto-popup when master pauses.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 

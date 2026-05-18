@@ -29,6 +29,7 @@ import {
 	formatAge,
 	isPaneGone,
 	mostRecentPollMs,
+	readAwaitingWatchTrackedEntries,
 	readOwnerVisibilityProbe,
 	readTrackedEntries,
 	resolveProjectRoot,
@@ -286,7 +287,7 @@ export function renderAwaitingWatchHintLine(snapshot: FlightdeckSnapshot, theme:
 		everStarted: daemonEverStarted(snapshot),
 		heartbeatAgeSec: snapshot.daemon.heartbeatAgeSec,
 	});
-	const sessions = readTrackedEntries(snapshot.master);
+	const sessions = readAwaitingWatchTrackedEntries(snapshot);
 	const count = sessions.length;
 	const noun = count === 1 ? "session" : "sessions";
 	const line = `${daemon} ${theme.fg("dim", "·")} ${theme.fg("dim", `${count} tracked ${noun} — run /skill:flightdeck session watch to start supervising.`)}`;
@@ -1312,6 +1313,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		const dashboardEnabled = dashboardPaneAllowed && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
 		const staleAfterMin = Math.max(0, Math.floor(settingNumber("dashboardStaleAfterMin", 5, ctx.cwd)));
 		const status = flightdeckSessionStatus(snapshot, { staleAfterMin });
+		const awaitingWatchSessionCount = readAwaitingWatchTrackedEntries(snapshot).length;
 		if (status === "inactive" && !showBanner) {
 			if (cache.lastSyncKey !== "__off__") {
 				setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.FLIGHTDECK, undefined);
@@ -1332,6 +1334,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			dashboardVisibility: visibility,
 			currentPaneId: snapshot?.tmux.paneId ?? null,
 			status,
+			awaitingWatchSessionCount,
 			master: snapshot?.master ?? null,
 			daemonAlive: snapshot?.daemon?.pidAlive ?? null,
 			daemonHeartbeat: snapshot?.daemon?.heartbeatAgeSec ?? null,

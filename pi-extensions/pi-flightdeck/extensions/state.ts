@@ -814,6 +814,19 @@ export function isPaneGone(session: TrackedSession | undefined, snapshot: Flight
 	return !live.has(paneId);
 }
 
+// Awaiting-watch should only count entries whose immutable tmux pane id is
+// still present. Empty `livePaneIds` means the probe is unavailable/unknown, so
+// keep legacy behavior and do not suppress the banner on lack of evidence.
+export function readAwaitingWatchTrackedEntries(snapshot: FlightdeckSnapshot | undefined): TrackedSession[] {
+	const entries = readTrackedEntries(snapshot?.master);
+	const live = snapshot?.livePaneIds;
+	if (!live || live.size === 0) return entries;
+	return entries.filter((entry) => {
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id.trim() : "";
+		return !paneId || live.has(paneId);
+	});
+}
+
 export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot {
 	const { projectRoot, stateDir, tmux } = inputs;
 	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
@@ -978,8 +991,10 @@ export function flightdeckSessionStatus(
 	if (daemonAlive) return "live";
 	// Daemon never started for this tmux session — normal state between
 	// `session start` and `session watch`. Don't flag as stale; the user
-	// hasn't tried to supervise yet.
-	if (!daemonEverStarted(snapshot)) return "awaiting-watch";
+	// hasn't tried to supervise yet. But if tmux proves every tracked
+	// pane_id is dead, the leftover state is stale-only and should not
+	// render a misleading "start supervising" hint.
+	if (!daemonEverStarted(snapshot)) return readAwaitingWatchTrackedEntries(snapshot).length > 0 ? "awaiting-watch" : "inactive";
 	const staleAfterMin = options?.staleAfterMin ?? 5;
 	if (staleAfterMin <= 0) return "live";
 	const now = options?.now ?? Date.now();

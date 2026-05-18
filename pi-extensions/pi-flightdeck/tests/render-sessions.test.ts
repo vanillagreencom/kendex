@@ -12,12 +12,13 @@ import { dashboardVisibleInPane, renderObserverHeader } from "../extensions/dash
 import {
 	makeInitialPopupState,
 	renderConflictsTab,
+	renderAwaitingWatchHintLine,
 	renderDashboardLines,
 	renderOverviewTab,
 	renderStaleHintLine,
 	type DashboardState,
 } from "../extensions/flightdeck.js";
-import { flightdeckSessionStatus, type FlightdeckSnapshot, type TrackedSession } from "../extensions/state.js";
+import { flightdeckSessionStatus, readAwaitingWatchTrackedEntries, type FlightdeckSnapshot, type TrackedSession } from "../extensions/state.js";
 
 type ThemeLike = {
 	fg(_color: string, text: string): string;
@@ -318,4 +319,24 @@ test("never-started daemon classifies as awaiting-watch, not stale", () => {
 		},
 	});
 	assert.equal(flightdeckSessionStatus(snap, { now: Date.parse("2026-05-13T00:30:00Z") }), "awaiting-watch");
+});
+
+test("awaiting-watch ignores tracked sessions whose pane ids are stale", () => {
+	const snap = snapshot([adhoc({ last_polled_at: "2026-05-13T00:00:00Z", pane_id: "%999" })], {
+		daemon: {
+			heartbeatExists: false,
+			pid: undefined,
+			pidAlive: false,
+			stateDir: "/tmp/pi-flightdeck-daemon",
+			subscriberCounts: { claude: 0, codex: 0, opencode: 0, pi: 0 },
+			subscribers: [],
+		},
+		livePaneIds: new Set(["%1", "%2"]),
+	});
+
+	assert.equal(readAwaitingWatchTrackedEntries(snap).length, 0);
+	assert.equal(flightdeckSessionStatus(snap, { now: Date.parse("2026-05-13T00:30:00Z") }), "inactive");
+	const text = joinRendered(renderAwaitingWatchHintLine(snap, plainTheme() as never, 120));
+	assert.match(text, /0 tracked sessions/);
+	assert.doesNotMatch(text, /1 tracked session/);
 });
