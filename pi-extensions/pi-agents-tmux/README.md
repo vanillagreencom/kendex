@@ -14,7 +14,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Task detail shows Summary and Completion tabs; Summary contains task metadata, artifacts, and task text, while Completion contains result summary, files changed, and validation.
 - Dashboard widget shows live state, turns, tokens, and cost for every spawned agent.
 - Grouped completion notifications batch multiple agents finishing together.
-- When `pi-session-bridge` is loaded, spawn/queue/start/steer/completion lifecycle points publish structured `agent.*` activity broker events without adding chat messages (`agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, `agent.needs_completion`, `agent.empty_after_compact`).
+- When `pi-session-bridge` is loaded, spawn/queue/start/steer/completion lifecycle points publish structured `agent.*` activity broker events without adding chat messages (`agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.pane_cwd_stale`).
 - `taskId` retrieval, mid-run steering, and pane stop without losing memory.
 - Stop kills the tmux process but preserves the session — next launch resumes it.
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.
@@ -91,7 +91,7 @@ Frontmatter fields:
 
 Everything after the frontmatter is the agent's system prompt.
 
-Pane tasks move through queued → running → completed | blocked | failed. Stop kills the tmux process; the session file is preserved so the next launch resumes memory.
+Pane tasks move through queued → running → completed | blocked | failed. Before reusing a live pane, `subagent` verifies the pane process cwd is still present and matches the requested task `cwd`; stale or mismatched panes return a structured `pane-cwd-stale` error, publish `agent.pane_cwd_stale`, and should be recovered with `stop_subagent` plus a retry using `forceSpawn: true`. Stop kills the tmux process; the session file is preserved so the next launch resumes memory.
 
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `wait_for_subagent_idle`) and activity broker mapping.
 

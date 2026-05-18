@@ -26,6 +26,7 @@ describe("subagent activity", () => {
 		publishSubagentActivity("subagents:failed", { agent: "rust", taskId: "task-2", status: "failed", summary: "failed" });
 		publishSubagentActivity("subagents:failed", { agent: "rust", taskId: "task-3", status: "blocked", summary: "blocked" });
 		publishSubagentActivity("subagents:needs_completion", { agent: "rust", taskId: "task-4", status: "needs_completion", summary: "missing" });
+		publishSubagentActivity("subagents:failed", { agent: "rust", status: "failed", reason: "pane-cwd-stale", summary: "stale cwd", cwdPid: "123", expectedCwd: "/new", actualCwdRaw: "/old (deleted)", cwdReason: "deleted" });
 
 		expect(events.map((event) => event.type)).toEqual([
 			"agent.spawned",
@@ -35,11 +36,14 @@ describe("subagent activity", () => {
 			"agent.task_failed",
 			"agent.task_blocked",
 			"agent.needs_completion",
+			"agent.pane_cwd_stale",
 		]);
 		expect(events[3]).toMatchObject({ importance: "normal", severity: "success" });
 		expect(events[4]).toMatchObject({ importance: "important", severity: "error" });
 		expect(events[5]).toMatchObject({ importance: "important", severity: "warning" });
 		expect(events[6]?.refs).toMatchObject({ agent: "rust", task_id: "task-4" });
+		expect(events[7]).toMatchObject({ importance: "important", severity: "error", summary: "stale cwd" });
+		expect(events[7]?.details).toMatchObject({ cwdPid: "123", expectedCwd: "/new", actualCwdRaw: "/old (deleted)", cwdReason: "deleted" });
 	});
 
 	test("steered publishes noisy activity", () => {

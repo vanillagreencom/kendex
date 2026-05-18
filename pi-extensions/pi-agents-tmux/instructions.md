@@ -18,6 +18,7 @@ Calling rules:
 - If a bg subagent hits `context_length_exceeded`, the extension retries once in a fresh one-shot lane and returns both attempt summaries if the retry also fails.
 - If a bg subagent returns `needs_completion` with `reason: "compact-then-empty"`, inspect `cwdSnapshot.head`, `cwdSnapshot.dirty`, and `cwdSnapshot.lastCommit.subject` before deciding whether the subagent's work completed.
 - When `pi-session-bridge` is loaded, subagent lifecycle changes also publish structured `agent.*` activity broker events for external observers; these do not appear as chat messages.
+- Before queuing work into a reused live pane, `subagent` verifies the pane process cwd is live and matches the requested task `cwd`. If not, the tool returns a structured `pane-cwd-stale` error and publishes `agent.pane_cwd_stale`; stop the pane with `stop_subagent` and retry with `forceSpawn: true` for a fresh process.
 - Pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to session runtime `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. Pass `forceSpawn: true` only when the user wants a fresh session.
 - `confirmProjectAgents: true` gates project-defined agents behind explicit user approval.

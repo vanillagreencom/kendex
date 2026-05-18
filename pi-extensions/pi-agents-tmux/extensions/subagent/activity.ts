@@ -68,6 +68,7 @@ function activityType(eventName: string, status?: string, reason?: string): stri
 	if (eventName === "subagents:steered") return "agent.steered";
 	if (eventName === "subagents:needs_completion" && reason === "compact-then-empty") return "agent.empty_after_compact";
 	if (eventName === "subagents:needs_completion") return "agent.needs_completion";
+	if (reason === "pane-cwd-stale") return "agent.pane_cwd_stale";
 	if (eventName === "subagents:rate_limited") return "agent.rate_limited";
 	if (eventName === "subagents:rate_limit_retry") return "agent.rate_limit_retry";
 	if (eventName === "subagents:rate_limit_resolved") return "agent.rate_limit_resolved";
@@ -80,7 +81,7 @@ function activityType(eventName: string, status?: string, reason?: string): stri
 
 function severityFor(type: string): PiActivitySeverity {
 	if (type === "agent.task_completed" || type === "agent.rate_limit_resolved") return "success";
-	if (type === "agent.task_failed" || type === "agent.rate_limit_exhausted") return "error";
+	if (type === "agent.task_failed" || type === "agent.pane_cwd_stale" || type === "agent.rate_limit_exhausted") return "error";
 	if (
 		type === "agent.spawned"
 		|| type === "agent.task_started"
@@ -113,6 +114,7 @@ function summaryFor(type: string, agent?: string, taskId?: string, payload: Reco
 		case "agent.task_completed": return payloadSummary || `${who} task${suffix} completed`;
 		case "agent.task_failed": return payloadSummary || `${who} task${suffix} failed`;
 		case "agent.task_blocked": return payloadSummary || `${who} task${suffix} blocked`;
+		case "agent.pane_cwd_stale": return payloadSummary || `${who} pane cwd stale`;
 		case "agent.needs_completion": return payloadSummary || `${who} task${suffix} needs completion`;
 		case "agent.empty_after_compact": return payloadSummary || `${who} task${suffix} empty after compact`;
 		case "agent.steered": return `${who} task${suffix} steered`;
@@ -132,7 +134,7 @@ function detailsFor(type: string, eventName: string, payload: Record<string, unk
 		reason: payload.reason,
 		status: payload.status,
 	};
-	for (const key of ["runtimeRoot", "transcriptPath", "completionPath", "sessionFile", "sessionKey", "sessionMode", "model", "effort", "error"] as const) {
+	for (const key of ["runtimeRoot", "transcriptPath", "completionPath", "sessionFile", "sessionKey", "sessionMode", "model", "effort", "error", "cwdPid", "expectedCwd", "actualCwd", "actualCwdRaw", "cwdReason"] as const) {
 		if (payload[key] !== undefined) details[key] = payload[key];
 	}
 	if (type === "agent.empty_after_compact") {

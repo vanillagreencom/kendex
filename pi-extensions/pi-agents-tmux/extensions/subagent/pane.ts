@@ -67,7 +67,9 @@ import {
 	type SingleResult,
 } from "./types.js";
 
-export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
+type ExecCaptureFn = (command: string, args: string[], options?: { cwd?: string }) => Promise<{ code: number; stdout: string; stderr: string; error?: unknown }>;
+
+async function defaultExecCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
 	return new Promise((resolve) => {
 		const proc = spawn(command, args, { cwd: options?.cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
@@ -77,6 +79,16 @@ export async function execCapture(command: string, args: string[], options?: { c
 		proc.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
 		proc.on("error", (error) => resolve({ code: 1, stdout, stderr: String(error), error }));
 	});
+}
+
+let execCaptureImpl: ExecCaptureFn = defaultExecCapture;
+
+export function setPaneExecCaptureForTests(capture?: ExecCaptureFn): void {
+	execCaptureImpl = capture ?? defaultExecCapture;
+}
+
+export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
+	return execCaptureImpl(command, args, options);
 }
 
 export async function tmux(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -92,6 +104,125 @@ async function ensureTmux(): Promise<void> {
 export async function paneExists(paneId: string): Promise<boolean> {
 	const result = await tmux(["display-message", "-p", "-t", paneId, "#{pane_id}"]);
 	return result.code === 0 && result.stdout.trim() === paneId;
+}
+
+const DELETED_CWD_SUFFIX = " (deleted)";
+
+export interface PaneCwdStaleDetails {
+	agent: string;
+	paneId: string;
+	pid?: string;
+	expectedCwd: string;
+	actualCwd?: string;
+	actualCwdRaw?: string;
+	reason: "deleted" | "missing" | "mismatch" | "uninspectable" | "unresolved-pid";
+}
+
+export class PaneCwdStaleError extends Error {
+	readonly code = "pane-cwd-stale";
+	readonly details: PaneCwdStaleDetails;
+
+	constructor(details: PaneCwdStaleDetails) {
+		super(formatPaneCwdStaleMessage(details));
+		this.name = "PaneCwdStaleError";
+		this.details = details;
+	}
+}
+
+function stripDeletedCwdSuffix(cwd: string): string {
+	return cwd.endsWith(DELETED_CWD_SUFFIX) ? cwd.slice(0, -DELETED_CWD_SUFFIX.length) : cwd;
+}
+
+function formatPaneCwdStaleMessage(details: PaneCwdStaleDetails): string {
+	const actual = details.actualCwdRaw ?? details.actualCwd ?? "(unavailable)";
+	const reason = details.reason === "deleted"
+		? "pane process cwd was deleted"
+		: details.reason === "missing"
+			? "pane process cwd no longer exists"
+			: details.reason === "mismatch"
+				? "pane process cwd differs from requested cwd"
+				: details.reason === "unresolved-pid"
+					? "pane process pid could not be resolved"
+					: "pane process cwd could not be inspected";
+	return [
+		`pane-cwd-stale: refusing to queue task for ${details.agent}; ${reason}.`,
+		`Pane: ${details.paneId}${details.pid ? ` pid=${details.pid}` : ""}`,
+		`Actual cwd: ${actual}`,
+		`Requested cwd: ${details.expectedCwd}`,
+		`Stop the pane with stop_subagent agent=${details.agent} and retry with forceSpawn for a fresh process.`,
+	].join("\n");
+}
+
+function paneCwdStaleEnvelope(details: PaneCwdStaleDetails, message: string): string {
+	return JSON.stringify({ error: { code: "pane-cwd-stale", message, details } });
+}
+
+async function paneProcessPid(entry: PaneRegistryEntry): Promise<string | undefined> {
+	const result = await tmux(["display-message", "-p", "-t", entry.paneId, "#{pane_pid}"]);
+	const tmuxPid = result.code === 0 ? result.stdout.trim() : "";
+	if (/^\d+$/.test(tmuxPid)) return tmuxPid;
+	const bridgePid = entry.bridgePid?.trim();
+	return bridgePid && /^\d+$/.test(bridgePid) ? bridgePid : undefined;
+}
+
+export function inspectPaneProcessCwd(entry: Pick<PaneRegistryEntry, "agent" | "paneId">, pid: string | number, expectedCwd: string): PaneCwdStaleDetails | undefined {
+	const normalizedPid = String(pid).trim();
+	const normalizedExpected = path.resolve(expectedCwd);
+	if (!normalizedPid) {
+		return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, reason: "unresolved-pid" };
+	}
+	if (process.platform !== "linux") return undefined;
+	let actualRaw: string;
+	try {
+		actualRaw = fs.readlinkSync(path.join("/proc", normalizedPid, "cwd"));
+	} catch {
+		return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, pid: normalizedPid, reason: "uninspectable" };
+	}
+	const deleted = actualRaw.endsWith(DELETED_CWD_SUFFIX);
+	const actualCwd = stripDeletedCwdSuffix(actualRaw);
+	if (deleted) {
+		return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, pid: normalizedPid, actualCwd, actualCwdRaw: actualRaw, reason: "deleted" };
+	}
+	try {
+		const stat = fs.statSync(actualCwd);
+		if (!stat.isDirectory()) {
+			return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, pid: normalizedPid, actualCwd, actualCwdRaw: actualRaw, reason: "missing" };
+		}
+	} catch {
+		return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, pid: normalizedPid, actualCwd, actualCwdRaw: actualRaw, reason: "missing" };
+	}
+	if (!samePath(actualCwd, normalizedExpected)) {
+		return { agent: entry.agent, paneId: entry.paneId, expectedCwd: normalizedExpected, pid: normalizedPid, actualCwd, actualCwdRaw: actualRaw, reason: "mismatch" };
+	}
+	return undefined;
+}
+
+async function assertPaneCwdReusable(entry: PaneRegistryEntry, expectedCwd: string): Promise<void> {
+	if (process.platform !== "linux") return;
+	const pid = await paneProcessPid(entry);
+	if (!pid) throw new PaneCwdStaleError({ agent: entry.agent, paneId: entry.paneId, expectedCwd: path.resolve(expectedCwd), reason: "unresolved-pid" });
+	const stale = inspectPaneProcessCwd(entry, pid, expectedCwd);
+	if (stale) throw new PaneCwdStaleError(stale);
+}
+
+function emitPaneCwdStale(pi: ExtensionAPI, runtimeRoot: string, task: string, entry: PaneRegistryEntry, details: PaneCwdStaleDetails, message: string): void {
+	emitSubagentEvent(pi, "subagents:failed", {
+		mode: "pane",
+		agent: entry.agent,
+		paneId: entry.paneId,
+		task,
+		status: "failed",
+		reason: "pane-cwd-stale",
+		summary: message,
+		error: message,
+		runtimeRoot,
+		transcriptPath: entry.sessionFile,
+		cwdPid: details.pid,
+		expectedCwd: details.expectedCwd,
+		actualCwd: details.actualCwd,
+		actualCwdRaw: details.actualCwdRaw,
+		cwdReason: details.reason,
+	});
 }
 
 async function parentPid(pid: number): Promise<number | undefined> {
@@ -602,12 +733,21 @@ export async function queuePersistentPaneTask(
 	const effectiveCwd = cwd ?? defaultCwd;
 	const existingRegistry = await readPaneRegistry(runtimeRoot);
 	const existing = existingRegistry[agent.name];
+	const liveExisting = existing && (await paneExists(existing.paneId)) ? existing : undefined;
+	if (liveExisting) {
+		try {
+			await assertPaneCwdReusable(liveExisting, effectiveCwd);
+		} catch (error) {
+			if (error instanceof PaneCwdStaleError) emitPaneCwdStale(pi, runtimeRoot, task, liveExisting, error.details, error.message);
+			throw error;
+		}
+	}
 	const activeDuplicate = Object.values(await readTaskRegistry(runtimeRoot))
 		.filter((record) => record.agent === agent.name && (record.status === "queued" || record.status === "running"))
 		.find((record) => normalizedTaskForDedup(record.task) === normalizedTaskForDedup(task));
-	if (activeDuplicate && existing && (await paneExists(existing.paneId))) {
+	if (activeDuplicate && liveExisting) {
 		return {
-			pane: existing,
+			pane: liveExisting,
 			taskId: activeDuplicate.taskId,
 			outboxFile: activeDuplicate.outboxFile ?? completionPath(runtimeRoot, agent.name, activeDuplicate.taskId),
 			taskFile: activeDuplicate.inboxFile ?? activeDuplicate.processingFile ?? path.join(inboxDir(runtimeRoot, agent.name), `${safeFileName(activeDuplicate.taskId)}.md`),
@@ -615,7 +755,7 @@ export async function queuePersistentPaneTask(
 			duplicate: true,
 		};
 	}
-	const hadLivePane = Boolean(existing && (await paneExists(existing.paneId)));
+	const hadLivePane = Boolean(liveExisting);
 	const hadSavedSession = hasSavedPaneSession(runtimeRoot, agent.name);
 	const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools);
 	const effort = pane.effort ?? selectedEffortForAgent(agent, pane.model, pane.thinkingLevel);
@@ -864,7 +1004,29 @@ export async function runPersistentPaneAgent(
 		await resetPersistentPaneSession(runtimeRoot, agent.name);
 	}
 
-	const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
+	let queued: QueuedPaneTask;
+	try {
+		queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
+	} catch (error) {
+		if (!(error instanceof PaneCwdStaleError)) throw error;
+		const stderr = error.message;
+		return {
+			agent: agent.name,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr,
+			stopReason: "pane-cwd-stale",
+			errorMessage: stderr,
+			errorEnvelope: paneCwdStaleEnvelope(error.details, stderr),
+			diagnostics: [paneCwdStaleEnvelope(error.details, stderr)],
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			paneId: error.details.paneId,
+			transcriptPath: (await readPaneRegistry(runtimeRoot))[agent.name]?.sessionFile,
+			step,
+		};
+	}
 	const sessionText = queued.sessionMode === "live" ? "reused live pane" : queued.sessionMode === "resumed" ? "resumed saved pane session" : "started new pane session";
 	// Surface the taskId in the assistant-visible content so the orchestrator
 	// can persist it without an extra get_subagent_result round-trip. The

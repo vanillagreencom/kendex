@@ -64,6 +64,8 @@ Options:
 
 Unknown agent names fail with a structured error listing missing and available agents. No similar-name redirect is attempted.
 
+Live pane reuse runs a cwd preflight before writing a new inbox task. The parent resolves the pane process pid from tmux, reads `/proc/<pid>/cwd`, and refuses dispatch with `stopReason: "pane-cwd-stale"` if the cwd is deleted, missing, or different from the requested task `cwd`. The failure emits `subagents:failed` with `reason: "pane-cwd-stale"`, cwd details, and no task record because no task was queued; callers should `stop_subagent` and retry with `forceSpawn: true`.
+
 Calls above the internal batch size (default 8) are split transparently.
 
 ## Result retrieval and steering
@@ -131,7 +133,7 @@ Completed task records store the durable result summary in `PaneTaskRecord.summa
 
 ## Activity broker publication
 
-When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, subagent lifecycle notifications publish best-effort `agent.*` broker events. Internal `subagents:created`, `queued`, `started`, `steered`, `needs_completion`, `completed`, and `failed` signals map to `agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.task_completed`, `agent.task_blocked`, and `agent.task_failed`. Refs carry `task_id` and `agent`; details include session mode/key, pane id, transcript/completion paths, model/effort, reason/status, and the compact-then-empty `cwdSnapshot` when present.
+When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, subagent lifecycle notifications publish best-effort `agent.*` broker events. Internal `subagents:created`, `queued`, `started`, `steered`, `needs_completion`, `completed`, and `failed` signals map to `agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, and `agent.pane_cwd_stale`. Refs carry `task_id` and `agent`; details include session mode/key, pane id, transcript/completion paths, model/effort, reason/status, pane-cwd-stale cwd fields, and the compact-then-empty `cwdSnapshot` when present.
 
 Broker publication is isolated in `extensions/subagent/activity.ts` and must stay fail-open: activity publisher errors do not affect task dispatch, completion, steering, or result retrieval.
 
