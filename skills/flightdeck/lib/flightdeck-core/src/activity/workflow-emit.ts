@@ -214,7 +214,7 @@ function workflowEntryId(ctx: WorkflowEmitContext): string | undefined {
 
 function workflowIssueId(ctx: WorkflowEmitContext): string | undefined {
 	if (!ctx.entry) return undefined;
-	return nonEmpty(issueDomain(ctx.entry).id) ?? githubIssueId(githubIssueDomain(ctx.entry));
+	return nonEmpty(issueDomain(ctx.entry).id) ?? githubIssueId(githubIssueDomain(ctx.entry)) ?? nonEmpty(planItemDomain(ctx.entry).item_id);
 }
 
 function issueDomain(entry: Record<string, unknown>): Record<string, unknown> {
@@ -229,6 +229,13 @@ function githubIssueDomain(entry: Record<string, unknown>): Record<string, unkno
 	if (!domain || typeof domain !== "object" || Array.isArray(domain)) return {};
 	const issue = (domain as Record<string, unknown>).github_issue;
 	return issue && typeof issue === "object" && !Array.isArray(issue) ? issue as Record<string, unknown> : {};
+}
+
+function planItemDomain(entry: Record<string, unknown>): Record<string, unknown> {
+	const domain = entry.domain;
+	if (!domain || typeof domain !== "object" || Array.isArray(domain)) return {};
+	const item = (domain as Record<string, unknown>).plan_item;
+	return item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
 }
 
 function githubIssueId(issue: Record<string, unknown>): string | undefined {

@@ -8,9 +8,9 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
 
 Auto-archive on session start: `flightdeck-session start` rolls the live file to a `.json.archive` sibling before fresh init when (a) `terminated == true` or (b) the file has tracked entries but ZERO `pane_id` is currently alive in tmux. Removes the need to manually prune leftover state from prior tmux sessions or crashed masters. `flightdeck-session start` also exports `FLIGHTDECK_ENTRY_ID` into the launched child environment (consumed by `github.sh` / `linear.sh` wrappers to auto-bind activity events to the right entry) and captures the current `git rev-parse --abbrev-ref HEAD` of the entry's cwd into `entry.branch` (informational; not refreshed when the agent switches branches mid-session) and onto every `pr.*` activity row's `refs.branch`.
 
-Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map. Malformed non-object entry values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids (including `entry.domain.issue.id` when present), accepts the optional `entry.domain.github_issue` shape, rejects unknown `entry.domain.*` sub-keys, rejects entries that set both `domain.issue` and `domain.github_issue`, and writes `.entries[id]`. Linear issue-mode metadata lives under `entry.domain.issue` (`pr_number`, `worktree`, `merge_commit`, etc.). GitHub issue-mode metadata lives under `entry.domain.github_issue` (`number`, `url`, `worktree`, `pr_number`, `merge_commit`, `scope_files_actual`). Generic `adhoc`/`workflow` rows may also carry top-level `pr_number` and `worktree` for traceability without becoming issue-mode entries; readers must keep those separate from issue-domain routing. Dashboard renderers surface the nested issue views and generic top-level traceability fields without changing issue-domain routing.
+Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map. Malformed non-object entry values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids (including `entry.domain.issue.id` and `entry.domain.plan_item.item_id` when present), accepts the optional `entry.domain.github_issue` and `entry.domain.plan_item` shapes, rejects unknown `entry.domain.*` sub-keys, rejects entries that set more than one of `domain.issue`, `domain.github_issue`, or `domain.plan_item`, and writes `.entries[id]`. Linear issue-mode metadata lives under `entry.domain.issue` (`pr_number`, `worktree`, `merge_commit`, etc.). GitHub issue-mode metadata lives under `entry.domain.github_issue` (`number`, `url`, `worktree`, `pr_number`, `merge_commit`, `scope_files_actual`). Plan-file metadata lives under `entry.domain.plan_item` (`plan_path`, `plan_title`, `item_id`, `item_title`, `depends_on`, `worktree`, `pr_number`, `merge_commit`). Generic `adhoc`/`workflow` rows may also carry top-level `pr_number` and `worktree` for traceability without becoming domain-routed entries; readers must keep those separate from Linear/GitHub/plan domain routing. Dashboard renderers surface the nested domain views and generic top-level traceability fields without changing domain routing.
 
-```json
+```jsonc
 {
   "session_id": "<TMUX_SESSION_NAME>",
   "started_at": "<ISO8601>",
@@ -63,6 +63,7 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
         "cx_ws": "<ws-url-or-null>", "cx_thread_id": "<id-or-null>"
       },
       "domain": {
+        // Exactly one of these keys may be present on a single entry.
         "issue": {
           "id": "<ISSUE_ID>",
           "worktree": "<absolute path>",
@@ -70,15 +71,28 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
           "scope_files_declared": 5,
           "scope_files_actual": 27,
           "orchestration_started": true
-        },
-        "github_issue": {
-          "number": 120,
-          "url": "https://github.com/OWNER/REPO/issues/120",
-          "worktree": "<absolute path>",
-          "pr_number": 0,
-          "merge_commit": null,
-          "scope_files_actual": 27
         }
+        // Alternative for GitHub issue lane:
+        // "github_issue": {
+        //   "number": 120,
+        //   "url": "https://github.com/OWNER/REPO/issues/120",
+        //   "worktree": "<absolute path>",
+        //   "pr_number": 0,
+        //   "merge_commit": null,
+        //   "scope_files_actual": 27
+        // }
+        // Alternative for plan lane:
+        // "plan_item": {
+        //   "plan_path": "<absolute plan path>",
+        //   "plan_title": "<plan title>",
+        //   "item_id": "<item-id>",
+        //   "item_title": "<item title>",
+        //   "depends_on": ["<item-id>"],
+        //   "worktree": "<absolute path>",
+        //   "pr_number": 0,
+        //   "merge_commit": null,
+        //   "scope_files_actual": 27
+        // }
       },
       "branch": "<git-branch-or-null>",
       "last_capture_hash": "sha256:...",
@@ -97,4 +111,4 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
 }
 ```
 
-Tracked entry state enum: `state ∈ {waiting, prompting, submitting, ready, complete, cancelled, dead}`. Issue-mode workflows additionally use `{merge-ready, merged, aborted}` for issue-specific lifecycle states; these map onto the generic enum via `domain.issue.phase` / `domain.issue.outcome` for Linear or `domain.github_issue.phase` / `domain.github_issue.outcome` for GitHub (e.g. `merged → complete + outcome="merged"`). `entryIdForIssue(issueId)` returns the issue id unchanged after validation (empty/invalid ids return null); `issueIdForEntry(entry)` reads `entry.domain.issue.id` or, for `kind: "issue"`, `entry.id`. GitHub entries use numeric `domain.github_issue.number` for lane-specific routing. `owner` is metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. Dashboard renderers use `owner.pane_id` to keep the persistent dashboard owner-scoped by default. `paused_for_user` carries `{entry_id|issue_id, reason, prompt_text}` when a guard or issue-mode pause fires.
+Tracked entry state enum: `state ∈ {waiting, prompting, submitting, ready, complete, cancelled, dead}`. Issue and plan workflows additionally use `{merge-ready, merged, aborted}` for PR lifecycle states; these map onto the generic enum via `domain.issue.phase` / `domain.issue.outcome` for Linear, `domain.github_issue.phase` / `domain.github_issue.outcome` for GitHub, or `domain.plan_item.phase` / `domain.plan_item.outcome` for plan items (e.g. `merged → complete + outcome="merged"`). `entryIdForIssue(issueId)` returns the issue id unchanged after validation (empty/invalid ids return null); `issueIdForEntry(entry)` reads `entry.domain.issue.id` or, for `kind: "issue"`, `entry.id`. GitHub entries use numeric `domain.github_issue.number` for lane-specific routing. Plan entries use `domain.plan_item.item_id` and normally keep `kind="workflow"` because their child panes receive self-contained item briefs. `owner` is metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. Dashboard renderers use `owner.pane_id` to keep the persistent dashboard owner-scoped by default. `paused_for_user` carries `{entry_id|issue_id, reason, prompt_text}` when a guard or issue/plan-mode pause fires.

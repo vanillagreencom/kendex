@@ -206,6 +206,36 @@ describe("terminate session summary split", () => {
 		expect(partition.genericEntries).toEqual([]);
 	});
 
+	test("plan_item domain workflow entries stay out of generic termination path", () => {
+		const state = baseState({
+			"item-one": {
+				id: "item-one",
+				title: "Item one",
+				kind: "workflow",
+				state: "merged",
+				harness: "pi",
+				domain: {
+					plan_item: {
+						depends_on: [],
+						item_id: "item-one",
+						item_title: "Item one",
+						merge_commit: "abc123",
+						plan_path: "/repo/docs/plans/plan.md",
+						plan_title: "Plan title",
+						pr_number: 221,
+						worktree: "/repo/trees/flightdeck-plan-item-one",
+					},
+				},
+			},
+		});
+		const partition = partitionTerminationEntries(state);
+		expect(partition.issueEntries.map((entry) => entry.id)).toEqual(["item-one"]);
+		expect(partition.genericEntries).toEqual([]);
+
+		const output = renderGenericTerminationSummaryFromState(state, opts);
+		expect(output).toBe("");
+	});
+
 	test("empty tracked entries produce explicit empty-session diagnostic", () => {
 		const state = baseState({});
 		const partition = partitionTerminationEntries(state);

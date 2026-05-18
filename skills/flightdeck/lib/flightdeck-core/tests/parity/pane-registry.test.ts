@@ -305,6 +305,41 @@ describe("pane-registry parity", () => {
 		}
 	});
 
+	test("plan workflow entries flatten and update plan domain PR fields", () => {
+		run(tsRepo, [
+			"init-entry", "plan-item",
+			"--title", "Plan item",
+			"--kind", "workflow",
+			"--cwd", "/repo/trees/flightdeck-plan-plan-item",
+			"--window", "45",
+			"--harness", "pi",
+			"--pane-id", "%405",
+		]);
+		const planDomain = {
+			plan_item: {
+				depends_on: [],
+				item_id: "plan-item",
+				item_title: "Plan item",
+				merge_commit: null,
+				plan_path: "/repo/docs/plans/plan.md",
+				plan_title: "Plan title",
+				pr_number: null,
+				worktree: "/repo/trees/flightdeck-plan-plan-item",
+			},
+		};
+		expect(run(tsRepo, ["set", "plan-item", "domain", JSON.stringify(planDomain)]).status).toBe(0);
+		expect(run(tsRepo, ["set", "plan-item", "pr_number", "222"]).status).toBe(0);
+		expect(run(tsRepo, ["set", "plan-item", "merge_commit", JSON.stringify("abc123")]).status).toBe(0);
+
+		const row = (JSON.parse(run(tsRepo, ["list", "--format", "json"]).stdout) as Record<string, unknown>[]).find((item) => item.id === "plan-item")!;
+		expect(row.plan_item).toBe("plan-item");
+		expect(row.pr_number).toBe(222);
+		expect(row.worktree).toBe("/repo/trees/flightdeck-plan-plan-item");
+		const entries = readEntries(tsRepo) as Record<string, { domain?: { plan_item?: Record<string, unknown> } }>;
+		expect(entries["plan-item"]!.domain!.plan_item!.pr_number).toBe(222);
+		expect(entries["plan-item"]!.domain!.plan_item!.merge_commit).toBe("abc123");
+	});
+
 	test("adapter arg commands accept pane ids for generic entries", async () => {
 		const statePath = makeShimState(tsRepo, {
 			panes: {

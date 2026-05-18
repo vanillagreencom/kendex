@@ -22,7 +22,8 @@ metadata:
    - Generic session commands (`session start`, `session attach`, `session watch`, `session status`, `session stop`, `session remove`) require only tmux plus the selected harness adapter (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). Do **not** load `github`, `linear`, `project-management`, or `worktree`.
    - Linear issue commands (`linear start [ISSUE_ID]`, `linear start new`, `linear start self`, `linear parallel-check`, `linear watch`, `linear merge-plan`, `linear close-issue`, `linear terminate` when entries use `domain.issue`) load `github`, `linear`, `project-management`, and `worktree` on demand.
    - GitHub issue commands (`github start <N>`, `github start new`, `github watch`, `github close-issue`, `github terminate` when entries use `domain.github_issue`) load `github` and `worktree` only. Do **not** load `linear` or `project-management`.
-3. If an issue-workflow dependency cannot be loaded after entering issue mode, stop and tell the user. Do not proceed with issue/PR/worktree actions without it.
+   - Plan-file commands (`plan start <path>`, `plan watch`, `plan close-item`, `plan terminate` when entries use `domain.plan_item`) load `github` and `worktree` only. Do **not** load `linear` or `project-management`.
+3. If a lane dependency cannot be loaded after entering issue or plan mode, stop and tell the user. Do not proceed with PR/worktree actions without it.
 
 ## Dependency modes
 
@@ -33,6 +34,7 @@ Core Flightdeck is a generic session manager. It needs tmux and the harness adap
 | Session | tmux + selected harness adapter | `github`, `linear`, `project-management`, `worktree` |
 | Linear issue | `github`, `linear`, `project-management`, `worktree` | only skip redundant loads |
 | GitHub issue | `github`, `worktree` | `linear`, `project-management` |
+| Plan file | `github`, `worktree` | `linear`, `project-management` |
 
 `decider` remains optional for agents that want an extra decision aid.
 
@@ -42,7 +44,7 @@ You are in **master mode**. Master supervises: it routes prompts, updates state/
 
 Generic session mode is the core path: launch/attach with `flightdeck-session`, supervise with `session-watch.md`, answer generic prompts, and summarize sessions. It skips issue selection, research/plan evaluation, `open-terminal`, merge planning, GitHub/Linear/worktree actions, and project-management flows.
 
-Issue-mode begins only after a Linear or GitHub issue command. Linear mode keeps the research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind path. GitHub mode resolves issue context with `gh`, spawns a child with a self-contained prompt through `open-terminal --tracker github`, watches PR/CI/review state, then verifies close/termination from authoritative GitHub state.
+Issue-mode begins only after a Linear or GitHub issue command. Linear mode keeps the research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind path. GitHub mode resolves issue context with `gh`, spawns a child with a self-contained prompt through `open-terminal --tracker github`, watches PR/CI/review state, then verifies close/termination from authoritative GitHub state. Plan mode parses one markdown plan file, dry-runs the item graph for user confirmation, spawns each item through `flightdeck-session start --kind workflow` with a self-contained `tmp/brief.md`, stores metadata under `domain.plan_item`, and reuses GitHub PR safety gates without loading Linear or project-management.
 
 Communicate with spawned agents through native channels (`pane-respond`): OpenCode HTTP, Claude Channels MCP/JSONL, Pi bridge, Codex JSON-RPC, with tmux capture/send-keys only as fallback (see `patterns/tmux-monitoring.md`). Pause for the user only on scope creep that requires reverting agent work, force-merging against a real content conflict, issue abort, direct `main` mutation when no orchestrator pane is alive, or a novel prompt shape no rule covers. Do not re-implement orchestration gates; answer surfaced prompts and add only cross-session conflict/scope facts.
 
@@ -53,6 +55,7 @@ Load these on demand; keep this file as the operational quick path.
 | Need | Read |
 |------|------|
 | Master-state JSON, activity sidecar, registry shape, `readTrackedEntries` / `writeTrackedEntry` contract | [`SCHEMA.md`](./SCHEMA.md) |
+| Plan file format and examples | [`PLAN-FILE.md`](./PLAN-FILE.md) |
 | Full scripts table, script arguments, Pi bg-task exit, Pi activity broker, activity sidecar, `daemon-exited` details | [`SCRIPTS.md`](./SCRIPTS.md) |
 | Full `prompt-classify` tag catalog, including daemon/event-only tags | [`PROMPT-TAGS.md`](./PROMPT-TAGS.md) |
 | Env var tables: master loop, watchdog gates, daemon hygiene, dashboard, adapter tuning | [`ENV.md`](./ENV.md) |
@@ -61,7 +64,7 @@ Load these on demand; keep this file as the operational quick path.
 
 ## Commands
 
-Use the session table for core Flightdeck: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Use Linear/GitHub tables only after the user enters an issue/PR/worktree domain. Dashboard terms: TrackedEntry row = source-of-truth state; Rust dashboard/TUI = persistent visibility; cycle summary = chat-visible tick report.
+Use the session table for core Flightdeck: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Use Linear/GitHub/Plan tables only after the user enters an issue/PR/worktree domain. Dashboard terms: TrackedEntry row = source-of-truth state; Rust dashboard/TUI = persistent visibility; cycle summary = chat-visible tick report.
 
 ### Session management
 
@@ -103,6 +106,19 @@ Entering these commands loads `github` + `worktree` only. Child panes receive se
 | `github close-issue` | `<N>` | `workflows/github/close-issue.md` | Requires recorded PR plus authoritative `gh pr view` `state === MERGED` and non-null merge commit before closing/no-oping issue. Pane text alone is never enough. |
 | `github terminate` | — | `workflows/github/terminate.md` | Summarizes GitHub entries partitioned by `domain.github_issue`; mixed sessions also include generic and Linear summaries. |
 
+### Plan workflows
+
+Entering these commands loads `github` + `worktree` only. The master parses one plan file, previews the item graph, and spawns each item with a self-contained brief through `flightdeck-session start --kind workflow`.
+
+| Command | Arguments | Workflow | Notes |
+|---------|-----------|----------|-------|
+| `plan start` | `<path>` | `workflows/plan/start.md` | Resolve and freeze a markdown plan, dry-run parse H2 work items, confirm, create plan entries, spawn dependency-free items, enter plan watch. |
+| `plan watch` | `[ITEM_ID...]` | `workflows/plan/watch.md` → `workflows/shared/session-watch.md` | Plan extension over the generic loop. Handles dependency unblocks, PR/CI/review prompts, `UNKNOWN` merge timers, and gh failure escalation. |
+| `plan close-item` | `<ITEM_ID>` | `workflows/plan/close-item.md` | Requires recorded PR plus authoritative `gh pr view` `state === MERGED` and non-null merge commit before cleanup/teardown. Pane text alone is never enough. |
+| `plan terminate` | — | `workflows/plan/terminate.md` | Summarizes plan items partitioned by `domain.plan_item`; mixed sessions also include generic, GitHub, and Linear summaries. |
+
+Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
+
 ### Lane-agnostic status
 
 | Command | Arguments | Workflow | Notes |
@@ -127,7 +143,7 @@ Decision rules grouped by domain. Pattern docs under `patterns/` hold examples a
 - **Cleanup scope** — answer YES iff the target path equals the asking pane's registered worktree. NEVER for sibling worktrees. Extract the path from prompt text and compare to the registry entry. Some agents propose batch cleanup; that's wrong.
 - **Combine guidance with option pick** — when picking an option triggers immediate sub-agent delegation (rebase, fix), sub-agent guidance must ride in the SAME input. `pane-respond` rejects `rebase-multi-choice` payloads missing the preserve / apply / verify triplet.
 - **Bot-review prompt response** — on a Skip/Wait/Abort prompt, decide from `gh pr view <PR> --json statusCheckRollup,reviewDecision,labels`. Skip if bot check is `SUCCESS` and `reviewDecision == APPROVED` (or unset with no pending reviewers). Real pending reviewer → escalate. Master never re-invokes `bot-review-wait` itself.
-- **GitHub merge-now gate** — before answering Merge in GitHub mode, run `gh pr view <PR> --json mergeStateStatus,reviewDecision,statusCheckRollup`. Auto-Merge only when `mergeStateStatus === "CLEAN"`, review is approved (or no pending reviewers), and every required check is `SUCCESS` or `SKIPPED`. `UNKNOWN`, `BEHIND`, `DIRTY`, `BLOCKED`, `HAS_HOOKS`, missing fields, and `FLIGHTDECK_AUTO_MERGE=0` all escalate or route to the documented UNKNOWN/auto-rebase path; never merge from pane text alone. `FLIGHTDECK_AUTO_MERGE=0` also blocks force-merge confirmation and UNKNOWN-timer transitions to force-merge.
+- **GitHub / Plan merge-now gate** — before answering Merge in GitHub or plan mode, run `gh pr view <PR> --json mergeStateStatus,reviewDecision,statusCheckRollup`. Auto-Merge only when `mergeStateStatus === "CLEAN"`, review is approved (or no pending reviewers), and every required check is `SUCCESS` or `SKIPPED`. `UNKNOWN`, `BEHIND`, `DIRTY`, `BLOCKED`, `HAS_HOOKS`, missing fields, and `FLIGHTDECK_AUTO_MERGE=0` all escalate or route to the documented UNKNOWN/auto-rebase path; never merge from pane text alone. `FLIGHTDECK_AUTO_MERGE=0` also blocks force-merge confirmation and UNKNOWN-timer transitions to force-merge. Plan mode reads/writes `entry.domain.plan_item.pr_number` instead of issue-domain fields.
 - **Rebase-multi-choice guidance** — payload must follow the preserve / apply / verify triplet:
   - **Preserve**: function signatures / parameter splits / new wrappers from upstream merge that must NOT be reverted.
   - **Apply**: field renames / type updates / local refactors that go ON TOP of the preserved shape.
@@ -140,7 +156,7 @@ Decision rules grouped by domain. Pattern docs under `patterns/` hold examples a
 - **`defer-ci`** label blocks heavy CI lanes (Lint, Cross-Platform, Linux Integration, Bench, Fixture Sync) but NOT bot reviews. Bot review runs with `defer-ci`; CI runs after label drops.
 - **File-level conflict graph** — build edges from `gh pr view <N> --json files`. Two PRs with file-set intersection conflict; merge order is topological + smallest-scope-first.
 - **UNKNOWN-state timer** — GitHub `mergeStateStatus` can stay `UNKNOWN` for minutes after upstream `main` moves. Force-merge predicate: `APPROVED ∧ all_checks_in {SUCCESS, SKIPPED} ∧ disjoint(PR_files, main_files_recently_changed) ∧ unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS ∧ FLIGHTDECK_AUTO_MERGE != 0`.
-- **GitHub issue close** — `github close-issue` requires `domain.github_issue.pr_number` plus authoritative `gh pr view <PR> --json state,mergeStateStatus,mergeCommit` with `state === "MERGED"` and non-null `mergeCommit` before `gh issue close`. If `state === "MERGED"` but `mergeCommit` is null, pause with `reason="gh-pr-merge-commit-missing"`. If `gh issue view <N> --json state` says already `CLOSED`, no-op and log; pane-buffer `MERGED` text is never sufficient.
+- **GitHub issue / Plan item close** — `github close-issue` requires `domain.github_issue.pr_number` plus authoritative `gh pr view <PR> --json state,mergeStateStatus,mergeCommit` with `state === "MERGED"` and non-null `mergeCommit` before `gh issue close`. `plan close-item` requires the same authoritative PR proof through `domain.plan_item.pr_number` before item cleanup or teardown. If `state === "MERGED"` but `mergeCommit` is null, pause with `reason="gh-pr-merge-commit-missing"`. If `gh issue view <N> --json state` says already `CLOSED`, no-op and log; pane-buffer `MERGED` text is never sufficient.
 
 ### Decision biases (`patterns/decision-biases.md`)
 
@@ -199,6 +215,11 @@ Full script table and event details live in [`SCRIPTS.md`](./SCRIPTS.md). Requir
 | `workflows/github/handle-prompt.md` | Nested invocation from GitHub `watch` for GitHub tags | GitHub PR prompt response surface: merge gate, UNKNOWN/force-merge, bot review, rebase, force-push, cleanup |
 | `workflows/github/close-issue.md` | Nested invocation from GitHub `watch` on `terminal-state-reached` | Requires recorded PR + authoritative merged PR/merge commit before issue close/no-op and teardown |
 | `workflows/github/terminate.md` | Nested invocation from GitHub `watch` or mixed unwind | Partitions by `domain.github_issue`, emits GitHub summary, coexists with generic and Linear summaries |
+| `workflows/plan/start.md` | `plan start <path>` | Parse plan file, dry-run preview, create `domain.plan_item` entries, spawn dependency-free items with self-contained `tmp/brief.md` prompts |
+| `workflows/plan/watch.md` | `plan watch` | Plan extension over `session-watch`: dependency unblocks, PR/CI/review routing, UNKNOWN timer, gh failure escalation, termination debounce |
+| `workflows/plan/handle-prompt.md` | Nested invocation from Plan `watch` for plan/GitHub tags | Reuses GitHub PR handlers adapted to `domain.plan_item`; adds dependency-edge resolution and plan cleanup scope |
+| `workflows/plan/close-item.md` | Nested invocation from Plan `watch` on `terminal-state-reached` | Requires recorded PR + authoritative merged PR/merge commit before item cleanup and teardown |
+| `workflows/plan/terminate.md` | Nested invocation from Plan `watch` or mixed unwind | Partitions by `domain.plan_item`, emits plan summary, coexists with generic, GitHub, and Linear summaries |
 
 ## Workflow Execution
 
@@ -234,4 +255,4 @@ The user-visible output blocks at the end of `terminate.md` (`<generic_output_fo
 
 ## Compaction Recovery
 
-Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/shared/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/linear/watch.md` § 8.
+Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/shared/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/linear/watch.md` § 8. Plan-item recovery lives in `workflows/plan/watch.md` § 10 and preserves dependency graph, PR, merge commit, and `unknown_since` fields under `domain.plan_item`.

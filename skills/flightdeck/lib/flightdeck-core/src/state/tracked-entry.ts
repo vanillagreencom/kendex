@@ -5,7 +5,7 @@ import type {
 } from "./types.ts";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
-const DOMAIN_KEYS = new Set(["issue", "github_issue"]);
+const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
 
 export interface ReadTrackedEntriesOptions {
 	warn?: (message: string) => void;
@@ -118,17 +118,28 @@ function validateRequiredString(value: unknown, label: string): void {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string`);
 }
 
+function validateRequiredStringArray(value: unknown, label: string): void {
+	if (!Array.isArray(value)) throw new Error(`invalid ${label}: must be an array of strings`);
+	for (const [idx, item] of value.entries()) validateEntryId(item, `${label}[${idx}]`);
+}
+
 export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">): string | undefined {
 	const domain = entry.domain;
 	if (domain === undefined || domain === null) return undefined;
 	if (!isRecord(domain)) throw new Error("must be an object or null");
 	for (const key of Object.keys(domain)) {
-		if (!DOMAIN_KEYS.has(key)) throw new Error(`unknown domain key ${JSON.stringify(key)} (expected issue or github_issue)`);
+		if (!DOMAIN_KEYS.has(key)) throw new Error(`unknown domain key ${JSON.stringify(key)} (expected issue, github_issue, or plan_item)`);
 	}
 	const issue = domain.issue;
 	const github = domain.github_issue;
-	if (issue !== undefined && issue !== null && github !== undefined && github !== null) {
-		throw new Error("domain.issue and domain.github_issue are mutually exclusive");
+	const planItem = domain.plan_item;
+	const presentDomainKeys = [
+		["domain.issue", issue],
+		["domain.github_issue", github],
+		["domain.plan_item", planItem],
+	].filter(([, value]) => value !== undefined && value !== null).map(([key]) => key);
+	if (presentDomainKeys.length > 1) {
+		throw new Error(`${presentDomainKeys.join(", ")} are mutually exclusive`);
 	}
 	let issueId: string | undefined;
 	if (issue !== undefined && issue !== null) {
@@ -145,6 +156,20 @@ export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">):
 		validateOptionalFiniteNumber(github.pr_number, "domain.github_issue.pr_number");
 		validateOptionalString(github.merge_commit, "domain.github_issue.merge_commit");
 		validateOptionalFiniteNumber(github.scope_files_actual, "domain.github_issue.scope_files_actual");
+	}
+	if (planItem !== undefined && planItem !== null) {
+		if (!isRecord(planItem)) throw new Error("invalid domain.plan_item: must be an object or null");
+		validateRequiredString(planItem.plan_path, "domain.plan_item.plan_path");
+		validateRequiredString(planItem.plan_title, "domain.plan_item.plan_title");
+		validateEntryId(planItem.item_id, "domain.plan_item.item_id");
+		validateRequiredString(planItem.item_title, "domain.plan_item.item_title");
+		validateRequiredStringArray(planItem.depends_on, "domain.plan_item.depends_on");
+		validateRequiredString(planItem.worktree, "domain.plan_item.worktree");
+		if (!("pr_number" in planItem)) throw new Error("invalid domain.plan_item.pr_number: missing required key");
+		if (!("merge_commit" in planItem)) throw new Error("invalid domain.plan_item.merge_commit: missing required key");
+		validateOptionalFiniteNumber(planItem.pr_number, "domain.plan_item.pr_number");
+		validateOptionalString(planItem.merge_commit, "domain.plan_item.merge_commit");
+		validateOptionalFiniteNumber(planItem.scope_files_actual, "domain.plan_item.scope_files_actual");
 	}
 	return issueId;
 }

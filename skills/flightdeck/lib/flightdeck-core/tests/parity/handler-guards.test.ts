@@ -13,6 +13,10 @@ const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-p
 const GITHUB_HANDLE_DOC = resolve(HERE, "../../../../workflows/github/handle-prompt.md");
 const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue.md");
 const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
+const PLAN_START_DOC = resolve(HERE, "../../../../workflows/plan/start.md");
+const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.md");
+const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
+const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -130,5 +134,42 @@ describe("handler domain guards", () => {
 			expect(doc).toContain("disjoint");
 			expect(doc).toContain("unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS");
 		}
+	});
+
+	test("plan lane spawn docs forbid supervisor recursion and use native session launcher", () => {
+		const docs = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC]
+			.map((path) => readFileSync(path, "utf8"));
+		const combined = docs.join("\n---\n");
+		expect(combined).toContain("flightdeck-session start");
+		expect(combined).toContain("--kind workflow");
+		expect(combined).toContain("Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line.");
+		expect(combined).not.toMatch(/\/skill:flightdeck plan|\$flightdeck plan|\/flightdeck plan (start|watch|close|terminate)/);
+		expect(combined).not.toContain("/skill:");
+	});
+
+	test("plan lane docs carry PR safety gates from github redesign", () => {
+		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		const close = readFileSync(PLAN_CLOSE_DOC, "utf8");
+		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
+		expect(handle).toContain('mergeStateStatus === "CLEAN"');
+		expect(handle).toContain("FLIGHTDECK_AUTO_MERGE=0` gates `merge-now`, `merge-ready-but-unknown`, and `force-merge-confirm`");
+		expect(handle).toContain("APPROVED ∧ all_checks_in {SUCCESS, SKIPPED} ∧ disjoint(PR_files, main_files_recently_changed) ∧ unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS");
+		expect(watch).toContain('If `FLIGHTDECK_AUTO_MERGE=0`, set `paused_for_user = {entry_id:<ITEM_ID>, reason:"auto-merge-disabled"');
+		expect(watch).toContain('reviewDecision == "APPROVED"');
+		expect(watch).toContain('do not substitute unset review with "no pending reviewers"');
+		expect(close).toContain("Pane-buffer text alone is never sufficient");
+		expect(close).toContain("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
+		expect(close).toContain('state === "MERGED"');
+		expect(close).toContain("mergeCommit !== null");
+	});
+
+	test("plan lane workflow prose uses placeholders instead of copied literals", () => {
+		const combined = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC]
+			.map((path) => readFileSync(path, "utf8"))
+			.join("\n");
+		expect(combined).toContain("<ITEM_ID>");
+		expect(combined).toContain("<PR>");
+		expect(combined).not.toContain("vanillagreencom/vstack");
+		expect(combined).not.toMatch(/issue-120|#120|\b120\b/);
 	});
 });

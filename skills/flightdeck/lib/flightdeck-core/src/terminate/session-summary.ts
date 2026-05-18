@@ -52,6 +52,12 @@ function githubIssueDomain(entry: TrackedEntry): Record<string, unknown> | undef
 	return issue;
 }
 
+function planItemDomain(entry: TrackedEntry): Record<string, unknown> | undefined {
+	const domain = isRecord(entry.domain) ? entry.domain : undefined;
+	const item = domain && isRecord(domain.plan_item) ? domain.plan_item : undefined;
+	return item;
+}
+
 function hasNonEmptyString(value: unknown): boolean {
 	return typeof value === "string" && value.trim().length > 0;
 }
@@ -64,13 +70,15 @@ function issueMarkers(entry: TrackedEntry): string[] {
 	const markers: string[] = [];
 	const issue = issueDomain(entry);
 	const githubIssue = githubIssueDomain(entry);
+	const planItem = planItemDomain(entry);
 	const genericKind = entry.kind === "adhoc" || entry.kind === "workflow";
 	if (hasNonEmptyString(issue?.id)) markers.push("domain.issue.id");
 	if (hasFiniteNumber(githubIssue?.number)) markers.push("domain.github_issue.number");
-	if (hasFiniteNumber(issue?.pr_number) || hasFiniteNumber(githubIssue?.pr_number) || (!genericKind && hasFiniteNumber(entry.pr_number))) markers.push("pr_number");
-	if (hasNonEmptyString(issue?.worktree) || hasNonEmptyString(githubIssue?.worktree) || (!genericKind && hasNonEmptyString(entry.worktree))) markers.push("worktree");
-	if (hasNonEmptyString(issue?.merge_commit) || hasNonEmptyString(githubIssue?.merge_commit) || hasNonEmptyString(entry.merge_commit)) markers.push("merge_commit");
-	if (hasFiniteNumber(issue?.scope_files_declared) || hasFiniteNumber(issue?.scope_files_actual) || hasFiniteNumber(githubIssue?.scope_files_actual)) markers.push("scope_files");
+	if (hasNonEmptyString(planItem?.item_id)) markers.push("domain.plan_item.item_id");
+	if (hasFiniteNumber(issue?.pr_number) || hasFiniteNumber(githubIssue?.pr_number) || hasFiniteNumber(planItem?.pr_number) || (!genericKind && hasFiniteNumber(entry.pr_number))) markers.push("pr_number");
+	if (hasNonEmptyString(issue?.worktree) || hasNonEmptyString(githubIssue?.worktree) || hasNonEmptyString(planItem?.worktree) || (!genericKind && hasNonEmptyString(entry.worktree))) markers.push("worktree");
+	if (hasNonEmptyString(issue?.merge_commit) || hasNonEmptyString(githubIssue?.merge_commit) || hasNonEmptyString(planItem?.merge_commit) || hasNonEmptyString(entry.merge_commit)) markers.push("merge_commit");
+	if (hasFiniteNumber(issue?.scope_files_declared) || hasFiniteNumber(issue?.scope_files_actual) || hasFiniteNumber(githubIssue?.scope_files_actual) || hasFiniteNumber(planItem?.scope_files_actual)) markers.push("scope_files");
 	if (typeof issue?.orchestration_started === "boolean" || typeof entry.orchestration_started === "boolean") markers.push("orchestration_started");
 	if (typeof entry.state === "string" && ISSUE_STATES.has(entry.state)) markers.push(`state:${entry.state}`);
 	if (typeof entry.substate === "string" && ISSUE_SUBSTATES.has(entry.substate)) markers.push(`substate:${entry.substate}`);
@@ -87,7 +95,8 @@ function classifyEntry(entry: TrackedEntry, opts: TerminationPartitionOptions, w
 	if (entry.kind === "issue") return "issue";
 	if (hasNonEmptyString(issueDomain(entry)?.id)) return "issue";
 	if (hasFiniteNumber(githubIssueDomain(entry)?.number)) return "issue";
-	const markers = issueMarkers(entry).filter((marker) => marker !== "domain.issue.id" && marker !== "domain.github_issue.number");
+	if (hasNonEmptyString(planItemDomain(entry)?.item_id)) return "issue";
+	const markers = issueMarkers(entry).filter((marker) => marker !== "domain.issue.id" && marker !== "domain.github_issue.number" && marker !== "domain.plan_item.item_id");
 	if (markers.length > 0) {
 		warn(`Warning: issue-shaped tracked entry ${JSON.stringify(entry.id)} missing kind=issue/domain issue key; routing through issue termination path (${markers.join(", ")}).`, opts, warnings);
 		return "issue";

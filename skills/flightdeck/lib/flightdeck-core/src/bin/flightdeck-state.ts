@@ -196,10 +196,17 @@ function emitDirectStateChange(field: string, before: Record<string, unknown> | 
 	if (typeof nextState !== "string" || before.state === nextState) return;
 	const domain = before.domain && typeof before.domain === "object" && !Array.isArray(before.domain) ? before.domain as Record<string, unknown> : {};
 	const issue = domain.issue && typeof domain.issue === "object" && !Array.isArray(domain.issue) ? domain.issue as Record<string, unknown> : {};
+	const githubIssue = domain.github_issue && typeof domain.github_issue === "object" && !Array.isArray(domain.github_issue) ? domain.github_issue as Record<string, unknown> : {};
+	const planItem = domain.plan_item && typeof domain.plan_item === "object" && !Array.isArray(domain.plan_item) ? domain.plan_item as Record<string, unknown> : {};
 	const refs: Record<string, unknown> = {};
 	if (typeof before.task_id === "string" && before.task_id) refs.task_id = before.task_id;
+	else if (typeof planItem.item_id === "string" && planItem.item_id) refs.task_id = planItem.item_id;
 	if (typeof issue.id === "string" && issue.id) refs.issue_id = issue.id;
-	if (typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)) refs.pr_number = Math.trunc(issue.pr_number);
+	else if (typeof githubIssue.number === "number" && Number.isFinite(githubIssue.number)) refs.issue_id = `#${Math.trunc(githubIssue.number)}`;
+	const prNumber = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number) ? issue.pr_number
+		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? githubIssue.pr_number
+		: typeof planItem.pr_number === "number" && Number.isFinite(planItem.pr_number) ? planItem.pr_number : undefined;
+	if (typeof prNumber === "number") refs.pr_number = Math.trunc(prNumber);
 	emitActivity({ sessionId: session, stateFile: file, tmuxSession: session }, {
 		details: { dedup_key: `${entryId}:entry.state_changed:state:${nextState}`, new: nextState, old: before.state ?? null },
 		entry_id: typeof before.id === "string" && before.id ? before.id : entryId,

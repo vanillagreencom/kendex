@@ -557,18 +557,26 @@ function entryGithubIssue(entry: EntryRecord): Record<string, unknown> {
 	return isRecord(domain.github_issue) ? domain.github_issue : {};
 }
 
+function entryPlanItem(entry: EntryRecord): Record<string, unknown> {
+	const domain = isRecord(entry.domain) ? entry.domain : {};
+	return isRecord(domain.plan_item) ? domain.plan_item : {};
+}
+
 function entryRefs(entry: EntryRecord): Record<string, unknown> | undefined {
 	const refs: Record<string, unknown> = {};
 	const issue = entryIssue(entry);
 	const githubIssue = entryGithubIssue(entry);
+	const planItem = entryPlanItem(entry);
 	const taskId = entryString(entry, "task_id");
 	if (taskId) refs.task_id = taskId;
 	const issueId = typeof issue.id === "string" && issue.id ? issue.id
 		: typeof githubIssue.number === "number" && Number.isFinite(githubIssue.number) ? `#${Math.trunc(githubIssue.number)}` : undefined;
 	if (issueId) refs.issue_id = issueId;
+	if (typeof planItem.item_id === "string" && planItem.item_id) refs.task_id = refs.task_id ?? planItem.item_id;
 	const prNumber = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)
 		? issue.pr_number
 		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? githubIssue.pr_number
+		: typeof planItem.pr_number === "number" && Number.isFinite(planItem.pr_number) ? planItem.pr_number
 		: typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? entry.pr_number : undefined;
 	if (typeof prNumber === "number") refs.pr_number = Math.trunc(prNumber);
 	return Object.keys(refs).length > 0 ? refs : undefined;
@@ -606,10 +614,12 @@ function registryWorkflowContext(entry: EntryRecord | null): { entry: EntryRecor
 function emitIssueMergeState(entry: EntryRecord, state: string): void {
 	const issue = entryIssue(entry);
 	const githubIssue = entryGithubIssue(entry);
+	const planItem = entryPlanItem(entry);
 	const pr = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number) ? Math.trunc(issue.pr_number)
-		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? Math.trunc(githubIssue.pr_number) : undefined;
+		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? Math.trunc(githubIssue.pr_number)
+		: typeof planItem.pr_number === "number" && Number.isFinite(planItem.pr_number) ? Math.trunc(planItem.pr_number) : undefined;
 	if (state === "merge-ready") emitMergeAction(registryWorkflowContext(entry), pr, "queued");
-	else if (state === "merged") emitMergeAction(registryWorkflowContext(entry), pr, "merged", { commit: entryString(issue, "merge_commit") ?? entryString(githubIssue, "merge_commit") ?? entryString(entry, "merge_commit") ?? "" });
+	else if (state === "merged") emitMergeAction(registryWorkflowContext(entry), pr, "merged", { commit: entryString(issue, "merge_commit") ?? entryString(githubIssue, "merge_commit") ?? entryString(planItem, "merge_commit") ?? entryString(entry, "merge_commit") ?? "" });
 	else if (state === "aborted") emitMergeAction(registryWorkflowContext(entry), pr, "blocked", { reason: "aborted" });
 }
 
@@ -708,8 +718,9 @@ function emitReconcileShellComplete(entry: EntryRecord): void {
 	});
 }
 
-// Issue-mode metadata lives under `entry.domain.issue` (Linear) or
-// `entry.domain.github_issue` (GitHub). If a caller
+// Issue-mode metadata lives under `entry.domain.issue` (Linear),
+// `entry.domain.github_issue` (GitHub), or `entry.domain.plan_item` (plan lane).
+// If a caller
 // passes one of those field names as a top-level set, redirect into the
 // nested object so downstream readers (`pane-registry list --format json`,
 // pi-flightdeck, merge planning) see the value where they look for it.
@@ -727,9 +738,9 @@ function setEntryField(id: string, field: string, value: string): void {
 	const idJson = JSON.stringify(id);
 	const entry = entryById(id);
 	const kind = typeof entry?.kind === "string" ? entry.kind : "";
-	if (ISSUE_DOMAIN_FIELDS.has(field) && kind === "issue") {
-		const domain = isRecord(entry?.domain) ? entry.domain : {};
-		const target = isRecord(domain.github_issue) ? "github_issue" : "issue";
+	const domain = isRecord(entry?.domain) ? entry.domain : {};
+	if (ISSUE_DOMAIN_FIELDS.has(field) && (kind === "issue" || isRecord(domain.plan_item) || isRecord(domain.github_issue) || isRecord(domain.issue))) {
+		const target = isRecord(domain.github_issue) ? "github_issue" : isRecord(domain.plan_item) ? "plan_item" : "issue";
 		fdStateOrDie(["set", `.entries[${idJson}].domain.${target}.${field}`, value]);
 		return;
 	}
@@ -748,11 +759,13 @@ function entryRows(): Record<string, unknown>[] {
 		const domain = nestedRecord(entry, "domain");
 		const issue = nestedRecord(domain, "issue");
 		const githubIssue = nestedRecord(domain, "github_issue");
+		const planItem = nestedRecord(domain, "plan_item");
 		const topLevelPr = typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? Math.trunc(entry.pr_number) : null;
 		const topLevelWorktree = typeof entry.worktree === "string" && entry.worktree ? entry.worktree : null;
 		const id = typeof entry.id === "string" ? entry.id : key;
 		const kind = typeof entry.kind === "string" ? entry.kind : "issue";
 		const githubNumber = typeof githubIssue.number === "number" && Number.isFinite(githubIssue.number) ? Math.trunc(githubIssue.number) : null;
+		const planItemId = typeof planItem.item_id === "string" && planItem.item_id ? planItem.item_id : null;
 		return {
 			...entry,
 			cc_port: adapter.cc_port ?? null,
@@ -770,10 +783,11 @@ function entryRows(): Record<string, unknown>[] {
 			pi_bridge_pid: adapter.pi_bridge_pid ?? null,
 			pi_bridge_socket: adapter.pi_bridge_socket ?? null,
 			pi_session_id: adapter.pi_session_id ?? null,
-			pr_number: issue.pr_number ?? githubIssue.pr_number ?? topLevelPr,
-			scope_files_actual: issue.scope_files_actual ?? githubIssue.scope_files_actual ?? null,
+			plan_item: planItemId,
+			pr_number: issue.pr_number ?? githubIssue.pr_number ?? planItem.pr_number ?? topLevelPr,
+			scope_files_actual: issue.scope_files_actual ?? githubIssue.scope_files_actual ?? planItem.scope_files_actual ?? null,
 			scope_files_declared: issue.scope_files_declared ?? null,
-			worktree: issue.worktree ?? githubIssue.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
+			worktree: issue.worktree ?? githubIssue.worktree ?? planItem.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
 		};
 	});
 }

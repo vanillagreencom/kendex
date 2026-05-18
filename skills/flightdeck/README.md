@@ -1,6 +1,6 @@
 # Flightdeck
 
-Flightdeck supervises AI agent sessions in tmux windows. It can track generic panes, run Linear issue cycles, or run GitHub issue cycles while routing prompts, showing progress, and summarizing completion.
+Flightdeck supervises AI agent sessions in tmux windows. It can track generic panes, run Linear issue cycles, run GitHub issue cycles, or orchestrate multi-item markdown plan files while routing prompts, showing progress, and summarizing completion.
 
 > AI agents using Flightdeck: read [`SKILL.md`](./SKILL.md). Contributors changing Flightdeck internals: read [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
@@ -11,6 +11,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - Run generic sessions with no issue tracker.
 - Run Linear issue workflows with planning, PR checks, merge ordering, and closeout summaries.
 - Run GitHub issue workflows with PR/CI/review handling and verified issue closeout.
+- Run plan-file workflows that split one markdown plan into item worktrees, panes, PRs, and dependency-aware merge supervision.
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
 - Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, and rate limits.
@@ -29,6 +30,7 @@ Requirements:
 - One supported harness adapter for each tracked pane: Pi bridge, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback.
 - Linear issue mode: Linear auth plus GitHub auth for PR helpers.
 - GitHub issue mode: `gh` authenticated against the target repo.
+- Plan lane: `gh` authenticated plus worktree creation configured; see [`PLAN-FILE.md`](./PLAN-FILE.md) for plan format.
 - macOS: GNU coreutils for `sha256sum` and GNU date.
 
 ## Commands quick reference
@@ -69,6 +71,17 @@ Run commands by asking your agent for `flightdeck <command>`.
 | `flightdeck github close-issue` | Verify merged PR state, then close/no-op issue. | `<N>` |
 | `flightdeck github terminate` | Summarize and unwind the GitHub session. | none |
 
+### Plan lane
+
+Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
+
+| Command | Use when | Main args |
+|---------|----------|-----------|
+| `flightdeck plan start` | Parse a plan file, preview items, spawn dependency-free work items. | `<path>` |
+| `flightdeck plan watch` | Resume plan supervision. | `[ITEM_ID...]` |
+| `flightdeck plan close-item` | Verify merged PR state, then clean up one item. | `<ITEM_ID>` |
+| `flightdeck plan terminate` | Summarize and unwind the plan session. | none |
+
 ## Settings users actually set
 
 Most sessions work with defaults. These are the knobs users most often change.
@@ -76,7 +89,7 @@ Most sessions work with defaults. These are the knobs users most often change.
 | Variable | Default | Use when |
 |----------|---------|----------|
 | `FLIGHTDECK_AUTO_MERGE` | `1` | Set `0` to require human approval before merge or force-merge actions. |
-| `FLIGHTDECK_AUTO_REBASE` | `0` | Set `1` in GitHub mode to allow safe auto-rebase/update-branch prompts. |
+| `FLIGHTDECK_AUTO_REBASE` | `0` | Set `1` in GitHub or plan mode to allow safe auto-rebase/update-branch prompts. |
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | Change how long Flightdeck waits before considering force-merge for approved, green PRs stuck in GitHub `UNKNOWN` merge state. |
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default model for panes launched from `open-terminal` or `flightdeck-session --prompt`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default effort/thinking level for launched panes. |
@@ -118,7 +131,7 @@ Useful keys:
 
 ## High-level architecture
 
-Flightdeck always runs inside one tmux session. The master agent owns the Flightdeck workflow and records tracked entries in a project-local state file. Each child agent runs in its own tmux window, never as a split of the active pane. Flightdeck talks to child panes through the best available native channel for that harness, with tmux as fallback. A daemon watches child panes and wakes the master only when there is work to do. The master classifies prompts, answers known safe shapes, pauses for risky or novel shapes, and updates state. Issue lanes add GitHub/Linear/worktree checks on top of the same session loop. The dashboard reads the same state and activity data the workflows already write; it does not replace the workflows.
+Flightdeck always runs inside one tmux session. The master agent owns the Flightdeck workflow and records tracked entries in a project-local state file. Each child agent runs in its own tmux window, never as a split of the active pane. Flightdeck talks to child panes through the best available native channel for that harness, with tmux as fallback. A daemon watches child panes and wakes the master only when there is work to do. The master classifies prompts, answers known safe shapes, pauses for risky or novel shapes, and updates state. Issue and plan lanes add GitHub/Linear/worktree checks on top of the same session loop. The dashboard reads the same state and activity data the workflows already write; it does not replace the workflows.
 
 ```
 user request
@@ -132,6 +145,7 @@ user request
 ## More docs
 
 - AI agent operating rules: [`SKILL.md`](./SKILL.md)
+- Plan file format: [`PLAN-FILE.md`](./PLAN-FILE.md)
 - Full script reference: [`SCRIPTS.md`](./SCRIPTS.md)
 - State and activity schema: [`SCHEMA.md`](./SCHEMA.md)
 - Env reference: [`ENV.md`](./ENV.md)
