@@ -60,8 +60,8 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 |---------|-----------|-------------------|-------|
 | `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, records launch model/effort metadata, and records a generic `.entries[ID]` row. Prompt LLM launches pass harness-aware model/effort argv (Pi `--model` + `--thinking`, Claude `--model` + `--effort`, Codex `-m` + `model_reasoning_effort`; OpenCode validates `--model` via `opencode models` and records effort unsupported). Launches/verifies the Rust dashboard by default unless `FLIGHTDECK_DASHBOARD=0`. |
 | `session attach` | `--pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window, records supplied or unsupported model/effort metadata, and launches/verifies the Rust dashboard unless disabled. Pi attach also probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
-| `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
-| `session prompt routing` | nested from `session watch` | `workflows/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
+| `session watch` | `[ENTRY_ID...]` | `workflows/shared/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
+| `session prompt routing` | nested from `session watch` | `workflows/shared/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries` snapshot. |
 | `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id` and accepts the issue-mode lifecycle (`merged|aborted|dead`) plus the generic lifecycle (`complete|cancelled`) as terminal states. `remove` drops the `.entries` row. |
 
@@ -71,14 +71,14 @@ Issue/PR/worktree workflows. Entering these commands loads the issue-mode depend
 
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
-| `start` | `[ISSUE_ID]` | `workflows/start.md` | From-main issue entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter issue watch loop. |
-| `start new` | `[title]` | `workflows/start-new.md` | Create new issue + spawn through the issue workflow path. |
+| `start` | `[ISSUE_ID]` | `workflows/linear/start.md` | From-main issue entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter issue watch loop. |
+| `start new` | `[title]` | `workflows/linear/start-new.md` | Create new issue + spawn through the issue workflow path. |
 | `start self` | — | inline | Initialize master issue session only, await further issue commands. |
-| `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Verify a candidate issue set is safe to spawn in parallel. |
-| `watch` | `[ISSUE_IDS]` | `workflows/watch.md` → `workflows/session-watch.md` | Issue-mode extension over the generic loop. Tracks issue-specific lifecycle states, routes PR/Linear/worktree handlers, and resumes merge planning. |
-| `merge-plan` | — | `workflows/merge-plan.md` | Build PR conflict graph and choose smallest-safe merge order for issue entries. |
-| `close-issue` | `<ISSUE_ID>` | `workflows/close-issue.md` | Verify terminal issue outcome, record issue fields, and tear down the issue window safely. |
-| `terminate` | — | `workflows/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
+| `parallel-check` | `[ISSUE_IDS]` | `workflows/linear/parallel-check.md` | Verify a candidate issue set is safe to spawn in parallel. |
+| `watch` | `[ISSUE_IDS]` | `workflows/linear/watch.md` → `workflows/shared/session-watch.md` | Issue-mode extension over the generic loop. Tracks issue-specific lifecycle states, routes PR/Linear/worktree handlers, and resumes merge planning. |
+| `merge-plan` | — | `workflows/linear/merge-plan.md` | Build PR conflict graph and choose smallest-safe merge order for issue entries. |
+| `close-issue` | `<ISSUE_ID>` | `workflows/linear/close-issue.md` | Verify terminal issue outcome, record issue fields, and tear down the issue window safely. |
+| `terminate` | — | `workflows/linear/terminate.md` | If any tracked entry is `kind=issue`, produce the issue/PR/new-issue recommendation summary; mixed sessions also include generic session summary. |
 | `status` | — | inline | Print current pane registry + state machine snapshot from `tmp/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
 
 ### Planning (cross-call to `project-management`, issue mode only)
@@ -158,8 +158,8 @@ Functional + integration tests live under `lib/flightdeck-core/tests/`.
 | `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll issue tmux/terminal commands — use this for issue workflow spawns.** Tmux fallback now delegates to `flightdeck-session` in issue mode. |
 | `flightdeck-session` | Generic session launcher/attacher. `start` creates a tmux window and registers `.entries[id]`; `attach` records an existing Pi pane by stable pane id. |
 | `parallel-groups` | Read/manage parallel issue groups. |
-| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`tracked-entries`/`write-entry`/`archive`), activity JSONL sidecar commands (`activity path\|append\|tail\|export`), and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/session-watch.md` § 1 for lock semantics. |
-| `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. `start` exits `4` for stale `--master` (distinct from usage/missing dependency exit `2`). Master respawn trigger: `status --session <S>` says `no daemon` while live entries exist; source panes via `pane-registry list --format inner-panes-live` / `inner-harnesses-live`, re-resolve `$TMUX_PANE` and retry once on exit `4`, and do not yield on unresolved start failure. Full contract: `workflows/session-watch.md` § 1 / § 6; adapter freshness: `patterns/tmux-monitoring.md`. |
+| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`tracked-entries`/`write-entry`/`archive`), activity JSONL sidecar commands (`activity path\|append\|tail\|export`), and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/shared/session-watch.md` § 1 for lock semantics. |
+| `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. `start` exits `4` for stale `--master` (distinct from usage/missing dependency exit `2`). Master respawn trigger: `status --session <S>` says `no daemon` while live entries exist; source panes via `pane-registry list --format inner-panes-live` / `inner-harnesses-live`, re-resolve `$TMUX_PANE` and retry once on exit `4`, and do not yield on unresolved start failure. Full contract: `workflows/shared/session-watch.md` § 1 / § 6; adapter freshness: `patterns/tmux-monitoring.md`. |
 | `flightdeck-dashboard` | Rust TUI dashboard binary. Subcommands: `tui`, `daemon {start,stop,status,health,tail}`, `launch`, `supervise`. The TUI has keyboard/mouse navigation, help/theme/filter/detail/confirm popups, dashboard badge/chip legend, cost/token totals, and two confirmation-gated writes that shell to canonical helpers (`pane-registry remove` for stale entries, `tmux select-window` for focus). Lives in `skills/flightdeck/lib/flightdeck-dashboard/`. See `DEVELOPMENT.md` for the build + test workflow. |
 | `codex-app-server-spawn` / `-stop` | Idempotent bring-up/teardown of the per-session codex `app-server --listen ws://...` shared by all `codex --remote` panes. |
 | `pane-registry` | TrackedEntry↔pane mapping CRUD. `init-entry` writes `.entries[id]`; `init <ISSUE>` is an alias for `init-entry --kind issue`. `find-by-pane` emits `{id,kind}` JSON. `list --format json\|inner-panes\|inner-harnesses\|inner-panes-live\|inner-harnesses-live` feeds `pane-poll --batch -` and `flightdeck-daemon start`; use the `*-live` pair for daemon respawn. |
@@ -176,7 +176,7 @@ Functional + integration tests live under `lib/flightdeck-core/tests/`.
 {"ts":"<iso>","pane_id":"%18","harness":"pi","event_type":"bg-task-exit","sequence":17,"task":{"id":"bg-3","status":"failed","exitCode":null,"command":"...","outputBytes":89},"classifier_tag":"pi-bg-task-exit","hash":"<12hex>"}
 ```
 
-The daemon (`lib/flightdeck-core/src/daemon/loop.ts`) treats the tag as canonical, appends to the per-session events file via `appendEvent`, extends `WAKE_PENDING.in_flight`, and wakes master before emitting structured activity. Non-exit bg-task subscriber signals (for example `details.eventType: "output"`) append activity-only `pi-bg-task-activity` rows with `activity_event_type` and `sequence`; the daemon records them as `bg_task.output_matched` activity without waking master. Master routes terminal rows through `workflows/session-watch.md` § 2 → `workflows/session-handle-prompt.md` § 7; issue mode may then resume `workflows/handle-prompt.md` § 4 for PR/CI/bot-review recovery. The classifier never sees these messages — they are system-role customType messages, not assistant text — so `prompt-classify` has no matching tag and only the daemon path produces them.
+The daemon (`lib/flightdeck-core/src/daemon/loop.ts`) treats the tag as canonical, appends to the per-session events file via `appendEvent`, extends `WAKE_PENDING.in_flight`, and wakes master before emitting structured activity. Non-exit bg-task subscriber signals (for example `details.eventType: "output"`) append activity-only `pi-bg-task-activity` rows with `activity_event_type` and `sequence`; the daemon records them as `bg_task.output_matched` activity without waking master. Master routes terminal rows through `workflows/shared/session-watch.md` § 2 → `workflows/shared/session-handle-prompt.md` § 7; issue mode may then resume `workflows/linear/handle-prompt.md` § 4 for PR/CI/bot-review recovery. The classifier never sees these messages — they are system-role customType messages, not assistant text — so `prompt-classify` has no matching tag and only the daemon path produces them.
 
 `pi-activity-broker`: Pi extensions publish through `globalThis[Symbol.for("vstack.pi.activity")]`; `pi-session-bridge` streams each publication as `{type:"event", event:"vstack_activity", data:{...}}`. The Pi subscriber appends an activity-only `pi-activity-broker` row to `WAKE_EVENTS_LOG`. The TS daemon copies the subset payload into `flightdeck-activity-<session>.jsonl` with the tracked pane id and never wakes master. Set `FLIGHTDECK_PI_ACTIVITY_BROKER=0` to disable this broker drain and rely on legacy custom-message wake paths only.
 
@@ -188,7 +188,7 @@ Activity sidecar: `flightdeck-state init` records `activity_path` beside the mas
 {"ts":"<iso>","pane_id":"%25","event_type":"daemon-exited","reason":"master-gone","master_id":"%25","pid":12345,"hash":"<12hex>","tag":"daemon-exited","stable_age_sec":0,"details":{"event_type":"daemon-exited","reason":"master-gone","master_id":"%25","pid":12345}}
 ```
 
-`session-watch.md` routes `daemon-exited` as a daemon-lifecycle signal, not a pane-prompt classification. It records the reason and follows the master respawn flow in `workflows/session-watch.md` § 1 / § 6 before yielding.
+`session-watch.md` routes `daemon-exited` as a daemon-lifecycle signal, not a pane-prompt classification. It records the reason and follows the master respawn flow in `workflows/shared/session-watch.md` § 1 / § 6 before yielding.
 
 ## Schema — master state
 
@@ -373,16 +373,16 @@ Additional tuning:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/start.md` | `start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter watch |
-| `workflows/start-new.md` | `start new` | Create new issue from main + spawn |
-| `workflows/parallel-check.md` | `parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
-| `workflows/session-watch.md` | `session watch`, and core loop invoked by issue `watch` | Generic state init, entry reconciliation, daemon spawn/ack/yield, polling, generic prompt routing, compaction recovery |
-| `workflows/session-handle-prompt.md` | Nested invocation from `session-watch` / issue `watch` for generic tags | Generic prompt response surface; no PR/Linear/GitHub/worktree dependency |
-| `workflows/watch.md` | `watch` (issue entry) or invoked at end of `start.md` after spawn | Issue-mode extension over `session-watch`: load issue skills, track issue-specific lifecycle states, route issue-only handlers, plan merges, terminate |
-| `workflows/handle-prompt.md` | Nested invocation from issue `watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
-| `workflows/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
-| `workflows/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
-| `workflows/terminate.md` | Nested invocation from issue `watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
+| `workflows/linear/start.md` | `start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter watch |
+| `workflows/linear/start-new.md` | `start new` | Create new issue from main + spawn |
+| `workflows/linear/parallel-check.md` | `parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
+| `workflows/shared/session-watch.md` | `session watch`, and core loop invoked by issue `watch` | Generic state init, entry reconciliation, daemon spawn/ack/yield, polling, generic prompt routing, compaction recovery |
+| `workflows/shared/session-handle-prompt.md` | Nested invocation from `session-watch` / issue `watch` for generic tags | Generic prompt response surface; no PR/Linear/GitHub/worktree dependency |
+| `workflows/linear/watch.md` | `watch` (issue entry) or invoked at end of `start.md` after spawn | Issue-mode extension over `session-watch`: load issue skills, track issue-specific lifecycle states, route issue-only handlers, plan merges, terminate |
+| `workflows/linear/handle-prompt.md` | Nested invocation from issue `watch` for issue-only tags | PR/Linear/worktree prompt response surface only |
+| `workflows/linear/close-issue.md` | Nested invocation from `watch` § 2 on `terminal-state-reached` | Verify two-signal terminal state, update master state, kill window, keep registry entry for terminate reporting/final cleanup |
+| `workflows/linear/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
+| `workflows/linear/terminate.md` | Nested invocation from issue `watch` or generic session unwind | Generic session summary for ad-hoc/workflow entries; issue/PR/new-issues recommendation summary when any issue entry exists; master-state finalization |
 
 ## Workflow Execution
 
@@ -418,4 +418,4 @@ The user-visible output blocks at the end of `terminate.md` (`<generic_output_fo
 
 ## Compaction Recovery
 
-Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/watch.md` § 8.
+Master state is persisted on every state mutation and rehydrated on watch re-entry. Generic entry reconciliation and daemon recovery live in `workflows/shared/session-watch.md` § 6; issue-specific recovery (pane fingerprinting, `unknown_since`, conflict graph, and paused issue re-evaluation) lives in `workflows/linear/watch.md` § 8.

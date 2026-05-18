@@ -169,7 +169,7 @@ If a generic tag appears on an issue entry, route it through `session-handle-pro
 Process `state == "prompting"` entries sequentially. Do not answer panes in parallel; adapter calls and decision logs must remain ordered.
 
 ```
-⤵ workflows/session-handle-prompt.md <ENTRY_ID> <SUBSTATE_TAG>
+⤵ workflows/shared/session-handle-prompt.md <ENTRY_ID> <SUBSTATE_TAG>
 ```
 
 Pass structured event details for `oc-question`, `pi-question`, and `pi-bg-task-exit`. Pass the captured buffer for text-classified prompts.

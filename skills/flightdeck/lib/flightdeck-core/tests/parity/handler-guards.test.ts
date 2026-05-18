@@ -9,7 +9,7 @@ import { ISSUE_ONLY_TAGS } from "../../src/classifier/rules.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(HERE, "../fixtures/prompt-classify");
 const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
-const HANDLER_DOC = resolve(HERE, "../../../../workflows/session-handle-prompt.md");
+const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-prompt.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 

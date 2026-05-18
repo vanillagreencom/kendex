@@ -10,7 +10,7 @@ import {
 import type { FlightdeckStateLike } from "../../src/state/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TERMINATE_MD = resolve(HERE, "../../../../workflows/terminate.md");
+const TERMINATE_MD = resolve(HERE, "../../../../workflows/linear/terminate.md");
 
 function baseState(entries: Record<string, unknown>, issues: Record<string, unknown> = {}): FlightdeckStateLike {
 	return {

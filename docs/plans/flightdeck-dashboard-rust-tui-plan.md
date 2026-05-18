@@ -28,7 +28,7 @@ The rest of the prior context (still accurate for PRs #20–#44):
 - **TrackedEntry seam.** Master state has `.entries` (kind-aware tracked sessions), `owner`, `merge_queue`, `conflict_graph`. `readTrackedEntries` (TS) is the normalization seam — the Rust reader produces the same shape.
 - **Owner block + visibility** (PR #25). `owner` has `harness`, `pane_id`, `pane_target`, `cwd`, `pid`, `pi_session_id`, `pi_bridge_socket`, `discovery_error`. The Rust TUI is its own tmux window so the gating differs — see [Owner / observer awareness](#owner--observer-awareness).
 - **Generic launcher** (PR #28). `skills/flightdeck/scripts/flightdeck-session start|attach` is the canonical entry for tracked tmux windows. The dashboard registers itself the same way when launched managed.
-- **Generic watch + handler split** (PR #29). `workflows/session-watch.md` is the generic loop; `workflows/watch.md` is the issue-mode layer. The dashboard reflects both — generic sessions get a session summary, issue sessions get the full PR/Linear/worktree story.
+- **Generic watch + handler split** (PR #29). `workflows/shared/session-watch.md` is the generic loop; `workflows/linear/watch.md` is the issue-mode layer. The dashboard reflects both — generic sessions get a session summary, issue sessions get the full PR/Linear/worktree story.
 - **Issue-mode dependency isolation** (PR #30). `terminate.md` routes by tracked-entry kinds; `session-summary.ts` handles generic vs issue summaries. The dashboard's termination panel mirrors that routing.
 - **Sessions-first Pi UI** (PR #31). `pi-flightdeck` already migrated to kind badges (`AH`/`ISS`/`WF`), `readTrackedEntries`, and the `state-archive.ts` / `state-normalizers.ts` / `render-terminated.ts` / `session-ui.ts` / `dashboard-visibility.ts` modules. These are the reference for what the Rust UI must render.
 - **TrackedEntry-aware set-state + teardown** (PR #33 + the legacy purge). `pane-registry teardown-entry` requires a terminal state; `set-state` writes to `.entries` directly. The dashboard never mutates state in Phase 1; later phases shell to these.
@@ -45,7 +45,7 @@ The rest of the prior context (still accurate for PRs #20–#44):
   - On cleanup the TS daemon writes a structured `daemon-exited` row to `EVENTS_FILE` (the file `flightdeck-daemon events` drains) with `reason` classification (`master-gone | signal-term | signal-int | other`). The Rust dashboard's Activity tab consumes this row as a canonical daemon-lifecycle event; the Rust daemon (Phase 5) MUST emit the same shape under `SESSION_LOCK`.
   - `--in-tmux-window` daemons are named `[fd] daemon-<session>` so operators don't accidentally close them. Rust daemon keeps the convention.
   - `pane-registry list --format inner-panes-live` filters to panes whose `pane_id` is currently in `tmux list-panes -a`. The Rust daemon's respawn-on-restart path uses this listing.
-  - `workflows/session-watch.md` now documents the master respawn contract: on `flightdeck-daemon status` returning `no daemon` with live tracked entries, master MUST respawn with the `inner-panes-live` listing and handle exit codes (4 = retry with `$TMUX_PANE`; 1 = check status for raced-respawn; other = `daemon-respawn-failed`, no yield). The Rust dashboard's daemon-supervisor mode respects this contract.
+  - `workflows/shared/session-watch.md` now documents the master respawn contract: on `flightdeck-daemon status` returning `no daemon` with live tracked entries, master MUST respawn with the `inner-panes-live` listing and handle exit codes (4 = retry with `$TMUX_PANE`; 1 = check status for raced-respawn; other = `daemon-respawn-failed`, no yield). The Rust dashboard's daemon-supervisor mode respects this contract.
 
 The activity plan will add a `flightdeck-activity-<session>.jsonl` sidecar plus archive on terminate. The dashboard's Activity tab is the read site — scaffolded here, fully populated by the activity plan.
 
@@ -457,7 +457,7 @@ Update Flightdeck startup so the dashboard launches with a session.
 
 At session init:
 
-1. `flightdeck-dashboard launch` is invoked from `workflows/start.md`.
+1. `flightdeck-dashboard launch` is invoked from `workflows/linear/start.md`.
 2. It starts the daemon (Rust opt-in, otherwise the canonical TS daemon). Daemon is detached, lives in `$FD_STATE_DIR`, idempotent on re-launch.
 3. It opens a tmux window for `flightdeck-dashboard tui`, via `flightdeck-session start --kind workflow --harness shell --cmd '…'` so the dashboard window itself is a TrackedEntry and inherits `FLIGHTDECK_MANAGED=1` (PR #21).
 4. Failure does not block Flightdeck — logs warning, continues.
@@ -596,7 +596,7 @@ Gate: every flip of a subscriber to Rust requires the relevant `tests/live-wake.
 
 Goals:
 
-- `flightdeck-dashboard launch` invoked from `workflows/start.md`.
+- `flightdeck-dashboard launch` invoked from `workflows/linear/start.md`.
 - Reuses `flightdeck-session start --kind workflow --harness shell --cmd '…'` so the dashboard window is a TrackedEntry.
 - Env toggles wired (`FLIGHTDECK_DASHBOARD`, `FLIGHTDECK_DASHBOARD_WINDOW`, `FLIGHTDECK_DASHBOARD_MOTION`, `FLIGHTDECK_DAEMON_RUST`).
 - Daemon auto-starts when needed; idempotent across re-runs.

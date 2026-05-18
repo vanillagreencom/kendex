@@ -6,7 +6,7 @@ Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/L
 
 **Pre-conditions**:
 - `$TMUX` set.
-- `workflows/session-watch.md` is the core loop for state init, entry reconciliation, daemon startup, polling, generic prompt routing, and ack/yield.
+- `workflows/shared/session-watch.md` is the core loop for state init, entry reconciliation, daemon startup, polling, generic prompt routing, and ack/yield.
 - Issue-mode skills are loaded now: `github`, `linear`, `worktree`, and `project-management` as needed by the issue workflow. Generic `session-watch.md` does not load or require them.
 - `[ISSUE_IDS]` non-empty or `tmp/flightdeck-state-<SESSION>.json` exists.
 
@@ -16,7 +16,7 @@ Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/L
 
 ## § 0: Enter through the generic loop
 
-Run `⤵ workflows/session-watch.md` for the common mechanics:
+Run `⤵ workflows/shared/session-watch.md` for the common mechanics:
 
 1. Initialize/resume master state.
 2. Reconcile entries through `flightdeck-state tracked-entries` / `pane-registry list --format json`.
@@ -98,7 +98,7 @@ POLL_INPUT=$(jq '[.[]
 3. **Domain guard** — if an issue-only tag appears on `kind=adhoc` or any non-issue entry, `prompt-classify --entry-kind` / `pane-poll` reports `domain-mismatch`. Log a warning, do not run issue handlers, and surface a master question through `paused_for_user`.
 4. **Generic tags on issue entries** — `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, and `pi-bg-task-exit` first route through `session-handle-prompt.md`. After it returns, resume this issue loop with domain state intact.
 
-`terminal-state-reached` on an issue entry invokes `⤵ workflows/close-issue.md <ISSUE_ID>` after the generic completion signal. `close-issue.md` performs the two-signal verification, records the issue outcome, and tears down the window when safe.
+`terminal-state-reached` on an issue entry invokes `⤵ workflows/linear/close-issue.md <ISSUE_ID>` after the generic completion signal. `close-issue.md` performs the two-signal verification, records the issue outcome, and tears down the window when safe.
 
 ---
 
@@ -108,12 +108,12 @@ Process prompting issues sequentially. For each issue in `state == "prompting"` 
 
 1. If `<SUBSTATE_TAG>` is generic, call:
    ```
-   ⤵ workflows/session-handle-prompt.md <ISSUE_ID> <SUBSTATE_TAG>
+   ⤵ workflows/shared/session-handle-prompt.md <ISSUE_ID> <SUBSTATE_TAG>
    ```
    Then re-poll and continue issue flow.
 2. If `<SUBSTATE_TAG>` is issue-only, call:
    ```
-   ⤵ workflows/handle-prompt.md <ISSUE_ID> <SUBSTATE_TAG>
+   ⤵ workflows/linear/handle-prompt.md <ISSUE_ID> <SUBSTATE_TAG>
    ```
 3. If either handler sets `paused_for_user`, stop the cycle and yield to the user.
 4. After a confirmed response, re-poll the same issue before moving to the next prompting issue.
@@ -126,7 +126,7 @@ The issue handler surface is limited to PR/Linear/worktree workflow logic: clean
 
 When at least one issue reaches `merge-ready` (`state = "merge-ready"` plus `domain.issue.phase = "merge-ready"`):
 
-1. Invoke `⤵ workflows/merge-plan.md`.
+1. Invoke `⤵ workflows/linear/merge-plan.md`.
 2. Build/rebuild `pr-conflict-graph` from live PR file lists.
 3. Merge the next safe PR using smallest-scope-first conflict ordering.
 4. After a merge, set `state = "merged"`, `domain.issue.outcome = "merged"`, and remove the entry from the active merge queue.
@@ -163,7 +163,7 @@ At the end of each issue cycle:
 
 1. Count issue entries by state/outcome. Terminal issue outcomes are `merged`, `aborted`, and `dead` (generic `complete`, `cancelled`, `dead`).
 2. If every tracked issue is terminal and no issue is `prompting`, increment the debounce counter.
-3. At `FLIGHTDECK_DEBOUNCE_CYCLES` consecutive terminal cycles (default 2), invoke `⤵ workflows/terminate.md`.
+3. At `FLIGHTDECK_DEBOUNCE_CYCLES` consecutive terminal cycles (default 2), invoke `⤵ workflows/linear/terminate.md`.
 4. Otherwise return to `session-watch.md` § 5 for ack/yield.
 
 ---
@@ -182,4 +182,4 @@ On re-entry, run the generic recovery in `session-watch.md` first, then issue-sp
 
 ## Returns
 
-To flightdeck's issue loop (`workflows/start.md` § 1), after `terminate.md` writes the issue summary and archives state.
+To flightdeck's issue loop (`workflows/linear/start.md` § 1), after `terminate.md` writes the issue summary and archives state.

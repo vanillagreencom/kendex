@@ -2,7 +2,7 @@
 
 Initialize development session, display status, select work, evaluate research, create worktree, and hand off to worktree session.
 
-This is the issue-mode start workflow. For ad-hoc or workflow sessions that are not tied to an issue/worktree, use `scripts/flightdeck-session start` or `flightdeck session start`, then supervise with `workflows/session-watch.md` and `workflows/session-handle-prompt.md`.
+This is the issue-mode start workflow. For ad-hoc or workflow sessions that are not tied to an issue/worktree, use `scripts/flightdeck-session start` or `flightdeck session start`, then supervise with `workflows/shared/session-watch.md` and `workflows/shared/session-handle-prompt.md`.
 
 ## 1. Initialize Session
 
@@ -22,7 +22,7 @@ This is the issue-mode start workflow. For ad-hoc or workflow sessions that are 
 
 3. **If build errors or auth failures** → fix locally before proceeding to § 1.3.
 
-4. **If preflight status shows "Worktree session"** → STOP. Wrong workflow. Use the orchestration workflow from the worktree pane instead: [`../../orchestration/workflows/start.md`](../../orchestration/workflows/start.md).
+4. **If preflight status shows "Worktree session"** → STOP. Wrong workflow. Use the orchestration workflow from the worktree pane instead: [`../../../orchestration/workflows/start.md`](../../../orchestration/workflows/start.md).
 
 ### 1.2.1 Rust Dashboard Verification
 
@@ -49,7 +49,7 @@ fi
    | Complete [Project]: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
    | Activate project: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
    | Plan cycle: audit-issues → cycle-plan | `⤵ .agents/skills/project-management/workflows/audit-issues.md project § 1-9`, then `⤵ .agents/skills/project-management/workflows/cycle-plan.md § 1-6 → § 1` |
-   | `parallel-check "Project"` | `⤵ workflows/parallel-check.md "Project" § 1-11 → § 1` |
+   | `parallel-check "Project"` | `⤵ workflows/linear/parallel-check.md "Project" § 1-11 → § 1` |
    | Start in parallel: [ISSUE_ID], ... | Ask user: `Start [ISSUE_ID] only` (→ § 1.4) \| `Launch parallel group` (capture `[ISSUE_IDS]` → § 1.4) |
    | Start [ISSUE_ID] | Capture issue ID → § 1.4 |
 
@@ -337,12 +337,12 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    ```
    For each active worktree issue: `.agents/skills/linear/scripts/linear.sh cache issues get [WT_ISSUE] --format=compact` → compare `agent` with current issue.
    - **No overlap** → continue
-   - **Same agent** → `.agents/skills/flightdeck/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `flightdeck parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
+   - **Same agent** → `.agents/skills/flightdeck/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `flightdeck parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/linear/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
 
 5. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
 6. **Launch**: Run § 4.0 to select `[LAUNCH_FLAGS]`.
-   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to the issue loop.
+   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`, then `⤵ workflows/linear/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to the issue loop.
    - **Manual**: Show the recommended command and worktree path so the user can run it themselves. → § 1.
    - **I'll launch it myself** → § 1.
 
@@ -359,8 +359,8 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    </output_format>
 
 3. **Ask user**: `Launch [N] issues` | `Select subset` | `I'll launch them myself` | `Cancel`
-   - **Launch**: Run § 4.0 for all `[ISSUE_IDS]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_IDS] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/watch.md [ISSUE_IDS] § 1-9 → § 1` — `watch.md § 1` spawns the daemon for the session and drives wake delivery for the spawned set.
-   - **Select subset**: Ask user with individual issues as options (multiSelect), then run § 4.0 for `[SELECTED_ISSUES]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [SELECTED_ISSUES] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/watch.md [SELECTED_ISSUES] § 1-9 → § 1`.
+   - **Launch**: Run § 4.0 for all `[ISSUE_IDS]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_IDS] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/linear/watch.md [ISSUE_IDS] § 1-9 → § 1` — `watch.md § 1` spawns the daemon for the session and drives wake delivery for the spawned set.
+   - **Select subset**: Ask user with individual issues as options (multiSelect), then run § 4.0 for `[SELECTED_ISSUES]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [SELECTED_ISSUES] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/linear/watch.md [SELECTED_ISSUES] § 1-9 → § 1`.
    - **Manual**: Show the recommended command(s) so the user can run them themselves. → § 1.
    - **Cancel** → § 1
 

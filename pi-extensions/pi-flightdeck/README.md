@@ -1,6 +1,6 @@
 # pi-flightdeck
 
-> **DEPRECATED for new sessions.** The Rust dashboard at `skills/flightdeck/lib/flightdeck-dashboard/` now has feature parity for everything this extension renders — structured activity rendering, rate-limit recovery surfacing, branch/entry binding, watchdog activity rows, the `(stale)` row annotation, responsive tabs, the Costs detail popup (`p`), Alt+M compact mode, theme picker swatch slots, conversations file-mode, and Unicode display-width — with native motion, file-watched live updates, and a daemon read-shim. Run `flightdeck-dashboard tui` (auto-launched by `workflows/start.md`) instead. This extension remains supported for sessions that prefer in-pi mission control until parity is verified across all installs.
+> **DEPRECATED for new sessions.** The Rust dashboard at `skills/flightdeck/lib/flightdeck-dashboard/` now has feature parity for everything this extension renders — structured activity rendering, rate-limit recovery surfacing, branch/entry binding, watchdog activity rows, the `(stale)` row annotation, responsive tabs, the Costs detail popup (`p`), Alt+M compact mode, theme picker swatch slots, conversations file-mode, and Unicode display-width — with native motion, file-watched live updates, and a daemon read-shim. Run `flightdeck-dashboard tui` (auto-launched by `workflows/linear/start.md`) instead. This extension remains supported for sessions that prefer in-pi mission control until parity is verified across all installs.
 
 > ⚠️ **WIP — not production ready.** APIs, settings, and UI may change without notice.
 

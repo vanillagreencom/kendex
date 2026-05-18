@@ -2,7 +2,7 @@
 
 Inner pane has signaled it's done. Verify the signal, mark the issue terminal in master state, kill the window, leave the registry entry in place for the final report, and either advance to the next queued issue or let the watch loop's termination check fire.
 
-Issue-mode workflow only. Generic/ad-hoc terminal signals stay in `workflows/session-handle-prompt.md`; issue `watch.md` layers this two-signal verification and safe teardown on top of the generic `workflows/session-watch.md` underlay.
+Issue-mode workflow only. Generic/ad-hoc terminal signals stay in `workflows/shared/session-handle-prompt.md`; issue `watch.md` layers this two-signal verification and safe teardown on top of the generic `workflows/shared/session-watch.md` underlay.
 
 **Inputs**: `<ISSUE_ID>`. Caller (`watch.md` § 2) routes here when `pane-poll` returns the `terminal-state-reached` tag.
 

@@ -2,7 +2,7 @@
 
 End-of-session unwind. Routes by tracked-entry kind, writes the summary file, marks master state terminated, archives state, and returns control to flightdeck's session loop. Issue entries keep the existing issue/PR/new-issue recommendation behavior from this markdown workflow; ad-hoc/workflow entries get a generic session summary with no issue-system side effects. Any TS helper under `lib/flightdeck-core/src/terminate/` owns the generic/empty summary path only — never replace the issue/PR/new-issue recommendation path with hard-coded TS output.
 
-Mode-aware boundary workflow. Generic-only sessions arrive from `workflows/session-watch.md` / `workflows/session-handle-prompt.md`; issue or mixed sessions arrive through `workflows/watch.md`, which adds issue summaries, merge history, and follow-up recommendations.
+Mode-aware boundary workflow. Generic-only sessions arrive from `workflows/shared/session-watch.md` / `workflows/shared/session-handle-prompt.md`; issue or mixed sessions arrive through `workflows/linear/watch.md`, which adds issue summaries, merge history, and follow-up recommendations.
 
 **Inputs**: master state after debounce confirms every tracked entry is terminal enough to end the session.
 
@@ -297,7 +297,7 @@ On launch:
    ```
    linear issues update <ISSUE_ID> --status Todo
    ```
-2. Invoke the spawn path: `⤵ workflows/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck start <ISSUE_ID>` would take).
+2. Invoke the spawn path: `⤵ workflows/linear/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck start <ISSUE_ID>` would take).
 3. The new pane is added to the registry; the watch loop's next cycle picks it up.
 4. Re-enter `watch.md § 2`. Do NOT proceed to § 9 (Pane Lifecycle) — session continues.
 
@@ -315,4 +315,4 @@ Do **not** close any additional panes here. Terminal issue windows were already 
 
 ## Returns
 
-To flightdeck's session loop (`workflows/start.md` or `workflows/session-watch.md`), after summary emission and state archive.
+To flightdeck's session loop (`workflows/linear/start.md` or `workflows/shared/session-watch.md`), after summary emission and state archive.

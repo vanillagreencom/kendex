@@ -201,13 +201,13 @@ Limitations:
 
 Relevant files:
 
-- `skills/flightdeck/workflows/session-watch.md`
-- `skills/flightdeck/workflows/watch.md`
-- `skills/flightdeck/workflows/session-handle-prompt.md`
-- `skills/flightdeck/workflows/handle-prompt.md`
-- `skills/flightdeck/workflows/merge-plan.md`
-- `skills/flightdeck/workflows/close-issue.md`
-- `skills/flightdeck/workflows/terminate.md`
+- `skills/flightdeck/workflows/shared/session-watch.md`
+- `skills/flightdeck/workflows/linear/watch.md`
+- `skills/flightdeck/workflows/shared/session-handle-prompt.md`
+- `skills/flightdeck/workflows/linear/handle-prompt.md`
+- `skills/flightdeck/workflows/linear/merge-plan.md`
+- `skills/flightdeck/workflows/linear/close-issue.md`
+- `skills/flightdeck/workflows/linear/terminate.md`
 
 Current model:
 
