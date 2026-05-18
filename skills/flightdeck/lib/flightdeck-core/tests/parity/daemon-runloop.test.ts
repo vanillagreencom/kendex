@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-daemon");
+const PANE_REGISTRY = resolve(HERE, "../../../../scripts/pane-registry");
 
 const INSIDE_TMUX = !!process.env.TMUX_PANE;
 
@@ -47,6 +48,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<bool
 
 let stateDir = "";
 let innerPaneId = "";
+let extraPaneIds: string[] = [];
 const SESSION = process.env.TMUX ? spawnSync("tmux", ["display-message", "-p", "#{session_id}"], { encoding: "utf8" }).stdout.trim() : "";
 const SESSION_NAME = process.env.TMUX ? spawnSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" }).stdout.trim() : "";
 const SESSION_KEY = SESSION ? `s${SESSION.replace(/^\$/, "")}` : "";
@@ -63,6 +65,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	for (const paneId of extraPaneIds) tmuxKillPaneFor(paneId);
+	extraPaneIds = [];
 	if (innerPaneId) { tmuxKillPaneFor(innerPaneId); innerPaneId = ""; }
 	if (stateDir) { rmSync(stateDir, { recursive: true, force: true }); stateDir = ""; }
 });
@@ -74,8 +78,27 @@ function runDaemon(action: string, extra: string[] = [], useTs = true): { status
 }
 
 function daemonEnv(useTs = true): Record<string, string> {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
+	const env: Record<string, string> = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_STATE_DIR: stateDir, FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "2" };
 	return env;
+}
+
+function runRegistry(args: string[], extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
+	const env = { ...daemonEnv(true), ...extraEnv };
+	const r = spawnSync(PANE_REGISTRY, args, { encoding: "utf8", env });
+	return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function registerPane(entryId: string, paneId: string): void {
+	const r = runRegistry([
+		"init-entry", entryId,
+		"--title", entryId,
+		"--kind", "adhoc",
+		"--cwd", process.cwd(),
+		"--window", "1",
+		"--harness", "pi",
+		"--pane-id", paneId,
+	]);
+	expect(r.status).toBe(0);
 }
 
 describe("daemon run-loop (TS)", () => {
@@ -255,6 +278,29 @@ describe("daemon run-loop (TS)", () => {
 		spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
 	}, 15000);
 
+	test("from-handoff startup warns and drops stale inner panes instead of exiting", async () => {
+		const stalePane = tmuxNewWindow(SESSION, `fd-stale-handoff-${Date.now()}`);
+		tmuxKillPaneFor(stalePane);
+		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+		const child = spawn(
+			SCRIPT,
+			["start", "--session", SESSION_NAME, "--master", MASTER_PANE, "--inner", `${stalePane},${innerPaneId}`, "--inner-harnesses", "pi,pi", "--foreground", "--from-handoff"],
+			{ env: daemonEnv(true), stdio: ["ignore", "ignore", "pipe"] },
+		);
+		try {
+			const started = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[start]"));
+			expect(started).toBe(true);
+			expect(child.exitCode).toBeNull();
+			const logText = readFileSync(logFile, "utf8");
+			expect(logText).toContain(`[handoff-inner-stale] dropping stale handoff inner pane '${stalePane}' (cannot resolve)`);
+			expect(logText).toContain(`inner_ids=${innerPaneId}`);
+		} finally {
+			try { child.kill("SIGTERM"); } catch { /* */ }
+			runDaemon("stop");
+			await sleep(200);
+		}
+	}, 10000);
+
 	test("FD_MAX_LIFETIME successor preserves state across handoff (round-5 #1 + round-4 #3)", async () => {
 		// Pre-fix bugs (round-4 #3): shell wrapper put log path in $@
 		// → 'nohup tried to run log file as command'. successor's
@@ -271,8 +317,8 @@ describe("daemon run-loop (TS)", () => {
 		// This test seeds all three state files BEFORE the rollover
 		// and asserts they still exist with their seeded content
 		// AFTER the handoff completes.
-		const env = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FD_MAX_LIFETIME: "2", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "5" } as Record<string, string>;
-			const r = spawnSync(SCRIPT, ["start", "--session", SESSION_NAME, "--master", MASTER_PANE, "--inner", innerPaneId], { encoding: "utf8", env });
+		const env = { ...(process.env as Record<string, string>), FD_STATE_DIR: stateDir, FLIGHTDECK_STATE_DIR: stateDir, FD_MAX_LIFETIME: "2", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "5" } as Record<string, string>;
+		const r = spawnSync(SCRIPT, ["start", "--session", SESSION_NAME, "--master", MASTER_PANE, "--inner", innerPaneId], { encoding: "utf8", env });
 		expect(r.status).toBe(0);
 		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
 		const hbFile = join(stateDir, `fd-daemon-${SESSION_KEY}.heartbeat`);
@@ -344,6 +390,45 @@ describe("daemon run-loop (TS)", () => {
 		runDaemon("stop");
 		await sleep(300);
 	}, 10000);
+
+	test("FD_MAX_LIFETIME handoff re-queries live registry panes and drops stale inner panes", async () => {
+		const paneB = tmuxNewWindow(SESSION, `fd-handoff-b-${Date.now()}`);
+		const paneC = tmuxNewWindow(SESSION, `fd-handoff-c-${Date.now()}`);
+		extraPaneIds.push(paneB, paneC);
+		registerPane("handoff-a", innerPaneId);
+		registerPane("handoff-b", paneB);
+		registerPane("handoff-c", paneC);
+
+		const env = { ...daemonEnv(true), FD_MAX_LIFETIME: "2", FD_POLL_SEC: "1", FD_HEARTBEAT_TICKS: "5" } as Record<string, string>;
+		const innerCsv = [innerPaneId, paneB, paneC].join(",");
+		const r = spawnSync(SCRIPT, ["start", "--session", SESSION_NAME, "--master", MASTER_PANE, "--inner", innerCsv, "--inner-harnesses", "pi,pi,pi"], { encoding: "utf8", env });
+		expect(r.status).toBe(0);
+		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+		const initialPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+		expect(initialPid).toBeGreaterThan(0);
+
+		tmuxKillPaneFor(paneB);
+		tmuxKillPaneFor(paneC);
+
+		const successorStarted = await waitFor(() => {
+			if (!existsSync(pidFile)) return false;
+			const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			return pid > 0 && pid !== initialPid && pidAlive(pid);
+		}, 9000);
+		expect(successorStarted).toBe(true);
+
+		const successorPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+		expect(successorPid).not.toBe(initialPid);
+		expect(pidAlive(successorPid)).toBe(true);
+		const logText = readFileSync(logFile, "utf8");
+		expect(logText).toContain(`[handoff-inner-live] panes=1 inner=${innerPaneId} harnesses=pi`);
+		expect(logText).not.toContain(`Error: cannot resolve inner pane '${paneB}'`);
+		expect(logText).not.toContain(`Error: cannot resolve inner pane '${paneC}'`);
+
+		runDaemon("stop");
+		await sleep(300);
+	}, 12000);
 
 	test("ack drains events + clears wake-pending atomically", async () => {
 		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId]);

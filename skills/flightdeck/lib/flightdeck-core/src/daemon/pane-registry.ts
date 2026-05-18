@@ -52,6 +52,46 @@ export function paneRegistryRows(bin: string): Record<string, unknown>[] {
 	} catch { return []; }
 }
 
+function splitCsv(csv: string, opts: { preserveEmpty?: boolean } = {}): string[] {
+	const trimmed = csv.trim();
+	if (!trimmed) return [];
+	const items = trimmed.split(",").map((item) => item.trim());
+	return opts.preserveEmpty ? items : items.filter(Boolean);
+}
+
+function paneRegistryListFormat(bin: string, format: string, opts: { preserveEmpty?: boolean } = {}): { ok: boolean; values: string[]; error?: string } {
+	if (!bin) return { ok: false, values: [], error: "pane-registry binary missing" };
+	const r = spawnSync(bin, ["list", "--format", format], { encoding: "utf8" });
+	if (r.status !== 0 || r.error) {
+		const stderr = (r.stderr ?? "").trim();
+		const error = r.error ? r.error.message : `exit ${r.status ?? "unknown"}${stderr ? `: ${stderr}` : ""}`;
+		return { ok: false, values: [], error };
+	}
+	return { ok: true, values: splitCsv(r.stdout ?? "", opts) };
+}
+
+export interface LiveInnerArgsForHandoff {
+	innerTargets: string[];
+	innerHarnesses: string[];
+	warnings: string[];
+}
+
+export function liveInnerArgsForHandoff(bin: string): LiveInnerArgsForHandoff {
+	const warnings: string[] = [];
+	const panes = paneRegistryListFormat(bin, "inner-panes-live");
+	if (!panes.ok) warnings.push(`pane-registry list --format inner-panes-live failed: ${panes.error ?? "unknown error"}`);
+	const harnesses = paneRegistryListFormat(bin, "inner-harnesses-live", { preserveEmpty: true });
+	if (!harnesses.ok) warnings.push(`pane-registry list --format inner-harnesses-live failed: ${harnesses.error ?? "unknown error"}`);
+
+	const innerTargets = panes.ok ? panes.values : [];
+	let innerHarnesses = harnesses.ok ? harnesses.values : [];
+	if (innerHarnesses.length > 0 && innerHarnesses.length !== innerTargets.length) {
+		warnings.push(`live inner harness count ${innerHarnesses.length} did not match pane count ${innerTargets.length}; dropping harness override`);
+		innerHarnesses = [];
+	}
+	return { innerTargets, innerHarnesses, warnings };
+}
+
 export function resolvePaneTargetForEntry(bin: string, paneId: string): string {
 	if (!paneId) return "";
 	for (const row of paneRegistryRows(bin)) {

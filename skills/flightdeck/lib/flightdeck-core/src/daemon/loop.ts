@@ -68,6 +68,7 @@ import {
 import {
 	entryKindForPane,
 	extractFlag,
+	liveInnerArgsForHandoff,
 	listTrackedEntriesForReconcile,
 	resolveMeta,
 	resolvePaneTargetForEntry,
@@ -116,6 +117,7 @@ export interface RunLoopOpts {
 	masterTurnTtl: number;
 	verbose: boolean;
 	debugPane: string;
+	fromHandoff: boolean;
 	scriptPath: string;
 	origArgs: string[];
 	paneRegistryBin: string;    // path to pane-registry executable for resolve_*_meta
@@ -185,6 +187,10 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		const t = opts.innerTargets[i]!;
 		const id = resolvePaneId(t);
 		if (!id) {
+			if (opts.fromHandoff) {
+				warn("handoff-inner-stale", `dropping stale handoff inner pane '${t}' (cannot resolve)`);
+				continue;
+			}
 			process.stderr.write(`Error: cannot resolve inner pane '${t}'\n`);
 			process.exit(2);
 		}
@@ -428,8 +434,18 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const elapsed = Math.floor(Date.now() / 1000) - startEpoch;
 			if (elapsed >= opts.maxLifetime) {
 				log("max-lifetime", `elapsed=${elapsed}s >= MAX_LIFETIME=${opts.maxLifetime}s; spawn successor (TS option-A divergence from bash's exec-in-place)`);
+				const handoff = liveInnerArgsForHandoff(opts.paneRegistryBin);
+				for (const message of handoff.warnings) warn("handoff-inner-live-warn", message);
+				log("handoff-inner-live", `panes=${handoff.innerTargets.length} inner=${handoff.innerTargets.join(",") || "(empty)"} harnesses=${handoff.innerHarnesses.join(",") || "(empty)"}`);
 				const { maxLifetimeExec } = require("./lifecycle.ts") as typeof import("./lifecycle.ts");
-				maxLifetimeExec({ activity, scriptPath: opts.scriptPath, origArgs: opts.origArgs, logFile });
+				maxLifetimeExec({
+					activity,
+					scriptPath: opts.scriptPath,
+					origArgs: opts.origArgs,
+					logFile,
+					handoffInnerTargets: handoff.innerTargets,
+					handoffInnerHarnesses: handoff.innerHarnesses,
+				});
 			}
 		}
 

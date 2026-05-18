@@ -32,7 +32,7 @@ import { emitDaemonStarted, resolveDaemonActivityContext } from "./activity.ts";
 import { runLoop, type RunLoopOpts } from "./loop.ts";
 import { PaneCache, resolvePaneId } from "./pane-meta.ts";
 
-export interface StartOpts extends Omit<RunLoopOpts, "scriptPath" | "origArgs"> {
+export interface StartOpts extends Omit<RunLoopOpts, "scriptPath" | "origArgs" | "fromHandoff"> {
 	foreground: boolean;
 	spawnMode: "detach" | "tmux-window";
 	scriptPath: string;
@@ -330,6 +330,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 		masterTurnTtl: opts.masterTurnTtl,
 		verbose: opts.verbose,
 		debugPane: opts.debugPane,
+		fromHandoff: opts.fromHandoff,
 		scriptPath: opts.scriptPath,
 		origArgs: opts.origArgs,
 		paneRegistryBin: opts.paneRegistryBin,

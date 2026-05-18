@@ -180,6 +180,34 @@ export interface MaxLifetimeExecOpts {
 	origArgs: string[];
 	logFile: string;
 	activity?: DaemonActivityContext;
+	handoffInnerTargets?: string[];
+	handoffInnerHarnesses?: string[];
+}
+
+function replaceArgValue(args: string[], flag: string, value: string): string[] {
+	const out: string[] = [];
+	let replaced = false;
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i]!;
+		if (arg === flag) {
+			if (!replaced) {
+				out.push(flag, value);
+				replaced = true;
+			}
+			i += 1;
+			continue;
+		}
+		if (arg.startsWith(`${flag}=`)) {
+			if (!replaced) {
+				out.push(flag, value);
+				replaced = true;
+			}
+			continue;
+		}
+		out.push(arg);
+	}
+	if (!replaced) out.push(flag, value);
+	return out;
 }
 
 export function maxLifetimeExec(opts: MaxLifetimeExecOpts): never {
@@ -198,7 +226,14 @@ export function maxLifetimeExec(opts: MaxLifetimeExecOpts): never {
 	// knows to skip the fresh-start wipe (round-5 #1 — the parent
 	// preserved wake-pending/events/wake-events.log for us).
 	const SKIP = new Set(["--in-tmux-window", "--foreground", "--no-detach", "--from-handoff"]);
-	const childArgs = ["start", ...origArgs.filter((a) => !SKIP.has(a)), "--foreground", "--from-handoff"];
+	let handoffArgs = origArgs.filter((a) => !SKIP.has(a));
+	if (opts.handoffInnerTargets) {
+		handoffArgs = replaceArgValue(handoffArgs, "--inner", opts.handoffInnerTargets.join(","));
+	}
+	if (opts.handoffInnerHarnesses) {
+		handoffArgs = replaceArgValue(handoffArgs, "--inner-harnesses", opts.handoffInnerHarnesses.join(","));
+	}
+	const childArgs = ["start", ...handoffArgs, "--foreground", "--from-handoff"];
 
 	// Shell wrapper: $1 is the log path; shift it out of $@ before
 	// exec so 'nohup "$@"' runs the script + args (not the log file).

@@ -153,6 +153,7 @@ if (action === "start") {
 		let masterTarget = "";
 		let masterHarness = "";
 		let innerTargetsCsv = "";
+		let sawInner = false;
 		let innerHarnessesCsv = "";
 		let foreground = false;
 		let spawnMode: "detach" | "tmux-window" = (process.env.FD_SPAWN_MODE === "tmux-window") ? "tmux-window" : "detach";
@@ -168,7 +169,7 @@ if (action === "start") {
 			switch (a) {
 				case "--master": masterTarget = args[++i] ?? ""; break;
 				case "--master-harness": masterHarness = args[++i] ?? ""; break;
-				case "--inner": innerTargetsCsv = args[++i] ?? ""; break;
+				case "--inner": sawInner = true; innerTargetsCsv = args[++i] ?? ""; break;
 				case "--inner-harnesses": innerHarnessesCsv = args[++i] ?? ""; break;
 				case "--foreground":
 				case "--no-detach": foreground = true; break;
@@ -178,7 +179,7 @@ if (action === "start") {
 				default: die(`unknown arg: ${a}`);
 			}
 		}
-		if (!masterTarget || !innerTargetsCsv) die("start needs --master and --inner");
+		if (!masterTarget || !sawInner) die("start needs --master and --inner");
 		if (!sessionId) die(`Error: tmux session '${sessionName}' not found`);
 
 		const pollSec = Number.parseInt(process.env.FD_POLL_SEC ?? "2", 10) || 2;
