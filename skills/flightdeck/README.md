@@ -118,16 +118,7 @@ flightdeck-dashboard tui --session <name> # past or current session
 flightdeck-dashboard tui --demo           # demo data
 ```
 
-Useful keys:
-
-- `?` — help.
-- `T` — theme picker.
-- `/` — filter.
-- `Enter` — detail popup for selected row.
-- `p` — pricing-source detail.
-- `g` — focus selected pane, with confirmation unless quick focus is enabled.
-- `D` — prune stale row, with confirmation.
-- `Alt+M` — compact mode.
+For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
 
 ## High-level architecture
 
