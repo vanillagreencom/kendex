@@ -27,6 +27,7 @@ import {
 	readTrackedEntries,
 	validateDomainIssueId,
 	validateEntryId,
+	validateTrackedEntryDomain,
 } from "../state/tracked-entry.ts";
 import { ActivityValidationError } from "../activity/types.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
@@ -83,6 +84,7 @@ switch (action) {
 		if (rest.length < 2) die("Usage: set <field> <json-value>");
 		const field = normalizePath(rest[0]!);
 		const before = readDirectStateEntry(field);
+		validateDomainSetMutation(field, rest[1]!);
 		updateState(file, `${field} = (${rest[1]})`);
 		emitDirectStateChange(field, before);
 		emitMergePlanChange(field);
@@ -151,6 +153,73 @@ function writeTrackedEntryFilter(id: string, entry: TrackedEntry): string {
 	const idJson = JSON.stringify(id);
 	const entryJson = JSON.stringify(entry);
 	return `.entries = ((.entries // {}) + {(${idJson}): ${entryJson}})`;
+}
+
+function parseDomainSetField(field: string): { id: string; path: string[] } | null {
+	const bracket = field.match(/^\.entries\[(.+)]\.domain(?:\.(.*))?$/);
+	if (bracket) {
+		try {
+			const parsed = JSON.parse(bracket[1]!);
+			if (typeof parsed !== "string" || !parsed) return null;
+			const rest = bracket[2] ? bracket[2]!.split(".").filter(Boolean) : [];
+			return { id: parsed, path: rest };
+		} catch {
+			return null;
+		}
+	}
+	const dotted = field.match(/^\.entries\.([A-Za-z0-9._-]+)\.domain(?:\.(.*))?$/);
+	if (!dotted) return null;
+	return { id: dotted[1]!, path: dotted[2] ? dotted[2]!.split(".").filter(Boolean) : [] };
+}
+
+function cloneRecord(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function applyDomainPath(domain: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
+	if (path.length === 0) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("domain must be an object or null");
+		return cloneRecord(value);
+	}
+	if (!new Set(["issue", "github_issue", "plan_item"]).has(path[0]!)) return domain;
+	let cursor: Record<string, unknown> = domain;
+	for (let i = 0; i < path.length - 1; i += 1) {
+		const key = path[i]!;
+		const next = cursor[key];
+		if (!next || typeof next !== "object" || Array.isArray(next)) cursor[key] = {};
+		cursor = cursor[key] as Record<string, unknown>;
+	}
+	cursor[path[path.length - 1]!] = value;
+	return domain;
+}
+
+function validateDomainSetMutation(field: string, jsonValue: string): void {
+	const parsedField = parseDomainSetField(field);
+	if (!parsedField || !existsSync(file)) return;
+	let value: unknown;
+	try {
+		value = JSON.parse(jsonValue);
+	} catch {
+		die(`Error: invalid domain mutation for entry ${parsedField.id}: json-value must be valid JSON`);
+	}
+	let state: FlightdeckStateLike;
+	try {
+		state = readStateJson();
+	} catch {
+		return;
+	}
+	const entries = state.entries;
+	if (!entries || typeof entries !== "object" || Array.isArray(entries)) return;
+	const entry = (entries as Record<string, unknown>)[parsedField.id];
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+	const candidateDomain = applyDomainPath(cloneRecord((entry as Record<string, unknown>).domain), parsedField.path, value);
+	try {
+		validateTrackedEntryDomain({ domain: candidateDomain });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		die(`Error: invalid domain mutation for entry ${parsedField.id}: ${message}`);
+	}
 }
 
 function readStateJson(): FlightdeckStateLike {

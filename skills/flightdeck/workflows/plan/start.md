@@ -36,9 +36,15 @@ Rules:
 - Branch name matches the worktree name.
 - Optional `### Depends on` body names other H2 titles or item ids. Normalize each dependency to an `item_id`.
 - Section content excluding only the optional `### Worktree` and `### Depends on` subsections becomes the child brief. Other H3 subsections remain part of the brief.
-- Detect cycles before creating any worktree. On cycle, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-cycle", prompt_text:<cycle>}` and stop.
 
-Before creating any worktree or entry, print a dry-run preview and ask the user to confirm.
+Validate the plan graph before dry-run preview and before any worktree, state, or pane mutation:
+
+1. Require at least one H2 work item. If none, set `paused_for_user = {entry_id:"plan", reason:"plan-parse-invalid", prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"}` and stop.
+2. Resolve every `Depends on` token against known H2 titles and slug ids. If any token fails, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-unresolved", prompt_text:"<ITEM_ID> depends on '<BAD_NAME>' which doesn't match any H2"}` and stop.
+3. Reject self-dependencies. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-self-dependency", prompt_text:"<ITEM_ID> depends on itself"}` and stop.
+4. Detect cycles. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-cycle", prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"}` and stop.
+
+Only after graph validation passes, print a dry-run preview and ask the user to confirm.
 
 <parse_preview_format>
 Plan: [PLAN_TITLE]
@@ -88,17 +94,23 @@ Minimum tracked-entry shape:
 
 ## § 4: Spawn dependency-free items
 
-For each item with no unmet dependencies, in dependency-graph topological order:
+For each item with no unmet dependencies, in dependency-graph topological order, run an independent transaction. A single item failure does not halt the rest of `plan start`.
 
-1. Run the worktree preflight:
+1. Before any worktree mutation, atomically claim the item under the Flightdeck state-lock:
+   - Compare-and-swap `entry.state` from `waiting` to `spawning`.
+   - Refuse to spawn if `entry.domain.plan_item.pr_number !== null`.
+   - Refuse to spawn if `entry.domain.plan_item.merge_commit !== null`.
+   - Refuse to spawn if a live pane is already registered for this entry.
+   - On refusal, leave the entry unchanged, emit activity `plan-spawn-refused item=<ITEM_ID> reason=<reason>`, and continue to the next item.
+2. Run the worktree preflight:
    ```bash
    .agents/skills/worktree/scripts/worktree check
    ```
-2. Create or reuse the item worktree with the item worktree name as branch name:
+3. Create or reuse the item worktree with the item worktree name as branch name:
    ```bash
    WT_PATH=$(.agents/skills/worktree/scripts/worktree create <WORKTREE_NAME>)
    ```
-3. Create `<WT_PATH>/tmp/brief.md` atomically. The file body must be:
+4. Create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The file body must be:
 
    ```markdown
    # Plan: <PLAN_TITLE>
@@ -112,7 +124,7 @@ For each item with no unmet dependencies, in dependency-graph topological order:
    <SECTION_CONTENT_FROM_PLAN_FILE>
    ```
 
-4. Spawn through Flightdeck's native session launcher. Do not hand-roll tmux or harness commands:
+5. Spawn through Flightdeck's native session launcher and check the return code. Do not hand-roll tmux or harness commands:
    ```bash
    .agents/skills/flightdeck/scripts/flightdeck-session start \
      --session-id <ITEM_ID> \
@@ -122,8 +134,14 @@ For each item with no unmet dependencies, in dependency-graph topological order:
      --kind workflow \
      --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."
    ```
-5. Immediately write `entry.domain.plan_item` onto the spawned entry, preserving the launch/adapter metadata that `flightdeck-session` recorded.
-6. Set `state="submitting"` and `domain.plan_item.phase="in-progress"`.
+6. Re-register / restore `entry.domain.plan_item` onto the spawned entry while preserving the launch/adapter metadata that `flightdeck-session` recorded. The entry remains claimed as `state="spawning"` until this write succeeds.
+7. Transition item to in-progress: set `state="submitting"` and `domain.plan_item.phase="in-progress"`.
+8. On any failure in steps 2-7:
+   - Remove `<WT_PATH>/tmp/brief.md` if it was written.
+   - Kill the spawned pane if `flightdeck-session start` succeeded but the entry could not be re-registered.
+   - Mark the entry `state="failed"` with `domain.plan_item.error = {phase:"<PHASE>", reason:"<REASON>", stderr:"<STDERR>"}`.
+   - Emit activity `plan-spawn-failed item=<ITEM_ID> phase=<PHASE> reason=<REASON>`.
+   - Continue to the next dependency-free item.
 
 This spawn shape is the recursion guard: child prompts contain implementation work only. They must not invoke master-side Flightdeck plan workflows.
 

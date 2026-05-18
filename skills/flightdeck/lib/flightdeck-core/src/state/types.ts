@@ -1,11 +1,13 @@
 export type TrackedEntryState =
 	| "waiting"
+	| "spawning"
 	| "prompting"
 	| "submitting"
 	| "ready"
 	| "complete"
 	| "cancelled"
 	| "dead"
+	| "failed"
 	// Issue-mode lifecycle states (issue-mode workflows tag kind=issue
 	// entries with these; renderers and handlers treat them as terminal
 	// or near-terminal alongside the generic enum).

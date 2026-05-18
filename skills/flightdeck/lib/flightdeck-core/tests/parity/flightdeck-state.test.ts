@@ -304,6 +304,56 @@ describe("flightdeck-state CLI", () => {
 		expect(missingMergeCommit.stderr).toContain("invalid domain.plan_item.merge_commit: missing required key");
 	});
 
+	test("raw set rejects adding plan_item beside Linear issue domain", () => {
+		const entry = sampleTrackedEntry();
+		const plan = samplePlanEntry().domain!.plan_item!;
+		run(repo, ["init"]);
+		expect(run(repo, ["write-entry", entry.id, JSON.stringify(entry)]).status).toBe(0);
+		const r = run(repo, ["set", `.entries[${JSON.stringify(entry.id)}].domain.plan_item`, JSON.stringify(plan)]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("invalid domain mutation");
+		expect(r.stderr).toContain("mutually exclusive");
+		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
+		expect(tracked[entry.id]?.domain?.plan_item).toBeUndefined();
+	});
+
+	test("raw set rejects adding plan_item beside GitHub issue domain", () => {
+		const github: TrackedEntry = {
+			domain: { github_issue: { merge_commit: null, number: 77, pr_number: null, url: "https://github.com/OWNER/REPO/issues/77", worktree: "/repo/trees/issue-77" } },
+			id: "77",
+			kind: "issue",
+			state: "waiting",
+		};
+		const plan = samplePlanEntry().domain!.plan_item!;
+		run(repo, ["init"]);
+		expect(run(repo, ["write-entry", github.id, JSON.stringify(github)]).status).toBe(0);
+		const r = run(repo, ["set", `.entries[${JSON.stringify(github.id)}].domain.plan_item`, JSON.stringify(plan)]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("invalid domain mutation");
+		expect(r.stderr).toContain("mutually exclusive");
+		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
+		expect(tracked[github.id]?.domain?.plan_item).toBeUndefined();
+	});
+
+	test("raw set rejects all three domain keys at once", () => {
+		const entry = samplePlanEntry();
+		const allDomains = {
+			github_issue: { merge_commit: null, number: 77, pr_number: null, url: "https://github.com/OWNER/REPO/issues/77", worktree: "/repo/trees/issue-77" },
+			issue: sampleTrackedEntry().domain!.issue!,
+			plan_item: entry.domain!.plan_item!,
+		};
+		run(repo, ["init"]);
+		expect(run(repo, ["write-entry", entry.id, JSON.stringify(entry)]).status).toBe(0);
+		const r = run(repo, ["set", `.entries[${JSON.stringify(entry.id)}].domain`, JSON.stringify(allDomains)]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("invalid domain mutation");
+		expect(r.stderr).toContain("domain.issue, domain.github_issue, domain.plan_item are mutually exclusive");
+		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
+		expect(tracked[entry.id]?.domain?.issue).toBeUndefined();
+		expect(tracked[entry.id]?.domain?.github_issue).toBeUndefined();
+		expect(tracked[entry.id]?.domain?.plan_item?.item_id).toBe("item-one");
+	});
+
 	test("pi owner discovery failure warns and persists discovery_error", () => {
 		const r = run(repo, ["init"], {
 			FLIGHTDECK_OWNER_HARNESS: "pi",

@@ -5,7 +5,7 @@ End-of-session unwind for plan item entries. Generic session entries still use t
 **Inputs**: master state after debounce confirms terminal entries.
 
 **Pre-conditions**:
-- `plan/watch.md` confirmed plan entries are terminal (`merged | aborted | dead`).
+- `plan/watch.md` confirmed plan entries are terminal (`merged | aborted | failed | dead`).
 - Generic entries, if any, are terminal enough for `workflows/shared/session-watch.md`.
 
 **Post-condition**: `<FLIGHTDECK_STATE_DIR>/flightdeck-summary-<SESSION>-<TS>.md` written, master state terminated/archived, user-visible summaries emitted.
@@ -57,7 +57,7 @@ For each plan entry:
 | `item_id` | `domain.plan_item.item_id` |
 | `item_title` | `domain.plan_item.item_title` |
 | `depends_on` | `domain.plan_item.depends_on` |
-| `state` | entry state (`merged | aborted | dead`) |
+| `state` | entry state (`merged | aborted | failed | dead`) |
 | `pr_number` | `domain.plan_item.pr_number` |
 | `merge_commit` | `domain.plan_item.merge_commit`; if missing and state is merged, `gh pr view <PR> --json mergeCommit` with retry policy |
 | `worktree` | `domain.plan_item.worktree` |
@@ -110,6 +110,7 @@ Source: <PLAN_PATH>
 ## Plan Counts
 - Merged: <N>
 - Aborted: <N>
+- Failed: <N>
 - Dead: <N>
 - Follow-ups: <N>
 ```
@@ -148,7 +149,7 @@ Emit generic block first when applicable, then plan block.
 
 | Item | State | PR | Merge commit | Decisions | Depends on |
 |------|-------|----|--------------|-----------|------------|
-| [ITEM_ID] | [merged | aborted | dead] | #[PR or —] | [SHORT_SHA or —] | [N] | [ITEM_ID, ... or —] |
+| [ITEM_ID] | [merged | aborted | failed | dead] | #[PR or —] | [SHORT_SHA or —] | [N] | [ITEM_ID, ... or —] |
 
 **Follow-ups**
 [If follow-ups exist:]
@@ -157,7 +158,7 @@ Emit generic block first when applicable, then plan block.
 [If none:]
 - None recorded.
 
-**Counts**: [N] merged · [N] aborted · [N] dead · [N] follow-ups
+**Counts**: [N] merged · [N] aborted · [N] failed · [N] dead · [N] follow-ups
 
 Summary file: `<FLIGHTDECK_STATE_DIR>/flightdeck-summary-<SESSION>-<TS>.md`
 </plan_output_format>

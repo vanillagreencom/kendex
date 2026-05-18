@@ -27,7 +27,7 @@ metadata:
 
 ## Dependency modes
 
-Core Flightdeck is a generic session manager. It needs tmux and the harness adapter for each tracked pane; GitHub, Linear, project-management, and worktree skills are issue-mode dependencies only.
+Core Flightdeck is a generic session manager. It needs tmux and the harness adapter for each tracked pane; GitHub, Linear, project-management, and worktree skills load only when an issue or plan lane needs them.
 
 | Lane | Load | Do not load |
 |------|------|-------------|

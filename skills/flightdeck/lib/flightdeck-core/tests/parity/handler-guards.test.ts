@@ -17,6 +17,7 @@ const PLAN_START_DOC = resolve(HERE, "../../../../workflows/plan/start.md");
 const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.md");
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
 const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
+const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -137,7 +138,7 @@ describe("handler domain guards", () => {
 	});
 
 	test("plan lane spawn docs forbid supervisor recursion and use native session launcher", () => {
-		const docs = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC]
+		const docs = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC, PLAN_TERMINATE_DOC]
 			.map((path) => readFileSync(path, "utf8"));
 		const combined = docs.join("\n---\n");
 		expect(combined).toContain("flightdeck-session start");
@@ -164,12 +165,51 @@ describe("handler domain guards", () => {
 	});
 
 	test("plan lane workflow prose uses placeholders instead of copied literals", () => {
-		const combined = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC]
+		const combined = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC, PLAN_TERMINATE_DOC]
 			.map((path) => readFileSync(path, "utf8"))
 			.join("\n");
 		expect(combined).toContain("<ITEM_ID>");
 		expect(combined).toContain("<PR>");
 		expect(combined).not.toContain("vanillagreencom/vstack");
 		expect(combined).not.toMatch(/issue-120|#120|\b120\b/);
+	});
+
+	test("plan start validates graph before dry-run or mutation", () => {
+		const doc = readFileSync(PLAN_START_DOC, "utf8");
+		expect(doc.indexOf("Validate the plan graph before dry-run preview")).toBeLessThan(doc.indexOf("<parse_preview_format>"));
+		expect(doc).toContain('reason:"plan-parse-invalid"');
+		expect(doc).toContain('prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"');
+		expect(doc).toContain('reason:"plan-dependency-unresolved"');
+		expect(doc).toContain("depends on '<BAD_NAME>' which doesn't match any H2");
+		expect(doc).toContain('reason:"plan-self-dependency"');
+		expect(doc).toContain('prompt_text:"<ITEM_ID> depends on itself"');
+		expect(doc).toContain('reason:"plan-dependency-cycle"');
+		expect(doc).toContain('prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"');
+	});
+
+	test("plan spawn docs require atomic claim and transactional failure handling", () => {
+		const start = readFileSync(PLAN_START_DOC, "utf8");
+		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
+		for (const doc of [start, watch]) {
+			expect(doc).toContain("Before any worktree mutation");
+			expect(doc).toContain("atomically claim");
+			expect(doc).toContain("state-lock");
+			expect(doc).toContain("from `waiting` to `spawning`");
+			expect(doc).toContain("entry.domain.plan_item.pr_number !== null");
+			expect(doc).toContain("entry.domain.plan_item.merge_commit !== null");
+			expect(doc).toContain("live pane is already registered");
+			expect(doc).toContain("state=\"failed\"");
+			expect(doc).toContain("domain.plan_item.error = {phase");
+		}
+		expect(start).toContain("A single item failure does not halt the rest of `plan start`");
+		expect(start).toContain("Continue to the next dependency-free item");
+		expect(watch).toContain("continue to the next unblocked item");
+	});
+
+	test("plan watch handles gh pr create failure and missing PR URL", () => {
+		const doc = readFileSync(PLAN_WATCH_DOC, "utf8");
+		expect(doc).toContain("`gh pr view`, `gh pr edit`, `gh pr create`");
+		expect(doc).toContain('reason:"plan-pr-create-failed"');
+		expect(doc).toContain("child completed without PR URL");
 	});
 });

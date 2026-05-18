@@ -17,6 +17,7 @@ import type { ActivityEventInput } from "../activity/types.ts";
 import type { CloseIssueOutcome } from "../activity/workflow-emit.ts";
 import { cxAdapterIsFresh, cxSpawnFile } from "../paths/codex.ts";
 import { decideShellAdhocWake } from "../daemon/shell-adhoc-wake.ts";
+import { validateTrackedEntryDomain } from "../state/tracked-entry.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FD_STATE_SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
@@ -674,7 +675,7 @@ function emitDecisionRecorded(entry: EntryRecord, tag: string, answer: string, s
 function terminalActivity(state: string): { importance: "important"; severity: "success" | "warning" | "error"; summaryWord: string; type: string } | null {
 	if (state === "merged" || state === "complete") return { importance: "important", severity: "success", summaryWord: "completed", type: "entry.completed" };
 	if (state === "cancelled") return { importance: "important", severity: "warning", summaryWord: "cancelled", type: "entry.cancelled" };
-	if (state === "aborted" || state === "dead") return { importance: "important", severity: "error", summaryWord: "dead", type: "entry.dead" };
+	if (state === "aborted" || state === "dead" || state === "failed") return { importance: "important", severity: "error", summaryWord: "dead", type: "entry.dead" };
 	return null;
 }
 
@@ -739,12 +740,49 @@ function setEntryField(id: string, field: string, value: string): void {
 	const entry = entryById(id);
 	const kind = typeof entry?.kind === "string" ? entry.kind : "";
 	const domain = isRecord(entry?.domain) ? entry.domain : {};
+	validateRegistryDomainMutation(id, entry ?? {}, field, value);
 	if (ISSUE_DOMAIN_FIELDS.has(field) && (kind === "issue" || isRecord(domain.plan_item) || isRecord(domain.github_issue) || isRecord(domain.issue))) {
 		const target = isRecord(domain.github_issue) ? "github_issue" : isRecord(domain.plan_item) ? "plan_item" : "issue";
 		fdStateOrDie(["set", `.entries[${idJson}].domain.${target}.${field}`, value]);
 		return;
 	}
 	fdStateOrDie(["set", `.entries[${idJson}].${field}`, value]);
+}
+
+function cloneRecord(value: unknown): Record<string, unknown> {
+	if (!isRecord(value)) return {};
+	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function validateRegistryDomainMutation(id: string, entry: EntryRecord, field: string, jsonValue: string): void {
+	if (field !== "domain" && !field.startsWith("domain.")) return;
+	let value: unknown;
+	try {
+		value = JSON.parse(jsonValue);
+	} catch {
+		die(`pane-registry: invalid domain mutation for entry '${id}': json-value must be valid JSON`);
+	}
+	let candidateDomain = cloneRecord(entry.domain);
+	if (field === "domain") {
+		if (!isRecord(value)) die(`pane-registry: invalid domain mutation for entry '${id}': domain must be an object`);
+		candidateDomain = cloneRecord(value);
+	} else {
+		const path = field.slice("domain.".length).split(".").filter(Boolean);
+		if (!["issue", "github_issue", "plan_item"].includes(path[0] ?? "")) return;
+		let cursor: Record<string, unknown> = candidateDomain;
+		for (let i = 0; i < path.length - 1; i += 1) {
+			const key = path[i]!;
+			if (!isRecord(cursor[key])) cursor[key] = {};
+			cursor = cursor[key] as Record<string, unknown>;
+		}
+		cursor[path[path.length - 1]!] = value;
+	}
+	try {
+		validateTrackedEntryDomain({ domain: candidateDomain });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		die(`pane-registry: invalid domain mutation for entry '${id}': ${message}`);
+	}
 }
 
 function nestedRecord(obj: Record<string, unknown>, key: string): Record<string, unknown> {
@@ -838,7 +876,7 @@ function cmdGet(issue: string): void {
 // Tracked entry states. Generic lifecycle plus issue-mode lifecycle states
 // (merge-ready/merged/aborted) which still write here when issue-mode
 // workflows tag a kind=issue entry.
-const VALID_STATES = new Set(["waiting", "prompting", "submitting", "ready", "merge-ready", "merged", "aborted", "complete", "cancelled", "dead"]);
+const VALID_STATES = new Set(["waiting", "spawning", "prompting", "submitting", "ready", "merge-ready", "merged", "aborted", "failed", "complete", "cancelled", "dead"]);
 
 function cmdSetState(issue: string, state: string): void {
 	if (!issue || !state) die("Usage: set-state <ENTRY_ID> <state>");

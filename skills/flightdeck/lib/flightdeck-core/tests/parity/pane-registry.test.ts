@@ -340,6 +340,34 @@ describe("pane-registry parity", () => {
 		expect(entries["plan-item"]!.domain!.plan_item!.merge_commit).toBe("abc123");
 	});
 
+	test("setEntryField rejects raw domain mutations that create multiple domain keys", () => {
+		expect(run(tsRepo, [
+			"init-entry", "ISSUE-DOMAIN-MUTEX",
+			"--title", "Issue domain mutex",
+			"--kind", "issue",
+			"--cwd", "/tmp/wt-domain-mutex",
+			"--window", "46",
+			"--harness", "pi",
+			"--worktree", "/tmp/wt-domain-mutex",
+		]).status).toBe(0);
+		const planItem = {
+			depends_on: [],
+			item_id: "plan-item",
+			item_title: "Plan item",
+			merge_commit: null,
+			plan_path: "/repo/docs/plans/plan.md",
+			plan_title: "Plan title",
+			pr_number: null,
+			worktree: "/repo/trees/flightdeck-plan-plan-item",
+		};
+		const r = run(tsRepo, ["set", "ISSUE-DOMAIN-MUTEX", "domain.plan_item", JSON.stringify(planItem)]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("invalid domain mutation");
+		expect(r.stderr).toContain("mutually exclusive");
+		const entries = readEntries(tsRepo) as Record<string, { domain?: { plan_item?: unknown } }>;
+		expect(entries["ISSUE-DOMAIN-MUTEX"]!.domain!.plan_item).toBeUndefined();
+	});
+
 	test("adapter arg commands accept pane ids for generic entries", async () => {
 		const statePath = makeShimState(tsRepo, {
 			panes: {

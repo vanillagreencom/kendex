@@ -45,11 +45,13 @@ For each item id in the active plan graph:
 | Plan state | Generic equivalent | Domain fields |
 |------------|--------------------|---------------|
 | `waiting-on-dependency` | `waiting` | `domain.plan_item.phase = "waiting-on-dependency"` |
+| `spawning` | `spawning` | atomic spawn claim held; worktree/pane transaction in progress |
 | `in-progress` | `submitting` | child work in progress |
 | `prompting` | `prompting` | `substate=<tag>` |
 | `merge-ready` | `ready` | `domain.plan_item.phase = "merge-ready"` |
 | `merged` | `complete` | `domain.plan_item.phase = "merged"`, `merge_commit` set |
 | `aborted` | `cancelled` | `domain.plan_item.phase = "aborted"` |
+| `failed` | `failed` | `domain.plan_item.error = {phase, reason, stderr}` |
 | `dead` | `dead` | pane/window lost |
 
 ---
@@ -123,7 +125,7 @@ Strict force-merge predicate requires: `reviewDecision == "APPROVED"` (strict; d
 
 ## § 6: gh-CLI failure handling
 
-Every `gh pr view`, `gh pr edit`, and label/check inspection call in plan workflows follows the same failure policy:
+Every `gh pr view`, `gh pr edit`, `gh pr create`, and label/check inspection call in plan workflows follows the same failure policy:
 
 1. Retry once after 2s.
 2. On second failure, emit activity warning:
@@ -138,6 +140,8 @@ Every `gh pr view`, `gh pr edit`, and label/check inspection call in plan workfl
 4. Surface one chat/activity sidecar line: `GitHub CLI unavailable for plan item <ITEM_ID>; paused.`
 5. Do not merge, close, rebase, spawn dependents, or tear down while `gh` state is unavailable.
 
+If a child pane completes its turn without producing a valid PR URL, master treats this as failed PR creation even if the pane text says the implementation is done. Grep stdout/stderr for a PR URL, validate it as a GitHub pull URL, and on missing or malformed URL set `paused_for_user = {entry_id:<ITEM_ID>, reason:"plan-pr-create-failed", prompt_text:<captured stderr or "child completed without PR URL">}`.
+
 ---
 
 ## § 7: Dependency-edge resolution
@@ -148,12 +152,17 @@ After `workflows/plan/close-item.md` verifies an item merged:
 2. Verify the plan spec is still current enough to proceed:
    - `domain.plan_item.plan_path` exists.
    - Each merged dependency still has an entry with `domain.plan_item.phase == "merged"` and a live or already-archived worktree record.
-   - The dependent entry still has no `pane_id` or live pane.
-3. Create the dependent item's worktree.
-4. Write its `<worktree>/tmp/brief.md` from the frozen plan snapshot / stored section content.
-5. Spawn via `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."`.
-6. Update the tracked entry from waiting to `state="submitting"` and `domain.plan_item.phase="in-progress"`.
-7. Yield.
+3. Before any worktree mutation for a dependent item, atomically claim each unblocked item under the Flightdeck state-lock:
+   - Compare-and-swap `entry.state` from `waiting` to `spawning`.
+   - Refuse to spawn if `entry.domain.plan_item.pr_number !== null`.
+   - Refuse to spawn if `entry.domain.plan_item.merge_commit !== null`.
+   - Refuse to spawn if a live pane is already registered for this entry.
+4. Create the dependent item's worktree.
+5. Write its `<worktree>/tmp/brief.md` from the frozen plan snapshot / stored section content and check the write return code.
+6. Spawn via `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."` and check the return code.
+7. Re-register / restore `entry.domain.plan_item` while preserving launch metadata, then transition item to in-progress with `state="submitting"` and `domain.plan_item.phase="in-progress"`.
+8. On any create/write/spawn/register failure, remove the brief if written, kill any spawned-but-unregistered pane, mark `state="failed"` with `domain.plan_item.error = {phase:"<PHASE>", reason:"<REASON>", stderr:"<STDERR>"}`, emit activity, and continue to the next unblocked item.
+9. Yield.
 
 If multiple items become unblocked simultaneously, spawn them in dependency-graph topological order. Items without dependency overlap may spawn in parallel; overlapping items should stay sequential so conflict graphs remain readable.
 
@@ -184,7 +193,7 @@ Paused: [item id and reason, or —]
 ## § 9: Termination
 
 1. Count plan entries by `entry.domain.plan_item` presence.
-2. Terminal outcomes are `merged`, `aborted`, and `dead`.
+2. Terminal outcomes are `merged`, `aborted`, `failed`, and `dead`.
 3. At `FLIGHTDECK_DEBOUNCE_CYCLES` consecutive terminal cycles (default 2), invoke `⤵ workflows/plan/terminate.md`.
 4. Mixed sessions with Linear, GitHub issue, generic, and plan entries are partitioned by domain key; all applicable lane summaries are produced.
 
