@@ -93,6 +93,7 @@ Most sessions work with defaults. These are the knobs users most often change.
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | Change how long Flightdeck waits before considering force-merge for approved, green PRs stuck in GitHub `UNKNOWN` merge state. |
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default model for panes launched from `open-terminal` or `flightdeck-session --prompt`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default effort/thinking level for launched panes. |
+| `FLIGHTDECK_DISABLE_AUTO_RENAME` | `0` | Set `1` when spawned tmux window titles should stay fixed instead of letting harnesses rename them. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | `1` | Set `0` only when using local OpenCode shims that are not listed by `opencode models`. |
 | `FLIGHTDECK_STATE_DIR` | `tmp` | Change where Flightdeck writes session state inside the project. |
 | `FLIGHTDECK_DASHBOARD` | `1` | Set `0` to disable automatic dashboard launch. |
@@ -108,7 +109,7 @@ Full env reference: [`ENV.md`](./ENV.md).
 
 ## Dashboard
 
-The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked sessions, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners.
+The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked sessions, current tmux window names, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners.
 
 Useful commands:
 

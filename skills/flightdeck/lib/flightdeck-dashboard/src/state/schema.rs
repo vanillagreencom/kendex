@@ -55,6 +55,7 @@ pub struct TrackedEntry {
     pub harness: Option<String>,
     pub cwd: Option<PathBuf>,
     pub window: Option<String>,
+    pub window_name_current: Option<String>,
     pub pane_target: Option<String>,
     pub pane_id: Option<String>,
     pub launch: Option<LaunchInfo>,

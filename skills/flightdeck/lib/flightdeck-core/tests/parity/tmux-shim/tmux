@@ -82,6 +82,35 @@ format_new_window() {
   printf '%s\n' "$out"
 }
 
+format_pane() {
+  local fmt="$1" pane_id="$2" pane="$3" out session window_id window_name window_index pane_index path pane_pid bell activity silence in_mode
+  session=$(jq -r '.session' "$STATE_FILE")
+  window_id=$(jq -r '.window_id // empty' <<< "$pane")
+  window_name=$(jq -r '.window_name // empty' <<< "$pane")
+  window_index=$(jq -r '.window_index // empty' <<< "$pane")
+  pane_index=$(jq -r '.pane_index // empty' <<< "$pane")
+  path=$(jq -r '.path // empty' <<< "$pane")
+  pane_pid=$(jq -r '.pane_pid // empty' <<< "$pane")
+  bell=$(jq -r '.window_bell_flag // 0' <<< "$pane")
+  activity=$(jq -r '.window_activity_flag // 0' <<< "$pane")
+  silence=$(jq -r '.window_silence_flag // 0' <<< "$pane")
+  in_mode=$(jq -r '.pane_in_mode // 0' <<< "$pane")
+  out="$fmt"
+  out="${out//'#{pane_id}'/$pane_id}"
+  out="${out//'#{session_name}'/$session}"
+  out="${out//'#{window_name}'/$window_name}"
+  out="${out//'#{window_id}'/$window_id}"
+  out="${out//'#{window_index}'/$window_index}"
+  out="${out//'#{pane_index}'/$pane_index}"
+  out="${out//'#{pane_current_path}'/$path}"
+  out="${out//'#{pane_pid}'/$pane_pid}"
+  out="${out//'#{window_bell_flag}'/$bell}"
+  out="${out//'#{window_activity_flag}'/$activity}"
+  out="${out//'#{window_silence_flag}'/$silence}"
+  out="${out//'#{pane_in_mode}'/$in_mode}"
+  printf '%s\n' "$out"
+}
+
 subcmd="${1:-}"
 shift || true
 
@@ -115,6 +144,7 @@ case "$subcmd" in
     case "$format" in
       "#{window_id}")         jq -r '.window_id // empty' <<< "$pane" ;;
       "#{window_name}")       jq -r '.window_name // empty' <<< "$pane" ;;
+      "#W")                   jq -r '.window_name // empty' <<< "$pane" ;;
       "#{window_index}")      jq -r '.window_index // empty' <<< "$pane" ;;
       "#{pane_index}")        jq -r '.pane_index // empty' <<< "$pane" ;;
       "#{pane_pid}")          jq -r '.pane_pid // empty' <<< "$pane" ;;
@@ -151,7 +181,14 @@ case "$subcmd" in
         echo "shim: list-panes -a refused (TMUX_SHIM_FAIL_LIST_PANES_A=1)" >&2
         exit 1
       fi
-      jq -r '.panes | keys[]' "$STATE_FILE"
+      if [[ -n "$format" ]]; then
+        jq -r '.panes | keys[]' "$STATE_FILE" | while IFS= read -r pane_id; do
+          pane=$(jq -c --arg pane_id "$pane_id" '.panes[$pane_id]' "$STATE_FILE")
+          format_pane "$format" "$pane_id" "$pane"
+        done
+      else
+        jq -r '.panes | keys[]' "$STATE_FILE"
+      fi
       exit 0
     fi
     if [[ -n "$target" ]]; then
@@ -166,7 +203,13 @@ case "$subcmd" in
           echo "shim: no panes in window $target" >&2
           exit 1
         fi
-        [[ -n "$format" ]] && echo "$matches"
+        if [[ -n "$format" ]]; then
+          while IFS= read -r pane_id; do
+            [[ -n "$pane_id" ]] || continue
+            pane=$(jq -c --arg pane_id "$pane_id" '.panes[$pane_id]' "$STATE_FILE")
+            format_pane "$format" "$pane_id" "$pane"
+          done <<< "$matches"
+        fi
         exit 0
       fi
       # Target by pane_id or pane_target string.
@@ -175,7 +218,10 @@ case "$subcmd" in
         echo "shim: pane $target not found" >&2
         exit 1
       fi
-      [[ -n "$format" ]] && resolve_pane_id "$target"
+      if [[ -n "$format" ]]; then
+        pane_id=$(resolve_pane_id "$target")
+        format_pane "$format" "$pane_id" "$pane"
+      fi
       exit 0
     fi
     echo "shim: list-panes requires -a or -t" >&2
@@ -307,6 +353,37 @@ case "$subcmd" in
       exit 1
     fi
     write_state ".panes |= with_entries(select(.key != \"$target\"))"
+    ;;
+  set-window-option)
+    target=""
+    option=""
+    value=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        *)
+          if [[ -z "$option" ]]; then option="$1";
+          elif [[ -z "$value" ]]; then value="$1";
+          fi
+          shift
+          ;;
+      esac
+    done
+    [[ -n "$target" && -n "$option" ]] || exit 2
+    if [[ "$target" == @* ]]; then
+      window_id="$target"
+    else
+      pane=$(resolve_pane "$target")
+      [[ -n "$pane" && "$pane" != "null" ]] || exit 1
+      window_id=$(jq -r '.window_id // empty' <<< "$pane")
+    fi
+    [[ -n "$window_id" ]] || exit 1
+    tmp=$(mktemp -t fd-shim-set-window-option.XXXXXX)
+    jq --arg window_id "$window_id" --arg option "$option" --arg value "$value" '
+      .windows[$window_id].options[$option] = $value
+      | if $option == "automatic-rename" then .windows[$window_id].automatic_rename = $value else . end
+    ' "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
     ;;
   show-options)
     # Only `-g pane-base-index` is consulted by pane-registry.

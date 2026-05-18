@@ -26,7 +26,7 @@ interface ShimPane {
 interface ShimState {
 	session: string;
 	panes: Record<string, ShimPane>;
-	windows: Record<string, { name: string; index: number }>;
+	windows: Record<string, { name: string; index: number; automatic_rename?: string }>;
 }
 
 function makeRepo(): string {
@@ -561,6 +561,7 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			const shimState = readShimState(shim);
 			const pane = shimState.panes["%1"]!;
 			expect(pane.window_name).toBe("Scratch");
+			expect(shimState.windows["@1"]!.automatic_rename).toBeUndefined();
 			expect(pane.sent_keys).toContain("clear Enter");
 			const launchLine = pane.sent_keys!.find((line) => line.includes("printf ok"))!;
 			expect(launchLine).toContain("FLIGHTDECK_MANAGED=1");
@@ -571,6 +572,24 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["adhoc-start"].cwd).toBe(repo);
 			expect(state.entries["adhoc-start"].launch.reasoning_status).toBe("unsupported");
 			expect(state.entries["adhoc-start"].launch.unsupported_reason).toContain("custom --cmd");
+		});
+
+		test(`start disables tmux automatic rename when opted in`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "no-auto-rename",
+				"--title", "Sticky title",
+				"--kind", "adhoc",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "printf ok",
+			], { FLIGHTDECK_DISABLE_AUTO_RENAME: "1" });
+			expect(r.status).toBe(0);
+			const shimState = readShimState(shim);
+			expect(shimState.windows["@1"]!.automatic_rename).toBe("off");
 		});
 
 		test(`start persists requested cwd when tmux reports stale pane cwd`, () => {

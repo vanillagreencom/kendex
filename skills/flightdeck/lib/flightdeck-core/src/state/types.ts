@@ -105,6 +105,8 @@ export interface TrackedEntry {
 	harness?: string | null;
 	cwd?: string | null;
 	window?: string | null;
+	/** Current tmux window name from `tmux display-message -p -t <pane> '#W'`. */
+	window_name_current?: string | null;
 	pane_target?: string | null;
 	pane_id?: string | null;
 	launch?: TrackedEntryLaunch | null;

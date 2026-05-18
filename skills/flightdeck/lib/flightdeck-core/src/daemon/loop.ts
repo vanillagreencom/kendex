@@ -70,6 +70,7 @@ import {
 	extractFlag,
 	liveInnerArgsForHandoff,
 	listTrackedEntriesForReconcile,
+	refreshTrackedWindowNames,
 	resolveMeta,
 	resolvePaneTargetForEntry,
 } from "./pane-registry.ts";
@@ -309,6 +310,10 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const reconcileIntervalSec = Math.max(1, Math.floor(reconcileIntervalFromEnv()));
 	let lastReconcileEpoch = Math.floor(Date.now() / 1000);
 	function reconcileNow(reason: string): void {
+		const nameRefresh = refreshTrackedWindowNames(opts.paneRegistryBin);
+		if (nameRefresh.updated.length > 0 || nameRefresh.cleared.length > 0) {
+			log("window-name-refresh", `updated=${nameRefresh.updated.length} cleared=${nameRefresh.cleared.length} updated_ids=${nameRefresh.updated.join(",") || "-"} cleared_ids=${nameRefresh.cleared.join(",") || "-"} reason=${reason}`);
+		}
 		const entries = listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness);
 		const result = reconcileTrackedEntries({
 			listTrackedEntries: () => entries,

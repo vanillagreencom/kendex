@@ -38,6 +38,7 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
       "harness": "claude|opencode|codex|pi|unknown",
       "cwd": "<absolute cwd>",
       "window": "<window-name-or-index>",
+      "window_name_current": "<current-tmux-window-name-or-null>",
       "pane_target": "<TMUX_SESSION>:<window>.<pane>",
       "pane_id": "%403",
       "pr_number": null,
@@ -110,5 +111,7 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
   "paused_for_user": null
 }
 ```
+
+`entry.window_name_current` is optional live tmux metadata refreshed from `tmux display-message -p -t <pane> '#W'` by `pane-poll` callers and the daemon reconcile loop. Dashboard title rendering prefers this current window name over the original spawn `title` when present.
 
 Tracked entry state enum: `state ∈ {waiting, prompting, submitting, ready, complete, cancelled, dead}`. Issue and plan workflows additionally use `{merge-ready, merged, aborted}` for PR lifecycle states; these map onto the generic enum via `domain.issue.phase` / `domain.issue.outcome` for Linear, `domain.github_issue.phase` / `domain.github_issue.outcome` for GitHub, or `domain.plan_item.phase` / `domain.plan_item.outcome` for plan items (e.g. `merged → complete + outcome="merged"`). `entryIdForIssue(issueId)` returns the issue id unchanged after validation (empty/invalid ids return null); `issueIdForEntry(entry)` reads `entry.domain.issue.id` or, for `kind: "issue"`, `entry.id`. GitHub entries use numeric `domain.github_issue.number` for lane-specific routing. Plan entries use `domain.plan_item.item_id` and normally keep `kind="workflow"` because their child panes receive self-contained item briefs. `owner` is metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. Dashboard renderers use `owner.pane_id` to keep the persistent dashboard owner-scoped by default. `paused_for_user` carries `{entry_id|issue_id, reason, prompt_text}` when a guard or issue/plan-mode pause fires.

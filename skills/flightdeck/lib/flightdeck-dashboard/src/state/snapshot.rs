@@ -463,6 +463,7 @@ pub struct TrackedSession {
     pub substate: Option<String>,
     pub harness: Option<String>,
     pub window: Option<String>,
+    pub window_name_current: Option<String>,
     pub pane_target: Option<String>,
     pub pane_id: Option<String>,
     pub cwd: Option<PathBuf>,
@@ -494,7 +495,13 @@ impl TrackedSession {
         } else {
             entry.id
         };
-        let title = entry.title.unwrap_or_else(|| id.clone());
+        let window_name_current = entry
+            .window_name_current
+            .filter(|value| !value.trim().is_empty());
+        let title = window_name_current
+            .clone()
+            .or(entry.title)
+            .unwrap_or_else(|| id.clone());
         Self {
             id,
             title,
@@ -503,6 +510,7 @@ impl TrackedSession {
             substate: entry.substate,
             harness: entry.harness,
             window: entry.window,
+            window_name_current,
             pane_target: entry.pane_target,
             pane_id: entry.pane_id,
             cwd: entry.cwd,

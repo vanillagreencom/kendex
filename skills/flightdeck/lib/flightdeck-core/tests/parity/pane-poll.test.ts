@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/pane-poll");
+const SHIM_DIR = resolve(HERE, "./tmux-shim");
 
 if (!process.env.TMUX) {
 	test.skip("pane-poll parity requires tmux", () => undefined);
@@ -56,6 +57,36 @@ describe("pane-poll parity", () => {
 		const aParsed = a.stdout.trim().split("\n").map((s) => JSON.parse(s));
 		const bParsed = b.stdout.trim().split("\n").map((s) => JSON.parse(s));
 		expect(bParsed).toEqual(aParsed);
+	});
+
+	test("batch mode emits current tmux window name", () => {
+		const { mkdtempSync, rmSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+		const { tmpdir } = require("node:os") as typeof import("node:os");
+		const { join } = require("node:path") as typeof import("node:path");
+		const dir = mkdtempSync(join(tmpdir(), "fd-pane-poll-name-"));
+		try {
+			const statePath = join(dir, "shim-state.json");
+			writeFileSync(statePath, JSON.stringify({
+				panes: {
+					"%210": { pane_index: 0, path: dir, window_id: "@21", window_index: 21, window_name: "Live tmux title" },
+				},
+				session: "test-session",
+				windows: { "@21": { index: 21, name: "Live tmux title" } },
+			}, null, 2));
+			const env: Record<string, string> = {
+				...(process.env as Record<string, string>),
+				PATH: `${SHIM_DIR}:${process.env.PATH ?? ""}`,
+				TMUX: "/tmp/tmux-test",
+				TMUX_SHIM_STATE: statePath,
+			};
+			const batch = JSON.stringify([{ harness: "shell", id: "pane-a", pane_id: "%210", kind: "adhoc" }]);
+			const r = spawnSync(SCRIPT, ["--batch", "-"], { encoding: "utf8", env, input: batch });
+			expect(r.status).toBe(0);
+			const row = JSON.parse(r.stdout.trim());
+			expect(row.window_name_current).toBe("Live tmux title");
+		} finally {
+			rmSync(dir, { force: true, recursive: true });
+		}
 	});
 
 	test("batch mode rejects non-array input", () => {

@@ -65,6 +65,16 @@ require_tmux() {
   [[ -n "${TMUX:-}" ]] || { echo "Error: flightdeck-session requires an active tmux session" >&2; exit 2; }
 }
 
+disable_auto_rename_if_requested() {
+  [[ "${FLIGHTDECK_DISABLE_AUTO_RENAME:-0}" == "1" ]] || return 0
+  local pane_id="$1" window_target
+  window_target=$(tmux display-message -p -t "$pane_id" '#{window_id}' 2>/dev/null || true)
+  [[ -n "$window_target" ]] || window_target="$pane_id"
+  if ! tmux set-window-option -t "$window_target" automatic-rename off >/dev/null 2>&1; then
+    echo "Warning: failed to disable tmux automatic-rename for $window_target" >&2
+  fi
+}
+
 valid_kind() {
   case "$1" in adhoc|workflow|issue) return 0 ;; *) return 1 ;; esac
 }
@@ -680,6 +690,7 @@ cmd_start() {
     exit 2
   fi
   [[ -n "$pane_id" ]] || { [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"; echo "Error: tmux new-window failed" >&2; exit 2; }
+  disable_auto_rename_if_requested "$pane_id"
   if ! tmux send-keys -t "$pane_id" "clear" Enter; then
     [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
     echo "Error: tmux send-keys failed during pane clear" >&2

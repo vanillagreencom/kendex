@@ -123,6 +123,23 @@ export function resolvePaneTargetForEntry(bin: string, paneId: string): string {
 	return paneId;
 }
 
+export function refreshTrackedWindowNames(bin: string): { updated: string[]; cleared: string[] } {
+	if (!bin) return { cleared: [], updated: [] };
+	const r = spawnSync(bin, ["refresh-window-names"], { encoding: "utf8" });
+	if (r.status !== 0) return { cleared: [], updated: [] };
+	try {
+		const parsed = JSON.parse(r.stdout ?? "{}") as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { cleared: [], updated: [] };
+		const obj = parsed as Record<string, unknown>;
+		return {
+			cleared: Array.isArray(obj.cleared) ? obj.cleared.filter((id): id is string => typeof id === "string") : [],
+			updated: Array.isArray(obj.updated) ? obj.updated.filter((id): id is string => typeof id === "string") : [],
+		};
+	} catch {
+		return { cleared: [], updated: [] };
+	}
+}
+
 export function entryKindForPane(bin: string, paneId: string): string {
 	if (!paneId) return "";
 	for (const row of paneRegistryRows(bin)) {

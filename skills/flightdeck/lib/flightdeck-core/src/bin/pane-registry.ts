@@ -64,6 +64,15 @@ function tmuxField(target: string, format: string): string {
 	return (r.stdout ?? "").trim();
 }
 
+function tmuxCurrentWindowName(target: string): string | null {
+	if (!target) return null;
+	if (!tmuxPaneExists(target)) return null;
+	const r = spawnSync("tmux", ["display-message", "-p", "-t", target, "#W"], { encoding: "utf8" });
+	if (r.status !== 0) return null;
+	const name = (r.stdout ?? "").trim();
+	return name || null;
+}
+
 function tmuxCurrentSession(): string {
 	const r = spawnSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" });
 	return (r.stdout ?? "").trim() || "unknown";
@@ -379,6 +388,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 	const paneTarget = fields.pane_target || `${session}:${fields.window}.${fields.pane_index}`;
 	let paneId = fields.pane_id;
 	if (!paneId && tmuxPaneExists(paneTarget)) paneId = tmuxField(paneTarget, "#{pane_id}");
+	const windowNameCurrent = tmuxCurrentWindowName(paneId || paneTarget);
 
 	const launchArgv = parseArgvJson(fields.launch_argv_json);
 	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd || fields.launch_requested_model || fields.launch_requested_effort || fields.launch_resolved_model || fields.launch_resolved_effort || fields.launch_reasoning_status || fields.launch_unsupported_reason || launchArgv)
@@ -464,6 +474,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		window: fields.window,
 		window_id: strOrNull(fields.window_id),
 		window_index: numOrNull(fields.window_index),
+		window_name_current: windowNameCurrent,
 	};
 	if (fields.kind !== "issue") {
 		const pr = numOrNull(fields.pr);
@@ -873,6 +884,30 @@ function cmdList(args: string[]): void {
 		default:
 			die(`Unknown format: ${format} (supported: json, inner-panes, inner-harnesses, inner-panes-live, inner-harnesses-live, inner-live-json)`);
 	}
+}
+
+function cmdRefreshWindowNames(args: string[]): void {
+	if (args.length > 0) die("Usage: refresh-window-names");
+	const updated: string[] = [];
+	const cleared: string[] = [];
+	for (const [id, entry] of Object.entries(trackedEntries())) {
+		const paneId = entryString(entry, "pane_id");
+		const paneTarget = entryString(entry, "pane_target");
+		const current = tmuxCurrentWindowName(paneId || paneTarget || "");
+		const previous = entry.window_name_current;
+		if (current === null) {
+			if (previous !== undefined && previous !== null) {
+				setEntryField(id, "window_name_current", "null");
+				cleared.push(id);
+			}
+			continue;
+		}
+		if (previous !== current) {
+			setEntryField(id, "window_name_current", JSON.stringify(current));
+			updated.push(id);
+		}
+	}
+	process.stdout.write(`${JSON.stringify({ updated, cleared })}\n`);
 }
 
 // ----- get / set-state / set-substate / set / log-decision -----------------
@@ -1392,6 +1427,7 @@ switch (action) {
 	case "init":          cmdInit(argv.shift() ?? "", argv); break;
 	case "init-entry":    cmdInitEntry(argv.shift() ?? "", argv); break;
 	case "list":          cmdList(argv); break;
+	case "refresh-window-names": cmdRefreshWindowNames(argv); break;
 	case "get":           cmdGet(argv[0] ?? ""); break;
 	case "set-state":     cmdSetState(argv[0] ?? "", argv[1] ?? ""); break;
 	case "set-substate":  cmdSetSubstate(argv[0] ?? "", argv[1] ?? ""); break;
@@ -1408,5 +1444,5 @@ switch (action) {
 	case "teardown-window":
 	case "teardown-entry":  cmdTeardownWindow(argv); break;
 	default:
-		die(`Unknown action: ${action}\nActions: init-entry | init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
+		die(`Unknown action: ${action}\nActions: init-entry | init | list | refresh-window-names | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
 }

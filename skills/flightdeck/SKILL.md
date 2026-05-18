@@ -251,7 +251,8 @@ The user-visible output blocks at the end of `terminate.md` (`<generic_output_fo
 3. **Dashboards are read-only and additive.** Rust dashboard renders from on-disk artifacts master and daemon already write; it never bypasses schema. Only write affordances are confirmation-gated shells to canonical helpers (`pane-registry remove` for stale entries, `tmux select-window` for focus).
 4. **One daemon per tmux session.** Concurrent Flightdecks within same tmux session are refused via flock. Run separate tmux sessions for parallel Flightdeck instances.
 5. **Explicit LLM launch profile.** Every fresh LLM pane Flightdeck creates must have selected model and effort/thinking level, or explicit `launch.reasoning_status` / `unsupported_reason` explaining why harness/session cannot report it. Subagents with generated model/effort definitions are exempt.
-6. **No hidden scripts or tags.** All scripts must appear in [`SCRIPTS.md`](./SCRIPTS.md). All `prompt-classify` tags must appear in [`PROMPT-TAGS.md`](./PROMPT-TAGS.md).
+6. **User-visible pane references use tracked-entry ids.** Master messages must name panes by `entry.id` only; never invent shorthand labels that are absent from registry/dashboard/tmux metadata.
+7. **No hidden scripts or tags.** All scripts must appear in [`SCRIPTS.md`](./SCRIPTS.md). All `prompt-classify` tags must appear in [`PROMPT-TAGS.md`](./PROMPT-TAGS.md).
 
 ## Compaction Recovery
 

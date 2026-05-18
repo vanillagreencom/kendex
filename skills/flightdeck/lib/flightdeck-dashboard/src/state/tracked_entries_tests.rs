@@ -81,6 +81,39 @@ fn happy_path_reads_three_entries_and_defaults_kind() {
 }
 
 #[test]
+fn current_tmux_window_name_overrides_spawn_title_for_display() {
+    let source = r#"{
+      "session_id": "HT",
+      "entries": {
+        "pane-a": {
+          "id": "pane-a",
+          "title": "Spawn title",
+          "window_name_current": "Pi renamed title",
+          "kind": "adhoc",
+          "state": "ready",
+          "decisions_log": []
+        }
+      },
+      "merge_queue": [],
+      "conflict_graph": { "edges": [], "computed_at": null },
+      "paused_for_user": null
+    }"#;
+    let mut warnings = Vec::new();
+    let mut warn = |message: &str| warnings.push(message.to_owned());
+
+    let snapshot =
+        snapshot_from_str_with_warn(source, fixed_now(), &mut warn).expect("snapshot reads");
+
+    assert!(warnings.is_empty());
+    let session = snapshot.sessions.first().expect("session exists");
+    assert_eq!(session.title, "Pi renamed title");
+    assert_eq!(
+        session.window_name_current.as_deref(),
+        Some("Pi renamed title")
+    );
+}
+
+#[test]
 fn read_tracked_entries_returns_vec() {
     let value: Value =
         serde_json::from_str(&fixture_source("entries-happy.json")).expect("json parses");

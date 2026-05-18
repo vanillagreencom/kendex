@@ -150,7 +150,7 @@ For each tracked entry:
    | `domain-mismatch` | `prompting` | guard escalation, no destructive action |
 
 3. Hash debounce still applies: if `capture_hash == last_capture_hash` and `bell == false`, skip handler routing for that row.
-4. Persist `last_capture_hash` and `last_polled_at` on every successful poll.
+4. Persist `last_capture_hash`, `last_polled_at`, and any non-empty `window_name_current` from `pane-poll` on every successful poll.
 
 ### Handler guards
 

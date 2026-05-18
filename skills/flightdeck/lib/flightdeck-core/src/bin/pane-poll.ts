@@ -111,6 +111,7 @@ function jsonDead(issue: string, window: string, pane: string): string {
 
 function jsonResult(
 	issue: string, window: string, pane: string,
+	windowNameCurrent: string | null,
 	bell: string, activity: string, silence: string,
 	tag: string, captureHash: string,
 	fingerprintMatch: boolean, paneIndexSuggest: number | null,
@@ -118,6 +119,7 @@ function jsonResult(
 	const obj: Record<string, unknown> = {};
 	if (issue) obj.issue = issue;
 	obj.window = window;
+	if (windowNameCurrent) obj.window_name_current = windowNameCurrent;
 	obj.pane_target = pane;
 	obj.bell = bell === "1";
 	obj.activity = activity === "1";
@@ -127,6 +129,14 @@ function jsonResult(
 	obj.fingerprint_match = fingerprintMatch;
 	obj.pane_index_suggest = paneIndexSuggest;
 	return JSON.stringify(obj);
+}
+
+function tmuxCurrentWindowName(target: string): string | null {
+	if (!target) return null;
+	const r = spawnSync("tmux", ["display-message", "-p", "-t", target, "#W"], { encoding: "utf8" });
+	if (r.status !== 0) return null;
+	const name = (r.stdout ?? "").trim();
+	return name || null;
 }
 
 function splitTargetAndIndex(raw: string, explicit: string): { windowTarget: string; paneTarget: string; paneIndex: string } {
@@ -303,6 +313,7 @@ function pollOne(row: PollRow): string {
 		}
 	}
 	const deriveTarget = `${windowTarget}.${paneIndex}`;
+	const windowNameCurrent = tmuxCurrentWindowName(outputPane);
 
 	let buf = "";
 	let ocUsed = false, ccUsed = false, piUsed = false, cxUsed = false;
@@ -441,7 +452,7 @@ function pollOne(row: PollRow): string {
 		}
 	}
 
-	return jsonResult(issue, windowTarget, outputPane, bell, activity, silence, tag, captureHash, fingerprintMatch, paneIndexSuggest);
+	return jsonResult(issue, windowTarget, outputPane, windowNameCurrent, bell, activity, silence, tag, captureHash, fingerprintMatch, paneIndexSuggest);
 }
 
 // ---- main ---------------------------------------------------------------

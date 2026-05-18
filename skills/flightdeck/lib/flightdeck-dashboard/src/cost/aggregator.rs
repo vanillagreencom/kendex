@@ -175,6 +175,7 @@ mod tests {
             substate: None,
             harness: Some(harness.to_owned()),
             window: None,
+            window_name_current: None,
             pane_target: None,
             pane_id: None,
             cwd: None,
