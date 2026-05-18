@@ -44,7 +44,9 @@ These tags come from harness events, not normal assistant text classification.
 | `pi-subagent-completion` | Pi subagent event | Inner Pi subagent completion surfaced to tracked pane. |
 | `pi-bg-task-exit` | Pi background task event | Background task exited; wake master through daemon path. |
 | `pi-activity-broker` | Pi activity broker | Activity-only broker row; copied to activity sidecar without waking master. |
-| `pi-rate-limit-skipped` | Pi rate-limit watchdog | Activity-only classifier rejection row; includes skip reason. |
-| `pi-rate-limit-retry` | Pi rate-limit watchdog | Rate limit detected and retry scheduled. |
-| `pi-rate-limit-exhausted` | Pi rate-limit watchdog | Retry ladder spent; normal completion/blocking flow resumes. |
+| `pi-rate-limit-skipped` | Pi rate-limit watchdog | Activity-only classifier rejection row; maps to `agent.rate_limit_skipped` and includes skip reason. |
+| `pi-rate-limit-retry` | Pi rate-limit watchdog | Activity-only retry row; maps to `agent.rate_limit_retry` with attempt and `next_retry_at`. |
+| `pi-rate-limit-resolved` | Pi rate-limit watchdog | Activity-only recovery row; maps to `agent.rate_limit_resolved` after a healthy assistant turn resets the retry budget. |
+| `pi-rate-limit-exhausted` | Pi rate-limit watchdog | Activity-only exhaustion row; maps to `agent.rate_limit_exhausted` and normal completion/blocking flow resumes. |
+| `pi-rate-limit-decider-error` | Pi rate-limit watchdog | Activity-only decider failure row; maps to `daemon.warning` with error/unavailable details. |
 | `daemon-exited` | Flightdeck daemon lifecycle | Daemon exited for master-gone, signal, or recorded reason; route through respawn/recovery flow. |

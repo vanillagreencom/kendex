@@ -210,17 +210,17 @@ function readAssistantStopReason(message: Record<string, unknown>): string | nul
 	return typeof value === "string" ? value : null;
 }
 
-// CLI entry: `bun rate-limit-watchdog.ts decide --event <json> --pane <id> --attempt <n> [--now <ms>]`
+// CLI entry: `printf '%s' "$event_json" | bun rate-limit-watchdog.ts decide --pane <id> --attempt <n> [--now <ms>]`
 // Used by the bash pi subscriber (Layer B) so it can route rate-limit
 // events through the same decision module without re-implementing the
 // ladder math. Outputs the decision as JSON on stdout, exits 0.
-// `--event` accepts a JSON-encoded event payload; if omitted, the event
-// is read from stdin.
+// `--event` remains accepted for manual debugging; production callers
+// should omit it so event JSON is read from stdin instead of process argv.
 if (import.meta.main) {
 	const args = process.argv.slice(2);
 	const action = args.shift();
 	if (action !== "decide") {
-		process.stderr.write("Usage: rate-limit-watchdog.ts decide --event <json> --pane <id> --attempt <n> [--now <ms>]\n");
+		process.stderr.write("Usage: rate-limit-watchdog.ts decide --pane <id> --attempt <n> [--now <ms>] < event.json\n");
 		process.exit(2);
 	}
 	let eventJson = "";

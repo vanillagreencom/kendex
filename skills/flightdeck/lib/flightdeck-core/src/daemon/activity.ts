@@ -29,6 +29,10 @@ export interface WakeEventRow {
 	details?: unknown;
 	entry_id?: unknown;
 	reason?: unknown;
+	attempt?: unknown;
+	next_retry_at?: unknown;
+	error?: unknown;
+	exit_code?: unknown;
 	master_id?: unknown;
 	pid?: unknown;
 }
@@ -178,7 +182,7 @@ export function activityInputsForWakeRow(row: WakeEventRow): ActivityEventInput[
 	if (tag === "pi-subagent-completion" || tag === "pi-subagent-completion-ok") return subagentActivities(row);
 	if (tag === BG_TASK_EXIT_CLASSIFIER_TAG || tag === "pi-bg-task-activity") return bgTaskActivities(row);
 	if (tag === "pi-activity-broker") return brokerActivities(row);
-	if (tag === "pi-rate-limit-skipped") return [rateLimitSkippedActivity(row)];
+	if (tag.startsWith("pi-rate-limit-")) return rateLimitActivities(row, tag);
 	if (tag === "domain-mismatch") return [domainMismatchActivity(row)];
 	if (tag === "daemon-exited") return [daemonExitedActivity(row)];
 	if (isPromptTag(tag)) return [promptActivity(row, tag)];
@@ -323,23 +327,101 @@ function bgTaskActivities(row: WakeEventRow): ActivityEventInput[] {
 	}];
 }
 
-function rateLimitSkippedActivity(row: WakeEventRow): ActivityEventInput {
+function rateLimitActivities(row: WakeEventRow, tag: string): ActivityEventInput[] {
 	const paneId = str(row.pane_id);
-	const reason = str(row.reason) || "unknown";
+	const reason = str(row.reason);
 	const hash = str(row.hash) || str(row.ts) || Date.now().toString();
-	const dedup = `${paneId}:rate_limit_skipped:${reason}:${hash}`;
-	return {
-		details: { dedup_key: dedup, event_type: "rate_limit_skipped", hash, reason },
-		harness: str(row.harness) || "pi",
-		importance: "noisy",
-		natural_key: dedup,
-		pane_id: paneId,
-		severity: "debug",
-		source: "subscriber",
-		summary: `rate-limit skipped: ${reason}`,
-		ts: str(row.ts),
-		type: "agent.rate_limit_skipped",
+	const attempt = typeof row.attempt === "number" ? row.attempt : undefined;
+	const nextRetryAt = typeof row.next_retry_at === "number" ? row.next_retry_at : undefined;
+	const error = str(row.error);
+	const exitCode = typeof row.exit_code === "number" ? row.exit_code : undefined;
+	const baseDetails = {
+		event_type: str(row.event_type) || tag,
+		hash,
+		...(attempt !== undefined ? { attempt } : {}),
+		...(nextRetryAt !== undefined ? { next_retry_at: nextRetryAt } : {}),
+		...(reason ? { reason } : {}),
+		...(error ? { error } : {}),
+		...(exitCode !== undefined ? { exit_code: exitCode } : {}),
 	};
+	const common = {
+		harness: str(row.harness) || "pi",
+		pane_id: paneId,
+		source: "subscriber" as const,
+		ts: str(row.ts),
+	};
+
+	if (tag === "pi-rate-limit-skipped") {
+		const skipReason = reason || "unknown";
+		const dedup = `${paneId}:rate_limit_skipped:${skipReason}:${hash}`;
+		return [{
+			...common,
+			details: { ...baseDetails, dedup_key: dedup, reason: skipReason },
+			importance: "noisy",
+			natural_key: dedup,
+			severity: "debug",
+			summary: `rate-limit skipped: ${skipReason}`,
+			type: "agent.rate_limit_skipped",
+		}];
+	}
+
+	if (tag === "pi-rate-limit-retry") {
+		const dedup = `${paneId}:rate_limit_retry:${attempt ?? "unknown"}:${hash}`;
+		return [{
+			...common,
+			details: { ...baseDetails, dedup_key: dedup },
+			importance: "important",
+			natural_key: dedup,
+			severity: "info",
+			summary: attempt !== undefined ? `rate-limit retry scheduled: attempt ${attempt}` : "rate-limit retry scheduled",
+			type: "agent.rate_limit_retry",
+		}];
+	}
+
+	if (tag === "pi-rate-limit-resolved") {
+		const dedup = `${paneId}:rate_limit_resolved:${attempt ?? "unknown"}:${hash}`;
+		return [{
+			...common,
+			details: { ...baseDetails, dedup_key: dedup },
+			importance: "normal",
+			natural_key: dedup,
+			severity: "success",
+			summary: attempt !== undefined ? `rate-limit resolved after attempt ${attempt}` : "rate-limit resolved",
+			type: "agent.rate_limit_resolved",
+		}];
+	}
+
+	if (tag === "pi-rate-limit-exhausted") {
+		const dedup = `${paneId}:rate_limit_exhausted:${attempt ?? "unknown"}:${hash}`;
+		return [{
+			...common,
+			details: { ...baseDetails, dedup_key: dedup },
+			importance: "important",
+			natural_key: dedup,
+			severity: "error",
+			summary: attempt !== undefined ? `rate-limit exhausted after attempt ${attempt}` : "rate-limit exhausted",
+			type: "agent.rate_limit_exhausted",
+		}];
+	}
+
+	if (tag === "pi-rate-limit-decider-error") {
+		const eventType = str(row.event_type) || "rate_limit_decider_error";
+		const dedup = `${paneId}:${eventType}:${reason || exitCode || hash}:${hash}`;
+		const summary = eventType === "rate_limit_decider_unavailable"
+			? `rate-limit decider unavailable: ${reason || "unknown"}`
+			: reason ? `rate-limit decider error: ${reason}` : "rate-limit decider error";
+		return [{
+			...common,
+			details: { ...baseDetails, dedup_key: dedup },
+			importance: "important",
+			natural_key: dedup,
+			severity: "warning",
+			summary,
+			type: "daemon.warning",
+		}];
+	}
+
+	return [];
 }
 
 function domainMismatchActivity(row: WakeEventRow): ActivityEventInput {

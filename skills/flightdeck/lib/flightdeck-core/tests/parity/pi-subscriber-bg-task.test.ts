@@ -427,6 +427,82 @@ sleep 30
 			await sleep(50);
 		}
 	});
+
+	test("rate-limit classifier rejections emit skipped activity rows and do not steer", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-rate-skip-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const sendLog = join(stateDir, "send.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  send)
+    printf '%s\n' "$*" >> "$SEND_LOG"
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"message_end","data":{"message":{"role":"user","content":[{"type":"text","text":"API rate limit was detected. Try to continue from where you left off."}]}}}
+{"type":"event","event":"message_end","data":{"message":{"role":"assistant","content":[{"type":"text","text":"Still working."}]}}}
+{"type":"event","event":"message_end","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"The API returned 429 last time but I retried and it worked."}]}}}
+{"type":"event","event":"message_end","data":{"message":{"role":"assistant","stopReason":"error","errorMessage":"Tool execution failed","content":[{"type":"text","text":"Tool output attached below."}]}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { SEND_LOG: sendLog });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%22", "1184234", "", String(parentPid)], {
+				detached: true,
+				env,
+				stdio: "ignore",
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.filter((row) => row.classifier_tag === "pi-rate-limit-skipped").length >= 4) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const skipped = rows.filter((row) => row.classifier_tag === "pi-rate-limit-skipped");
+			expect(skipped).toHaveLength(4);
+			expect(rows.filter((row) => row.classifier_tag === "rendering")).toHaveLength(3);
+			expect(skipped.map((row) => row.classifier_tag)).toEqual([
+				"pi-rate-limit-skipped",
+				"pi-rate-limit-skipped",
+				"pi-rate-limit-skipped",
+				"pi-rate-limit-skipped",
+			]);
+			expect(skipped.map((row) => row.reason)).toEqual([
+				"non-assistant",
+				"no-stopreason",
+				"stopreason-mismatch",
+				"no-prose",
+			]);
+			expect(rows.some((row) => row.classifier_tag === "pi-rate-limit-retry")).toBe(false);
+			expect(existsSync(sendLog) ? readFileSync(sendLog, "utf8") : "").toBe("");
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
 });
 
 describe("Pi subscriber question drain on attach (#37 D)", () => {
