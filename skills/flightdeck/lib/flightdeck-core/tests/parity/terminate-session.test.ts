@@ -156,6 +156,7 @@ describe("terminate session summary split", () => {
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("issue-shaped tracked entry");
 		expect(warnings[0]).toContain("routing through issue termination path");
+		expect(warnings[0]).toContain("domain issue key");
 		expect(warnings[0]).toContain("merge_commit");
 		expect(warnings[0]).not.toContain("pr_number");
 
@@ -179,6 +180,30 @@ describe("terminate session summary split", () => {
 		const partition = partitionTerminationEntries(state);
 		expect(partition.issueEntries).toEqual([]);
 		expect(partition.genericEntries.map((entry) => entry.id)).toEqual(["workflow-pr"]);
+	});
+
+	test("github_issue domain entries route to issue termination path", () => {
+		const state = baseState({
+			"120": {
+				id: "120",
+				title: "GitHub issue workflow",
+				kind: "issue",
+				state: "merged",
+				harness: "pi",
+				domain: {
+					github_issue: {
+						number: 120,
+						url: "https://github.com/owner/repo/issues/120",
+						worktree: "/repo/trees/120",
+						pr_number: 220,
+						merge_commit: "abc123",
+					},
+				},
+			},
+		});
+		const partition = partitionTerminationEntries(state);
+		expect(partition.issueEntries.map((entry) => entry.id)).toEqual(["120"]);
+		expect(partition.genericEntries).toEqual([]);
 	});
 
 	test("empty tracked entries produce explicit empty-session diagnostic", () => {

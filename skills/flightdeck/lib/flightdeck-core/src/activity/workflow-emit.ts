@@ -185,15 +185,16 @@ function stateSessionId(stateFile: string | undefined): string | undefined {
 function entryFields(ctx: WorkflowEmitContext): Pick<ActivityEventInput, "entry_id" | "entry_title" | "entry_kind" | "pane_id" | "harness" | "refs"> {
 	const entry = ctx.entry && typeof ctx.entry === "object" && !Array.isArray(ctx.entry) ? ctx.entry : {};
 	const issue = issueDomain(entry);
+	const githubIssue = githubIssueDomain(entry);
 	const refs = mergeRefs(
 		ctx.refs,
-		stringRecordRef("issue_id", nonEmpty(issue.id)),
+		stringRecordRef("issue_id", nonEmpty(issue.id) ?? githubIssueId(githubIssue)),
 		stringRecordRef("linear_id", nonEmpty(issue.linear_id) ?? nonEmpty(issue.id)),
-		numberRecordRef("pr_number", normalizePrNumber(issue.pr_number) ?? normalizePrNumber(entry.pr_number)),
-		stringRecordRef("commit", nonEmpty(issue.merge_commit) ?? nonEmpty(entry.merge_commit)),
+		numberRecordRef("pr_number", normalizePrNumber(issue.pr_number) ?? normalizePrNumber(githubIssue.pr_number) ?? normalizePrNumber(entry.pr_number)),
+		stringRecordRef("commit", nonEmpty(issue.merge_commit) ?? nonEmpty(githubIssue.merge_commit) ?? nonEmpty(entry.merge_commit)),
 	);
 	const out: Pick<ActivityEventInput, "entry_id" | "entry_title" | "entry_kind" | "pane_id" | "harness" | "refs"> = {};
-	const entryId = nonEmpty(ctx.entryId) ?? nonEmpty(entry.id) ?? nonEmpty(issue.id);
+	const entryId = nonEmpty(ctx.entryId) ?? nonEmpty(entry.id) ?? nonEmpty(issue.id) ?? githubIssueId(githubIssue);
 	if (entryId) out.entry_id = entryId;
 	const title = nonEmpty(ctx.entryTitle) ?? nonEmpty(entry.title);
 	if (title) out.entry_title = title;
@@ -212,7 +213,8 @@ function workflowEntryId(ctx: WorkflowEmitContext): string | undefined {
 }
 
 function workflowIssueId(ctx: WorkflowEmitContext): string | undefined {
-	return ctx.entry ? nonEmpty(issueDomain(ctx.entry).id) : undefined;
+	if (!ctx.entry) return undefined;
+	return nonEmpty(issueDomain(ctx.entry).id) ?? githubIssueId(githubIssueDomain(ctx.entry));
 }
 
 function issueDomain(entry: Record<string, unknown>): Record<string, unknown> {
@@ -220,6 +222,18 @@ function issueDomain(entry: Record<string, unknown>): Record<string, unknown> {
 	if (!domain || typeof domain !== "object" || Array.isArray(domain)) return {};
 	const issue = (domain as Record<string, unknown>).issue;
 	return issue && typeof issue === "object" && !Array.isArray(issue) ? issue as Record<string, unknown> : {};
+}
+
+function githubIssueDomain(entry: Record<string, unknown>): Record<string, unknown> {
+	const domain = entry.domain;
+	if (!domain || typeof domain !== "object" || Array.isArray(domain)) return {};
+	const issue = (domain as Record<string, unknown>).github_issue;
+	return issue && typeof issue === "object" && !Array.isArray(issue) ? issue as Record<string, unknown> : {};
+}
+
+function githubIssueId(issue: Record<string, unknown>): string | undefined {
+	const number = normalizePrNumber(issue.number);
+	return typeof number === "number" ? `#${number}` : undefined;
 }
 
 function normalizeMergeAction(kind: MergeActionKind): "pr.merge_queued" | "pr.merged" | "pr.merge_blocked" {

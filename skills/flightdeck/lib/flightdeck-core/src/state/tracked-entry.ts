@@ -5,6 +5,7 @@ import type {
 } from "./types.ts";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const DOMAIN_KEYS = new Set(["issue", "github_issue"]);
 
 export interface ReadTrackedEntriesOptions {
 	warn?: (message: string) => void;
@@ -32,6 +33,11 @@ function invalidEntriesWarning(ids: string[]): string {
 
 function invalidEntryIdWarning(entryKey: string, rawId: unknown): string {
 	return `Warning: invalid .entries[${JSON.stringify(entryKey)}].id ${JSON.stringify(rawId)}; using entry key.`;
+}
+
+function invalidEntryDomainWarning(entryKey: string, error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return `Warning: invalid .entries[${JSON.stringify(entryKey)}].domain: ${message}; skipping.`;
 }
 
 export function validateEntryId(value: unknown, label = "entry id"): string {
@@ -62,7 +68,16 @@ export function readTrackedEntries(state: FlightdeckStateLike | undefined | null
 	if (!state || typeof state !== "object") return {};
 	const out: Record<string, TrackedEntry> = {};
 	const entries = entryRecordMap(state.entries, options.warn);
-	for (const [id, raw] of Object.entries(entries)) out[id] = normalizeEntry(id, raw, { warn: options.warn });
+	for (const [id, raw] of Object.entries(entries)) {
+		const entry = normalizeEntry(id, raw, { warn: options.warn });
+		try {
+			validateTrackedEntryDomain(entry);
+		} catch (error) {
+			options.warn?.(invalidEntryDomainWarning(id, error));
+			continue;
+		}
+		out[id] = entry;
+	}
 	return out;
 }
 
@@ -71,7 +86,7 @@ export function writeTrackedEntry<T extends FlightdeckStateLike>(state: T, id: s
 	const validId = validateEntryId(id, "entry id");
 	const entryId = validateEntryId(entry.id, "entry.id");
 	if (entryId !== validId) throw new Error(`invalid entry.id: must match entry id ${validId}`);
-	validateDomainIssueId(entry);
+	validateTrackedEntryDomain(entry);
 	if (!isRecord(target.entries)) target.entries = {};
 	const entries = target.entries as Record<string, TrackedEntry>;
 	const normalized = normalizeEntry(validId, entry as unknown as Record<string, unknown>, { strict: true });
@@ -89,10 +104,50 @@ export function issueIdForEntry(entry: Pick<TrackedEntry, "id" | "kind" | "domai
 	return entry.kind === "issue" && entry.id.trim() ? entry.id : undefined;
 }
 
+function validateOptionalFiniteNumber(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`invalid ${label}: must be a finite number or null`);
+}
+
+function validateOptionalString(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "string") throw new Error(`invalid ${label}: must be a string or null`);
+}
+
+function validateRequiredString(value: unknown, label: string): void {
+	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string`);
+}
+
+export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">): string | undefined {
+	const domain = entry.domain;
+	if (domain === undefined || domain === null) return undefined;
+	if (!isRecord(domain)) throw new Error("must be an object or null");
+	for (const key of Object.keys(domain)) {
+		if (!DOMAIN_KEYS.has(key)) throw new Error(`unknown domain key ${JSON.stringify(key)} (expected issue or github_issue)`);
+	}
+	const issue = domain.issue;
+	let issueId: string | undefined;
+	if (issue !== undefined && issue !== null) {
+		if (!isRecord(issue)) throw new Error("invalid domain.issue: must be an object or null");
+		if ("id" in issue && issue.id !== undefined) issueId = validateEntryId(issue.id, "domain.issue.id");
+	}
+	const github = domain.github_issue;
+	if (github !== undefined && github !== null) {
+		if (!isRecord(github)) throw new Error("invalid domain.github_issue: must be an object or null");
+		if (typeof github.number !== "number" || !Number.isFinite(github.number)) throw new Error("invalid domain.github_issue.number: must be a finite number");
+		validateRequiredString(github.url, "domain.github_issue.url");
+		validateRequiredString(github.worktree, "domain.github_issue.worktree");
+		if (!("pr_number" in github)) throw new Error("invalid domain.github_issue.pr_number: missing required key");
+		if (!("merge_commit" in github)) throw new Error("invalid domain.github_issue.merge_commit: missing required key");
+		validateOptionalFiniteNumber(github.pr_number, "domain.github_issue.pr_number");
+		validateOptionalString(github.merge_commit, "domain.github_issue.merge_commit");
+		validateOptionalFiniteNumber(github.scope_files_actual, "domain.github_issue.scope_files_actual");
+	}
+	return issueId;
+}
+
 export function validateDomainIssueId(entry: Pick<TrackedEntry, "domain">): string | undefined {
-	const issue = entry.domain && typeof entry.domain === "object" && !Array.isArray(entry.domain) ? entry.domain.issue : undefined;
-	if (!issue || typeof issue !== "object" || Array.isArray(issue) || !("id" in issue) || issue.id === undefined) return undefined;
-	return validateEntryId(issue.id, "domain.issue.id");
+	return validateTrackedEntryDomain(entry);
 }
 
 // Suppress unused-import linter complaint while leaving the type

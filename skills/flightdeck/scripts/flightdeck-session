@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
   flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
@@ -506,11 +506,13 @@ build_prompt_cmd() {
 }
 
 register_entry() {
-  local entry_id="$1" title="$2" kind="$3" cwd="$4" window_index="$5" harness="$6" pane_id="$7" pane_target="$8" window_id="$9" launch_cmd="${10}" worktree="${11:-}" pr="${12:-}" branch="${13:-}"
+  local entry_id="$1" title="$2" kind="$3" cwd="$4" window_index="$5" harness="$6" pane_id="$7" pane_target="$8" window_id="$9" launch_cmd="${10}" worktree="${11:-}" pr="${12:-}" branch="${13:-}" tracker="${14:-linear}" github_url="${15:-}"
   local args=(init-entry "$entry_id" --title "$title" --kind "$kind" --cwd "$cwd" --window "$window_index" --harness "$harness" --pane-id "$pane_id" --pane-target "$pane_target" --window-id "$window_id" --window-index "$window_index")
   [[ -n "$worktree" ]] && args+=(--worktree "$worktree")
   [[ -n "$pr" ]] && args+=(--pr "$pr")
   [[ -n "$branch" ]] && args+=(--branch "$branch")
+  [[ -n "$tracker" ]] && args+=(--tracker "$tracker")
+  [[ -n "$github_url" ]] && args+=(--github-url "$github_url")
   [[ -n "$launch_cmd" ]] && args+=(--launch-cmd "$launch_cmd")
   [[ -n "${LAUNCH_MODEL:-}" ]] && args+=(--launch-model "$LAUNCH_MODEL")
   [[ -n "${LAUNCH_EFFORT:-}" ]] && args+=(--launch-effort "$LAUNCH_EFFORT")
@@ -595,7 +597,7 @@ archive_stale_state_if_needed() {
 cmd_start() {
   require_tmux
   archive_stale_state_if_needed
-  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override=""
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override="" tracker="linear" github_url=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session-id) session_id="$2"; shift 2 ;;
@@ -616,6 +618,10 @@ cmd_start() {
       --effort=*|--thinking=*) effort_override="${1#*=}"; shift ;;
       --kind) kind="$2"; shift 2 ;;
       --kind=*) kind="${1#--kind=}"; shift ;;
+      --tracker) tracker="$2"; shift 2 ;;
+      --tracker=*) tracker="${1#--tracker=}"; shift ;;
+      --github-url|--github-issue-url) github_url="$2"; shift 2 ;;
+      --github-url=*|--github-issue-url=*) github_url="${1#*=}"; shift ;;
       --worktree) worktree="$2"; shift 2 ;;
       --worktree=*) worktree="${1#--worktree=}"; shift ;;
       --pr) pr="$2"; shift 2 ;;
@@ -627,6 +633,11 @@ cmd_start() {
   done
   [[ -n "$session_id" && -n "$title" && -n "$cwd" && -n "$harness" ]] || usage
   valid_kind "$kind" || { echo "Error: invalid --kind: $kind" >&2; exit 2; }
+  [[ "$tracker" == "linear" || "$tracker" == "github" ]] || { echo "Error: invalid --tracker: $tracker" >&2; exit 2; }
+  if [[ "$kind" == "issue" && "$tracker" == "github" ]]; then
+    [[ "$session_id" =~ ^[0-9]+$ ]] || { echo "Error: github tracker requires numeric --session-id" >&2; exit 2; }
+    [[ -n "$github_url" ]] || { echo "Error: github tracker requires --github-url" >&2; exit 2; }
+  fi
   [[ -n "$cmd" || -n "$prompt" ]] || { echo "Error: start requires --cmd or --prompt" >&2; exit 2; }
   [[ -z "$cmd" || -z "$prompt" ]] || { echo "Error: --cmd and --prompt are mutually exclusive" >&2; exit 2; }
 
@@ -701,7 +712,7 @@ cmd_start() {
   # report a stale tmux pane_current_path during launch (for example the
   # parent shell's cwd before `exec pi`), but all activity/PR/worktree
   # attribution should bind to the caller-selected working directory.
-  register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch"
+  register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch" "$tracker" "$github_url"
   ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }

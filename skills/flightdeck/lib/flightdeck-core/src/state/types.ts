@@ -49,9 +49,19 @@ export interface TrackedIssueDomain {
 	[key: string]: unknown;
 }
 
+export interface GithubIssueDomain {
+	number: number;
+	url: string;
+	worktree: string;
+	pr_number: number | null;
+	merge_commit: string | null;
+	scope_files_actual?: number | null;
+	[key: string]: unknown;
+}
+
 export interface TrackedEntryDomain {
 	issue?: TrackedIssueDomain;
-	[key: string]: unknown;
+	github_issue?: GithubIssueDomain;
 }
 
 export interface TrackedEntryLaunch {

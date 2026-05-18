@@ -177,6 +177,7 @@ interface InitFields {
 	cx_ws: string;
 	discovery_error: string;
 	harness: string;
+	github_url: string;
 	kind: string;
 	launch_cmd: string;
 	launch_effort: string;
@@ -201,6 +202,7 @@ interface InitFields {
 	pi_session_id: string;
 	pr: string;
 	title: string;
+	tracker: string;
 	window: string;
 	window_id: string;
 	window_index: string;
@@ -214,6 +216,7 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		cwd: "",
 		cx_thread_id: "", cx_ws: "",
 		discovery_error: "",
+		github_url: "",
 		harness: "",
 		kind,
 		launch_argv_json: "", launch_cmd: "", launch_effort: "", launch_effort_source: "",
@@ -225,6 +228,7 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		pi_bridge_pid: "", pi_bridge_socket: "", pi_session_id: "",
 		pr: "",
 		title: entryId,
+		tracker: "linear",
 		window: "", window_id: "", window_index: "",
 		worktree: "",
 	};
@@ -240,6 +244,8 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--cx-thread-id": "cx_thread_id",
 	"--cx-ws": "cx_ws",
 	"--discovery-error": "discovery_error",
+	"--github-issue-url": "github_url",
+	"--github-url": "github_url",
 	"--harness": "harness",
 	"--kind": "kind",
 	"--launch-argv-json": "launch_argv_json",
@@ -265,6 +271,7 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--pi-session-id": "pi_session_id",
 	"--pr": "pr",
 	"--title": "title",
+	"--tracker": "tracker",
 	"--window": "window",
 	"--window-id": "window_id",
 	"--window-index": "window_index",
@@ -355,10 +362,15 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 	if (!fields.title) fields.title = entryId;
 	if (mode === "issue") fields.kind = "issue";
 	if (!["adhoc", "issue", "workflow"].includes(fields.kind)) die("init-entry requires --kind adhoc|issue|workflow");
+	if (!["linear", "github"].includes(fields.tracker)) die("init-entry requires --tracker linear|github");
 	if (mode === "issue" && !fields.worktree) die("init requires --window, --harness, --worktree");
 	if (fields.kind === "issue" && !fields.worktree) fields.worktree = fields.cwd;
 	if (!fields.cwd) fields.cwd = fields.worktree;
 	if (!fields.window || !fields.harness || !fields.cwd) die(mode === "issue" ? "init requires --window, --harness, --worktree" : "init-entry requires --title, --kind, --cwd, --window, --harness");
+	if (fields.kind === "issue" && fields.tracker === "github") {
+		if (!/^\d+$/.test(entryId)) die("github tracker requires a numeric entry id");
+		if (!fields.github_url) die("github tracker requires --github-url");
+	}
 
 	hydrateSpawnMetadata(entryId, fields);
 	fdStateOrDie(["init"]);
@@ -398,14 +410,29 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		pi_bridge_socket: strOrNull(fields.pi_bridge_socket),
 		pi_session_id: strOrNull(fields.pi_session_id),
 	};
-	const issueDomain = fields.kind === "issue" ? {
-		id: entryId,
-		orchestration_started: false,
-		pr_number: numOrNull(fields.pr),
-		scope_files_actual: null,
-		scope_files_declared: null,
-		worktree: strOrNull(fields.worktree),
-	} : undefined;
+	const domain = fields.kind === "issue"
+		? fields.tracker === "github"
+			? {
+				github_issue: {
+					merge_commit: null,
+					number: Number.parseInt(entryId, 10),
+					pr_number: numOrNull(fields.pr),
+					scope_files_actual: null,
+					url: fields.github_url,
+					worktree: fields.worktree,
+				},
+			}
+			: {
+				issue: {
+					id: entryId,
+					orchestration_started: false,
+					pr_number: numOrNull(fields.pr),
+					scope_files_actual: null,
+					scope_files_declared: null,
+					worktree: strOrNull(fields.worktree),
+				},
+			}
+		: null;
 	const ts = nowIso();
 	const entry: Record<string, unknown> = {
 		adapter,
@@ -413,7 +440,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		cwd: fields.cwd,
 		decisions_log: [],
 		discovery_error: strOrNull(fields.discovery_error),
-		domain: issueDomain ? { issue: issueDomain } : null,
+		domain,
 		harness: fields.harness,
 		id: entryId,
 		kind: fields.kind,
@@ -525,15 +552,23 @@ function entryIssue(entry: EntryRecord): Record<string, unknown> {
 	return isRecord(domain.issue) ? domain.issue : {};
 }
 
+function entryGithubIssue(entry: EntryRecord): Record<string, unknown> {
+	const domain = isRecord(entry.domain) ? entry.domain : {};
+	return isRecord(domain.github_issue) ? domain.github_issue : {};
+}
+
 function entryRefs(entry: EntryRecord): Record<string, unknown> | undefined {
 	const refs: Record<string, unknown> = {};
 	const issue = entryIssue(entry);
+	const githubIssue = entryGithubIssue(entry);
 	const taskId = entryString(entry, "task_id");
 	if (taskId) refs.task_id = taskId;
-	const issueId = typeof issue.id === "string" && issue.id ? issue.id : undefined;
+	const issueId = typeof issue.id === "string" && issue.id ? issue.id
+		: typeof githubIssue.number === "number" && Number.isFinite(githubIssue.number) ? `#${Math.trunc(githubIssue.number)}` : undefined;
 	if (issueId) refs.issue_id = issueId;
 	const prNumber = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)
 		? issue.pr_number
+		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? githubIssue.pr_number
 		: typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? entry.pr_number : undefined;
 	if (typeof prNumber === "number") refs.pr_number = Math.trunc(prNumber);
 	return Object.keys(refs).length > 0 ? refs : undefined;
@@ -570,9 +605,11 @@ function registryWorkflowContext(entry: EntryRecord | null): { entry: EntryRecor
 
 function emitIssueMergeState(entry: EntryRecord, state: string): void {
 	const issue = entryIssue(entry);
-	const pr = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number) ? Math.trunc(issue.pr_number) : undefined;
+	const githubIssue = entryGithubIssue(entry);
+	const pr = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number) ? Math.trunc(issue.pr_number)
+		: typeof githubIssue.pr_number === "number" && Number.isFinite(githubIssue.pr_number) ? Math.trunc(githubIssue.pr_number) : undefined;
 	if (state === "merge-ready") emitMergeAction(registryWorkflowContext(entry), pr, "queued");
-	else if (state === "merged") emitMergeAction(registryWorkflowContext(entry), pr, "merged", { commit: entryString(issue, "merge_commit") ?? entryString(entry, "merge_commit") ?? "" });
+	else if (state === "merged") emitMergeAction(registryWorkflowContext(entry), pr, "merged", { commit: entryString(issue, "merge_commit") ?? entryString(githubIssue, "merge_commit") ?? entryString(entry, "merge_commit") ?? "" });
 	else if (state === "aborted") emitMergeAction(registryWorkflowContext(entry), pr, "blocked", { reason: "aborted" });
 }
 
@@ -671,7 +708,8 @@ function emitReconcileShellComplete(entry: EntryRecord): void {
 	});
 }
 
-// Issue-mode metadata lives under `entry.domain.issue`. If a caller
+// Issue-mode metadata lives under `entry.domain.issue` (Linear) or
+// `entry.domain.github_issue` (GitHub). If a caller
 // passes one of those field names as a top-level set, redirect into the
 // nested object so downstream readers (`pane-registry list --format json`,
 // pi-flightdeck, merge planning) see the value where they look for it.
@@ -690,7 +728,9 @@ function setEntryField(id: string, field: string, value: string): void {
 	const entry = entryById(id);
 	const kind = typeof entry?.kind === "string" ? entry.kind : "";
 	if (ISSUE_DOMAIN_FIELDS.has(field) && kind === "issue") {
-		fdStateOrDie(["set", `.entries[${idJson}].domain.issue.${field}`, value]);
+		const domain = isRecord(entry?.domain) ? entry.domain : {};
+		const target = isRecord(domain.github_issue) ? "github_issue" : "issue";
+		fdStateOrDie(["set", `.entries[${idJson}].domain.${target}.${field}`, value]);
 		return;
 	}
 	fdStateOrDie(["set", `.entries[${idJson}].${field}`, value]);
@@ -707,10 +747,12 @@ function entryRows(): Record<string, unknown>[] {
 		const adapter = nestedRecord(entry, "adapter");
 		const domain = nestedRecord(entry, "domain");
 		const issue = nestedRecord(domain, "issue");
+		const githubIssue = nestedRecord(domain, "github_issue");
 		const topLevelPr = typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? Math.trunc(entry.pr_number) : null;
 		const topLevelWorktree = typeof entry.worktree === "string" && entry.worktree ? entry.worktree : null;
 		const id = typeof entry.id === "string" ? entry.id : key;
 		const kind = typeof entry.kind === "string" ? entry.kind : "issue";
+		const githubNumber = typeof githubIssue.number === "number" && Number.isFinite(githubIssue.number) ? Math.trunc(githubIssue.number) : null;
 		return {
 			...entry,
 			cc_port: adapter.cc_port ?? null,
@@ -720,7 +762,7 @@ function entryRows(): Record<string, unknown>[] {
 			cx_thread_id: adapter.cx_thread_id ?? null,
 			cx_ws: adapter.cx_ws ?? null,
 			id,
-			issue: kind === "issue" ? (issue.id ?? id) : null,
+			issue: kind === "issue" ? (issue.id ?? githubNumber ?? id) : null,
 			oc_port: adapter.oc_port ?? null,
 			oc_session_id: adapter.oc_session_id ?? null,
 			oc_url: adapter.oc_url ?? null,
@@ -728,10 +770,10 @@ function entryRows(): Record<string, unknown>[] {
 			pi_bridge_pid: adapter.pi_bridge_pid ?? null,
 			pi_bridge_socket: adapter.pi_bridge_socket ?? null,
 			pi_session_id: adapter.pi_session_id ?? null,
-			pr_number: issue.pr_number ?? topLevelPr,
-			scope_files_actual: issue.scope_files_actual ?? null,
+			pr_number: issue.pr_number ?? githubIssue.pr_number ?? topLevelPr,
+			scope_files_actual: issue.scope_files_actual ?? githubIssue.scope_files_actual ?? null,
 			scope_files_declared: issue.scope_files_declared ?? null,
-			worktree: issue.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
+			worktree: issue.worktree ?? githubIssue.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
 		};
 	});
 }

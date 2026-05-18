@@ -8,7 +8,7 @@ Flightdeck supervises AI harness sessions in tmux windows. In core session mode 
 
 Running one agent at a time is fine. Running five at once is chaos — each one keeps stopping to ask questions, background tasks finish at odd times, and issue-mode merge order can turn into a guessing game. Flightdeck handles the supervisory layer so you can track generic sessions or spawn a whole issue cycle and walk away.
 
-Activates only inside tmux and only when you ask for it (`flightdeck session start|attach` for core sessions, `flightdeck start` for issue workflows). Outside tmux it's a no-op.
+Activates only inside tmux and only when you ask for it (`flightdeck session start|attach` for core sessions, `flightdeck start` for Linear issue workflows, `flightdeck github start` for GitHub issue workflows). Outside tmux it's a no-op.
 
 ## How it works
 
@@ -16,10 +16,11 @@ Flightdeck launches generic sessions with `flightdeck session start` (or `attach
 
 A background daemon detects when an agent has a question, the master agent classifies the prompt, auto-answers when there's a learned default, and pauses for the human when there isn't.
 
-There are two modes per tracked entry:
+There are three modes: generic session, Linear issue, GitHub issue.
 
 - **Generic session mode** — structured questions, bash permission prompts, safe bounded choices, Pi background-task exits.
-- **Issue mode** — adds GitHub/Linear/worktree decisions: cleanup, rebase, force-push, bot-review/CI recovery, merge planning, scope creep.
+- **Linear issue mode** — adds GitHub/Linear/worktree/project-management decisions: cleanup, rebase, force-push, bot-review/CI recovery, merge planning, scope creep, next-cycle recommendations.
+- **GitHub issue mode** — adds GitHub/worktree decisions for numeric GitHub issues: self-contained child prompts, PR/CI/review handling, authoritative merge/close verification, and GitHub summaries.
 
 When all tracked entries are terminal, flightdeck writes a summary and hands control back.
 
@@ -38,7 +39,7 @@ If the daemon's master pane disappears (master agent crash, accidental window ki
 
 ## Activation and termination
 
-- **Activates** on `flightdeck session start|attach` for generic tracked sessions, or `flightdeck start` for issue workflows, from inside tmux.
+- **Activates** on `flightdeck session start|attach` for generic tracked sessions, `flightdeck start` for Linear issue workflows, or `flightdeck github start` for GitHub issue workflows, from inside tmux.
 - **Pauses** for you on: scope creep that wants reverting, force-merging against a real content conflict, an issue abort, a `main` mutation that needs human OK, domain mismatch, or a novel prompt shape no rule covers. Sets `paused_for_user` in state and stops polling. Resume by running `session watch` or issue `watch` again.
 - **Terminates** automatically when every tracked entry is terminal for the relevant mode. Generic-only sessions write a session summary with no GitHub/Linear/worktree calls. Issue sessions write the issue summary, archive the state file, and hand control back.
 
@@ -50,7 +51,7 @@ Fresh LLM panes need an explicit launch profile. `flightdeck session start --pro
 
 ## Issue workflows
 
-Issue orchestration remains first-class when the session is tied to a Linear/GitHub/worktree domain. Ask the agent to start an issue, check a parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session — it routes to the right flightdeck command for you.
+Issue orchestration remains first-class when the session is tied to a Linear or GitHub issue domain. Ask the agent to start a Linear issue, check a Linear parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session. For plain GitHub issues, ask for `flightdeck github start <N>` / `watch` / `close-issue` / `terminate`; GitHub mode uses a self-contained child prompt and stores metadata under `domain.github_issue`.
 
 The `github` skill ships `label-add` and `label-remove` wrappers around `gh pr edit` / `gh issue edit`. When flightdeck spawns a managed pane, those wrappers emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows alongside the existing `pr.*` events, so label-driven gates (`defer-ci`, custom workflow labels) show up in the activity sidecar and Rust dashboard.
 
@@ -65,9 +66,9 @@ vstack add vanillagreencom/vstack --skill flightdeck -y
 
 Core mode requires tmux only at the workflow/skill-dependency layer, plus the harness adapter you choose for a tracked pane (`pi-bridge`, OpenCode HTTP, Claude Channels, Codex app-server, or tmux fallback). It does not require GitHub, Linear credentials, project-management, or worktree setup.
 
-Issue mode adds the optional `github`, `linear`, `worktree`, and `project-management` skills on demand for `flightdeck start <ISSUE>`, `start new`, `parallel-check`, `merge-plan`, `close-issue`, and issue termination/recommendation workflows.
+Linear issue mode requires Linear MCP/CLI auth plus the optional `github`, `linear`, `worktree`, and `project-management` skills on demand for `flightdeck start <ISSUE>`, `start new`, `parallel-check`, `merge-plan`, `close-issue`, and issue termination/recommendation workflows. GitHub issue mode requires `gh` CLI authenticated against the target repo plus the optional `github` and `worktree` skills for `flightdeck github start <N>`, `watch`, `close-issue`, and `terminate`. Generic session mode requires neither Linear nor GitHub issue auth.
 
-Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, `jq`, `flock`, and `bun` (https://bun.sh). Issue mode additionally needs the GitHub/Linear CLIs or auth wrappers used by those skills, plus normal git worktree support. Mac users: install GNU coreutils for `sha256sum` and GNU date.
+Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, `jq`, `flock`, and `bun` (https://bun.sh). Linear issue mode additionally needs Linear MCP/CLI auth and the GitHub auth used by PR helpers; GitHub issue mode needs `gh` auth for the target repo; both issue modes need normal git worktree support. Mac users: install GNU coreutils for `sha256sum` and GNU date.
 
 ## Dashboard
 
@@ -112,6 +113,7 @@ Most users never touch these. The ones that occasionally matter:
 | Variable | What it does |
 | --- | --- |
 | `FLIGHTDECK_AUTO_MERGE` | Set to `0` to require a human OK on every merge instead of auto-handling the obvious case. Useful for compliance-sensitive repos or big-blast-radius PRs. |
+| `FLIGHTDECK_AUTO_REBASE` | GitHub issue mode defaults this to `0`; set `1` only when you want Flightdeck to answer safe Update Branch / auto-rebase prompts for `BEHIND` PRs. |
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | How long flightdeck waits before force-merging a PR that's approved + green but stuck in GitHub's `UNKNOWN` merge state (default 4 minutes). |
 | `FLIGHTDECK_LAUNCH_MODEL` / `FLIGHTDECK_LAUNCH_EFFORT` | Default model + thinking level for spawned agents / `flightdeck-session --prompt` when the user doesn't pass them explicitly. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | Keep `1` to require `opencode models` to list the selected OpenCode provider/model before launch; set `0` only for local smoke shims. |

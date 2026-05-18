@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/open-terminal");
+const STATE_SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
 const SHIM_DIR = resolve(HERE, "./tmux-shim");
 
 interface ShimPane {
@@ -64,6 +65,31 @@ exit 1
 	return bin;
 }
 
+function makeGhShim(repo: string): string {
+	const bin = join(repo, "gh");
+	writeFileSync(bin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
+  issue="\${3:-120}"
+  cat <<JSON
+{"number":$issue,"title":"Test github issue","body":"Body for github issue $issue","url":"https://github.com/owner/repo/issues/$issue","labels":[]}
+JSON
+  exit 0
+fi
+if [[ "\${1:-}" == "repo" && "\${2:-}" == "view" ]]; then
+  if [[ "$*" == *"--jq"* ]]; then
+    printf 'owner/repo\n'
+  else
+    printf '{"nameWithOwner":"owner/repo"}\n'
+  fi
+  exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makeOpencodeBinShim(repo: string, models = "openai/gpt-5.5\n"): string {
 	const bin = join(repo, "opencode");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -91,6 +117,17 @@ function runOpenTerminal(repo: string, shimState: string, args: string[], extraE
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function runState(repo: string, args: string[]) {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	const r = spawnSync(STATE_SCRIPT, args, { cwd: repo, encoding: "utf8", env });
+	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function forbiddenSupervisorSubstrings(): string[] {
+	return ["/skill:flightdeck github", "$flightdeck github", "/flightdeck github start"];
 }
 
 const repos: string[] = [];
@@ -196,5 +233,93 @@ describe("open-terminal smoke", () => {
 		expect(r.stderr).toContain("invalid --effort for claude");
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		expect(existsSync(stateFile(repo))).toBe(false);
+	});
+
+	for (const harness of ["pi", "codex", "claude", "opencode"] as const) {
+		test(`github tracker ${harness} launch uses self-contained prompt`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			makeGhShim(repo);
+			if (harness === "opencode") makeOpencodeBinShim(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = runOpenTerminal(repo, shim, ["--tracker", "github", "--repo", "owner/repo", "120", "--tmux", "--harness", harness]);
+			expect(r.status).toBe(0);
+			const pane = readShimState(shim).panes["%1"]!;
+			expect(pane.window_name).toBe("120");
+			const launchLine = pane.sent_keys!.find((line) => line.includes(harness === "claude" ? "claude" : harness))!;
+			expect(launchLine).toContain("Fix GitHub issue owner/repo#120");
+			expect(launchLine).toContain("Print the PR URL as the LAST line");
+			for (const forbidden of forbiddenSupervisorSubstrings()) expect(launchLine).not.toContain(forbidden);
+			if (harness === "opencode") expect(launchLine).toContain("--prompt");
+
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			const entry = state.entries["120"];
+			expect(entry.domain.issue).toBeUndefined();
+			expect(entry.domain.github_issue).toMatchObject({
+				merge_commit: null,
+				number: 120,
+				pr_number: null,
+				url: "https://github.com/owner/repo/issues/120",
+				worktree: repo,
+			});
+		});
+	}
+
+	test("github tracker rejects Linear-style ids before tmux mutation", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["--tracker", "github", "CC-7", "--tmux", "--harness", "pi", "--repo", "owner/repo"]);
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("github tracker requires numeric issue IDs");
+		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		expect(existsSync(stateFile(repo))).toBe(false);
+	});
+
+	test("bare numeric without github tracker is treated as group id and does not spawn", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["120", "--tmux", "--harness", "pi"]);
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("no active group with id 120");
+		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		expect(existsSync(stateFile(repo))).toBe(false);
+	});
+
+	test("mixed Linear and GitHub domains round-trip through flightdeck-state", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		expect(runState(repo, ["init", "--session", "mixed-domain"]).status).toBe(0);
+		const linear = {
+			id: "CC-120",
+			kind: "issue",
+			state: "waiting",
+			domain: { issue: { id: "CC-120", worktree: "/repo/trees/cc-120", pr_number: 120, merge_commit: null } },
+		};
+		const github = {
+			id: "120",
+			kind: "issue",
+			state: "waiting",
+			domain: { github_issue: { number: 120, url: "https://github.com/owner/repo/issues/120", worktree: "/repo/trees/120", pr_number: null, merge_commit: null, scope_files_actual: 3 } },
+		};
+		expect(runState(repo, ["write-entry", "CC-120", JSON.stringify(linear), "--session", "mixed-domain"]).status).toBe(0);
+		expect(runState(repo, ["write-entry", "120", JSON.stringify(github), "--session", "mixed-domain"]).status).toBe(0);
+		const out = runState(repo, ["tracked-entries", "--session", "mixed-domain"]);
+		expect(out.status).toBe(0);
+		const entries = JSON.parse(out.stdout);
+		expect(entries["CC-120"].domain.issue.id).toBe("CC-120");
+		expect(entries["120"].domain.github_issue.number).toBe(120);
+		expect(entries["120"].domain.issue).toBeUndefined();
+	});
+
+	test("flightdeck-state rejects unknown domain subkeys", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		expect(runState(repo, ["init", "--session", "bad-domain"]).status).toBe(0);
+		const bad = { id: "bad", kind: "adhoc", domain: { future_issue: { id: "bad" } } };
+		const r = runState(repo, ["write-entry", "bad", JSON.stringify(bad), "--session", "bad-domain"]);
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("unknown domain key");
 	});
 });
