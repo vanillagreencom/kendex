@@ -34568,6 +34568,7 @@ function envFlagEnabled(value) {
 }
 function wrapClaudeSpawnErrorForSdk(err, options) {
   const originalCode = codeValue(err, "SPAWN_ERROR");
+  const originalMessage = err.message;
   const spawnPath = pathValue(err) ?? options.command;
   const cwd = options.cwd ?? process.cwd();
   const detail = [
@@ -34578,17 +34579,17 @@ function wrapClaudeSpawnErrorForSdk(err, options) {
     `cwd=${cwd}`,
     `command=${options.command}`
   ].join(" ");
-  const wrapped = new Error(`Claude Code spawn failed: ${err.message} (${detail})`);
+  const wrapped = new Error(`Claude Code spawn failed: ${originalMessage} (${detail})`);
   wrapped.name = "ClaudeSpawnDiagnosticError";
   wrapped.code = originalCode === "ENOENT" ? "CLAUDE_BRIDGE_SPAWN_FAILED" : originalCode;
   wrapped.originalCode = originalCode;
+  wrapped.originalMessage = originalMessage;
   const errno = errnoValue(err);
   if (errno !== void 0) wrapped.errno = typeof errno === "number" ? errno : Number(errno);
   const syscall = syscallValue(err);
   if (syscall) wrapped.syscall = syscall;
   wrapped.path = spawnPath;
   wrapped.cwd = cwd;
-  wrapped.cause = err;
   return wrapped;
 }
 function spawnClaudeCodeWithDiagnostics(options) {
@@ -34608,10 +34609,12 @@ function spawnClaudeCodeWithDiagnostics(options) {
     });
   }
   child.prependListener("error", (err) => {
+    const originalStack = err.stack;
     const wrapped = wrapClaudeSpawnErrorForSdk(err, options);
+    Object.assign(err, wrapped);
     err.name = wrapped.name;
     err.message = wrapped.message;
-    Object.assign(err, wrapped);
+    if (originalStack) err.stack = originalStack;
   });
   return {
     stdin: child.stdin,

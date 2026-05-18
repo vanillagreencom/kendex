@@ -76,10 +76,14 @@ describe("preflightClaudeExecutable", () => {
 		assert.equal(error.name, "ClaudeSpawnDiagnosticError");
 		assert.equal(error.code, "CLAUDE_BRIDGE_SPAWN_FAILED");
 		assert.equal(error.originalCode, "ENOENT");
+		assert.match(error.originalMessage, /ENOENT/);
 		assert.equal(error.path, missing);
 		assert.equal(error.cwd, dir);
 		assert.match(error.message, /code=ENOENT/);
 		assert.match(error.message, /syscall=spawn/);
 		assert.doesNotMatch(error.message, /native binary not found/);
+		assert.notEqual(error.cause, error);
+		assert.doesNotThrow(() => JSON.stringify(error));
+		assert.doesNotMatch(error.stack ?? "", /wrapClaudeSpawnErrorForSdk/);
 	}));
 });

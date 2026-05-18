@@ -241,8 +241,9 @@ function envFlagEnabled(value: string | undefined): boolean {
 	return value === "1" || value?.toLowerCase() === "true";
 }
 
-export function wrapClaudeSpawnErrorForSdk(err: Error, options: SpawnOptions): Error & NodeJS.ErrnoException & { cwd: string; originalCode?: string } {
+export function wrapClaudeSpawnErrorForSdk(err: Error, options: SpawnOptions): Error & NodeJS.ErrnoException & { cwd: string; originalCode?: string; originalMessage?: string } {
 	const originalCode = codeValue(err, "SPAWN_ERROR");
+	const originalMessage = err.message;
 	const spawnPath = pathValue(err) ?? options.command;
 	const cwd = options.cwd ?? process.cwd();
 	const detail = [
@@ -253,20 +254,24 @@ export function wrapClaudeSpawnErrorForSdk(err: Error, options: SpawnOptions): E
 		`cwd=${cwd}`,
 		`command=${options.command}`,
 	].join(" ");
-	const wrapped = new Error(`Claude Code spawn failed: ${err.message} (${detail})`) as Error & NodeJS.ErrnoException & { cwd: string; originalCode?: string };
+	const wrapped = new Error(`Claude Code spawn failed: ${originalMessage} (${detail})`) as Error & NodeJS.ErrnoException & { cwd: string; originalCode?: string; originalMessage?: string };
 	wrapped.name = "ClaudeSpawnDiagnosticError";
 	// The SDK special-cases code === ENOENT and replaces the message with its
 	// generic "native binary not found" text. Preserve the original code in the
 	// message/originalCode while using a bridge code so the SDK surfaces context.
 	wrapped.code = originalCode === "ENOENT" ? "CLAUDE_BRIDGE_SPAWN_FAILED" : originalCode;
 	wrapped.originalCode = originalCode;
+	wrapped.originalMessage = originalMessage;
 	const errno = errnoValue(err);
 	if (errno !== undefined) wrapped.errno = typeof errno === "number" ? errno : Number(errno);
 	const syscall = syscallValue(err);
 	if (syscall) wrapped.syscall = syscall;
 	wrapped.path = spawnPath;
 	wrapped.cwd = cwd;
-	(wrapped as Error & { cause?: unknown }).cause = err;
+	// Do not set `cause` here: the listener copies these structured fields back
+	// onto the original Error. A cause reference to that same object would become
+	// `err.cause === err`, making JSON.stringify throw on a circular structure.
+	// originalMessage plus code/errno/syscall/path/cwd preserve the useful data.
 	return wrapped;
 }
 
@@ -287,10 +292,15 @@ export function spawnClaudeCodeWithDiagnostics(options: SpawnOptions): SpawnedPr
 		});
 	}
 	child.prependListener("error", (err) => {
+		const originalStack = err.stack;
 		const wrapped = wrapClaudeSpawnErrorForSdk(err, options);
+		Object.assign(err, wrapped);
 		err.name = wrapped.name;
 		err.message = wrapped.message;
-		Object.assign(err, wrapped);
+		// Keep V8's stack from the actual Node spawn failure, not the wrapper
+		// construction site. Diagnostic fields above remain enumerable and
+		// JSON-serializable; stack stays the spawn-time breadcrumb for operators.
+		if (originalStack) err.stack = originalStack;
 	});
 	return {
 		stdin: child.stdin,
