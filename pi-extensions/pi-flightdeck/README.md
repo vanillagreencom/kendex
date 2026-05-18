@@ -53,7 +53,7 @@ Restart Pi after installation.
 | Command | Action |
 | --- | --- |
 | `/flightdeck` | Open the session-control popup. |
-| `/skill:flightdeck linear watch [args]` | Linear watch invocation. New daemon wakes use `/skill:flightdeck linear watch --from-daemon` through pi-session-bridge directly. |
+| `/flightdeck watch [args]` | Legacy bridge workaround that dispatches the `flightdeck linear watch` workflow. The daemon now sends `/skill:flightdeck watch --from-daemon` through pi-session-bridge directly. |
 | `/flightdeck:toggle` | Cycle the persistent dashboard widget. |
 
 Peer panes get an observer view labelled with the owner pane id; the popup's own footer documents its keys.

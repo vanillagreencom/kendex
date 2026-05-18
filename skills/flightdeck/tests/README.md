@@ -34,7 +34,7 @@ It asserts that:
 2. `pane-poll --batch -` returns the live bash inner pane from a registry-shaped JSON input (when the test itself is running inside tmux, matching normal local usage);
 3. `flightdeck-daemon start --in-tmux-window --master-harness pi` can launch against that master and a bash inner pane;
 4. a terminal bell in the inner pane is detected by the daemon fallback path; and
-5. the daemon wakes the Pi master through `pi-bridge send` with `/skill:flightdeck linear watch --from-daemon`, observable in `pi-bridge history`, with `harness=pi via=pi-bridge` in the daemon log. The test fails if that daemon log is absent.
+5. the daemon wakes the Pi master through `pi-bridge send` with `/skill:flightdeck watch --from-daemon`, observable in `pi-bridge history`, with `harness=pi via=pi-bridge` in the daemon log. The test fails if that daemon log is absent.
 
 Run full mode from inside tmux:
 
