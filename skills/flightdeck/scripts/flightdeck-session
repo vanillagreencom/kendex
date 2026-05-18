@@ -16,7 +16,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
-  flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow] [--model <id>] [--effort <level>|--thinking <level>]
+  flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--worktree <path>] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
 }
@@ -719,7 +719,7 @@ cmd_start() {
 
 cmd_attach() {
   require_tmux
-  local pane="" harness="" title="" kind="adhoc" session_id="" model_override="" effort_override=""
+  local pane="" harness="" title="" kind="adhoc" session_id="" model_override="" effort_override="" tracker="linear" github_url="" worktree=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pane) pane="$2"; shift 2 ;;
@@ -730,6 +730,12 @@ cmd_attach() {
       --title=*) title="${1#--title=}"; shift ;;
       --kind) kind="$2"; shift 2 ;;
       --kind=*) kind="${1#--kind=}"; shift ;;
+      --tracker) tracker="$2"; shift 2 ;;
+      --tracker=*) tracker="${1#--tracker=}"; shift ;;
+      --github-url|--github-issue-url) github_url="$2"; shift 2 ;;
+      --github-url=*|--github-issue-url=*) github_url="${1#*=}"; shift ;;
+      --worktree) worktree="$2"; shift 2 ;;
+      --worktree=*) worktree="${1#--worktree=}"; shift ;;
       --model) model_override="$2"; shift 2 ;;
       --model=*) model_override="${1#--model=}"; shift ;;
       --effort|--thinking) effort_override="$2"; shift 2 ;;
@@ -742,6 +748,11 @@ cmd_attach() {
   done
   [[ -n "$pane" && -n "$harness" && -n "$title" ]] || usage
   valid_kind "$kind" || { echo "Error: invalid --kind: $kind" >&2; exit 2; }
+  [[ "$tracker" == "linear" || "$tracker" == "github" ]] || { echo "Error: invalid --tracker: $tracker" >&2; exit 2; }
+  if [[ "$kind" == "issue" && "$tracker" == "github" ]]; then
+    [[ -n "$session_id" && "$session_id" =~ ^[0-9]+$ ]] || { echo "Error: github tracker requires numeric --session-id" >&2; exit 2; }
+    [[ -n "$github_url" ]] || { echo "Error: github tracker requires --github-url" >&2; exit 2; }
+  fi
   tmux list-panes -t "$pane" >/dev/null 2>&1 || { echo "Error: pane not found: $pane" >&2; exit 1; }
   capture_pane_meta "$pane"
   if [[ "$harness" == "pi" ]]; then
@@ -760,7 +771,8 @@ cmd_attach() {
   prepare_launch_metadata "$harness" "$kind" "attach" "$model_override" "$effort_override"
   local branch=""
   [[ -n "$CAPTURE_PANE_CWD" ]] && branch=$(capture_git_branch "$CAPTURE_PANE_CWD")
-  register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "" "" "$branch"
+  [[ -z "$worktree" && "$kind" == "issue" ]] && worktree="$CAPTURE_PANE_CWD"
+  register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "$worktree" "" "$branch" "$tracker" "$github_url"
   ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }

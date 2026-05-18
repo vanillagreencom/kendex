@@ -90,6 +90,20 @@ exit 1
 	return bin;
 }
 
+function makeFailingGhShim(repo: string, stderr = "simulated gh failure"): string {
+	const bin = join(repo, "gh");
+	writeFileSync(bin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
+  printf '%s\n' ${JSON.stringify(stderr)} >&2
+  exit 1
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makeOpencodeBinShim(repo: string, models = "openai/gpt-5.5\n"): string {
 	const bin = join(repo, "opencode");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -127,7 +141,7 @@ function runState(repo: string, args: string[]) {
 }
 
 function forbiddenSupervisorSubstrings(): string[] {
-	return ["/skill:flightdeck github", "$flightdeck github", "/flightdeck github start"];
+	return ["/skill:", "$flightdeck", "/flightdeck github start"];
 }
 
 const repos: string[] = [];
@@ -287,6 +301,27 @@ describe("open-terminal smoke", () => {
 		expect(existsSync(stateFile(repo))).toBe(false);
 	});
 
+	test("github tracker validates issue before creating worktree", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		makeFailingGhShim(repo, "auth failed for owner/repo");
+		const marker = join(repo, "worktree-called");
+		const worktree = join(repo, "worktree-should-not-run");
+		writeFileSync(worktree, `#!/usr/bin/env bash
+touch ${JSON.stringify(marker)}
+printf '%s\n' ${JSON.stringify(repo)}
+`);
+		chmodSync(worktree, 0o755);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["--tracker", "github", "--repo", "owner/repo", "404", "--tmux", "--harness", "pi"], { WORKTREE_CLI: worktree });
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("gh issue view 404 --repo owner/repo failed");
+		expect(r.stderr).toContain("auth failed for owner/repo");
+		expect(existsSync(marker)).toBe(false);
+		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		expect(existsSync(stateFile(repo))).toBe(false);
+	});
+
 	test("mixed Linear and GitHub domains round-trip through flightdeck-state", () => {
 		const repo = makeRepo();
 		repos.push(repo);
@@ -321,5 +356,30 @@ describe("open-terminal smoke", () => {
 		const r = runState(repo, ["write-entry", "bad", JSON.stringify(bad), "--session", "bad-domain"]);
 		expect(r.status).not.toBe(0);
 		expect(r.stderr).toContain("unknown domain key");
+	});
+
+	test("flightdeck-state rejects entries with both Linear and GitHub domains", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		expect(runState(repo, ["init", "--session", "mixed-bad-domain"]).status).toBe(0);
+		const bad = {
+			id: "120",
+			kind: "issue",
+			domain: {
+				issue: { id: "CC-120", worktree: "/repo/trees/cc-120", pr_number: 120, merge_commit: null },
+				github_issue: { number: 120, url: "https://github.com/owner/repo/issues/120", worktree: "/repo/trees/120", pr_number: null, merge_commit: null },
+			},
+		};
+		const r = runState(repo, ["write-entry", "120", JSON.stringify(bad), "--session", "mixed-bad-domain"]);
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("mutually exclusive");
+	});
+
+	test("github tracker native adapter routing is tracker-agnostic", () => {
+		const source = readFileSync(SCRIPT, "utf8");
+		expect(source).not.toMatch(/\$HARNESS" == "(opencode|claude|pi|codex)"[^\n]*\$TRACKER" != "github"/);
+		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" pi)"');
+		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" claude)"');
+		expect(source).toContain('prompt="$(start_prompt_for_harness "$TRACKER" "$issue" opencode)"');
 	});
 });

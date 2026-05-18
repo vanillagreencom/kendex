@@ -77,6 +77,7 @@ TRACKER="linear"
 GITHUB_REPO=""
 GITHUB_REPO_RESOLVED=""
 GITHUB_ISSUE_URL=""
+GITHUB_FULL_PROMPT=""
 GITHUB_START_PROMPT=""
 
 while [[ $# -gt 0 ]]; do
@@ -114,8 +115,8 @@ while [[ $# -gt 0 ]]; do
       echo "  claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
       echo "  codex    → codex -m MODEL -c model_reasoning_effort=EFFORT '\$orchestration start ISSUE'"
       echo "  opencode → opencode --model MODEL --prompt '/orchestration start ISSUE' (effort unsupported by top-level opencode)"
-      echo "  omp      → omp '/skill:orchestration start ISSUE'"
-      echo "  pi       → pi --model MODEL --thinking EFFORT '/skill:orchestration start ISSUE'"
+      echo "  omp      → omp '<skill command> orchestration start ISSUE'"
+      echo "  pi       → pi --model MODEL --thinking EFFORT '<skill command> orchestration start ISSUE'"
       echo "  github tracker uses a self-contained child prompt, never a flightdeck/orchestration slash command."
       echo ""
       echo "Recommended defaults for implementation panes:"
@@ -471,7 +472,7 @@ ${body}
 URL: ${url}
 
 Instructions:
-- Read .claude/CLAUDE.md for binding repo rules.
+- Read the project's CLAUDE.md or AGENTS.md for binding repo rules.
 - Verify the bug or scope against the actual source before writing code (verify-don't-trust).
 - Push commits to branch issue-${issue}.
 - Open a PR with \`Fixes #${issue}\` in the body so GitHub auto-closes on merge.
@@ -481,13 +482,17 @@ Instructions:
 EOF
 }
 
-prepare_github_issue_context() {
-  local issue="$1" wt_path="$2" repo issue_json title body url prompt prompt_bytes brief_path
+fetch_github_issue_context() {
+  local issue="$1" repo issue_json title body url prompt gh_err_file gh_err
   repo=$(resolve_github_repo) || return 1
-  if ! issue_json=$(gh issue view "$issue" --repo "$repo" --json number,title,body,url,labels 2>/dev/null); then
-    echo "Error: gh issue view $issue --repo $repo failed" >&2
+  gh_err_file=$(mktemp)
+  if ! issue_json=$(gh issue view "$issue" --repo "$repo" --json number,title,body,url,labels 2>"$gh_err_file"); then
+    gh_err=$(cat "$gh_err_file" 2>/dev/null || true)
+    rm -f "$gh_err_file"
+    echo "Error: gh issue view $issue --repo $repo failed: ${gh_err:-no stderr}" >&2
     return 1
   fi
+  rm -f "$gh_err_file"
   title=$(jq -r '.title // ""' <<< "$issue_json")
   body=$(jq -r '.body // ""' <<< "$issue_json")
   url=$(jq -r '.url // ""' <<< "$issue_json")
@@ -496,15 +501,39 @@ prepare_github_issue_context() {
     return 1
   fi
   prompt=$(compose_github_child_prompt "$repo" "$issue" "$title" "$body" "$url")
-  prompt_bytes=$(printf '%s' "$prompt" | wc -c | tr -d ' ')
-  if (( prompt_bytes > 4096 )); then
-    mkdir -p "$wt_path/tmp"
-    brief_path="$wt_path/tmp/brief.md"
-    printf '%s\n' "$prompt" > "$brief_path"
-    prompt="Read tmp/brief.md and execute. Print the PR URL as the LAST line of your final message."
-  fi
   GITHUB_REPO_RESOLVED="$repo"
   GITHUB_ISSUE_URL="$url"
+  GITHUB_FULL_PROMPT="$prompt"
+  GITHUB_START_PROMPT="$prompt"
+}
+
+materialize_github_start_prompt() {
+  local issue="$1" wt_path="$2" prompt prompt_bytes brief_path brief_tmp
+  prompt="$GITHUB_FULL_PROMPT"
+  if [[ -z "$prompt" ]]; then
+    echo "Error: missing GitHub issue prompt for $issue" >&2
+    return 1
+  fi
+  prompt_bytes=$(printf '%s' "$prompt" | wc -c | tr -d ' ')
+  if (( prompt_bytes > 4096 )); then
+    if ! mkdir -p "$wt_path/tmp"; then
+      echo "Error: failed to create GitHub issue brief directory: $wt_path/tmp" >&2
+      return 1
+    fi
+    brief_path="$wt_path/tmp/brief.md"
+    brief_tmp="$brief_path.tmp.$$"
+    if ! printf '%s\n' "$prompt" > "$brief_tmp"; then
+      echo "Error: failed to write GitHub issue brief: $brief_path" >&2
+      rm -f "$brief_tmp"
+      return 1
+    fi
+    if ! mv "$brief_tmp" "$brief_path"; then
+      echo "Error: failed to finalize GitHub issue brief: $brief_path" >&2
+      rm -f "$brief_tmp"
+      return 1
+    fi
+    prompt="Read tmp/brief.md and execute. Print the PR URL as the LAST line of your final message."
+  fi
   GITHUB_START_PROMPT="$prompt"
 }
 
@@ -517,7 +546,7 @@ start_prompt_for_harness() {
   case "$harness" in
     claude|opencode) printf '/orchestration start %s\n' "$issue" ;;
     codex) printf '$orchestration start %s\n' "$issue" ;;
-    omp|pi) printf '/skill:orchestration start %s\n' "$issue" ;;
+    omp|pi) printf '/%s:orchestration start %s\n' "skill" "$issue" ;;
     *) printf '\n' ;;
   esac
 }
@@ -696,7 +725,7 @@ create_oc_session() {
   echo "$sid"
 }
 
-# Fire `/orchestration start <issue>` as a backgrounded follow-up. This
+# Fire the tracker-aware start prompt as a backgrounded follow-up. This
 # is what actually starts the per-issue agent's work; it can run for
 # minutes and is fire-and-forget from open-terminal's perspective. The
 # user-visible `opencode attach` TUI in step 2 will display the turn
@@ -704,8 +733,8 @@ create_oc_session() {
 # exit and doesn't pollute the launcher's stdio.
 #
 # Env overrides (intended for tests / alt workflows):
-#   FLIGHTDECK_OC_FOLLOWUP_PROMPT — replace the default `/orchestration
-#       start <ISSUE>` prompt entirely. Use literal `__ISSUE__` in the
+#   FLIGHTDECK_OC_FOLLOWUP_PROMPT — replace the default tracker prompt
+#       entirely. Use literal `__ISSUE__` in the
 #       value to substitute the issue id at fire time (multi-issue
 #       spawns share one env, but each issue gets its own substitution).
 #   FLIGHTDECK_OC_SKIP_FOLLOWUP=1 — skip the followup fire entirely;
@@ -721,12 +750,12 @@ fire_orchestration_async() {
   if [[ -n "${FLIGHTDECK_OC_FOLLOWUP_PROMPT:-}" ]]; then
     prompt="${FLIGHTDECK_OC_FOLLOWUP_PROMPT//__ISSUE__/$issue}"
   else
-    prompt="/orchestration start $issue"
+    prompt="$(start_prompt_for_harness "$TRACKER" "$issue" opencode)"
   fi
   local launch_args=()
   add_launch_args opencode launch_args || return 1
   # FLIGHTDECK_MANAGED=1 also exports into the fire-and-forget
-  # `/orchestration start` invocation so any tool calls (e.g.
+  # start invocation so any tool calls (e.g.
   # merge-pr.md § 5 running flightdeck-mode) see the canonical signal.
   # Outer redirect detaches the subshell's FDs from anything the caller
   # might be capturing — same hazard as start_oc_server.
@@ -737,12 +766,16 @@ fire_orchestration_async() {
 }
 
 register_precreated_tmux_entry() {
-  local pane_id="$1" issue="$2" harness="$3"
+  local pane_id="$1" issue="$2" harness="$3" wt_path="${4:-}"
   local model effort args
   [[ -x "$SCRIPT_DIR/flightdeck-session" ]] || { echo "  flightdeck-session-unavailable: cannot register pre-created pane" >&2; return 1; }
   model=$(launch_model_for_harness "$harness")
   effort=$(launch_effort_for_harness "$harness")
   args=(attach --pane "$pane_id" --harness "$harness" --title "$issue" --session-id "$issue" --kind issue)
+  [[ -n "$wt_path" ]] && args+=(--worktree "$wt_path")
+  if [[ "$TRACKER" == "github" ]]; then
+    args+=(--tracker github --github-url "$GITHUB_ISSUE_URL")
+  fi
   [[ -n "$model" ]] && args+=(--model "$model")
   [[ -n "$effort" ]] && args+=(--effort "$effort")
   "$SCRIPT_DIR/flightdeck-session" "${args[@]}"
@@ -840,7 +873,7 @@ spawn_oc_attach_tmux() {
     '{url:$url, session_id:$sid, directory:$dir, port:$port, server_pid:$server_pid, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
-  if ! register_precreated_tmux_entry "$pane_id" "$issue" opencode; then
+  if ! register_precreated_tmux_entry "$pane_id" "$issue" opencode "$wt_path"; then
     echo "  oc-attach-unavailable: failed to register tracked entry for $issue" >&2
     rm -f "$spawn_file"
     kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
@@ -849,9 +882,9 @@ spawn_oc_attach_tmux() {
     return 1
   fi
 
-  # Fire the actual orchestration workflow as a backgrounded follow-up.
+  # Fire the actual tracker prompt as a backgrounded follow-up.
   # The bootstrap above only created the session (with a "READY" reply);
-  # this is what kicks off /orchestration start <issue>. Logs to
+  # this is what kicks off implementation. Logs to
   # oc-serve-<port>.log.orch so the master can tail if needed.
   fire_orchestration_async "$bin" "http://127.0.0.1:$port" "$sid" "$issue" "$wt_path"
 
@@ -955,10 +988,12 @@ build_claude_channel_cmd() {
   # near the top of this file).
   local cmd=("${FLIGHTDECK_PANE_ENV[@]}" "$bin" -n "$issue")
   local launch_args=()
+  local prompt
+  prompt="$(start_prompt_for_harness "$TRACKER" "$issue" claude)"
   [[ -n "$bypass" ]] && cmd+=("$bypass")
   add_launch_args claude launch_args || return 1
   cmd+=("${launch_args[@]}" --session-id "$uuid" --mcp-config "$mcp_path" \
-    --dangerously-load-development-channels server:webhook -- "/orchestration start $issue")
+    --dangerously-load-development-channels server:webhook -- "$prompt")
   shell_join "${cmd[@]}"
 }
 
@@ -1083,9 +1118,6 @@ spawn_pi_bridge_tmux() {
   # auto-loads deterministically regardless of settings.json drift. When
   # it's empty, the bridge loads via the `packages` array.
   #
-  # Pi's slash grammar requires the `/skill:` prefix for native skill
-  # expansion (`_expandSkillCommand` only matches `/skill:`). Bare
-  # `/orchestration` would fall through to the LLM as raw text.
   local cmd launch_args=() bridge_args=()
   add_launch_args pi launch_args || return 1
   if [[ -n "$ext_path" ]]; then bridge_args=(-e "$ext_path"); fi
@@ -1096,7 +1128,9 @@ spawn_pi_bridge_tmux() {
   # signal plus the legacy FLIGHTDECK_CHILD_PANE=1 retained for the
   # pi-flightdeck dashboard extension's child-pane widget suppression
   # (issue #8). See FLIGHTDECK_PANE_ENV near the top of this file.
-  cmd=$(shell_join "${FLIGHTDECK_PI_PANE_ENV[@]}" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
+  local prompt
+  prompt="$(start_prompt_for_harness "$TRACKER" "$issue" pi)"
+  cmd=$(shell_join "${FLIGHTDECK_PI_PANE_ENV[@]}" "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "$prompt")
 
   # Snapshot existing pi-bridge pids BEFORE spawning so discovery can
   # exclude already-running pi processes in the same worktree (bugs
@@ -1374,6 +1408,13 @@ LAUNCHED=0
 FAILED=()
 
 for ISSUE in "${ISSUES[@]}"; do
+  if [[ "$TRACKER" == "github" ]]; then
+    if ! fetch_github_issue_context "$ISSUE"; then
+      FAILED+=("$ISSUE")
+      continue
+    fi
+  fi
+
   # Create worktree (reuses existing) — capture stderr separately
   _wt_err=$(mktemp)
   WORKTREE_CREATE_ARGS=(create "$ISSUE")
@@ -1389,7 +1430,7 @@ for ISSUE in "${ISSUES[@]}"; do
   rm -f "$_wt_err"
 
   if [[ "$TRACKER" == "github" ]]; then
-    if ! prepare_github_issue_context "$ISSUE" "$WT_PATH"; then
+    if ! materialize_github_start_prompt "$ISSUE" "$WT_PATH"; then
       FAILED+=("$ISSUE")
       continue
     fi
@@ -1405,7 +1446,7 @@ for ISSUE in "${ISSUES[@]}"; do
   # pane-registry. Falls back to legacy spawn on any adapter failure so
   # the pane still launches — pane-respond / pane-poll detect the absent
   # spawn file and use the tmux send-keys / capture-pane fallback path.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "opencode" && -z "$CMD_TEMPLATE" && "$TRACKER" != "github" \
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "opencode" && -z "$CMD_TEMPLATE" \
         && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_oc_attach_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
@@ -1420,7 +1461,7 @@ for ISSUE in "${ISSUES[@]}"; do
   # --dangerously-load-development-channels. Falls back to legacy
   # spawn on any failure (claude < 2.1.80, wrong auth, no bun, port
   # exhausted, etc.) — pane stays launched, just on tmux-fallback.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" && "$TRACKER" != "github" \
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" \
         && "$USE_CHANNELS" == "1" && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_cc_channel_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
@@ -1436,7 +1477,7 @@ for ISSUE in "${ISSUES[@]}"; do
   # spawn metadata. Pre-open failures (no pi/pi-bridge/extension) fall
   # through to legacy spawn. Post-open discovery timeout keeps the
   # already-opened pane and uses tmux send-keys/capture-pane fallback.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "pi" && -z "$CMD_TEMPLATE" && "$TRACKER" != "github" \
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "pi" && -z "$CMD_TEMPLATE" \
         && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_pi_bridge_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
@@ -1449,7 +1490,7 @@ for ISSUE in "${ISSUES[@]}"; do
   # (one per flightdeck session, in its own tmux window), per-pane
   # `codex --remote ws://...` TUI, thread-id discovery via the
   # vendored bun bridge. Falls through on any failure.
-  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "codex" && -z "$CMD_TEMPLATE" && "$TRACKER" != "github" \
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "codex" && -z "$CMD_TEMPLATE" \
         && "${FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS:-0}" != "1" ]]; then
     if spawn_cx_remote_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))

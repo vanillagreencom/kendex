@@ -43,7 +43,7 @@ Issue body:
 URL: <URL>
 
 Instructions:
-- Read .claude/CLAUDE.md for binding repo rules.
+- Read the project's CLAUDE.md or AGENTS.md for binding repo rules.
 - Verify the bug or scope against the actual source before writing code (verify-don't-trust).
 - Push commits to branch issue-<N>.
 - Open a PR with `Fixes #<N>` in the body so GitHub auto-closes on merge.
@@ -100,12 +100,12 @@ The tracked entry id is `<N>` and `kind="issue"`. GitHub metadata must be stored
 
 Minimum shape:
 
-```json
+```jsonc
 {
   "domain": {
     "github_issue": {
-      "number": 120,
-      "url": "https://github.com/OWNER/REPO/issues/120",
+      "number": <N>,
+      "url": "https://github.com/<REPO>/issues/<N>",
       "worktree": "/abs/path/to/worktree",
       "pr_number": null,
       "merge_commit": null,

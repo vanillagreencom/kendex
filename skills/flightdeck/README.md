@@ -51,7 +51,7 @@ Fresh LLM panes need an explicit launch profile. `flightdeck session start --pro
 
 ## Issue workflows
 
-Issue orchestration remains first-class when the session is tied to a Linear or GitHub issue domain. Ask the agent to start a Linear issue, check a Linear parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session. For plain GitHub issues, ask for `flightdeck github start <N>` / `watch` / `close-issue` / `terminate`; GitHub mode uses a self-contained child prompt and stores metadata under `domain.github_issue`.
+Issue orchestration remains first-class when the session is tied to a Linear or GitHub issue domain. Ask the agent to start a Linear issue, check a Linear parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session. For plain GitHub issues, ask for `flightdeck github start <N>` / `watch` / `close-issue` / `terminate`; GitHub mode uses a self-contained child prompt and tracks GitHub issue session metadata separately from Linear sessions.
 
 The `github` skill ships `label-add` and `label-remove` wrappers around `gh pr edit` / `gh issue edit`. When flightdeck spawns a managed pane, those wrappers emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows alongside the existing `pr.*` events, so label-driven gates (`defer-ci`, custom workflow labels) show up in the activity sidecar and Rust dashboard.
 
@@ -112,9 +112,9 @@ Most users never touch these. The ones that occasionally matter:
 
 | Variable | What it does |
 | --- | --- |
-| `FLIGHTDECK_AUTO_MERGE` | Set to `0` to require a human OK on every merge instead of auto-handling the obvious case. Useful for compliance-sensitive repos or big-blast-radius PRs. |
+| `FLIGHTDECK_AUTO_MERGE` | Set to `0` to require a human OK on every merge, including UNKNOWN-state force-merge prompts. Useful for compliance-sensitive repos or big-blast-radius PRs. |
 | `FLIGHTDECK_AUTO_REBASE` | GitHub issue mode defaults this to `0`; set `1` only when you want Flightdeck to answer safe Update Branch / auto-rebase prompts for `BEHIND` PRs. |
-| `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | How long flightdeck waits before force-merging a PR that's approved + green but stuck in GitHub's `UNKNOWN` merge state (default 4 minutes). |
+| `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | How long flightdeck waits before considering force-merge for a PR that's approved + green but stuck in GitHub's `UNKNOWN` merge state (default 4 minutes). |
 | `FLIGHTDECK_LAUNCH_MODEL` / `FLIGHTDECK_LAUNCH_EFFORT` | Default model + thinking level for spawned agents / `flightdeck-session --prompt` when the user doesn't pass them explicitly. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | Keep `1` to require `opencode models` to list the selected OpenCode provider/model before launch; set `0` only for local smoke shims. |
 | `FLIGHTDECK_STATE_DIR` | Where flightdeck writes its session state file inside the project. Defaults to `tmp/`. |

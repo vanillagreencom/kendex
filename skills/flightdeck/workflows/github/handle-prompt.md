@@ -70,19 +70,21 @@ Applies to `gh pr view`, `gh pr edit`, `gh issue view`, and any label/check insp
 
 ## § 4: Handler — `merge-ready-but-unknown`
 
-1. Re-fetch:
+1. If `FLIGHTDECK_AUTO_MERGE=0`, set `paused_for_user = {issue_id:<N>, reason:"auto-merge-disabled", prompt_text:<buffer>}` and return. Do not answer wait, Merge, force-merge, or transition to `force-merge-confirm` while auto-merge is disabled.
+2. Re-fetch:
    ```bash
    gh pr view <PR> --json mergeStateStatus,reviewDecision,statusCheckRollup,files
    ```
-2. If state is still `UNKNOWN`, preserve existing `unknown_since` or set it to now.
-3. If elapsed is below `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` (default 240), answer wait/continue if the prompt offers it; otherwise log and yield.
-4. If elapsed exceeds threshold, evaluate force-merge predicate from `patterns/conflict-detection.md`:
+3. If state is still `UNKNOWN`, preserve existing `unknown_since` or set it to now.
+4. If elapsed is below `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` (default 240), answer wait/continue if the prompt offers it; otherwise log and yield.
+5. If elapsed exceeds threshold, re-check `FLIGHTDECK_AUTO_MERGE`; if it is `0`, set `paused_for_user.reason="auto-merge-disabled"` and return without transitioning to `force-merge-confirm`.
+6. If auto-merge is enabled, evaluate force-merge predicate from `patterns/conflict-detection.md`:
    - approved or no pending reviewers;
    - all checks `SUCCESS` or `SKIPPED`;
    - disjoint from other live PRs and recent main changes;
    - no authoritative conflict state.
-5. Predicate true → transition to `force-merge-confirm`.
-6. Predicate false → set `paused_for_user` with the failed predicate list.
+7. Predicate true → transition to `force-merge-confirm`.
+8. Predicate false → set `paused_for_user` with the failed predicate list.
 
 ---
 
@@ -90,6 +92,7 @@ Applies to `gh pr view`, `gh pr edit`, `gh issue view`, and any label/check insp
 
 Force merge is allowed only for persistent `UNKNOWN` after the threshold and only when the force-merge predicate holds. Re-run the same `gh pr view` check immediately before answering.
 
+- If `FLIGHTDECK_AUTO_MERGE=0`, set `paused_for_user = {issue_id:<N>, reason:"auto-merge-disabled", prompt_text:<buffer>}` and do not answer the force-merge option.
 - Predicate true → answer the force-merge option and log `{unknown_since, elapsed, predicate:"passed"}`.
 - Predicate false → set `paused_for_user` and do not answer.
 

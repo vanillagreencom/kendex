@@ -104,15 +104,17 @@ Process prompting GitHub issues sequentially:
 
 When a prompt or poll classifies `merge-ready-but-unknown`:
 
-1. Re-run authoritative state:
+1. If `FLIGHTDECK_AUTO_MERGE=0`, set `paused_for_user = {issue_id:<N>, reason:"auto-merge-disabled", prompt_text:<state summary>}` and yield. Do not answer wait, Merge, force-merge, or transition to `force-merge-confirm` while auto-merge is disabled.
+2. Re-run authoritative state:
    ```bash
    gh pr view <PR> --json mergeStateStatus,reviewDecision,statusCheckRollup,files
    ```
-2. If `mergeStateStatus` is no longer `UNKNOWN`, clear/ignore `unknown_since` and route to the matching handler (`merge-now`, `pr-merge-conflict`, `behind`, or blocked escalation).
-3. If `UNKNOWN` persists and `unknown_since` is missing, set it to now on the tracked entry.
-4. If elapsed `< FLIGHTDECK_FORCE_MERGE_AFTER_SECS` (default 240), emit structured log `merge-ready-but-unknown issue=<N> pr=<PR> elapsed=<secs>` and yield for daemon wake.
-5. If elapsed `>= FLIGHTDECK_FORCE_MERGE_AFTER_SECS` and the force-merge predicate from `patterns/conflict-detection.md` holds, transition to `force-merge-confirm`.
-6. If elapsed passed threshold but predicate fails, set `paused_for_user` with the failed predicates.
+3. If `mergeStateStatus` is no longer `UNKNOWN`, clear/ignore `unknown_since` and route to the matching handler (`merge-now`, `pr-merge-conflict`, `behind`, or blocked escalation).
+4. If `UNKNOWN` persists and `unknown_since` is missing, set it to now on the tracked entry.
+5. If elapsed `< FLIGHTDECK_FORCE_MERGE_AFTER_SECS` (default 240), emit structured log `merge-ready-but-unknown issue=<N> pr=<PR> elapsed=<secs>` and yield for daemon wake.
+6. If elapsed `>= FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, re-check `FLIGHTDECK_AUTO_MERGE`; if it is `0`, set `paused_for_user.reason="auto-merge-disabled"` and do not transition to `force-merge-confirm`.
+7. If elapsed `>= FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, auto-merge is enabled, and the force-merge predicate from `patterns/conflict-detection.md` holds, transition to `force-merge-confirm`.
+8. If elapsed passed threshold but predicate fails, set `paused_for_user` with the failed predicates.
 
 Force-merge predicate requires: approved or no pending reviewers, all required checks `SUCCESS` or `SKIPPED`, disjoint PR files from recent main changes, and no GitHub authoritative conflict state.
 

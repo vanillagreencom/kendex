@@ -126,12 +126,15 @@ export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">):
 		if (!DOMAIN_KEYS.has(key)) throw new Error(`unknown domain key ${JSON.stringify(key)} (expected issue or github_issue)`);
 	}
 	const issue = domain.issue;
+	const github = domain.github_issue;
+	if (issue !== undefined && issue !== null && github !== undefined && github !== null) {
+		throw new Error("domain.issue and domain.github_issue are mutually exclusive");
+	}
 	let issueId: string | undefined;
 	if (issue !== undefined && issue !== null) {
 		if (!isRecord(issue)) throw new Error("invalid domain.issue: must be an object or null");
 		if ("id" in issue && issue.id !== undefined) issueId = validateEntryId(issue.id, "domain.issue.id");
 	}
-	const github = domain.github_issue;
 	if (github !== undefined && github !== null) {
 		if (!isRecord(github)) throw new Error("invalid domain.github_issue: must be an object or null");
 		if (typeof github.number !== "number" || !Number.isFinite(github.number)) throw new Error("invalid domain.github_issue.number: must be a finite number");
