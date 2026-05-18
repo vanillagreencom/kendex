@@ -193,16 +193,18 @@ export function listTrackedEntriesForReconcile(bin: string, defaultHarness: stri
 		if (!paneId) continue;
 		const harness = typeof r2.harness === "string" && r2.harness.trim() ? r2.harness.trim() : (defaultHarness || "");
 		const kind = typeof r2.kind === "string" ? r2.kind : undefined;
+		const cwd = typeof r2.cwd === "string" ? r2.cwd : undefined;
 		const adapterMeta: ReconcileAdapterMeta = {
 			ocUrl: typeof r2.oc_url === "string" ? r2.oc_url : undefined,
 			ocSessionId: typeof r2.oc_session_id === "string" ? r2.oc_session_id : undefined,
 			ccTranscript: typeof r2.cc_transcript === "string" ? r2.cc_transcript : undefined,
 			piPid: r2.pi_bridge_pid != null ? String(r2.pi_bridge_pid) : undefined,
 			piSocket: typeof r2.pi_bridge_socket === "string" ? r2.pi_bridge_socket : undefined,
+			piSessionId: typeof r2.pi_session_id === "string" ? r2.pi_session_id : undefined,
 			cxUrl: typeof r2.cx_ws === "string" ? r2.cx_ws : undefined,
 			cxThreadId: typeof r2.cx_thread_id === "string" ? r2.cx_thread_id : undefined,
 		};
-		entries.push({ paneId, harness, kind, adapterMeta });
+		entries.push({ paneId, harness, kind, cwd, adapterMeta });
 	}
 	return entries;
 }

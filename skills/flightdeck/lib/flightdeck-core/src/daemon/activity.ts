@@ -35,6 +35,10 @@ export interface WakeEventRow {
 	exit_code?: unknown;
 	master_id?: unknown;
 	pid?: unknown;
+	pi_session_id?: unknown;
+	expected_pi_session_id?: unknown;
+	pi_pid?: unknown;
+	pi_socket?: unknown;
 }
 
 export function resolveDaemonActivityContext(sessionName: string): DaemonActivityContext {
@@ -149,6 +153,29 @@ export function emitSubscriberReattached(ctx: DaemonActivityContext, harness: st
 		source: "daemon",
 		summary: `${harness || "unknown"} subscriber reattached for ${paneId}`,
 		type: "daemon.warning",
+	});
+}
+
+export function emitPiSubscriberMismatch(ctx: DaemonActivityContext, paneId: string, details: { pid?: number; expectedSessionId: string; actualSessionId: string; piPid?: string; piSocket?: string }): void {
+	const dedup = `${paneId}:pi-subscriber-mismatch:${details.pid ?? "unknown"}:${details.actualSessionId || "missing"}`;
+	emitDaemonActivity(ctx, {
+		details: {
+			dedup_key: dedup,
+			event_type: "pi-subscriber-mismatch",
+			expected_pi_session_id: details.expectedSessionId,
+			pi_pid: details.piPid ?? null,
+			pi_session_id: details.actualSessionId || null,
+			pi_socket: details.piSocket ?? null,
+			subscriber_pid: details.pid ?? null,
+		},
+		harness: "pi",
+		importance: "important",
+		natural_key: dedup,
+		pane_id: paneId,
+		severity: "error",
+		source: "daemon",
+		summary: `pi subscriber session mismatch for ${paneId}`,
+		type: "subscriber.mismatch",
 	});
 }
 

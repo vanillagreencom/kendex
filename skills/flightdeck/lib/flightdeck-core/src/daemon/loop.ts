@@ -43,6 +43,7 @@ import { isCanonicalTag, appendEvent } from "./events.ts";
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
 import {
 	emitActivityForWakeRow,
+	emitPiSubscriberMismatch,
 	emitSubscriberDead,
 	emitSubscriberReattached,
 	emitSubscriberStarted,
@@ -64,7 +65,12 @@ import {
 import {
 	reconcileIntervalFromEnv,
 	reconcileTrackedEntries,
+	type ReconcileEntry,
 } from "./reconcile.ts";
+import {
+	piSessionConnectedMismatch,
+	resolvePiSubscriberBinding,
+} from "./pi-binding.ts";
 import {
 	entryKindForPane,
 	extractFlag,
@@ -163,6 +169,8 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	// per-tick liveness check is process.kill(pid, 0) rather than
 	// existsSync + readFileSync + parse on the pid file.
 	const subscriberPid = new Map<string, number>();
+	const piExpectedSession = new Map<string, string>();
+	const subscriberRespawnNeeded = new Set<string>();
 	// Round-4 #11: track per-pane activity flag to skip capture-pane
 	// when nothing changed since the last tick. A low-frequency sweep
 	// (every 30 ticks) still captures so we catch missed signals.
@@ -219,7 +227,12 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		parentPid: process.pid,
 	};
 
-	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string): boolean {
+	function trackedEntryForPane(paneId: string): ReconcileEntry | undefined {
+		return listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness)
+			.find((entry) => entry.paneId === paneId);
+	}
+
+	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string, trackedEntry?: ReconcileEntry): boolean {
 		switch (harness) {
 			case "opencode": {
 				const meta = resolveMeta(opts.paneRegistryBin, "oc-attach-args", target);
@@ -244,11 +257,31 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			}
 			case "pi": {
 				const meta = resolveMeta(opts.paneRegistryBin, "pi-bridge-args", target);
-				const piPid = extractFlag(meta, "--pid");
-				const piSocket = extractFlag(meta, "--socket");
-				if (!piPid && !piSocket) return false;
+				const rawPiPid = extractFlag(meta, "--pid");
+				const rawPiSocket = extractFlag(meta, "--socket");
+				const entry = trackedEntry ?? trackedEntryForPane(paneId);
+				if (!rawPiPid && !rawPiSocket && !entry) return false;
+				let piPid = rawPiPid;
+				let piSocket = rawPiSocket;
+				const expectedSessionId = entry?.adapterMeta?.piSessionId ?? "";
+				if (entry) {
+					const binding = resolvePiSubscriberBinding({
+						paneId,
+						piPid: rawPiPid,
+						piSocket: rawPiSocket,
+						expectedCwd: entry?.cwd,
+						expectedSessionId,
+					});
+					if (!binding.ok) {
+						log("pi-subscriber-bind-skip", `pane=${paneId} reason=${binding.reason} pi_pid=${rawPiPid || ""} socket=${rawPiSocket || ""} expected_session=${expectedSessionId} expected_cwd=${entry?.cwd ?? ""} actual_session=${binding.sessionId ?? ""} proc_cwd=${binding.procCwd ?? ""}`);
+						return false;
+					}
+					piPid = binding.pid;
+					piSocket = binding.socket;
+					piExpectedSession.set(paneId, binding.sessionId);
+				}
 				const entryKind = entryKindForPane(opts.paneRegistryBin, paneId);
-				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
+				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, expectedSessionId: piExpectedSession.get(paneId) ?? expectedSessionId, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
 				emitSubscriberLifecycle(activity, reattached, "pi", paneId, pid);
@@ -328,7 +361,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			spawnFor: (entry) => {
 				const target = entry.adapterMeta?.ocUrl || entry.paneId; // fallback if pane-target unknown
 				const resolvedTarget = resolvePaneTargetForEntry(opts.paneRegistryBin, entry.paneId) || target;
-				const spawned = entry.harness ? trySpawnSubscriberForPane(entry.paneId, resolvedTarget, entry.harness) : false;
+				const spawned = entry.harness ? trySpawnSubscriberForPane(entry.paneId, resolvedTarget, entry.harness, entry) : false;
 				if (spawned) {
 					paneHarness.set(entry.paneId, entry.harness);
 					ocPaneTarget.set(entry.paneId, resolvedTarget);
@@ -345,6 +378,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				seenInner.delete(paneId);
 				paneHarness.delete(paneId);
 				ocPaneTarget.delete(paneId);
+				subscriberRespawnNeeded.delete(paneId);
 			},
 			log: (tag, msg) => log(tag, `${msg} reason=${reason}`),
 		});
@@ -379,6 +413,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		);
 		ocSubscribed.delete(paneId);
 		subscriberPid.delete(paneId);
+		piExpectedSession.delete(paneId);
 		lastActivityFlag.delete(paneId);
 		lastHash.delete(paneId);
 		hashSince.delete(paneId);
@@ -415,6 +450,21 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		}
 		try { process.kill(pid, 0); return true; }
 		catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+	}
+
+	function handlePiSessionConnected(row: WakeEventRow): void {
+		const paneId = typeof row.pane_id === "string" ? row.pane_id : "";
+		if (!paneId) return;
+		const expected = piExpectedSession.get(paneId) || (typeof row.expected_pi_session_id === "string" ? row.expected_pi_session_id : "");
+		const actual = typeof row.pi_session_id === "string" ? row.pi_session_id : "";
+		if (!piSessionConnectedMismatch(expected, actual)) return;
+		const pid = subscriberPid.get(paneId);
+		const piPid = typeof row.pi_pid === "string" ? row.pi_pid : undefined;
+		const piSocket = typeof row.pi_socket === "string" ? row.pi_socket : undefined;
+		log("pi-subscriber-mismatch", `pane=${paneId} subscriber_pid=${pid ?? ""} expected_session=${expected} actual_session=${actual || ""} pi_pid=${piPid ?? ""} socket=${piSocket ?? ""}; reaping for respawn`);
+		emitPiSubscriberMismatch(activity, paneId, { pid, expectedSessionId: expected, actualSessionId: actual, piPid, piSocket });
+		reapSubscriberForPane(paneId, "pi-session-mismatch");
+		subscriberRespawnNeeded.add(paneId);
 	}
 
 	function ocBellMarkerFile(paneId: string): string {
@@ -530,6 +580,11 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (!evPid || !evHash) continue;
 			if (!paneCache.alive(evPid)) continue;
 			if (!firstSeen.has(evPid)) firstSeen.set(evPid, now);
+			if (evTag === "pi-session-connected") {
+				handlePiSessionConnected(ev);
+				notifiedHash.set(evPid, evHash);
+				continue;
+			}
 			if (notifiedHash.get(evPid) === evHash) continue;
 
 			let src = "adapter-event";
@@ -618,6 +673,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				emitSubscriberDead(activity, subHarness, innerId, deadPid);
 				ocSubscribed.delete(innerId);
 				subscriberPid.delete(innerId);
+				piExpectedSession.delete(innerId);
 				try { unlinkSync(pidFile); } catch { /* */ }
 			}
 
@@ -629,6 +685,12 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (!target) continue;
 			const winId = paneCache.windowId(innerId);
 			const harness = paneHarness.get(innerId) ?? opts.defaultHarness;
+			if (subscriberRespawnNeeded.has(innerId)) {
+				subscriberRespawnNeeded.delete(innerId);
+				const entry = trackedEntryForPane(innerId);
+				const resolvedTarget = entry ? (resolvePaneTargetForEntry(opts.paneRegistryBin, entry.paneId) || target) : target;
+				if (harness && trySpawnSubscriberForPane(innerId, resolvedTarget, harness, entry)) continue;
+			}
 			const bell = paneCache.bell(innerId);
 			const paneActivity = paneCache.activity(innerId);
 

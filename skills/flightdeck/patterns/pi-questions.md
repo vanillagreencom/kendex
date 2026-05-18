@@ -38,13 +38,13 @@ The daemon normalizes this to a canonical `pi-question` wake event with `questio
 `pi-bridge stream` only delivers **future** events, and `pane-poll` can't see questions (they live in bridge state, not the tmux pane buffer). To avoid wake-starvation when a question is already open at attach time, the daemon's pi subscriber drains pending questions twice on startup:
 
 1. **Initial drain** — immediately before opening the stream, the subscriber calls `pi-bridge questions` and synthesizes a `pi-question` wake row for every entry in `data.questions[]`, seeding a per-pane `seen_qids` dedup string.
-2. **Re-drain on `bridge_hello`** — `pi-session-bridge` sends `{"type":"bridge_hello","protocol":"pi-session-bridge.v1"}` the instant the stream socket is accepted. The subscriber treats that line as the deterministic "stream connected" signal and runs the same drain again, closing the race window between the initial snapshot and the stream subscription registering with the bridge. `seen_qids` carries forward, so a question seen by both drains (or by a drain and the live `event:"question" action:"opened"`) wakes master exactly once.
+2. **Re-drain on `bridge_hello`** — `pi-session-bridge` sends `{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"..."}}` the instant the stream socket is accepted. The subscriber logs the connected Pi session id, emits a `pi-session-connected` guard row when the daemon supplied an expected session id, and runs the same drain again. This closes the race window between the initial snapshot and the stream subscription registering with the bridge. `seen_qids` carries forward, so a question seen by both drains (or by a drain and the live `event:"question" action:"opened"`) wakes master exactly once.
 
 The drain is **fail-open**: a broken bridge must never block the live-stream branch from running. `pi-bridge questions` is wrapped in `timeout` bounded by `FD_ADAPTER_READ_TIMEOUT_SEC` (default 2s, matching `pane-poll`); rc and stderr are captured and classified, and the subscriber proceeds to the stream regardless. Operators can grep the per-pane `daemon.log.pi-sub-<paneid>` sub-log for these tags:
 
 | Tag | Meaning |
 | --- | --- |
-| `[pi-sub-stream-connected]` | `bridge_hello` arrived; re-drain about to fire. |
+| `[pi-sub-stream-connected]` | `bridge_hello` arrived; line includes `pi_session_id=` and re-drain is about to fire. |
 | `[pi-question-emit] ... drain=1` | Drain (initial or re-drain) wrote a `pi-question` wake row for the listed `request_id`. |
 | `[pi-sub-drain-empty]` | Bridge returned an empty response body — distinguishes drain-quiet from drain-broken. |
 | `[pi-sub-drain-error]` | `pi-bridge questions` exited non-zero (or hit `rc=124` from the timeout). Line carries `rc=` and a `stderr=` tail (200 chars). |

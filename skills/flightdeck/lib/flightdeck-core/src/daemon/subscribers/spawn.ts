@@ -137,6 +137,7 @@ export interface SpawnPiOpts extends BaseSpawnEnv {
 	paneId: string;
 	piPid: string;
 	piSocket: string;
+	expectedSessionId?: string;
 	piLastAssistantJq: string;
 	entryKind?: string;
 	entryHarness?: string;
@@ -156,8 +157,8 @@ export function spawnPiSubscriber(opts: SpawnPiOpts): { pid: number; reattached:
 		FD_ENTRY_KIND: opts.entryKind ?? "",
 		FD_ENTRY_HARNESS: opts.entryHarness ?? "pi",
 	};
-	const pid = spawnSub(["pi", opts.paneId, opts.piPid, opts.piSocket, String(opts.parentPid)], env, pidFile);
-	opts.log("pi-subscriber-spawn", `pane=${opts.paneId} pid=${pid} pi_pid=${opts.piPid} socket=${opts.piSocket} entry_kind=${opts.entryKind ?? "unknown"}`);
+	const pid = spawnSub(["pi", opts.paneId, opts.piPid, opts.piSocket, String(opts.parentPid), opts.expectedSessionId ?? ""], env, pidFile);
+	opts.log("pi-subscriber-spawn", `pane=${opts.paneId} pid=${pid} pi_pid=${opts.piPid} socket=${opts.piSocket} expected_session=${opts.expectedSessionId ?? ""} entry_kind=${opts.entryKind ?? "unknown"}`);
 	return { pid, reattached: false };
 }
 

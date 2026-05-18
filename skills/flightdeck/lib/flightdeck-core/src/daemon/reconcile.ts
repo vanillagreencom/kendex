@@ -18,6 +18,7 @@ export interface ReconcileEntry {
 	paneId: string;
 	harness: string;
 	kind?: string;
+	cwd?: string;
 	adapterMeta?: ReconcileAdapterMeta;
 }
 
@@ -27,6 +28,7 @@ export interface ReconcileAdapterMeta {
 	ccTranscript?: string;
 	piPid?: string;
 	piSocket?: string;
+	piSessionId?: string;
 	cxUrl?: string;
 	cxThreadId?: string;
 }

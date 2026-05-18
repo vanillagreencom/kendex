@@ -7,7 +7,7 @@
 # Usage:
 #   bash subscribers.bash oc <pane_id> <oc_url> <session_id> <parent_pid>
 #   bash subscribers.bash cc <pane_id> <transcript> <parent_pid>
-#   bash subscribers.bash pi <pane_id> <pi_pid> <pi_socket> <parent_pid>
+#   bash subscribers.bash pi <pane_id> <pi_pid> <pi_socket> <parent_pid> [expected_pi_session_id]
 #   bash subscribers.bash cx <pane_id> <cx_url> <thread_id> <parent_pid>
 #
 # Required env (the TS daemon exports these before spawning):
@@ -246,13 +246,13 @@ cc_subscriber_loop() {
 
 pi_subscriber_loop() {
   exec 200<&- 2>/dev/null || true
-  local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}"
+  local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}" expected_pi_session_id="${5:-}"
   local last_hash=""
   local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
-  printf '%s [pi-sub-start] pane=%s pi_pid=%s socket=%s parent=%s\n' \
-    "$(date -Iseconds)" "$pane_id" "$pi_pid" "$pi_socket" "$parent_pid" \
+  printf '%s [pi-sub-start] pane=%s pi_pid=%s socket=%s parent=%s expected_session=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$pi_pid" "$pi_socket" "$parent_pid" "$expected_pi_session_id" \
     >> "$sub_log" 2>/dev/null || true
 
   local pi_bin; pi_bin=$(pi_resolve_bridge_bin) || {
@@ -370,9 +370,30 @@ pi_subscriber_loop() {
       local msg_type
       msg_type=$(jq -r '.type // ""' <<< "$line" 2>/dev/null)
       if [[ "$msg_type" == "bridge_hello" ]]; then
-        printf '%s [pi-sub-stream-connected] pane=%s\n' \
-          "$(date -Iseconds)" "$pane_id" \
+        local connected_pi_session_id
+        connected_pi_session_id=$(jq -r '.state.sessionId // .state.session_id // .data.sessionId // .data.session_id // .sessionId // .session_id // ""' <<< "$line" 2>/dev/null)
+        printf '%s [pi-sub-stream-connected] pane=%s pi_session_id=%s expected_session=%s\n' \
+          "$(date -Iseconds)" "$pane_id" "$connected_pi_session_id" "$expected_pi_session_id" \
           >> "$sub_log" 2>/dev/null || true
+        if [[ -n "$expected_pi_session_id" ]]; then
+          local connected_hash
+          connected_hash=$(printf '%s|pi-session-connected|%s|%s|%s|%s' "$pane_id" "$connected_pi_session_id" "$expected_pi_session_id" "$pi_pid" "$pi_socket" | sha256sum | awk '{print substr($1,1,12)}')
+          ( exec 211>"$SESSION_LOCK"
+            flock 211
+            jq -nc --arg ts "$(date -Iseconds)" \
+                   --arg pid "$pane_id" \
+                   --arg harness "pi" \
+                   --arg event "pi_session_connected" \
+                   --arg tag "pi-session-connected" \
+                   --arg h "$connected_hash" \
+                   --arg session "$connected_pi_session_id" \
+                   --arg expected "$expected_pi_session_id" \
+                   --arg pi_pid "$pi_pid" \
+                   --arg socket "$pi_socket" \
+                   '{ts:$ts, pane_id:$pid, harness:$harness, event_type:$event, classifier_tag:$tag, hash:$h, pi_session_id:$session, expected_pi_session_id:$expected, pi_pid:$pi_pid, pi_socket:$socket}' \
+                   >> "$WAKE_EVENTS_LOG"
+          )
+        fi
         pi_subscriber_drain_questions "$pane_id" "$pi_bin" "$sub_log" pi_target_args seen_qids
         continue
       fi

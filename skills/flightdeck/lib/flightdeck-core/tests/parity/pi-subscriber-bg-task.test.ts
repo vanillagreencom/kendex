@@ -100,6 +100,71 @@ describe("subscriber env isolation (vstack#15 round 4)", () => {
 	});
 });
 
+describe("Pi subscriber connect metadata", () => {
+	test("emits connected pi session id when daemon supplies expected session", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-connect-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const log = join(stateDir, "daemon.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "questions" ]]; then
+  echo '{"success":true,"data":{"questions":[]}}'
+  exit 0
+fi
+if [[ "\${1:-}" == "stream" ]]; then
+  echo '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"pi-new","socketPath":"/tmp/pi-new.sock"}}'
+  sleep 30
+fi
+exit 0
+`);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%1312", "2169938", "/tmp/pi-new.sock", String(parentPid), "pi-new"], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+
+			const deadline = Date.now() + 8000;
+			let lines: string[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					lines = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean);
+					if (lines.length > 0) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			expect(lines.length).toBe(1);
+			const ev = JSON.parse(lines[0]!);
+			expect(ev.pane_id).toBe("%1312");
+			expect(ev.classifier_tag).toBe("pi-session-connected");
+			expect(ev.event_type).toBe("pi_session_connected");
+			expect(ev.pi_session_id).toBe("pi-new");
+			expect(ev.expected_pi_session_id).toBe("pi-new");
+			expect(ev.pi_pid).toBe("2169938");
+			expect(ev.pi_socket).toBe("/tmp/pi-new.sock");
+			expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+			const subLog = readFileSync(`${log}.pi-sub-1312`, "utf8");
+			expect(subLog).toContain("pi_session_id=pi-new");
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+});
+
 describe("Pi subscriber bg-task exit translation (vstack#15)", () => {
 	test("emits pi-bg-task-exit wake event with task payload", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-bg-"));
