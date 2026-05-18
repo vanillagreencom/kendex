@@ -71,12 +71,17 @@ export function rateLimitBackoffLadderFromEnv(env: NodeJS.ProcessEnv = process.e
 }
 
 export function isRateLimitEvent(event: unknown): boolean {
-	const text = extractErrorText(event);
+	const message = readAssistantMessage(event);
+	if (!message) return false;
+	const stopReason = readAssistantStopReason(message);
+	if (stopReason !== "error") return false;
+	const text = extractAssistantErrorText(message);
 	if (!text) return false;
-	if (!RATE_LIMIT_ERROR_REGEX.test(text)) return false;
-	const stopReason = readStopReason(event);
-	if (stopReason && stopReason !== "error") return false;
-	return true;
+	return RATE_LIMIT_ERROR_REGEX.test(text);
+}
+
+export function isAssistantMessageEvent(event: unknown): boolean {
+	return readAssistantMessage(event) !== null;
 }
 
 export function extractRetryAfterMs(event: unknown): number | null {
@@ -132,48 +137,40 @@ export function decideRateLimitRetry(
 	return { at, attempt: nextAttempt, hash, kind: "retry-at", steerMessage: RATE_LIMIT_STEER_MESSAGE };
 }
 
-function extractErrorText(event: unknown): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object";
+}
+
+function readAssistantMessage(event: unknown): Record<string, unknown> | null {
+	if (!isRecord(event)) return null;
+	const directMessage = event.message;
+	if (isRecord(directMessage) && directMessage.role === "assistant") return directMessage;
+	const data = event.data;
+	if (isRecord(data)) {
+		const dataMessage = data.message;
+		if (isRecord(dataMessage) && dataMessage.role === "assistant") return dataMessage;
+	}
+	return null;
+}
+
+function extractAssistantErrorText(message: Record<string, unknown>): string {
 	const parts: string[] = [];
-	const seen = new Set<unknown>();
-	const stack: unknown[] = [event];
-	while (stack.length > 0) {
-		const node = stack.pop();
-		if (!node || typeof node !== "object" || seen.has(node)) continue;
-		seen.add(node);
-		const record = node as Record<string, unknown>;
-		for (const key of ["errorMessage", "error_message", "message", "text", "error"]) {
-			const value = record[key];
-			if (typeof value === "string" && value) parts.push(value);
-		}
-		const content = record.content;
-		if (Array.isArray(content)) {
-			for (const item of content) {
-				if (item && typeof item === "object") {
-					const text = (item as Record<string, unknown>).text;
-					if (typeof text === "string" && text) parts.push(text);
-				}
-			}
-		}
-		for (const child of Object.values(record)) {
-			if (child && typeof child === "object") stack.push(child);
+	for (const key of ["errorMessage", "error_message"]) {
+		const value = message[key];
+		if (typeof value === "string" && value) parts.push(value);
+	}
+	const content = message.content;
+	if (Array.isArray(content)) {
+		for (const item of content) {
+			if (!isRecord(item)) continue;
+			const text = item.text;
+			if (typeof text === "string" && text) parts.push(text);
 		}
 	}
 	return parts.join("\n");
 }
 
-function readStopReason(event: unknown): string | null {
-	const seen = new Set<unknown>();
-	const stack: unknown[] = [event];
-	while (stack.length > 0) {
-		const node = stack.pop();
-		if (!node || typeof node !== "object" || seen.has(node)) continue;
-		seen.add(node);
-		const record = node as Record<string, unknown>;
-		const value = record.stopReason;
-		if (typeof value === "string" && value) return value;
-		for (const child of Object.values(record)) {
-			if (child && typeof child === "object") stack.push(child);
-		}
-	}
-	return null;
+function readAssistantStopReason(message: Record<string, unknown>): string | null {
+	const value = message.stopReason;
+	return typeof value === "string" ? value : null;
 }

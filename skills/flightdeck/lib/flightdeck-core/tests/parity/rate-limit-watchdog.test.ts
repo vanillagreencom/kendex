@@ -6,7 +6,10 @@
 
 import { describe, expect, test } from "bun:test";
 
-import {
+import * as canonicalDecision from "../../src/daemon/rate-limit-watchdog.ts";
+import * as vendoredDecision from "../../../../../../pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-decision.ts";
+
+const {
 	RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC,
 	RATE_LIMIT_DEFAULT_MAX_ATTEMPTS,
 	RATE_LIMIT_ERROR_REGEX,
@@ -17,7 +20,12 @@ import {
 	rateLimitBackoffLadderFromEnv,
 	rateLimitMaxAttemptsFromEnv,
 	rateLimitWatchdogEnabledFromEnv,
-} from "../../src/daemon/rate-limit-watchdog.ts";
+} = canonicalDecision;
+
+const DECISION_MODULES: Array<{ name: string; module: typeof canonicalDecision }> = [
+	{ module: canonicalDecision, name: "flightdeck-core canonical" },
+	{ module: vendoredDecision, name: "pi-agents-tmux vendored" },
+];
 
 // Canonical message_end-style envelope produced by pi-coding-agent for a
 // rate-limited assistant turn. Snapshot taken from a real session under
@@ -204,8 +212,99 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 	});
 });
 
+describe("rate-limit decision parity — false-positive regression coverage (vstack#120)", () => {
+	const toolResultMentionsRateLimit = {
+		message: {
+			content: [{ text: "see § 9.2 — Rate limit (429) handling", type: "text" }],
+			role: "toolResult",
+		},
+		type: "message_end",
+	};
+
+	const steerEchoUserMessage = {
+		message: {
+			content: [{ text: RATE_LIMIT_STEER_MESSAGE, type: "text" }],
+			role: "user",
+		},
+		type: "message_end",
+	};
+
+	const assistantStopMentions429 = {
+		message: {
+			content: [{ text: "The API returned 429 last time but I retried and it worked.", type: "text" }],
+			role: "assistant",
+			stopReason: "stop",
+		},
+		type: "message_end",
+	};
+
+	const assistantErrorWithNestedToolTextOnly = {
+		message: {
+			content: [{ text: "Tool output attached below.", type: "text" }],
+			errorMessage: "Tool execution failed",
+			role: "assistant",
+			stopReason: "error",
+		},
+		type: "message_end",
+		toolResult: {
+			content: [{ text: "Normal docs mention Rate limit (429)", type: "text" }],
+		},
+	};
+
+	const regressionEvents = [
+		{
+			assistant: false,
+			event: toolResultMentionsRateLimit,
+			name: "toolResult message_end whose content mentions rate limit",
+		},
+		{
+			assistant: false,
+			event: steerEchoUserMessage,
+			name: "user message_end echoing the steer text",
+		},
+		{
+			assistant: true,
+			event: assistantStopMentions429,
+			name: "assistant message_end with stopReason=stop mentioning 429",
+		},
+		{
+			assistant: true,
+			event: assistantErrorWithNestedToolTextOnly,
+			name: "assistant error whose rate-limit prose exists only outside the assistant envelope",
+		},
+	] as const;
+
+	for (const { module, name } of DECISION_MODULES) {
+		for (const { assistant, event, name: eventName } of regressionEvents) {
+			test(`${name}: ${eventName} returns not-rate-limited`, () => {
+				expect(module.isAssistantMessageEvent(event)).toBe(assistant);
+				expect(module.isRateLimitEvent(event)).toBe(false);
+				expect(
+					module.decideRateLimitRetry({
+						attempt: 0,
+						event,
+						lastRetryAt: null,
+						now: 1_000,
+						paneId: "%41",
+					}),
+				).toEqual({ kind: "not-rate-limited" });
+			});
+		}
+	}
+
+	test("canonical and vendored decision modules stay behaviorally identical", () => {
+		for (const { event } of [
+			...regressionEvents,
+			{ event: CANONICAL_RATE_LIMIT_EVENT, name: "canonical rate-limit event" },
+		]) {
+			const input = { attempt: 0, event, lastRetryAt: null, now: 10_000, paneId: "%41" };
+			expect(vendoredDecision.decideRateLimitRetry(input)).toEqual(canonicalDecision.decideRateLimitRetry(input));
+		}
+	});
+});
+
 describe("isRateLimitEvent — defensive shape matching", () => {
-	test("accepts agent_end shapes with top-level data.error prose", () => {
+	test("rejects top-level data.error prose without an assistant message envelope", () => {
 		expect(
 			isRateLimitEvent({
 				data: {
@@ -216,7 +315,7 @@ describe("isRateLimitEvent — defensive shape matching", () => {
 				stopReason: "error",
 				type: "agent_end",
 			}),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	test("matches the canonical regex with several phrasings", () => {

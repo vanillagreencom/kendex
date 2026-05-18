@@ -36,6 +36,7 @@
 import {
 	RATE_LIMIT_STEER_MESSAGE,
 	decideRateLimitRetry,
+	isAssistantMessageEvent,
 	rateLimitBackoffLadderFromEnv,
 	rateLimitMaxAttemptsFromEnv,
 	rateLimitWatchdogEnabledFromEnv,
@@ -151,6 +152,10 @@ export function createSubagentRateLimitWatchdog(
 			if (decision.kind === "not-rate-limited") {
 				// Recovery branch: if the pane had been mid-rate-limit and just
 				// produced a healthy assistant turn, emit resolved + reset state.
+				// Non-assistant message_end events (toolResult/user echo of our own
+				// steer) are ignored so they cannot retrigger or falsely resolve the
+				// retry ladder.
+				if (!isAssistantMessageEvent(event)) return { kind: "not-rate-limited" };
 				if (state.pendingRetry === null && state.attempt > 0) {
 					const previousAttempt = state.attempt;
 					state.attempt = 0;

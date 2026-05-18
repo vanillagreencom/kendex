@@ -37,6 +37,14 @@ const HEALTHY_MESSAGE_END = {
 	type: "message_end",
 };
 
+const USER_STEER_ECHO_MESSAGE_END = {
+	message: {
+		content: [{ text: "API rate limit was detected. Try to continue from where you left off.", type: "text" }],
+		role: "user",
+	},
+	type: "message_end",
+};
+
 function makeDeps(overrides: Partial<SubagentRateLimitWatchdogDeps> = {}): {
 	deps: SubagentRateLimitWatchdogDeps;
 	scheduled: Array<{ delayMs: number; fn: () => void; cancelled: boolean }>;
@@ -154,6 +162,20 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		const second = watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust");
 		if (second.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
 		expect(second.attempt).toBe(1);
+	});
+
+	test("user-role steer echo does not resolve or reset the retry ladder", () => {
+		const ctx = makeDeps();
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust");
+		watchdog.fireRetryNow("rust"); // pending cleared, attempt remains 1
+		ctx.activity.length = 0;
+		const echo = watchdog.onMessageEnd(USER_STEER_ECHO_MESSAGE_END, "rust");
+		expect(echo.kind).toBe("not-rate-limited");
+		expect(ctx.activity).toHaveLength(0);
+		const second = watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust");
+		if (second.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(second.attempt).toBe(2);
 	});
 
 	test("non-rate-limit message_end leaves state untouched", () => {
