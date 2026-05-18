@@ -67,6 +67,7 @@ import {
 	ensurePaneBridgeMetadata,
 	ensurePersistentPane,
 	execCapture,
+	createCachedPiBridgeResolver,
 	migrateLegacyPackageRuntime,
 	migrateLegacyProjectRuntime,
 	paneExists,
@@ -354,11 +355,19 @@ function clampAboveEditorWidget(lines: string[], terminalRows: number, theme: Th
 	return [...lines.slice(0, maxLines - 1), theme.fg("muted", `… ${hidden} more (open agents browser for full view)`)];
 }
 
+function appendRuntimeDiagnostic(runtimeRoot: string | undefined, source: string, message: string): void {
+	if (!runtimeRoot) return;
+	const logFile = path.join(runtimeRoot, "subagent-diagnostics.jsonl");
+	const entry = { ts: new Date().toISOString(), source, message };
+	void fs.promises.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 }).catch(() => undefined);
+}
+
 export default function (pi: ExtensionAPI) {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 	if (!settingBoolean("enabled", true)) return;
+	const resolveIdleProbeBridgeBin = createCachedPiBridgeResolver(resolvePiBridgeBin);
 
 	const childAgentName = process.env.PI_SUBAGENT_CHILD_AGENT;
 	const statuslineBridge: SubagentStatuslineBridge = {
@@ -440,6 +449,7 @@ export default function (pi: ExtensionAPI) {
 	// the W5 O_EXCL writer so a racing real complete_subagent always wins.
 
 	let currentRuntimeRoot: string | undefined;
+	const logIdleStallDiagnostic = (message: string) => appendRuntimeDiagnostic(currentRuntimeRoot, "idle-stall-watchdog", message);
 	const idleStallWatchdog = createIdleStallWatchdog({
 		intervalMs: stallWatchdogIntervalMsFromEnv(),
 		thresholdMs: stallWatchdogThresholdMsFromEnv(),
@@ -471,7 +481,7 @@ export default function (pi: ExtensionAPI) {
 			if (!currentRuntimeRoot) return false;
 			const registry = await readPaneRegistry(currentRuntimeRoot);
 			const probe = await probePaneIdle(record, {
-				resolveBridgeBin: resolvePiBridgeBin,
+				resolveBridgeBin: resolveIdleProbeBridgeBin,
 				execCapture: async (command, args, options) => {
 					const timeoutMs = options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS;
 					return Promise.race([
@@ -482,7 +492,7 @@ export default function (pi: ExtensionAPI) {
 					]);
 				},
 				readPaneRegistryEntry: async (agent) => registry[agent],
-				logWarn: (msg) => console.warn(msg),
+				logWarn: logIdleStallDiagnostic,
 			});
 			return probe.idle;
 		},
@@ -502,9 +512,7 @@ export default function (pi: ExtensionAPI) {
 					completionPath(currentRuntimeRoot, record.agent, record.taskId),
 			});
 		},
-		logWarn: (msg) => {
-			console.warn(msg);
-		},
+		logWarn: logIdleStallDiagnostic,
 	});
 	let dashboardState: SubagentDashboardState = { collapsed: false, mode: "normal", visible: true, items: {} };
 	let dashboardCtx: ExtensionContext | undefined;

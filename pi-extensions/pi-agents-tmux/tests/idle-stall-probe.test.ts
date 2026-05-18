@@ -95,9 +95,29 @@ test("flat state shape (no .data wrapper) is also accepted", async () => {
 	assert.equal(result.idle, true);
 });
 
-test("bridge unreachable (exec throws) -> default-busy with bridge-error", async () => {
+test("bridge spawn ENOENT (exec throws) -> default-busy without warning toast", async () => {
 	const { d, warnings } = deps({
-		execError: new Error("ENOENT spawn pi-bridge"),
+		execError: new Error("spawn /home/user/.pi/agent/bin/pi-bridge ENOENT"),
+	});
+	const result = await probePaneIdle(record(), d);
+	assert.equal(result.idle, false);
+	assert.equal(result.reason, "bridge-bin-not-found");
+	assert.equal(warnings.length, 0);
+});
+
+test("bridge spawn ENOENT (non-zero result) -> default-busy without warning toast", async () => {
+	const { d, warnings } = deps({
+		execResult: { code: 1, stdout: "", stderr: "Error: spawn /home/user/.pi/agent/bin/pi-bridge ENOENT" },
+	});
+	const result = await probePaneIdle(record(), d);
+	assert.equal(result.idle, false);
+	assert.equal(result.reason, "bridge-bin-not-found");
+	assert.equal(warnings.length, 0);
+});
+
+test("bridge unreachable (non-ENOENT exec throws) -> default-busy with bridge-error", async () => {
+	const { d, warnings } = deps({
+		execError: new Error("ECONNRESET"),
 	});
 	const result = await probePaneIdle(record(), d);
 	assert.equal(result.idle, false);

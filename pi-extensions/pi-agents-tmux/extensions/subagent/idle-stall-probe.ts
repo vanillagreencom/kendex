@@ -56,6 +56,10 @@ function parseIsIdle(stdout: string): boolean | undefined {
 	}
 }
 
+function isBridgeSpawnMissing(message: string): boolean {
+	return /\bspawn\b/i.test(message) && /\bENOENT\b/i.test(message);
+}
+
 export async function probePaneIdle(
 	record: PaneTaskRecord,
 	deps: ProbePaneIdleDeps,
@@ -75,11 +79,14 @@ export async function probePaneIdle(
 		result = await deps.execCapture(bin, args, { cwd: entry.cwd, timeoutMs });
 	} catch (err) {
 		const message = (err as Error)?.message ?? String(err);
+		if (isBridgeSpawnMissing(message)) return { idle: false, reason: "bridge-bin-not-found" };
 		deps.logWarn?.(`probePaneIdle: ${record.agent} exec threw: ${message}`);
 		return { idle: false, reason: /timeout|timed out/i.test(message) ? "bridge-timeout" : "bridge-error" };
 	}
 	if (result.code !== 0) {
-		deps.logWarn?.(`probePaneIdle: ${record.agent} pi-bridge state exit ${result.code}: ${(result.stderr || "").trim().slice(0, 200)}`);
+		const stderr = (result.stderr || "").trim();
+		if (isBridgeSpawnMissing(stderr)) return { idle: false, reason: "bridge-bin-not-found" };
+		deps.logWarn?.(`probePaneIdle: ${record.agent} pi-bridge state exit ${result.code}: ${stderr.slice(0, 200)}`);
 		return { idle: false, reason: "bridge-error" };
 	}
 	const idle = parseIsIdle(result.stdout);

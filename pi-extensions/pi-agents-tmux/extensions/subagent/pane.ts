@@ -259,6 +259,20 @@ async function resolvePiBridgeBin(): Promise<string | undefined> {
 	return found || undefined;
 }
 
+export function createCachedPiBridgeResolver(resolve: () => Promise<string | undefined> = resolvePiBridgeBin): () => Promise<string | undefined> {
+	// vstack#122: interval probes must not re-run path discovery on every tick.
+	// Resolve once at extension-load; if the cached binary later disappears,
+	// probePaneIdle classifies spawn ENOENT as bridge-bin-not-found and skips
+	// silently instead of leaking a console.warn into the Pi TUI.
+	let cached: Promise<string | undefined>;
+	try {
+		cached = Promise.resolve(resolve()).catch(() => undefined);
+	} catch {
+		cached = Promise.resolve(undefined);
+	}
+	return () => cached;
+}
+
 export { resolvePiBridgeBin };
 
 async function discoverBridgeMetadataForPane(entry: PaneRegistryEntry, timeoutMs = 0): Promise<BridgeMetadata | undefined> {
