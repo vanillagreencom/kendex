@@ -39,6 +39,12 @@ describe("classifyPiBridgeState (vstack#57)", () => {
 		expect(result.matched).toContain("adhoc pi idle");
 	});
 
+	test("wrapped pi-bridge state under data -> terminal-state-reached", () => {
+		const result = classifyPiBridgeState({ data: { isIdle: true, hasPendingMessages: false } }, { entryKind: "workflow", entryHarness: "pi" });
+		expect(result.tag).toBe("terminal-state-reached");
+		expect(result.matched).toContain("workflow pi idle");
+	});
+
 	test("issue-kind pi idle with no pending messages -> idle (unchanged)", () => {
 		const result = classifyPiBridgeState({ isIdle: true, hasPendingMessages: false }, { entryKind: "issue", entryHarness: "pi" });
 		expect(result.tag).toBe("idle");
@@ -82,6 +88,13 @@ describe("prompt-classify --bridge-state-file (vstack#57)", () => {
 		const r = runClassifyBridge(file, { entryKind: "adhoc", entryHarness: "pi" });
 		expect(r.status).toBe(0);
 		expect(r.stdout).toBe("terminal-state-reached");
+	});
+
+	test("CLI returns terminal-state-reached for wrapped workflow pi idle no-pending", () => {
+		const file = tmpStateFile({ data: { isIdle: true, hasPendingMessages: false } });
+		const r = runClassifyBridge(file, { entryKind: "workflow", entryHarness: "pi", dryRun: true });
+		expect(r.status).toBe(0);
+		expect(r.stdout).toMatch(/^terminal-state-reached	workflow pi idle/);
 	});
 
 	test("CLI returns idle for issue-kind pi idle no-pending", () => {

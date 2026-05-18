@@ -205,8 +205,7 @@ fn render_single_column(
             " "
         };
         let pr = session
-            .issue()
-            .and_then(|issue| issue.pr_number)
+            .pr_number()
             .map(|pr| format!("PR #{pr}"))
             .unwrap_or_default();
         let style = if idx == model.selected_index() {
@@ -339,7 +338,7 @@ fn render_session_table(
         Cell::from("Harness"),
         Cell::from("Title"),
         Cell::from("Cost"),
-        Cell::from("PR/worktree"),
+        Cell::from("PR / path"),
         Cell::from("Age"),
         Cell::from("Decision"),
         Cell::from("Activity"),
@@ -487,11 +486,9 @@ fn detail_lines(
         Span::styled("pane    ", theme.status_label()),
         Span::raw(session.pane_id.clone().unwrap_or_else(|| "—".to_owned())),
     ]));
-    if let Some(issue) = session.issue() {
-        if let Some(worktree) = &issue.worktree {
-            lines.push(Line::from(Span::styled("worktree", theme.status_label())));
-            lines.push(Line::from(format!("  {}", worktree.display())));
-        }
+    if let Some(worktree) = session.worktree() {
+        lines.push(Line::from(Span::styled("worktree", theme.status_label())));
+        lines.push(Line::from(format!("  {}", worktree.display())));
     }
     if let Some(cwd) = &session.cwd {
         lines.push(Line::from(vec![
@@ -504,6 +501,14 @@ fn detail_lines(
             Span::styled("branch  ", theme.status_label()),
             Span::raw(branch.to_owned()),
         ]));
+    }
+    if session.issue().is_none() {
+        if let Some(pr) = session.pr_number() {
+            lines.push(Line::from(vec![
+                Span::styled("PR      ", theme.status_label()),
+                Span::raw(format!("#{pr}")),
+            ]));
+        }
     }
 
     if let Some(issue) = session.issue() {
@@ -719,17 +724,10 @@ fn issue_label(session: &TrackedSession) -> String {
         .branch
         .as_deref()
         .filter(|name| !name.is_empty() && !is_default_branch(name));
-    let Some(issue) = session.issue() else {
-        // Non-issue rows: surface branch alone when present + non-default.
-        return match branch {
-            Some(name) => format!("branch {name}"),
-            None => String::from("—"),
-        };
-    };
-    let pr = issue.pr_number.map(|number| format!("PR #{number}"));
-    let worktree = issue
-        .worktree
-        .as_ref()
+    let has_issue = session.issue().is_some();
+    let pr = session.pr_number().map(|number| format!("PR #{number}"));
+    let worktree = session
+        .worktree()
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str());
     match (branch, pr.as_deref(), worktree) {
@@ -742,8 +740,9 @@ fn issue_label(session: &TrackedSession) -> String {
         // Default/missing branch: keep the legacy PR · worktree shape.
         (None, Some(p), Some(w)) => format!("{p} · {w}"),
         (None, Some(p), None) => p.to_owned(),
-        (None, None, Some(w)) => format!("PR — · {w}"),
-        (None, None, None) => String::from("PR —"),
+        (None, None, Some(w)) => format!("path {w}"),
+        (None, None, None) if has_issue => String::from("PR —"),
+        (None, None, None) => String::from("—"),
     }
 }
 

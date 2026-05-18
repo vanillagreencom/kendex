@@ -267,6 +267,82 @@ describe("flightdeck-state CLI", () => {
 		expect(r.stderr).toContain("Warning: pi-bridge metadata discovery failed (pi_bridge_timeout); proceeding with null pi_session_id/pi_bridge_socket.");
 	});
 
+	test("pi owner discovery falls back from helper pid to bridge cwd", () => {
+		const stub = writePiBridgeStub(repo, `
+if [[ "$*" == "list --json --pid 4242" ]]; then
+  printf '%s\n' '[]'
+else
+  printf '%s\n' '[{"pid":5151,"sessionId":"pi-cwd-session","socketPath":"/tmp/pi-cwd.sock","cwd":"/tmp/flightdeck-owner-parity"}]'
+fi
+`);
+		const r = run(repo, ["init"], {
+			FLIGHTDECK_OWNER_HARNESS: "pi",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: `${stub}:/usr/bin:/bin`,
+		});
+		expect(r.status).toBe(0);
+		expect(r.stderr).toBe("");
+		const owner = (readState(repo) as { owner?: { discovery_error?: string | null; pi_session_id?: string; pi_bridge_socket?: string | null } }).owner;
+		expect(owner).toMatchObject({
+			discovery_error: null,
+			pi_bridge_socket: "/tmp/pi-cwd.sock",
+			pi_session_id: "pi-cwd-session",
+		});
+	});
+
+
+	test("non-pi explicit owner harness skips pi cwd fallback", () => {
+		const stub = writePiBridgeStub(repo, `
+printf '%s\n' '[{"pid":5151,"sessionId":"pi-cwd-session","socketPath":"/tmp/pi-cwd.sock","cwd":"/tmp/flightdeck-owner-parity"}]'
+`);
+		const r = run(repo, ["init"], {
+			FLIGHTDECK_OWNER_HARNESS: "claude",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: `${stub}:/usr/bin:/bin`,
+		});
+		expect(r.status).toBe(0);
+		expect(r.stderr).toBe("");
+		const owner = (readState(repo) as { owner?: { harness?: string; discovery_error?: string | null; pi_session_id?: string | null; pi_bridge_socket?: string | null } }).owner;
+		expect(owner).toMatchObject({
+			discovery_error: null,
+			harness: "claude",
+			pi_bridge_socket: null,
+			pi_session_id: null,
+		});
+	});
+
+	test("pi owner cwd fallback warns on ambiguous cwd matches", () => {
+		const stub = writePiBridgeStub(repo, `
+if [[ "$*" == "list --json --pid 4242" ]]; then
+  printf '%s\n' '[]'
+else
+  printf '%s\n' '[{"pid":5151,"sessionId":"pi-cwd-a","socketPath":"/tmp/pi-cwd-a.sock","cwd":"/tmp/flightdeck-owner-parity"},{"pid":5152,"sessionId":"pi-cwd-b","socketPath":"/tmp/pi-cwd-b.sock","cwd":"/tmp/flightdeck-owner-parity"}]'
+fi
+`);
+		const r = run(repo, ["init"], {
+			FLIGHTDECK_OWNER_HARNESS: "pi",
+			FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET: undefined,
+			FLIGHTDECK_OWNER_PI_SESSION_ID: undefined,
+			PI_BRIDGE_SOCKET_PATH: undefined,
+			PI_SESSION_ID: undefined,
+			PATH: `${stub}:/usr/bin:/bin`,
+		});
+		expect(r.status).toBe(0);
+		expect(r.stderr).toContain("pi_bridge_ambiguous_cwd");
+		const owner = (readState(repo) as { owner?: { discovery_error?: string | null; pi_session_id?: string | null; pi_bridge_socket?: string | null } }).owner;
+		expect(owner).toMatchObject({
+			discovery_error: "pi_bridge_ambiguous_cwd",
+			pi_bridge_socket: null,
+			pi_session_id: null,
+		});
+	});
+
 	test("pi owner partial bridge metadata warns and persists discovery_error", () => {
 		const stub = writePiBridgeStub(repo, "printf '%s\\n' '[{\"pid\":4242,\"sessionId\":\"pi-session-only\"}]'");
 		const r = run(repo, ["init"], {

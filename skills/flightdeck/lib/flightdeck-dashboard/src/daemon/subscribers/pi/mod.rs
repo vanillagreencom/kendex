@@ -103,6 +103,7 @@ impl PiTarget {
 pub(super) struct PiStreamState {
     seen_qids: HashSet<String>,
     last_hash: Option<String>,
+    last_terminal_hash: Option<String>,
     compact_seen: bool,
     last_parse_error: Option<String>,
     last_classifier_spawn_error: Option<io::ErrorKind>,
@@ -115,6 +116,7 @@ impl PiStreamState {
         Self {
             seen_qids: HashSet::new(),
             last_hash: None,
+            last_terminal_hash: None,
             compact_seen: false,
             last_parse_error: None,
             last_classifier_spawn_error: None,
@@ -128,6 +130,14 @@ impl PiStreamState {
             return false;
         }
         self.last_hash = Some(hash);
+        true
+    }
+
+    fn set_last_terminal_hash(&mut self, hash: String) -> bool {
+        if self.last_terminal_hash.as_deref() == Some(hash.as_str()) {
+            return false;
+        }
+        self.last_terminal_hash = Some(hash);
         true
     }
 }

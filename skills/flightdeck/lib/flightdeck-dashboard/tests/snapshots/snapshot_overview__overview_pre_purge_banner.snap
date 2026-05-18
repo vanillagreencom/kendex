@@ -12,7 +12,7 @@ expression: rendered
 "│                                                            Pre-purge state file detected (.issues without .entries). Re-init the session.                                                            │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ left rail ───────────────┐┌ sessions (0 tracked) ────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌ detail ──────────────────────────────────┐"
-"│Status                    ││Kind    State            Harness    Title          Cost           PR/worktree    Age      Decision                Activity    ││No session selected                       │"
+"│Status                    ││Kind    State            Harness    Title          Cost           PR / path      Age      Decision                Activity    ││No session selected                       │"
 "│no tracked entries        ││                                                                                                                              ││                                          │"
 "│                          ││                                                                                                                              ││                                          │"
 "│Merge queue               ││                                                                                                                              ││                                          │"

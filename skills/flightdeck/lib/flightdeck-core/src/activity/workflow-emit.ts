@@ -189,7 +189,7 @@ function entryFields(ctx: WorkflowEmitContext): Pick<ActivityEventInput, "entry_
 		ctx.refs,
 		stringRecordRef("issue_id", nonEmpty(issue.id)),
 		stringRecordRef("linear_id", nonEmpty(issue.linear_id) ?? nonEmpty(issue.id)),
-		numberRecordRef("pr_number", normalizePrNumber(issue.pr_number)),
+		numberRecordRef("pr_number", normalizePrNumber(issue.pr_number) ?? normalizePrNumber(entry.pr_number)),
 		stringRecordRef("commit", nonEmpty(issue.merge_commit) ?? nonEmpty(entry.merge_commit)),
 	);
 	const out: Pick<ActivityEventInput, "entry_id" | "entry_title" | "entry_kind" | "pane_id" | "harness" | "refs"> = {};

@@ -112,7 +112,8 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 	let foundSocket = "";
 	let discoveryError = "";
 	const timeoutMs = Number.parseInt(nonEmptyEnv("FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS") || "1000", 10);
-	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1000 });
+	const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1000;
+	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout });
 	if (r.error) {
 		const code = (r.error as NodeJS.ErrnoException).code;
 		discoveryError = code === "ENOENT" ? "pi_bridge_not_found" : code === "ETIMEDOUT" ? "pi_bridge_timeout" : `pi_bridge_error_${code ?? "unknown"}`;
@@ -121,27 +122,69 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 	} else if (!r.stdout.trim()) {
 		discoveryError = "pi_bridge_empty_output";
 	} else {
-		try {
-			const parsed = JSON.parse(r.stdout) as unknown;
-			if (Array.isArray(parsed)) {
-				const match = parsed.find((item) => {
-					if (!item || typeof item !== "object") return false;
-					return String((item as { pid?: unknown }).pid ?? "") === String(pid);
-				}) as Record<string, unknown> | undefined;
-				if (match) {
-					foundSession = typeof match.sessionId === "string" ? match.sessionId : typeof match.session_id === "string" ? match.session_id : "";
-					foundSocket = typeof match.socketPath === "string" ? match.socketPath : typeof match.socket === "string" ? match.socket : "";
-					if (!foundSession || !foundSocket) discoveryError = "pi_bridge_partial_metadata";
-				}
-				if (!match) discoveryError = "pi_bridge_no_instance_for_pid";
+		const parsed = parsePiBridgeList(r.stdout);
+		if (parsed.error) discoveryError = parsed.error;
+		else {
+			const match = parsed.instances.find((item) => String(item.pid ?? "") === String(pid));
+			if (match) {
+				foundSession = bridgeSessionId(match);
+				foundSocket = bridgeSocket(match);
+				if (!foundSession || !foundSocket) discoveryError = "pi_bridge_partial_metadata";
 			} else {
-				discoveryError = "pi_bridge_json_not_array";
+				const fallback = piBridgeMetadataByCwd(nonEmptyEnv("FLIGHTDECK_OWNER_CWD") || process.cwd(), timeout);
+				if (fallback.sessionId || fallback.socketPath || fallback.discoveryError !== "pi_bridge_no_instance_for_pid") {
+					return {
+						discoveryError: fallback.discoveryError,
+						sessionId: envSession || fallback.sessionId,
+						socketPath: envSocket || fallback.socketPath,
+					};
+				}
+				discoveryError = "pi_bridge_no_instance_for_pid";
 			}
-		} catch (e) {
-			discoveryError = "pi_bridge_malformed_json";
 		}
 	}
 	return { discoveryError, sessionId: envSession || foundSession, socketPath: envSocket || foundSocket };
+}
+
+function piBridgeMetadataByCwd(cwd: string, timeout: number): { sessionId: string; socketPath: string; discoveryError: string } {
+	const r = spawnSync("pi-bridge", ["list", "--json"], { encoding: "utf8", timeout });
+	if (r.error) {
+		const code = (r.error as NodeJS.ErrnoException).code;
+		return { discoveryError: code === "ETIMEDOUT" ? "pi_bridge_timeout" : `pi_bridge_error_${code ?? "unknown"}`, sessionId: "", socketPath: "" };
+	}
+	if (r.status !== 0) return { discoveryError: `pi_bridge_exit_${r.status ?? "unknown"}`, sessionId: "", socketPath: "" };
+	if (!r.stdout.trim()) return { discoveryError: "pi_bridge_empty_output", sessionId: "", socketPath: "" };
+	const parsed = parsePiBridgeList(r.stdout);
+	if (parsed.error) return { discoveryError: parsed.error, sessionId: "", socketPath: "" };
+	const matches = parsed.instances.filter((item) => typeof item.cwd === "string" && item.cwd === cwd);
+	if (matches.length > 1) return { discoveryError: "pi_bridge_ambiguous_cwd", sessionId: "", socketPath: "" };
+	const match = matches[0];
+	if (!match) return { discoveryError: "pi_bridge_no_instance_for_pid", sessionId: "", socketPath: "" };
+	const sessionId = bridgeSessionId(match);
+	const socketPath = bridgeSocket(match);
+	return {
+		discoveryError: sessionId && socketPath ? "" : "pi_bridge_partial_metadata",
+		sessionId,
+		socketPath,
+	};
+}
+
+function parsePiBridgeList(stdout: string): { instances: Record<string, unknown>[]; error?: string } {
+	try {
+		const parsed = JSON.parse(stdout) as unknown;
+		if (!Array.isArray(parsed)) return { instances: [], error: "pi_bridge_json_not_array" };
+		return { instances: parsed.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item)) };
+	} catch {
+		return { instances: [], error: "pi_bridge_malformed_json" };
+	}
+}
+
+function bridgeSessionId(match: Record<string, unknown>): string {
+	return typeof match.sessionId === "string" ? match.sessionId : typeof match.session_id === "string" ? match.session_id : "";
+}
+
+function bridgeSocket(match: Record<string, unknown>): string {
+	return typeof match.socketPath === "string" ? match.socketPath : typeof match.socket === "string" ? match.socket : "";
 }
 
 function detectOwnerHarness(piMeta: { sessionId: string; socketPath: string }): string {
@@ -156,7 +199,10 @@ function detectOwnerHarness(piMeta: { sessionId: string; socketPath: string }): 
 
 export function resolveOwnerMetadata(): FlightdeckOwner {
 	const pid = ownerPid();
-	const piMeta = piBridgeMetadata(pid);
+	const explicitHarness = nonEmptyEnv("FLIGHTDECK_OWNER_HARNESS");
+	const piMeta = explicitHarness && explicitHarness !== "pi"
+		? { discoveryError: "", sessionId: "", socketPath: "" }
+		: piBridgeMetadata(pid);
 	const harness = detectOwnerHarness(piMeta);
 	const discoveryError = harness === "pi" && (!piMeta.sessionId || !piMeta.socketPath)
 		? (piMeta.discoveryError || "pi_bridge_partial_metadata")

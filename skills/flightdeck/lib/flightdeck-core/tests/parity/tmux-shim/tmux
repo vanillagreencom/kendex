@@ -238,7 +238,8 @@ case "$subcmd" in
     if (( print == 1 )); then
       fmt="$format"
       [[ -n "$fmt" ]] || fmt='#{pane_id}'
-      format_new_window "$fmt" "$pane_id" "$window_id" "$window_index" "$pane_index" "$cwd"
+      report_cwd="${TMUX_SHIM_NEW_WINDOW_REPORT_CWD:-$cwd}"
+      format_new_window "$fmt" "$pane_id" "$window_id" "$window_index" "$pane_index" "$report_cwd"
     fi
     ;;
   send-keys)

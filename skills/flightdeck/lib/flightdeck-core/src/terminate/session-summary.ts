@@ -57,9 +57,10 @@ function hasFiniteNumber(value: unknown): boolean {
 function issueMarkers(entry: TrackedEntry): string[] {
 	const markers: string[] = [];
 	const issue = issueDomain(entry);
+	const genericKind = entry.kind === "adhoc" || entry.kind === "workflow";
 	if (hasNonEmptyString(issue?.id)) markers.push("domain.issue.id");
-	if (hasFiniteNumber(issue?.pr_number) || hasFiniteNumber(entry.pr_number)) markers.push("pr_number");
-	if (hasNonEmptyString(issue?.worktree) || hasNonEmptyString(entry.worktree)) markers.push("worktree");
+	if (hasFiniteNumber(issue?.pr_number) || (!genericKind && hasFiniteNumber(entry.pr_number))) markers.push("pr_number");
+	if (hasNonEmptyString(issue?.worktree) || (!genericKind && hasNonEmptyString(entry.worktree))) markers.push("worktree");
 	if (hasNonEmptyString(issue?.merge_commit) || hasNonEmptyString(entry.merge_commit)) markers.push("merge_commit");
 	if (hasFiniteNumber(issue?.scope_files_declared) || hasFiniteNumber(issue?.scope_files_actual)) markers.push("scope_files");
 	if (typeof issue?.orchestration_started === "boolean" || typeof entry.orchestration_started === "boolean") markers.push("orchestration_started");

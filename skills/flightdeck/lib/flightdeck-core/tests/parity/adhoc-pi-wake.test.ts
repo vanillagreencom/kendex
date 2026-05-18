@@ -1,6 +1,6 @@
-// Regression coverage for vstack#61: the Pi subscriber must emit a
-// wake-event row with classifier_tag=terminal-state-reached when an
-// adhoc Pi pane transitions to isIdle=true with no pending messages.
+// Regression coverage for vstack#61/#117: the Pi subscriber must emit a
+// wake-event row with classifier_tag=terminal-state-reached when a generic
+// Pi pane (adhoc/workflow) transitions to isIdle=true with no pending messages.
 // Issue-mode panes keep their existing classifier path.
 //
 // The bash mirror lives in scripts/lib/subscribers.bash::pi_subscriber_loop.
@@ -32,7 +32,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			paneId: "%10",
 			entryKind: "adhoc",
 			entryHarness: "pi",
-			bridgeState: { isIdle: true, hasPendingMessages: false },
+			bridgeState: { data: { isIdle: true, hasPendingMessages: false } },
 			assistantTextHash: TEXT_HASH,
 			now: FIXED_NOW,
 		});
@@ -44,6 +44,21 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 		expect(outcome.row.ts).toBe("2026-05-15T12:00:00.000Z");
 		expect(outcome.row.hash).toMatch(/^[0-9a-f]{12}$/);
 		expect(outcome.row.last_assistant_text).toBe("");
+	});
+
+	test("workflow pi idle transition with no pending messages -> wake row terminal-state-reached", () => {
+		const outcome = decidePiAdhocWake({
+			paneId: "%11",
+			entryKind: "workflow",
+			entryHarness: "pi",
+			bridgeState: { isIdle: true, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
+			now: FIXED_NOW,
+		});
+		expect(outcome.emit).toBe(true);
+		if (!outcome.emit) throw new Error("expected emit=true");
+		expect(outcome.row.classifier_tag).toBe("terminal-state-reached");
+		expect(outcome.row.pane_id).toBe("%11");
 	});
 
 	test("issue-kind pi idle transition -> no wake (existing classifier path handles it)", () => {
@@ -146,9 +161,10 @@ describe("piAdhocWakeHash bash parity (vstack#61 B5)", () => {
 describe("bash subscribers.bash adhoc-pi mirror (vstack#61)", () => {
 	const body = readFileSync(BASH_SUBSCRIBERS, "utf8");
 
-	test("pi_subscriber_loop has the FD_ENTRY_KIND adhoc gate", () => {
+	test("pi_subscriber_loop has the FD_ENTRY_KIND generic adhoc/workflow gate", () => {
 		expect(body).toContain("FD_ENTRY_KIND");
 		expect(body).toContain("== \"adhoc\"");
+		expect(body).toContain("== \"workflow\"");
 	});
 
 	test("pi_subscriber_loop checks isIdle and hasPendingMessages from pi-bridge state", () => {
@@ -166,5 +182,16 @@ describe("bash subscribers.bash adhoc-pi mirror (vstack#61)", () => {
 
 	test("bash mirror has a last_terminal_hash dedup variable", () => {
 		expect(body).toContain("last_terminal_hash");
+	});
+
+	test("bash mirror logs terminal-state errors instead of dropping silently", () => {
+		expect(body).toContain("[pi-sub-terminal-state-error]");
+		expect(body).toContain("reason=state_rc");
+		expect(body).toContain("reason=state_json");
+		expect(body).toContain("reason=append_failed");
+	});
+
+	test("bash mirror accepts pi-bridge state wrappers", () => {
+		expect(body).toContain(".data // .");
 	});
 });

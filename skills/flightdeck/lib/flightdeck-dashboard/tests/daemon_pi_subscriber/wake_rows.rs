@@ -112,6 +112,40 @@ exit 0
 }
 
 #[tokio::test]
+async fn workflow_pi_idle_state_emits_terminal_wake() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let state_file = temp.path().join("flightdeck-state-s505.json");
+    write_state(&state_file, "workflow")?;
+    let bridge = write_fake_bridge(
+        temp.path(),
+        r#"
+if [[ "$1" == "stream" ]]; then
+  echo '{"type":"event","event":"message_end","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"workflow done"}]}}}'
+  sleep 5
+elif [[ "$1" == "state" ]]; then
+  echo '{"data":{"isIdle":true,"hasPendingMessages":false}}'
+fi
+exit 0
+"#,
+    )?;
+
+    let mut daemon = spawn_daemon(temp.path(), &state_file, &bridge, &[]).await?;
+    let rows = wait_for_wake_rows(temp.path(), 1).await?;
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.get("classifier_tag").and_then(Value::as_str) == Some("terminal-state-reached")
+        })
+        .ok_or("terminal-state-reached row missing")?;
+    assert_eq!(row["pane_id"], PANE_ID);
+    assert_eq!(row["harness"], "pi");
+    assert_eq!(row["last_assistant_text"], "");
+
+    daemon.stop();
+    Ok(())
+}
+
+#[tokio::test]
 async fn pi_empty_after_compact_detection_is_deferred() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let state_file = temp.path().join("flightdeck-state-s505.json");

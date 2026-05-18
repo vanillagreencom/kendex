@@ -186,6 +186,8 @@ mod tests {
             last_polled_at: None,
             decisions_log: Vec::new(),
             stats: Default::default(),
+            pr_number: None,
+            worktree: None,
             branch: None,
         }
     }

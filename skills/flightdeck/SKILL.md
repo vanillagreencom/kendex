@@ -189,7 +189,7 @@ Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<T
 
 Auto-archive on session start: `flightdeck-session start` rolls the live file to a `.json.archive` sibling before fresh init when (a) `terminated == true` or (b) the file has tracked entries but ZERO `pane_id` is currently alive in tmux. Removes the need to manually prune leftover state from prior tmux sessions or crashed masters.
 
-Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map. Malformed non-object entry values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids (including `entry.domain.issue.id` when present) and writes `.entries[id]`. Issue-mode metadata lives under `entry.domain.issue` (`pr_number`, `worktree`, `merge_commit`, etc.); the pi-flightdeck renderer surfaces that nested view alongside the top-level tracked-entry state.
+Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map. Malformed non-object entry values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids (including `entry.domain.issue.id` when present) and writes `.entries[id]`. Issue-mode metadata lives under `entry.domain.issue` (`pr_number`, `worktree`, `merge_commit`, etc.). Generic `adhoc`/`workflow` rows may also carry top-level `pr_number` and `worktree` for traceability without becoming issue-mode entries; readers must keep those separate from issue-domain routing.
 
 ```json
 {
@@ -221,6 +221,8 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
       "window": "<window-name-or-index>",
       "pane_target": "<TMUX_SESSION>:<window>.<pane>",
       "pane_id": "%403",
+      "pr_number": null,
+      "worktree": null,
       "launch": {
         "model": "<resolved-model-or-null>",
         "effort": "<resolved-effort-or-thinking-or-null>",

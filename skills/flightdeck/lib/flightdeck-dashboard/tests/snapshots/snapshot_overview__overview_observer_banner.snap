@@ -9,7 +9,7 @@ expression: rendered
 "│ Overview │ Activity │ Conversations │ Decisions │ Costs │ Daemon                                                                                                                                     │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ left rail ───────────────┐┌ sessions (1 tracked) ────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌ detail ──────────────────────────────────┐"
-"│Status                    ││Kind    State            Harness    Title          Cost           PR/worktree    Age      Decision                Activity    ││Observe another Flightdeck owner          │"
+"│Status                    ││Kind    State            Harness    Title          Cost           PR / path      Age      Decision                Activity    ││Observe another Flightdeck owner          │"
 "│▸ Running            1    ││WF      Running          pi         Observe anoth… —              —              1h05m    —                       0m          ││observer-workflow  ·  Workflow  ·  Running│"
 "│                          ││                                                                                                                              ││substate: read-only view                  │"
 "│Merge queue               ││                                                                                                                              ││                                          │"

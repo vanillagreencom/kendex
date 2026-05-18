@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::daemon::wake::{apply_domain_guard, is_canonical_tag, WakeEvent};
 
+use super::bridge;
 use super::classifier;
 use super::stream_parse::{self, BridgeEvent};
 use super::{PiConfig, PiStreamState};
@@ -50,11 +51,12 @@ pub(super) async fn handle_line(config: &PiConfig, state: &mut PiStreamState, li
                         config.pane_id.clone(),
                         truncate_excerpt(text),
                         guarded_tag,
-                        hash,
+                        hash.clone(),
                     ),
                 )
                 .await;
             }
+            emit_terminal_state_if_idle(config, state, &hash).await;
         }
         BridgeEvent::EmptyAfterCompactDeferred => {
             tracing::debug!(pane_id = %config.pane_id, "pi empty-after-compact detected but emission deferred until TS canonical tag set includes it");
@@ -106,6 +108,37 @@ async fn emit_question(
     emit_wake(
         config,
         WakeEvent::pi_question(config.pane_id.clone(), request_id, payload, hash),
+    )
+    .await;
+}
+
+async fn emit_terminal_state_if_idle(config: &PiConfig, state: &mut PiStreamState, hash: &str) {
+    if !matches!(config.entry_kind.as_str(), "adhoc" | "workflow") {
+        return;
+    }
+    let bridge_state = match bridge::query_state(config).await {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(pane_id = %config.pane_id, %error, "pi terminal-state bridge state query failed");
+            return;
+        }
+    };
+    let data = bridge_state.get("data").unwrap_or(&bridge_state);
+    let is_idle = data.get("isIdle").and_then(Value::as_bool) == Some(true);
+    let has_pending = data
+        .get("hasPendingMessages")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !is_idle || has_pending {
+        return;
+    }
+    let term_hash = stream_parse::sha12(&format!("{}|adhoc-pi-idle|{hash}", config.pane_id));
+    if !state.set_last_terminal_hash(term_hash.clone()) {
+        return;
+    }
+    emit_wake(
+        config,
+        WakeEvent::terminal_state(config.pane_id.clone(), term_hash),
     )
     .await;
 }

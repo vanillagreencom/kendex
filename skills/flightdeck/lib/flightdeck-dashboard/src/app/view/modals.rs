@@ -78,7 +78,7 @@ fn legend_lines(theme: &Palette) -> Vec<Line<'static>> {
         Line::from("Status chips    fresh / 1m old / 5m old · stale = how recent the state is"),
         Line::from("                file-mode = reading the state file directly; observer = different tmux pane than master"),
         Line::from("Spinners        Braille spinner next to a badge means transient work is being polled"),
-        Line::from("PR / worktree   Pull Request number and local git worktree directory"),
+        Line::from("PR / path       Pull Request number and local git worktree/path"),
     ]
 }
 

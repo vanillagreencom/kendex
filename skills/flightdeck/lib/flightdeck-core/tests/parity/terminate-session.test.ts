@@ -55,7 +55,6 @@ function legacyIssueShapedEntry(id = "FD-402"): Record<string, unknown> {
 	return {
 		id,
 		title: "Issue-shaped malformed entry",
-		kind: "adhoc",
 		state: "merged",
 		harness: "pi",
 		pr_number: 402,
@@ -157,10 +156,29 @@ describe("terminate session summary split", () => {
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("issue-shaped tracked entry");
 		expect(warnings[0]).toContain("routing through issue termination path");
-		expect(warnings[0]).toContain("pr_number");
+		expect(warnings[0]).toContain("merge_commit");
+		expect(warnings[0]).not.toContain("pr_number");
 
 		const output = renderGenericTerminationSummaryFromState(state, { ...opts, warn: () => undefined });
 		expect(output).toBe("");
+	});
+
+
+	test("workflow entries with generic PR metadata stay in generic termination path", () => {
+		const state = baseState({
+			"workflow-pr": {
+				id: "workflow-pr",
+				title: "Workflow PR",
+				kind: "workflow",
+				state: "complete",
+				harness: "pi",
+				pr_number: 117,
+				worktree: "/repo/trees/issue-117",
+			},
+		});
+		const partition = partitionTerminationEntries(state);
+		expect(partition.issueEntries).toEqual([]);
+		expect(partition.genericEntries.map((entry) => entry.id)).toEqual(["workflow-pr"]);
 	});
 
 	test("empty tracked entries produce explicit empty-session diagnostic", () => {

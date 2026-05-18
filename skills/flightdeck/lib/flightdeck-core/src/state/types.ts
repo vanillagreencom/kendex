@@ -92,6 +92,15 @@ export interface TrackedEntry {
 	unknown_since?: string | null;
 	merge_commit?: string | null;
 	/**
+	 * PR number for generic ad-hoc/workflow entries that create a pull
+	 * request outside the issue-domain model. Issue-mode entries keep the
+	 * canonical value under `domain.issue.pr_number`; readers should prefer
+	 * that and fall back to this field for non-issue rows.
+	 */
+	pr_number?: number | null;
+	/** Optional worktree override for non-issue rows. */
+	worktree?: string | null;
+	/**
 	 * Git branch captured at spawn time by `flightdeck-session start`
 	 * via `git -C <cwd> rev-parse --abbrev-ref HEAD`. Null when the cwd
 	 * is not a git repo or HEAD is detached. Informational — staleness

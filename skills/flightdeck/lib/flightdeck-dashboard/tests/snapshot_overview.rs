@@ -10,7 +10,10 @@ use flightdeck_dashboard::app::motion::{self, MotionLevel};
 use flightdeck_dashboard::app::msg::Msg;
 use flightdeck_dashboard::app::theme::Theme;
 use flightdeck_dashboard::app::update;
-use flightdeck_dashboard::state::snapshot::{DashboardSnapshot, PauseInfo, SessionState};
+use flightdeck_dashboard::state::schema::MasterState;
+use flightdeck_dashboard::state::snapshot::{
+    DaemonStatus, DashboardSnapshot, PauseInfo, SessionState,
+};
 use flightdeck_dashboard::state::tracked_entries::{
     self, PRE_PURGE_BANNER, PRE_PURGE_STATE_MESSAGE,
 };
@@ -729,4 +732,72 @@ fn motion_effects_overview_start_and_settled() {
     model.animate_frame = 8;
     motion::prune_effects(&mut model.active_effects, model.animate_frame);
     insta::assert_snapshot!("overview_motion_settled", common::render_model(&model));
+}
+
+#[test]
+fn generic_workflow_pr_and_worktree_render_in_overview() {
+    let state: MasterState = serde_json::from_value(serde_json::json!({
+        "session_id": "generic-pr",
+        "updated_at": "2026-05-15T10:06:00Z",
+        "entries": {
+            "workflow-pr": {
+                "id": "workflow-pr",
+                "title": "Workflow PR",
+                "kind": "workflow",
+                "state": "complete",
+                "harness": "pi",
+                "cwd": "/repo/main",
+                "pane_id": "%117",
+                "pr_number": 117,
+                "worktree": "/repo/worktrees/issue-117",
+                "branch": "issue-117"
+            }
+        }
+    }))
+    .expect("generic workflow state decodes");
+    let snapshot = DashboardSnapshot::from_master_state(state, common::fixed_now());
+    let mut model = Model::new(
+        snapshot,
+        SnapshotSource::Demo("mixed"),
+        MotionLevel::Off,
+        Theme::Moon,
+        common::fixed_now,
+    );
+    model.set_selected_index(0);
+
+    let rendered = common::render_model(&model);
+    assert!(
+        rendered.contains("PR      #117"),
+        "detail rail should show generic PR: {rendered}"
+    );
+    assert!(
+        rendered.contains("/repo/worktrees/issue-117"),
+        "detail rail should show generic worktree: {rendered}"
+    );
+}
+
+#[test]
+fn non_socket_snapshot_update_preserves_file_mode_daemon_status() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.snapshot_source = SnapshotSource::File(PathBuf::from("/tmp/flightdeck-state-demo.json"));
+    model.snapshot.daemon = DaemonStatus {
+        label: "daemon: file-mode".to_owned(),
+        healthy: Some(true),
+        pid: None,
+        last_heartbeat_at: None,
+    };
+    let mut incoming = model.snapshot.clone();
+    incoming.daemon = DaemonStatus::unknown();
+    incoming.updated_at += chrono::Duration::seconds(1);
+
+    let _commands = update::update(
+        &mut model,
+        Msg::SnapshotUpdated {
+            snapshot: Box::new(incoming),
+            source_state: ReadSourceState::Live,
+        },
+    );
+
+    assert_eq!(model.snapshot.daemon.label, "daemon: file-mode");
+    assert_eq!(model.snapshot.daemon.healthy, Some(true));
 }

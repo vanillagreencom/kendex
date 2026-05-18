@@ -9,7 +9,7 @@ expression: rendered
 "│ Overview │ Activity │ Conversations │ Merges │ Decisions │ Costs │ Daemon                                                                                                                            │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ left rail ───────────────┐┌ sessions (3 tracked) ────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌ detail ──────────────────────────────────┐"
-"│Status                    ││Kind    State            Harness    Title          Cost           PR/worktree    Age      Decision                Activity    ││Workflow rebuild on main                  │"
+"│Status                    ││Kind    State            Harness    Title          Cost           PR / path      Age      Decision                Activity    ││Workflow rebuild on main                  │"
 "│▸ Needs input        1    ││ISS     Needs input      opencode   Issue with br… —              …-201 · PR #88 1h35m    —                       4m          ││workflow-build  ·  Workflow  ·  Submitting│"
 "│Submitting         1      ││WF      Submitting       codex      Workflow rebu… —              —              58m      —                       4m          ││                                          │"
 "│Running            1      ││AH      Running          pi         Triage sweep … —              …/triage-spike 2h10m    —                       4m          ││Where                                     │"

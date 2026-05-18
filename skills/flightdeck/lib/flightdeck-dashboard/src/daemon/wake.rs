@@ -200,6 +200,16 @@ impl WakeEvent {
     }
 
     #[must_use]
+    pub fn terminal_state(pane_id: String, hash: String) -> Self {
+        Self::assistant_text(
+            pane_id,
+            String::new(),
+            "terminal-state-reached".to_owned(),
+            hash,
+        )
+    }
+
+    #[must_use]
     pub fn subagent_completion(pane_id: String, completion: Value, hash: String) -> Self {
         Self {
             ts: String::new(),

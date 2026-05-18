@@ -31,7 +31,8 @@ All four emit activity-only rows for soft signals (detection, retry) and wake ma
 The spawn path and tool wrappers cooperate to thread a stable identity through every activity row originated by a tracked pane.
 
 - `flightdeck-session start` exports `FLIGHTDECK_ENTRY_ID=<id>` into the child environment so subsequent `github.sh` / `linear.sh` / `label-*` wrappers can attach `refs.entry_id` without further plumbing. The wrappers fall back to legacy `FLIGHTDECK_ISSUE_ID` for issue-mode panes when the entry id is not available.
-- `entry.branch` is captured at spawn via `git rev-parse --abbrev-ref HEAD` against the worktree cwd. Stored on `entries[id].branch` and surfaced in the Rust dashboard right rail and the Sessions table PR/worktree column (`<branch> · PR #N` for non-default branches).
+- `entry.branch` is captured at spawn via `git rev-parse --abbrev-ref HEAD` against the worktree cwd. Stored on `entries[id].branch` and surfaced in the Rust dashboard right rail and the Sessions table PR/path column (`<branch> · PR #N` for non-default branches).
+- Generic `adhoc` / `workflow` entries that create PRs store `entry.pr_number` and optional `entry.worktree` at top level. Issue-mode entries keep the canonical PR/worktree fields under `entry.domain.issue`; renderers and workflow refs prefer the issue-domain values and fall back to the generic top-level fields.
 - `refs.branch` is enriched on `pr.*` activity rows by querying `gh pr view --json headRefName` in `workflow-emit.ts`. Failures degrade silently — the row still emits without `refs.branch`.
 - Child Pi sessions advertise a unique `<parent>:c<pid>` session id (see `pi-extensions/pi-session-bridge/extensions/child-session-id.ts`) by exporting `PI_BRIDGE_PARENT_SESSION_ID` and `PI_BRIDGE_CHILD_ROLE` into the child environment before spawn. Activity rows from the child therefore disambiguate from the parent in dashboards and post-mortems.
 
@@ -57,7 +58,7 @@ The reason flows through `lifecycle.ts` into the snapshot consumed by `bg_status
 
 Flightdeck core is the generic tmux-session manager. It owns `TrackedEntry` lifecycle, owner metadata, daemon wake routing, generic prompt handling, and stable pane/window ids for any harness session. Issue orchestration is a domain layer on top: it adds GitHub/Linear/worktree metadata under `entry.domain.issue`, issue-specific lifecycle states (`merge-ready` / `merged` / `aborted`), PR conflict graphs, merge queues, and next-cycle recommendations.
 
-`flightdeck-state init` writes `entries`, `merge_queue`, `conflict_graph`, and `owner`. All readers go through `readTrackedEntries(state)` for the canonical `TrackedEntry` view; `writeTrackedEntry` validates `entry.id` plus optional `entry.domain.issue.id` and stores the entry under `entries[id]`.
+`flightdeck-state init` writes `entries`, `merge_queue`, `conflict_graph`, and `owner`. All readers go through `readTrackedEntries(state)` for the canonical `TrackedEntry` view; `writeTrackedEntry` validates `entry.id` plus optional `entry.domain.issue.id` and stores the entry under `entries[id]`. Pi owner discovery first checks explicit env, then `pi-bridge list --pid <owner-pid>`, then falls back to a cwd match; `flightdeck-state init` often runs under a helper process, so code must not treat helper PID mismatch as `Master unknown` while cwd metadata is available.
 
 Use the TrackedEntry seam everywhere new code reads tracked sessions. Core helpers (`readTrackedEntries`, `writeTrackedEntry`, `entryIdForIssue`, `issueIdForEntry`) live under `lib/flightdeck-core/src/state/`; `pane-registry list --format json` and `flightdeck-state tracked-entries` expose the same normalized view to scripts. `pi-flightdeck` consumes the same seam via read-only `TrackedSession` / `TrackedState` render types, reads `.entries`, and uses `owner.pane_id` for default owner-scoped rendering.
 
@@ -121,7 +122,9 @@ skills/flightdeck/scripts/flightdeck-session attach \
   --title "Manual Pi"
 ```
 
-`pane-registry list --format json` returns normalized entries for both ad-hoc and issue rows. `session watch` uses the generic session loop; issue `watch` layers merge/PR workflow logic on top. Issue-only prompt tags on ad-hoc sessions trigger a `domain-mismatch` guard; lookups that cannot determine `kind` must pass `--entry-kind-unknown` to fail closed.
+`pane-registry list --format json` returns normalized entries for ad-hoc, workflow, and issue rows. Adapter-arg commands (`pi-bridge-args`, `oc-attach-args`, etc.) accept entry ids, `find-by-pane` JSON, pane ids, or pane targets so daemon reconcile can spawn subscribers from the pane identity it has in hand. `session watch` uses the generic session loop; issue `watch` layers merge/PR workflow logic on top. Issue-only prompt tags on ad-hoc sessions trigger a `domain-mismatch` guard; lookups that cannot determine `kind` must pass `--entry-kind-unknown` to fail closed.
+
+Pi idle terminal semantics are generic for `adhoc` and `workflow` entries: `isIdle == true` with no pending messages emits `terminal-state-reached` through the Pi subscriber so the daemon wakes the master. Issue-mode Pi panes stay on their issue prompt/classifier path.
 
 `flightdeck-session start --prompt` supports `--model` and `--effort` / `--thinking` for LLM harnesses. Prompt launches translate model/effort into harness argv and persist launch metadata on the entry: requested/resolved model, requested/resolved effort or thinking, source (`explicit`, `env`, `auto`), resolved argv, `reasoning_status`, and `unsupported_reason` when model/effort cannot be known. Harness mappings: Pi `--model` + `--thinking`; Claude `--model` + `--effort` (`minimal`/`off` are rejected before tmux mutation); Codex `-m` + `-c model_reasoning_effort=...`; OpenCode validates the configured provider/model via exact token match in `opencode models` and passes `--model` only because top-level OpenCode has no validated effort flag. Custom `--cmd` launches are not rewritten; pass matching harness argv in the command and use `--model` / `--effort` for metadata.
 
@@ -188,11 +191,11 @@ Keep each dashboard fact in one canonical home:
 
 - Header: session id, master harness/path, daemon chip, uptime, kind counts, freshness/observer/cost/theme chips. The theme chip is right-anchored on the trailing edge and never truncated; cost compacts before any other chip at narrow widths. Do not add per-state counts, owner pane ids, or a `paused` chip here — the pause state surfaces as a banner row directly below the header, not as a header chip.
 - Left rail: status counts, merge queue glance, and conflict glance. The merge queue renders every queued entry (no per-rail truncation); the table column may abbreviate but the rail does not.
-- Session table: scan-friendly row data only — kind badge, friendly state, harness, title, cost, PR/worktree, age, last decision, last activity, plus `(stale)` only when tmux says the pane id no longer exists.
+- Session table: scan-friendly row data only — kind badge, friendly state, harness, title, cost, PR/path, age, last decision, last activity, plus `(stale)` only when tmux says the pane id no longer exists.
 - Right rail: selected-session summary grouped as Where, Issue, Paused, Cost, Recent decisions, and Actions. Keep low-level adapter/debug fields out of the rail.
 - Detail popups: full wrapped decision/event/session text and debugging details that would crowd the main layout.
-- Daemon tab: daemon/pane/debug metadata, including owner pane ids and socket/file-mode details.
-- Help popup: the canonical legend for kind badges, state-count badges, status chips, spinners, and PR/worktree labels.
+- Daemon tab: daemon/pane/debug metadata, including owner pane ids and socket/file-mode details. File/session snapshot reloads must preserve the `daemon: file-mode` chip; only socket-backed reads should show Rust daemon status.
+- Help popup: the canonical legend for kind badges, state-count badges, status chips, spinners, and PR/path labels.
 
 ### Theme tokens
 

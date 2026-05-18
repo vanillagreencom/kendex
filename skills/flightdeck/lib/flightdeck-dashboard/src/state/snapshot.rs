@@ -474,6 +474,12 @@ pub struct TrackedSession {
     pub last_polled_at: Option<DateTime<Utc>>,
     pub decisions_log: Vec<DecisionLogEntry>,
     pub stats: PaneStats,
+    /// Pull request number for generic ad-hoc/workflow entries. Issue-mode
+    /// rows keep the canonical value under `domain.issue.pr_number`; renderers
+    /// prefer that and fall back to this field.
+    pub pr_number: Option<u32>,
+    /// Optional worktree override for generic rows.
+    pub worktree: Option<PathBuf>,
     /// Git branch captured at spawn time by `flightdeck-session start`
     /// (vstack#101). Empty / None when the cwd is not a git repo or
     /// HEAD was detached. Informational; staleness is acceptable.
@@ -508,6 +514,8 @@ impl TrackedSession {
             last_polled_at: entry.last_polled_at,
             decisions_log: entry.decisions_log,
             stats: PaneStats::default(),
+            pr_number: entry.pr_number,
+            worktree: entry.worktree,
             branch: entry.branch.filter(|value| !value.trim().is_empty()),
         }
     }
@@ -517,6 +525,20 @@ impl TrackedSession {
         self.domain
             .as_ref()
             .and_then(|domain| domain.issue.as_ref())
+    }
+
+    #[must_use]
+    pub fn pr_number(&self) -> Option<u32> {
+        self.issue()
+            .and_then(|issue| issue.pr_number)
+            .or(self.pr_number)
+    }
+
+    #[must_use]
+    pub fn worktree(&self) -> Option<&PathBuf> {
+        self.issue()
+            .and_then(|issue| issue.worktree.as_ref())
+            .or(self.worktree.as_ref())
     }
 
     #[must_use]

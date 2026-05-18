@@ -34,7 +34,7 @@ expression: rendered
 "│                     │ Status chips    fresh / 1m old / 5m old · stale = how recent the state is                                                                                │                     │"
 "│                     │ file-mode = reading the state file directly; observer = different tmux pane than master                                                                  │                     │"
 "│                     │ Spinners        Braille spinner next to a badge means transient work is being polled                                                                     │                     │"
-"│                     │ PR / worktree   Pull Request number and local git worktree directory                                                                                     │                     │"
+"│                     │ PR / path       Pull Request number and local git worktree/path                                                                                          │                     │"
 "│                     │                                                                                                                                                          │                     │"
 "│                     │ Keyboard                                                                                                                                                 │                     │"
 "│                     │ Tab             Next tab                                                                                                                                 │                     │"

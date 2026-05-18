@@ -54,7 +54,7 @@ Issue orchestration remains first-class when the session is tied to a Linear/Git
 
 The `github` skill ships `label-add` and `label-remove` wrappers around `gh pr edit` / `gh issue edit`. When flightdeck spawns a managed pane, those wrappers emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows alongside the existing `pr.*` events, so label-driven gates (`defer-ci`, custom workflow labels) show up in the activity sidecar and Rust dashboard.
 
-The spawn path also auto-exports `FLIGHTDECK_ENTRY_ID` into every child pane and captures the worktree's current git branch as `entry.branch` (via `git rev-parse --abbrev-ref HEAD`). The Rust dashboard renders branch info in the right rail and Sessions table PR/worktree column (`<branch> · PR #N` for non-default branches), and `pr.*` activity rows are enriched with `refs.branch` via `gh pr view --json headRefName`. Child Pi sessions also advertise a unique `<parent>:c<pid>` session id (via `PI_BRIDGE_PARENT_SESSION_ID`) so cross-session activity does not collide with the parent.
+The spawn path also auto-exports `FLIGHTDECK_ENTRY_ID` into every child pane and captures the worktree's current git branch as `entry.branch` (via `git rev-parse --abbrev-ref HEAD`). The Rust dashboard renders branch info in the right rail and Sessions table PR/path column (`<branch> · PR #N` for non-default branches), and `pr.*` activity rows are enriched with `refs.branch` via `gh pr view --json headRefName`. Child Pi sessions also advertise a unique `<parent>:c<pid>` session id (via `PI_BRIDGE_PARENT_SESSION_ID`) so cross-session activity does not collide with the parent.
 
 ## Install
 

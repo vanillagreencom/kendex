@@ -573,6 +573,31 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["adhoc-start"].launch.unsupported_reason).toContain("custom --cmd");
 		});
 
+		test(`start persists requested cwd when tmux reports stale pane cwd`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const requested = join(repo, "requested-cwd");
+			mkdirSync(requested, { recursive: true });
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(
+				repo,
+				shim,
+				[
+					"start",
+					"--session-id", "stale-cwd",
+					"--title", "Stale cwd",
+					"--kind", "workflow",
+					"--cwd", requested,
+					"--harness", "pi",
+					"--cmd", "printf ok",
+				],
+				{ TMUX_SHIM_NEW_WINDOW_REPORT_CWD: "/home/method" },
+			);
+			expect(r.status).toBe(0);
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["stale-cwd"].cwd).toBe(requested);
+		});
+
 		test(`start records model/effort overrides as not applicable for non-LLM shell cmd`, () => {
 			const repo = makeRepo();
 			repos.push(repo);

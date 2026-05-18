@@ -164,6 +164,68 @@ sleep 30
 		}
 	});
 
+
+	test("workflow terminal-state accepts wrapped pi-bridge state in bash subscriber", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-terminal-wrapper-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  state)
+    echo '{"data":{"isIdle":true,"hasPendingMessages":false}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"message_end","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"workflow done"}]}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { FD_ENTRY_KIND: "workflow", FD_ENTRY_HARNESS: "pi" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%20", "1184234", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.some((row) => row.classifier_tag === "terminal-state-reached")) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const ev = rows.find((row) => row.classifier_tag === "terminal-state-reached");
+			expect(ev).toBeTruthy();
+			expect(ev.pane_id).toBe("%20");
+			expect(ev.harness).toBe("pi");
+			expect(ev.last_assistant_text).toBe("");
+			expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
 	test("non-exit bg-task event (output) does not produce pi-bg-task-exit", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-bg-out-"));
 		stateDirs.push(stateDir);

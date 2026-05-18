@@ -697,7 +697,11 @@ cmd_start() {
   [[ -n "$worktree" ]] || [[ "$kind" != "issue" ]] || worktree="$abs_cwd"
   local branch
   branch=$(capture_git_branch "$abs_cwd")
-  register_entry "$session_id" "$title" "$kind" "${CAPTURE_PANE_CWD:-$abs_cwd}" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch"
+  # Persist the requested cwd as canonical. Interactive harnesses can still
+  # report a stale tmux pane_current_path during launch (for example the
+  # parent shell's cwd before `exec pi`), but all activity/PR/worktree
+  # attribution should bind to the caller-selected working directory.
+  register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch"
   ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }

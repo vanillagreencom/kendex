@@ -1,4 +1,4 @@
-// Pi subscriber → adhoc terminal-state-reached wake decision (vstack#61).
+// Pi subscriber → generic terminal-state-reached wake decision (vstack#61/#117).
 //
 // This module is intentionally NOT wired into the TS daemon loop; the
 // runtime emit path lives in `scripts/lib/subscribers.bash`
@@ -6,10 +6,10 @@
 // exists only as the canonical reference + unit-test surface.
 //
 // The bash Pi subscriber in scripts/lib/subscribers.bash sees assistant
-// message_end events with stopReason set. For ADHOC Pi entries we treat
-// those as `isIdle: false -> true` transitions and emit a wake-event
-// row carrying classifier_tag=terminal-state-reached so the daemon's
-// existing canonical-tag path delivers a wake to master.
+// message_end events with stopReason set. For generic Pi entries (adhoc or
+// workflow) we treat `isIdle: true && hasPendingMessages: false` as terminal
+// and emit a wake-event row carrying classifier_tag=terminal-state-reached
+// so the daemon's existing canonical-tag path delivers a wake to master.
 //
 // This module owns the pure decision so:
 //   - The bash mirror has a clear canonical reference to stay in lock

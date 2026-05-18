@@ -5,6 +5,7 @@ use std::time::Duration;
 use nix::errno::Errno;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use serde_json::Value;
 use tokio::io::BufReader;
 use tokio::process::{Child, Command};
 
@@ -24,6 +25,28 @@ impl Drop for BridgeStream {
         let _ = self.child.start_kill();
         reap_child(pid);
     }
+}
+
+pub(super) async fn query_state(config: &PiConfig) -> Result<Value, io::Error> {
+    let target = config.target.args();
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        Command::new(&config.bridge_bin)
+            .arg("state")
+            .arg(target[0])
+            .arg(target[1])
+            .output(),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "pi-bridge state timed out"))??;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "pi-bridge state exited with {}",
+            output.status
+        )));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 impl BridgeStream {

@@ -68,6 +68,8 @@ pub struct TrackedEntry {
     pub decisions_log: Vec<DecisionLogEntry>,
     pub unknown_since: Option<DateTime<Utc>>,
     pub merge_commit: Option<String>,
+    pub pr_number: Option<u32>,
+    pub worktree: Option<PathBuf>,
     pub branch: Option<String>,
 }
 

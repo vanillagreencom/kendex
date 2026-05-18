@@ -6,7 +6,7 @@ use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use crate::state::snapshot::{DaemonStatus as SnapshotDaemonStatus, EventImportance};
 use crate::watcher::WatcherEvent;
 
-use super::command::Cmd;
+use super::command::{Cmd, SnapshotSource};
 use super::hitmap::{ClickAction, ScrollSource};
 use super::keymap::{self, Action};
 use super::model::{ActionStatus, ConfirmDialog, ModalState, Model, Tab};
@@ -115,10 +115,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
 
 fn handle_snapshot_updated(
     model: &mut Model,
-    snapshot: crate::state::snapshot::DashboardSnapshot,
+    mut snapshot: crate::state::snapshot::DashboardSnapshot,
     source_state: super::model::ReadSourceState,
 ) -> Vec<Cmd> {
     let pending_reload = finish_reload(model, false);
+    if !matches!(model.snapshot_source, SnapshotSource::Socket(_)) {
+        snapshot.daemon = file_mode_daemon_status();
+    }
     if model.snapshot.structural_eq(&snapshot) && model.read_source_state == source_state {
         model.snapshot_diff_drops = model.snapshot_diff_drops.saturating_add(1);
         return pending_reload;
@@ -823,6 +826,15 @@ fn move_selection(model: &mut Model, delta: isize) {
     model.mark_overview_selection_initialized();
     let target = EffectTarget::Row(model.selected_index());
     push_effect(model, EffectKind::SelectionHalo, target);
+}
+
+fn file_mode_daemon_status() -> SnapshotDaemonStatus {
+    SnapshotDaemonStatus {
+        label: String::from("daemon: file-mode"),
+        healthy: Some(true),
+        pid: None,
+        last_heartbeat_at: None,
+    }
 }
 
 fn daemon_status_chip(status: &RuntimeDaemonStatus) -> SnapshotDaemonStatus {

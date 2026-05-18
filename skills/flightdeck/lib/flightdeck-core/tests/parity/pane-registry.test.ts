@@ -3,7 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,9 +25,10 @@ function makeRepo(): string {
 	return dir;
 }
 
-function run(cwd: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
+function run(cwd: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
@@ -284,6 +286,100 @@ describe("pane-registry parity", () => {
 		expect(domain?.issue?.worktree).toBe("/tmp/wt42");
 	});
 
+	test("workflow init-entry records top-level PR/worktree metadata", () => {
+		for (const repo of [tsRepo]) {
+			run(repo, [
+				"init-entry", "workflow-pr",
+				"--title", "Workflow PR",
+				"--kind", "workflow",
+				"--cwd", "/tmp/main-repo",
+				"--window", "44",
+				"--harness", "pi",
+				"--pane-id", "%404",
+				"--worktree", "/tmp/workflow-wt",
+				"--pr", "117",
+			]);
+			const row = (JSON.parse(run(repo, ["list", "--format", "json"]).stdout) as Record<string, unknown>[]).find((item) => item.id === "workflow-pr")!;
+			expect(row.pr_number).toBe(117);
+			expect(row.worktree).toBe("/tmp/workflow-wt");
+		}
+	});
+
+	test("adapter arg commands accept pane ids for generic entries", async () => {
+		const statePath = makeShimState(tsRepo, {
+			panes: {
+				"%405": { pane_index: 0, path: "/tmp/pi-pane-lookup", window_id: "@45", window_index: 45, window_name: "pi-pane-lookup" },
+			},
+			session: "test-session",
+			windows: { "@45": { index: 45, name: "pi-pane-lookup" } },
+		});
+		const socketPath = join(tsRepo, "tmp", "pi-405.sock");
+		mkdirSync(join(tsRepo, "tmp"), { recursive: true });
+		const stubDir = join(tsRepo, "stub-bin");
+		mkdirSync(stubDir, { recursive: true });
+		const stub = join(stubDir, "pi-bridge");
+		writeFileSync(stub, `#!/usr/bin/env bash
+if [[ "$1" == "state" ]]; then
+  printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1"}}'
+else
+  printf '%s\n' '[]'
+fi
+`, "utf8");
+		chmodSync(stub, 0o755);
+		const server = createServer();
+		await new Promise<void>((resolveListen, rejectListen) => {
+			server.once("error", rejectListen);
+			server.listen(socketPath, resolveListen);
+		});
+		try {
+			runShim(tsRepo, statePath, [
+				"init-entry", "pi-pane-lookup",
+				"--title", "Pi pane lookup",
+				"--kind", "workflow",
+				"--cwd", "/tmp/pi-pane-lookup",
+				"--window", "45",
+				"--harness", "pi",
+				"--pane-id", "%405",
+				"--pane-target", "test-session:45.0",
+				"--pi-bridge-pid", String(process.pid),
+				"--pi-bridge-socket", socketPath,
+			]);
+			const env = { PI_BRIDGE_BIN: stub };
+			const byPaneId = runShim(tsRepo, statePath, ["pi-bridge-args", "%405"], env);
+			expect(byPaneId.status).toBe(0);
+			expect(byPaneId.stdout).toContain(`--pid ${process.pid}`);
+			expect(byPaneId.stdout).toContain(`--socket ${socketPath}`);
+			const byPaneTarget = runShim(tsRepo, statePath, ["pi-bridge-args", "test-session:45.0"], env);
+			expect(byPaneTarget.status).toBe(0);
+			expect(byPaneTarget.stdout).toContain(`--pid ${process.pid}`);
+		} finally {
+			server.close();
+		}
+	});
+
+	test("adapter arg commands reject stale pane ids for generic entries", () => {
+		const statePath = makeShimState(tsRepo, {
+			panes: {},
+			session: "test-session",
+			windows: {},
+		});
+		runShim(tsRepo, statePath, [
+			"init-entry", "stale-pi-pane",
+			"--title", "Stale Pi pane",
+			"--kind", "workflow",
+			"--cwd", "/tmp/stale-pi-pane",
+			"--window", "stale-pi-pane",
+			"--harness", "pi",
+			"--pane-id", "%999",
+			"--pane-target", "test-session:99.0",
+			"--pi-bridge-pid", String(process.pid),
+			"--pi-bridge-socket", "/tmp/stale.sock",
+		]);
+		const byPaneId = runShim(tsRepo, statePath, ["pi-bridge-args", "%999"]);
+		expect(byPaneId.status).toBe(1);
+		expect(byPaneId.stderr).toContain("find-by-pane match %999 is stale");
+	});
+
 	test("list --format json returns normalized entries with issue-domain fields", () => {
 		for (const repo of [tsRepo]) {
 			run(repo, ["init-entry", "adhoc-json", "--title", "Adhoc", "--kind", "adhoc", "--cwd", "/tmp/a", "--window", "10", "--harness", "pi", "--pane-id", "%10"]);
@@ -356,6 +452,21 @@ describe("pane-registry parity", () => {
 		expect(JSON.parse(runShim(tsRepo, join(tsRepo, "shim-state.json"), ["find-by-pane", "%110"]).stdout)).toEqual({ id: "adhoc-fbp", kind: "adhoc" });
 		expect(JSON.parse(runShim(tsRepo, join(tsRepo, "shim-state.json"), ["find-by-pane", "test-session:12.0"]).stdout)).toEqual({ id: "LEGACY-1", kind: "issue" });
 		expect(JSON.parse(runShim(tsRepo, join(tsRepo, "shim-state.json"), ["find-by-pane", "test-session:12.0"]).stdout)).toEqual({ id: "LEGACY-1", kind: "issue" });
+	});
+
+	test("find-by-pane skips stale duplicate matches and returns a later live row", () => {
+		const statePath = makeShimState(tsRepo, {
+			panes: {
+				"%333": { pane_index: 0, path: "/tmp/live", window_id: "@33", window_index: 33, window_name: "live-dup" },
+			},
+			session: "test-session",
+			windows: { "@33": { index: 33, name: "live-dup" } },
+		});
+		runShim(tsRepo, statePath, ["init-entry", "old-stale", "--title", "Old stale", "--kind", "workflow", "--cwd", "/tmp/old", "--window", "33", "--harness", "pi", "--pane-id", "%999", "--pane-target", "test-session:33.0"]);
+		runShim(tsRepo, statePath, ["init-entry", "new-live", "--title", "New live", "--kind", "workflow", "--cwd", "/tmp/live", "--window", "33", "--harness", "pi", "--pane-id", "%333", "--pane-target", "test-session:33.0"]);
+		const r = runShim(tsRepo, statePath, ["find-by-pane", "test-session:33.0"]);
+		expect(r.status).toBe(0);
+		expect(JSON.parse(r.stdout)).toEqual({ id: "new-live", kind: "workflow" });
 	});
 
 	test("find-by-pane treats stale pane_id as no match and warns", () => {

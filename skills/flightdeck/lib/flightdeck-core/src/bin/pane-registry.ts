@@ -146,6 +146,26 @@ function lookupId(raw: string): string {
 	}
 }
 
+function lookupIdOrPane(raw: string, requireLivePane = false): string {
+	const id = lookupId(raw);
+	if (!id) return id;
+	if (registryHasEntry(id)) return id;
+	const matches = Object.entries(trackedEntries()).filter(([, entry]) => entry.pane_id === id || entry.pane_target === id);
+	if (!matches.length) return id;
+	if (!requireLivePane) return matches[0]![0];
+	for (const [key, entry] of matches) {
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+		const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
+		if (paneMatchIsLive(paneId, paneTarget)) return key;
+	}
+	const [, firstEntry] = matches[0]!;
+	warnStalePaneMatch(
+		typeof firstEntry.pane_id === "string" ? firstEntry.pane_id : "",
+		typeof firstEntry.pane_target === "string" ? firstEntry.pane_target : "",
+	);
+	process.exit(1);
+}
+
 interface InitFields {
 	branch: string;
 	cc_port: string;
@@ -387,7 +407,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		worktree: strOrNull(fields.worktree),
 	} : undefined;
 	const ts = nowIso();
-	const entry = {
+	const entry: Record<string, unknown> = {
 		adapter,
 		branch: strOrNull(fields.branch),
 		cwd: fields.cwd,
@@ -417,6 +437,11 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		window_id: strOrNull(fields.window_id),
 		window_index: numOrNull(fields.window_index),
 	};
+	if (fields.kind !== "issue") {
+		const pr = numOrNull(fields.pr);
+		if (pr !== null) entry.pr_number = pr;
+		if (fields.worktree) entry.worktree = strOrNull(fields.worktree);
+	}
 
 	fdStateOrDie(["write-entry", entryId, JSON.stringify(entry)]);
 	emitEntryRegistered(entry);
@@ -507,7 +532,10 @@ function entryRefs(entry: EntryRecord): Record<string, unknown> | undefined {
 	if (taskId) refs.task_id = taskId;
 	const issueId = typeof issue.id === "string" && issue.id ? issue.id : undefined;
 	if (issueId) refs.issue_id = issueId;
-	if (typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)) refs.pr_number = Math.trunc(issue.pr_number);
+	const prNumber = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)
+		? issue.pr_number
+		: typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? entry.pr_number : undefined;
+	if (typeof prNumber === "number") refs.pr_number = Math.trunc(prNumber);
 	return Object.keys(refs).length > 0 ? refs : undefined;
 }
 
@@ -659,7 +687,9 @@ const ISSUE_DOMAIN_FIELDS = new Set([
 function setEntryField(id: string, field: string, value: string): void {
 	if (!registryHasEntry(id)) die(`pane-registry: entry '${id}' not found in .entries`);
 	const idJson = JSON.stringify(id);
-	if (ISSUE_DOMAIN_FIELDS.has(field)) {
+	const entry = entryById(id);
+	const kind = typeof entry?.kind === "string" ? entry.kind : "";
+	if (ISSUE_DOMAIN_FIELDS.has(field) && kind === "issue") {
 		fdStateOrDie(["set", `.entries[${idJson}].domain.issue.${field}`, value]);
 		return;
 	}
@@ -677,6 +707,8 @@ function entryRows(): Record<string, unknown>[] {
 		const adapter = nestedRecord(entry, "adapter");
 		const domain = nestedRecord(entry, "domain");
 		const issue = nestedRecord(domain, "issue");
+		const topLevelPr = typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? Math.trunc(entry.pr_number) : null;
+		const topLevelWorktree = typeof entry.worktree === "string" && entry.worktree ? entry.worktree : null;
 		const id = typeof entry.id === "string" ? entry.id : key;
 		const kind = typeof entry.kind === "string" ? entry.kind : "issue";
 		return {
@@ -696,10 +728,10 @@ function entryRows(): Record<string, unknown>[] {
 			pi_bridge_pid: adapter.pi_bridge_pid ?? null,
 			pi_bridge_socket: adapter.pi_bridge_socket ?? null,
 			pi_session_id: adapter.pi_session_id ?? null,
-			pr_number: issue.pr_number ?? null,
+			pr_number: issue.pr_number ?? topLevelPr,
 			scope_files_actual: issue.scope_files_actual ?? null,
 			scope_files_declared: issue.scope_files_declared ?? null,
-			worktree: issue.worktree ?? entry.cwd ?? null,
+			worktree: issue.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
 		};
 	});
 }
@@ -845,7 +877,7 @@ function safeUnlink(p: string): void {
 
 function cmdOcAttachArgs(issue: string): void {
 	if (!issue) die("Usage: oc-attach-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "oc_url");
 	const sid = readField(issue, "oc_session_id");
 	if (url && sid && url !== "null" && sid !== "null") {
@@ -855,7 +887,7 @@ function cmdOcAttachArgs(issue: string): void {
 
 function cmdCcChannelArgs(issue: string): void {
 	if (!issue) die("Usage: cc-channel-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "cc_url");
 	const transcript = readField(issue, "cc_transcript");
 	if (url && transcript && url !== "null" && transcript !== "null") {
@@ -865,7 +897,7 @@ function cmdCcChannelArgs(issue: string): void {
 
 function cmdPiBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: pi-bridge-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const pid = readField(issue, "pi_bridge_pid");
 	const socket = readField(issue, "pi_bridge_socket");
 	if (pid && socket && pid !== "null" && socket !== "null") {
@@ -875,7 +907,7 @@ function cmdPiBridgeArgs(issue: string): void {
 
 function cmdCxBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: cx-bridge-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "cx_ws");
 	const thread = readField(issue, "cx_thread_id");
 	if (url && thread && url !== "null" && thread !== "null") {
@@ -887,16 +919,21 @@ function cmdCxBridgeArgs(issue: string): void {
 
 function cmdFindByPane(target: string): void {
 	if (!target) die("Usage: find-by-pane <pane-target-or-pane-id>");
-	const hit = Object.entries(trackedEntries()).find(([, entry]) => entry.pane_target === target || entry.pane_id === target);
-	if (!hit) process.exit(1);
-	const [key, entry] = hit;
-	const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
-	const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
-	if (!paneMatchIsLive(paneId, paneTarget)) {
-		warnStalePaneMatch(paneId, paneTarget);
-		process.exit(1);
+	const hits = Object.entries(trackedEntries()).filter(([, entry]) => entry.pane_target === target || entry.pane_id === target);
+	if (!hits.length) process.exit(1);
+	for (const [key, entry] of hits) {
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+		const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
+		if (!paneMatchIsLive(paneId, paneTarget)) continue;
+		process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
+		return;
 	}
-	process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
+	const [, entry] = hits[0]!;
+	warnStalePaneMatch(
+		typeof entry.pane_id === "string" ? entry.pane_id : "",
+		typeof entry.pane_target === "string" ? entry.pane_target : "",
+	);
+	process.exit(1);
 }
 
 // ----- reconcile / remove-merged -------------------------------------------

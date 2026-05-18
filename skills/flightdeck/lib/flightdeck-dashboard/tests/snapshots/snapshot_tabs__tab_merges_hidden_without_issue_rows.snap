@@ -9,7 +9,7 @@ expression: rendered
 "│ Overview │ Activity │ Conversations │ Decisions │ Costs │ Daemon                                                                                                                                     │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ left rail ───────────────┐┌ sessions (2 tracked) ────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌ detail ──────────────────────────────────┐"
-"│Status                    ││Kind    State            Harness    Title          Cost           PR/worktree    Age      Decision                Activity    ││Dashboard smoke                           │"
+"│Status                    ││Kind    State            Harness    Title          Cost           PR / path      Age      Decision                Activity    ││Dashboard smoke                           │"
 "│▸ Submitting         1    ││WF      Submitting       shell      Dashboard smo… —              —              1h10m    —                       1m          ││wf-dashboard  ·  Workflow  ·  Submitting  │"
 "│Running            1      ││AH      Running          claude     Read docs      —              —              2h00m    —                       1m          ││substate: running smoke                   │"
 "│                          ││                                                                                                                              ││                                          │"
