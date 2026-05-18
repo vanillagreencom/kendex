@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-session-bridge",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Pi extension and CLI for controlling visible interactive Pi sessions over a structured Unix-socket side channel.",
   "license": "MIT",
   "keywords": [
