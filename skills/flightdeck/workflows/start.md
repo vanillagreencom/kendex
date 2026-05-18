@@ -12,25 +12,25 @@ This is the issue-mode start workflow. For ad-hoc or workflow sessions that are 
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 ```
 
-### 1.2 Present Dashboard
+### 1.2 Present Preflight Status
 
 1. **Run**: `FLIGHTDECK_PREFLIGHT=1 .agents/skills/orchestration/scripts/session-init`
 
    The `FLIGHTDECK_PREFLIGHT=1` signal tells session-init to also check the runtime deps flightdeck itself needs (currently: `bun`, the runtime for every trampolined script plus the claude-channel and codex-bridge transports). If bun is missing the dashboard adds a hard warning — trampolines fail without it.
 
-2. **Output the result exactly as shown** — no reformatting, no additions, no commentary before/after the dashboard. The script output IS the dashboard. Script output uses backticks and markdown syntax.
+2. **Output the result exactly as shown** — no reformatting, no additions, no commentary before/after the preflight status. Script output uses backticks and markdown syntax.
 
 3. **If build errors or auth failures** → fix locally before proceeding to § 1.3.
 
-4. **If dashboard shows "Worktree session"** → STOP. Wrong workflow. Use the orchestration workflow from the worktree pane instead: [`../../orchestration/workflows/start.md`](../../orchestration/workflows/start.md).
+4. **If preflight status shows "Worktree session"** → STOP. Wrong workflow. Use the orchestration workflow from the worktree pane instead: [`../../orchestration/workflows/start.md`](../../orchestration/workflows/start.md).
 
-### 1.2.1 Best-effort Rust Dashboard Launch
+### 1.2.1 Rust Dashboard Verification
 
-Run the Rust dashboard launch hook after session init and before the watch loop path. This is non-critical UI only: warn on failure, but do not block issue selection or launch.
+Run the Rust dashboard launch hook after session init and before the watch loop path. This verifies a live tracked `flightdeck-dashboard` entry/pane and ignores stale same-name windows. `FLIGHTDECK_DASHBOARD=0` is the only explicit opt-out.
 
 ```bash
 if ! .agents/skills/flightdeck/scripts/flightdeck-dashboard launch 2>&1; then
-  echo "flightdeck-dashboard launch failed; continuing flightdeck startup without dashboard"
+  echo "flightdeck-dashboard launch failed; continuing supervision but dashboard invariant is not satisfied" >&2
 fi
 ```
 
@@ -282,14 +282,12 @@ Use this whenever § 4.3 or § 4.4 launches a pane through `open-terminal`.
    | OpenAI/Codex-preferred implementation | Codex, strongest reasoning | `--harness codex --model gpt-5.5 --effort xhigh` |
    | Pi-native orchestration / Pi extension work | Pi, strongest OpenAI reasoning | `--harness pi --model openai-codex/gpt-5.5 --effort xhigh` |
    | OpenCode-preferred implementation | OpenCode, strong model + variant | `--harness opencode --model openai/gpt-5.5 --effort xhigh` |
-   | User wants their configured defaults | Harness default | `--harness [HARNESS]` only |
-
    Notes:
    - `open-terminal` maps effort per harness: Claude → `--effort`, Codex → `-c model_reasoning_effort=...`, Pi → `--thinking`, OpenCode → `--variant`. `max` maps to `xhigh` for Codex/Pi and OpenCode OpenAI/Codex models; OpenCode `off` maps to `none`.
    - If the user chooses a model/effort different from the recommendation, pass exactly their values.
-   - If the user chooses harness defaults, omit `--model` and `--effort`.
+   - Do not choose bare harness defaults for a fresh LLM pane; subagents generated with model/effort definitions are exempt.
 
-2. **Ask user** for launch profile. Include the recommendation first, then: `Claude max` | `Codex xhigh` | `Pi xhigh` | `OpenCode xhigh` | `Harness defaults` | `I'll launch it myself` | custom model/effort.
+2. **Ask user** for launch profile. Include the recommendation first, then: `Claude max` | `Codex xhigh` | `Pi xhigh` | `OpenCode xhigh` | `I'll launch it myself` | custom model/effort.
 
 3. **Capture** `[HARNESS]`, optional `[MODEL]`, optional `[EFFORT]`. Build `[LAUNCH_FLAGS]` as:
    ```bash
@@ -343,7 +341,7 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
 5. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
 6. **Launch**: Run § 4.0 to select `[LAUNCH_FLAGS]`.
-   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to dashboard.
+   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to the issue loop.
    - **Manual**: Show the recommended command and worktree path so the user can run it themselves. → § 1.
    - **I'll launch it myself** → § 1.
 
@@ -365,4 +363,4 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    - **Manual**: Show the recommended command(s) so the user can run them themselves. → § 1.
    - **Cancel** → § 1
 
-4. **→ § 1** (restart dashboard in current session, only reached on Manual / Cancel paths).
+4. **→ § 1** (restart issue selection in current session, only reached on Manual / Cancel paths).

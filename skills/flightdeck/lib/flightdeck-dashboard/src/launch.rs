@@ -67,22 +67,21 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
             Ok(false) => {}
             Err(error) => {
                 warn(format!(
-                    "tmux idempotency probe failed; skipping dashboard launch this run: {error}"
+                    "tmux tracked-entry probe failed; attempting dashboard launch anyway: {error}"
                 ));
-                return Ok(());
             }
         }
         match tmux_window_exists(&window_name).await {
             Ok(true) => {
-                tracing::info!(window = %window_name, "flightdeck dashboard window already exists; launch skipped");
-                return Ok(());
+                warn(format!(
+                    "dashboard window '{window_name}' exists but no live tracked dashboard entry was verified; launching a tracked dashboard anyway"
+                ));
             }
             Ok(false) => {}
             Err(error) => {
                 warn(format!(
-                    "tmux idempotency probe failed; skipping dashboard launch this run: {error}"
+                    "tmux window probe failed; attempting dashboard launch anyway: {error}"
                 ));
-                return Ok(());
             }
         }
     }

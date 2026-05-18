@@ -12,7 +12,7 @@ Activates only inside tmux and only when you ask for it (`flightdeck session sta
 
 ## How it works
 
-Flightdeck launches generic sessions with `flightdeck session start` (or `attach`) or issue agents with `flightdeck start`, always into their own tmux windows, then watches them in parallel. Each agent talks to flightdeck through its native channel (Claude Code MCP, OpenCode HTTP, Pi bridge, Codex app-server) and falls back to tmux when a channel isn't available.
+Flightdeck launches generic sessions with `flightdeck session start` (or `attach`) or issue agents with `flightdeck start`, always into their own tmux windows, then watches them in parallel. Each Flightdeck session launches/verifies the Rust dashboard by default; set `FLIGHTDECK_DASHBOARD=0` to opt out. Each agent talks to flightdeck through its native channel (Claude Code MCP, OpenCode HTTP, Pi bridge, Codex app-server) and falls back to tmux when a channel isn't available.
 
 A background daemon detects when an agent has a question, the master agent classifies the prompt, auto-answers when there's a learned default, and pauses for the human when there isn't.
 
@@ -46,6 +46,8 @@ If the daemon's master pane disappears (master agent crash, accidental window ki
 
 Ask the agent to track an ad-hoc tmux window (a scratch Pi pane, a log tail, an extra worker) and it will call `flightdeck session start` or `flightdeck session attach` for you. Useful when you want supervision and a dashboard row but no issue/worktree wiring. See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the script flag reference.
 
+Fresh LLM panes need an explicit launch profile. `flightdeck session start --prompt` accepts `--model` plus `--effort`/`--thinking` and translates them per harness: Pi uses `--model` + `--thinking`, Claude uses `--model` + `--effort`, Codex uses `-m` + `model_reasoning_effort`, and OpenCode uses `--model` + `--variant` after checking `opencode models`. If a custom command or attached pane cannot expose model/effort, the tracked entry records `launch.reasoning_status` and `launch.unsupported_reason` instead of pretending defaults were known.
+
 ## Issue workflows
 
 Issue orchestration remains first-class when the session is tied to a Linear/GitHub/worktree domain. Ask the agent to start an issue, check a parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session — it routes to the right flightdeck command for you.
@@ -71,7 +73,7 @@ Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, 
 
 The Rust dashboard binary lives at `skills/flightdeck/lib/flightdeck-dashboard/`, with the user-facing trampoline at `skills/flightdeck/scripts/flightdeck-dashboard`. It is a ratatui view of the master state file: it renders tracked sessions, owner/observer status, pause/stale/archive/pre-purge banners, cross-harness cost/token totals, the Activity tab (formerly Live feed), conversations, decisions, merges, and daemon health. Live mode file-watches the state/archive/activity paths with debounced reloads; the optional Rust daemon adds a UDS JSON-RPC snapshot stream and Pi-only wake subscriber absorption. Mouse support covers tabs, rows, pause/banner chips, the daemon/theme/cost chips, footer hints, popup controls, and panel scrolling. The only write actions are confirmation-gated shells to canonical helpers: prune stale registry entries through `pane-registry remove` and focus a session through `tmux select-window`.
 
-`flightdeck-dashboard launch` is the best-effort startup hook used by Flightdeck. It opens one tracked tmux window through `flightdeck-session start --kind workflow --harness shell`, registers `.entries.flightdeck-dashboard`, and skips cleanly outside tmux, when disabled, or when tmux idempotency probes fail. Use `launch --theme moon|dawn|pantera|system` to forward a theme to the child TUI. It honors:
+`flightdeck-dashboard launch` is the startup hook used by Flightdeck. It opens one tracked tmux window through `flightdeck-session start --kind workflow --harness shell`, registers `.entries.flightdeck-dashboard`, and skips cleanly outside tmux or when disabled. Idempotency is based on the live tracked dashboard pane; stale same-name windows no longer satisfy the launch check. Use `launch --theme moon|dawn|pantera|system` to forward a theme to the child TUI. It honors:
 
 | Variable | Purpose |
 | --- | --- |
@@ -118,7 +120,8 @@ Most users never touch these. The ones that occasionally matter:
 | --- | --- |
 | `FLIGHTDECK_AUTO_MERGE` | Set to `0` to require a human OK on every merge instead of auto-handling the obvious case. Useful for compliance-sensitive repos or big-blast-radius PRs. |
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | How long flightdeck waits before force-merging a PR that's approved + green but stuck in GitHub's `UNKNOWN` merge state (default 4 minutes). |
-| `FLIGHTDECK_LAUNCH_MODEL` / `FLIGHTDECK_LAUNCH_EFFORT` | Default model + thinking level for spawned agents when the user doesn't pass them explicitly. |
+| `FLIGHTDECK_LAUNCH_MODEL` / `FLIGHTDECK_LAUNCH_EFFORT` | Default model + thinking level for spawned agents / `flightdeck-session --prompt` when the user doesn't pass them explicitly. |
+| `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | Keep `1` to require `opencode models` to list the selected OpenCode provider/model before launch; set `0` only for local smoke shims. |
 | `FLIGHTDECK_STATE_DIR` | Where flightdeck writes its session state file inside the project. Defaults to `tmp/`. |
 | `FLIGHTDECK_ACTIVITY_FILE` | Override the activity JSONL sidecar path for wrapper/workflow emitters and `flightdeck-state activity append`. |
 | `FLIGHTDECK_DASHBOARD` | Set to `0` to disable the Rust dashboard launch hook silently. |

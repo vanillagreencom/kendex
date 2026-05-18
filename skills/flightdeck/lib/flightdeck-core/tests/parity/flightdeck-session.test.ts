@@ -59,9 +59,19 @@ function run(repo: string, statePath: string, args: string[], extraEnv: Record<s
 	env.TMUX_PARITY_SESSION = "test-session";
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_DASHBOARD = "0";
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function makeDashboardShim(repo: string, captureFile: string): string {
+	const bin = join(repo, "flightdeck-dashboard-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
+`);
+	chmodSync(bin, 0o755);
+	return bin;
 }
 
 function makePiBridgeShim(repo: string): string {
@@ -187,6 +197,20 @@ echo pi-shim "$@"
 	return bin;
 }
 
+function makeOpencodeBinShim(repo: string, models = "openai/gpt-5.5\n"): string {
+	const bin = join(repo, "opencode");
+	writeFileSync(bin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "models" ]]; then
+  cat <<'MODELS'
+${models}MODELS
+  exit 0
+fi
+echo opencode "$@"
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makeFailingMktempShim(repo: string): string {
 	const dir = join(repo, "mktemp-fail-bin");
 	mkdirSync(dir, { recursive: true });
@@ -245,6 +269,16 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 	});
 
 	for (const useTs of [true]) {
+		test(`help documents model and effort flags`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, ["--help"]);
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("--model <id>");
+			expect(r.stderr).toContain("--effort <level>|--thinking <level>");
+		});
+
 		test(`start --prompt launches Pi through a tempfile without ANSI-C shell quoting`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
@@ -263,6 +297,10 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			const shimState = readShimState(shim);
 			const launchLine = shimState.panes["%1"]!.sent_keys!.find((line) => line.includes("bash") && line.includes("pi-shim"))!;
 			expect(launchLine).toContain("bash");
+			expect(launchLine).toContain("--model");
+			expect(launchLine).toContain("openai-codex/gpt-5.5");
+			expect(launchLine).toContain("--thinking");
+			expect(launchLine).toContain("xhigh");
 			expect(launchLine).not.toContain("$'");
 			expect(launchLine).not.toContain(prompt);
 			const promptFile = extractPromptTempfile(launchLine);
@@ -278,6 +316,93 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(consumed.stdout).toContain("prompt-file-gone-before-pi");
 			expect(readFileSync(captureFile, "utf8")).toBe(prompt);
 			expect(existsSync(promptFile)).toBe(false);
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["fish-prompt"].launch.model).toBe("openai-codex/gpt-5.5");
+			expect(state.entries["fish-prompt"].launch.effort).toBe("xhigh");
+			expect(state.entries["fish-prompt"].launch.model_source).toBe("auto");
+			expect(state.entries["fish-prompt"].launch.effort_source).toBe("auto");
+			expect(state.entries["fish-prompt"].launch.reasoning_status).toBe("configured");
+			expect(state.entries["fish-prompt"].launch.argv).toContain("--thinking");
+		});
+
+		test(`start --prompt records explicit Pi model and thinking metadata`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-explicit");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "pi-explicit",
+				"--title", "Pi explicit",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--model", "custom/pi:model",
+				"--thinking", "high",
+				"--prompt", "say hi",
+			], { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makePromptLaunchPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeDir });
+			expect(r.status).toBe(0);
+			const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes("bash") && line.includes("pi-shim"))!;
+			expect(launchLine).toContain("custom/pi:model");
+			expect(launchLine).toContain("--thinking");
+			expect(launchLine).toContain("high");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["pi-explicit"].launch.model).toBe("custom/pi:model");
+			expect(state.entries["pi-explicit"].launch.effort).toBe("high");
+			expect(state.entries["pi-explicit"].launch.requested_model).toBe("custom/pi:model");
+			expect(state.entries["pi-explicit"].launch.requested_effort).toBe("high");
+			expect(state.entries["pi-explicit"].launch.model_source).toBe("explicit");
+			expect(state.entries["pi-explicit"].launch.effort_source).toBe("explicit");
+		});
+
+		test(`start --prompt validates OpenCode model and maps effort to variant`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-opencode");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const opencode = makeOpencodeBinShim(repo);
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "oc-prompt",
+				"--title", "OpenCode prompt",
+				"--cwd", repo,
+				"--harness", "opencode",
+				"--model", "openai/gpt-5.5",
+				"--effort", "max",
+				"--prompt", "say hi",
+			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}`, XDG_RUNTIME_DIR: runtimeDir });
+			expect(r.status).toBe(0);
+			expect(opencode).toBe(join(repo, "opencode"));
+			const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes("bash") && line.includes("opencode"))!;
+			expect(launchLine).toContain("--model");
+			expect(launchLine).toContain("openai/gpt-5.5");
+			expect(launchLine).toContain("--variant");
+			expect(launchLine).toContain("xhigh");
+			expect(launchLine).toContain("--prompt");
+			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(state.entries["oc-prompt"].launch.model).toBe("openai/gpt-5.5");
+			expect(state.entries["oc-prompt"].launch.effort).toBe("xhigh");
+			expect(state.entries["oc-prompt"].launch.argv).toContain("--variant");
+		});
+
+		test(`start --prompt rejects unconfigured OpenCode model before tmux mutation`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-opencode-invalid");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			makeOpencodeBinShim(repo, "anthropic/claude-sonnet\n");
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "oc-invalid",
+				"--title", "OpenCode invalid",
+				"--cwd", repo,
+				"--harness", "opencode",
+				"--model", "openai/gpt-5.5",
+				"--prompt", "say hi",
+			], { PATH: `${repo}:${SHIM_DIR}:${process.env.PATH ?? ""}`, XDG_RUNTIME_DIR: runtimeDir });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("opencode model is not configured");
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
 		});
 
 		test(`start creates tmux window and registers entry`, () => {
@@ -305,6 +430,60 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["adhoc-start"].pane_id).toBe("%1");
 			expect(state.entries["adhoc-start"].kind).toBe("adhoc");
 			expect(state.entries["adhoc-start"].cwd).toBe(repo);
+			expect(state.entries["adhoc-start"].launch.reasoning_status).toBe("unsupported");
+			expect(state.entries["adhoc-start"].launch.unsupported_reason).toContain("custom --cmd");
+		});
+
+		test(`start launches dashboard hook and dashboard entry does not recurse`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const capture = join(repo, "dashboard-calls.txt");
+			const dashboard = makeDashboardShim(repo, capture);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "needs-dashboard",
+				"--title", "Needs dashboard",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "printf ok",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard });
+			expect(r.status).toBe(0);
+			expect(readFileSync(capture, "utf8").trim()).toBe("launch");
+
+			const dashboardShim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const dashboardEntry = run(repo, dashboardShim, [
+				"start",
+				"--session-id", "flightdeck-dashboard",
+				"--title", "flightdeck",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "printf dashboard",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard });
+			expect(dashboardEntry.status).toBe(0);
+			expect(readFileSync(capture, "utf8").trim()).toBe("launch");
+		});
+
+		test(`attach launches dashboard hook`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const capture = join(repo, "dashboard-attach-calls.txt");
+			const dashboard = makeDashboardShim(repo, capture);
+			const shim = writeShimState(repo, {
+				panes: {
+					"%66": { pane_index: 0, path: "/tmp/manual", window_id: "@6", window_index: 6, window_name: "manual" },
+				},
+				session: "test-session",
+				windows: { "@6": { index: 6, name: "manual" } },
+			});
+			const r = run(repo, shim, [
+				"attach",
+				"--pane", "%66",
+				"--harness", "shell",
+				"--title", "Manual Shell",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard });
+			expect(r.status).toBe(0);
+			expect(readFileSync(capture, "utf8").trim()).toBe("launch");
 		});
 
 		test(`start reports tmux new-window failure without registering entry`, () => {

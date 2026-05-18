@@ -197,7 +197,7 @@ fn launch_against_missing_state_file_does_not_create_it() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn probe_failure_skips_safely() -> Result<(), Box<dyn Error>> {
+fn probe_failure_warns_and_attempts_launch() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");
     std::fs::create_dir_all(&project)?;
@@ -217,13 +217,50 @@ fn probe_failure_skips_safely() -> Result<(), Box<dyn Error>> {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("tmux idempotency probe failed; skipping dashboard launch this run"),
+        stderr.contains("tmux window probe failed; attempting dashboard launch anyway"),
         "stderr missing probe warning: {stderr}"
     );
     assert!(stderr.contains("tmux list-windows failed"));
     assert!(
-        !capture.exists(),
-        "flightdeck-session skipped on probe failure"
+        capture.exists(),
+        "flightdeck-session attempted despite probe failure"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_same_name_window_does_not_satisfy_launch() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    std::fs::write(&windows_file, "flightdeck-test\n")?;
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = launch_command_without_daemon(&path, &temp.path().join("runtime"), &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exists but no live tracked dashboard entry was verified"),
+        "stderr missing stale-window warning: {stderr}"
+    );
+    assert!(
+        capture.exists(),
+        "stale same-name window did not skip launch"
     );
     Ok(())
 }

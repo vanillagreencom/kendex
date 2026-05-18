@@ -101,6 +101,8 @@ skills/flightdeck/scripts/flightdeck-session start \
   --title "Scratch Pi" \
   --cwd "$PWD" \
   --harness pi \
+  --model openai-codex/gpt-5.5 \
+  --effort xhigh \
   --prompt "Investigate this repo and report risks" \
   --kind adhoc
 
@@ -120,6 +122,8 @@ skills/flightdeck/scripts/flightdeck-session attach \
 ```
 
 `pane-registry list --format json` returns normalized entries for both ad-hoc and issue rows. `session watch` uses the generic session loop; issue `watch` layers merge/PR workflow logic on top. Issue-only prompt tags on ad-hoc sessions trigger a `domain-mismatch` guard; lookups that cannot determine `kind` must pass `--entry-kind-unknown` to fail closed.
+
+`flightdeck-session start --prompt` supports `--model` and `--effort` / `--thinking` for LLM harnesses. Prompt launches translate model/effort into harness argv and persist launch metadata on the entry: requested/resolved model, requested/resolved effort or thinking, source (`explicit`, `env`, `auto`), resolved argv, `reasoning_status`, and `unsupported_reason` when model/effort cannot be known. Harness mappings: Pi `--model` + `--thinking`; Claude `--model` + `--effort`; Codex `-m` + `-c model_reasoning_effort=...`; OpenCode `--model` + `--variant` after checking `opencode models` for the configured provider/model. Custom `--cmd` launches are not rewritten; pass matching harness argv in the command and use `--model` / `--effort` for metadata.
 
 ## Daemon tuning (`FD_*` env vars)
 
@@ -232,7 +236,7 @@ cargo run --release -- tui --demo
 cargo run --release -- tui --state-file ../../tests/fixtures/state/entries-happy.json
 ```
 
-`flightdeck-dashboard launch` is the Flightdeck startup hook. It is best-effort: outside tmux it prints `flightdeck-dashboard: not in tmux; skipping launch`, `FLIGHTDECK_DASHBOARD=0` exits silently, `--no-daemon` skips Rust daemon startup, and `FLIGHTDECK_DAEMON_RUST=1` opts into `daemon start --detach` before opening the tracked workflow window through `flightdeck-session start`. The trampoline exports `FLIGHTDECK_SKILL_DIR` so installed `.agents/skills/flightdeck` projects can find sibling scripts. Use `FLIGHTDECK_DASHBOARD_WINDOW`, `FLIGHTDECK_DASHBOARD_MOTION`, and `FLIGHTDECK_DASHBOARD_THEME` (or CLI `--window-name` / `--motion` / `--theme`) for local launch smoke variants; `NO_MOTION`/`NO_COLOR` force `--motion off` for launched TUI children.
+`flightdeck-dashboard launch` is the Flightdeck startup hook. Outside tmux it prints `flightdeck-dashboard: not in tmux; skipping launch`, `FLIGHTDECK_DASHBOARD=0` exits silently, `--no-daemon` skips Rust daemon startup, and `FLIGHTDECK_DAEMON_RUST=1` opts into `daemon start --detach` before opening the tracked workflow window through `flightdeck-session start`. Idempotency is live-entry based: a live `.entries.flightdeck-dashboard.pane_id` skips launch, but stale same-name windows and tmux probe failures warn then attempt launch. The trampoline exports `FLIGHTDECK_SKILL_DIR` so installed `.agents/skills/flightdeck` projects can find sibling scripts. Use `FLIGHTDECK_DASHBOARD_WINDOW`, `FLIGHTDECK_DASHBOARD_MOTION`, and `FLIGHTDECK_DASHBOARD_THEME` (or CLI `--window-name` / `--motion` / `--theme`) for local launch smoke variants; `NO_MOTION`/`NO_COLOR` force `--motion off` for launched TUI children.
 
 Snapshots live under `tests/snapshots/`; update intentionally with `INSTA_UPDATE=always cargo insta test`, then review the `.snap` diff before committing. Phase 7 parity smoke steps for terminal bell, no-auto-focus pause behavior, and live observer panes live in `docs/work-in-progress/flightdeck-dashboard-parity-smokes.md`. Watcher tests use `notify-debouncer-full` against temp dirs; if they fail locally, verify the filesystem supports native file notifications.
 

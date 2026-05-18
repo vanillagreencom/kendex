@@ -1,6 +1,6 @@
 # Workflow: `watch` — Issue-Mode Extension
 
-Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/Linear/worktree decisions, merge planning, issue dashboards, and the issue-specific lifecycle states.
+Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/Linear/worktree decisions, merge planning, issue cycle summaries, and the issue-specific lifecycle states.
 
 **Inputs**: `[ISSUE_IDS]` from `start.md` or an existing Flightdeck state file on compaction recovery.
 
@@ -134,9 +134,9 @@ When at least one issue reaches `merge-ready` (`state = "merge-ready"` plus `dom
 
 ---
 
-## § 6: Issue dashboard
+## § 6: Issue cycle summary
 
-After generic session status, emit the issue summary expected by current users.
+After generic session status, emit the issue summary expected by current users. This chat table is not the Rust dashboard.
 
 For each tracked issue, gather:
 
@@ -182,4 +182,4 @@ On re-entry, run the generic recovery in `session-watch.md` first, then issue-sp
 
 ## Returns
 
-To flightdeck's dashboard loop (`workflows/start.md` § 1), after `terminate.md` writes the issue summary and archives state.
+To flightdeck's issue loop (`workflows/start.md` § 1), after `terminate.md` writes the issue summary and archives state.

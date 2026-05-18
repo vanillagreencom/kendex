@@ -42,21 +42,15 @@ Core Flightdeck is a generic session manager. It requires tmux and the harness a
 
 ## Mode
 
-You are in **master mode**. Observe-and-direct only.
+You are in **master mode**. Master supervises: it routes prompts, updates state/dashboard, and calls named Flightdeck workflows/scripts. It does not perform per-issue implementation, verification, product-code mutation, or domain mutations directly. Route fixes/checks back through the owning pane/workflow; record only cross-session facts spawned panes cannot see.
 
 Generic session mode is the core path: launch/attach with `flightdeck-session`, supervise with `session-watch.md`, answer generic prompts, and summarize sessions. It skips issue selection, research/plan evaluation, `open-terminal`, merge planning, GitHub/Linear/worktree actions, and project-management flows.
 
-Issue-mode global arc begins only after entering an Issue workflows command:
-
-- **You do NOT** write code in worktrees, run builds/tests, or invoke per-issue orchestration workflows (`bot-review-wait`, `ci-wait`, `merge-pr`, etc.). Per-issue work happens inside the spawned panes; you supervise.
-- **You DO** own the issue-mode master arc end to end — dashboard → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind — and answer prompts that surface from the spawned panes via `pane-respond`.
-- **You communicate with spawned agents through their native channels**: opencode via HTTP `/session/<id>/message`, claude via Channels MCP push + JSONL tail, pi via Unix-socket bridge, codex via JSON-RPC over WebSocket. `pane-respond` routes into the matching send path. Tmux `capture-pane` / `send-keys` is only the fallback when the channel is unavailable (see `patterns/tmux-monitoring.md`).
-- **You pause for the user only on**: scope creep that requires reverting agent work, force-merging against a real content conflict (not `UNKNOWN`), an issue abort, flightdeck mutating `main` directly when no orchestrator pane is alive, or a novel prompt shape no rule covers.
-- **You do NOT re-implement orchestration gates**. When the orchestrator surfaces a prompt (merge-now, audit-relation, fix-suggestions), its upstream conditions are already checked. Answer the prompt; don't re-validate CI / mergeable / thread state. The only checks master adds are cross-session conflict graph and multi-pane scope drift — things only master sees.
+Issue-mode global arc begins only after entering an Issue workflows command: dashboard verification → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind. Communicate with spawned agents through native channels (`pane-respond`): opencode HTTP, Claude Channels MCP/JSONL, Pi bridge, Codex JSON-RPC, with tmux capture/send-keys only as fallback (see `patterns/tmux-monitoring.md`). Pause for the user only on scope creep that requires reverting agent work, force-merging against a real content conflict, issue abort, direct `main` mutation when no orchestrator pane is alive, or a novel prompt shape no rule covers. Do not re-implement orchestration gates; answer surfaced prompts and add only cross-session conflict/scope facts.
 
 ## Commands
 
-Use the session-management table for the core Flightdeck product: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Use the issue-workflow table only after the user enters the issue/PR/worktree domain; those workflows layer on `session-watch.md` / `session-handle-prompt.md` rather than replacing them.
+Use the session-management table for the core Flightdeck product: tracked tmux-window sessions, harness IO, generic prompts, and summaries. Dashboard terms are distinct: TrackedEntry row = source-of-truth state; Rust dashboard/TUI = persistent visibility launched by default; cycle summary = chat-visible tick report, not a dashboard replacement. Use the issue-workflow table only after the user enters the issue/PR/worktree domain; those workflows layer on `session-watch.md` / `session-handle-prompt.md` rather than replacing them.
 
 ### Session management
 
@@ -64,9 +58,9 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 | Command | Arguments | Workflow / Script | Notes |
 |---------|-----------|-------------------|-------|
-| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, and records a generic `.entries[ID]` row. Pi `--prompt` launch starts `pi` directly and records bridge metadata when discovery succeeds. |
-| `session attach` | `--pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window. For Pi, probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
-| `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
+| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches the command/harness, sets `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1`, records launch model/effort metadata, and records a generic `.entries[ID]` row. Prompt LLM launches pass harness-aware model/effort argv (Pi `--model` + `--thinking`, Claude `--model` + `--effort`, Codex `-m` + `model_reasoning_effort`, OpenCode `--model` + `--variant` after `opencode models` validation). Launches/verifies the Rust dashboard by default unless `FLIGHTDECK_DASHBOARD=0`. |
+| `session attach` | `--pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Attaches an existing pane without launching a new window, records supplied or unsupported model/effort metadata, and launches/verifies the Rust dashboard unless disabled. For Pi, probes `pi-bridge` by pane pid and records `pi_session_id`/socket metadata when available. |
+| `session watch` | `[ENTRY_ID...]` | `workflows/session-watch.md` | Generic daemon/poll/handler loop for tracked entries. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
 | `session prompt routing` | nested from `session watch` | `workflows/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries` snapshot. |
 | `session stop` / `session remove` | `<ENTRY_ID>` | `pane-registry teardown-entry` / `pane-registry remove` | Teardown uses stable `pane_id` and accepts the issue-mode lifecycle (`merged|aborted|dead`) plus the generic lifecycle (`complete|cancelled`) as terminal states. `remove` drops the `.entries` row. |
@@ -227,7 +221,18 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
       "window": "<window-name-or-index>",
       "pane_target": "<TMUX_SESSION>:<window>.<pane>",
       "pane_id": "%403",
-      "launch": { "model": "<model-or-null>", "effort": "<effort-or-null>", "cmd": "<command-or-null>" },
+      "launch": {
+        "model": "<resolved-model-or-null>",
+        "effort": "<resolved-effort-or-thinking-or-null>",
+        "requested_model": "<explicit-or-env-model-or-null>",
+        "requested_effort": "<explicit-or-env-effort-or-null>",
+        "model_source": "explicit|env|auto|null",
+        "effort_source": "explicit|env|auto|null",
+        "argv": ["<resolved>", "<harness>", "argv>"],
+        "reasoning_status": "configured|recorded|unsupported|not-applicable",
+        "unsupported_reason": "<reason-or-null>",
+        "cmd": "<command-or-null>"
+      },
       "adapter": {
         "pi_bridge_pid": 0, "pi_bridge_socket": "<path-or-null>", "pi_session_id": "<id-or-null>",
         "oc_url": "<server-url-or-null>", "oc_session_id": "<id-or-null>",
@@ -285,8 +290,9 @@ Master-loop env vars consulted by workflows:
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
 | `FLIGHTDECK_AUTO_MERGE` | `1` | When `0`, the `merge-now` handler escalates instead of auto-answering. For sessions where the human gate is desired (compliance, big-blast-radius PRs) |
 | `FLIGHTDECK_HIJACK_GRACE_SECS` | `90` | Seconds after spawn that master tolerates no orchestration `workflow-state-<ISSUE>.json` before escalating "orchestration-never-started". Catches hijacked panes / failed launches. |
-| `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal --model` override when the workflow/user does not pass `--model`. |
-| `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal --effort` / thinking override when the workflow/user does not pass `--effort`. |
+| `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal` / `flightdeck-session --prompt` model override when the workflow/user does not pass `--model`. |
+| `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal` / `flightdeck-session --prompt` effort/thinking override when the workflow/user does not pass `--effort`. |
+| `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | `1` | When launching OpenCode, require `opencode models` to list the selected provider/model before passing `--model`. Set `0` only for local smoke tests with custom shims. |
 | `FLIGHTDECK_PI_ACTIVITY_BROKER` | `1` | Set to `0` to ignore `pi-session-bridge` `vstack_activity` broker rows and rely on legacy Pi wake messages only. |
 | `FLIGHTDECK_ENTRY_ID` | auto | Exported by `flightdeck-session start` into spawned panes (and inherited by their tool wrappers). When set, `github.sh` / `linear.sh` / `label-*` activity rows auto-bind `refs.entry_id` so cross-source activity ties back to the tracked entry. Do not set by hand. |
 
@@ -395,7 +401,8 @@ The user-visible output blocks at the end of `terminate.md` (`<generic_output_fo
 2. **Daemon-driven wake; no blocking sleeps.** `flightdeck-daemon` (spawned by `session-watch.md` § 1; issue `watch.md` reuses that core loop) owns wake delivery for every harness. Master ends each turn after `flightdeck-daemon ack` + `flightdeck-state master-busy unlock`. Never `sleep`. Wake payload reference: `/flightdeck` (claude/opencode/default), `$flightdeck` (codex), `/skill:flightdeck` (pi). Claude Code MAY optionally arm `ScheduleWakeup({delaySeconds: 1800})` as a defensive fallback.
 3. **Pi dashboard is read-only and additive.** Optional `pi-flightdeck` extension renders mission-control UX from the on-disk artifacts master already writes; never bypasses the schema. No harness-specific shortcuts that bypass the on-disk schema in other harnesses either. See README.md.
 4. **One daemon per tmux session.** Concurrent flightdecks within the same tmux session are refused via flock. Run separate sessions for parallel flightdeck instances.
-5. **All scripts must appear in this SKILL.md's Scripts table.** No "hidden" scripts. README.md mirrors the table for human readers.
+5. **Explicit LLM launch profile.** Every fresh LLM pane Flightdeck creates must have a selected model and effort/thinking level, or an explicit `launch.reasoning_status`/`unsupported_reason` explaining why that harness/session cannot report it. Subagents with generated model/effort definitions are exempt.
+6. **All scripts must appear in this SKILL.md's Scripts table.** No "hidden" scripts. README.md mirrors the table for human readers.
 
 ## Compaction Recovery
 

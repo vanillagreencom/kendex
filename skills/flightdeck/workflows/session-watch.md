@@ -48,10 +48,20 @@ Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `wa
    REGISTRY_JSON=$(.agents/skills/flightdeck/scripts/pane-registry list --format json)
    ```
    `pane-registry list --format json` is backed by `flightdeck-state tracked-entries` (canonical `.entries` view) and preserves `kind` for domain routing.
-4. Spawn or attach the daemon idempotently after checking daemon status for live work:
+4. Verify the Rust dashboard is present for live work, unless explicitly disabled:
+   ```bash
+   INNER_PANES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-panes-live)"
+   if [[ -n "$INNER_PANES" && "${FLIGHTDECK_DASHBOARD:-1}" != "0" ]]; then
+     if ! .agents/skills/flightdeck/scripts/flightdeck-dashboard launch 2>&1; then
+       echo "dashboard-launch-failed session=$SESSION" >&2
+       # Keep going: prompt/daemon supervision remains canonical, but do not call the cycle summary a dashboard.
+     fi
+   fi
+   ```
+   `flightdeck-dashboard launch` verifies the tracked `flightdeck-dashboard` entry and pane, ignores stale same-name windows, and is guarded against recursive launches from the dashboard's own `flightdeck-session start`.
+5. Spawn or attach the daemon idempotently after checking daemon status for live work:
    ```bash
    MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
-   INNER_PANES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-panes-live)"
    INNER_HARNESSES="$(.agents/skills/flightdeck/scripts/pane-registry list --format inner-harnesses-live)"
    if [[ -n "$INNER_PANES" ]] && ! .agents/skills/flightdeck/scripts/flightdeck-daemon status --session "$SESSION" >/dev/null 2>&1; then
      daemon_start_err="$(mktemp -t flightdeck-daemon-start.XXXXXX)"
@@ -90,11 +100,11 @@ Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `wa
    fi
    ```
    On every watch tick with live tracked entries, master MUST check `flightdeck-daemon status --session "$SESSION"`. If it reports `no daemon`, master MUST respawn with the current alive inner pane list from `pane-registry list --format inner-panes-live` / `inner-harnesses-live`, capture the `flightdeck-daemon start` exit code + stderr, and log the respawn in the cycle notes. Exit `4` means stale `--master`: re-resolve from `$TMUX_PANE` and retry once. Exit `1` may be a lock race: if `flightdeck-daemon status` then reports running, log `daemon-respawn-raced` and continue. Any remaining non-zero exit must surface `daemon-respawn-failed` to the user; do NOT yield/end the turn because the master loop is not armed for wakes.
-5. Acquire the master-busy lock before processing:
+6. Acquire the master-busy lock before processing:
    ```bash
    .agents/skills/flightdeck/scripts/flightdeck-state master-busy lock --owner-pid "$MASTER_OWNER_PID"
    ```
-6. Drain pending daemon events for routing hints:
+7. Drain pending daemon events for routing hints:
    ```bash
    PENDING=$(.agents/skills/flightdeck/scripts/flightdeck-daemon events --session "$SESSION_ID")
    ```
@@ -174,9 +184,9 @@ If the handler escalates, leave `paused_for_user` populated and do not release t
 
 ---
 
-## § 4: Generic dashboard
+## § 4: Cycle summary
 
-Emit a sessions-first cycle summary. Omit PR/Linear/worktree columns.
+Emit a sessions-first cycle summary. This chat table is not the Rust dashboard. Omit PR/Linear/worktree columns.
 
 <output_format>
 ### ✈️ Flightdeck sessions [N] · [SESSION] · [ISO8601]
@@ -211,7 +221,7 @@ If `paused_for_user` is set, do not release/yield as a normal cycle; wait for th
 
 On re-entry, `flightdeck-state init` is idempotent. Reconcile entries, re-poll through `pane-registry list --format json`, treat persisted state as a hint, and resume at § 2.
 
-Compaction recovery MUST verify daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with `pane-registry list --format inner-panes-live` and the matching `inner-harnesses-live` list. Capture `flightdeck-daemon start` exit code + stderr using the § 1 contract: exit `4` → re-resolve master from `$TMUX_PANE` and retry once; exit `1` + `flightdeck-daemon status` running → log `daemon-respawn-raced` and proceed; any remaining failure → surface `daemon-respawn-failed` and do NOT yield/end the turn. On success, log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
+Compaction recovery MUST verify dashboard presence and daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `FLIGHTDECK_DASHBOARD != 0`, run `flightdeck-dashboard launch` before daemon respawn; stale same-name windows do not satisfy the invariant. If `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with `pane-registry list --format inner-panes-live` and the matching `inner-harnesses-live` list. Capture `flightdeck-daemon start` exit code + stderr using the § 1 contract: exit `4` → re-resolve master from `$TMUX_PANE` and retry once; exit `1` + `flightdeck-daemon status` running → log `daemon-respawn-raced` and proceed; any remaining failure → surface `daemon-respawn-failed` and do NOT yield/end the turn. On success, log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
 
 ---
 

@@ -15,8 +15,8 @@ source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--strict-discovery]
-  flightdeck-session attach --pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc|workflow]
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
+  flightdeck-session attach --pane <%PANE_ID> --harness pi --title <T> [--session-id <ID>] [--kind adhoc|workflow] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
 }
@@ -67,6 +67,182 @@ require_tmux() {
 
 valid_kind() {
   case "$1" in adhoc|workflow|issue) return 0 ;; *) return 1 ;; esac
+}
+
+is_llm_harness() {
+  case "$1" in claude|codex|opencode|pi) return 0 ;; *) return 1 ;; esac
+}
+
+default_launch_model_for_harness() {
+  case "$1" in
+    claude) echo "opus[1m]" ;;
+    codex) echo "gpt-5.5" ;;
+    opencode) echo "openai/gpt-5.5" ;;
+    pi) echo "openai-codex/gpt-5.5" ;;
+    *) echo "" ;;
+  esac
+}
+
+default_launch_effort_for_harness() {
+  case "$1" in
+    claude) echo "max" ;;
+    codex|opencode|pi) echo "xhigh" ;;
+    *) echo "" ;;
+  esac
+}
+
+validate_model_value() {
+  local model="$1"
+  [[ "$model" != *$'\n'* && "$model" != *$'\r'* ]] || { echo "Error: --model must be a single-line value" >&2; exit 2; }
+}
+
+validate_effort_value() {
+  local effort="$1"
+  [[ -z "$effort" ]] && return 0
+  case "$effort" in
+    minimal|low|medium|high|xhigh|max|off) return 0 ;;
+    *) echo "Error: invalid --effort/--thinking: $effort (expected minimal|low|medium|high|xhigh|max|off)" >&2; exit 2 ;;
+  esac
+}
+
+normalize_openai_effort() {
+  case "$1" in
+    max) echo "xhigh" ;;
+    minimal) echo "low" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+normalize_opencode_effort() {
+  local effort="$1" model="$2"
+  case "$effort" in
+    off) echo "none" ;;
+    minimal) echo "low" ;;
+    max)
+      case "$model" in
+        openai/*|opencode/*|*gpt*|*codex*) echo "xhigh" ;;
+        *) echo "max" ;;
+      esac
+      ;;
+    *) echo "$effort" ;;
+  esac
+}
+
+resolve_effort_for_harness() {
+  local harness="$1" effort="$2" model="${3:-}"
+  [[ -n "$effort" ]] || return 0
+  case "$harness" in
+    codex|pi) normalize_openai_effort "$effort" ;;
+    opencode) normalize_opencode_effort "$effort" "$model" ;;
+    *) echo "$effort" ;;
+  esac
+}
+
+json_argv() {
+  jq -nc '$ARGS.positional' --args -- "$@"
+}
+
+resolve_harness_bin() {
+  local harness="$1" bin
+  case "$harness" in
+    pi) pi_resolve_pi_bin || { echo "Error: pi binary not found" >&2; return 1; } ;;
+    claude|codex|opencode)
+      bin=$(type -P "$harness" 2>/dev/null || true)
+      [[ -n "$bin" && -x "$bin" ]] || { echo "Error: $harness binary not found" >&2; return 1; }
+      echo "$bin"
+      ;;
+    *) echo "Error: --prompt launch does not support --harness $harness" >&2; return 1 ;;
+  esac
+}
+
+validate_opencode_model() {
+  local bin="$1" model="$2" out
+  [[ -n "$model" ]] || return 0
+  [[ "${FLIGHTDECK_OPENCODE_VALIDATE_MODEL:-1}" != "0" ]] || return 0
+  if ! out=$("$bin" models 2>/dev/null); then
+    echo "Error: opencode models failed; cannot validate --model $model" >&2
+    return 1
+  fi
+  if ! grep -Fq -- "$model" <<< "$out"; then
+    echo "Error: opencode model is not configured: $model" >&2
+    return 1
+  fi
+}
+
+prepare_launch_metadata() {
+  local harness="$1" kind="$2" mode="$3" requested_model="$4" requested_effort="$5"
+  local model="" effort="" model_source="" effort_source="" default_model default_effort
+
+  LAUNCH_MODEL=""; LAUNCH_EFFORT=""; LAUNCH_REQUESTED_MODEL=""; LAUNCH_REQUESTED_EFFORT=""
+  LAUNCH_MODEL_SOURCE=""; LAUNCH_EFFORT_SOURCE=""; LAUNCH_REASONING_STATUS=""; LAUNCH_UNSUPPORTED_REASON=""; LAUNCH_ARGV_JSON=""
+
+  if [[ -n "$requested_model" ]]; then
+    model="$requested_model"; model_source="explicit"; LAUNCH_REQUESTED_MODEL="$requested_model"
+  elif [[ -n "${FLIGHTDECK_LAUNCH_MODEL:-}" ]]; then
+    model="$FLIGHTDECK_LAUNCH_MODEL"; model_source="env"; LAUNCH_REQUESTED_MODEL="$FLIGHTDECK_LAUNCH_MODEL"
+  elif [[ "$mode" == "prompt" ]] && is_llm_harness "$harness"; then
+    default_model=$(default_launch_model_for_harness "$harness")
+    if [[ -n "$default_model" ]]; then model="$default_model"; model_source="auto"; fi
+  fi
+
+  if [[ -n "$requested_effort" ]]; then
+    effort="$requested_effort"; effort_source="explicit"; LAUNCH_REQUESTED_EFFORT="$requested_effort"
+  elif [[ -n "${FLIGHTDECK_LAUNCH_EFFORT:-}" ]]; then
+    effort="$FLIGHTDECK_LAUNCH_EFFORT"; effort_source="env"; LAUNCH_REQUESTED_EFFORT="$FLIGHTDECK_LAUNCH_EFFORT"
+  elif [[ "$mode" == "prompt" ]] && is_llm_harness "$harness"; then
+    default_effort=$(default_launch_effort_for_harness "$harness")
+    if [[ -n "$default_effort" ]]; then effort="$default_effort"; effort_source="auto"; fi
+  fi
+
+  validate_model_value "$model"
+  validate_effort_value "$effort"
+
+  if is_llm_harness "$harness"; then
+    if [[ "$effort" == "off" ]]; then
+      LAUNCH_MODEL="$model"
+      LAUNCH_EFFORT=""
+      LAUNCH_MODEL_SOURCE="$model_source"
+      LAUNCH_EFFORT_SOURCE="$effort_source"
+      LAUNCH_REASONING_STATUS="unsupported"
+      LAUNCH_UNSUPPORTED_REASON="effort explicitly disabled with --effort off"
+    elif [[ "$mode" == "prompt" ]]; then
+      LAUNCH_MODEL="$model"
+      LAUNCH_EFFORT=$(resolve_effort_for_harness "$harness" "$effort" "$model")
+      LAUNCH_MODEL_SOURCE="$model_source"
+      LAUNCH_EFFORT_SOURCE="$effort_source"
+      LAUNCH_REASONING_STATUS="configured"
+    elif [[ -n "$model" || -n "$effort" ]]; then
+      LAUNCH_MODEL="$model"
+      LAUNCH_EFFORT=$(resolve_effort_for_harness "$harness" "$effort" "$model")
+      LAUNCH_MODEL_SOURCE="$model_source"
+      LAUNCH_EFFORT_SOURCE="$effort_source"
+      LAUNCH_REASONING_STATUS="recorded"
+      LAUNCH_UNSUPPORTED_REASON="custom --cmd launch; caller-provided command must include matching harness model/effort argv"
+    else
+      LAUNCH_REASONING_STATUS="unsupported"
+      LAUNCH_UNSUPPORTED_REASON="custom --cmd or attached LLM session; model/effort not discoverable by flightdeck-session"
+    fi
+  else
+    LAUNCH_REASONING_STATUS="not-applicable"
+    LAUNCH_UNSUPPORTED_REASON="harness $harness is not an LLM harness"
+  fi
+}
+
+ensure_dashboard_launched() {
+  local entry_id="$1" dashboard_bin err rc
+  [[ "$entry_id" != "flightdeck-dashboard" ]] || return 0
+  [[ "${FLIGHTDECK_DASHBOARD:-1}" != "0" ]] || return 0
+  [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" != "1" ]] || return 0
+  dashboard_bin="${FLIGHTDECK_DASHBOARD_BIN:-$SCRIPT_DIR/flightdeck-dashboard}"
+  [[ -x "$dashboard_bin" ]] || { printf 'Warning: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 0; }
+  err=$(mktemp -t flightdeck-dashboard-launch.XXXXXX)
+  rc=0
+  FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" launch 2>"$err" || rc=$?
+  if [[ -s "$err" ]]; then cat "$err" >&2; fi
+  rm -f "$err"
+  if (( rc != 0 )); then
+    printf 'Warning: flightdeck dashboard launch failed after registering %s (rc=%s)\n' "$entry_id" "$rc" >&2
+  fi
 }
 
 capture_pane_meta() {
@@ -227,14 +403,42 @@ warn_pi_discovery_error() {
   printf 'Warning: pi-bridge metadata discovery failed during %s (%s); registering degraded entry.\n' "$context" "$PI_DISCOVERY_ERROR" >&2
 }
 
-build_pi_prompt_cmd() {
-  local prompt="$1" session_id="${2:-session}" out_var="${3:-}" tmp_var="${4:-}" pi_bin ext_path bridge_args=()
-  if ! pi_bin=$(pi_resolve_pi_bin); then
-    echo "Error: pi binary not found" >&2
+build_prompt_cmd() {
+  local harness="$1" prompt="$2" session_id="${3:-session}" out_var="${4:-}" tmp_var="${5:-}" bin ext_path bridge_args=() harness_args=() argv_record=() prompt_mode="positional"
+  if ! bin=$(resolve_harness_bin "$harness"); then
     return 1
   fi
-  ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
-  [[ -n "$ext_path" ]] && bridge_args=(-e "$ext_path")
+  case "$harness" in
+    pi)
+      ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
+      [[ -n "$ext_path" ]] && bridge_args=(-e "$ext_path")
+      harness_args=("$bin")
+      [[ -n "${LAUNCH_MODEL:-}" ]] && harness_args+=(--model "$LAUNCH_MODEL")
+      [[ -n "${LAUNCH_EFFORT:-}" ]] && harness_args+=(--thinking "$LAUNCH_EFFORT")
+      harness_args+=("${bridge_args[@]}")
+      ;;
+    claude)
+      harness_args=("$bin")
+      [[ -n "${LAUNCH_MODEL:-}" ]] && harness_args+=(--model "$LAUNCH_MODEL")
+      [[ -n "${LAUNCH_EFFORT:-}" ]] && harness_args+=(--effort "$LAUNCH_EFFORT")
+      ;;
+    codex)
+      harness_args=("$bin")
+      [[ -n "${LAUNCH_MODEL:-}" ]] && harness_args+=(-m "$LAUNCH_MODEL")
+      [[ -n "${LAUNCH_EFFORT:-}" ]] && harness_args+=(-c "model_reasoning_effort=$LAUNCH_EFFORT")
+      ;;
+    opencode)
+      validate_opencode_model "$bin" "${LAUNCH_MODEL:-}" || return 1
+      harness_args=("$bin")
+      [[ -n "${LAUNCH_MODEL:-}" ]] && harness_args+=(--model "$LAUNCH_MODEL")
+      [[ -n "${LAUNCH_EFFORT:-}" ]] && harness_args+=(--variant "$LAUNCH_EFFORT")
+      prompt_mode="opencode-prompt-flag"
+      ;;
+    *)
+      echo "Error: --prompt launch does not support --harness $harness" >&2
+      return 1
+      ;;
+  esac
   local runtime_dir prompt_dir safe_session prompt_file inner_cmd prompt_arg body built_cmd
   runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
   prompt_dir="$runtime_dir/flightdeck"
@@ -253,9 +457,17 @@ build_pi_prompt_cmd() {
     rm -f "$prompt_file"
     return 1
   fi
-  inner_cmd=$(shell_join env FLIGHTDECK_MANAGED=1 FLIGHTDECK_CHILD_PANE=1 "FLIGHTDECK_ENTRY_ID=${session_id}" "$pi_bin" "${bridge_args[@]}")
+  inner_cmd=$(shell_join env FLIGHTDECK_MANAGED=1 FLIGHTDECK_CHILD_PANE=1 "FLIGHTDECK_ENTRY_ID=${session_id}" "${harness_args[@]}")
   prompt_arg=$(shell_join "$prompt_file")
-  body="IFS= read -r -d '' p < ${prompt_arg} || true; rm -f ${prompt_arg}; exec ${inner_cmd} \"\$p\""
+  argv_record=("${harness_args[@]}")
+  if [[ "$prompt_mode" == "opencode-prompt-flag" ]]; then
+    argv_record+=(--prompt "<prompt>")
+    body="IFS= read -r -d '' p < ${prompt_arg} || true; rm -f ${prompt_arg}; exec ${inner_cmd} --prompt \"\$p\""
+  else
+    argv_record+=("<prompt>")
+    body="IFS= read -r -d '' p < ${prompt_arg} || true; rm -f ${prompt_arg}; exec ${inner_cmd} \"\$p\""
+  fi
+  LAUNCH_ARGV_JSON=$(json_argv "${argv_record[@]}")
   built_cmd=$(shell_join bash -c "$body")
   if [[ -n "$out_var" ]]; then
     printf -v "$out_var" '%s' "$built_cmd"
@@ -274,6 +486,15 @@ register_entry() {
   [[ -n "$pr" ]] && args+=(--pr "$pr")
   [[ -n "$branch" ]] && args+=(--branch "$branch")
   [[ -n "$launch_cmd" ]] && args+=(--launch-cmd "$launch_cmd")
+  [[ -n "${LAUNCH_MODEL:-}" ]] && args+=(--launch-model "$LAUNCH_MODEL")
+  [[ -n "${LAUNCH_EFFORT:-}" ]] && args+=(--launch-effort "$LAUNCH_EFFORT")
+  [[ -n "${LAUNCH_REQUESTED_MODEL:-}" ]] && args+=(--launch-requested-model "$LAUNCH_REQUESTED_MODEL")
+  [[ -n "${LAUNCH_REQUESTED_EFFORT:-}" ]] && args+=(--launch-requested-effort "$LAUNCH_REQUESTED_EFFORT")
+  [[ -n "${LAUNCH_MODEL_SOURCE:-}" ]] && args+=(--launch-model-source "$LAUNCH_MODEL_SOURCE")
+  [[ -n "${LAUNCH_EFFORT_SOURCE:-}" ]] && args+=(--launch-effort-source "$LAUNCH_EFFORT_SOURCE")
+  [[ -n "${LAUNCH_REASONING_STATUS:-}" ]] && args+=(--launch-reasoning-status "$LAUNCH_REASONING_STATUS")
+  [[ -n "${LAUNCH_UNSUPPORTED_REASON:-}" ]] && args+=(--launch-unsupported-reason "$LAUNCH_UNSUPPORTED_REASON")
+  [[ -n "${LAUNCH_ARGV_JSON:-}" ]] && args+=(--launch-argv-json "$LAUNCH_ARGV_JSON")
   [[ -n "${PI_BRIDGE_PID:-}" ]] && args+=(--pi-bridge-pid "$PI_BRIDGE_PID")
   [[ -n "${PI_BRIDGE_SOCKET:-}" ]] && args+=(--pi-bridge-socket "$PI_BRIDGE_SOCKET")
   [[ -n "${PI_SESSION_ID:-}" ]] && args+=(--pi-session-id "$PI_SESSION_ID")
@@ -346,7 +567,7 @@ archive_stale_state_if_needed() {
 cmd_start() {
   require_tmux
   archive_stale_state_if_needed
-  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session-id) session_id="$2"; shift 2 ;;
@@ -361,6 +582,10 @@ cmd_start() {
       --cmd=*) cmd="${1#--cmd=}"; shift ;;
       --prompt) prompt="$2"; shift 2 ;;
       --prompt=*) prompt="${1#--prompt=}"; shift ;;
+      --model) model_override="$2"; shift 2 ;;
+      --model=*) model_override="${1#--model=}"; shift ;;
+      --effort|--thinking) effort_override="$2"; shift 2 ;;
+      --effort=*|--thinking=*) effort_override="${1#*=}"; shift ;;
       --kind) kind="$2"; shift 2 ;;
       --kind=*) kind="${1#--kind=}"; shift ;;
       --worktree) worktree="$2"; shift 2 ;;
@@ -383,6 +608,11 @@ cmd_start() {
   PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
   if [[ -n "$prompt" ]]; then
+    prepare_launch_metadata "$harness" "$kind" "prompt" "$model_override" "$effort_override"
+  else
+    prepare_launch_metadata "$harness" "$kind" "cmd" "$model_override" "$effort_override"
+  fi
+  if [[ -n "$prompt" ]]; then
     case "$harness" in
       pi)
         if ! pi_snapshot_pids_checked; then
@@ -393,12 +623,13 @@ cmd_start() {
           fi
         fi
         pre_pids="$PI_SNAPSHOT_PIDS"
-        if ! build_pi_prompt_cmd "$prompt" "$session_id" launch_cmd prompt_tmpfile; then
-          exit 2
-        fi
         ;;
-      *) echo "Error: --prompt launch currently supports --harness pi; use --cmd for $harness" >&2; exit 2 ;;
+      claude|codex|opencode) ;;
+      *) echo "Error: --prompt launch does not support --harness $harness; use --cmd for $harness" >&2; exit 2 ;;
     esac
+    if ! build_prompt_cmd "$harness" "$prompt" "$session_id" launch_cmd prompt_tmpfile; then
+      exit 2
+    fi
   else
     launch_cmd="$(flightdeck_session_pane_env_str "$session_id") $cmd"
   fi
@@ -439,12 +670,13 @@ cmd_start() {
   local branch
   branch=$(capture_git_branch "$abs_cwd")
   register_entry "$session_id" "$title" "$kind" "${CAPTURE_PANE_CWD:-$abs_cwd}" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch"
+  ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
 cmd_attach() {
   require_tmux
-  local pane="" harness="" title="" kind="adhoc" session_id=""
+  local pane="" harness="" title="" kind="adhoc" session_id="" model_override="" effort_override=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pane) pane="$2"; shift 2 ;;
@@ -455,6 +687,10 @@ cmd_attach() {
       --title=*) title="${1#--title=}"; shift ;;
       --kind) kind="$2"; shift 2 ;;
       --kind=*) kind="${1#--kind=}"; shift ;;
+      --model) model_override="$2"; shift 2 ;;
+      --model=*) model_override="${1#--model=}"; shift ;;
+      --effort|--thinking) effort_override="$2"; shift 2 ;;
+      --effort=*|--thinking=*) effort_override="${1#*=}"; shift ;;
       --session-id) session_id="$2"; shift 2 ;;
       --session-id=*) session_id="${1#--session-id=}"; shift ;;
       --help|-h) usage ;;
@@ -478,9 +714,11 @@ cmd_attach() {
       session_id="pane-${CAPTURE_PANE_ID#%}"
     fi
   fi
+  prepare_launch_metadata "$harness" "$kind" "attach" "$model_override" "$effort_override"
   local branch=""
   [[ -n "$CAPTURE_PANE_CWD" ]] && branch=$(capture_git_branch "$CAPTURE_PANE_CWD")
   register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "" "" "$branch"
+  ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 

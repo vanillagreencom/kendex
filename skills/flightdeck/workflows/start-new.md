@@ -127,15 +127,14 @@ Always create as a parent + sub-issue pair. Parent coordinates, child implements
 
 4. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
-5. **Launch**: Ask user for harness/model/effort profile. Recommend one of:
+5. **Launch**: Ask user for harness/model/effort profile. Explicit model/effort selection is required for new LLM panes; subagents generated with their own model/effort definitions are exempt. Recommend one of:
    - Claude max: `--harness claude --model 'opus[1m]' --effort max`
    - Codex xhigh: `--harness codex --model gpt-5.5 --effort xhigh`
    - Pi xhigh: `--harness pi --model openai-codex/gpt-5.5 --effort xhigh`
    - OpenCode xhigh: `--harness opencode --model openai/gpt-5.5 --effort xhigh` (`open-terminal` maps effort to `--variant`)
-   - Harness defaults: `--harness [HARNESS]`
    - `I'll launch it myself`
 
-   If the user chooses custom values, pass exactly those flags. If the user chooses harness defaults, omit `--model` and `--effort`.
+   If the user chooses custom values, pass exactly those flags. Do not choose harness defaults for a fresh LLM pane.
    - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`
    - **Manual**: Show the recommended command and worktree path so the user can run it themselves.
 

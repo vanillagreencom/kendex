@@ -49,13 +49,13 @@ Structured question events include the authoritative request payload; do not inf
 
 ## § 3: Handler — `bash-permission-prompt`
 
-The harness is asking permission to run a bash command. Auto-approve only conservative, read-only, or Flightdeck/skill-owned commands.
+The harness is asking permission to run a bash command. Auto-approve only conservative read-only commands or Flightdeck control-plane scripts.
 
 Allowlist patterns:
 
 | Pattern | Why safe |
 |---------|----------|
-| `\.agents/skills/[^/]+/scripts/[^/]+` | Installed skill helper script. |
+| `\.agents/skills/flightdeck/scripts/(flightdeck-state|flightdeck-daemon|flightdeck-dashboard|flightdeck-session|pane-registry|pane-poll|pane-respond|pane-clear-bell)(\s|$)` | Flightdeck control-plane helper. |
 | `^git (status|log|diff|show|rev-parse|fetch|worktree list)` | Read-only git / metadata. |
 | `^tmux (capture-pane|list-(windows|panes)|display-message|send-keys|select-window)` | Pane observation/response primitives. |
 | `^(jq|cat|head|tail|grep|awk|sed|wc|sort|uniq|tr|cut)\s` | Read-only text processing. |
@@ -75,9 +75,9 @@ Issue-mode may add domain-specific read-only commands (for example `gh pr view` 
 
 The inner agent is alive but waiting for free-text guidance after a cancel/decline/no-prompt state.
 
-1. Read `decisions_log[-1]` for this entry to recover the most recent intent.
-2. If there is enough generic context, synthesize a one-sentence continuation directive, e.g. "Continue with the last selected option; if clarification is required, surface a structured question."
-3. If there is no prior context, set `paused_for_user = {entry_id, reason: "awaiting-direction-no-context", prompt_text: <buffer excerpt>}`.
+1. Read `decisions_log[-1]` for this entry to recover the most recent explicit user instruction or option selected by this workflow.
+2. If the last decision contains an explicit selected option or user-provided instruction, restate only that prior decision as a one-sentence continuation directive. Do not add new plan content, new scope, or a fresh technical direction.
+3. If there is no explicit prior selected option/user instruction, set `paused_for_user = {entry_id, reason: "awaiting-direction-no-context", prompt_text: <buffer excerpt>}`.
 4. Send the directive via `pane-respond <pane> "<directive>"` and log `awaiting-direction`.
 
 ---

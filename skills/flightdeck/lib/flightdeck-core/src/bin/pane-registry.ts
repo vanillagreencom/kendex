@@ -161,6 +161,13 @@ interface InitFields {
 	launch_cmd: string;
 	launch_effort: string;
 	launch_model: string;
+	launch_argv_json: string;
+	launch_effort_source: string;
+	launch_model_source: string;
+	launch_reasoning_status: string;
+	launch_requested_effort: string;
+	launch_requested_model: string;
+	launch_unsupported_reason: string;
 	oc_port: string;
 	oc_session_id: string;
 	oc_url: string;
@@ -187,7 +194,9 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		discovery_error: "",
 		harness: "",
 		kind,
-		launch_cmd: "", launch_effort: "", launch_model: "",
+		launch_argv_json: "", launch_cmd: "", launch_effort: "", launch_effort_source: "",
+		launch_model: "", launch_model_source: "", launch_reasoning_status: "",
+		launch_requested_effort: "", launch_requested_model: "", launch_unsupported_reason: "",
 		oc_port: "", oc_session_id: "", oc_url: "",
 		pane_id: "", pane_index: tmuxBasePaneIndex() || "0", pane_target: "",
 		pi_bridge_pid: "", pi_bridge_socket: "", pi_session_id: "",
@@ -210,9 +219,16 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--discovery-error": "discovery_error",
 	"--harness": "harness",
 	"--kind": "kind",
+	"--launch-argv-json": "launch_argv_json",
 	"--launch-cmd": "launch_cmd",
 	"--launch-effort": "launch_effort",
+	"--launch-effort-source": "launch_effort_source",
 	"--launch-model": "launch_model",
+	"--launch-model-source": "launch_model_source",
+	"--launch-reasoning-status": "launch_reasoning_status",
+	"--launch-requested-effort": "launch_requested_effort",
+	"--launch-requested-model": "launch_requested_model",
+	"--launch-unsupported-reason": "launch_unsupported_reason",
 	"--oc-port": "oc_port",
 	"--oc-session-id": "oc_session_id",
 	"--oc-url": "oc_url",
@@ -238,6 +254,29 @@ function parseInitFlags(fields: InitFields, args: string[]): void {
 	}
 }
 
+function hydrateLaunchFields(fields: InitFields, launch: Record<string, unknown> | undefined): void {
+	if (!launch) return;
+	if (!fields.launch_model) fields.launch_model = String(launch.model ?? "");
+	if (!fields.launch_effort) fields.launch_effort = String(launch.effort ?? "");
+	if (!fields.launch_requested_model) fields.launch_requested_model = String(launch.requested_model ?? "");
+	if (!fields.launch_requested_effort) fields.launch_requested_effort = String(launch.requested_effort ?? "");
+	if (!fields.launch_model_source) fields.launch_model_source = String(launch.model_source ?? launch.source ?? "");
+	if (!fields.launch_effort_source) fields.launch_effort_source = String(launch.effort_source ?? launch.source ?? "");
+	if (!fields.launch_reasoning_status) fields.launch_reasoning_status = String(launch.reasoning_status ?? "");
+	if (!fields.launch_unsupported_reason) fields.launch_unsupported_reason = String(launch.unsupported_reason ?? "");
+	if (!fields.launch_argv_json && Array.isArray(launch.argv)) fields.launch_argv_json = JSON.stringify(launch.argv);
+}
+
+function parseArgvJson(value: string): string[] | null {
+	if (!value) return null;
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
 function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 	const harness = fields.harness;
 	if (harness === "opencode" && !fields.oc_url) {
@@ -247,8 +286,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.oc_session_id = String(rec.session_id ?? "");
 			fields.oc_port = String(rec.port ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "claude" && !fields.cc_url) {
@@ -259,8 +297,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.cc_port = String(rec.port ?? "");
 			fields.cc_transcript = String(rec.transcript ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "pi" && !fields.pi_bridge_pid) {
@@ -270,8 +307,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.pi_bridge_socket = String(rec.socket ?? "");
 			fields.pi_session_id = String(rec.session_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "codex" && !fields.cx_ws) {
@@ -280,8 +316,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.cx_ws = String(rec.url ?? "");
 			fields.cx_thread_id = String(rec.thread_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 }
@@ -305,8 +340,20 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 	let paneId = fields.pane_id;
 	if (!paneId && tmuxPaneExists(paneTarget)) paneId = tmuxField(paneTarget, "#{pane_id}");
 
-	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd)
-		? { cmd: fields.launch_cmd || null, effort: fields.launch_effort || null, model: fields.launch_model || null }
+	const launchArgv = parseArgvJson(fields.launch_argv_json);
+	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd || fields.launch_requested_model || fields.launch_requested_effort || fields.launch_reasoning_status || fields.launch_unsupported_reason || launchArgv)
+		? {
+			argv: launchArgv,
+			cmd: fields.launch_cmd || null,
+			effort: fields.launch_effort || null,
+			effort_source: fields.launch_effort_source || null,
+			model: fields.launch_model || null,
+			model_source: fields.launch_model_source || null,
+			reasoning_status: fields.launch_reasoning_status || null,
+			requested_effort: fields.launch_requested_effort || null,
+			requested_model: fields.launch_requested_model || null,
+			unsupported_reason: fields.launch_unsupported_reason || null,
+		}
 		: null;
 	const adapter = {
 		cc_port: numOrNull(fields.cc_port),
