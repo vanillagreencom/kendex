@@ -138,6 +138,12 @@ interface TickPending {
 	isBell: boolean;
 }
 
+function fatalStartupError(message: string, code = 2): never {
+	setDaemonExitReason("startup-error", { error: message, exit_code: code });
+	process.stderr.write(`${message}\n`);
+	process.exit(code);
+}
+
 // pane-registry helpers were moved to ./pane-registry.ts (W5 reviewer
 // follow-up B4). Sibling modules should import them from there directly.
 
@@ -179,16 +185,14 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	let captureSweepCounter = 0;
 
 	if (opts.innerHarnesses.length > 0 && opts.innerHarnesses.length !== opts.innerTargets.length) {
-		process.stderr.write(`Error: --inner-harnesses count (${opts.innerHarnesses.length}) != --inner count (${opts.innerTargets.length})\n`);
-		process.exit(2);
+		fatalStartupError(`Error: --inner-harnesses count (${opts.innerHarnesses.length}) != --inner count (${opts.innerTargets.length})`);
 	}
 
 	// Resolve every inner target → pane_id. Refuse master/inner
 	// collision; refuse duplicate inner ids.
 	const masterId = resolvePaneId(opts.masterTarget);
 	if (!masterId) {
-		process.stderr.write(`Error: cannot resolve master pane '${opts.masterTarget}'\n`);
-		process.exit(2);
+		fatalStartupError(`Error: cannot resolve master pane '${opts.masterTarget}'`);
 	}
 	setDaemonMasterId(masterId);
 	const innerIds: string[] = [];
@@ -201,16 +205,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				warn("handoff-inner-stale", `dropping stale handoff inner pane '${t}' (cannot resolve)`);
 				continue;
 			}
-			process.stderr.write(`Error: cannot resolve inner pane '${t}'\n`);
-			process.exit(2);
+			fatalStartupError(`Error: cannot resolve inner pane '${t}'`);
 		}
 		if (id === masterId) {
-			process.stderr.write(`Error: inner pane '${t}' resolves to master pane id ${masterId} (feedback loop)\n`);
-			process.exit(2);
+			fatalStartupError(`Error: inner pane '${t}' resolves to master pane id ${masterId} (feedback loop)`);
 		}
 		if (seenInner.has(id)) {
-			process.stderr.write(`Error: duplicate inner pane id ${id} (target '${t}' resolves to already-tracked pane)\n`);
-			process.exit(2);
+			fatalStartupError(`Error: duplicate inner pane id ${id} (target '${t}' resolves to already-tracked pane)`);
 		}
 		seenInner.add(id);
 		innerIds.push(id);

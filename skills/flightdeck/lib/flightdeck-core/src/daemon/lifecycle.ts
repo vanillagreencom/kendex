@@ -75,9 +75,14 @@ export interface ShutdownOpts {
 let handoffMode = false;
 export function setHandoffMode(on: boolean): void { handoffMode = on; }
 
-let daemonExitReason = "other";
-export function setDaemonExitReason(reason: "master-gone" | "session-gone" | "signal-term" | "signal-int" | "other"): void {
+export type DaemonExitReason = "master-gone" | "session-gone" | "signal-term" | "signal-int" | "startup-error" | "other";
+
+let daemonExitReason: DaemonExitReason = "other";
+let daemonExitDetails: Record<string, unknown> = {};
+
+export function setDaemonExitReason(reason: DaemonExitReason, details: Record<string, unknown> = {}): void {
 	daemonExitReason = reason;
+	daemonExitDetails = details;
 }
 
 let daemonMasterId = "";
@@ -93,7 +98,8 @@ function emitDaemonExitedEvent(opts: ShutdownOpts): void {
 	const ts = new Date().toISOString();
 	const reason = daemonExitReason || "other";
 	const masterId = daemonMasterId || opts.masterId();
-	emitDaemonStopped(opts.activity ?? {}, { masterId, pid: process.pid, reason });
+	const details = { event_type: "daemon-exited", reason, master_id: masterId, pid: process.pid, ...daemonExitDetails };
+	emitDaemonStopped(opts.activity ?? {}, { masterId, pid: process.pid, reason, details: daemonExitDetails });
 	const hash = createHash("sha256").update(`${ts}|${reason}|${masterId}|${process.pid}`).digest("hex").slice(0, 12);
 	const row = JSON.stringify({
 		ts,
@@ -105,7 +111,7 @@ function emitDaemonExitedEvent(opts: ShutdownOpts): void {
 		hash,
 		tag: "daemon-exited",
 		stable_age_sec: 0,
-		details: { event_type: "daemon-exited", reason, master_id: masterId, pid: process.pid },
+		details,
 	});
 	const r = spawnSync("bash", ["-c", "exec 219>\"$1\"; flock 219; printf '%s\\n' \"$2\" >> \"$3\"", "_", opts.sessionLock, row, opts.eventsFile], { encoding: "utf8" });
 	if (r.status !== 0 || r.error) {

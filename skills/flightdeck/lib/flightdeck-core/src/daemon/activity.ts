@@ -66,9 +66,10 @@ export function emitDaemonStarted(ctx: DaemonActivityContext, details: { pid: nu
 	});
 }
 
-export function emitDaemonStopped(ctx: DaemonActivityContext, details: { reason: string; masterId?: string; pid: number }): void {
+export function emitDaemonStopped(ctx: DaemonActivityContext, details: { reason: string; masterId?: string; pid: number; details?: Record<string, unknown> }): void {
 	emitDaemonActivity(ctx, {
 		details: {
+			...(details.details ?? {}),
 			dedup_key: `daemon_exited:${details.pid}:${details.reason}`,
 			event_type: "daemon-exited",
 			master_id: details.masterId ?? null,

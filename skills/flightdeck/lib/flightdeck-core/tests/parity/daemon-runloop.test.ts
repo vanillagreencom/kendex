@@ -151,6 +151,20 @@ describe("daemon run-loop (TS)", () => {
 		expect(r.stderr).toContain("start needs --master and --inner");
 	});
 
+	test("startup validation errors emit daemon-exited startup-error details", () => {
+		const stalePane = tmuxNewWindow(SESSION, `fd-startup-error-${Date.now()}`);
+		tmuxKillPaneFor(stalePane);
+		const eventsFile = join(stateDir, `fd-daemon-events-${SESSION_KEY}.jsonl`);
+		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", stalePane, "--foreground"]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain(`Error: cannot resolve inner pane '${stalePane}'`);
+		expect(existsSync(eventsFile)).toBe(true);
+		const rows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+		const event = rows.find((line) => line.event_type === "daemon-exited");
+		expect(event).toMatchObject({ event_type: "daemon-exited", reason: "startup-error", tag: "daemon-exited" });
+		expect(event.details).toMatchObject({ reason: "startup-error", error: `Error: cannot resolve inner pane '${stalePane}'`, exit_code: 2 });
+	});
+
 	test("daemon writes daemon-exited event when the master pane disappears", async () => {
 		for (const useTs of [true]) {
 			const masterPane = tmuxNewWindow(SESSION, `fd-master-gone-${Date.now()}`);
