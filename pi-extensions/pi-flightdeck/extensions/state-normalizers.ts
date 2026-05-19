@@ -2,7 +2,7 @@
 //
 // A corrupt or partially-written archive (crash mid-archive, hand-edit
 // gone wrong, manual JSON tweak) should render as empty-but-stable, not
-// as a render-time exception that crashes the popup. These helpers
+// as a render-time exception that crashes status renderers. These helpers
 // filter the two nested fields the renderers iterate without guarding:
 // `conflict_graph.edges` and per-session `decisions_log`.
 

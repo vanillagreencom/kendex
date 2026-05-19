@@ -93,6 +93,10 @@ fn main() -> Result<()> {
                 warn_settings_error(settings_error);
                 flightdeck_dashboard::launch::run(args).await
             }
+            Command::FocusOrLaunch(args) => {
+                warn_settings_error(settings_error);
+                flightdeck_dashboard::launch::run_focus_or_launch(args).await
+            }
         }
     })
 }

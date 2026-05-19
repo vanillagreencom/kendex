@@ -45,6 +45,230 @@ fn launch_disabled_exits_silently() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn focus_or_launch_without_tmux_returns_blocked_json() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let output = Command::new(dashboard_bin())
+        .args(["focus-or-launch", "--json"])
+        .env_remove("TMUX")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_STATE_DIR", temp.path().join("state"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "blocked");
+    assert!(report["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("not in tmux"));
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_focuses_existing_tracked_dashboard() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%99", "@99")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_with_select_log(&bin_dir, &windows_file, &select_log)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["focus-or-launch", "--session", SESSION, "--json"])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "focus failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "focused");
+    assert_eq!(report["pane"], "%99");
+    assert_eq!(report["window"], "@99");
+    let log = std::fs::read_to_string(select_log)?;
+    assert!(
+        log.contains("select-window -t @99"),
+        "missing window focus: {log}"
+    );
+    assert!(
+        log.contains("select-pane -t %99"),
+        "missing pane focus: {log}"
+    );
+    assert!(!capture.exists(), "existing dashboard must not relaunch");
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_relaunches_stale_tracked_dashboard() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%dead", "@dead")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_stale_then_select(&bin_dir, &windows_file, &select_log)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--no-daemon",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "focus-or-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "launched");
+    assert_eq!(report["pane"], "%99");
+    assert!(capture.exists(), "stale dashboard should relaunch");
+    let log = std::fs::read_to_string(select_log)?;
+    assert!(
+        log.contains("select-window -t @99"),
+        "missing focus after relaunch: {log}"
+    );
+    Ok(())
+}
+
+#[test]
+fn launch_forwards_after_window_id_to_flightdeck_session() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = launch_command_without_daemon(&path, &temp.path().join("runtime"), &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .arg("--after-window-id")
+        .arg("@1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = std::fs::read_to_string(capture)?;
+    assert!(
+        args.contains("--after-window-id\n@1\n"),
+        "after-window-id not forwarded: {args}"
+    );
+    Ok(())
+}
+
+#[test]
+fn launch_uses_icon_window_title_by_default() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = launch_command_default_window(&path, &temp.path().join("runtime"), &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        std::fs::read_to_string(capture)?.contains("--title\n FD\n"),
+        "default icon title not forwarded"
+    );
+    Ok(())
+}
+
+#[test]
+fn launch_window_icon_zero_uses_plain_fd_default() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = launch_command_default_window(&path, &temp.path().join("runtime"), &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .env("FLIGHTDECK_DASHBOARD_WINDOW_ICON", "0")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = std::fs::read_to_string(capture)?;
+    assert!(
+        args.contains("--title\nFD\n"),
+        "plain FD title not forwarded: {args}"
+    );
+    assert!(
+        !args.contains(" FD"),
+        "icon title should be disabled: {args}"
+    );
+    Ok(())
+}
+
+#[test]
 fn startup_override_file_can_disable_dashboard_launch() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");
@@ -500,6 +724,26 @@ fn launch_command_without_daemon(path: &str, runtime_dir: &Path, project: &Path)
     command
 }
 
+fn launch_command_default_window(path: &str, runtime_dir: &Path, project: &Path) -> Command {
+    let mut command = Command::new(dashboard_bin());
+    command
+        .current_dir(project)
+        .args(["launch", "--session", SESSION, "--no-daemon"])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", runtime_dir)
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env_remove("FLIGHTDECK_SESSION_BIN")
+        .env_remove("FLIGHTDECK_SKILL_DIR")
+        .env_remove("FLIGHTDECK_DASHBOARD_WINDOW")
+        .env_remove("FLIGHTDECK_DASHBOARD_WINDOW_ICON")
+        .env_remove("FLIGHTDECK_DASHBOARD_MOTION")
+        .env_remove("FLIGHTDECK_DAEMON_RUST")
+        .env_remove("NO_MOTION")
+        .env_remove("NO_COLOR");
+    command
+}
+
 fn path_with_bin(bin_dir: &Path) -> String {
     format!(
         "{}:{}",
@@ -571,6 +815,35 @@ fn write_state_with_pane(path: &Path, pane_id: &str) -> Result<(), Box<dyn Error
     Ok(())
 }
 
+fn write_state_with_target(
+    path: &Path,
+    pane_id: &str,
+    window_id: &str,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = format!(
+        r#"{{
+  "session_id": "{SESSION}",
+  "updated_at": "2026-05-15T00:00:00Z",
+  "entries": {{
+    "flightdeck-dashboard": {{
+      "id": "flightdeck-dashboard",
+      "title": "flightdeck-test",
+      "kind": "workflow",
+      "state": "waiting",
+      "harness": "shell",
+      "pane_id": "{pane_id}",
+      "window_id": "{window_id}"
+    }}
+  }}
+}}"#
+    );
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
 fn write_fake_tmux(dir: &Path, windows_file: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let path = dir.join("tmux");
     std::fs::write(
@@ -597,6 +870,95 @@ fi
 exit 0
 "##,
             windows = windows_file.display()
+        ),
+    )?;
+    make_executable(&path)?;
+    Ok(path)
+}
+
+fn write_fake_tmux_with_select_log(
+    dir: &Path,
+    windows_file: &Path,
+    select_log: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let path = dir.join("tmux");
+    std::fs::write(
+        &path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+windows={windows:?}
+select_log={select_log:?}
+if [[ "${{1:-}}" == "display-message" ]]; then
+  args="$*"
+  if [[ "$args" == *"#{{pane_id}}"* && "$args" == *"#{{window_id}}"* ]]; then echo -e '%99\t@99'; exit 0; fi
+  if [[ "$args" == *"#{{session_id}}"* ]]; then echo '$42'; exit 0; fi
+  if [[ "$args" == *"#S"* ]]; then echo '{SESSION}'; exit 0; fi
+  if [[ "$args" == *"#{{pane_id}}"* ]]; then echo '%99'; exit 0; fi
+  if [[ "$args" == *"#{{window_id}}"* ]]; then echo '@99'; exit 0; fi
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-panes" ]]; then
+  echo '%99'
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-windows" ]]; then
+  [[ -f "$windows" ]] && cat "$windows"
+  exit 0
+fi
+if [[ "${{1:-}}" == "select-window" || "${{1:-}}" == "select-pane" ]]; then
+  printf '%s\n' "$*" >> "$select_log"
+  exit 0
+fi
+exit 0
+"##,
+            windows = windows_file.display(),
+            select_log = select_log.display()
+        ),
+    )?;
+    make_executable(&path)?;
+    Ok(path)
+}
+
+fn write_fake_tmux_stale_then_select(
+    dir: &Path,
+    windows_file: &Path,
+    select_log: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let path = dir.join("tmux");
+    std::fs::write(
+        &path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+windows={windows:?}
+select_log={select_log:?}
+if [[ "${{1:-}}" == "display-message" ]]; then
+  args="$*"
+  if [[ "$args" == *"%dead"* ]]; then exit 1; fi
+  if [[ "$args" == *"#{{pane_id}}"* && "$args" == *"#{{window_id}}"* ]]; then echo -e '%99\t@99'; exit 0; fi
+  if [[ "$args" == *"#{{session_id}}"* ]]; then echo '$42'; exit 0; fi
+  if [[ "$args" == *"#S"* ]]; then echo '{SESSION}'; exit 0; fi
+  if [[ "$args" == *"#{{pane_id}}"* ]]; then echo '%99'; exit 0; fi
+  if [[ "$args" == *"#{{window_id}}"* ]]; then echo '@99'; exit 0; fi
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-panes" ]]; then
+  echo '%99'
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-windows" ]]; then
+  [[ -f "$windows" ]] && cat "$windows"
+  exit 0
+fi
+if [[ "${{1:-}}" == "select-window" || "${{1:-}}" == "select-pane" ]]; then
+  printf '%s\n' "$*" >> "$select_log"
+  exit 0
+fi
+exit 0
+"##,
+            windows = windows_file.display(),
+            select_log = select_log.display()
         ),
     )?;
     make_executable(&path)?;

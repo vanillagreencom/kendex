@@ -1,5 +1,6 @@
 ---
 source: tests/snapshot_popups.rs
+assertion_line: 86
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
@@ -40,7 +41,8 @@ expression: rendered
 "│       │ daemon        FD_RECONCILE_INTERVAL_SEC            5                    5              number   default   next launch  Mid-session reconcile cadence.                                │       │"
 "│       │ daemon        FD_HEARTBEAT_OWNER_CGROUP            1                    1              bool     default   next launch  When 0, skip heartbeat cgroup memory probe.                   │       │"
 "│       │ dashboard     FLIGHTDECK_DASHBOARD                 1                    1              bool     default   next launch  When 0, dashboard launch exits silently.                      │       │"
-"│       │ dashboard     FLIGHTDECK_DASHBOARD_WINDOW          flightdeck           flightdeck     string   default   next launch  Tmux window name used by dashboard launch hook.               │       │"
+"│       │ dashboard     FLIGHTDECK_DASHBOARD_WINDOW           FD                  FD           string   default   next launch  Tmux window name used by dashboard launch/focus hooks.        │       │"
+"│       │ dashboard     FLIGHTDECK_DASHBOARD_WINDOW_ICON     1                    1              bool     default   next launch  When 0 and no explicit window name is set, use plain FD inste │       │"
 "│       │ dashboard     FLIGHTDECK_DASHBOARD_MOTION          full                 full           string   default   next launch  Animation intensity: full, reduced, or off.                   │       │"
 "│       │ dashboard     FLIGHTDECK_DASHBOARD_THEME           moon                 moon           string   default   next launch  Color theme: moon, dawn, pantera, or system.                  │       │"
 "│       │ dashboard     FLIGHTDECK_DAEMON_RUST               0                    0              bool     default   next launch  Opt in to Rust daemon wake side/subscriber absorption.        │       │"
@@ -53,7 +55,6 @@ expression: rendered
 "│       │ dashboard     TMUX_PROBE_TTL                       5                    5              number   default   next launch  Cached tmux list-panes TTL for stale row detection.           │       │"
 "│       │ dashboard     FLIGHTDECK_DASHBOARD_STALE_WARN_SECS 30                   30             number   default   current run  Stale-chip warning threshold in seconds.                      │       │"
 "│       │ dashboard     FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS 300                  300            number   default   current run  Stale/dead chip threshold in seconds.                         │       │"
-"│       │ dashboard     FLIGHTDECK_DASHBOARD_STOP_GRACE_MS   5000                 5000           number   default   next launch  Daemon stop grace before SIGKILL escalation.                  │       │"
 "│       │                                                       ↑/↓ select   Enter edit/toggle   Space toggle bool   r reset   Esc close                                                       │       │"
 "│       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │"
 "│                          ││                                                                                                                              ││                                          │"

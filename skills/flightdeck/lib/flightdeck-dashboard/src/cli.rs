@@ -22,6 +22,8 @@ pub enum Command {
     Supervise(SuperviseArgs),
     /// Launch the dashboard window from Flightdeck startup.
     Launch(LaunchArgs),
+    /// Focus an existing dashboard window, or launch it first.
+    FocusOrLaunch(FocusOrLaunchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -127,6 +129,9 @@ pub struct LaunchArgs {
     /// Dashboard tmux window name.
     #[arg(long, value_name = "NAME")]
     pub window_name: Option<String>,
+    /// Insert the dashboard tmux window after this stable tmux window id.
+    #[arg(long, value_name = "@ID")]
+    pub after_window_id: Option<String>,
     /// Read a concrete Flightdeck master-state JSON file.
     #[arg(long, value_name = "PATH")]
     pub state_file: Option<PathBuf>,
@@ -142,6 +147,52 @@ pub struct LaunchArgs {
     /// Ignore already-running guards for debugging.
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FocusOrLaunchArgs {
+    /// Flightdeck tmux session name/id/key. Defaults to current tmux session.
+    #[arg(long, value_name = "NAME")]
+    pub session: Option<String>,
+    /// Dashboard tmux window name.
+    #[arg(long, value_name = "NAME")]
+    pub window_name: Option<String>,
+    /// Insert a newly launched dashboard window after this stable tmux window id.
+    #[arg(long, value_name = "@ID")]
+    pub after_window_id: Option<String>,
+    /// Read a concrete Flightdeck master-state JSON file.
+    #[arg(long, value_name = "PATH")]
+    pub state_file: Option<PathBuf>,
+    /// Color theme for the launched TUI.
+    #[arg(long, value_enum)]
+    pub theme: Option<ThemeArg>,
+    /// Motion level for the launched TUI.
+    #[arg(long, value_enum)]
+    pub motion: Option<MotionArg>,
+    /// Skip auto-starting the Rust dashboard daemon when launching.
+    #[arg(long)]
+    pub no_daemon: bool,
+    /// Ignore already-running guards for debugging.
+    #[arg(long)]
+    pub force: bool,
+    /// Emit a machine-readable JSON status object.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl From<&FocusOrLaunchArgs> for LaunchArgs {
+    fn from(args: &FocusOrLaunchArgs) -> Self {
+        Self {
+            session: args.session.clone(),
+            window_name: args.window_name.clone(),
+            after_window_id: args.after_window_id.clone(),
+            state_file: args.state_file.clone(),
+            theme: args.theme,
+            motion: args.motion,
+            no_daemon: args.no_daemon,
+            force: args.force,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

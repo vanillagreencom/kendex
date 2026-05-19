@@ -12,16 +12,16 @@
 //     preserves the entries map (decisions_log, pr_number, merge_commit).
 //   * `buildSnapshotFromInputs` falls back to the newest terminated
 //     archive when the live file is missing.
-//   * `flightdeckSessionStatus` returns the new `terminated` arm,
-//     keeping the dashboard widget + popup populated.
+//   * `flightdeckSessionStatus` keeps terminated archives inactive by default,
+//     so the Pi mini-dashboard remains active-run-only.
 //   * `readMasterState` normalizes nested `conflict_graph` /
 //     `decisions_log` so a corrupt archive renders as empty-but-stable
-//     instead of crashing the popup.
+//     instead of crashing renderers.
 //
 // Tests are layered: pure shape (readMasterState), policy
 // (flightdeckSessionStatus / mergedIssueHistory / readTrackedEntries),
 // end-to-end (buildSnapshotFromInputs against a real archive on disk),
-// and render output (rendered tab text contains expected fields).
+// and active-run policy (terminated archives do not render inline by default).
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -177,9 +177,9 @@ test("readMasterState normalizes malformed conflict_graph and decisions_log with
 		assert.equal(error, undefined);
 		assert.deepEqual(state?.conflict_graph?.edges, []);
 		assert.equal(state?.conflict_graph?.computed_at, null);
-		assert.deepEqual(state?.entries["CC-001"]?.decisions_log, []);
-		assert.equal(state?.entries["CC-002"]?.decisions_log?.length, 1);
-		assert.equal(state?.entries["CC-002"]?.decisions_log?.[0]?.prompt_tag, "x");
+		assert.deepEqual(state?.entries?.["CC-001"]?.decisions_log, []);
+		assert.equal(state?.entries?.["CC-002"]?.decisions_log?.length, 1);
+		assert.equal(state?.entries?.["CC-002"]?.decisions_log?.[0]?.prompt_tag, "x");
 	} finally {
 		cleanup();
 	}
@@ -187,7 +187,7 @@ test("readMasterState normalizes malformed conflict_graph and decisions_log with
 
 // ----- policy --------------------------------------------------------------
 
-test("flightdeckSessionStatus returns 'terminated' when terminated AND issues preserved", () => {
+test("flightdeckSessionStatus is inactive when terminated archives preserve entries", () => {
 	const { tmpDir, cleanup } = makeProject();
 	try {
 		const { archive } = simulateTerminateArchive(tmpDir, "HT", terminatedPayload({
@@ -195,7 +195,7 @@ test("flightdeckSessionStatus returns 'terminated' when terminated AND issues pr
 		}));
 		const { state } = readMasterState(archive);
 		const snapshot = makeSnapshot(state);
-		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
 	} finally {
 		cleanup();
 	}
@@ -285,7 +285,7 @@ test("buildSnapshotFromInputs falls back to terminated archive when live file is
 		assert.equal(snapshot.master?.issues["CC-503"]?.pr_number, 81);
 		assert.equal(snapshot.master?.issues["CC-503"]?.merge_commit, "156d9df02ce8fb3a798f233c73e489338db969f9");
 		assert.equal(snapshot.masterStatePath, archive, "masterStatePath should point at the archive");
-		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
 		assert.equal(readTrackedEntries(snapshot.master).length, 1);
 	} finally {
 		cleanup();
@@ -371,7 +371,7 @@ test("edge case: mixed merged/aborted/dead outcomes all preserved", () => {
 			"M-2": makeMergedIssueRecord("M-2", { last_polled_at: "2026-05-13T00:20:00Z" }),
 		}));
 		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
-		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
 		const entries = readTrackedEntries(snapshot.master);
 		assert.equal(entries.length, 4);
 		const merged = mergedIssueHistory(snapshot.master);
@@ -390,7 +390,7 @@ test("edge case: archive present but summary_path absent renders gracefully", ()
 		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 		assert.equal(snapshot.master?.terminated, true);
 		assert.equal(snapshot.master?.summary_path, undefined);
-		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
 	} finally {
 		cleanup();
 	}
@@ -448,7 +448,7 @@ test("buildSnapshotFromInputs: malformed newest + valid older archive → falls 
 		assert.equal(snapshot.master?.issues["OLD-1"]?.pr_number, 99);
 		assert.ok(snapshot.masterStatePath?.endsWith("20260101T000000Z.json.archive"), "should land on the older but valid archive");
 		assert.equal(snapshot.masterError, undefined, "successful fallback should not leave masterError set");
-		assert.equal(flightdeckSessionStatus(snapshot), "terminated");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
 	} finally {
 		cleanup();
 	}
@@ -508,7 +508,7 @@ test("strict archive: `{}` root counts as failure (archive missing terminated:tr
 test("strict archive: valid-object-but-not-terminated counts as failure", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	try {
-		const payload = terminatedPayload({ "X-1": makeMergedIssueRecord({ pr_number: 1 }) });
+		const payload = terminatedPayload({ "X-1": makeMergedIssueRecord("X-1", { pr_number: 1 }) });
 		// Strip the terminated flag entirely — the archive carries a valid
 		// state shape but isn't a completion record.
 		delete (payload as Record<string, unknown>).terminated;
@@ -596,6 +596,7 @@ function makeSnapshot(masterShape: unknown): FlightdeckSnapshot {
 			subscriberCounts: { claude: 0, codex: 0, opencode: 0, pi: 0 },
 			subscribers: [],
 		},
+		livePaneIds: new Set(),
 		master,
 		pendingEvents: [],
 		stateDir: "/tmp",

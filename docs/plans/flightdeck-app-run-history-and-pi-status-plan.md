@@ -135,9 +135,9 @@ These details were verified against the current code before expanding this plan:
 - The extension currently shells to `pane-registry remove <id>` only from the popup prune keybind. Once the popup is removed, live stale-entry pruning should move to the Rust app only.
 - The extension currently has no tool-output renderer registration and no `tool_call` / `tool_result` rendering logic. No Flightdeck-specific tool-output rendering needs to be preserved today. If future Pi tool renderers are added, keep only those renderer registrations and tests.
 - `flightdeck-dashboard launch` already no-ops outside tmux, starts the Rust app through `flightdeck-session start`, and records a `flightdeck-dashboard` tracked entry.
-- The current app tmux window default is `flightdeck`, configurable through `--window-name` or `FLIGHTDECK_DASHBOARD_WINDOW`; that env var is now also exposed in the Rust dashboard Settings popup and `settings_catalog.rs`. If this plan changes the default to ` FD` or adds an icon fallback knob, update the CLI/env docs, settings catalog definitions, validation, and dashboard snapshots together.
-- `flightdeck-session start` currently launches/verifies the app after registering the child entry. For desired tmux ordering, move app launch earlier and anchor insertion after the master window.
-- Current user-facing docs still describe `pi-flightdeck` as deprecated for new sessions in root `README.md` and `pi-extensions/pi-flightdeck/README.md` / package metadata. `skills/flightdeck/README.md` was updated by #150 to document the Rust dashboard and Settings popup, but Phase 6.6/11 should still audit it for optional Pi UI wording. Rewrite the stale docs: `pi-flightdeck` is optional Pi UI support for Flightdeck, not deprecated and not a dependency of the Flightdeck skill.
+- Before the Phase 6.6/11 status-shell work, the app tmux window default was `flightdeck`, configurable through `--window-name` or `FLIGHTDECK_DASHBOARD_WINDOW`; that env var was also exposed in the Rust dashboard Settings popup and `settings_catalog.rs`. The status-shell work changes the default to ` FD`, adds `FLIGHTDECK_DASHBOARD_WINDOW_ICON=0` for plain `FD`, and updates CLI/env docs, settings catalog definitions, validation, and dashboard snapshots together.
+- Before the Phase 6.6/11 status-shell work, `flightdeck-session start` launched/verified the app after registering the child entry. The status-shell work moves app launch earlier and anchors child insertion after the app window.
+- Before the Phase 6.6/11 status-shell work, stale user-facing docs described `pi-flightdeck` as deprecated for new sessions. The status-shell work rewrites those docs: `pi-flightdeck` is optional Pi UI support for Flightdeck, not a dependency of the Flightdeck skill, and the Rust app remains the canonical full UI.
 
 ### Storage layout
 
@@ -795,7 +795,7 @@ Very low. Test-only clarity improvement. Not required for runtime correctness.
 
 #### Current state
 
-Current docs still say `pi-flightdeck` is deprecated for new sessions because the Rust dashboard in `skills/flightdeck/lib/flightdeck-dashboard/` has feature parity and is canonical.
+Before Phase 11, stale docs said `pi-flightdeck` was deprecated for new sessions because the Rust dashboard in `skills/flightdeck/lib/flightdeck-dashboard/` has feature parity and is canonical.
 
 That policy is superseded by this plan.
 

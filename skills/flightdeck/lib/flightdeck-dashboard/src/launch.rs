@@ -3,18 +3,21 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use color_eyre::eyre::{bail, Result, WrapErr};
+use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
 
-use crate::cli::{LaunchArgs, MotionArg, ThemeArg};
+use crate::cli::{FocusOrLaunchArgs, LaunchArgs, MotionArg, ThemeArg};
 use crate::daemon::lifecycle::{pid_alive, read_pid};
 use crate::state::tracked_entries;
 use crate::util::paths::{fd_resolve_state_dir, resolve_session_key};
 
 const DASHBOARD_ENTRY_ID: &str = "flightdeck-dashboard";
-const DEFAULT_WINDOW_NAME: &str = "flightdeck";
+const DEFAULT_WINDOW_NAME: &str = " FD";
+const DEFAULT_WINDOW_NAME_PLAIN: &str = "FD";
 const DASHBOARD_ENV: &str = "FLIGHTDECK_DASHBOARD";
 const WINDOW_ENV: &str = "FLIGHTDECK_DASHBOARD_WINDOW";
+const WINDOW_ICON_ENV: &str = "FLIGHTDECK_DASHBOARD_WINDOW_ICON";
 const MOTION_ENV: &str = "FLIGHTDECK_DASHBOARD_MOTION";
 const THEME_ENV: &str = "FLIGHTDECK_DASHBOARD_THEME";
 const DAEMON_RUST_ENV: &str = "FLIGHTDECK_DAEMON_RUST";
@@ -22,6 +25,21 @@ const SESSION_BIN_ENV: &str = "FLIGHTDECK_SESSION_BIN";
 const SKILL_DIR_ENV: &str = "FLIGHTDECK_SKILL_DIR";
 const NO_MOTION_ENV: &str = "NO_MOTION";
 const NO_COLOR_ENV: &str = "NO_COLOR";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FocusOrLaunchReport {
+    pub status: &'static str,
+    pub reason: String,
+    pub pane: Option<String>,
+    pub window: Option<String>,
+    pub stderr: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DashboardTarget {
+    pane_id: String,
+    window_id: Option<String>,
+}
 
 pub async fn run(args: LaunchArgs) -> Result<()> {
     if dashboard_disabled() {
@@ -96,6 +114,7 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
     launch_window(
         &session,
         &window_name,
+        args.after_window_id.as_deref(),
         theme,
         motion,
         explicit_state_file.as_deref(),
@@ -110,6 +129,159 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
             "flightdeck dashboard launch did not register a live tracked entry in {}",
             path.display()
         );
+    }
+    Ok(())
+}
+
+pub async fn run_focus_or_launch(args: FocusOrLaunchArgs) -> Result<()> {
+    let report = focus_or_launch(&args).await;
+    match &report {
+        Ok(report) => emit_focus_report(report, args.json)?,
+        Err(report) => {
+            emit_focus_report(report, args.json)?;
+            bail!(report.reason.clone());
+        }
+    }
+    Ok(())
+}
+
+async fn focus_or_launch(
+    args: &FocusOrLaunchArgs,
+) -> std::result::Result<FocusOrLaunchReport, FocusOrLaunchReport> {
+    if dashboard_disabled() {
+        return Err(FocusOrLaunchReport {
+            status: "blocked",
+            reason: format!("{DASHBOARD_ENV}=0; dashboard launch disabled"),
+            pane: None,
+            window: None,
+            stderr: None,
+        });
+    }
+    if std::env::var_os("TMUX").is_none() {
+        return Err(FocusOrLaunchReport {
+            status: "blocked",
+            reason: "not in tmux; run /flightdeck from inside the Flightdeck tmux session"
+                .to_owned(),
+            pane: None,
+            window: None,
+            stderr: None,
+        });
+    }
+
+    let session = match resolve_session(args.session.as_deref()).await {
+        Ok(session) => session,
+        Err(error) => {
+            return Err(FocusOrLaunchReport {
+                status: "error",
+                reason: format!("failed to resolve tmux session: {error}"),
+                pane: None,
+                window: None,
+                stderr: None,
+            })
+        }
+    };
+    let project_root = resolve_project_root();
+    let explicit_state_file = args.state_file.as_deref().map(absolutize);
+    let state_file = resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+
+    match dashboard_target(state_file.as_deref()).await {
+        Ok(Some(target)) => match focus_dashboard_target(&target).await {
+            Ok(()) => {
+                return Ok(FocusOrLaunchReport {
+                    status: "focused",
+                    reason: "existing dashboard app focused".to_owned(),
+                    pane: Some(target.pane_id),
+                    window: target.window_id,
+                    stderr: None,
+                });
+            }
+            Err(error) => {
+                return Err(FocusOrLaunchReport {
+                    status: "error",
+                    reason: format!("failed to focus dashboard app: {error}"),
+                    pane: Some(target.pane_id),
+                    window: target.window_id,
+                    stderr: Some(error.to_string()),
+                });
+            }
+        },
+        Ok(None) => {}
+        Err(error) => {
+            warn(format!(
+                "dashboard target probe failed; attempting launch anyway: {error}"
+            ));
+        }
+    }
+
+    let mut launch_args = LaunchArgs::from(args);
+    launch_args.force = true;
+    let mut launch_stderr = None;
+    if let Err(error) = run(launch_args).await {
+        launch_stderr = Some(error.to_string());
+        return Err(FocusOrLaunchReport {
+            status: "error",
+            reason: format!("dashboard app launch failed: {error}"),
+            pane: None,
+            window: None,
+            stderr: launch_stderr,
+        });
+    }
+
+    match dashboard_target(state_file.as_deref()).await {
+        Ok(Some(target)) => match focus_dashboard_target(&target).await {
+            Ok(()) => Ok(FocusOrLaunchReport {
+                status: "launched",
+                reason: "dashboard app launched and focused".to_owned(),
+                pane: Some(target.pane_id),
+                window: target.window_id,
+                stderr: launch_stderr,
+            }),
+            Err(error) => Err(FocusOrLaunchReport {
+                status: "error",
+                reason: format!("dashboard app launched but focus failed: {error}"),
+                pane: Some(target.pane_id),
+                window: target.window_id,
+                stderr: Some(error.to_string()),
+            }),
+        },
+        Ok(None) => Err(FocusOrLaunchReport {
+            status: "error",
+            reason: "dashboard app launch finished but no live tracked pane was found".to_owned(),
+            pane: None,
+            window: None,
+            stderr: launch_stderr,
+        }),
+        Err(error) => Err(FocusOrLaunchReport {
+            status: "error",
+            reason: format!("dashboard app launch finished but target probe failed: {error}"),
+            pane: None,
+            window: None,
+            stderr: Some(error.to_string()),
+        }),
+    }
+}
+
+fn emit_focus_report(report: &FocusOrLaunchReport, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string(report)?);
+    } else if matches!(report.status, "focused" | "launched") {
+        println!(
+            "flightdeck-dashboard: {} ({}){}{}",
+            report.status,
+            report.reason,
+            report
+                .window
+                .as_deref()
+                .map(|window| format!(" window={window}"))
+                .unwrap_or_default(),
+            report
+                .pane
+                .as_deref()
+                .map(|pane| format!(" pane={pane}"))
+                .unwrap_or_default()
+        );
+    } else {
+        eprintln!("flightdeck-dashboard: {}: {}", report.status, report.reason);
     }
     Ok(())
 }
@@ -132,7 +304,15 @@ fn select_window_name(cli: Option<&str>) -> String {
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| DEFAULT_WINDOW_NAME.to_owned())
+        .unwrap_or_else(default_window_name)
+}
+
+fn default_window_name() -> String {
+    if std::env::var(WINDOW_ICON_ENV).is_ok_and(|value| value.trim() == "0") {
+        DEFAULT_WINDOW_NAME_PLAIN.to_owned()
+    } else {
+        DEFAULT_WINDOW_NAME.to_owned()
+    }
 }
 
 fn select_theme(cli: Option<ThemeArg>) -> Option<ThemeArg> {
@@ -293,6 +473,35 @@ async fn tracked_dashboard_alive(state_file: Option<&Path>) -> Result<bool> {
     tmux_pane_alive(pane_id).await
 }
 
+async fn dashboard_target(state_file: Option<&Path>) -> Result<Option<DashboardTarget>> {
+    let Some(path) = state_file else {
+        return Ok(None);
+    };
+    let Ok(body) = fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&body) else {
+        return Ok(None);
+    };
+    let entry = value.pointer(&format!("/entries/{DASHBOARD_ENTRY_ID}"));
+    let Some(entry) = entry else {
+        return Ok(None);
+    };
+    let Some(pane_id) = entry
+        .get("pane_id")
+        .and_then(Value::as_str)
+        .filter(|pane| !pane.is_empty())
+    else {
+        return Ok(None);
+    };
+    let hinted_window = entry
+        .get("window_id")
+        .and_then(Value::as_str)
+        .filter(|window| !window.is_empty())
+        .map(str::to_owned);
+    tmux_pane_target(pane_id, hinted_window).await
+}
+
 async fn tmux_pane_alive(pane_id: &str) -> Result<bool> {
     let output = Command::new("tmux")
         .args(["list-panes", "-a", "-F", "#{pane_id}"])
@@ -309,6 +518,71 @@ async fn tmux_pane_alive(pane_id: &str) -> Result<bool> {
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .any(|line| line.trim() == pane_id))
+}
+
+async fn tmux_pane_target(
+    pane_id: &str,
+    hinted_window: Option<String>,
+) -> Result<Option<DashboardTarget>> {
+    let output = Command::new("tmux")
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            pane_id,
+            "#{pane_id}\t#{window_id}",
+        ])
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut fields = stdout.trim().split('\t');
+    let resolved_pane = fields.next().unwrap_or_default().trim();
+    if resolved_pane != pane_id {
+        return Ok(None);
+    }
+    let resolved_window = fields
+        .next()
+        .map(str::trim)
+        .filter(|window| !window.is_empty())
+        .map(str::to_owned)
+        .or(hinted_window);
+    Ok(Some(DashboardTarget {
+        pane_id: pane_id.to_owned(),
+        window_id: resolved_window,
+    }))
+}
+
+async fn focus_dashboard_target(target: &DashboardTarget) -> Result<()> {
+    if let Some(window_id) = target.window_id.as_deref() {
+        let output = Command::new("tmux")
+            .args(["select-window", "-t", window_id])
+            .output()
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux select-window failed with status {}: {}",
+                output.status,
+                stderr.trim()
+            );
+        }
+    }
+    let output = Command::new("tmux")
+        .args(["select-pane", "-t", target.pane_id.as_str()])
+        .output()
+        .await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "tmux select-pane failed with status {}: {}",
+            output.status,
+            stderr.trim()
+        );
+    }
+    Ok(())
 }
 
 async fn tmux_window_exists(window_name: &str) -> Result<bool> {
@@ -332,6 +606,7 @@ async fn tmux_window_exists(window_name: &str) -> Result<bool> {
 async fn launch_window(
     session: &str,
     window_name: &str,
+    after_window_id: Option<&str>,
     theme: Option<ThemeArg>,
     motion: Option<MotionArg>,
     state_file: Option<&Path>,
@@ -353,6 +628,9 @@ async fn launch_window(
     command.arg(project_root);
     command.args(["--harness", "shell", "--kind", "workflow", "--cmd"]);
     command.arg(cmd);
+    if let Some(window_id) = after_window_id.filter(|value| !value.trim().is_empty()) {
+        command.args(["--after-window-id", window_id.trim()]);
+    }
     command.stdout(Stdio::null()).stderr(Stdio::piped());
     match command.output().await {
         Ok(output) if output.status.success() => {

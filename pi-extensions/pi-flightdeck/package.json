@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-flightdeck",
   "version": "0.1.1",
-  "description": "Read-only sessions-first dashboard for the flightdeck skill: owner-scoped overview of tracked sessions, daemon health, stale-pane filtering, decisions log, and a prominent pause banner when master is awaiting the user.",
+  "description": "Optional Pi status shell for the flightdeck skill: owner-scoped mini-dashboard, pause banner, notifications, and /flightdeck focus/open integration for the Rust app.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -18,12 +18,12 @@
   },
   "vstack": {
     "extensionManager": {
-      "displayName": "Flightdeck Dashboard",
+      "displayName": "Flightdeck Status",
       "settings": [
         {
           "key": "enabled",
-          "label": "Enable flightdeck dashboard",
-          "description": "Register /flightdeck command, owner-scoped persistent session dashboard, and pause banner.",
+          "label": "Enable Flightdeck Pi status shell",
+          "description": "Register /flightdeck focus/open command, owner-scoped persistent mini-dashboard, and pause banner.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -31,19 +31,9 @@
           "requiresReload": true
         },
         {
-          "key": "popupShortcut",
-          "label": "Popup shortcut",
-          "description": "Keyboard shortcut that opens the full flightdeck session-control popup. Use none to disable.",
-          "type": "string",
-          "default": "f6",
-          "category": "Keyboard",
-          "apply": "reload",
-          "requiresReload": true
-        },
-        {
           "key": "dashboardShortcut",
           "label": "Dashboard cycle shortcut",
-          "description": "Keyboard shortcut that cycles the persistent dashboard widget through hidden → compact → expanded. Use none to disable.",
+          "description": "Keyboard shortcut that cycles the persistent mini-dashboard widget through hidden \u2192 compact \u2192 expanded. Use none to disable.",
           "type": "string",
           "default": "alt+m",
           "category": "Keyboard",
@@ -52,8 +42,8 @@
         },
         {
           "key": "dashboard",
-          "label": "Show dashboard widget",
-          "description": "Render a persistent sessions dashboard above the owner editor when a Flightdeck session is active.",
+          "label": "Show mini-dashboard widget",
+          "description": "Render a persistent sessions mini-dashboard above the owner editor when a Flightdeck session is active.",
           "type": "boolean",
           "default": true,
           "category": "Dashboard",
@@ -62,7 +52,7 @@
         {
           "key": "dashboardVisibility",
           "label": "Dashboard visibility",
-          "description": "Where the persistent dashboard widget may render: owner pane only (default), any pane in the same tmux session, or always when state is readable. Child panes remain suppressed.",
+          "description": "Where the persistent mini-dashboard widget may render: owner pane only (default), any pane in the same tmux session, or always when state is readable. Child panes remain suppressed.",
           "type": "enum",
           "enumValues": [
             "owner",
@@ -90,7 +80,7 @@
         {
           "key": "dashboardMaxItems",
           "label": "Dashboard max sessions",
-          "description": "Maximum tracked-session rows shown in the persistent dashboard widget. Existing dashboardMaxItems settings continue to apply; only the label changed.",
+          "description": "Maximum tracked-session rows shown in the persistent mini-dashboard widget. Existing dashboardMaxItems settings continue to apply; only the label changed.",
           "type": "number",
           "default": 8,
           "category": "Dashboard",
@@ -124,18 +114,9 @@
           "apply": "live"
         },
         {
-          "key": "autoOpenOnPause",
-          "label": "Auto-open popup on pause",
-          "description": "Automatically open the /flightdeck popup once when paused_for_user is first detected. The banner is shown either way.",
-          "type": "boolean",
-          "default": false,
-          "category": "Pause banner",
-          "apply": "live"
-        },
-        {
           "key": "pollIntervalMs",
           "label": "Refresh interval",
-          "description": "How often (ms) the dashboard, banner, and popup re-read flightdeck state files.",
+          "description": "How often (ms) the dashboard and banner re-read flightdeck state files.",
           "type": "number",
           "default": 1500,
           "category": "Refresh",
@@ -143,36 +124,9 @@
           "requiresReload": true
         },
         {
-          "key": "liveFeedLines",
-          "label": "Live feed lines",
-          "description": "Number of daemon log + tracked-session decision lines retained in the popup Live feed tab.",
-          "type": "number",
-          "default": 200,
-          "category": "Popup",
-          "apply": "live"
-        },
-        {
-          "key": "conversationExcerptChars",
-          "label": "Conversation excerpt chars",
-          "description": "Maximum characters of last assistant text retained per tracked session in the Conversations tab.",
-          "type": "number",
-          "default": 800,
-          "category": "Popup",
-          "apply": "live"
-        },
-        {
-          "key": "conversationsHistory",
-          "label": "Conversations turns kept",
-          "description": "Number of recent assistant turns retained per tracked session in the Conversations tab. Rows resolve to tracked-session titles when available.",
-          "type": "number",
-          "default": 5,
-          "category": "Popup",
-          "apply": "live"
-        },
-        {
           "key": "treeStyle",
           "label": "Tree connector style",
-          "description": "Connector glyphs for the dashboard widget. Unicode is prettier; ASCII uses |--/`-- for maximum terminal compatibility.",
+          "description": "Connector glyphs for the mini-dashboard widget. Unicode is prettier; ASCII uses |--/`-- for maximum terminal compatibility.",
           "type": "enum",
           "enumValues": [
             "unicode",
@@ -207,12 +161,12 @@
         {
           "kind": "command",
           "name": "/flightdeck",
-          "description": "Open the flightdeck session-control popup."
+          "description": "Focus the Flightdeck Rust app, or launch it if missing."
         },
         {
           "kind": "command",
           "name": "/flightdeck:toggle",
-          "description": "Cycle the persistent flightdeck dashboard widget."
+          "description": "Cycle the persistent flightdeck mini-dashboard widget."
         }
       ]
     }

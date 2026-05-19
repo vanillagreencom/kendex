@@ -744,12 +744,22 @@ pub const SETTING_DEFINITIONS: &[SettingDefinition] = &[
     ),
     setting!(
         "FLIGHTDECK_DASHBOARD_WINDOW",
-        Some("flightdeck"),
-        "flightdeck",
-        "Tmux window name used by dashboard launch hook.",
+        Some(" FD"),
+        " FD",
+        "Tmux window name used by dashboard launch/focus hooks.",
         Dashboard,
         String,
         SettingValidation::String,
+        true
+    ),
+    setting!(
+        "FLIGHTDECK_DASHBOARD_WINDOW_ICON",
+        Some("1"),
+        "1",
+        "When 0 and no explicit window name is set, use plain FD instead of the icon title.",
+        Dashboard,
+        Bool,
+        SettingValidation::Bool,
         true
     ),
     setting!(

@@ -15,7 +15,7 @@ import { daemonHealthChip, divider, framePanel, label, sessionCompleteChip } fro
 import { issueDomain, sessionLabel } from "./session-ui.js";
 import { ageSecondsSince, daemonEverStarted, type FlightdeckSnapshot, formatAge, mergedIssueHistory } from "./state.js";
 
-// Header chip for the dashboard / popup. Terminated sessions show a
+// Header chip for the dashboard/app. Terminated sessions show a
 // green "session complete"; otherwise the normal daemon-health chip.
 // `archive-error` doesn't take this path — it renders
 // `renderArchiveErrorBanner` alongside the regular daemon chip.
@@ -30,8 +30,8 @@ export function headerChipForSnapshot(snapshot: FlightdeckSnapshot, theme: Theme
 
 // Overview-tab banner. Renders `✔ session complete · at <ts>` + the
 // summary file path (when present) and a divider. The caller composes
-// this above the tracked-session list so the post-mortem context is the first
-// thing the user sees when reopening the popup after termination.
+// this above a tracked-session list so post-mortem context can be rendered
+// by explicit archive/history surfaces.
 export function renderTerminatedOverviewBanner(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string[] {
 	if (!snapshot.master?.terminated) return [];
 	const out: string[] = [];
