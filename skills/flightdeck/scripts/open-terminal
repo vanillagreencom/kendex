@@ -225,7 +225,12 @@ shell_join() {
   local out="" arg
   for arg in "$@"; do
     local quoted
-    printf -v quoted '%q' "$arg"
+    # This string is pasted into whatever login shell owns the new tmux
+    # pane. Bash's printf %q can emit ANSI-C quotes ($'...') for multiline
+    # prompts, which fish rejects before the harness process starts
+    # (vstack#152). Single-quote argv form is accepted by bash, zsh, and
+    # fish, and preserves literal newlines without shell-specific syntax.
+    quoted="'${arg//\'/\'\\\'\'}'"
     if [[ -z "$out" ]]; then
       out="$quoted"
     else
@@ -508,33 +513,34 @@ fetch_github_issue_context() {
 }
 
 materialize_github_start_prompt() {
-  local issue="$1" wt_path="$2" prompt prompt_bytes brief_path brief_tmp
+  local issue="$1" wt_path="$2" prompt brief_path brief_tmp
   prompt="$GITHUB_FULL_PROMPT"
   if [[ -z "$prompt" ]]; then
     echo "Error: missing GitHub issue prompt for $issue" >&2
     return 1
   fi
-  prompt_bytes=$(printf '%s' "$prompt" | wc -c | tr -d ' ')
-  if (( prompt_bytes > 4096 )); then
-    if ! mkdir -p "$wt_path/tmp"; then
-      echo "Error: failed to create GitHub issue brief directory: $wt_path/tmp" >&2
-      return 1
-    fi
-    brief_path="$wt_path/tmp/brief.md"
-    brief_tmp="$brief_path.tmp.$$"
-    if ! printf '%s\n' "$prompt" > "$brief_tmp"; then
-      echo "Error: failed to write GitHub issue brief: $brief_path" >&2
-      rm -f "$brief_tmp"
-      return 1
-    fi
-    if ! mv "$brief_tmp" "$brief_path"; then
-      echo "Error: failed to finalize GitHub issue brief: $brief_path" >&2
-      rm -f "$brief_tmp"
-      return 1
-    fi
-    prompt="Read tmp/brief.md and execute. Print the PR URL as the LAST line of your final message."
+
+  # GitHub issue text is untrusted and may contain newlines, quotes, or C0
+  # control bytes. Never paste it directly into a tmux pane; materialize the
+  # self-contained child prompt into the worktree and send only a short stable
+  # pointer to the harness (vstack#152 + security review).
+  if ! mkdir -p "$wt_path/tmp"; then
+    echo "Error: failed to create GitHub issue brief directory: $wt_path/tmp" >&2
+    return 1
   fi
-  GITHUB_START_PROMPT="$prompt"
+  brief_path="$wt_path/tmp/brief.md"
+  brief_tmp="$brief_path.tmp.$$"
+  if ! printf '%s\n' "$prompt" > "$brief_tmp"; then
+    echo "Error: failed to write GitHub issue brief: $brief_path" >&2
+    rm -f "$brief_tmp"
+    return 1
+  fi
+  if ! mv "$brief_tmp" "$brief_path"; then
+    echo "Error: failed to finalize GitHub issue brief: $brief_path" >&2
+    rm -f "$brief_tmp"
+    return 1
+  fi
+  GITHUB_START_PROMPT="Read tmp/brief.md and execute. Print the PR URL as the LAST line of your final message."
 }
 
 start_prompt_for_harness() {

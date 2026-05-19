@@ -1,6 +1,6 @@
 # Flightdeck App, Run History, and Pi Status Plan
 
-## Pre-execution context (updated 2026-05-19 after the cleanup/dashboard session)
+## Pre-execution context (updated 2026-05-19 after cleanup/dashboard and issue #152 follow-up)
 
 This plan was drafted before the flightdeck v2 architecture refactor, v3 plan-file orchestration lane, and cleanup/dashboard handoff landed in main. Most of the plan is still accurate; this section captures the deltas the executing agent must know before starting this next plan.
 
@@ -32,8 +32,18 @@ The active handoff at `docs/plans/flightdeck-cleanup-and-dashboard-settings-hand
 
 Issue state now:
 
-- **Closed:** #126, #129, #130, #133, #135, #136, #140.
-- **Open/deferred:** #151 — `Flightdeck daemon exited during plan execution; BACKUP-WAKE found no daemon`. This was filed during the cleanup/dashboard session after BACKUP-WAKE found a `daemon-exited` event with reason `other` and no replacement daemon. Treat it as live context for any daemon/run-history work; do not silently ignore daemon exits while executing this plan.
+- **Closed:** #126, #129, #130, #133, #135, #136, #140, #141, #151, #155, #156, #157.
+- **Recently fixed before this plan:** #152 — GitHub Pi launches no longer depend on Bash ANSI-C `$'...'` prompt quoting in arbitrary login shells. Keep launch-command construction portable across bash/zsh/fish; do not reintroduce Bash-only `%q` strings for commands pasted into tmux panes.
+
+Additional post-handoff fixes now merged or landing before this plan executes:
+
+| PR/Commit | Result |
+|-----------|--------|
+| PR #153 / merge `48221836` | #141 installed Pi package runtime dependency handling and tests. |
+| PR #154 / merge `b6004a8c` | #151 daemon startup error diagnostics/lifecycle hardening. |
+| commit `bc4a00d5` | Dashboard supervision UX refresh, Pi cost polling, `pane-poll` Pi history maxBuffer fix (#155), daemon reconcile active-without-subscriber fix (#156), and Pi shell output minimizer default-on. |
+| commit `3b2e33f9` | `refresh-window-names` rechecks entry existence before mutating `window_name_current`, preventing ghost rows after cleanup (#157). |
+| #152 fix | `open-terminal` GitHub/Pi launch command quoting is fish-compatible for multiline prompts under the brief-file threshold. |
 
 Relevant merged deltas for this plan:
 
@@ -41,13 +51,15 @@ Relevant merged deltas for this plan:
 - **#133 is done.** PR #148 added `entry.window_name_current`, `pane-poll`/daemon refresh, dashboard current-title rendering, and `FLIGHTDECK_DISABLE_AUTO_RENAME`. Do not reimplement pane/window-name sync; build on these fields.
 - **#149 is load-bearing.** Pi subscriber binding now validates cwd + recorded `adapter.pi_session_id`, malformed `pi-bridge state` preflight fails open to stream attach, mismatched subscribers are quarantined/reaped by process group, positive-PID signal fallback was removed, and mismatch respawn preserves the registry harness. Do not regress these daemon/subscriber safety properties when changing run lifecycle.
 - **#150 added dashboard settings.** Rust dashboard has a Settings popup on `S` / `Alt+S`, with `skills/flightdeck/lib/flightdeck-dashboard/src/settings_catalog.rs` as catalog source, writes dashboard-scoped overrides to `<project-root>/tmp/flightdeck-settings.toml`, applies those overrides at dashboard command startup before logging/runtime thread creation, does not mutate the parent shell or live process env from popup actions, rejects NUL/invalid values, and uses path/symlink checks. Future dashboard env/default changes must update `settings_catalog.rs`, snapshots/tests, and `ENV.md`/README docs.
+- **#151 is fixed, but daemon exits remain high-signal.** PR #154 added diagnostics for detached startup failures. If new daemon/run-history work sees `daemon-exited`, capture fresh events and file/update a new issue instead of assuming #151 still owns the failure.
+- **#155/#156/#157 are fixed and should be treated as regression constraints.** Keep `pane-poll` adapter reads bounded with large-enough buffers, keep daemon reconcile spawning subscribers for active panes with missing subscribers, and keep window-name refresh from recreating removed entries.
 
 **Standards from the v2/v3 session that this plan should follow (re-stated for clarity):**
 
 - **Use the worktree skill**: `.agents/skills/worktree/scripts/worktree create <id>`. Never `git worktree add`.
 - **Self-contained child prompts** when spawning panes (see PLAN-FILE.md and `workflows/plan/start.md`). No `/skill:flightdeck plan start`, `/skill:flightdeck linear start`, etc. as child prompts — those are master-side workflow names, not user-input commands.
 - **Spawned pi panes use `openai-codex/gpt-5.5` model + `xhigh` thinking** (user directive from the v2/v3 session).
-- **Backup wake timer is mandatory first action** when starting orchestration: `bg_task spawn command:'while true; do sleep 2700; echo "BACKUP-WAKE $(date -u +%FT%TZ)"; done' notifyOnOutput:true notifyPattern:'BACKUP-WAKE'`. Previous sessions hit daemon misfires (#135, #136) and a later daemon exit (#151) where the backup timer was the only thing preventing silent stalls. On every BACKUP-WAKE, drain daemon events, check daemon status, run `pi-bridge state --socket <socket>` for every live tracked Pi pane, file/update a GitHub issue for daemon misfire or pane wedge, restart the daemon only after recording the diagnostic, and stop the timer in final cleanup.
+- **Backup wake timer is mandatory first action** when starting orchestration: `bg_task spawn command:'while true; do sleep 2700; echo "BACKUP-WAKE $(date -u +%FT%TZ)"; done' notifyOnOutput:true notifyPattern:'BACKUP-WAKE'`. Previous sessions hit daemon misfires (#135, #136) and a later daemon exit (#151, now fixed) where the backup timer was the only thing preventing silent stalls. On every BACKUP-WAKE, drain daemon events, check daemon status, run `pi-bridge state --socket <socket>` for every live tracked Pi pane, file/update a GitHub issue for any new daemon misfire or pane wedge, restart the daemon only after recording the diagnostic, and stop the timer in final cleanup.
 - **5-reviewer fan-out per substantive PR** (arch / test / doc / error / safety). Light scope (2 reviewers: doc + arch) for text-only or docs-only PRs. Reviewer prompts MUST include: "Do NOT act as flightdeck master. Do NOT produce session/cycle/dashboard status. JSON-only output."
 - **Recursion invariant for any new flightdeck lane/handler**: workflow files must NEVER emit `/skill:flightdeck <lane> (start|watch|close|terminate)` or `$flightdeck <lane> ...` or `/flightdeck <lane> ...` as a child-pane prompt. Add a parity test asserting zero hits (the v3 PR added `handler-guards.test.ts` lines 139-147 — use as template).
 - **CLEAN merge gate + `FLIGHTDECK_AUTO_MERGE=0` honored across ALL merge-answering handlers** (merge-now, merge-ready-but-unknown, force-merge-confirm). Authoritative `gh pr view --json state,mergeStateStatus,mergeCommit` verification before any close-item / close-issue cleanup. Strict force-merge predicate (APPROVED + green + disjoint + UNKNOWN-timer expired); not the weaker "approved or no pending reviewers".
@@ -958,7 +970,7 @@ If any Pi extension behavior changes:
 - Tests cover lifecycle, migration, dashboard rendering, Pi mini-dashboard banner behavior, Pi app focus/open behavior, tmux app placement, Settings popup/catalog interactions when dashboard env defaults change, and read-only/settings-write safety.
 - After Flightdeck merges a PR, the primary local `main` checkout is either fast-forwarded to `origin/main` or Flightdeck clearly reports why sync was blocked and what operator choice is needed; never reset the kind of divergent local-main state observed after the cleanup session (`ahead 8, behind 9`).
 - After any implementation PR is merged, local `main` is fetched and fast-forwarded or a blocking sync reason is recorded before the work is called complete.
-- Open daemon issue #151 is either fixed, explicitly descoped in the PR body, or carried forward with fresh diagnostics if daemon/run-history work touches related lifecycle paths.
+- Closed daemon issue #151 stays treated as regression context: daemon/run-history work must capture fresh diagnostics and open/update a new issue if a similar daemon exit appears.
 
 ## Validation plan
 

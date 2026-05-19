@@ -65,13 +65,13 @@ exit 1
 	return bin;
 }
 
-function makeGhShim(repo: string): string {
+function makeGhShim(repo: string, body = "Body for github issue"): string {
 	const bin = join(repo, "gh");
 	writeFileSync(bin, `#!/usr/bin/env bash
 if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
   issue="\${3:-120}"
   cat <<JSON
-{"number":$issue,"title":"Test github issue","body":"Body for github issue $issue","url":"https://github.com/owner/repo/issues/$issue","labels":[]}
+{"number":$issue,"title":"Test github issue","body":${JSON.stringify(body)},"url":"https://github.com/owner/repo/issues/$issue","labels":[]}
 JSON
   exit 0
 fi
@@ -261,10 +261,23 @@ describe("open-terminal smoke", () => {
 			const pane = readShimState(shim).panes["%1"]!;
 			expect(pane.window_name).toBe("120");
 			const launchLine = pane.sent_keys!.find((line) => line.includes(harness === "claude" ? "claude" : harness))!;
-			expect(launchLine).toContain("Fix GitHub issue owner/repo#120");
+			expect(launchLine).toContain("Read tmp/brief.md and execute");
 			expect(launchLine).toContain("Print the PR URL as the LAST line");
+			expect(launchLine).not.toContain("Fix GitHub issue owner/repo#120");
 			for (const forbidden of forbiddenSupervisorSubstrings()) expect(launchLine).not.toContain(forbidden);
 			if (harness === "opencode") expect(launchLine).toContain("--prompt");
+			if (harness === "pi") {
+				expect(launchLine).not.toContain("$'");
+				const fishPath = spawnSync("bash", ["-lc", "command -v fish || true"], { encoding: "utf8" }).stdout.trim();
+				if (fishPath) {
+					const parsed = spawnSync(fishPath, ["-n", "-c", launchLine], { encoding: "utf8" });
+					expect(parsed.status).toBe(0);
+				}
+			}
+			const brief = readFileSync(join(repo, "tmp", "brief.md"), "utf8");
+			expect(brief).toContain("Fix GitHub issue owner/repo#120");
+			expect(brief).toContain("Body for github issue");
+			for (const forbidden of forbiddenSupervisorSubstrings()) expect(brief).not.toContain(forbidden);
 
 			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));
 			const entry = state.entries["120"];
@@ -278,6 +291,22 @@ describe("open-terminal smoke", () => {
 			});
 		});
 	}
+
+	test("github tracker materializes control bytes into brief file, not tmux launch line", () => {
+		const repo = makeRepo();
+		repos.push(repo);
+		makeGhShim(repo, "control body before \u0003 after\nsecond line");
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+		const r = runOpenTerminal(repo, shim, ["--tracker", "github", "--repo", "owner/repo", "120", "--tmux", "--harness", "pi"]);
+		expect(r.status).toBe(0);
+		const launchLine = readShimState(shim).panes["%1"]!.sent_keys!.find((line) => line.includes("pi"))!;
+		expect(launchLine).toContain("Read tmp/brief.md and execute");
+		expect(launchLine).not.toContain("\u0003");
+		expect(launchLine).not.toContain("control body before");
+		const brief = readFileSync(join(repo, "tmp", "brief.md"), "utf8");
+		expect(brief).toContain("control body before \u0003 after");
+		expect(brief).toContain("second line");
+	});
 
 	test("github tracker rejects Linear-style ids before tmux mutation", () => {
 		const repo = makeRepo();
