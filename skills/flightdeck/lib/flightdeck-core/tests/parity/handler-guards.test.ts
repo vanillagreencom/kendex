@@ -19,7 +19,9 @@ const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md")
 const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
 const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
 const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
+const SCHEMA_DOC = resolve(HERE, "../../../../SCHEMA.md");
 const PLAN_FILE_FIXTURES = resolve(HERE, "../fixtures/plan-files");
+const ACTUAL_PHASE_STYLE_PLAN = resolve(HERE, "../../../../../../docs/plans/flightdeck-app-run-history-and-pi-status-plan.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -86,6 +88,9 @@ const SAFE_SHARED_H2 = new Set([
 	"architecture",
 	"lifecycle changes",
 	"dashboard ux",
+	"pi extension scope after the rust app",
+	"cli/script changes",
+	"data model additions",
 	"storage layout",
 	"acceptance criteria",
 	"validation plan",
@@ -114,12 +119,13 @@ type ParsedPlanOutcome = {
 	reason?: string;
 	beforePreview: boolean;
 	beforeMutation: boolean;
-	items: Array<{ id: string; title: string; brief: string }>;
+	items: Array<{ id: string; title: string; brief: string; worktree: string; depends_on: string[] }>;
 	omittedOrchestrationContext: string[];
 	allH2Ids: string[];
 };
 
-type H3Section = { title: string; body: string };
+type H4Section = { title: string; body: string };
+type H3Section = { title: string; body: string; intro: string; h4s: H4Section[] };
 type H2Section = { title: string; body: string; intro: string; h3s: H3Section[] };
 
 function normalizeHeading(title: string): string {
@@ -178,10 +184,53 @@ function parseH2Sections(markdown: string): H2Section[] {
 		const intro = bodyLines.slice(0, h3Matches[0]?.line ?? bodyLines.length).join("\n").trim();
 		const h3s = h3Matches.map((h3, h3Index) => {
 			const h3End = h3Matches[h3Index + 1]?.line ?? bodyLines.length;
-			return { title: h3.title, body: bodyLines.slice(h3.line + 1, h3End).join("\n").trim() };
+			const h3BodyLines = bodyLines.slice(h3.line + 1, h3End);
+			const h4Matches: Array<{ title: string; line: number }> = [];
+			for (let i = 0; i < h3BodyLines.length; i++) {
+				const match = /^####(?!#)\s+(.+?)\s*$/.exec(h3BodyLines[i] ?? "");
+				if (match) h4Matches.push({ title: match[1], line: i });
+			}
+			const h4s = h4Matches.map((h4, h4Index) => {
+				const h4End = h4Matches[h4Index + 1]?.line ?? h3BodyLines.length;
+				return { title: h4.title, body: h3BodyLines.slice(h4.line + 1, h4End).join("\n").trim() };
+			});
+			return {
+				title: h3.title,
+				body: h3BodyLines.join("\n").trim(),
+				intro: h3BodyLines.slice(0, h4Matches[0]?.line ?? h3BodyLines.length).join("\n").trim(),
+				h4s,
+			};
 		});
 		return { title: h2.title, body: bodyLines.join("\n").trim(), intro, h3s };
 	});
+}
+
+function parseDepends(body: string): string[] {
+	return body
+		.split(/[\n,]/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((title) => slugTitle(title));
+}
+
+function itemBriefAndControls(h3: H3Section, itemId: string): { brief: string; worktree: string; depends_on: string[] } {
+	const briefParts: string[] = [];
+	let worktree = `flightdeck-plan-${itemId}`;
+	let depends_on: string[] = [];
+	if (h3.intro) briefParts.push(h3.intro);
+	for (const h4 of h3.h4s) {
+		const normalized = normalizeHeading(h4.title);
+		if (normalized === "worktree") {
+			worktree = h4.body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? worktree;
+			continue;
+		}
+		if (normalized === "depends on") {
+			depends_on = parseDepends(h4.body);
+			continue;
+		}
+		briefParts.push(`#### ${h4.title}\n\n${h4.body}`);
+	}
+	return { brief: briefParts.join("\n\n"), depends_on, worktree };
 }
 
 function ambiguous(reason: string): ParsedPlanOutcome {
@@ -203,7 +252,7 @@ function parsePlanContract(markdown: string): ParsedPlanOutcome {
 			mode: "h2-items",
 			beforePreview: false,
 			beforeMutation: true,
-			items: h2s.map((section) => ({ id: slugTitle(section.title), title: section.title, brief: section.body })),
+			items: h2s.map((section) => ({ id: slugTitle(section.title), title: section.title, brief: section.body, worktree: `flightdeck-plan-${slugTitle(section.title)}`, depends_on: [] })),
 			omittedOrchestrationContext: [],
 			allH2Ids,
 		};
@@ -240,7 +289,8 @@ function parsePlanContract(markdown: string): ParsedPlanOutcome {
 			if (containsOrchestrationOnlyMarker(h3.body)) {
 				return { ...ambiguous(`plan-format-ambiguous: ${id} contains Flightdeck master-only orchestration instructions`), allH2Ids };
 			}
-			items.push({ id, title: h3.title, brief: [...safeGlobalContext, ...safeLocalContext, h3.body].filter(Boolean).join("\n\n---\n\n") });
+			const controls = itemBriefAndControls(h3, id);
+			items.push({ id, title: h3.title, brief: [...safeGlobalContext, ...safeLocalContext, controls.brief].filter(Boolean).join("\n\n---\n\n"), worktree: controls.worktree, depends_on: controls.depends_on });
 		}
 	}
 
@@ -390,7 +440,10 @@ describe("handler domain guards", () => {
 
 	test("plan lane supports phase-style docs without treating context H2s as items", () => {
 		const start = readFileSync(PLAN_START_DOC, "utf8");
+		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
+		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
 		const planFile = readFileSync(PLAN_FILE_DOC, "utf8");
+		const schema = readFileSync(SCHEMA_DOC, "utf8");
 		for (const doc of [start, planFile]) {
 			expect(doc).toContain("phase-style");
 			expect(doc).toContain("Implementation phases");
@@ -405,6 +458,18 @@ describe("handler domain guards", () => {
 		expect(start).toContain("Context-only H2 sections outside the safe allowlist must never appear as preview Item rows");
 		expect(start).toContain("Omit matching shared-context sections from child briefs and show their titles in the preview as omitted orchestration context");
 		expect(start).toContain("<ITEM_ID> contains Flightdeck master-only orchestration instructions");
+		expect(start).toContain("brief_artifact_path");
+		expect(start).toContain("brief_sha256");
+		expect(start).toContain("plan_snapshot_sha256");
+		expect(start).toContain("Plan watch and dependency-edge resolution must consume only these immutable brief artifacts");
+		expect(start).toContain("They must not reread mutable `plan_path` to rebuild child briefs after compaction/re-entry");
+		expect(watch).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
+		expect(watch).toContain("The artifact hash matches `domain.plan_item.brief_sha256`");
+		expect(handle).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
+		expect(handle).toContain("Require `domain.plan_item.brief_artifact_path`, `domain.plan_item.brief_sha256`, and `domain.plan_item.plan_snapshot_sha256`");
+		expect(schema).toContain("brief_artifact_path");
+		expect(schema).toContain("brief_sha256");
+		expect(schema).toContain("plan_snapshot_sha256");
 		expect(start).toContain('reason:"plan-format-ambiguous"');
 		expect(start).toContain("Mode: [PARSE_MODE]");
 		expect(start).toContain("Shared context: [global H2/workstream-local titles or —]");
@@ -413,6 +478,20 @@ describe("handler domain guards", () => {
 		expect(planFile).toContain("`Problem`, `Goals`, `Additional workstream — Documentation follow-ups`, and `Context` are shared context, not work items");
 		expect(planFile).toContain("Malformed phase-style sections do not fall back to H2 item mode");
 		expect(planFile).toContain("Result: `plan-format-ambiguous`");
+	});
+
+	test("actual app/run-history plan remains valid phase-style under the allowlist", () => {
+		const parsed = parsePlanContract(readFileSync(ACTUAL_PHASE_STYLE_PLAN, "utf8"));
+		expect(parsed.mode).toBe("phase-style");
+		expect(parsed.reason).toBeUndefined();
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 1 — Design and compatibility layer");
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 6.7 — App focus/open helper, icon title, and launch order");
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 12 — No-op confirmations for upstream-only fixes");
+		for (const requiredSafeH2 of ["pi-extension-scope-after-the-rus", "cli-script-changes", "data-model-additions"]) {
+			expect(parsed.allH2Ids).toContain(requiredSafeH2);
+			expect(parsed.items.map((item) => item.id)).not.toContain(requiredSafeH2);
+		}
+		expect(parsed.items.length).toBe(15);
 	});
 
 	test("phase-style fixture parses exact phase items and excludes context-only H2s", () => {
@@ -425,6 +504,14 @@ describe("handler domain guards", () => {
 			"phase-8-codex-provider-shim",
 			"phase-9-responsive-skills-rows",
 		]);
+		expect(parsed.items[0]).toMatchObject({
+			depends_on: [],
+			worktree: "flightdeck-plan-run-identity",
+		});
+		expect(parsed.items[1]).toMatchObject({
+			depends_on: ["phase-1-run-identity"],
+			worktree: "flightdeck-plan-phase-2-state-command-support",
+		});
 		for (const contextH2 of [
 			"pre-execution-context-updated-20",
 			"problem",
@@ -442,6 +529,10 @@ describe("handler domain guards", () => {
 		expect(parsed.omittedOrchestrationContext).toEqual(["Pre-execution context (updated 2026-05-19)", "Execution workflow"]);
 		for (const brief of parsed.items.map((item) => item.brief)) {
 			expect(brief).toContain("Flightdeck needs clearer run identity and history behavior");
+			expect(brief).not.toContain("#### Worktree");
+			expect(brief).not.toContain("#### Depends on");
+			expect(brief).not.toContain("flightdeck-plan-run-identity");
+			expect(brief).not.toContain("Phase 1 — Run identity");
 			expect(brief).not.toMatch(/BACKUP-WAKE|5-reviewer|Do NOT act as Flightdeck master|\/skill:flightdeck\s+plan|\/flightdeck\s+plan|\bflightdeck\s+plan\s+(?:start|watch|close-item|terminate)\b/i);
 		}
 	});

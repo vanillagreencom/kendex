@@ -65,7 +65,7 @@ Recognized implementation workstream headings include `## Implementation phases`
 
 Top-level shared context is fail-closed. In phase-style mode, H2 sections outside recognized workstreams are shared context only when their normalized titles are allowlisted:
 
-- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
+- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Pi extension scope after the Rust app`, `CLI/script changes`, `Data model additions`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
 
 An allowlisted title may have a parenthetical or update suffix, such as `Pre-execution context (updated ...)`. Any other H2 outside a recognized workstream stops parsing with `plan-format-ambiguous` before preview, worktree creation, state writes, or pane launch.
 
@@ -88,6 +88,7 @@ Shared context is also filtered for child-brief safety. Sections containing mast
 - Other subsections, such as `Acceptance criteria`, stay in the item brief.
 - Dependencies must resolve to known items, cannot point at self, and cannot form cycles.
 - The dry-run preview is mandatory before Flightdeck creates worktrees or panes.
+- After preview confirmation, Flightdeck writes immutable sanitized item brief artifacts under its state directory and stores `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` on each `domain.plan_item`. Dependency-spawned items read those artifacts instead of reparsing a mutable plan file.
 
 Good item briefs include: scope, likely files, acceptance criteria, tests, non-goals, and PR-size boundaries.
 
@@ -269,5 +270,6 @@ Result: `plan-format-ambiguous` because implementation item content contains Fli
 
 - One plan file represents one plan session.
 - Dependent items spawn only after required items merge.
+- Dependent items use the immutable brief artifact created at plan start; mid-session edits to the source plan do not change queued child briefs.
 - GitHub merge verification happens before item cleanup.
 - Mid-session edits are not re-parsed; start a new session if the plan changes materially.

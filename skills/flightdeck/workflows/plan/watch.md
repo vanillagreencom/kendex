@@ -149,8 +149,11 @@ If a child pane completes its turn without producing a valid PR URL, master trea
 After `workflows/plan/close-item.md` verifies an item merged:
 
 1. Find waiting entries whose `domain.plan_item.depends_on` are all merged with non-null `merge_commit`.
-2. Verify the plan spec is still current enough to proceed:
-   - `domain.plan_item.plan_path` exists.
+2. Verify the immutable plan item artifacts are present and current enough to proceed:
+   - Do not reread `domain.plan_item.plan_path` to rebuild child briefs; the source plan may have changed after start.
+   - `domain.plan_item.brief_artifact_path` exists for the unblocked item.
+   - The artifact hash matches `domain.plan_item.brief_sha256`.
+   - `domain.plan_item.plan_snapshot_sha256` is recorded so the artifact can be traced to the frozen source snapshot.
    - Each merged dependency still has an entry with `domain.plan_item.phase == "merged"` and a live or already-archived worktree record.
 3. Before any worktree mutation for a dependent item, atomically claim each unblocked item under the Flightdeck state-lock:
    - Compare-and-swap `entry.state` from `waiting` to `spawning`.
@@ -158,7 +161,7 @@ After `workflows/plan/close-item.md` verifies an item merged:
    - Refuse to spawn if `entry.domain.plan_item.merge_commit !== null`.
    - Refuse to spawn if a live pane is already registered for this entry.
 4. Create the dependent item's worktree.
-5. Write its `<worktree>/tmp/brief.md` from the frozen safe item brief content produced by `workflows/plan/start.md` § 2/§ 4 and check the write return code. Omitted orchestration context must not be reintroduced for dependency-spawned items.
+5. Write its `<worktree>/tmp/brief.md` from the verified immutable brief artifact and check the write return code. Omitted orchestration context must not be reintroduced for dependency-spawned items.
 6. Spawn via `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."` and check the return code.
 7. Re-register / restore `entry.domain.plan_item` while preserving launch metadata, then transition item to in-progress with `state="submitting"` and `domain.plan_item.phase="in-progress"`.
 8. On any create/write/spawn/register failure, remove the brief if written, kill any spawned-but-unregistered pane, mark `state="failed"` with `domain.plan_item.error = {phase:"<PHASE>", reason:"<REASON>", stderr:"<STDERR>"}`, emit activity, and continue to the next unblocked item.

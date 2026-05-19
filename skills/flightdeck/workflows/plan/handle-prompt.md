@@ -76,10 +76,14 @@ This is a plan-only internal routing step used by `workflows/plan/watch.md` afte
 
 1. Read all entries with the same `domain.plan_item.plan_path`.
 2. Find waiting items whose `depends_on` are all merged with non-null `merge_commit`.
-3. Verify the plan file still exists and no dependency cycle appeared in the stored graph.
+3. Verify the stored graph and immutable brief artifacts:
+   - Do not reread `domain.plan_item.plan_path` to rebuild child briefs.
+   - Require `domain.plan_item.brief_artifact_path`, `domain.plan_item.brief_sha256`, and `domain.plan_item.plan_snapshot_sha256` for each item to be spawned.
+   - Verify each artifact exists and its hash matches `brief_sha256`.
+   - Verify no dependency cycle appeared in the stored graph.
 4. For each now-unblocked item in topological order:
    - Create its worktree with the worktree skill.
-   - Write `<worktree>/tmp/brief.md` with the same header and safe item brief shape documented in `workflows/plan/start.md` § 4; do not reintroduce omitted orchestration context.
+   - Write `<worktree>/tmp/brief.md` with the same header and verified immutable brief artifact documented in `workflows/plan/start.md` § 4; do not reintroduce omitted orchestration context.
    - Spawn with `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."`.
    - Update `state="submitting"` and `domain.plan_item.phase="in-progress"`.
 5. If any create/write/spawn step fails, set `paused_for_user = {entry_id:<ITEM_ID>, reason:"plan-dependent-spawn-failed", prompt_text:<stderr>}` and stop.

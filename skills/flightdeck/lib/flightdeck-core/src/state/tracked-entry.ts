@@ -114,6 +114,16 @@ function validateOptionalString(value: unknown, label: string): void {
 	if (typeof value !== "string") throw new Error(`invalid ${label}: must be a string or null`);
 }
 
+function validateOptionalNonEmptyString(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string or null`);
+}
+
+function validateOptionalSha256(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(value)) throw new Error(`invalid ${label}: must be sha256:<64 hex chars> or null`);
+}
+
 function validateRequiredString(value: unknown, label: string): void {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string`);
 }
@@ -121,6 +131,12 @@ function validateRequiredString(value: unknown, label: string): void {
 function validateRequiredStringArray(value: unknown, label: string): void {
 	if (!Array.isArray(value)) throw new Error(`invalid ${label}: must be an array of strings`);
 	for (const [idx, item] of value.entries()) validateEntryId(item, `${label}[${idx}]`);
+}
+
+function validateOptionalStringArray(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (!Array.isArray(value)) throw new Error(`invalid ${label}: must be an array of strings or null`);
+	for (const [idx, item] of value.entries()) validateRequiredString(item, `${label}[${idx}]`);
 }
 
 export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">): string | undefined {
@@ -169,6 +185,14 @@ export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">):
 		if (!("merge_commit" in planItem)) throw new Error("invalid domain.plan_item.merge_commit: missing required key");
 		validateOptionalFiniteNumber(planItem.pr_number, "domain.plan_item.pr_number");
 		validateOptionalString(planItem.merge_commit, "domain.plan_item.merge_commit");
+		validateOptionalString(planItem.parse_mode, "domain.plan_item.parse_mode");
+		validateOptionalSha256(planItem.plan_snapshot_sha256, "domain.plan_item.plan_snapshot_sha256");
+		validateOptionalNonEmptyString(planItem.brief_artifact_path, "domain.plan_item.brief_artifact_path");
+		validateOptionalSha256(planItem.brief_sha256, "domain.plan_item.brief_sha256");
+		if ((planItem.brief_artifact_path === undefined || planItem.brief_artifact_path === null) !== (planItem.brief_sha256 === undefined || planItem.brief_sha256 === null)) {
+			throw new Error("invalid domain.plan_item.brief_artifact_path/domain.plan_item.brief_sha256: both keys must be present together or omitted together");
+		}
+		validateOptionalStringArray(planItem.omitted_context, "domain.plan_item.omitted_context");
 		validateOptionalFiniteNumber(planItem.scope_files_actual, "domain.plan_item.scope_files_actual");
 	}
 	return issueId;

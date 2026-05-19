@@ -36,7 +36,7 @@ Phase-style indicators are any H3 heading matching `### Phase <N> ...` or `### W
 
 Safe global shared-context H2 allowlist for phase-style mode:
 
-- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
+- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Pi extension scope after the Rust app`, `CLI/script changes`, `Data model additions`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
 - The title may have a parenthetical or update suffix after an allowlisted base title, such as `Pre-execution context (updated ...)`.
 - Any other H2 outside a recognized implementation workstream is ambiguous; do not silently treat it as shared context.
 
@@ -90,6 +90,16 @@ If the user rejects or corrects the preview, stop without mutation. This verify-
 
 After confirmation, create one tracked entry per item. Items blocked by dependencies may have no pane yet; they still get a state row so the graph survives compaction.
 
+Before writing entries or spawning panes, materialize immutable sanitized item brief artifacts from the already-confirmed parse result:
+
+1. Compute `plan_snapshot_sha256 = sha256:<hex>` over the frozen plan text read in § 1.
+2. Create a plan-brief artifact directory under the Flightdeck state dir, for example `<FD_STATE_DIR>/plan-briefs/<PLAN_ID_OR_HASH>/`.
+3. For every item, write the final sanitized item brief content (safe shared context + item content, with `Worktree` / `Depends on` controls removed and omitted orchestration context excluded) to `<ARTIFACT_DIR>/<ITEM_ID>.md` atomically.
+4. Compute `brief_sha256 = sha256:<hex>` for each artifact and store `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` in `domain.plan_item`.
+5. If any artifact write/hash fails, set `paused_for_user = {entry_id:"plan", reason:"plan-brief-artifact-failed", prompt_text:"<ITEM_ID>: <ERROR>"}` and stop before any tracked-entry, worktree, or pane mutation.
+
+Plan watch and dependency-edge resolution must consume only these immutable brief artifacts. They must not reread mutable `plan_path` to rebuild child briefs after compaction/re-entry.
+
 Minimum tracked-entry shape:
 
 ```jsonc
@@ -101,11 +111,16 @@ Minimum tracked-entry shape:
   "domain": {
     "plan_item": {
       "plan_path": "<ABSOLUTE_PLAN_PATH>",
+      "plan_snapshot_sha256": "sha256:<FROZEN_PLAN_TEXT_HASH>",
       "plan_title": "<PLAN_TITLE>",
       "item_id": "<ITEM_ID>",
       "item_title": "<ITEM_TITLE>",
       "depends_on": ["<ITEM_ID>"],
       "worktree": "<ABSOLUTE_WORKTREE_PATH>",
+      "parse_mode": "h2-items|phase-style",
+      "brief_artifact_path": "<ABSOLUTE_BRIEF_ARTIFACT_PATH>",
+      "brief_sha256": "sha256:<SANITIZED_BRIEF_HASH>",
+      "omitted_context": ["<H2_OR_H3_TITLE>"],
       "pr_number": null,
       "merge_commit": null
     }
@@ -135,7 +150,7 @@ For each item with no unmet dependencies, in dependency-graph topological order,
    ```bash
    WT_PATH=$(.agents/skills/worktree/scripts/worktree create <WORKTREE_NAME>)
    ```
-4. Re-scan the final item brief for orchestration-only markers, then create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include only safe shared context when parse mode is `phase-style`; omitted orchestration context must not be written. The file body must be:
+4. Read the immutable sanitized item brief from `entry.domain.plan_item.brief_artifact_path`, verify its `sha256:<hex>` matches `entry.domain.plan_item.brief_sha256`, re-scan it for orchestration-only markers, then create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include only safe shared context when parse mode is `phase-style`; omitted orchestration context must not be written. The file body must be:
 
    ```markdown
    # Plan: <PLAN_TITLE>

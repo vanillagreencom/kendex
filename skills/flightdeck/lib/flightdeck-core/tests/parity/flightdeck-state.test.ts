@@ -109,11 +109,16 @@ function samplePlanEntry(): TrackedEntry {
 		decisions_log: [],
 		domain: {
 			plan_item: {
+				brief_artifact_path: "/repo/tmp/flightdeck-plan-briefs/plan/item-one.md",
+				brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				depends_on: ["setup-foundation"],
 				item_id: "item-one",
 				item_title: "Item one",
 				merge_commit: null,
+				omitted_context: ["Pre-execution context"],
+				parse_mode: "phase-style",
 				plan_path: "/repo/docs/plans/plan.md",
+				plan_snapshot_sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				plan_title: "Plan title",
 				pr_number: null,
 				worktree: "/repo/trees/flightdeck-plan-item-one",
@@ -269,10 +274,15 @@ describe("flightdeck-state CLI", () => {
 		expect(write.status).toBe(0);
 		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
 		expect(tracked[entry.id]?.domain?.plan_item).toMatchObject({
+			brief_artifact_path: "/repo/tmp/flightdeck-plan-briefs/plan/item-one.md",
+			brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			depends_on: ["setup-foundation"],
 			item_id: "item-one",
 			merge_commit: null,
+			omitted_context: ["Pre-execution context"],
+			parse_mode: "phase-style",
 			plan_path: "/repo/docs/plans/plan.md",
+			plan_snapshot_sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			plan_title: "Plan title",
 			pr_number: null,
 			worktree: "/repo/trees/flightdeck-plan-item-one",
@@ -302,6 +312,12 @@ describe("flightdeck-state CLI", () => {
 		const missingMergeCommit = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, merge_commit: undefined } } })]);
 		expect(missingMergeCommit.status).toBe(2);
 		expect(missingMergeCommit.stderr).toContain("invalid domain.plan_item.merge_commit: missing required key");
+		const badBriefHash = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_sha256: "not-a-hash" } } })]);
+		expect(badBriefHash.status).toBe(2);
+		expect(badBriefHash.stderr).toContain("invalid domain.plan_item.brief_sha256: must be sha256:<64 hex chars> or null");
+		const missingBriefPath = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: undefined } } })]);
+		expect(missingBriefPath.status).toBe(2);
+		expect(missingBriefPath.stderr).toContain("brief_artifact_path/domain.plan_item.brief_sha256: both keys must be present together or omitted together");
 	});
 
 	test("raw set rejects adding plan_item beside Linear issue domain", () => {
