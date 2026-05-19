@@ -29,14 +29,25 @@ Parse with master judgment. No parser code is required. First choose exactly one
 
 Parse modes:
 
-- `h2-items`: default simple format. Each `## <Work item title>` H2 section is one work item.
-- `phase-style`: long-plan format. One or more recognized implementation workstream H2 sections contain item H3s. Recognized workstream headings are `## Implementation phases`, `## Implementation plan`, `## Work items`, `## Workstreams`, `## Additional workstream ...`, and `## Execution plan`; any H2 containing `workstream` is a workstream. Inside those sections, `### Phase <N> ...` and `### Work item ...` H3 headings become work items. H2 sections outside recognized implementation workstreams are shared context, not work items. Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items.
+- `h2-items`: simple format. Each `## <Work item title>` H2 section is one work item. Use this mode only when the file contains no phase-style indicators anywhere.
+- `phase-style`: long-plan format. One or more recognized implementation workstream H2 sections contain item H3s. Recognized workstream headings are `## Implementation phases`, `## Implementation plan`, `## Work items`, `## Workstreams`, `## Additional workstream ...`, and `## Execution plan`; any H2 containing `workstream` is a workstream. Inside those sections, `### Phase <N> ...` and `### Work item ...` H3 headings become work items. Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items.
+
+Phase-style indicators are any H3 heading matching `### Phase <N> ...` or `### Work item ...`, anywhere in the file. A malformed phase-style file must not fall back to H2 item mode.
+
+Safe global shared-context H2 allowlist for phase-style mode:
+
+- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
+- The title may have a parenthetical or update suffix after an allowlisted base title, such as `Pre-execution context (updated ...)`.
+- Any other H2 outside a recognized implementation workstream is ambiguous; do not silently treat it as shared context.
 
 Safety guard:
 
-- If phase-style indicators exist but do not match the recognized shape, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"}` and stop before dry-run preview.
-- If a phase-style document also appears to contain standalone H2 work items mixed with shared context H2s, use phase-style only when every implementation item is a matching H3 under a recognized implementation workstream. Otherwise stop with `plan-format-ambiguous` before any worktree, state, or pane mutation.
-- Context-only H2 sections such as `Problem`, `Goals`, `Non-goals`, `Proposed model`, `Acceptance criteria`, `Context`, and `Notes` must never appear as preview Item rows in phase-style mode.
+- If phase-style indicators exist but do not sit under a recognized implementation workstream, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"}` and stop before dry-run preview.
+- If a phase-style document has any non-allowlisted H2 outside recognized implementation workstreams, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: H2 '<H2_TITLE>' is neither an implementation workstream nor allowlisted shared context"}` and stop before dry-run preview.
+- Before adding shared context to any child brief, scan shared-context sections for orchestration-only markers: `BACKUP-WAKE`, reviewer fan-out instructions, `Do NOT act as Flightdeck master`, `/skill:flightdeck plan`, `$flightdeck plan`, `/flightdeck plan`, `flightdeck plan start`, `flightdeck plan watch`, `flightdeck plan close-item`, `flightdeck plan terminate`, `flightdeck linear start`, `flightdeck github start`, and `flightdeck session` master commands. Omit matching shared-context sections from child briefs and show their titles in the preview as omitted orchestration context.
+- If an implementation item section contains any orchestration-only marker, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ITEM_ID> contains Flightdeck master-only orchestration instructions"}` and stop before dry-run preview. Do not silently strip item content.
+- Immediately before writing `<WT_PATH>/tmp/brief.md`, re-scan the final item brief and abort with `plan-format-ambiguous` if any orchestration-only marker remains.
+- Context-only H2 sections outside the safe allowlist must never appear as preview Item rows in phase-style mode; they must fail closed as `plan-format-ambiguous`.
 
 Rules:
 
@@ -46,7 +57,7 @@ Rules:
 - Branch name matches the worktree name.
 - Optional `Depends on` control body names other item titles or item ids. Normalize each dependency to an `item_id`. Use `### Depends on` in `h2-items` mode and `#### Depends on` in `phase-style` mode.
 - In `h2-items` mode, the H2 section content excluding only optional `### Worktree` and `### Depends on` subsections becomes the child brief. Other H3 subsections remain part of the brief.
-- In `phase-style` mode, shared context is the plan intro plus H2 sections outside recognized implementation workstreams. Workstream-local shared context is the recognized workstream H2 intro plus non-item H3 sections inside that workstream. The child brief is global shared context plus workstream-local shared context plus the item H3 content, excluding only optional `#### Worktree` and `#### Depends on` subsections. Other H4 subsections remain part of the item brief.
+- In `phase-style` mode, shared context is the plan intro plus allowlisted H2 sections outside recognized implementation workstreams that do not contain orchestration-only markers. Workstream-local shared context is the recognized workstream H2 intro plus non-item H3 sections inside that workstream that do not contain orchestration-only markers. The child brief is safe global shared context plus safe workstream-local shared context plus the item H3 content, excluding only optional `#### Worktree` and `#### Depends on` subsections. Other H4 subsections remain part of the item brief.
 
 Validate the parse mode and plan graph before dry-run preview and before any worktree, state, or pane mutation:
 
@@ -62,6 +73,7 @@ Plan: [PLAN_TITLE]
 Source: [ABSOLUTE_PLAN_PATH]
 Mode: [PARSE_MODE]
 Shared context: [global H2/workstream-local titles or —]
+Omitted orchestration context: [titles or —]
 
 | Item | Depends on | Worktree | Brief preview |
 |------|------------|----------|---------------|
@@ -123,7 +135,7 @@ For each item with no unmet dependencies, in dependency-graph topological order,
    ```bash
    WT_PATH=$(.agents/skills/worktree/scripts/worktree create <WORKTREE_NAME>)
    ```
-4. Create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include shared context when parse mode is `phase-style`. The file body must be:
+4. Re-scan the final item brief for orchestration-only markers, then create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include only safe shared context when parse mode is `phase-style`; omitted orchestration context must not be written. The file body must be:
 
    ```markdown
    # Plan: <PLAN_TITLE>

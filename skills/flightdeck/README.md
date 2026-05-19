@@ -73,7 +73,7 @@ Run commands by asking your agent for `flightdeck <command>`.
 
 ### Plan lane
 
-Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Plans can use simple H2 work-item sections or phase-style H3 items under an implementation workstream; Flightdeck previews the chosen mode before any worktree or pane is created. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
+Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Plans can use simple H2 work-item sections or phase-style H3 items under a recognized implementation workstream; ambiguous H2s or master-only orchestration text fail closed before preview or mutation. Flightdeck previews the chosen mode before any worktree or pane is created. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 | Command | Use when | Main args |
 |---------|----------|-----------|

@@ -79,7 +79,7 @@ This is a plan-only internal routing step used by `workflows/plan/watch.md` afte
 3. Verify the plan file still exists and no dependency cycle appeared in the stored graph.
 4. For each now-unblocked item in topological order:
    - Create its worktree with the worktree skill.
-   - Write `<worktree>/tmp/brief.md` with the same header and section content shape documented in `workflows/plan/start.md` § 4.
+   - Write `<worktree>/tmp/brief.md` with the same header and safe item brief shape documented in `workflows/plan/start.md` § 4; do not reintroduce omitted orchestration context.
    - Spawn with `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."`.
    - Update `state="submitting"` and `domain.plan_item.phase="in-progress"`.
 5. If any create/write/spawn step fails, set `paused_for_user = {entry_id:<ITEM_ID>, reason:"plan-dependent-spawn-failed", prompt_text:<stderr>}` and stop.
