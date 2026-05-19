@@ -110,6 +110,17 @@ describe("Flightdeck durable run store", () => {
 		expect(readActiveRun(repo)?.active.run_id).toBe(second.metadata.run_id);
 	});
 
+	test("corrupt metadata cannot claim another run id to clear the active pointer", () => {
+		const first = createRun(repo, SESSION);
+		const second = createRun(repo, "RUNSTORE2");
+		writeFileSync(first.paths.metadata_json, JSON.stringify({ ...first.metadata, run_id: second.metadata.run_id }), "utf8");
+
+		expect(() => showRun(repo, first.metadata.run_id)).toThrow(/run_id .*does not match requested run/);
+		expect(() => terminateRun(repo, first.metadata.run_id)).toThrow(/run_id .*does not match requested run/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(second.metadata.run_id);
+		expect((JSON.parse(readFileSync(first.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
+	});
+
 	test("snapshot lookup rejects traversal and unsafe basenames", () => {
 		const created = createRun(repo, SESSION);
 		terminateRun(repo, created.metadata.run_id);
