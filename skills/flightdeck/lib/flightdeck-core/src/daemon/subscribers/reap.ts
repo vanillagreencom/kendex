@@ -7,9 +7,9 @@
 // reaper leaves the bash process running.
 //
 // Policy (from the brief, non-negotiable):
-//   1. SIGTERM the pid.
+//   1. SIGTERM the captured pid's process group (fallback: pid).
 //   2. Wait up to graceMs (default 5s) for clean exit.
-//   3. If still alive: SIGKILL.
+//   3. If still alive: SIGKILL the captured process group (fallback: pid).
 //   4. Remove the pid file (after the signal sequence resolves) only
 //      if it still points at the reaped pid.
 //   5. Remove the matching log file if known and the pidfile guard did
@@ -81,11 +81,37 @@ function defaultScheduleAfter(ms: number, fn: () => void): { cancel(): void } {
 	return { cancel: () => clearTimeout(handle) };
 }
 
-function pidAlive(signal: (pid: number, sig: NodeJS.Signals | 0) => void, pid: number): boolean {
-	try { signal(pid, 0); return true; }
+function targetAlive(signal: (pid: number, sig: NodeJS.Signals | 0) => void, target: number): boolean {
+	try { signal(target, 0); return true; }
 	catch (e) {
 		const code = (e as NodeJS.ErrnoException).code;
 		return code === "EPERM";
+	}
+}
+
+function subscriberAlive(signal: (pid: number, sig: NodeJS.Signals | 0) => void, pid: number): boolean {
+	return targetAlive(signal, -pid) || targetAlive(signal, pid);
+}
+
+type SubscriberSignalResult =
+	| { sent: true; target: number; scope: "process-group" | "process" }
+	| { sent: false; target: number; scope: "process-group" | "process" | "none"; error?: Error };
+
+function signalSubscriber(signal: (pid: number, sig: NodeJS.Signals | 0) => void, pid: number, sig: NodeJS.Signals): SubscriberSignalResult {
+	try {
+		signal(-pid, sig);
+		return { sent: true, target: -pid, scope: "process-group" };
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code !== "ESRCH") return { sent: false, target: -pid, scope: "process-group", error: e as Error };
+	}
+	try {
+		signal(pid, sig);
+		return { sent: true, target: pid, scope: "process" };
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code !== "ESRCH") return { sent: false, target: pid, scope: "process", error: e as Error };
+		return { sent: false, target: pid, scope: "none" };
 	}
 }
 
@@ -150,7 +176,7 @@ export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberD
 			logFileRemoved,
 		};
 	}
-	if (!pidAlive(signal, pid)) {
+	if (!subscriberAlive(signal, pid)) {
 		const { pidFileRemoved, logFileRemoved } = cleanupIfPidStillMatches({
 			pid,
 			pidFile: input.pidFile,
@@ -173,14 +199,13 @@ export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberD
 	}
 	let outcome: ReapOutcome = "term-ok";
 	let signalError: string | undefined;
-	try {
-		signal(pid, "SIGTERM");
-	} catch (e) {
-		const code = (e as NodeJS.ErrnoException).code;
-		if (code !== "ESRCH") {
-			signalError = (e as Error).message;
-			deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGTERM failed: ${signalError}`);
-		}
+	const term = signalSubscriber(signal, pid, "SIGTERM");
+	if (term.sent) {
+		deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} signal=SIGTERM target=${term.target} scope=${term.scope}`);
+	}
+	if (!term.sent && term.error) {
+		signalError = term.error.message;
+		deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGTERM failed target=${term.target} scope=${term.scope}: ${signalError}`);
 		outcome = "signal-error";
 	}
 	const result: ReapSubscriberResult = {
@@ -193,17 +218,14 @@ export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberD
 	};
 	scheduleAfter(graceMs, () => {
 		try {
-			if (pidAlive(signal, pid)) {
-				try {
-					signal(pid, "SIGKILL");
-					deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=kill-required (SIGTERM grace expired)`);
-				} catch (e) {
-					const code = (e as NodeJS.ErrnoException).code;
-					if (code === "ESRCH") {
-						deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok-race`);
-					} else {
-						deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGKILL failed: ${(e as Error).message}`);
-					}
+			if (subscriberAlive(signal, pid)) {
+				const kill = signalSubscriber(signal, pid, "SIGKILL");
+				if (kill.sent) {
+					deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=kill-required target=${kill.target} scope=${kill.scope} (SIGTERM grace expired)`);
+				} else if (kill.error) {
+					deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGKILL failed target=${kill.target} scope=${kill.scope}: ${kill.error.message}`);
+				} else {
+					deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok-race`);
 				}
 			} else {
 				deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok`);

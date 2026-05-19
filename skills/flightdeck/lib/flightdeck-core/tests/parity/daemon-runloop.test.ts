@@ -37,6 +37,16 @@ function pidAlive(pid: number): boolean {
 	try { process.kill(pid, 0); return true; }
 	catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
 }
+function activeProcessGroupPids(pgid: number): number[] {
+	if (!Number.isFinite(pgid) || pgid <= 0) return [];
+	const r = spawnSync("ps", ["-eo", "pid=,pgid=,stat="], { encoding: "utf8" });
+	if (r.status !== 0) return [];
+	return (r.stdout ?? "").split("\n")
+		.map((line) => line.trim().split(/\s+/, 3))
+		.filter(([pid, group, stat]) => pid && group && stat && Number.parseInt(group, 10) === pgid && !stat.includes("Z"))
+		.map(([pid]) => Number.parseInt(pid!, 10))
+		.filter((pid) => Number.isFinite(pid) && pid > 0);
+}
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
@@ -392,12 +402,23 @@ exit 1
 				return Number.parseInt(readFileSync(streamCountFile, "utf8").trim() || "0", 10) >= 2;
 			}, 8000);
 			expect(sawRespawn).toBe(true);
+			const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
+			const readSpawnPids = (): number[] => {
+				if (!existsSync(logFile)) return [];
+				return Array.from(readFileSync(logFile, "utf8").matchAll(/\[pi-subscriber-spawn\][^\n]*\spid=(\d+)/g))
+					.map((m) => Number.parseInt(m[1]!, 10));
+			};
+			const sawTwoSpawnPids = await waitFor(() => readSpawnPids().length >= 2, 3000);
+			expect(sawTwoSpawnPids).toBe(true);
+			const spawnPids = readSpawnPids();
 			const replacementPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			const oldPids = spawnPids.filter((pid) => pid !== replacementPid);
+			expect(oldPids.length).toBeGreaterThan(0);
 			expect(Number.isFinite(replacementPid) && replacementPid > 0).toBe(true);
 			await sleep(5200);
+			for (const oldPid of oldPids) expect(activeProcessGroupPids(oldPid)).toEqual([]);
 			expect(readFileSync(pidFile, "utf8").trim()).toBe(String(replacementPid));
 			expect(existsSync(subLogFile)).toBe(true);
-			const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
 			const sawMismatchLog = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[pi-subscriber-mismatch]") && readFileSync(logFile, "utf8").includes("force-spawn requested"), 3000);
 			expect(sawMismatchLog).toBe(true);
 			const activity = readFileSync(activityPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
