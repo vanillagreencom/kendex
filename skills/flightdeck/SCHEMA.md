@@ -6,6 +6,82 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 
 Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Activity history lives beside it as `flightdeck-activity-<TMUX_SESSION_NAME>.jsonl` and is exposed through `flightdeck-state activity path|append|tail|export`. Both survive compaction; terminate rotates state to `*-<terminated_at>.json.archive` and activity to `*-<terminated_at>.jsonl.archive` in the same `flightdeck-state archive` flow (see `terminate.md § 6`). The archive preserves the full session history (including merged-issue `decisions_log`, `pr_number`, `merge_commit`) so post-completion dashboards and post-mortem inspection have the whole session history — do not call `pane-registry remove-merged` between `set terminated true` and `archive`. Dashboard snapshot loaders fall back to the newest matching `*.json.archive` when the live file is gone, so the completed-session view keeps rendering until a new `flightdeck linear start` rewrites the live file. Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
+## Schema — durable run store
+
+Durable run history lives outside project `tmp/` so it survives cleanup:
+
+```text
+~/.vstack/flightdeck/projects/<project-id>/
+  project.json
+  active-run.json                 # optional
+  runs/
+    <run-id>/
+      metadata.json
+      state.json
+      activity.jsonl
+      summary.md                  # optional
+      snapshots/
+        <timestamp>.json
+        <timestamp>.activity.jsonl
+```
+
+`<project-id>` is stable and human-safe. With a Git remote, the id is based on `remote.origin.url` plus a SHA-256 hash of the absolute project root; without a remote it falls back to the absolute project-root hash. The human-readable prefix comes from the remote repo name or project directory name.
+
+`project.json`:
+
+```jsonc
+{
+  "schema_version": 1,
+  "project_id": "<safe-name>-<16hex>",
+  "name": "<display-name>",
+  "root_path": "<absolute-project-root>",
+  "root_hash": "<sha256-root-path>",
+  "remote_url": "<git-remote-or-null>",
+  "id_source": "git-remote+root|root",
+  "created_at": "<ISO8601>",
+  "last_seen_at": "<ISO8601>"
+}
+```
+
+`active-run.json` is absent when no run is active:
+
+```jsonc
+{
+  "schema_version": 1,
+  "project_id": "<project-id>",
+  "run_id": "<run-id>",
+  "tmux_session": "<TMUX_SESSION_NAME>",
+  "state_path": "~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/state.json",
+  "activity_path": "~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/activity.jsonl",
+  "updated_at": "<ISO8601>"
+}
+```
+
+`metadata.json`:
+
+```jsonc
+{
+  "schema_version": 1,
+  "project_id": "<project-id>",
+  "run_id": "<run-id>",
+  "project_root": "<absolute-project-root>",
+  "tmux_session": "<TMUX_SESSION_NAME>",
+  "state_path": "<durable-run>/state.json",
+  "activity_path": "<durable-run>/activity.jsonl",
+  "summary_path": null,
+  "snapshots_path": "<durable-run>/snapshots",
+  "started_at": "<ISO8601>",
+  "last_seen_at": "<ISO8601>",
+  "terminated": false,
+  "terminated_at": null,
+  "imported": false,
+  "imported_from": null,
+  "legacy_activity_path": null
+}
+```
+
+`flightdeck-state run create` writes `metadata.json`, `state.json`, `activity.jsonl`, and `active-run.json`. `run terminate` sets `terminated=true`, writes `terminated_at`, creates a final `snapshots/<timestamp>.json`, copies a matching activity snapshot when present, and clears `active-run.json` if it still points at that run. `run import-legacy` copies `flightdeck-state-*.json.archive` and matching activity archives into deterministic imported run ids without deleting source archives.
+
 Auto-archive on session start: `flightdeck-session start` rolls the live file to a `.json.archive` sibling before fresh init when (a) `terminated == true` or (b) the file has tracked entries but ZERO `pane_id` is currently alive in tmux. Removes the need to manually prune leftover state from prior tmux sessions or crashed masters. `flightdeck-session start` also exports `FLIGHTDECK_ENTRY_ID` into the launched child environment (consumed by `github.sh` / `linear.sh` wrappers to auto-bind activity events to the right entry) and captures the current `git rev-parse --abbrev-ref HEAD` of the entry's cwd into `entry.branch` (informational; not refreshed when the agent switches branches mid-session) and onto every `pr.*` activity row's `refs.branch`.
 
 Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map. Malformed non-object entry values are skipped with a stderr warning; malformed internal `entry.id` values warn and fall back to the map key. `writeTrackedEntry(state, id, entry)` validates non-empty ids (including `entry.domain.issue.id` and `entry.domain.plan_item.item_id` when present), accepts the optional `entry.domain.github_issue` and `entry.domain.plan_item` shapes, rejects unknown `entry.domain.*` sub-keys, rejects entries that set more than one of `domain.issue`, `domain.github_issue`, or `domain.plan_item`, and writes `.entries[id]`. Linear issue-mode metadata lives under `entry.domain.issue` (`pr_number`, `worktree`, `merge_commit`, etc.). GitHub issue-mode metadata lives under `entry.domain.github_issue` (`number`, `url`, `worktree`, `pr_number`, `merge_commit`, `scope_files_actual`). Plan-file metadata lives under `entry.domain.plan_item` (`plan_path`, `plan_title`, `item_id`, `item_title`, `depends_on`, `worktree`, `pr_number`, `merge_commit`). Generic `adhoc`/`workflow` rows may also carry top-level `pr_number` and `worktree` for traceability without becoming domain-routed entries; readers must keep those separate from Linear/GitHub/plan domain routing. Dashboard renderers surface the nested domain views and generic top-level traceability fields without changing domain routing.

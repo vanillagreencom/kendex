@@ -14,6 +14,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - Run plan-file workflows that split one markdown plan into item worktrees, panes, PRs, and dependency-aware merge supervision.
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
+- Keep durable run history under `~/.vstack/flightdeck` so completed run state survives project `tmp/` cleanup.
 - Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, and rate limits.
 
 ## Install
@@ -128,6 +129,21 @@ flightdeck-dashboard tui --demo           # demo data
 ```
 
 For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
+
+## Run history helpers
+
+Flightdeck can create and inspect durable run records separately from the live tmux session files. This is mostly for dashboard/history tooling and post-mortems.
+
+```bash
+flightdeck-state run create --project-root "$PWD" --tmux-session <name>
+flightdeck-state run active --project-root "$PWD"
+flightdeck-state run list --project-root "$PWD" --json
+flightdeck-state run show <run-id> --project-root "$PWD"
+flightdeck-state run terminate <run-id> --project-root "$PWD"
+flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
+```
+
+Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
 
 ## High-level architecture
 

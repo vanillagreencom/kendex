@@ -509,6 +509,77 @@ fi
 		expect(r.stdout.endsWith(`tmp/flightdeck-state-${SESSION}.json\n`)).toBe(true);
 	});
 
+	test("run create active list show and terminate expose durable run state", () => {
+		const home = join(repo, "home");
+		const created = parseRunJson<{ metadata: { run_id: string; terminated: boolean }; active: { run_id: string } }>(
+			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
+		);
+		expect(created.metadata.terminated).toBe(false);
+		expect(created.active.run_id).toBe(created.metadata.run_id);
+
+		const active = parseRunJson<{ active: { run_id: string }; metadata: { run_id: string } }>(
+			run(repo, ["run", "active", "--project-root", repo], { HOME: home }),
+		);
+		expect(active.active.run_id).toBe(created.metadata.run_id);
+		expect(active.metadata.run_id).toBe(created.metadata.run_id);
+
+		const listed = parseRunJson<{ runs: Array<{ run_id: string; terminated: boolean }> }>(
+			run(repo, ["run", "list", "--project-root", repo, "--json"], { HOME: home }),
+		);
+		expect(listed.runs.map((item) => item.run_id)).toContain(created.metadata.run_id);
+
+		const shown = parseRunJson<{ metadata: { run_id: string }; state: { session_id: string; terminated: boolean } }>(
+			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(shown.metadata.run_id).toBe(created.metadata.run_id);
+		expect(shown.state.session_id).toBe(SESSION);
+		expect(shown.state.terminated).toBe(false);
+
+		const terminated = parseRunJson<{ active_cleared: boolean; metadata: { terminated: boolean; run_id: string }; snapshot_path: string }>(
+			run(repo, ["run", "terminate", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(terminated.active_cleared).toBe(true);
+		expect(terminated.metadata.terminated).toBe(true);
+		expect(existsSync(terminated.snapshot_path)).toBe(true);
+
+		const activeAfter = run(repo, ["run", "active", "--project-root", repo], { HOME: home });
+		expect(activeAfter.status).toBe(0);
+		expect(JSON.parse(activeAfter.stdout)).toBeNull();
+	});
+
+	test("run import-legacy copies archives without deleting legacy files", () => {
+		const home = join(repo, "home");
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		const archive = join(stateDir, "flightdeck-state-PARITY-2026-05-19T000000Z.json.archive");
+		const activity = join(stateDir, "flightdeck-activity-PARITY-2026-05-19T000000Z.jsonl.archive");
+		writeFileSync(activity, '{"type":"session.completed"}\n', "utf8");
+		writeFileSync(archive, JSON.stringify({
+			activity_archive_path: activity,
+			entries: { A: { id: "A", kind: "adhoc", state: "complete" } },
+			session_id: SESSION,
+			started_at: "2026-05-19T00:00:00Z",
+			terminated: true,
+			terminated_at: "2026-05-19T00:00:00Z",
+		}), "utf8");
+
+		const imported = parseRunJson<{ imported: Array<{ activity_path: string; imported_from: string; run_id: string }>; skipped: unknown[] }>(
+			run(repo, ["run", "import-legacy", "--project-root", repo, "--state-dir", "tmp"], { HOME: home }),
+		);
+		expect(imported.imported).toHaveLength(1);
+		expect(imported.skipped).toHaveLength(0);
+		expect(imported.imported[0]?.imported_from).toBe(archive);
+		expect(readFileSync(imported.imported[0]!.activity_path, "utf8")).toContain("session.completed");
+		expect(existsSync(archive)).toBe(true);
+		expect(existsSync(activity)).toBe(true);
+
+		const repeated = parseRunJson<{ imported: unknown[]; skipped: unknown[] }>(
+			run(repo, ["run", "import-legacy", "--project-root", repo, "--state-dir", "tmp"], { HOME: home }),
+		);
+		expect(repeated.imported).toHaveLength(0);
+		expect(repeated.skipped).toHaveLength(1);
+	});
+
 	test("activity path returns canonical activity JSONL path", () => {
 		const r = run(repo, ["activity", "path"]);
 		expect(r.status).toBe(0);

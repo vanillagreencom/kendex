@@ -54,7 +54,7 @@ Load these on demand; keep this file as the operational quick path.
 
 | Need | Read |
 |------|------|
-| Master-state JSON, activity sidecar, registry shape, `readTrackedEntries` / `writeTrackedEntry` contract | [`SCHEMA.md`](./SCHEMA.md) |
+| Master-state JSON, durable run store, activity sidecar, registry shape, `readTrackedEntries` / `writeTrackedEntry` contract | [`SCHEMA.md`](./SCHEMA.md) |
 | Plan file format and examples | [`PLAN-FILE.md`](./PLAN-FILE.md) |
 | Full scripts table, script arguments, Pi bg-task exit, Pi activity broker, activity sidecar, `daemon-exited` details | [`SCRIPTS.md`](./SCRIPTS.md) |
 | Full `prompt-classify` tag catalog, including daemon/event-only tags | [`PROMPT-TAGS.md`](./PROMPT-TAGS.md) |
@@ -124,6 +124,19 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
 | `status` | — | inline | Print current pane registry + state machine snapshot from `<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
+
+### Run storage helpers
+
+Durable run commands are read/write state helpers only. They do not start dashboard UI, spawn panes, or change lane lifecycle beyond active-pointer metadata.
+
+| Command | Arguments | Script | Notes |
+|---------|-----------|--------|-------|
+| `state run create` | `--project-root <path> --tmux-session <name>` | `flightdeck-state run create` | Creates a durable run under `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/`, writes `metadata.json`, `state.json`, `activity.jsonl`, and sets `active-run.json`. |
+| `state run active` | `[--project-root <path>]` | `flightdeck-state run active` | Prints the active pointer plus run metadata as JSON, or `null` if none exists. |
+| `state run list` | `[--project-root <path>] [--json]` | `flightdeck-state run list` | Lists known runs newest-first; use `--json` for machine output. |
+| `state run show` | `<run-id> [--snapshot <timestamp>] [--project-root <path>]` | `flightdeck-state run show` | Prints run metadata, state, activity path, and snapshot names as JSON. |
+| `state run terminate` | `<run-id> [--project-root <path>]` | `flightdeck-state run terminate` | Marks run metadata/state terminated, writes a final snapshot, and clears `active-run.json` when it points at that run. |
+| `state run import-legacy` | `[--project-root <path>] [--state-dir <dir>]` | `flightdeck-state run import-legacy` | Imports `flightdeck-state-*.json.archive` files into durable run storage without deleting legacy files. |
 
 ## Skill Rules
 
