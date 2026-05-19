@@ -220,6 +220,47 @@ function dirtyStatus(root: string, ahead = 0, behind = 0): DirtyStatusResult {
 	return { ok: true, paths };
 }
 
+type PathListResult =
+	| { ok: true; paths: string[] }
+	| { ok: false; result: RepoMainSyncResult };
+
+function parseNulPaths(stdout: string): string[] {
+	return stdout.split("\0").filter((path) => path.length > 0);
+}
+
+function incomingChangedPaths(root: string, localRef: string, remoteRef: string, ahead = 0, behind = 0): PathListResult {
+	const r = runGit(root, ["diff", "--name-only", "-z", "--diff-filter=ACMRT", `${localRef}..${remoteRef}`]);
+	if (!ok(r)) return { ok: false, result: failGit("incoming-paths-failed", r, [r.command], ahead, behind) };
+	return { ok: true, paths: parseNulPaths(r.stdout) };
+}
+
+function ignoredUntrackedPaths(root: string, ahead = 0, behind = 0): PathListResult {
+	const r = runGit(root, ["ls-files", "-z", "-o", "-i", "--exclude-standard"]);
+	if (!ok(r)) return { ok: false, result: failGit("ignored-paths-failed", r, [r.command], ahead, behind) };
+	return { ok: true, paths: parseNulPaths(r.stdout) };
+}
+
+function pathsCollide(a: string, b: string): boolean {
+	return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+function collidingIgnoredPaths(incomingPaths: string[], ignoredPaths: string[]): string[] {
+	const collisions = new Set<string>();
+	for (const ignored of ignoredPaths) {
+		if (incomingPaths.some((incoming) => pathsCollide(incoming, ignored))) collisions.add(ignored);
+	}
+	return [...collisions].sort();
+}
+
+function ignoredFileCollisions(root: string, localRef: string, remoteRef: string, ahead: number, behind: number): PathListResult {
+	const incoming = incomingChangedPaths(root, localRef, remoteRef, ahead, behind);
+	if (!incoming.ok) return incoming;
+	if (incoming.paths.length === 0) return { ok: true, paths: [] };
+	const ignored = ignoredUntrackedPaths(root, ahead, behind);
+	if (!ignored.ok) return ignored;
+	return { ok: true, paths: collidingIgnoredPaths(incoming.paths, ignored.paths) };
+}
+
 type RemoteBranchResult =
 	| { ok: true }
 	| { missing: true; ok: false }
@@ -272,6 +313,16 @@ function commandsForDirty(root: string, remote: string, branch: string): string[
 		`git -C ${shellQuote(root)} status --short`,
 		"commit dirty work, move/copy it aside intentionally, or rerun later after the checkout is clean",
 		"do not delete or discard dirty paths just to make repo sync pass",
+		suggestedRerun(root, remote, branch),
+	];
+}
+
+function commandsForCollision(root: string, localRef: string, remoteRef: string, remote: string, branch: string): string[] {
+	return [
+		`git -C ${shellQuote(root)} diff --name-only ${shellQuote(`${localRef}..${remoteRef}`)}`,
+		`git -C ${shellQuote(root)} ls-files -o -i --exclude-standard`,
+		"commit work, move/copy colliding ignored files aside intentionally, or rerun later after the checkout is safe",
+		"do not delete or discard ignored/untracked files just to make repo sync pass",
 		suggestedRerun(root, remote, branch),
 	];
 }
@@ -356,6 +407,11 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 	if (!currentResult.ok) return { projectRoot: root, result: currentResult.result };
 	const current = currentResult.branch;
 	if (current === opts.branch) {
+		const collisions = ignoredFileCollisions(root, localRef, remoteRef, counts.ahead, counts.behind);
+		if (!collisions.ok) return { projectRoot: root, result: collisions.result };
+		if (collisions.paths.length > 0) {
+			return { projectRoot: root, result: blocked("ignored-file-collision", commandsForCollision(root, localRef, remoteRef, opts.remote, opts.branch), counts.ahead, counts.behind, collisions.paths) };
+		}
 		const merge = runGit(root, ["merge", "--ff-only", remoteRef]);
 		if (!ok(merge)) return { projectRoot: root, result: failGit("fast-forward-failed", merge, commandsForDirty(root, opts.remote, opts.branch), counts.ahead, counts.behind) };
 	} else {

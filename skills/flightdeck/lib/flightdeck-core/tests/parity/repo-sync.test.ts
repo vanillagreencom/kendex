@@ -204,6 +204,28 @@ describe("flightdeck-repo-sync main", () => {
 		expect(readFileSync(join(fixture.clone, "remote.txt"), "utf8")).toBe("remote\n");
 	});
 
+	test("ignored file collision blocks before checked-out main fast-forward", () => {
+		if (!fixture) throw new Error("fixture missing");
+		const ignoredPath = join(fixture.clone, "ignored.txt");
+		writeFileSync(join(fixture.clone, ".git/info/exclude"), "\nignored.txt\n", { flag: "a" });
+		writeFileSync(ignoredPath, "local ignored work\n", "utf8");
+		expect(git(fixture.clone, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+		const before = rev(fixture.clone, "main");
+		pushSeed("ignored.txt", "remote tracked\n", "track ignored path");
+		const result = runSync();
+		expect(result.status).toBe(0);
+		expect(result.json.status).toBe("blocked");
+		expect(result.json.reason).toBe("ignored-file-collision");
+		expect(result.json.ahead).toBe(0);
+		expect(result.json.behind).toBe(1);
+		expect(result.json.dirty_paths).toContain("ignored.txt");
+		expect(result.json.commands_suggested.join("\n")).toContain("ls-files -o -i --exclude-standard");
+		expect(result.json.commands_suggested.join("\n")).toContain("do not delete or discard ignored/untracked files");
+		expect(readFileSync(ignoredPath, "utf8")).toBe("local ignored work\n");
+		expect(rev(fixture.clone, "main")).toBe(before);
+		expect(rev(fixture.clone, "origin/main")).not.toBe(before);
+	});
+
 	test("clean non-main checkout fast-forwards local main ref without switching", () => {
 		if (!fixture) throw new Error("fixture missing");
 		git(fixture.clone, ["switch", "-q", "-c", "feature"]);
