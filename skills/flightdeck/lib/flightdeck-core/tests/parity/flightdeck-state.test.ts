@@ -7,11 +7,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveProjectRoot } from "../../src/shared/project.ts";
 import { entryIdForIssue, readTrackedEntries, writeTrackedEntry } from "../../src/state/tracked-entry.ts";
 import type { TrackedEntry } from "../../src/state/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
+const PROJECT_ROOT = resolveProjectRoot(resolve(HERE, "../../../../../.."));
 const SESSION = "PARITY";
 
 function makeRepo(): string {
@@ -103,13 +105,14 @@ function sampleTrackedEntry(): TrackedEntry {
 	};
 }
 
-function samplePlanEntry(): TrackedEntry {
+function samplePlanEntry(projectRoot = PROJECT_ROOT): TrackedEntry {
+	const briefPath = join(projectRoot, "tmp", "plan-briefs", "plan", "item-one.md");
 	return {
-		cwd: "/repo/trees/flightdeck-plan-item-one",
+		cwd: join(projectRoot, "trees", "flightdeck-plan-item-one"),
 		decisions_log: [],
 		domain: {
 			plan_item: {
-				brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md",
+				brief_artifact_path: briefPath,
 				brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				depends_on: ["setup-foundation"],
 				item_id: "item-one",
@@ -117,11 +120,11 @@ function samplePlanEntry(): TrackedEntry {
 				merge_commit: null,
 				omitted_context: ["Pre-execution context"],
 				parse_mode: "phase-style",
-				plan_path: "/repo/docs/plans/plan.md",
+				plan_path: join(projectRoot, "docs", "plans", "plan.md"),
 				plan_snapshot_sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				plan_title: "Plan title",
 				pr_number: null,
-				worktree: "/repo/trees/flightdeck-plan-item-one",
+				worktree: join(projectRoot, "trees", "flightdeck-plan-item-one"),
 			},
 		},
 		harness: "pi",
@@ -267,25 +270,25 @@ describe("flightdeck-state CLI", () => {
 	});
 
 	test("write-entry accepts plan item domain entries", () => {
-		const entry = samplePlanEntry();
-		expect(() => writeTrackedEntry({}, entry.id, entry)).not.toThrow();
+		expect(() => writeTrackedEntry({}, samplePlanEntry().id, samplePlanEntry())).not.toThrow();
+		const entry = samplePlanEntry(repo);
 		run(repo, ["init"]);
 		const write = run(repo, ["write-entry", entry.id, JSON.stringify(entry)]);
 		expect(write.status).toBe(0);
 		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
 		expect(tracked[entry.id]?.domain?.plan_item).toMatchObject({
-			brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md",
+			brief_artifact_path: join(repo, "tmp", "plan-briefs", "plan", "item-one.md"),
 			brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			depends_on: ["setup-foundation"],
 			item_id: "item-one",
 			merge_commit: null,
 			omitted_context: ["Pre-execution context"],
 			parse_mode: "phase-style",
-			plan_path: "/repo/docs/plans/plan.md",
+			plan_path: join(repo, "docs", "plans", "plan.md"),
 			plan_snapshot_sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			plan_title: "Plan title",
 			pr_number: null,
-			worktree: "/repo/trees/flightdeck-plan-item-one",
+			worktree: join(repo, "trees", "flightdeck-plan-item-one"),
 		});
 	});
 
@@ -297,17 +300,19 @@ describe("flightdeck-state CLI", () => {
 		expect(() => writeTrackedEntry({}, plan.id, { ...plan, domain: { github_issue: github, plan_item: plan.domain!.plan_item! } })).toThrow(/mutually exclusive/);
 
 		run(repo, ["init"]);
-		const withLinear = run(repo, ["write-entry", plan.id, JSON.stringify({ ...plan, domain: { issue: linear, plan_item: plan.domain!.plan_item! } })]);
+		const cliPlan = samplePlanEntry(repo);
+		const withLinear = run(repo, ["write-entry", cliPlan.id, JSON.stringify({ ...cliPlan, domain: { issue: linear, plan_item: cliPlan.domain!.plan_item! } })]);
 		expect(withLinear.status).toBe(2);
 		expect(withLinear.stderr).toContain("mutually exclusive");
-		const withGithub = run(repo, ["write-entry", plan.id, JSON.stringify({ ...plan, domain: { github_issue: github, plan_item: plan.domain!.plan_item! } })]);
+		const withGithub = run(repo, ["write-entry", cliPlan.id, JSON.stringify({ ...cliPlan, domain: { github_issue: github, plan_item: cliPlan.domain!.plan_item! } })]);
 		expect(withGithub.status).toBe(2);
 		expect(withGithub.stderr).toContain("mutually exclusive");
 	});
 
 	test("write-entry rejects malformed plan item fields", () => {
-		const entry = samplePlanEntry();
-		expect(() => writeTrackedEntry({}, entry.id, { ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, depends_on: ["bad dep"] } } })).toThrow(/domain.plan_item.depends_on/);
+		const localEntry = samplePlanEntry();
+		expect(() => writeTrackedEntry({}, localEntry.id, { ...localEntry, domain: { plan_item: { ...localEntry.domain!.plan_item!, depends_on: ["bad dep"] } } })).toThrow(/domain.plan_item.depends_on/);
+		const entry = samplePlanEntry(repo);
 		run(repo, ["init"]);
 		const missingMergeCommit = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, merge_commit: undefined } } })]);
 		expect(missingMergeCommit.status).toBe(2);
@@ -321,35 +326,49 @@ describe("flightdeck-state CLI", () => {
 		const relativeBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "tmp/plan-briefs/plan/item-one.md" } } })]);
 		expect(relativeBrief.status).toBe(2);
 		expect(relativeBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be an absolute path under a state-owned plan-briefs directory");
-		const traversalBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/../item-one.md" } } })]);
+		const fakeOutsideWithPlanBriefs = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/plan-briefs/plan/item-one.md" } } })]);
+		expect(fakeOutsideWithPlanBriefs.status).toBe(2);
+		expect(fakeOutsideWithPlanBriefs.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under state-owned plan-briefs root");
+		const missingUnderRoot = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(repo, "tmp", "plan-briefs", "missing", "item-one.md") } } })]);
+		expect(missingUnderRoot.status).toBe(0);
+		const traversalBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(repo, "tmp", "plan-briefs")}/../item-one.md` } } })]);
 		expect(traversalBrief.status).toBe(2);
 		expect(traversalBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be normalized with no traversal segments");
 		const outOfStateBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/item-one.md" } } })]);
 		expect(outOfStateBrief.status).toBe(2);
-		expect(outOfStateBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under a state-owned plan-briefs directory");
-		const wrongFilename = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/plan/other.md" } } })]);
+		expect(outOfStateBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under state-owned plan-briefs root");
+		const wrongFilename = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(repo, "tmp", "plan-briefs", "plan", "other.md") } } })]);
 		expect(wrongFilename.status).toBe(2);
 		expect(wrongFilename.stderr).toContain("invalid domain.plan_item.brief_artifact_path: filename must be item-one.md");
-		const controlCharBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md\u0000" } } })]);
+		const controlCharBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(repo, "tmp", "plan-briefs", "plan", "item-one.md")}\u0000` } } })]);
 		expect(controlCharBrief.status).toBe(2);
 		expect(controlCharBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not contain control characters");
 		const missingSnapshotHash = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, plan_snapshot_sha256: undefined } } })]);
 		expect(missingSnapshotHash.status).toBe(2);
 		expect(missingSnapshotHash.stderr).toContain("invalid domain.plan_item.plan_snapshot_sha256: required when brief_artifact_path is present");
 
-		const outside = mkdtempSync(join(repo, "outside-"));
 		const symlinkRoot = join(repo, "tmp", "plan-briefs");
+		mkdirSync(symlinkRoot, { recursive: true });
+		const symlinkPlanOutside = mkdtempSync(join(repo, "plan-outside-"));
+		const symlinkPlanDir = join(symlinkRoot, "evil-plan");
+		symlinkSync(symlinkPlanOutside, symlinkPlanDir, "dir");
+		const missingViaSymlink = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(symlinkPlanDir, "missing", "item-one.md") } } })]);
+		expect(missingViaSymlink.status).toBe(2);
+		expect(missingViaSymlink.stderr).toContain("invalid domain.plan_item.brief_artifact_path: parent directory escapes state-owned plan-briefs root");
+		rmSync(symlinkPlanDir, { force: true, recursive: true });
+
+		const outside = mkdtempSync(join(repo, "outside-"));
 		rmSync(symlinkRoot, { force: true, recursive: true });
 		symlinkSync(outside, symlinkRoot, "dir");
 		const symlinkEscapePath = join(symlinkRoot, "plan", "item-one.md");
 		const symlinkEscape = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: symlinkEscapePath } } })]);
 		expect(symlinkEscape.status).toBe(2);
-		expect(symlinkEscape.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not traverse symlinks");
+		expect(symlinkEscape.stderr).toContain("invalid domain.plan_item.brief_artifact_path: plan-briefs root must not be a symlink");
 	});
 
 	test("raw set rejects adding plan_item beside Linear issue domain", () => {
 		const entry = sampleTrackedEntry();
-		const plan = samplePlanEntry().domain!.plan_item!;
+		const plan = samplePlanEntry(repo).domain!.plan_item!;
 		run(repo, ["init"]);
 		expect(run(repo, ["write-entry", entry.id, JSON.stringify(entry)]).status).toBe(0);
 		const r = run(repo, ["set", `.entries[${JSON.stringify(entry.id)}].domain.plan_item`, JSON.stringify(plan)]);
@@ -367,7 +386,7 @@ describe("flightdeck-state CLI", () => {
 			kind: "issue",
 			state: "waiting",
 		};
-		const plan = samplePlanEntry().domain!.plan_item!;
+		const plan = samplePlanEntry(repo).domain!.plan_item!;
 		run(repo, ["init"]);
 		expect(run(repo, ["write-entry", github.id, JSON.stringify(github)]).status).toBe(0);
 		const r = run(repo, ["set", `.entries[${JSON.stringify(github.id)}].domain.plan_item`, JSON.stringify(plan)]);
@@ -379,7 +398,7 @@ describe("flightdeck-state CLI", () => {
 	});
 
 	test("raw set rejects all three domain keys at once", () => {
-		const entry = samplePlanEntry();
+		const entry = samplePlanEntry(repo);
 		const allDomains = {
 			github_issue: { merge_commit: null, number: 77, pr_number: null, url: "https://github.com/OWNER/REPO/issues/77", worktree: "/repo/trees/issue-77" },
 			issue: sampleTrackedEntry().domain!.issue!,

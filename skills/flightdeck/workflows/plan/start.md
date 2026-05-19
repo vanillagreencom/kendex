@@ -93,7 +93,7 @@ After confirmation, create one tracked entry per item. Items blocked by dependen
 Before writing entries or spawning panes, materialize immutable sanitized item brief artifacts from the already-confirmed parse result:
 
 1. Compute `plan_snapshot_sha256 = sha256:<hex>` over the frozen plan text read in § 1.
-2. Create a plan-brief artifact directory under the Flightdeck state dir, for example `<FD_STATE_DIR>/plan-briefs/<PLAN_ID_OR_HASH>/`.
+2. Create a plan-brief artifact directory under the canonical Flightdeck state-owned root, for example `<project-root>/<FLIGHTDECK_STATE_DIR or tmp>/plan-briefs/<PLAN_ID_OR_HASH>/`. Do not use attacker-controlled absolute paths that merely contain a `plan-briefs` segment.
 3. For every item, write the final sanitized item brief content (safe shared context + item content, with `Worktree` / `Depends on` controls removed and omitted orchestration context excluded) to `<ARTIFACT_DIR>/<ITEM_ID>.md` atomically.
 4. Compute `brief_sha256 = sha256:<hex>` for each artifact and store `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` in `domain.plan_item`.
 5. If any artifact write/hash fails, set `paused_for_user = {entry_id:"plan", reason:"plan-brief-artifact-failed", prompt_text:"<ITEM_ID>: <ERROR>"}` and stop before any tracked-entry, worktree, or pane mutation.

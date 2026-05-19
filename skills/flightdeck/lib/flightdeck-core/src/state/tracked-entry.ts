@@ -3,8 +3,9 @@ import type {
 	TrackedEntry,
 	TrackedEntryLaunch,
 } from "./types.ts";
-import { lstatSync, realpathSync } from "node:fs";
-import { basename, isAbsolute, normalize, sep } from "node:path";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, normalize, relative, resolve, sep } from "node:path";
+import { loadDotEnvIntoProcess, resolveProjectRoot } from "../shared/project.ts";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
@@ -121,6 +122,42 @@ function validateOptionalNonEmptyString(value: unknown, label: string): void {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string or null`);
 }
 
+function expectedPlanBriefRoot(): string {
+	const projectRoot = resolveProjectRoot();
+	loadDotEnvIntoProcess(projectRoot);
+	const stateDir = process.env.FLIGHTDECK_STATE_DIR?.trim() || "tmp";
+	return resolve(projectRoot, stateDir, "plan-briefs");
+}
+
+function isInside(root: string, candidate: string): boolean {
+	const rel = relative(root, candidate);
+	return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function assertNoSymlinkEscape(root: string, artifactPath: string, label: string): void {
+	if (!existsSync(root)) return;
+	if (lstatSync(root).isSymbolicLink()) throw new Error(`invalid ${label}: plan-briefs root must not be a symlink`);
+	const rootReal = realpathSync(root);
+	let existingAncestor = dirname(artifactPath);
+	while (!existsSync(existingAncestor) && existingAncestor !== root && isInside(root, existingAncestor)) {
+		const next = dirname(existingAncestor);
+		if (next === existingAncestor) break;
+		existingAncestor = next;
+	}
+	if (existsSync(existingAncestor)) {
+		const ancestorReal = realpathSync(existingAncestor);
+		if (!isInside(rootReal, ancestorReal)) throw new Error(`invalid ${label}: parent directory escapes state-owned plan-briefs root`);
+	}
+	if (existsSync(dirname(artifactPath))) {
+		const parentReal = realpathSync(dirname(artifactPath));
+		if (!isInside(rootReal, parentReal)) throw new Error(`invalid ${label}: parent directory escapes state-owned plan-briefs root`);
+	}
+	if (existsSync(artifactPath)) {
+		const artifactReal = realpathSync(artifactPath);
+		if (!isInside(rootReal, artifactReal)) throw new Error(`invalid ${label}: must not escape via symlink or alias`);
+	}
+}
+
 function validateBriefArtifactPath(value: unknown, itemId: string, label: string): void {
 	if (value === undefined || value === null) return;
 	validateOptionalNonEmptyString(value, label);
@@ -128,27 +165,12 @@ function validateBriefArtifactPath(value: unknown, itemId: string, label: string
 	if (/\p{Cc}/u.test(path)) throw new Error(`invalid ${label}: must not contain control characters`);
 	if (!isAbsolute(path)) throw new Error(`invalid ${label}: must be an absolute path under a state-owned plan-briefs directory`);
 	if (normalize(path) !== path) throw new Error(`invalid ${label}: must be normalized with no traversal segments`);
-	const parts = path.split(sep).filter(Boolean);
-	if (!parts.includes("plan-briefs")) throw new Error(`invalid ${label}: must be under a state-owned plan-briefs directory`);
+	const root = expectedPlanBriefRoot();
+	if (!isInside(root, path)) throw new Error(`invalid ${label}: must be under state-owned plan-briefs root ${root}`);
+	const rootRelative = relative(root, path).split(sep).filter(Boolean);
+	if (rootRelative.length < 2) throw new Error(`invalid ${label}: must include a plan namespace under the state-owned plan-briefs root`);
 	if (basename(path) !== `${itemId}.md`) throw new Error(`invalid ${label}: filename must be ${itemId}.md`);
-	try {
-		let cursor = path;
-		while (cursor && cursor !== sep) {
-			try {
-				if (lstatSync(cursor).isSymbolicLink()) throw new Error(`invalid ${label}: must not traverse symlinks`);
-			} catch (error) {
-				if (error instanceof Error && error.message.includes("must not traverse symlinks")) throw error;
-			}
-			const next = normalize(`${cursor}${sep}..`);
-			if (next === cursor) break;
-			cursor = next;
-		}
-		const real = realpathSync(path);
-		if (real !== path) throw new Error(`invalid ${label}: must not escape via symlink or alias`);
-	} catch (error) {
-		if (error instanceof Error && error.message.startsWith(`invalid ${label}:`)) throw error;
-		// Missing future artifacts are allowed at pure state-validation time; spawn paths verify existence + hash before use.
-	}
+	assertNoSymlinkEscape(root, path, label);
 }
 
 function validateOptionalSha256(value: unknown, label: string): void {
