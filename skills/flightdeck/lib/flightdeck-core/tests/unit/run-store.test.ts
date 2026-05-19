@@ -12,6 +12,7 @@ import {
 	legacyStateDir,
 	legacyStatePath,
 	listRuns,
+	loadProjectIndex,
 	readActiveRun,
 	resolveProjectIdentity,
 	resolveProjectRunPaths,
@@ -123,6 +124,36 @@ describe("Flightdeck durable run store", () => {
 		expect(() => listRuns(repo)).toThrow(new RegExp(created.paths.metadata_json.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	});
 
+	test("durable JSON null and non-object shapes fail loud instead of acting missing", () => {
+		const activeCase = createRun(repo, SESSION);
+		const projectPaths = resolveProjectRunPaths(activeCase.project);
+
+		writeFileSync(projectPaths.active_run_json, "null", "utf8");
+		expect(() => readActiveRun(repo)).toThrow(/active run pointer.*expected object/);
+
+		const metadataCase = createRun(repo, "META");
+		writeFileSync(metadataCase.paths.metadata_json, "null", "utf8");
+		expect(() => listRuns(repo)).toThrow(/run metadata.*expected object/);
+
+		rmSync(metadataCase.paths.run_dir, { force: true, recursive: true });
+		const stateCase = createRun(repo, "STATE");
+		writeFileSync(stateCase.paths.state_json, "[]", "utf8");
+		expect(() => showRun(repo, stateCase.metadata.run_id)).toThrow(/run state.*expected object/);
+		expect(() => terminateRun(repo, stateCase.metadata.run_id)).toThrow(/run state.*expected object/);
+
+		writeFileSync(projectPaths.project_json, "42", "utf8");
+		expect(() => loadProjectIndex(repo)).toThrow(/project index.*expected object/);
+	});
+
+	test("create rejects non-object live state instead of synthesizing empty state", () => {
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		const liveState = join(stateDir, `flightdeck-state-${SESSION}.json`);
+		writeFileSync(liveState, "null", "utf8");
+		expect(() => createRun(repo, SESSION)).toThrow(new RegExp(liveState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		expect(readFileSync(liveState, "utf8")).toBe("null");
+	});
+
 	test("create honors FLIGHTDECK_STATE_DIR from .env.local", () => {
 		writeFileSync(join(repo, ".env.local"), "FLIGHTDECK_STATE_DIR=fd-state\n", "utf8");
 		const configuredStateDir = join(repo, "fd-state");
@@ -188,6 +219,9 @@ describe("Flightdeck durable run store", () => {
 		expect(result.imported).toHaveLength(1);
 		expect(result.imported[0]?.tmux_session).toBe("FALLBACK");
 		expect(readFileSync(result.imported[0]!.activity_path, "utf8")).toContain("fallback");
+		const shown = showRun(repo, result.imported[0]!.run_id) as { state: { session_id?: string } };
+		expect(shown.state.session_id).toBe("FALLBACK");
+		expect(JSON.parse(readFileSync(result.imported[0]!.state_path, "utf8")).session_id).toBe("FALLBACK");
 		const repeat = importLegacyArchives(repo, "tmp");
 		expect(repeat.imported).toHaveLength(0);
 		expect(repeat.skipped.map((item) => item.run_id)).toEqual([result.imported[0]!.run_id]);

@@ -627,10 +627,15 @@ fi
 		const activity = join(stateDir, "flightdeck-activity-DIRECT-2026-05-19T000000Z.jsonl.archive");
 		writeFileSync(activity, '{"type":"session.completed"}\n', "utf8");
 		writeFileSync(archive, JSON.stringify({ entries: {}, terminated: true }), "utf8");
-		const imported = parseRunJson<{ imported: Array<{ tmux_session: string }>; skipped: unknown[] }>(
+		const imported = parseRunJson<{ imported: Array<{ run_id: string; tmux_session: string }>; skipped: unknown[] }>(
 			runDirect(repo, ["run", "import-legacy", "--project-root", repo, "--state-dir", "tmp"], { HOME: home }),
 		);
 		expect(imported.imported.map((item) => item.tmux_session)).toContain("DIRECT");
+		const importedRun = imported.imported.find((item) => item.tmux_session === "DIRECT")!;
+		const importedShown = parseRunJson<{ state: { session_id: string } }>(
+			runDirect(repo, ["run", "show", importedRun.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(importedShown.state.session_id).toBe("DIRECT");
 	});
 
 	test("activity path returns canonical activity JSONL path", () => {

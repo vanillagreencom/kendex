@@ -136,6 +136,9 @@ interface LegacyArchiveName {
 	terminatedAt: string;
 }
 
+const JSON_MISSING = Symbol("json-missing");
+type JsonMissing = typeof JSON_MISSING;
+
 function nowIso(): string {
 	return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -223,7 +226,8 @@ export function createRun(projectRoot: string, tmuxSession: string, stateDir?: s
 		mkdirSync(paths.snapshots_dir, { recursive: true });
 		const liveState = join(legacyStateDirForRoot(project.root_path, stateDir), `flightdeck-state-${session}.json`);
 		const liveActivity = activityPathForSession(session, legacyStateDirForRoot(project.root_path, stateDir));
-		const state = readJsonFile<Record<string, unknown>>(liveState) ?? initialRunState(session, timestamp, paths.activity_jsonl);
+		const liveStateJson = readStateObject(liveState, "live state");
+		const state = liveStateJson === JSON_MISSING ? initialRunState(session, timestamp, paths.activity_jsonl) : liveStateJson;
 		state.activity_path = paths.activity_jsonl;
 		writeJsonAtomic(paths.state_json, state);
 		if (existsSync(liveActivity)) copyFileAtomic(liveActivity, paths.activity_jsonl);
@@ -265,10 +269,11 @@ export function readActiveRun(projectRoot: string): { project: ProjectIndex; act
 	return withProjectLock(projectRoot, (ctx) => {
 		const loaded = loadProjectIndexLocked(ctx);
 		if (!loaded) return null;
-		const active = readJsonFile<ActiveRunPointer>(loaded.paths.active_run_json);
-		if (!active) return null;
+		const active = readActivePointer(loaded.paths.active_run_json);
+		if (active === JSON_MISSING) return null;
 		const runPaths = resolveRunPaths(loaded.paths, active.run_id);
-		return { active, metadata: readJsonFile<RunMetadata>(runPaths.metadata_json), project: loaded.project };
+		const metadata = readRunMetadata(runPaths.metadata_json);
+		return { active, metadata: metadata === JSON_MISSING ? null : metadata, project: loaded.project };
 	});
 }
 
@@ -279,8 +284,8 @@ export function listRuns(projectRoot: string): { project: ProjectIndex; runs: Ru
 		if (existsSync(loaded.paths.runs_dir)) {
 			for (const entry of readdirSync(loaded.paths.runs_dir)) {
 				if (!isSafeBasename(entry)) continue;
-				const metadata = readJsonFile<RunMetadata>(join(loaded.paths.runs_dir, entry, "metadata.json"));
-				if (metadata) runs.push(metadata);
+				const metadata = readRunMetadata(join(loaded.paths.runs_dir, entry, "metadata.json"));
+				if (metadata !== JSON_MISSING) runs.push(metadata);
 			}
 		}
 		runs.sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
@@ -293,17 +298,19 @@ export function showRun(projectRoot: string, runId: string, snapshot?: string): 
 		const loaded = loadProjectIndexLocked(ctx);
 		if (!loaded) throw new Error("project has no Flightdeck run store");
 		const paths = resolveRunPaths(loaded.paths, safeRunId(runId));
-		const metadata = readJsonFile<RunMetadata>(paths.metadata_json);
-		if (!metadata) throw new Error(`run not found: ${runId}`);
+		const metadata = readRunMetadata(paths.metadata_json);
+		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 		const snapshotName = snapshot ? safeSnapshotName(snapshot) : null;
 		const statePath = snapshotName ? safeSnapshotPath(paths.snapshots_dir, snapshotName) : paths.state_json;
 		if (!existsSync(statePath)) throw new Error(snapshotName ? `snapshot not found: ${snapshot}` : `state not found for run: ${runId}`);
+		const state = readStateObject(statePath, "run state");
+		if (state === JSON_MISSING) throw new Error(snapshotName ? `snapshot not found: ${snapshot}` : `state not found for run: ${runId}`);
 		return {
 			activity_path: metadata.activity_path,
 			metadata,
 			snapshot: snapshotName,
 			snapshots: listSnapshotFiles(paths.snapshots_dir),
-			state: readJsonFile<unknown>(statePath),
+			state,
 		};
 	});
 }
@@ -313,8 +320,8 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 		const loaded = loadProjectIndexLocked(ctx);
 		if (!loaded) throw new Error("project has no Flightdeck run store");
 		const paths = resolveRunPaths(loaded.paths, safeRunId(runId));
-		const metadata = readJsonFile<RunMetadata>(paths.metadata_json);
-		if (!metadata) throw new Error(`run not found: ${runId}`);
+		const metadata = readRunMetadata(paths.metadata_json);
+		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 		const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 		const nextMetadata: RunMetadata = {
 			...metadata,
@@ -323,7 +330,8 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 			terminated_at: timestamp.iso,
 		};
 		mkdirSync(paths.snapshots_dir, { recursive: true });
-		const state = readJsonFile<Record<string, unknown>>(paths.state_json) ?? initialRunState(metadata.tmux_session, metadata.started_at, paths.activity_jsonl);
+		const state = readStateObject(paths.state_json, "run state");
+		if (state === JSON_MISSING) throw new Error(`state not found for run: ${runId}`);
 		state.terminated = true;
 		state.terminated_at = timestamp.iso;
 		writeJsonAtomic(paths.state_json, state);
@@ -335,9 +343,9 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 			copyFileAtomic(paths.activity_jsonl, activitySnapshotPath);
 		}
 		writeJsonAtomic(paths.metadata_json, nextMetadata);
-		const active = readJsonFile<ActiveRunPointer>(loaded.paths.active_run_json);
+		const active = readActivePointer(loaded.paths.active_run_json);
 		let activeCleared = false;
-		if (active?.run_id === metadata.run_id) {
+		if (active !== JSON_MISSING && active.run_id === metadata.run_id) {
 			rmSync(loaded.paths.active_run_json, { force: true });
 			activeCleared = true;
 		}
@@ -373,14 +381,14 @@ export function importLegacyArchives(projectRoot: string, stateDir?: string): Le
 			const startedAt = typeof state.started_at === "string" && state.started_at ? state.started_at : fileMtimeIso(archivePath);
 			const runId = importedRunId(project.project_id, session, terminatedAt.iso, entry);
 			const paths = resolveRunPaths(projectPaths, runId);
-			const existing = readJsonFile<RunMetadata>(paths.metadata_json);
-			if (existing) {
+			const existing = readRunMetadata(paths.metadata_json);
+			if (existing !== JSON_MISSING) {
 				skipped.push(existing);
 				continue;
 			}
 			mkdirSync(paths.snapshots_dir, { recursive: true });
 			const legacyActivity = resolveLegacyActivityArchive(state, archivePath, session, terminatedAt.basename, diagnostics);
-			const normalizedState = { ...state, activity_path: paths.activity_jsonl, activity_archive_path: legacyActivity ? paths.activity_jsonl : null };
+			const normalizedState = { ...state, activity_path: paths.activity_jsonl, activity_archive_path: legacyActivity ? paths.activity_jsonl : null, session_id: session };
 			writeJsonAtomic(paths.state_json, normalizedState);
 			writeJsonAtomic(safeSnapshotPath(paths.snapshots_dir, `${terminatedAt.basename}.json`), normalizedState);
 			if (legacyActivity) {
@@ -424,8 +432,8 @@ function withProjectLock<T>(projectRoot: string, fn: (ctx: ProjectLockContext) =
 
 function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso()): { project: ProjectIndex; paths: ProjectRunPaths } {
 	mkdirSync(ctx.paths.runs_dir, { recursive: true });
-	const existing = readJsonFile<ProjectIndex>(ctx.paths.project_json);
-	const createdAt = existing?.created_at && typeof existing.created_at === "string" ? existing.created_at : timestamp;
+	const existing = readProjectIndex(ctx.paths.project_json);
+	const createdAt = existing !== JSON_MISSING ? existing.created_at : timestamp;
 	const project: ProjectIndex = {
 		created_at: createdAt,
 		id_source: ctx.identity.id_source,
@@ -442,8 +450,8 @@ function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso())
 }
 
 function loadProjectIndexLocked(ctx: ProjectLockContext): { project: ProjectIndex; paths: ProjectRunPaths } | null {
-	const project = readJsonFile<ProjectIndex>(ctx.paths.project_json);
-	if (!project) return null;
+	const project = readProjectIndex(ctx.paths.project_json);
+	if (project === JSON_MISSING) return null;
 	return { paths: ctx.paths, project };
 }
 
@@ -637,7 +645,8 @@ function readLegacyArchiveJson(path: string, diagnostics: string[]): Record<stri
 		if (lst.isSymbolicLink()) throw new Error("symlinks are not allowed");
 		const st = statSync(path);
 		if (!st.isFile()) throw new Error("not a regular file");
-		return readJsonFile<Record<string, unknown>>(path);
+		const archive = readJsonObject(path, "legacy state archive");
+		return archive === JSON_MISSING ? null : archive;
 	} catch (error) {
 		diagnostics.push(`skipped ${path}: ${error instanceof Error ? error.message : String(error)}`);
 		return null;
@@ -652,19 +661,117 @@ function fileMtimeIso(file: string): string {
 	}
 }
 
-function readJsonFile<T>(path: string): T | null {
+function readProjectIndex(path: string): ProjectIndex | JsonMissing {
+	const raw = readJsonObject(path, "project index");
+	if (raw === JSON_MISSING) return JSON_MISSING;
+	return {
+		created_at: expectString(raw, "created_at", path, "project index"),
+		id_source: expectEnum(raw, "id_source", path, "project index", ["git-remote+root", "root"]),
+		last_seen_at: expectString(raw, "last_seen_at", path, "project index"),
+		name: expectString(raw, "name", path, "project index"),
+		project_id: safeRunId(expectString(raw, "project_id", path, "project index")),
+		remote_url: expectNullableString(raw, "remote_url", path, "project index"),
+		root_hash: expectString(raw, "root_hash", path, "project index"),
+		root_path: expectString(raw, "root_path", path, "project index"),
+		schema_version: expectSchemaVersion(raw, path, "project index"),
+	};
+}
+
+function readActivePointer(path: string): ActiveRunPointer | JsonMissing {
+	const raw = readJsonObject(path, "active run pointer");
+	if (raw === JSON_MISSING) return JSON_MISSING;
+	return {
+		activity_path: expectString(raw, "activity_path", path, "active run pointer"),
+		project_id: safeRunId(expectString(raw, "project_id", path, "active run pointer")),
+		run_id: safeRunId(expectString(raw, "run_id", path, "active run pointer")),
+		schema_version: expectSchemaVersion(raw, path, "active run pointer"),
+		state_path: expectString(raw, "state_path", path, "active run pointer"),
+		tmux_session: safeLegacySessionName(expectString(raw, "tmux_session", path, "active run pointer")),
+		updated_at: expectString(raw, "updated_at", path, "active run pointer"),
+	};
+}
+
+function readRunMetadata(path: string): RunMetadata | JsonMissing {
+	const raw = readJsonObject(path, "run metadata");
+	if (raw === JSON_MISSING) return JSON_MISSING;
+	return {
+		activity_path: expectString(raw, "activity_path", path, "run metadata"),
+		imported: expectBoolean(raw, "imported", path, "run metadata"),
+		imported_from: expectNullableString(raw, "imported_from", path, "run metadata"),
+		last_seen_at: expectString(raw, "last_seen_at", path, "run metadata"),
+		legacy_activity_path: expectNullableString(raw, "legacy_activity_path", path, "run metadata"),
+		project_id: safeRunId(expectString(raw, "project_id", path, "run metadata")),
+		project_root: expectString(raw, "project_root", path, "run metadata"),
+		run_id: safeRunId(expectString(raw, "run_id", path, "run metadata")),
+		schema_version: expectSchemaVersion(raw, path, "run metadata"),
+		snapshots_path: expectString(raw, "snapshots_path", path, "run metadata"),
+		started_at: expectString(raw, "started_at", path, "run metadata"),
+		state_path: expectString(raw, "state_path", path, "run metadata"),
+		summary_path: expectNullableString(raw, "summary_path", path, "run metadata"),
+		terminated: expectBoolean(raw, "terminated", path, "run metadata"),
+		terminated_at: expectNullableString(raw, "terminated_at", path, "run metadata"),
+		tmux_session: safeLegacySessionName(expectString(raw, "tmux_session", path, "run metadata")),
+	};
+}
+
+function readStateObject(path: string, label: string): Record<string, unknown> | JsonMissing {
+	return readJsonObject(path, label);
+}
+
+function readJsonObject(path: string, label: string): Record<string, unknown> | JsonMissing {
+	const value = readJsonValue(path);
+	if (value === JSON_MISSING) return JSON_MISSING;
+	if (!isRecord(value)) throw new Error(`invalid ${label} JSON ${path}: expected object`);
+	return value;
+}
+
+function readJsonValue(path: string): unknown | JsonMissing {
 	let text: string;
 	try {
 		text = readFileSync(path, "utf8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return JSON_MISSING;
 		throw new Error(`failed to read JSON ${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	try {
-		return JSON.parse(text) as T;
+		return JSON.parse(text) as unknown;
 	} catch (error) {
 		throw new Error(`invalid JSON in ${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function expectSchemaVersion(raw: Record<string, unknown>, path: string, label: string): 1 {
+	if (raw.schema_version !== RUN_STORE_SCHEMA_VERSION) throw new Error(`invalid ${label} JSON ${path}: schema_version must be ${RUN_STORE_SCHEMA_VERSION}`);
+	return RUN_STORE_SCHEMA_VERSION;
+}
+
+function expectString(raw: Record<string, unknown>, field: string, path: string, label: string): string {
+	const value = raw[field];
+	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label} JSON ${path}: ${field} must be a non-empty string`);
+	return value;
+}
+
+function expectNullableString(raw: Record<string, unknown>, field: string, path: string, label: string): string | null {
+	const value = raw[field];
+	if (value === null) return null;
+	if (typeof value === "string") return value;
+	throw new Error(`invalid ${label} JSON ${path}: ${field} must be a string or null`);
+}
+
+function expectBoolean(raw: Record<string, unknown>, field: string, path: string, label: string): boolean {
+	const value = raw[field];
+	if (typeof value !== "boolean") throw new Error(`invalid ${label} JSON ${path}: ${field} must be a boolean`);
+	return value;
+}
+
+function expectEnum<T extends string>(raw: Record<string, unknown>, field: string, path: string, label: string, allowed: readonly T[]): T {
+	const value = raw[field];
+	if (typeof value !== "string" || !allowed.includes(value as T)) throw new Error(`invalid ${label} JSON ${path}: ${field} must be ${allowed.join("|")}`);
+	return value as T;
 }
 
 function writeJsonAtomic(path: string, value: unknown): void {
