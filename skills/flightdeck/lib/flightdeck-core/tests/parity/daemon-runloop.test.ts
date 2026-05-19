@@ -165,6 +165,19 @@ describe("daemon run-loop (TS)", () => {
 		expect(event.details).toMatchObject({ reason: "startup-error", error: `Error: cannot resolve inner pane '${stalePane}'`, exit_code: 2 });
 	});
 
+	test("default detached start rejects stale inner panes before spawning", () => {
+		const stalePane = tmuxNewWindow(SESSION, `fd-detached-startup-error-${Date.now()}`);
+		tmuxKillPaneFor(stalePane);
+		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+		const eventsFile = join(stateDir, `fd-daemon-events-${SESSION_KEY}.jsonl`);
+		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", stalePane]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain(`Error: cannot resolve inner pane '${stalePane}'`);
+		expect(r.stdout).not.toContain("daemon spawned pid=");
+		expect(existsSync(pidFile)).toBe(false);
+		expect(existsSync(eventsFile)).toBe(false);
+	});
+
 	test("daemon writes daemon-exited event when the master pane disappears", async () => {
 		for (const useTs of [true]) {
 			const masterPane = tmuxNewWindow(SESSION, `fd-master-gone-${Date.now()}`);

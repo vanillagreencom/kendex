@@ -58,8 +58,33 @@ function validateMasterTargetAlive(target: string): void {
 	}
 }
 
+function failDispatchValidation(message: string, code = 2): never {
+	process.stderr.write(`${message}\n`);
+	process.exit(code);
+}
+
+function validateDispatchTargets(opts: StartOpts): void {
+	const cache = new PaneCache();
+	cache.refresh();
+	const masterId = resolvePaneId(opts.masterTarget);
+	if (!masterId || !cache.alive(masterId)) {
+		failDispatchValidation(`error: master pane '${opts.masterTarget}' does not exist; pass --master "$TMUX_PANE" or run 'tmux list-panes -a'`, 4);
+	}
+	if (opts.innerHarnesses.length > 0 && opts.innerHarnesses.length !== opts.innerTargets.length) {
+		failDispatchValidation(`Error: --inner-harnesses count (${opts.innerHarnesses.length}) != --inner count (${opts.innerTargets.length})`);
+	}
+	const seen = new Set<string>();
+	for (const target of opts.innerTargets) {
+		const paneId = resolvePaneId(target);
+		if (!paneId || !cache.alive(paneId)) failDispatchValidation(`Error: cannot resolve inner pane '${target}'`);
+		if (paneId === masterId) failDispatchValidation(`Error: inner pane '${target}' resolves to master pane id ${masterId} (feedback loop)`);
+		if (seen.has(paneId)) failDispatchValidation(`Error: duplicate inner pane id ${paneId} (target '${target}' resolves to already-tracked pane)`);
+		seen.add(paneId);
+	}
+}
+
 async function dispatchSpawn(opts: StartOpts): Promise<never> {
-	validateMasterTargetAlive(opts.masterTarget);
+	validateDispatchTargets(opts);
 	const pidFile = fdPidFile(opts.stateDir, opts.sessionKey);
 	const logFile = fdLogFile(opts.stateDir, opts.sessionKey);
 	// Build child args. opts.origArgs is the post-action argv slice
