@@ -44,7 +44,7 @@ You are in **master mode**. Master supervises: it routes prompts, updates state/
 
 Generic session mode is the core path: launch/attach with `flightdeck-session`, supervise with `session-watch.md`, answer generic prompts, and summarize sessions. It skips issue selection, research/plan evaluation, `open-terminal`, merge planning, GitHub/Linear/worktree actions, and project-management flows.
 
-Issue-mode begins only after a Linear or GitHub issue command. Linear mode keeps the research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind path. GitHub mode resolves issue context with `gh`, spawns a child with a self-contained prompt through `open-terminal --tracker github`, watches PR/CI/review state, then verifies close/termination from authoritative GitHub state. Plan mode parses one markdown plan file, dry-runs the item graph for user confirmation, spawns each item through `flightdeck-session start --kind workflow` with a self-contained `tmp/brief.md`, stores metadata under `domain.plan_item`, and reuses GitHub PR safety gates without loading Linear or project-management.
+Issue-mode begins only after a Linear or GitHub issue command. Linear mode keeps the research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind path. GitHub mode resolves issue context with `gh`, spawns a child with a self-contained prompt through `open-terminal --tracker github`, watches PR/CI/review state, then verifies close/termination from authoritative GitHub state. Plan mode parses one markdown plan file in either H2 item mode or phase-style mode, rejects ambiguous H2s and item-level master-only orchestration content before preview/mutation, omits master-only shared context from child briefs, dry-runs the item graph for user confirmation, spawns each item through `flightdeck-session start --kind workflow` with a self-contained `tmp/brief.md`, stores metadata under `domain.plan_item`, and reuses GitHub PR safety gates without loading Linear or project-management.
 
 Communicate with spawned agents through native channels (`pane-respond`): OpenCode HTTP, Claude Channels MCP/JSONL, Pi bridge, Codex JSON-RPC, with tmux capture/send-keys only as fallback (see `patterns/tmux-monitoring.md`). Pause for the user only on scope creep that requires reverting agent work, force-merging against a real content conflict, issue abort, direct `main` mutation when no orchestrator pane is alive, or a novel prompt shape no rule covers. Do not re-implement orchestration gates; answer surfaced prompts and add only cross-session conflict/scope facts.
 
@@ -54,7 +54,7 @@ Load these on demand; keep this file as the operational quick path.
 
 | Need | Read |
 |------|------|
-| Master-state JSON, activity sidecar, registry shape, `readTrackedEntries` / `writeTrackedEntry` contract | [`SCHEMA.md`](./SCHEMA.md) |
+| Master-state JSON, durable run store, activity sidecar, registry shape, `readTrackedEntries` / `writeTrackedEntry` contract | [`SCHEMA.md`](./SCHEMA.md) |
 | Plan file format and examples | [`PLAN-FILE.md`](./PLAN-FILE.md) |
 | Full scripts table, script arguments, Pi bg-task exit, Pi activity broker, activity sidecar, `daemon-exited` details | [`SCRIPTS.md`](./SCRIPTS.md) |
 | Full `prompt-classify` tag catalog, including daemon/event-only tags | [`PROMPT-TAGS.md`](./PROMPT-TAGS.md) |
@@ -112,7 +112,7 @@ Entering these commands loads `github` + `worktree` only. The master parses one 
 
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
-| `plan start` | `<path>` | `workflows/plan/start.md` | Resolve and freeze a markdown plan, dry-run parse H2 work items, confirm, create plan entries, spawn dependency-free items, enter plan watch. |
+| `plan start` | `<path>` | `workflows/plan/start.md` | Resolve and freeze a markdown plan, dry-run parse H2 or phase-style work items, confirm, create plan entries, spawn dependency-free items, enter plan watch. |
 | `plan watch` | `[ITEM_ID...]` | `workflows/plan/watch.md` → `workflows/shared/session-watch.md` | Plan extension over the generic loop. Handles dependency unblocks, PR/CI/review prompts, `UNKNOWN` merge timers, and gh failure escalation. |
 | `plan close-item` | `<ITEM_ID>` | `workflows/plan/close-item.md` | Requires recorded PR plus authoritative `gh pr view` `state === MERGED` and non-null merge commit before cleanup/teardown. Pane text alone is never enough. |
 | `plan terminate` | — | `workflows/plan/terminate.md` | Summarizes plan items partitioned by `domain.plan_item`; mixed sessions also include generic, GitHub, and Linear summaries. |
@@ -124,6 +124,19 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
 | `status` | — | inline | Print current pane registry + state machine snapshot from `<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
+
+### Run storage helpers
+
+Durable run commands are read/write state helpers only. They do not start dashboard UI, spawn panes, or change lane lifecycle beyond active-pointer metadata.
+
+| Command | Arguments | Script | Notes |
+|---------|-----------|--------|-------|
+| `state run create` | `--project-root <path> --tmux-session <name> [--state-dir <dir>]` | `flightdeck-state run create` | Creates a durable run under `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/`, writes `metadata.json`, `state.json`, `activity.jsonl`, and sets `active-run.json`. Honors `FLIGHTDECK_STATE_DIR` / `.env.local` unless `--state-dir` is supplied. |
+| `state run active` | `[--project-root <path>]` | `flightdeck-state run active` | Prints the active pointer plus run metadata as JSON, or `null` if none exists. |
+| `state run list` | `[--project-root <path>] [--json]` | `flightdeck-state run list` | Lists known runs newest-first; use `--json` for machine output. |
+| `state run show` | `<run-id> [--snapshot <timestamp>] [--project-root <path>]` | `flightdeck-state run show` | Prints run metadata, state, activity path, and snapshot names as JSON. |
+| `state run terminate` | `<run-id> [--project-root <path>]` | `flightdeck-state run terminate` | Marks run metadata/state terminated, writes a final snapshot, and clears `active-run.json` when it points at that run. |
+| `state run import-legacy` | `[--project-root <path>] [--state-dir <dir>]` | `flightdeck-state run import-legacy` | Imports `flightdeck-state-*.json.archive` files into durable run storage without deleting legacy files. |
 
 ## Skill Rules
 

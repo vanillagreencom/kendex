@@ -29,6 +29,7 @@ import {
 	readSkillDocument,
 	toUpdatedSkill,
 } from "./format.js";
+import { normalizeListRows, responsiveBrowsePageSelection, responsiveBrowseWindow, sanitizePopupMaxHeight } from "./layout.js";
 import { isDeletableSkill, skillStorageTarget } from "./registry.js";
 import { settingNumber, settingOverlaySize, settingString } from "./settings.js";
 import {
@@ -48,6 +49,7 @@ import {
 	type CreateStep,
 	type CreateTextStepId,
 	type Mode,
+	type OverlaySize,
 	type SkillEntry,
 	type SkillLocation,
 	type SkillRegistry,
@@ -77,7 +79,8 @@ class SkillsManagerDialog implements Focusable {
 	private deleteReturnMode: "browse" | "preview" = "browse";
 	private generationAbortController: AbortController | undefined;
 	private generationRunId = 0;
-	private readonly listRows: number;
+	private readonly configuredListRows: number;
+	private readonly popupMaxHeight: OverlaySize;
 
 	constructor(
 		private readonly ctx: ExtensionContext,
@@ -95,7 +98,8 @@ class SkillsManagerDialog implements Focusable {
 		this.browseQuery = initialQuery;
 		this.browseInput.setValue(initialQuery);
 		this.createLocation = settingString("defaultCreateLocation", "project", ctx.cwd) === "global" ? "global" : "project";
-		this.listRows = Math.max(6, Math.floor(settingNumber("listRows", DEFAULT_LIST_ROWS, ctx.cwd)));
+		this.configuredListRows = normalizeListRows(settingNumber("listRows", DEFAULT_LIST_ROWS, ctx.cwd));
+		this.popupMaxHeight = sanitizePopupMaxHeight(settingOverlaySize("popupMaxHeight", DEFAULT_POPUP_MAX_HEIGHT, ctx.cwd));
 		this.descriptionEditor = new Editor(tui, { borderColor: (text: string) => " ".repeat(text.length), selectList: getEditorTheme(theme).selectList });
 		this.descriptionEditor.onSubmit = (text: string) => { this.submittedDescriptionValue = text; void this.advanceCreate(); };
 		this.renameInput.onSubmit = (value) => { void this.submitRename(value); };
@@ -298,8 +302,7 @@ class SkillsManagerDialog implements Focusable {
 				selectableIndex += 1;
 			}
 		}
-		const startIndex = Math.max(0, Math.min(selectedDisplayIndex - Math.floor(this.listRows / 2), Math.max(0, entries.length - this.listRows)));
-		const endIndex = Math.min(startIndex + this.listRows, entries.length);
+		const { startIndex, endIndex } = responsiveBrowseWindow(this.configuredListRows, this.tui.terminal.rows, entries.length, selectedDisplayIndex, this.popupMaxHeight);
 		selectableIndex = 0;
 		const ellipsis = this.theme.fg("dim", "...");
 		for (let i = 0; i < endIndex; i++) {
@@ -400,8 +403,8 @@ class SkillsManagerDialog implements Focusable {
 	private handleBrowseInput(data: string): void {
 		if (matchesKey(data, Key.up)) { this.selectedIndex = this.selectedIndex === 0 ? this.filteredSkills.length : this.selectedIndex - 1; return; }
 		if (matchesKey(data, Key.down)) { this.selectedIndex = this.selectedIndex === this.filteredSkills.length ? 0 : this.selectedIndex + 1; return; }
-		if (matchesKey(data, "-") || matchesKey(data, Key.pageUp)) { this.selectedIndex = Math.max(0, this.selectedIndex - this.listRows); return; }
-		if (matchesKey(data, "=") || matchesKey(data, Key.pageDown)) { this.selectedIndex = Math.min(this.filteredSkills.length, this.selectedIndex + this.listRows); return; }
+		if (matchesKey(data, "-") || matchesKey(data, Key.pageUp)) { this.selectedIndex = responsiveBrowsePageSelection(this.configuredListRows, this.tui.terminal.rows, this.selectedIndex, this.filteredSkills.length, -1, this.popupMaxHeight); return; }
+		if (matchesKey(data, "=") || matchesKey(data, Key.pageDown)) { this.selectedIndex = responsiveBrowsePageSelection(this.configuredListRows, this.tui.terminal.rows, this.selectedIndex, this.filteredSkills.length, 1, this.popupMaxHeight); return; }
 		if (matchesKey(data, Key.enter)) { if (this.selectedIndex === 0) { this.enterCreateMode(); return; } const skill = this.getSelectedSkill(); if (!skill) return; if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with alt+x", "info"); else this.done(skill); return; }
 		if (matchesKey(data, Key.tab)) { const skill = this.getSelectedSkill(); if (skill) this.openPreview(skill); return; }
 		if (matchesKey(data, Key.alt("x")) || matchesKey(data, Key.ctrl("x"))) { const skill = this.getSelectedSkill(); if (skill) void this.toggleSkill(skill); return; }
@@ -439,7 +442,7 @@ export async function showSkillsManager(ctx: ExtensionContext, registry: SkillRe
 			overlayOptions: {
 				anchor: "center",
 				width: settingOverlaySize("popupWidth", DEFAULT_POPUP_WIDTH, ctx.cwd),
-				maxHeight: settingOverlaySize("popupMaxHeight", DEFAULT_POPUP_MAX_HEIGHT, ctx.cwd),
+				maxHeight: sanitizePopupMaxHeight(settingOverlaySize("popupMaxHeight", DEFAULT_POPUP_MAX_HEIGHT, ctx.cwd)),
 			},
 		});
 	} finally {

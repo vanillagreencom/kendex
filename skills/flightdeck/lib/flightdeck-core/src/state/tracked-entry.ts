@@ -3,11 +3,15 @@ import type {
 	TrackedEntry,
 	TrackedEntryLaunch,
 } from "./types.ts";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, normalize, relative, resolve, sep } from "node:path";
+import { loadDotEnvIntoProcess, resolveProjectRoot } from "../shared/project.ts";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
 
 export interface ReadTrackedEntriesOptions {
+	strictPlanItemDomain?: boolean;
 	warn?: (message: string) => void;
 }
 
@@ -36,8 +40,12 @@ function invalidEntryIdWarning(entryKey: string, rawId: unknown): string {
 }
 
 function invalidEntryDomainWarning(entryKey: string, error: unknown): string {
+	return `Warning: ${invalidEntryDomainError(entryKey, error)}; skipping.`;
+}
+
+function invalidEntryDomainError(entryKey: string, error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
-	return `Warning: invalid .entries[${JSON.stringify(entryKey)}].domain: ${message}; skipping.`;
+	return `invalid .entries[${JSON.stringify(entryKey)}].domain: ${message}`;
 }
 
 export function validateEntryId(value: unknown, label = "entry id"): string {
@@ -64,6 +72,11 @@ function validateEntryIdOrNull(value: unknown): string | null {
 	}
 }
 
+function hasPlanItemDomain(entry: Pick<TrackedEntry, "domain">): boolean {
+	const domain = entry.domain;
+	return isRecord(domain) && domain.plan_item !== undefined && domain.plan_item !== null;
+}
+
 export function readTrackedEntries(state: FlightdeckStateLike | undefined | null, options: ReadTrackedEntriesOptions = {}): Record<string, TrackedEntry> {
 	if (!state || typeof state !== "object") return {};
 	const out: Record<string, TrackedEntry> = {};
@@ -73,6 +86,7 @@ export function readTrackedEntries(state: FlightdeckStateLike | undefined | null
 		try {
 			validateTrackedEntryDomain(entry);
 		} catch (error) {
+			if (options.strictPlanItemDomain && hasPlanItemDomain(entry)) throw new Error(invalidEntryDomainError(id, error));
 			options.warn?.(invalidEntryDomainWarning(id, error));
 			continue;
 		}
@@ -114,6 +128,129 @@ function validateOptionalString(value: unknown, label: string): void {
 	if (typeof value !== "string") throw new Error(`invalid ${label}: must be a string or null`);
 }
 
+function validateOptionalNonEmptyString(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string or null`);
+}
+
+interface PlanBriefLocation {
+	projectRoot: string;
+	stateBase: string;
+	briefRoot: string;
+}
+
+function expectedPlanBriefLocation(): PlanBriefLocation {
+	const projectRoot = resolveProjectRoot();
+	loadDotEnvIntoProcess(projectRoot);
+	const stateDir = process.env.FLIGHTDECK_STATE_DIR?.trim() || "tmp";
+	const stateBase = resolve(projectRoot, stateDir);
+	return { projectRoot, stateBase, briefRoot: resolve(stateBase, "plan-briefs") };
+}
+
+function isInside(root: string, candidate: string): boolean {
+	const rel = relative(root, candidate);
+	return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | null {
+	try {
+		return lstatSync(path);
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error) {
+			const code = (error as { code?: unknown }).code;
+			if (code === "ENOENT" || code === "ENOTDIR") return null;
+		}
+		throw error;
+	}
+}
+
+function pathChain(root: string, target: string): string[] {
+	if (!isInside(root, target)) return [];
+	const out: string[] = [];
+	let cursor = target;
+	while (isInside(root, cursor)) {
+		out.push(cursor);
+		if (cursor === root) break;
+		const next = dirname(cursor);
+		if (next === cursor) break;
+		cursor = next;
+	}
+	return out.reverse();
+}
+
+function assertNoSymlinkEscape(location: PlanBriefLocation, artifactPath: string, label: string): void {
+	const { projectRoot, stateBase, briefRoot } = location;
+	const projectRootReal = realpathSync(projectRoot);
+	for (const ancestor of pathChain(projectRoot, stateBase)) {
+		const stat = lstatIfPresent(ancestor);
+		if (!stat) continue;
+		if (ancestor !== projectRoot && stat.isSymbolicLink()) {
+			if (ancestor === stateBase) throw new Error(`invalid ${label}: state directory must not be a symlink`);
+			throw new Error(`invalid ${label}: state directory parent must not be a symlink`);
+		}
+		const ancestorReal = realpathSync(ancestor);
+		if (!isInside(projectRootReal, ancestorReal)) throw new Error(`invalid ${label}: state directory escapes project-owned root`);
+	}
+
+	const stateBaseStat = lstatIfPresent(stateBase);
+	let stateBaseReal: string | null = null;
+	if (stateBaseStat) {
+		if (stateBaseStat.isSymbolicLink()) throw new Error(`invalid ${label}: state directory must not be a symlink`);
+		stateBaseReal = realpathSync(stateBase);
+	}
+
+	for (const ancestor of pathChain(stateBase, artifactPath)) {
+		const stat = lstatIfPresent(ancestor);
+		if (!stat) continue;
+		if (stat.isSymbolicLink()) {
+			if (ancestor === stateBase) throw new Error(`invalid ${label}: state directory must not be a symlink`);
+			if (ancestor === briefRoot) throw new Error(`invalid ${label}: plan-briefs root must not be a symlink`);
+			throw new Error(`invalid ${label}: must not traverse symlinks`);
+		}
+		if (stateBaseReal) {
+			const ancestorReal = realpathSync(ancestor);
+			if (!isInside(stateBaseReal, ancestorReal)) throw new Error(`invalid ${label}: parent directory escapes state-owned directory`);
+		}
+	}
+
+	const briefRootStat = lstatIfPresent(briefRoot);
+	if (!briefRootStat) return;
+	if (briefRootStat.isSymbolicLink()) throw new Error(`invalid ${label}: plan-briefs root must not be a symlink`);
+	const briefRootReal = realpathSync(briefRoot);
+	const parentStat = lstatIfPresent(dirname(artifactPath));
+	if (parentStat) {
+		const parentReal = realpathSync(dirname(artifactPath));
+		if (!isInside(briefRootReal, parentReal)) throw new Error(`invalid ${label}: parent directory escapes state-owned plan-briefs root`);
+	}
+	const artifactStat = lstatIfPresent(artifactPath);
+	if (artifactStat) {
+		if (artifactStat.isSymbolicLink()) throw new Error(`invalid ${label}: must not traverse symlinks`);
+		const artifactReal = realpathSync(artifactPath);
+		if (!isInside(briefRootReal, artifactReal)) throw new Error(`invalid ${label}: must not escape via symlink or alias`);
+	}
+}
+
+function validateBriefArtifactPath(value: unknown, itemId: string, label: string): void {
+	if (value === undefined || value === null) return;
+	validateOptionalNonEmptyString(value, label);
+	const path = value as string;
+	if (/\p{Cc}/u.test(path)) throw new Error(`invalid ${label}: must not contain control characters`);
+	if (!isAbsolute(path)) throw new Error(`invalid ${label}: must be an absolute path under a state-owned plan-briefs directory`);
+	if (normalize(path) !== path) throw new Error(`invalid ${label}: must be normalized with no traversal segments`);
+	const location = expectedPlanBriefLocation();
+	const root = location.briefRoot;
+	if (!isInside(root, path)) throw new Error(`invalid ${label}: must be under state-owned plan-briefs root ${root}`);
+	const rootRelative = relative(root, path).split(sep).filter(Boolean);
+	if (rootRelative.length < 2) throw new Error(`invalid ${label}: must include a plan namespace under the state-owned plan-briefs root`);
+	if (basename(path) !== `${itemId}.md`) throw new Error(`invalid ${label}: filename must be ${itemId}.md`);
+	assertNoSymlinkEscape(location, path, label);
+}
+
+function validateOptionalSha256(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(value)) throw new Error(`invalid ${label}: must be sha256:<64 hex chars> or null`);
+}
+
 function validateRequiredString(value: unknown, label: string): void {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string`);
 }
@@ -121,6 +258,12 @@ function validateRequiredString(value: unknown, label: string): void {
 function validateRequiredStringArray(value: unknown, label: string): void {
 	if (!Array.isArray(value)) throw new Error(`invalid ${label}: must be an array of strings`);
 	for (const [idx, item] of value.entries()) validateEntryId(item, `${label}[${idx}]`);
+}
+
+function validateOptionalStringArray(value: unknown, label: string): void {
+	if (value === undefined || value === null) return;
+	if (!Array.isArray(value)) throw new Error(`invalid ${label}: must be an array of strings or null`);
+	for (const [idx, item] of value.entries()) validateRequiredString(item, `${label}[${idx}]`);
 }
 
 export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">): string | undefined {
@@ -169,6 +312,17 @@ export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">):
 		if (!("merge_commit" in planItem)) throw new Error("invalid domain.plan_item.merge_commit: missing required key");
 		validateOptionalFiniteNumber(planItem.pr_number, "domain.plan_item.pr_number");
 		validateOptionalString(planItem.merge_commit, "domain.plan_item.merge_commit");
+		validateOptionalString(planItem.parse_mode, "domain.plan_item.parse_mode");
+		validateOptionalSha256(planItem.plan_snapshot_sha256, "domain.plan_item.plan_snapshot_sha256");
+		validateBriefArtifactPath(planItem.brief_artifact_path, validateEntryId(planItem.item_id, "domain.plan_item.item_id"), "domain.plan_item.brief_artifact_path");
+		validateOptionalSha256(planItem.brief_sha256, "domain.plan_item.brief_sha256");
+		if ((planItem.brief_artifact_path === undefined || planItem.brief_artifact_path === null) !== (planItem.brief_sha256 === undefined || planItem.brief_sha256 === null)) {
+			throw new Error("invalid domain.plan_item.brief_artifact_path/domain.plan_item.brief_sha256: both keys must be present together or omitted together");
+		}
+		if (planItem.brief_artifact_path !== undefined && planItem.brief_artifact_path !== null && (planItem.plan_snapshot_sha256 === undefined || planItem.plan_snapshot_sha256 === null)) {
+			throw new Error("invalid domain.plan_item.plan_snapshot_sha256: required when brief_artifact_path is present");
+		}
+		validateOptionalStringArray(planItem.omitted_context, "domain.plan_item.omitted_context");
 		validateOptionalFiniteNumber(planItem.scope_files_actual, "domain.plan_item.scope_files_actual");
 	}
 	return issueId;

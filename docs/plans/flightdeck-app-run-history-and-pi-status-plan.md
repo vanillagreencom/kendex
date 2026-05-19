@@ -10,7 +10,7 @@ This plan was drafted before the flightdeck v2 architecture refactor, v3 plan-fi
   - `flightdeck linear *` (Linear issue lifecycle, `workflows/linear/`)
   - `flightdeck github *` (GitHub issue lifecycle, `workflows/github/`)
   - `flightdeck session *` (generic, `workflows/shared/` + `flightdeck-session`)
-  - `flightdeck plan start <path>` (plan-file orchestration; `workflows/plan/`). This plan document is itself a valid plan file under the loose convention in `skills/flightdeck/PLAN-FILE.md`, so `flightdeck plan start docs/plans/flightdeck-app-run-history-and-pi-status-plan.md` is a viable execution path.
+  - `flightdeck plan start <path>` (plan-file orchestration; `workflows/plan/`). This plan document is itself a valid phase-style plan file under `skills/flightdeck/PLAN-FILE.md`: allowlisted top-level context sections are shared context, master-only orchestration sections are omitted from child briefs, and `### Phase ...` sections under `## Implementation phases` plus `## Additional workstream ...` are the work items. `flightdeck plan start docs/plans/flightdeck-app-run-history-and-pi-status-plan.md` is a viable execution path.
 - `entry.domain` is a mutually-exclusive union of `issue` (linear) / `github_issue` (github) / `plan_item` (plan). Validator at `skills/flightdeck/lib/flightdeck-core/src/state/tracked-entry.ts` rejects multi-domain entries on both `write-entry` and raw `setEntryField` / `flightdeck-state set` paths (per PR #139 hardening commit `517fd332`).
 - SKILL.md is now compact (currently 259 lines in `origin/main`, down from the old 453-line version). Reference docs live in `skills/flightdeck/` siblings: `SCHEMA.md`, `SCRIPTS.md`, `ENV.md`, `WATCHDOGS.md`, `PROMPT-TAGS.md`, `PLAN-FILE.md`.
 

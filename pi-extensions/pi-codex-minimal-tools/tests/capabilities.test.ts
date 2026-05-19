@@ -4,7 +4,7 @@ import { computeNextActiveTools, computeToolCapabilities } from "../src/capabili
 import { DEFAULT_SETTINGS } from "../src/settings.js";
 
 const codex55 = { provider: "openai-codex", id: "gpt-5.5", input: ["text", "image"] };
-const spark = { provider: "openai-codex", id: "gpt-5.3-codex-spark", input: ["text"] };
+const textOnlyCodex = { provider: "openai-codex", id: "text-only-codex", input: ["text"] };
 const openai = { provider: "openai", id: "gpt-5.5", input: ["text", "image"] };
 
 test("capability gating follows provider and image support", () => {
@@ -15,10 +15,10 @@ test("capability gating follows provider and image support", () => {
 	assert.equal(codex.view_image.enabled, true);
 	assert.equal(codex.apply_patch.enabled, true);
 
-	const sparkCaps = computeToolCapabilities(spark, withViewImage);
-	assert.equal(sparkCaps.image_generation.enabled, false);
-	assert.equal(sparkCaps.view_image.enabled, false);
-	assert.equal(sparkCaps.apply_patch.enabled, true);
+	const textOnlyCodexCaps = computeToolCapabilities(textOnlyCodex, withViewImage);
+	assert.equal(textOnlyCodexCaps.image_generation.enabled, false);
+	assert.equal(textOnlyCodexCaps.view_image.enabled, false);
+	assert.equal(textOnlyCodexCaps.apply_patch.enabled, true);
 
 	const openaiCaps = computeToolCapabilities(openai, withViewImage);
 	assert.equal(openaiCaps.image_generation.enabled, false);

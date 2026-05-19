@@ -19,7 +19,7 @@ if (!process.env.TMUX) {
 function makeRepo(): string {
 	const dir = mkdtempSync(join(tmpdir(), "fdreg-parity-"));
 	spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-	spawnSync("git", ["-C", dir, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"], {
+	spawnSync("git", ["-C", dir, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
 		env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
 	});
 	return dir;
@@ -45,6 +45,12 @@ function readIssues(repo: string, session = process.env.TMUX_PARITY_SESSION ?? s
 function readEntries(repo: string, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): unknown {
 	const file = join(repo, "tmp", `flightdeck-state-${session}.json`);
 	return JSON.parse(readFileSync(file, "utf8")).entries;
+}
+
+function writeRawState(repo: string, state: unknown, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): void {
+	const dir = join(repo, "tmp");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, `flightdeck-state-${session}.json`), JSON.stringify(state), "utf8");
 }
 
 function sessionName(): string {
@@ -480,6 +486,40 @@ fi
 		expect(normRows(b)).toEqual(normRows(a));
 		expect(normRows(b)).toContainEqual({ id: "JSON-9", issue: "JSON-9", kind: "issue", pane_id: null, pr_number: 9, worktree: "/tmp/json-9" });
 		expect(normRows(b)).toContainEqual({ id: "adhoc-json", issue: null, kind: "adhoc", pane_id: "%10", pr_number: null, worktree: "/tmp/a" });
+	});
+
+	test("list fails loud when tracked entries contain invalid plan brief metadata", () => {
+		writeRawState(tsRepo, {
+			entries: {
+				"item-one": {
+					cwd: join(tsRepo, "trees", "flightdeck-plan-item-one"),
+					domain: {
+						plan_item: {
+							brief_artifact_path: "/tmp/outside/plan-briefs/plan/item-one.md",
+							brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+							depends_on: [],
+							item_id: "item-one",
+							item_title: "Item one",
+							merge_commit: null,
+							plan_path: join(tsRepo, "docs", "plans", "plan.md"),
+							plan_snapshot_sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+							plan_title: "Plan title",
+							pr_number: null,
+							worktree: join(tsRepo, "trees", "flightdeck-plan-item-one"),
+						},
+					},
+					harness: "pi",
+					id: "item-one",
+					kind: "workflow",
+					state: "waiting",
+				},
+			},
+		});
+		const r = run(tsRepo, ["list", "--format", "json"]);
+		expect(r.status).toBe(2);
+		expect(r.stdout).toBe("");
+		expect(r.stderr).toContain('Error: invalid .entries["item-one"].domain: invalid domain.plan_item.brief_artifact_path');
+		expect(r.stderr).toContain("must be under state-owned plan-briefs root");
 	});
 
 	test("init-entry rejects bad input with parity", () => {

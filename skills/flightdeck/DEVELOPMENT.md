@@ -132,6 +132,14 @@ Pi idle terminal semantics are generic for `adhoc` and `workflow` entries: `isId
 
 Issue launches may pass `--tracker linear|github`. Linear is the default and writes `entry.domain.issue`. GitHub requires numeric `--session-id` plus `--github-url` and writes `entry.domain.github_issue`; `open-terminal --tracker github` is the intended caller and supplies those fields after `gh issue view`.
 
+## Durable run store
+
+`src/state/run-store.ts` owns the durable run history compatibility layer. Project-local live state stays at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION>.json`; durable run records live under `~/.vstack/flightdeck/projects/<project-id>/`. The project id is `<safe-project-name>-<16 hex>` where the hash material is `remote.origin.url` when present, otherwise the first configured remote, plus the absolute project-root hash; without remotes it uses the absolute project-root hash alone. `project.json` stores display fields (`name`, `root_path`, `remote_url`, `root_hash`, `created_at`, `last_seen_at`) so UIs do not have to reverse-engineer the id.
+
+Each run directory contains `metadata.json`, `state.json`, `activity.jsonl`, optional `summary.md`, and `snapshots/`. `active-run.json` is project-scoped and points at the current run only. `flightdeck-state run create` initializes these files and sets the pointer; `run terminate` marks metadata and state terminated, writes a timestamped snapshot, and clears the pointer only when it still targets that run. This phase does not wire session lifecycle or dashboard history UI to the store; callers must invoke the state commands explicitly.
+
+`flightdeck-state run import-legacy [--state-dir <dir>]` scans `flightdeck-state-*.json.archive`, copies matching state/activity archives into durable run directories, and never deletes the legacy files. Imported run ids are deterministic from project id, session id, termination time, and archive filename so repeat imports skip existing runs. Legacy activity archives are accepted only from the same state directory with the expected basename, regular-file type, and size cap; malformed legacy state archives are skipped with diagnostics while corrupt durable project/run JSON fails loud with the path.
+
 ## Daemon tuning (`FD_*` env vars)
 
 The background daemon (`flightdeck-daemon`) is configurable but defaults are fine for normal use. Listed for advanced setups:

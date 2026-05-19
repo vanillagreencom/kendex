@@ -174,6 +174,8 @@ const websocketSessionCache = new Map<string, SessionWebSocketCacheEntry>();
 
 class NonRetryableProviderError extends Error {}
 
+const HTTP_STATUS_MESSAGE_PREFIX = /^HTTP\s+\d{3}(?::|\b)/i;
+
 interface StreamEventShape {
 	type?: string;
 	response?: ResponseEnvelope;
@@ -580,6 +582,12 @@ function isRetryableError(status: number, errorText: string): boolean {
 		return true;
 	}
 	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
+}
+
+export function withHttpStatusPrefix(status: number, message: string): string {
+	const trimmed = message.trim() || "Request failed";
+	if (HTTP_STATUS_MESSAGE_PREFIX.test(trimmed)) return trimmed;
+	return `HTTP ${status}: ${trimmed}`;
 }
 
 function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
@@ -1666,7 +1674,7 @@ function createCodexStream<TApi extends Api>(
 						statusText: response.statusText,
 					});
 					const info = await parseErrorResponse(fakeResponse);
-					throw new NonRetryableProviderError(info.friendlyMessage || info.message);
+					throw new NonRetryableProviderError(withHttpStatusPrefix(response.status, info.friendlyMessage || info.message));
 				} catch (error) {
 					if (error instanceof NonRetryableProviderError) {
 						throw error;

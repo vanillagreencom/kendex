@@ -55,7 +55,7 @@ Open `/extensions:settings`; settings appear under the **Skills Manager** tab.
 | Default create location | `project` or `global`. |
 | Popup width | Number of columns or `82%`-style percentage. |
 | Popup max height | Number of rows or percentage. |
-| Visible list rows | Rows shown before scrolling. |
+| Visible list rows | Maximum rows shown before scrolling; short terminals shrink this so controls remain visible. |
 
 ## Notes
 

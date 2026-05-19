@@ -15,6 +15,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - After verified PR merges, safely fast-forward the local `main` checkout when possible and report dirty, ahead, or diverged cases without rewriting user work.
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
+- Keep durable run history under `~/.vstack/flightdeck` so completed run state survives project `tmp/` cleanup.
 - Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, and rate limits.
 
 ## Install
@@ -74,7 +75,7 @@ Run commands by asking your agent for `flightdeck <command>`.
 
 ### Plan lane
 
-Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
+Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Plans can use simple H2 work-item sections or phase-style H3 items under a recognized implementation workstream. Ambiguous H2s and master-only orchestration text inside item content fail closed before preview or mutation; master-only orchestration text in shared context is omitted from child briefs and reported in the preview. Flightdeck previews the chosen mode before any worktree or pane is created. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 | Command | Use when | Main args |
 |---------|----------|-----------|
@@ -129,6 +130,21 @@ flightdeck-dashboard tui --demo           # demo data
 ```
 
 For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
+
+## Run history helpers
+
+Flightdeck can create and inspect durable run records separately from the live tmux session files. This is mostly for dashboard/history tooling and post-mortems.
+
+```bash
+flightdeck-state run create --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
+flightdeck-state run active --project-root "$PWD"
+flightdeck-state run list --project-root "$PWD" --json
+flightdeck-state run show <run-id> --project-root "$PWD"
+flightdeck-state run terminate <run-id> --project-root "$PWD"
+flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
+```
+
+Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
 
 ## High-level architecture
 

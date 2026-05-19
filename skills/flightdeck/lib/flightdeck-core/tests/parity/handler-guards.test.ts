@@ -20,6 +20,10 @@ const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
 const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
 const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
+const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
+const SCHEMA_DOC = resolve(HERE, "../../../../SCHEMA.md");
+const PLAN_FILE_FIXTURES = resolve(HERE, "../fixtures/plan-files");
+const ACTUAL_PHASE_STYLE_PLAN = resolve(HERE, "../../../../../../docs/plans/flightdeck-app-run-history-and-pi-status-plan.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -48,6 +52,251 @@ const ISSUE_ONLY_CASES: Array<{ tag: string; fixture: string }> = [
 
 function fixture(file: string): string {
 	return readFileSync(join(FIXTURES, file), "utf8");
+}
+
+function planFixture(file: string): string {
+	return readFileSync(join(PLAN_FILE_FIXTURES, file), "utf8");
+}
+
+function expectTextBefore(haystack: string, before: string, after: string): void {
+	const beforeIndex = haystack.indexOf(before);
+	const afterIndex = haystack.indexOf(after);
+	expect(beforeIndex).toBeGreaterThanOrEqual(0);
+	expect(afterIndex).toBeGreaterThanOrEqual(0);
+	expect(beforeIndex).toBeLessThan(afterIndex);
+}
+
+function expectTextBeforeLast(haystack: string, before: string, after: string): void {
+	const beforeIndex = haystack.indexOf(before);
+	const afterIndex = haystack.lastIndexOf(after);
+	expect(beforeIndex).toBeGreaterThanOrEqual(0);
+	expect(afterIndex).toBeGreaterThanOrEqual(0);
+	expect(beforeIndex).toBeLessThan(afterIndex);
+}
+
+const SAFE_SHARED_H2 = new Set([
+	"pre-execution context",
+	"context",
+	"background",
+	"summary",
+	"problem",
+	"goals",
+	"non-goals",
+	"scope",
+	"constraints",
+	"current state",
+	"proposed model",
+	"design",
+	"architecture",
+	"lifecycle changes",
+	"dashboard ux",
+	"pi extension scope after the rust app",
+	"cli/script changes",
+	"data model additions",
+	"storage layout",
+	"acceptance criteria",
+	"validation plan",
+	"test plan",
+	"tests",
+	"execution workflow",
+	"risks",
+	"notes",
+	"open questions",
+]);
+
+const ORCHESTRATION_ONLY_PATTERNS = [
+	/BACKUP-WAKE/i,
+	/reviewer fan-out|5-reviewer/i,
+	/Do NOT act as Flightdeck master/i,
+	/\/skill:flightdeck\s+plan\b/i,
+	/\$flightdeck\s+plan\b/i,
+	/\/flightdeck\s+plan\b/i,
+	/\bflightdeck\s+plan\s+(?:start|watch|close-item|terminate)\b/i,
+	/\bflightdeck\s+(?:linear|github)\s+start\b/i,
+	/\bflightdeck\s+session\b/i,
+];
+
+type ParsedPlanOutcome = {
+	mode: "h2-items" | "phase-style" | "ambiguous";
+	reason?: string;
+	beforePreview: boolean;
+	beforeMutation: boolean;
+	items: Array<{ id: string; title: string; brief: string; worktree: string; depends_on: string[] }>;
+	omittedOrchestrationContext: string[];
+	allH2Ids: string[];
+};
+
+type H4Section = { title: string; body: string };
+type H3Section = { title: string; body: string; intro: string; h4s: H4Section[] };
+type H2Section = { title: string; body: string; intro: string; h3s: H3Section[] };
+
+function normalizeHeading(title: string): string {
+	return title.replace(/[—–]/g, "-").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function slugTitle(title: string): string {
+	return normalizeHeading(title)
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 32)
+		.replace(/-+$/g, "");
+}
+
+function isRecognizedWorkstream(title: string): boolean {
+	const normalized = normalizeHeading(title);
+	return normalized === "implementation phases" ||
+		normalized === "implementation plan" ||
+		normalized === "work items" ||
+		normalized === "workstreams" ||
+		normalized === "execution plan" ||
+		normalized.startsWith("additional workstream") ||
+		normalized.includes("workstream");
+}
+
+function isSafeSharedH2(title: string): boolean {
+	const normalized = normalizeHeading(title).replace(/\s*\([^)]*\)\s*$/, "");
+	return SAFE_SHARED_H2.has(normalized);
+}
+
+function isPhaseItemHeading(title: string): boolean {
+	return /^phase\s+\d+(?:\.\d+)?\b/i.test(title) || /^work item\b/i.test(title);
+}
+
+function containsOrchestrationOnlyMarker(text: string): boolean {
+	return ORCHESTRATION_ONLY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function parseH2Sections(markdown: string): H2Section[] {
+	const lines = markdown.split(/\r?\n/);
+	const h2s: Array<{ title: string; line: number }> = [];
+	for (let i = 0; i < lines.length; i++) {
+		const match = /^##(?!#)\s+(.+?)\s*$/.exec(lines[i] ?? "");
+		if (match) h2s.push({ title: match[1], line: i });
+	}
+
+	return h2s.map((h2, index) => {
+		const end = h2s[index + 1]?.line ?? lines.length;
+		const bodyLines = lines.slice(h2.line + 1, end);
+		const h3Matches: Array<{ title: string; line: number }> = [];
+		for (let i = 0; i < bodyLines.length; i++) {
+			const match = /^###(?!#)\s+(.+?)\s*$/.exec(bodyLines[i] ?? "");
+			if (match) h3Matches.push({ title: match[1], line: i });
+		}
+		const intro = bodyLines.slice(0, h3Matches[0]?.line ?? bodyLines.length).join("\n").trim();
+		const h3s = h3Matches.map((h3, h3Index) => {
+			const h3End = h3Matches[h3Index + 1]?.line ?? bodyLines.length;
+			const h3BodyLines = bodyLines.slice(h3.line + 1, h3End);
+			const h4Matches: Array<{ title: string; line: number }> = [];
+			for (let i = 0; i < h3BodyLines.length; i++) {
+				const match = /^####(?!#)\s+(.+?)\s*$/.exec(h3BodyLines[i] ?? "");
+				if (match) h4Matches.push({ title: match[1], line: i });
+			}
+			const h4s = h4Matches.map((h4, h4Index) => {
+				const h4End = h4Matches[h4Index + 1]?.line ?? h3BodyLines.length;
+				return { title: h4.title, body: h3BodyLines.slice(h4.line + 1, h4End).join("\n").trim() };
+			});
+			return {
+				title: h3.title,
+				body: h3BodyLines.join("\n").trim(),
+				intro: h3BodyLines.slice(0, h4Matches[0]?.line ?? h3BodyLines.length).join("\n").trim(),
+				h4s,
+			};
+		});
+		return { title: h2.title, body: bodyLines.join("\n").trim(), intro, h3s };
+	});
+}
+
+function parseDepends(body: string): string[] {
+	return body
+		.split(/[\n,]/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((title) => slugTitle(title));
+}
+
+function itemBriefAndControls(h3: H3Section, itemId: string): { brief: string; worktree: string; depends_on: string[] } {
+	const briefParts: string[] = [];
+	let worktree = `flightdeck-plan-${itemId}`;
+	let depends_on: string[] = [];
+	if (h3.intro) briefParts.push(h3.intro);
+	for (const h4 of h3.h4s) {
+		const normalized = normalizeHeading(h4.title);
+		if (normalized === "worktree") {
+			worktree = h4.body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? worktree;
+			continue;
+		}
+		if (normalized === "depends on") {
+			depends_on = parseDepends(h4.body);
+			continue;
+		}
+		briefParts.push(`#### ${h4.title}\n\n${h4.body}`);
+	}
+	return { brief: briefParts.join("\n\n"), depends_on, worktree };
+}
+
+function ambiguous(reason: string): ParsedPlanOutcome {
+	return { mode: "ambiguous", reason, beforePreview: true, beforeMutation: true, items: [], omittedOrchestrationContext: [], allH2Ids: [] };
+}
+
+function parsePlanContract(markdown: string): ParsedPlanOutcome {
+	const h2s = parseH2Sections(markdown);
+	const allH2Ids = h2s.map((section) => slugTitle(section.title));
+	const hasPhaseIndicators = h2s.some((section) => section.h3s.some((h3) => isPhaseItemHeading(h3.title)));
+	const hasRecognizedPhaseItems = h2s.some((section) => isRecognizedWorkstream(section.title) && section.h3s.some((h3) => isPhaseItemHeading(h3.title)));
+
+	if (hasPhaseIndicators && !hasRecognizedPhaseItems) {
+		return { ...ambiguous("plan-format-ambiguous: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"), allH2Ids };
+	}
+
+	if (!hasPhaseIndicators) {
+		return {
+			mode: "h2-items",
+			beforePreview: false,
+			beforeMutation: true,
+			items: h2s.map((section) => ({ id: slugTitle(section.title), title: section.title, brief: section.body, worktree: `flightdeck-plan-${slugTitle(section.title)}`, depends_on: [] })),
+			omittedOrchestrationContext: [],
+			allH2Ids,
+		};
+	}
+
+	const safeGlobalContext: string[] = [];
+	const omittedOrchestrationContext: string[] = [];
+	for (const section of h2s) {
+		if (isRecognizedWorkstream(section.title)) continue;
+		if (!isSafeSharedH2(section.title)) {
+			return { ...ambiguous(`plan-format-ambiguous: H2 '${section.title}' is neither an implementation workstream nor allowlisted shared context`), allH2Ids };
+		}
+		if (containsOrchestrationOnlyMarker(section.body)) {
+			omittedOrchestrationContext.push(section.title);
+		} else {
+			safeGlobalContext.push(`## ${section.title}\n\n${section.body}`);
+		}
+	}
+
+	const items: ParsedPlanOutcome["items"] = [];
+	for (const section of h2s.filter((candidate) => isRecognizedWorkstream(candidate.title))) {
+		const safeLocalContext: string[] = [];
+		if (section.intro) {
+			if (containsOrchestrationOnlyMarker(section.intro)) omittedOrchestrationContext.push(section.title);
+			else safeLocalContext.push(section.intro);
+		}
+		for (const h3 of section.h3s) {
+			if (isPhaseItemHeading(h3.title)) continue;
+			if (containsOrchestrationOnlyMarker(h3.body)) omittedOrchestrationContext.push(`${section.title} / ${h3.title}`);
+			else safeLocalContext.push(`### ${h3.title}\n\n${h3.body}`);
+		}
+		for (const h3 of section.h3s.filter((candidate) => isPhaseItemHeading(candidate.title))) {
+			const id = slugTitle(h3.title);
+			if (containsOrchestrationOnlyMarker(h3.body)) {
+				return { ...ambiguous(`plan-format-ambiguous: ${id} contains Flightdeck master-only orchestration instructions`), allH2Ids };
+			}
+			const controls = itemBriefAndControls(h3, id);
+			items.push({ id, title: h3.title, brief: [...safeGlobalContext, ...safeLocalContext, controls.brief].filter(Boolean).join("\n\n---\n\n"), worktree: controls.worktree, depends_on: controls.depends_on });
+		}
+	}
+
+	return { mode: "phase-style", beforePreview: false, beforeMutation: true, items, omittedOrchestrationContext, allH2Ids };
 }
 
 function runClassify(input: string, args: string[] = []): { stdout: string; stderr: string; status: number | null } {
@@ -120,7 +369,7 @@ describe("handler domain guards", () => {
 		expect(doc).toContain("mergeCommit !== null");
 		expect(doc).toContain("Pane text like `MERGED`");
 		expect(doc).toContain("never closes an issue by itself");
-		expect(doc.indexOf("gh pr view <PR> --json state,mergeStateStatus,mergeCommit")).toBeLessThan(doc.lastIndexOf("gh issue close <N> --reason completed"));
+		expectTextBeforeLast(doc, "gh pr view <PR> --json state,mergeStateStatus,mergeCommit", "gh issue close <N> --reason completed");
 	});
 
 
@@ -200,11 +449,13 @@ describe("handler domain guards", () => {
 		const docs = [PLAN_START_DOC, PLAN_HANDLE_DOC, PLAN_CLOSE_DOC, PLAN_WATCH_DOC, PLAN_TERMINATE_DOC]
 			.map((path) => readFileSync(path, "utf8"));
 		const combined = docs.join("\n---\n");
+		const spawnPrompts = combined.match(/--prompt "[^"]*"/g) ?? [];
 		expect(combined).toContain("flightdeck-session start");
 		expect(combined).toContain("--kind workflow");
 		expect(combined).toContain("Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line.");
-		expect(combined).not.toMatch(/\/skill:flightdeck plan|\$flightdeck plan|\/flightdeck plan (start|watch|close|terminate)/);
-		expect(combined).not.toContain("/skill:");
+		expect(spawnPrompts.length).toBeGreaterThan(0);
+		expect(spawnPrompts.join("\n")).not.toMatch(/\/skill:flightdeck plan|\$flightdeck plan|\/flightdeck plan (start|watch|close|terminate)/);
+		expect(spawnPrompts.join("\n")).not.toContain("/skill:");
 	});
 
 	test("plan lane docs carry PR safety gates from github redesign", () => {
@@ -235,21 +486,152 @@ describe("handler domain guards", () => {
 
 	test("plan start validates graph before dry-run or mutation", () => {
 		const doc = readFileSync(PLAN_START_DOC, "utf8");
-		expect(doc.indexOf("Validate the plan graph before dry-run preview")).toBeLessThan(doc.indexOf("<parse_preview_format>"));
+		expectTextBefore(doc, "Validate the parse mode and plan graph before dry-run preview", "<parse_preview_format>");
 		expect(doc).toContain('reason:"plan-parse-invalid"');
 		expect(doc).toContain('prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"');
 		expect(doc).toContain('reason:"plan-dependency-unresolved"');
-		expect(doc).toContain("depends on '<BAD_NAME>' which doesn't match any H2");
+		expect(doc).toContain("depends on '<BAD_NAME>' which doesn't match any item title or id");
 		expect(doc).toContain('reason:"plan-self-dependency"');
 		expect(doc).toContain('prompt_text:"<ITEM_ID> depends on itself"');
 		expect(doc).toContain('reason:"plan-dependency-cycle"');
 		expect(doc).toContain('prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"');
 	});
 
+	test("plan lane supports phase-style docs without treating context H2s as items", () => {
+		const start = readFileSync(PLAN_START_DOC, "utf8");
+		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
+		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		const planFile = readFileSync(PLAN_FILE_DOC, "utf8");
+		const schema = readFileSync(SCHEMA_DOC, "utf8");
+		for (const doc of [start, planFile]) {
+			expect(doc).toContain("phase-style");
+			expect(doc).toContain("Implementation phases");
+			expect(doc).toContain("### Phase");
+			expect(doc).toContain("shared context");
+		}
+		expect(start).toContain("A malformed phase-style file must not fall back to H2 item mode");
+		expect(start).toContain("Any other H2 outside a recognized implementation workstream is ambiguous; do not silently treat it as shared context");
+		expect(start).toContain("H2 '<H2_TITLE>' is neither an implementation workstream nor allowlisted shared context");
+		expect(start).toContain("Additional workstream");
+		expect(start).toContain("Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items");
+		expect(start).toContain("Context-only H2 sections outside the safe allowlist must never appear as preview Item rows");
+		expect(start).toContain("Omit matching shared-context sections from child briefs and show their titles in the preview as omitted orchestration context");
+		expect(start).toContain("<ITEM_ID> contains Flightdeck master-only orchestration instructions");
+		expect(start).toContain("brief_artifact_path");
+		expect(start).toContain("brief_sha256");
+		expect(start).toContain("plan_snapshot_sha256");
+		expect(start).toContain("Plan watch and dependency-edge resolution must consume only these immutable brief artifacts");
+		expect(start).toContain("They must not reread mutable `plan_path` to rebuild child briefs after compaction/re-entry");
+		expect(watch).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
+		expect(watch).toContain("Treat `domain.plan_item.plan_path` as traceability only after plan start");
+		expect(watch).not.toContain('reason="plan-file-missing"');
+		expect(watch).toContain("The artifact hash matches `domain.plan_item.brief_sha256`");
+		expect(handle).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
+		expect(handle).toContain("Require `domain.plan_item.brief_artifact_path`, `domain.plan_item.brief_sha256`, and `domain.plan_item.plan_snapshot_sha256`");
+		expect(schema).toContain("brief_artifact_path");
+		expect(schema).toContain("brief_sha256");
+		expect(schema).toContain("plan_snapshot_sha256");
+		expect(start).toContain('reason:"plan-format-ambiguous"');
+		expect(start).toContain("Mode: [PARSE_MODE]");
+		expect(start).toContain("Shared context: [global H2/workstream-local titles or —]");
+		expect(start).toContain("Omitted orchestration context: [titles or —]");
+		expect(planFile).toContain("Preview must show only `phase-1-normalize-error-payloads`, `phase-2-render-diagnostics`, and `phase-3-update-troubleshooting-guide` as items");
+		expect(planFile).toContain("`Problem`, `Goals`, `Additional workstream — Documentation follow-ups`, and `Context` are shared context, not work items");
+		expect(planFile).toContain("Malformed phase-style sections do not fall back to H2 item mode");
+		expect(planFile).toContain("Result: `plan-format-ambiguous`");
+	});
+
+	test("actual app/run-history plan remains valid phase-style under the allowlist", () => {
+		const parsed = parsePlanContract(readFileSync(ACTUAL_PHASE_STYLE_PLAN, "utf8"));
+		expect(parsed.mode).toBe("phase-style");
+		expect(parsed.reason).toBeUndefined();
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 1 — Design and compatibility layer");
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 6.7 — App focus/open helper, icon title, and launch order");
+		expect(parsed.items.map((item) => item.title)).toContain("Phase 12 — No-op confirmations for upstream-only fixes");
+		for (const requiredSafeH2 of ["pi-extension-scope-after-the-rus", "cli-script-changes", "data-model-additions"]) {
+			expect(parsed.allH2Ids).toContain(requiredSafeH2);
+			expect(parsed.items.map((item) => item.id)).not.toContain(requiredSafeH2);
+		}
+		expect(parsed.items.length).toBe(15);
+	});
+
+	test("phase-style fixture parses exact phase items and excludes context-only H2s", () => {
+		const parsed = parsePlanContract(planFixture("phase-style-valid.md"));
+		expect(parsed.mode).toBe("phase-style");
+		expect(parsed.beforeMutation).toBe(true);
+		expect(parsed.items.map((item) => item.id)).toEqual([
+			"phase-1-run-identity",
+			"phase-2-state-command-support",
+			"phase-8-codex-provider-shim",
+			"phase-9-responsive-skills-rows",
+		]);
+		expect(parsed.items[0]).toMatchObject({
+			depends_on: [],
+			worktree: "flightdeck-plan-run-identity",
+		});
+		expect(parsed.items[1]).toMatchObject({
+			depends_on: ["phase-1-run-identity"],
+			worktree: "flightdeck-plan-phase-2-state-command-support",
+		});
+		for (const contextH2 of [
+			"pre-execution-context-updated-20",
+			"problem",
+			"goals",
+			"lifecycle-changes",
+			"implementation-phases",
+			"additional-workstream-pi-followu",
+			"acceptance-criteria",
+			"validation-plan",
+			"execution-workflow",
+		]) {
+			expect(parsed.allH2Ids).toContain(contextH2);
+			expect(parsed.items.map((item) => item.id)).not.toContain(contextH2);
+		}
+		expect(parsed.omittedOrchestrationContext).toEqual(["Pre-execution context (updated 2026-05-19)", "Execution workflow"]);
+		for (const brief of parsed.items.map((item) => item.brief)) {
+			expect(brief).toContain("Flightdeck needs clearer run identity and history behavior");
+			expect(brief).not.toContain("#### Worktree");
+			expect(brief).not.toContain("#### Depends on");
+			expect(brief).not.toContain("flightdeck-plan-run-identity");
+			expect(brief).not.toContain("Phase 1 — Run identity");
+			expect(brief).not.toMatch(/BACKUP-WAKE|5-reviewer|Do NOT act as Flightdeck master|\/skill:flightdeck\s+plan|\/flightdeck\s+plan|\bflightdeck\s+plan\s+(?:start|watch|close-item|terminate)\b/i);
+		}
+	});
+
+	test("malformed or mixed phase-style fixtures fail closed before preview or mutation", () => {
+		const malformed = parsePlanContract(planFixture("malformed-phases-h2.md"));
+		expect(malformed.mode).toBe("ambiguous");
+		expect(malformed.reason).toContain("plan-format-ambiguous");
+		expect(malformed.reason).toContain("put Phase/Work item H3s under an implementation workstream");
+		expect(malformed.beforePreview).toBe(true);
+		expect(malformed.beforeMutation).toBe(true);
+		expect(malformed.items).toEqual([]);
+
+		const mixed = parsePlanContract(planFixture("mixed-unknown-h2.md"));
+		expect(mixed.mode).toBe("ambiguous");
+		expect(mixed.reason).toContain("plan-format-ambiguous");
+		expect(mixed.reason).toContain("Refactor dashboard");
+		expect(mixed.reason).toContain("neither an implementation workstream nor allowlisted shared context");
+		expect(mixed.beforePreview).toBe(true);
+		expect(mixed.beforeMutation).toBe(true);
+		expect(mixed.items).toEqual([]);
+	});
+
+	test("implementation item content with Flightdeck master commands fails instead of entering child briefs", () => {
+		const parsed = parsePlanContract(planFixture("item-master-command.md"));
+		expect(parsed.mode).toBe("ambiguous");
+		expect(parsed.reason).toContain("plan-format-ambiguous");
+		expect(parsed.reason).toContain("phase-1-parser-guard contains Flightdeck master-only orchestration instructions");
+		expect(parsed.beforePreview).toBe(true);
+		expect(parsed.beforeMutation).toBe(true);
+		expect(parsed.items).toEqual([]);
+	});
+
 	test("plan spawn docs require atomic claim and transactional failure handling", () => {
 		const start = readFileSync(PLAN_START_DOC, "utf8");
 		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
-		for (const doc of [start, watch]) {
+		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		for (const doc of [start, watch, handle]) {
 			expect(doc).toContain("Before any worktree mutation");
 			expect(doc).toContain("atomically claim");
 			expect(doc).toContain("state-lock");
@@ -263,6 +645,7 @@ describe("handler domain guards", () => {
 		expect(start).toContain("A single item failure does not halt the rest of `plan start`");
 		expect(start).toContain("Continue to the next dependency-free item");
 		expect(watch).toContain("continue to the next unblocked item");
+		expect(handle).toContain("continue to the next unblocked item");
 	});
 
 	test("plan watch handles gh pr create failure and missing PR URL", () => {

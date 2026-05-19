@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // CLI parity port of skills/flightdeck/scripts/flightdeck-state.
 //
-// Subcommands: init | get | set | append | increment | tracked-entries | write-entry | path | phase | archive | activity | master-busy
+// Subcommands: init | get | set | append | increment | tracked-entries | write-entry | path | phase | archive | activity | master-busy | run
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -29,6 +29,14 @@ import {
 	validateEntryId,
 	validateTrackedEntryDomain,
 } from "../state/tracked-entry.ts";
+import {
+	createRun,
+	importLegacyArchives,
+	listRuns,
+	readActiveRun,
+	showRun,
+	terminateRun,
+} from "../state/run-store.ts";
 import { ActivityValidationError } from "../activity/types.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
 import {
@@ -61,8 +69,8 @@ function parseGlobalAndArgs(): { action: string; session: string; rest: string[]
 }
 
 const { action, session: rawSession, rest } = parseGlobalAndArgs();
-const session = resolveSession(rawSession);
-const file = statePath(session);
+const session = action === "run" && !rawSession ? "" : resolveSession(rawSession);
+const file = session ? statePath(session) : "";
 
 switch (action) {
 	case "path": {
@@ -105,7 +113,12 @@ switch (action) {
 	case "tracked-entries": {
 		if (!existsSync(file)) process.exit(1);
 		const state = readStateJson();
-		process.stdout.write(`${JSON.stringify(readTrackedEntries(state, { warn: warnLine }))}\n`);
+		try {
+			process.stdout.write(`${JSON.stringify(readTrackedEntries(state, { strictPlanItemDomain: true, warn: warnLine }))}\n`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			die(`Error: ${message}`);
+		}
 		break;
 	}
 	case "write-entry": {
@@ -145,8 +158,12 @@ switch (action) {
 		runMasterBusy(rest);
 		break;
 	}
+	case "run": {
+		runRun(rest, rawSession);
+		break;
+	}
 	default:
-		die(`Unknown action: ${action}\nActions: init | get | set | append | increment | tracked-entries | write-entry | archive | activity | master-busy | path | phase`);
+		die(`Unknown action: ${action}\nActions: init | get | set | append | increment | tracked-entries | write-entry | archive | activity | master-busy | run | path | phase`);
 }
 
 function writeTrackedEntryFilter(id: string, entry: TrackedEntry): string {
@@ -461,6 +478,89 @@ function validateDomainIssueIdOrDie(entry: TrackedEntry): string | undefined {
 	} catch (error) {
 		die(`Error: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+interface RunFlags {
+	json: boolean;
+	positionals: string[];
+	projectRoot?: string;
+	snapshot?: string;
+	stateDir?: string;
+	tmuxSession?: string;
+}
+
+function runRun(args: string[], globalSession: string): void {
+	const sub = args[0];
+	if (!sub) die("Usage: run <active|list|show|create|terminate|import-legacy> [args]");
+	const flags = parseRunFlags(args.slice(1));
+	const projectRoot = flags.projectRoot || resolveProjectRoot();
+	try {
+		switch (sub) {
+			case "active": {
+				writeJson(readActiveRun(projectRoot));
+				break;
+			}
+			case "create": {
+				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
+				writeJson(createRun(projectRoot, tmuxSession, flags.stateDir));
+				break;
+			}
+			case "list": {
+				const result = listRuns(projectRoot);
+				if (flags.json) writeJson(result);
+				else {
+					for (const run of result.runs) {
+						const status = run.terminated ? "terminated" : "active";
+						process.stdout.write(`${run.run_id}\t${status}\t${run.started_at}\t${run.tmux_session}\n`);
+					}
+				}
+				break;
+			}
+			case "show": {
+				const runId = flags.positionals[0];
+				if (!runId) die("Usage: run show <run-id> [--snapshot <timestamp>] [--project-root <path>]");
+				writeJson(showRun(projectRoot, runId, flags.snapshot));
+				break;
+			}
+			case "terminate": {
+				const runId = flags.positionals[0];
+				if (!runId) die("Usage: run terminate <run-id> [--project-root <path>]");
+				writeJson(terminateRun(projectRoot, runId));
+				break;
+			}
+			case "import-legacy": {
+				writeJson(importLegacyArchives(projectRoot, flags.stateDir));
+				break;
+			}
+			default:
+				die("Usage: run <active|list|show|create|terminate|import-legacy> [args]");
+		}
+	} catch (error) {
+		die(`Error: ${error instanceof Error ? error.message : String(error)}`, 1);
+	}
+}
+
+function parseRunFlags(args: string[]): RunFlags {
+	const flags: RunFlags = { json: false, positionals: [] };
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i]!;
+		if (arg === "--json") { flags.json = true; continue; }
+		if (arg === "--project-root") { flags.projectRoot = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--project-root=")) { flags.projectRoot = arg.slice("--project-root=".length); continue; }
+		if (arg === "--tmux-session") { flags.tmuxSession = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--tmux-session=")) { flags.tmuxSession = arg.slice("--tmux-session=".length); continue; }
+		if (arg === "--state-dir") { flags.stateDir = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--state-dir=")) { flags.stateDir = arg.slice("--state-dir=".length); continue; }
+		if (arg === "--snapshot") { flags.snapshot = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--snapshot=")) { flags.snapshot = arg.slice("--snapshot=".length); continue; }
+		if (arg.startsWith("--")) die(`Unknown run flag: ${arg}`);
+		flags.positionals.push(arg);
+	}
+	return flags;
+}
+
+function writeJson(value: unknown): void {
+	process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
 function runPhase(issue: string): void {

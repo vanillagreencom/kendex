@@ -16,6 +16,9 @@
     ],
     "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-skills-manager/assets/skills-manager.png"
   },
+  "scripts": {
+    "test": "bun test ./tests"
+  },
   "vstack": {
     "extensionManager": {
       "displayName": "Skills Manager",
@@ -83,7 +86,7 @@
         {
           "key": "listRows",
           "label": "Visible list rows",
-          "description": "Number of list rows shown before scrolling in browse mode.",
+          "description": "Maximum list rows shown before scrolling in browse mode. Short terminals shrink this to keep popup controls visible.",
           "type": "number",
           "default": 14,
           "category": "UI",

@@ -70,6 +70,16 @@ export interface PlanItemDomain {
 	worktree: string;
 	pr_number: number | null;
 	merge_commit: string | null;
+	/** Parse mode used to produce immutable item briefs. Present for new plan-lane entries; omitted on legacy entries. */
+	parse_mode?: "h2-items" | "phase-style" | string | null;
+	/** sha256:<hex> hash of the frozen source plan text used at plan start. */
+	plan_snapshot_sha256?: string | null;
+	/** Absolute path to the sanitized immutable item brief artifact stored under Flightdeck state. */
+	brief_artifact_path?: string | null;
+	/** sha256:<hex> hash of brief_artifact_path content. */
+	brief_sha256?: string | null;
+	/** Shared context titles omitted from this item's brief because they contained orchestration-only instructions. */
+	omitted_context?: string[] | null;
 	scope_files_actual?: number | null;
 	[key: string]: unknown;
 }
