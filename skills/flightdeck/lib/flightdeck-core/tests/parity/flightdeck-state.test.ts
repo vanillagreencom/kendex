@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,7 +109,7 @@ function samplePlanEntry(): TrackedEntry {
 		decisions_log: [],
 		domain: {
 			plan_item: {
-				brief_artifact_path: "/repo/tmp/flightdeck-plan-briefs/plan/item-one.md",
+				brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md",
 				brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				depends_on: ["setup-foundation"],
 				item_id: "item-one",
@@ -274,7 +274,7 @@ describe("flightdeck-state CLI", () => {
 		expect(write.status).toBe(0);
 		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
 		expect(tracked[entry.id]?.domain?.plan_item).toMatchObject({
-			brief_artifact_path: "/repo/tmp/flightdeck-plan-briefs/plan/item-one.md",
+			brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md",
 			brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			depends_on: ["setup-foundation"],
 			item_id: "item-one",
@@ -318,6 +318,33 @@ describe("flightdeck-state CLI", () => {
 		const missingBriefPath = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: undefined } } })]);
 		expect(missingBriefPath.status).toBe(2);
 		expect(missingBriefPath.stderr).toContain("brief_artifact_path/domain.plan_item.brief_sha256: both keys must be present together or omitted together");
+		const relativeBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "tmp/plan-briefs/plan/item-one.md" } } })]);
+		expect(relativeBrief.status).toBe(2);
+		expect(relativeBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be an absolute path under a state-owned plan-briefs directory");
+		const traversalBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/../item-one.md" } } })]);
+		expect(traversalBrief.status).toBe(2);
+		expect(traversalBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be normalized with no traversal segments");
+		const outOfStateBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/item-one.md" } } })]);
+		expect(outOfStateBrief.status).toBe(2);
+		expect(outOfStateBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under a state-owned plan-briefs directory");
+		const wrongFilename = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/plan/other.md" } } })]);
+		expect(wrongFilename.status).toBe(2);
+		expect(wrongFilename.stderr).toContain("invalid domain.plan_item.brief_artifact_path: filename must be item-one.md");
+		const controlCharBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/repo/tmp/plan-briefs/plan/item-one.md\u0000" } } })]);
+		expect(controlCharBrief.status).toBe(2);
+		expect(controlCharBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not contain control characters");
+		const missingSnapshotHash = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, plan_snapshot_sha256: undefined } } })]);
+		expect(missingSnapshotHash.status).toBe(2);
+		expect(missingSnapshotHash.stderr).toContain("invalid domain.plan_item.plan_snapshot_sha256: required when brief_artifact_path is present");
+
+		const outside = mkdtempSync(join(repo, "outside-"));
+		const symlinkRoot = join(repo, "tmp", "plan-briefs");
+		rmSync(symlinkRoot, { force: true, recursive: true });
+		symlinkSync(outside, symlinkRoot, "dir");
+		const symlinkEscapePath = join(symlinkRoot, "plan", "item-one.md");
+		const symlinkEscape = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: symlinkEscapePath } } })]);
+		expect(symlinkEscape.status).toBe(2);
+		expect(symlinkEscape.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not traverse symlinks");
 	});
 
 	test("raw set rejects adding plan_item beside Linear issue domain", () => {

@@ -3,6 +3,8 @@ import type {
 	TrackedEntry,
 	TrackedEntryLaunch,
 } from "./types.ts";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, isAbsolute, normalize, sep } from "node:path";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
@@ -119,6 +121,36 @@ function validateOptionalNonEmptyString(value: unknown, label: string): void {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`invalid ${label}: must be a non-empty string or null`);
 }
 
+function validateBriefArtifactPath(value: unknown, itemId: string, label: string): void {
+	if (value === undefined || value === null) return;
+	validateOptionalNonEmptyString(value, label);
+	const path = value as string;
+	if (/\p{Cc}/u.test(path)) throw new Error(`invalid ${label}: must not contain control characters`);
+	if (!isAbsolute(path)) throw new Error(`invalid ${label}: must be an absolute path under a state-owned plan-briefs directory`);
+	if (normalize(path) !== path) throw new Error(`invalid ${label}: must be normalized with no traversal segments`);
+	const parts = path.split(sep).filter(Boolean);
+	if (!parts.includes("plan-briefs")) throw new Error(`invalid ${label}: must be under a state-owned plan-briefs directory`);
+	if (basename(path) !== `${itemId}.md`) throw new Error(`invalid ${label}: filename must be ${itemId}.md`);
+	try {
+		let cursor = path;
+		while (cursor && cursor !== sep) {
+			try {
+				if (lstatSync(cursor).isSymbolicLink()) throw new Error(`invalid ${label}: must not traverse symlinks`);
+			} catch (error) {
+				if (error instanceof Error && error.message.includes("must not traverse symlinks")) throw error;
+			}
+			const next = normalize(`${cursor}${sep}..`);
+			if (next === cursor) break;
+			cursor = next;
+		}
+		const real = realpathSync(path);
+		if (real !== path) throw new Error(`invalid ${label}: must not escape via symlink or alias`);
+	} catch (error) {
+		if (error instanceof Error && error.message.startsWith(`invalid ${label}:`)) throw error;
+		// Missing future artifacts are allowed at pure state-validation time; spawn paths verify existence + hash before use.
+	}
+}
+
 function validateOptionalSha256(value: unknown, label: string): void {
 	if (value === undefined || value === null) return;
 	if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(value)) throw new Error(`invalid ${label}: must be sha256:<64 hex chars> or null`);
@@ -187,10 +219,13 @@ export function validateTrackedEntryDomain(entry: Pick<TrackedEntry, "domain">):
 		validateOptionalString(planItem.merge_commit, "domain.plan_item.merge_commit");
 		validateOptionalString(planItem.parse_mode, "domain.plan_item.parse_mode");
 		validateOptionalSha256(planItem.plan_snapshot_sha256, "domain.plan_item.plan_snapshot_sha256");
-		validateOptionalNonEmptyString(planItem.brief_artifact_path, "domain.plan_item.brief_artifact_path");
+		validateBriefArtifactPath(planItem.brief_artifact_path, validateEntryId(planItem.item_id, "domain.plan_item.item_id"), "domain.plan_item.brief_artifact_path");
 		validateOptionalSha256(planItem.brief_sha256, "domain.plan_item.brief_sha256");
 		if ((planItem.brief_artifact_path === undefined || planItem.brief_artifact_path === null) !== (planItem.brief_sha256 === undefined || planItem.brief_sha256 === null)) {
 			throw new Error("invalid domain.plan_item.brief_artifact_path/domain.plan_item.brief_sha256: both keys must be present together or omitted together");
+		}
+		if (planItem.brief_artifact_path !== undefined && planItem.brief_artifact_path !== null && (planItem.plan_snapshot_sha256 === undefined || planItem.plan_snapshot_sha256 === null)) {
+			throw new Error("invalid domain.plan_item.plan_snapshot_sha256: required when brief_artifact_path is present");
 		}
 		validateOptionalStringArray(planItem.omitted_context, "domain.plan_item.omitted_context");
 		validateOptionalFiniteNumber(planItem.scope_files_actual, "domain.plan_item.scope_files_actual");

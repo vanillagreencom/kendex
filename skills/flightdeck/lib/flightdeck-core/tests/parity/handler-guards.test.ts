@@ -569,7 +569,8 @@ describe("handler domain guards", () => {
 	test("plan spawn docs require atomic claim and transactional failure handling", () => {
 		const start = readFileSync(PLAN_START_DOC, "utf8");
 		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
-		for (const doc of [start, watch]) {
+		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		for (const doc of [start, watch, handle]) {
 			expect(doc).toContain("Before any worktree mutation");
 			expect(doc).toContain("atomically claim");
 			expect(doc).toContain("state-lock");
@@ -583,6 +584,7 @@ describe("handler domain guards", () => {
 		expect(start).toContain("A single item failure does not halt the rest of `plan start`");
 		expect(start).toContain("Continue to the next dependency-free item");
 		expect(watch).toContain("continue to the next unblocked item");
+		expect(handle).toContain("continue to the next unblocked item");
 	});
 
 	test("plan watch handles gh pr create failure and missing PR URL", () => {

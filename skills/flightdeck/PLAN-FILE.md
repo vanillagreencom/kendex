@@ -88,7 +88,7 @@ Shared context is also filtered for child-brief safety. Sections containing mast
 - Other subsections, such as `Acceptance criteria`, stay in the item brief.
 - Dependencies must resolve to known items, cannot point at self, and cannot form cycles.
 - The dry-run preview is mandatory before Flightdeck creates worktrees or panes.
-- After preview confirmation, Flightdeck writes immutable sanitized item brief artifacts under its state directory and stores `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` on each `domain.plan_item`. Dependency-spawned items read those artifacts instead of reparsing a mutable plan file.
+- After preview confirmation, Flightdeck writes immutable sanitized item brief artifacts under its state-owned `plan-briefs/` directory and stores `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` on each `domain.plan_item`. Artifact paths must be absolute normalized `plan-briefs/.../<item_id>.md` paths with no traversal, control characters, wrong filename, or symlink escape. Dependency-spawned items read those artifacts instead of reparsing a mutable plan file.
 
 Good item briefs include: scope, likely files, acceptance criteria, tests, non-goals, and PR-size boundaries.
 
