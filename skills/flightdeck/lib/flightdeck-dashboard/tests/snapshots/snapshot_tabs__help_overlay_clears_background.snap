@@ -18,7 +18,7 @@ expression: rendered
 "│1. VST-101  Needs inp│ Enter opens the selected detail popup. Click a row to select; click selected row again for detail.                                                       │                     │"
 "│2. VST-102  queued   │                                                                                                                                                          │01                   │"
 "│                     │ View toggles                                                                                                                                             │es/vst-101           │"
-"│Conflicts            │ / filter   Ctrl+N show noise   Alt+M compact   ? help   T theme                                                                                          │                     │"
+"│Conflicts            │ / filter   Ctrl+N show noise   Alt+M compact   ? help   T theme   S settings                                                                             │                     │"
 "│• VST-101 ↔ VST-102  │                                                                                                                                                          │                     │"
 "│                     │ Mouse                                                                                                                                                    │                     │"
 "│                     │ Click tabs, rows, footer hints, the pause banner, daemon chip, or theme chip. Scroll inside tables to move selection.                                    │al=7 (1.4x bigger    │"

@@ -16,6 +16,7 @@ use crate::app::motion::{EffectInstance, MotionLevel};
 use crate::app::reload::ReloadCoalescer;
 use crate::app::theme::{Palette, Theme};
 use crate::cost::{CostMetrics, PricingTable, SessionTotals};
+use crate::settings_catalog::SettingsState;
 use crate::state::snapshot::{
     DashboardSnapshot, Event, EventImportance, SessionKind, SessionState, TrackedSession,
 };
@@ -464,6 +465,7 @@ pub enum ModalState {
     FilterInput,
     ConfirmAction,
     PricingDetail,
+    Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -511,6 +513,7 @@ pub struct Model {
     pub tmux_panes: PaneSnapshot,
     pub cost_totals: SessionTotals,
     pub pricing_table: PricingTable,
+    pub settings: SettingsState,
     pub confirm: Option<ConfirmDialog>,
     pub status_message: Option<ActionStatus>,
     pub quit_requested: bool,
@@ -526,6 +529,22 @@ impl Model {
         snapshot_source: SnapshotSource,
         motion: MotionLevel,
         theme: Theme,
+        clock: Clock,
+    ) -> Self {
+        let settings = SettingsState::load(
+            crate::settings_catalog::resolve_project_root(),
+            crate::settings_catalog::capture_ambient_env(),
+        );
+        Self::new_with_settings(snapshot, snapshot_source, motion, theme, settings, clock)
+    }
+
+    #[must_use]
+    pub fn new_with_settings(
+        snapshot: DashboardSnapshot,
+        snapshot_source: SnapshotSource,
+        motion: MotionLevel,
+        theme: Theme,
+        settings: SettingsState,
         clock: Clock,
     ) -> Self {
         let tabs_enabled = enabled_tabs_for(&snapshot);
@@ -578,6 +597,7 @@ impl Model {
             tmux_panes: PaneSnapshot::default(),
             cost_totals: SessionTotals::default(),
             pricing_table: PricingTable::load(),
+            settings,
             confirm: None,
             status_message: None,
             quit_requested: false,

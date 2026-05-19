@@ -130,6 +130,9 @@ pub fn render_with_hitmap(frame: &mut Frame<'_>, model: &Model, hitmap: &mut Hit
         crate::app::model::ModalState::PricingDetail => {
             modals::render_pricing_detail(frame, area, model, theme, hitmap);
         }
+        crate::app::model::ModalState::Settings => {
+            modals::render_settings(frame, area, model, theme, hitmap);
+        }
         crate::app::model::ModalState::None => {}
     }
 }

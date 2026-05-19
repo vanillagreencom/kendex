@@ -21,6 +21,7 @@ pub enum ClickAction {
     OpenHelp,
     OpenThemePicker,
     OpenPricingDetail,
+    SelectSetting(usize),
     OpenLegend,
     SelectTheme(crate::app::theme::Theme),
     CloseOverlay,

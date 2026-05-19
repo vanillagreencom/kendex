@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod events;
 pub mod fixtures;
 pub mod launch;
+pub mod settings_catalog;
 pub mod state;
 pub mod tmux;
 pub mod util;

@@ -1,4 +1,4 @@
-use ratatui::layout::{Alignment, Constraint, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
@@ -12,6 +12,7 @@ use crate::app::model::{Model, ACTIVITY_TYPE_CHIPS};
 use crate::app::theme::{Palette, Theme};
 use crate::app::view::activity::severity_style;
 use crate::app::view::popup::{render_popup, PopupChrome, PopupHeight, PopupWidth};
+use crate::settings_catalog::SettingSource;
 
 pub fn render_help(
     frame: &mut Frame<'_>,
@@ -36,7 +37,7 @@ pub fn render_help(
             Line::from("Enter opens the selected detail popup. Click a row to select; click selected row again for detail."),
             Line::from(""),
             Line::from(Span::styled("View toggles", theme.header())),
-            Line::from("/ filter   Ctrl+N show noise   Alt+M compact   ? help   T theme"),
+            Line::from("/ filter   Ctrl+N show noise   Alt+M compact   ? help   T theme   S settings"),
             Line::from(""),
             Line::from(Span::styled("Mouse", theme.header())),
             Line::from("Click tabs, rows, footer hints, the pause banner, daemon chip, or theme chip. Scroll inside tables to move selection."),
@@ -575,6 +576,184 @@ pub fn render_activity_filter(
         .column_spacing(1);
         frame.render_widget(table, body);
     });
+}
+
+pub fn render_settings(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &Model,
+    theme: &Palette,
+    hitmap: &mut HitMap,
+) {
+    let chrome = PopupChrome {
+        title: "Settings",
+        subtitle: Some(
+            "edit dashboard-local env overrides; restart rows apply on next launch/session",
+        ),
+        footer_hints: &[
+            "↑/↓ select",
+            "Enter edit/toggle",
+            "Space toggle bool",
+            "r reset",
+            "Esc close",
+        ],
+        width: PopupWidth::PercentOfFrame(92),
+        height: PopupHeight::PercentOfFrame(82),
+    };
+    render_popup(frame, area, chrome, theme, hitmap, |frame, body, hitmap| {
+        let mut status_lines = vec![
+            Line::from(vec![
+                Span::styled("Override file ", theme.status_label()),
+                Span::raw(model.settings.override_path.display().to_string()),
+            ]),
+            Line::from("Unset values show defaults from ENV.md; override file values win over process env for this dashboard process."),
+        ];
+        if let Some(error) = &model.settings.last_error {
+            status_lines.push(Line::from(Span::styled(error.clone(), theme.error())));
+        }
+        if let Some(notice) = &model.settings.notice {
+            status_lines.push(Line::from(Span::styled(notice.clone(), theme.warning())));
+        }
+        if let Some(edit) = &model.settings.edit {
+            if let Some(entry) = model.settings.entries.get(edit.index) {
+                status_lines.push(Line::from(vec![
+                    Span::styled(format!("Editing {} ", entry.definition.name), theme.info()),
+                    Span::styled(format!("> {}", edit.input), theme.status()),
+                ]));
+            }
+        }
+        let status_height = u16::try_from(status_lines.len().saturating_add(1))
+            .unwrap_or(u16::MAX)
+            .min(body.height.saturating_sub(3).max(1));
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(status_height), Constraint::Min(3)])
+            .split(body);
+        frame.render_widget(
+            Paragraph::new(status_lines)
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        let table_area = chunks[1];
+        let visible_rows = usize::from(table_area.height.saturating_sub(1)).max(1);
+        let selected = model.settings.selected;
+        let mut scroll = model
+            .popup_scroll
+            .min(model.settings.entries.len().saturating_sub(1));
+        if selected < scroll {
+            scroll = selected;
+        } else if selected >= scroll.saturating_add(visible_rows) {
+            scroll = selected.saturating_add(1).saturating_sub(visible_rows);
+        }
+        let rows = model
+            .settings
+            .entries
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible_rows)
+            .map(|(idx, entry)| {
+                let row_y = table_area
+                    .y
+                    .saturating_add(1)
+                    .saturating_add(u16::try_from(idx.saturating_sub(scroll)).unwrap_or(u16::MAX));
+                hitmap.push(
+                    Rect::new(table_area.x, row_y, table_area.width, 1),
+                    ClickAction::SelectSetting(idx),
+                    10,
+                );
+                let value = model
+                    .settings
+                    .edit
+                    .as_ref()
+                    .filter(|edit| edit.index == idx)
+                    .map_or_else(|| entry.display_value(), |edit| format!("> {}", edit.input));
+                Row::new([
+                    Cell::from(entry.definition.category.label()),
+                    Cell::from(entry.definition.name),
+                    Cell::from(Span::styled(
+                        value,
+                        setting_value_style(
+                            theme,
+                            entry.source,
+                            model.settings.editing_selected() && idx == selected,
+                        ),
+                    )),
+                    Cell::from(Span::styled(entry.default_display(), theme.muted())),
+                    Cell::from(Span::styled(
+                        entry.definition.kind.label(),
+                        theme.status_label(),
+                    )),
+                    Cell::from(Span::styled(
+                        entry.source_label(),
+                        setting_source_style(theme, entry.source),
+                    )),
+                    Cell::from(Span::styled(
+                        entry.effect_label(),
+                        if entry.definition.restart_required {
+                            theme.warning()
+                        } else {
+                            theme.ok()
+                        },
+                    )),
+                    Cell::from(entry.definition.purpose),
+                ])
+                .style(if idx == selected {
+                    model.selection_style()
+                } else {
+                    theme.frame()
+                })
+            })
+            .collect::<Vec<_>>();
+        let header = Row::new([
+            Cell::from("Category"),
+            Cell::from("Setting"),
+            Cell::from("Value"),
+            Cell::from("Default"),
+            Cell::from("Kind"),
+            Cell::from("Source"),
+            Cell::from("Effect"),
+            Cell::from("Purpose"),
+        ])
+        .style(theme.header());
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(13),
+                Constraint::Length(36),
+                Constraint::Length(20),
+                Constraint::Length(14),
+                Constraint::Length(8),
+                Constraint::Length(9),
+                Constraint::Length(12),
+                Constraint::Min(24),
+            ],
+        )
+        .header(header)
+        .column_spacing(1);
+        frame.render_widget(table, table_area);
+    });
+}
+
+fn setting_value_style(theme: &Palette, source: SettingSource, editing: bool) -> Style {
+    if editing {
+        return theme.info();
+    }
+    match source {
+        SettingSource::Default => theme.muted(),
+        SettingSource::Env => theme.info(),
+        SettingSource::Override => theme.ok(),
+    }
+}
+
+fn setting_source_style(theme: &Palette, source: SettingSource) -> Style {
+    match source {
+        SettingSource::Default => theme.muted(),
+        SettingSource::Env => theme.info(),
+        SettingSource::Override => theme.ok(),
+    }
 }
 
 fn filter_row<'a>(

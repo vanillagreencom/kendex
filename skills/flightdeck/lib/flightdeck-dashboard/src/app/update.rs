@@ -3,6 +3,7 @@ use futures::FutureExt;
 
 use crate::actions::{self, WriteAction};
 use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
+use crate::settings_catalog::{SettingChange, SettingsError, SettingsState};
 use crate::state::snapshot::{DaemonStatus as SnapshotDaemonStatus, EventImportance};
 use crate::watcher::WatcherEvent;
 
@@ -15,6 +16,7 @@ use super::msg::Msg;
 use super::theme::Theme;
 
 const PAGE_STEP: usize = 10;
+const SETTINGS_VISIBLE_ROWS: usize = 15;
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     match msg {
@@ -242,6 +244,7 @@ fn handle_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         }
         Action::OpenThemePicker => open_theme_picker(model),
         Action::OpenPricingDetail => open_pricing_detail(model),
+        Action::OpenSettings => open_settings(model),
         Action::Quit => {
             model.quit_requested = true;
             vec![Cmd::Render]
@@ -268,6 +271,7 @@ fn handle_popup_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         ModalState::FilterInput => handle_filter_key(model, key),
         ModalState::ConfirmAction => handle_confirm_key(model, key),
         ModalState::PricingDetail => handle_pricing_detail_key(model, key),
+        ModalState::Settings => handle_settings_key(model, key),
         ModalState::None => Vec::new(),
     }
 }
@@ -300,6 +304,85 @@ fn handle_pricing_detail_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::End => {
             model.popup_scroll = usize::MAX / 2;
+            vec![Cmd::Render]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn handle_settings_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
+    if model.settings.editing_selected() {
+        return handle_settings_edit_key(model, key);
+    }
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            close_overlay(model);
+            vec![Cmd::Render]
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            move_settings_selection(model, 1);
+            vec![Cmd::Render]
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            move_settings_selection(model, -1);
+            vec![Cmd::Render]
+        }
+        KeyCode::PageDown => {
+            move_settings_selection(model, PAGE_STEP as isize);
+            vec![Cmd::Render]
+        }
+        KeyCode::PageUp => {
+            move_settings_selection(model, -(PAGE_STEP as isize));
+            vec![Cmd::Render]
+        }
+        KeyCode::Home => {
+            model.settings.select(0);
+            model.popup_scroll = 0;
+            vec![Cmd::Render]
+        }
+        KeyCode::End => {
+            let last = model.settings.entries.len().saturating_sub(1);
+            model.settings.select(last);
+            clamp_settings_scroll(model);
+            vec![Cmd::Render]
+        }
+        KeyCode::Enter => {
+            if model.settings.selected_is_bool() {
+                apply_settings_change(model, |settings| settings.toggle_selected())
+            } else {
+                match model.settings.begin_edit_selected() {
+                    Ok(()) => vec![Cmd::Render],
+                    Err(error) => settings_error(model, error.to_string()),
+                }
+            }
+        }
+        KeyCode::Char(' ') => {
+            if model.settings.selected_is_bool() {
+                apply_settings_change(model, |settings| settings.toggle_selected())
+            } else {
+                Vec::new()
+            }
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            apply_settings_change(model, |settings| settings.reset_selected())
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn handle_settings_edit_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
+    match key.code {
+        KeyCode::Enter => apply_settings_change(model, |settings| settings.commit_edit()),
+        KeyCode::Esc => {
+            model.settings.cancel_edit();
+            vec![Cmd::Render]
+        }
+        KeyCode::Backspace => {
+            model.settings.pop_edit_char();
+            vec![Cmd::Render]
+        }
+        KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            model.settings.push_edit_char(ch);
             vec![Cmd::Render]
         }
         _ => Vec::new(),
@@ -404,6 +487,42 @@ fn move_theme_picker(model: &mut Model, delta: isize) {
     };
 }
 
+fn move_settings_selection(model: &mut Model, delta: isize) {
+    model.settings.move_selection(delta);
+    clamp_settings_scroll(model);
+}
+
+fn clamp_settings_scroll(model: &mut Model) {
+    let selected = model.settings.selected;
+    if selected < model.popup_scroll {
+        model.popup_scroll = selected;
+    } else if selected >= model.popup_scroll.saturating_add(SETTINGS_VISIBLE_ROWS) {
+        model.popup_scroll = selected
+            .saturating_add(1)
+            .saturating_sub(SETTINGS_VISIBLE_ROWS);
+    }
+}
+
+fn apply_settings_change<F>(model: &mut Model, action: F) -> Vec<Cmd>
+where
+    F: FnOnce(&mut SettingsState) -> Result<SettingChange, SettingsError>,
+{
+    match action(&mut model.settings) {
+        Ok(change) => {
+            set_status(model, change.notice(), true);
+            vec![Cmd::Render]
+        }
+        Err(error) => settings_error(model, error.to_string()),
+    }
+}
+
+fn settings_error(model: &mut Model, error: String) -> Vec<Cmd> {
+    set_status(model, error.clone(), false);
+    model.error = Some(error);
+    push_effect(model, EffectKind::ErrorFlash, EffectTarget::Global);
+    vec![Cmd::Render]
+}
+
 fn handle_click(model: &mut Model, action: ClickAction) -> Vec<Cmd> {
     match action {
         ClickAction::SelectTab(tab) => {
@@ -478,6 +597,11 @@ fn handle_click(model: &mut Model, action: ClickAction) -> Vec<Cmd> {
         }
         ClickAction::OpenThemePicker => open_theme_picker(model),
         ClickAction::OpenPricingDetail => open_pricing_detail(model),
+        ClickAction::SelectSetting(index) => {
+            model.settings.select(index);
+            clamp_settings_scroll(model);
+            vec![Cmd::Render]
+        }
         ClickAction::SelectTheme(theme) => {
             model.theme = theme;
             model.theme_picker_index = theme.index();
@@ -646,6 +770,13 @@ fn open_pricing_detail(model: &mut Model) -> Vec<Cmd> {
     vec![Cmd::Render]
 }
 
+fn open_settings(model: &mut Model) -> Vec<Cmd> {
+    model.popup_scroll = 0;
+    model.settings.cancel_edit();
+    model.modal = ModalState::Settings;
+    vec![Cmd::Render]
+}
+
 fn open_filter(model: &mut Model) -> Vec<Cmd> {
     model.popup_scroll = 0;
     model.feed_filter.begin_edit();
@@ -721,6 +852,7 @@ fn close_overlay(model: &mut Model) {
     model.ui.filter_open = false;
     model.event_detail = None;
     model.confirm = None;
+    model.settings.cancel_edit();
     model.popup_scroll = 0;
 }
 

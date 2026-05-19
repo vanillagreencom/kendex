@@ -1,9 +1,13 @@
 mod common;
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
 use flightdeck_dashboard::actions::WriteAction;
 use flightdeck_dashboard::activity::{ActivityEvent, ActivityType, Importance, Severity};
 use flightdeck_dashboard::app::model::{ConfirmDialog, ModalState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
+use flightdeck_dashboard::settings_catalog::SettingsState;
 
 #[test]
 fn popup_theme_picker() {
@@ -69,6 +73,17 @@ fn popup_activity_filter() {
     let mut model = common::model_for_tab(Tab::Activity);
     model.modal = ModalState::ActivityFilter;
     insta::assert_snapshot!("popup_activity_filter", common::render_model(&model));
+}
+
+#[test]
+fn popup_settings() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.settings = SettingsState::load(PathBuf::from("/project"), BTreeMap::new());
+    model.modal = ModalState::Settings;
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("FLIGHTDECK_AUTO_MERGE"));
+    assert!(rendered.contains("next launch"));
+    insta::assert_snapshot!("popup_settings", rendered);
 }
 
 #[test]

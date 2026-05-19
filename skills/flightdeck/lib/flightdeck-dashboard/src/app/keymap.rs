@@ -24,6 +24,7 @@ pub enum Action {
     ToggleHelp,
     OpenThemePicker,
     OpenPricingDetail,
+    OpenSettings,
     Quit,
     CloseModal,
 }
@@ -147,6 +148,11 @@ pub const BINDINGS: &[KeyBinding] = &[
         action: Action::OpenPricingDetail,
     },
     KeyBinding {
+        keys: "S / Alt+S",
+        description: "Open settings popup",
+        action: Action::OpenSettings,
+    },
+    KeyBinding {
         keys: "q / Ctrl+C",
         description: "Quit",
         action: Action::Quit,
@@ -167,6 +173,10 @@ pub fn action_for(key: &KeyEvent) -> Option<Action> {
         KeyCode::Enter => Some(Action::OpenDetail),
         KeyCode::Char('/') => Some(Action::OpenFilter),
         KeyCode::Char('f') | KeyCode::Char('F') => Some(Action::OpenActivityFilter),
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::ALT) => {
+            Some(Action::OpenSettings)
+        }
+        KeyCode::Char('S') => Some(Action::OpenSettings),
         KeyCode::Char('s') => Some(Action::CycleActivitySession),
         KeyCode::Char('d') => Some(Action::JumpToDecisions),
         KeyCode::Char('e') => Some(Action::ActivityExport),
