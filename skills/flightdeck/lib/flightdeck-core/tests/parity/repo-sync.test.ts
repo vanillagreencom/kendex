@@ -83,6 +83,10 @@ function failWorktreeListShim(): Record<string, string> {
 	return gitShim(`  *" worktree list --porcelain "*) echo "worktree list exploded" >&2; exit 45 ;;`);
 }
 
+function failSymbolicRefShim(): Record<string, string> {
+	return gitShim(`  *" symbolic-ref --quiet --short HEAD "*) echo "symbolic-ref exploded" >&2; exit 1 ;;`);
+}
+
 function git(cwd: string, args: string[]): string {
 	const r = sh("git", ["-c", "commit.gpgsign=false", "-C", cwd, ...args]);
 	if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
@@ -194,8 +198,25 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json.ahead).toBe(0);
 		expect(result.json.behind).toBe(1);
 		expect(result.json.dirty_paths).toContain("README.md");
-		expect(result.json.commands_suggested.join("\n")).toContain("git -C");
+		const suggestions = result.json.commands_suggested.join("\n");
+		expect(suggestions).toContain("git -C");
+		expect(suggestions).toContain("move/copy it aside intentionally");
+		expect(suggestions).toContain("do not delete or discard dirty paths");
+		expect(suggestions).not.toContain("commit, remove");
 		expect(rev(fixture.clone, "main")).toBe(before);
+	});
+
+	test("explicit fetch refspec ignores configured local-branch refspec and preserves local main", () => {
+		if (!fixture) throw new Error("fixture missing");
+		commitFile(fixture.clone, "local.txt", "local\n", "local main only");
+		git(fixture.clone, ["switch", "-q", "-c", "feature"]);
+		const before = rev(fixture.clone, "refs/heads/main");
+		git(fixture.clone, ["config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/heads/main"]);
+		const result = runSync();
+		expect(result.status).toBe(0);
+		expect(result.json).toMatchObject({ ahead: 1, behind: 0, reason: "local-branch-ahead", status: "blocked" });
+		expect(rev(fixture.clone, "refs/heads/main")).toBe(before);
+		expect(rev(fixture.clone, "refs/remotes/origin/main")).not.toBe(before);
 	});
 
 	test("untracked nested paths are reported as dirty", () => {
@@ -230,6 +251,22 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json.dirty_paths).toEqual([]);
 		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 44, stderr: "status exploded" });
 		expect(result.json.diagnostics?.[0]?.command).toContain("status --porcelain=v1 --untracked-files=all");
+	});
+
+	test("symbolic-ref failure fails before updating checked-out main ref", () => {
+		if (!fixture) throw new Error("fixture missing");
+		const before = rev(fixture.clone, "main");
+		pushSeed("remote.txt", "remote\n", "remote update");
+		const result = runSync(failSymbolicRefShim());
+		expect(result.status).toBe(1);
+		expect(result.json.status).toBe("failed");
+		expect(result.json.reason).toContain("git-symbolic-ref-failed");
+		expect(result.json.reason).toContain("exit 1");
+		expect(result.json.reason).toContain("symbolic-ref exploded");
+		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 1, stderr: "symbolic-ref exploded" });
+		expect(result.json.diagnostics?.[0]?.command).toContain("symbolic-ref --quiet --short HEAD");
+		expect(rev(fixture.clone, "main")).toBe(before);
+		expect(existsSync(join(fixture.clone, "remote.txt"))).toBe(false);
 	});
 
 	test("ahead-only local main blocks safely", () => {

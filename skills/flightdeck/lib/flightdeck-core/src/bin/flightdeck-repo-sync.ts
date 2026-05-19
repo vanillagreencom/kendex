@@ -51,15 +51,20 @@ function parseArgs(argv: string[]): Options {
 		usage();
 	}
 	if (!projectRoot.trim()) usage();
-	if (!remote.trim() || remote.startsWith("-")) usage();
-	if (!branch.trim() || branch.startsWith("-") || !isSafeRefComponent(branch)) usage();
+	if (!remote.trim() || remote.startsWith("-") || !isSafeRefPath(remote)) usage();
+	if (!branch.trim() || branch.startsWith("-") || !isSafeRefPath(branch)) usage();
 	return { action: "main", branch: branch.trim(), json, projectRoot: projectRoot.trim(), remote: remote.trim() };
 }
 
-function isSafeRefComponent(value: string): boolean {
+function isSafeRefPath(value: string): boolean {
 	if (!/^[A-Za-z0-9._/+-]+$/.test(value)) return false;
+	if (value === "@") return false;
+	if (value.startsWith("/") || value.endsWith("/")) return false;
 	if (value.includes("..") || value.includes("@{") || value.includes("//")) return false;
-	if (value.endsWith(".") || value.endsWith("/") || value.includes(".lock")) return false;
+	if (value.endsWith(".")) return false;
+	for (const part of value.split("/")) {
+		if (!part || part.startsWith(".") || part.endsWith(".lock")) return false;
+	}
 	return true;
 }
 
@@ -215,9 +220,21 @@ function dirtyStatus(root: string, ahead = 0, behind = 0): DirtyStatusResult {
 	return { ok: true, paths };
 }
 
-function currentBranch(root: string): string {
+function fetchRemoteTracking(root: string, remote: string, branch: string): GitRun {
+	const sourceRef = `refs/heads/${branch}`;
+	const destinationRef = `refs/remotes/${remote}/${branch}`;
+	return runGit(root, ["fetch", "--prune", "--refmap=", remote, `+${sourceRef}:${destinationRef}`]);
+}
+
+type CurrentBranchResult =
+	| { branch: string; ok: true }
+	| { ok: false; result: RepoMainSyncResult };
+
+function currentBranch(root: string, ahead = 0, behind = 0): CurrentBranchResult {
 	const r = runGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-	return ok(r) ? r.stdout.trim() : "";
+	if (ok(r)) return { branch: r.stdout.trim(), ok: true };
+	if (!r.error && r.status === 1 && !r.stderr.trim()) return { branch: "", ok: true };
+	return { ok: false, result: failGit("git-symbolic-ref-failed", r, [r.command], ahead, behind) };
 }
 
 type BranchCheckoutResult =
@@ -241,7 +258,8 @@ function branchCheckoutPaths(root: string, branchRef: string, ahead: number, beh
 function commandsForDirty(root: string, remote: string, branch: string): string[] {
 	return [
 		`git -C ${shellQuote(root)} status --short`,
-		"commit, remove, or move dirty paths out of the checkout",
+		"commit dirty work, move/copy it aside intentionally, or rerun later after the checkout is clean",
+		"do not delete or discard dirty paths just to make repo sync pass",
 		suggestedRerun(root, remote, branch),
 	];
 }
@@ -269,7 +287,7 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 	const root = top.root!;
 	try { process.chdir(root); } catch { /* best effort: git -C still pins repo operations */ }
 
-	const fetch = runGit(root, ["fetch", opts.remote, "--prune"]);
+	const fetch = fetchRemoteTracking(root, opts.remote, opts.branch);
 	if (!ok(fetch)) return { projectRoot: root, result: failGit("git-fetch-failed", fetch) };
 
 	const localRef = `refs/heads/${opts.branch}`;
@@ -283,7 +301,7 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 	if (!remoteSha.ok) {
 		return { projectRoot: root, result: blocked("missing-remote-branch", [
 			`git -C ${shellQuote(root)} remote -v`,
-			`git -C ${shellQuote(root)} fetch ${shellQuote(opts.remote)} --prune`,
+			`git -C ${shellQuote(root)} fetch --prune --refmap= ${shellQuote(opts.remote)} ${shellQuote(`+refs/heads/${opts.branch}:refs/remotes/${opts.remote}/${opts.branch}`)}`,
 		], 0, 0, statusBeforeRefBlock?.paths ?? []) };
 	}
 	if (!localSha.ok) {
@@ -309,7 +327,9 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 		return { projectRoot: root, result: failGit("git-merge-base-failed", ancestor, commandsForDiverged(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
 	}
 
-	const current = currentBranch(root);
+	const currentResult = currentBranch(root, counts.ahead, counts.behind);
+	if (!currentResult.ok) return { projectRoot: root, result: currentResult.result };
+	const current = currentResult.branch;
 	if (current === opts.branch) {
 		const merge = runGit(root, ["merge", "--ff-only", remoteRef]);
 		if (!ok(merge)) return { projectRoot: root, result: failGit("fast-forward-failed", merge, commandsForDirty(root, opts.remote, opts.branch), counts.ahead, counts.behind) };

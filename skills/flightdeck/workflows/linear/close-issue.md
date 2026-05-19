@@ -43,34 +43,38 @@ Implementation:
 
 ---
 
-## § 2: Determine Outcome
+## § 2: Determine Outcome and Authoritative Merge Proof
 
-Map signals to terminal state:
+Map signals to a candidate terminal state:
 
-- PR state `MERGED` (or buffer banner says `MERGED`) → `state = merged`.
-- PR state `CLOSED` without merge AND issue tracker state cancelled → `state = aborted`.
+- PR state `MERGED` (or buffer banner says `MERGED`) → candidate `state = merged`.
+- PR state `CLOSED` without merge AND issue tracker state cancelled → candidate `state = aborted`.
 - Pane signals end-of-session but PR state is still `OPEN` and no other signal contradicts → return without teardown; the orchestrator may have ended its turn but the merge hasn't actually landed yet. Re-poll.
 
-Capture the outcome's summary fields from the buffer if present (PR number, merge commit, branch deleted-on-remote, etc.) — these go into the issue end-of-session report (`terminate.md` § 2).
+For merged candidates, verify authoritative GitHub proof **before any terminal state write, merge-field persistence, repo sync, or teardown**:
+
+```bash
+gh pr view <PR> --json state,mergeStateStatus,mergeCommit
+```
+
+Required: `state === "MERGED"` AND `mergeCommit !== null`. If the `merged` outcome came only from pane text, a buffer banner, or any signal that did not include this authoritative PR proof, do not call `pane-registry set-state`, do not persist PR/merge fields, do not sync, and do not teardown. Leave the entry non-terminal and return to the watch loop until a later poll can verify the PR.
+
+Capture the outcome's summary fields from the buffer if present (PR number, merge commit, branch deleted-on-remote, etc.) in local memory only until the proof gate passes — these go into the issue end-of-session report (`terminate.md` § 2).
 
 ---
 
 ## § 3: Update Master State
+
+After § 2 yields either an aborted outcome or a merged outcome with authoritative proof, write terminal state and decision history:
 
 ```
 .agents/skills/flightdeck/scripts/pane-registry set-state <ISSUE_ID> <merged|aborted>
 .agents/skills/flightdeck/scripts/pane-registry log-decision <ISSUE_ID> terminal-state-reached "<outcome-summary>"
 ```
 
-Persist any captured summary fields via `pane-registry set <ISSUE_ID> <field> <value>`.
+Persist any captured summary fields via `pane-registry set <ISSUE_ID> <field> <value>`. For merged outcomes, persist the merge commit from the authoritative `gh pr view` payload, not from pane text alone.
 
-For merged outcomes only, immediately run the safe post-merge local-main sync helper after the state/pr/merge fields are recorded and before teardown, but only when authoritative GitHub proof exists for the PR:
-
-```bash
-gh pr view <PR> --json state,mergeStateStatus,mergeCommit
-```
-
-Required: `state === "MERGED"` AND `mergeCommit !== null`. If the `merged` outcome came only from pane text, a buffer banner, or any signal that did not include this authoritative PR proof, do not sync; return to the watch loop until a later poll can verify the PR.
+For merged outcomes only, immediately run the safe post-merge local-main sync helper after the state/pr/merge fields are recorded and before teardown:
 
 ```bash
 .agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json

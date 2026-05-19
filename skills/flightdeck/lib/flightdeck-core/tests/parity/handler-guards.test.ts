@@ -152,12 +152,24 @@ describe("handler domain guards", () => {
 
 	test("linear close post-merge repo sync is not driven by pane text", () => {
 		const doc = readFileSync(LINEAR_CLOSE_DOC, "utf8");
+		const proof = doc.indexOf("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
+		const setState = doc.indexOf("pane-registry set-state <ISSUE_ID> <merged|aborted>");
+		const persistFields = doc.indexOf("Persist any captured summary fields");
+		const teardown = doc.indexOf("pane-registry teardown-window <ISSUE_ID>");
 		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
 		expect(doc).toContain("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
 		expect(doc).toContain('state === "MERGED"');
 		expect(doc).toContain("mergeCommit !== null");
 		expect(doc).toContain("If the `merged` outcome came only from pane text");
+		expect(doc).toContain("Leave the entry non-terminal and return to the watch loop");
 		expect(doc).toContain("Do not run this helper for queued auto-merge");
+		expect(proof).toBeGreaterThanOrEqual(0);
+		expect(setState).toBeGreaterThanOrEqual(0);
+		expect(persistFields).toBeGreaterThanOrEqual(0);
+		expect(teardown).toBeGreaterThanOrEqual(0);
+		expect(proof).toBeLessThan(setState);
+		expect(proof).toBeLessThan(persistFields);
+		expect(proof).toBeLessThan(teardown);
 	});
 
 	test("linear direct merge sync skips queued auto-merge", () => {
