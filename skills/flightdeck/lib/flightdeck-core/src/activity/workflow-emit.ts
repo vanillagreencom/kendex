@@ -42,6 +42,22 @@ export interface MergeActionDetails extends Record<string, unknown> {
 	transient?: boolean;
 }
 
+export type RepoMainSyncStatus = "synced" | "already-synced" | "blocked" | "failed";
+export interface RepoMainSyncResult {
+	status: RepoMainSyncStatus;
+	ahead: number;
+	behind: number;
+	dirty_paths: string[];
+	reason: string;
+	commands_suggested: string[];
+}
+
+export interface RepoMainSyncContext {
+	branch?: string;
+	projectRoot?: string;
+	remote?: string;
+}
+
 export function emitSessionStarted(ctx: WorkflowEmitContext): void {
 	emitWorkflowActivity(ctx, {
 		details: { dedup_key: `${workflowSessionId(ctx)}:session.started` },
@@ -120,6 +136,39 @@ export function emitMergeAction(ctx: WorkflowEmitContext, prNumber: number | str
 		refs: mergeRefs(ctx.refs, pr ? { pr_number: pr } : undefined, typeof details.commit === "string" ? { commit: details.commit } : undefined),
 		severity,
 		summary: type === "pr.merged" ? `${label} merged` : type === "pr.merge_blocked" ? `${label} merge blocked` : `${label} queued for merge`,
+		type,
+	});
+}
+
+export function emitRepoMainSync(ctx: WorkflowEmitContext, result: RepoMainSyncResult, repo: RepoMainSyncContext = {}): void {
+	const status = result.status;
+	const type = status === "failed" ? "repo.main_sync_failed" : status === "blocked" ? "repo.main_sync_blocked" : "repo.main_synced";
+	const severity: ActivitySeverity = status === "failed" ? "error" : status === "blocked" ? "warning" : "success";
+	const branch = nonEmpty(repo.branch) ?? "main";
+	const remote = nonEmpty(repo.remote) ?? "origin";
+	const summary = status === "synced"
+		? `Local ${branch} synced to ${remote}/${branch}`
+		: status === "already-synced"
+			? `Local ${branch} already synced with ${remote}/${branch}`
+			: status === "blocked"
+				? `Local ${branch} sync blocked: ${result.reason}`
+				: `Local ${branch} sync failed: ${result.reason}`;
+	emitWorkflowActivity(ctx, {
+		details: {
+			ahead: result.ahead,
+			behind: result.behind,
+			branch,
+			commands_suggested: result.commands_suggested,
+			dedup_key: `${workflowSessionId(ctx)}:${type}:${branch}:${result.reason}:${result.ahead}:${result.behind}:${result.dirty_paths.join(",")}`,
+			dirty_paths: result.dirty_paths,
+			project_root: nonEmpty(repo.projectRoot) ?? null,
+			reason: result.reason,
+			remote,
+			status,
+		},
+		importance: status === "blocked" || status === "failed" ? "important" : "normal",
+		severity,
+		summary,
 		type,
 	});
 }

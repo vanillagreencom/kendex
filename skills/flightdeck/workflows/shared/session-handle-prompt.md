@@ -103,7 +103,16 @@ A generic entry reported completion.
 1. Verify the pane is no longer actively rendering.
 2. Mark the entry `complete` through the tracked-entry state path.
 3. Log `terminal-state-reached` with a short completion excerpt.
-4. Do not tear down the window automatically unless the caller explicitly requested stop/remove.
+4. If this is a generic PR-producing workflow (`kind="workflow"` or `kind="adhoc"` with top-level `entry.pr_number`), verify the bound PR before any repository sync:
+   ```bash
+   gh pr view <PR> --json state,mergeStateStatus,mergeCommit
+   ```
+   Run post-merge local-main sync only when `state === "MERGED"` and `mergeCommit !== null`:
+   ```bash
+   .agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
+   ```
+   Branch only on JSON `status`: `synced|already-synced` → `repo.main_synced`; `blocked` → `repo.main_sync_blocked` with `ahead`, `behind`, `dirty_paths`, `reason`, and `commands_suggested`; `failed` → `repo.main_sync_failed`. If `gh` reports queued auto-merge, `OPEN`, `mergeCommit:null`, or any non-`MERGED` state, do not sync; a later poll/terminal observation must see actual `MERGED` state first.
+5. Do not tear down the window automatically unless the caller explicitly requested stop/remove.
 
 Issue mode overrides verification/teardown through `close-issue.md` after mapping to the generic `complete` state.
 

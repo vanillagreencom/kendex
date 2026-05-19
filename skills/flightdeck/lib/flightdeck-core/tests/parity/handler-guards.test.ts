@@ -13,6 +13,8 @@ const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-p
 const GITHUB_HANDLE_DOC = resolve(HERE, "../../../../workflows/github/handle-prompt.md");
 const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue.md");
 const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
+const LINEAR_CLOSE_DOC = resolve(HERE, "../../../../workflows/linear/close-issue.md");
+const LINEAR_MERGE_DOC = resolve(HERE, "../../../../workflows/linear/merge-plan.md");
 const PLAN_START_DOC = resolve(HERE, "../../../../workflows/plan/start.md");
 const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.md");
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
@@ -119,6 +121,27 @@ describe("handler domain guards", () => {
 		expect(doc).toContain("Pane text like `MERGED`");
 		expect(doc).toContain("never closes an issue by itself");
 		expect(doc.indexOf("gh pr view <PR> --json state,mergeStateStatus,mergeCommit")).toBeLessThan(doc.lastIndexOf("gh issue close <N> --reason completed"));
+	});
+
+	test("post-merge repo sync runs only after observed MERGED state", () => {
+		const docs = [
+			readFileSync(HANDLER_DOC, "utf8"),
+			readFileSync(GITHUB_CLOSE_DOC, "utf8"),
+			readFileSync(LINEAR_CLOSE_DOC, "utf8"),
+			readFileSync(LINEAR_MERGE_DOC, "utf8"),
+			readFileSync(PLAN_CLOSE_DOC, "utf8"),
+		];
+		for (const doc of docs) {
+			expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+			expect(doc).toContain("repo.main_synced");
+			expect(doc).toContain("repo.main_sync_blocked");
+			expect(doc).toContain("repo.main_sync_failed");
+		}
+		expect(readFileSync(GITHUB_CLOSE_DOC, "utf8")).toContain('state === "MERGED"');
+		expect(readFileSync(PLAN_CLOSE_DOC, "utf8")).toContain('state === "MERGED"');
+		expect(readFileSync(HANDLER_DOC, "utf8")).toContain('state === "MERGED"');
+		expect(readFileSync(LINEAR_MERGE_DOC, "utf8")).toContain("It does not run for exit `75` queued auto-merge");
+		expect(docs.join("\n")).toContain("Do not run this helper for queued auto-merge");
 	});
 
 	test("github force-merge handlers honor FLIGHTDECK_AUTO_MERGE=0", () => {

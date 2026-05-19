@@ -87,6 +87,14 @@ Because the entry is GitHub-domain, `pane-registry set <N> merge_commit ...` mus
 
 For aborted outcome, set state `aborted` and log the explicit abort signal.
 
+For merged outcomes only, immediately run the safe post-merge local-main sync helper after the state/pr/merge fields are recorded and before teardown:
+
+```bash
+.agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
+```
+
+Branch only on JSON `status`. `synced|already-synced` records/reports `repo.main_synced`; `blocked` records/reports `repo.main_sync_blocked` with `ahead`, `behind`, `dirty_paths`, `reason`, and `commands_suggested`; `failed` records/reports `repo.main_sync_failed`. Sync block/failure never downgrades the already verified PR outcome and never authorizes reset, stash, discard, or force-push. Do not run this helper for queued auto-merge or any state that is not observably merged.
+
 ---
 
 ## § 6: Tear down window safely

@@ -12,6 +12,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - Run Linear issue workflows with planning, PR checks, merge ordering, and closeout summaries.
 - Run GitHub issue workflows with PR/CI/review handling and verified issue closeout.
 - Run plan-file workflows that split one markdown plan into item worktrees, panes, PRs, and dependency-aware merge supervision.
+- After verified PR merges, safely fast-forward the local `main` checkout when possible and report dirty, ahead, or diverged cases without rewriting user work.
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
 - Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, and rate limits.

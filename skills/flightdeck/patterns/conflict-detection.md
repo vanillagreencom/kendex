@@ -118,3 +118,15 @@ When a pane is in `merge-ready` state with `mergeStateStatus == UNKNOWN`:
 6. If state flips to DIRTY → conflict detected; trigger `rebase-multi-choice` flow.
 
 `unknown_since` survives compaction (persisted in master state).
+
+## Post-merge local main sync
+
+After authoritative GitHub state proves a PR is actually merged (`state == MERGED` and non-null `mergeCommit`), Flightdeck runs:
+
+```bash
+.agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
+```
+
+The helper is the only place git reconciliation logic lives. It fetches with `git fetch origin --prune`, fast-forwards local `main` only when clean and unambiguous, and returns JSON. Dirty paths, local commits ahead of remote, diverged histories, missing refs, or unsafe checkout/ref updates return `status:"blocked"` with `ahead`, `behind`, `dirty_paths`, `reason`, and `commands_suggested`. Operators choose manual merge/rebase/cleanup; Flightdeck never hard-resets, stashes, discards, or force-pushes local `main`.
+
+Queued auto-merge is not a merge. Do not run the helper when a wrapper reports queued auto-merge or GitHub says the PR is still open. Wait for a later poll/close workflow to observe `MERGED`.

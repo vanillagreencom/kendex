@@ -65,6 +65,15 @@ See `patterns/decision-biases.md` § Smaller-PR-first merge order and § Merge-o
 4. On successful merge (exit 0):
    - `pane-registry set-state <ISSUE_ID> merged`.
    - `pane-registry set <ISSUE_ID> pr_number <number>` (if not already set).
+   - Run post-merge local-main sync from the primary project checkout:
+     ```bash
+     .agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
+     ```
+     Branch only on the returned JSON `status`:
+     - `synced|already-synced` → continue to § 4; the helper records `repo.main_synced` activity when Flightdeck-managed.
+     - `blocked` → keep the PR outcome merged, record/report `repo.main_sync_blocked` with `ahead`, `behind`, `dirty_paths`, `reason`, and `commands_suggested`; do not reset, stash, discard, or force-push.
+     - `failed` → keep the PR outcome merged, record/report `repo.main_sync_failed` and surface the helper JSON in the cycle notes.
+     This step only runs after exit `0` (MERGED). It does not run for exit `75` queued auto-merge; a later watch poll must observe actual `MERGED` state first.
 
 ### § 3.5: Bounded UNKNOWN wait (optional)
 

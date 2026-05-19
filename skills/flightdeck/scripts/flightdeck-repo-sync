@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Trampoline for flightdeck-core TypeScript implementation under
+# skills/flightdeck/lib/flightdeck-core/src/bin/. `bun` is a hard
+# runtime dependency.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NAME="$(basename "${BASH_SOURCE[0]}")"
+exec bun "$SCRIPT_DIR/../lib/flightdeck-core/src/bin/${NAME}.ts" "$@"

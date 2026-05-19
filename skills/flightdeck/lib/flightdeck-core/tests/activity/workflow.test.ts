@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
 	emitMergeAction,
 	emitMergePlanUpdated,
+	emitRepoMainSync,
 	emitSessionStarted,
 	emitWorkflowDecision,
 } from "../../src/activity/workflow-emit.ts";
@@ -130,6 +131,41 @@ describe("workflow activity helpers", () => {
 		const [row] = events(file);
 		expect(row).toMatchObject({ severity: "warning", source: "workflow", type: "daemon.warning" });
 		expect(row?.details).toMatchObject({ conflict_count: 1, queue_count: 2 });
+	});
+
+	test("repo main sync helper emits success, blocked, and failed rows", () => {
+		const file = activityPath();
+		process.env.FLIGHTDECK_ACTIVITY_FILE = file;
+		emitRepoMainSync({ sessionId: "S3b" }, {
+			ahead: 0,
+			behind: 0,
+			commands_suggested: [],
+			dirty_paths: [],
+			reason: "fast-forwarded-worktree",
+			status: "synced",
+		}, { branch: "main", remote: "origin" });
+		emitRepoMainSync({ sessionId: "S3b" }, {
+			ahead: 8,
+			behind: 9,
+			commands_suggested: ["git log --left-right main...origin/main"],
+			dirty_paths: [],
+			reason: "local-branch-diverged",
+			status: "blocked",
+		});
+		emitRepoMainSync({ sessionId: "S3b" }, {
+			ahead: 0,
+			behind: 0,
+			commands_suggested: [],
+			dirty_paths: [],
+			reason: "git-fetch-failed",
+			status: "failed",
+		});
+
+		expect(events(file).map((row) => [row.type, row.severity, row.details?.reason])).toEqual([
+			["repo.main_synced", "success", "fast-forwarded-worktree"],
+			["repo.main_sync_blocked", "warning", "local-branch-diverged"],
+			["repo.main_sync_failed", "error", "git-fetch-failed"],
+		]);
 	});
 });
 
