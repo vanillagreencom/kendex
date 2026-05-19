@@ -171,6 +171,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const subscriberPid = new Map<string, number>();
 	const piExpectedSession = new Map<string, string>();
 	const subscriberRespawnNeeded = new Set<string>();
+	const subscriberRespawnHarness = new Map<string, string>();
 	// Round-4 #11: track per-pane activity flag to skip capture-pane
 	// when nothing changed since the last tick. A low-frequency sweep
 	// (every 30 ticks) still captures so we catch missed signals.
@@ -379,6 +380,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				paneHarness.delete(paneId);
 				ocPaneTarget.delete(paneId);
 				subscriberRespawnNeeded.delete(paneId);
+				subscriberRespawnHarness.delete(paneId);
 			},
 			log: (tag, msg) => log(tag, `${msg} reason=${reason}`),
 		});
@@ -462,6 +464,9 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		const pid = subscriberPid.get(paneId);
 		const piPid = typeof row.pi_pid === "string" ? row.pi_pid : undefined;
 		const piSocket = typeof row.pi_socket === "string" ? row.pi_socket : undefined;
+		const entry = trackedEntryForPane(paneId);
+		const respawnHarness = entry?.harness || paneHarness.get(paneId) || (typeof row.harness === "string" ? row.harness : "") || opts.defaultHarness || "";
+		if (respawnHarness) subscriberRespawnHarness.set(paneId, respawnHarness);
 		log("pi-subscriber-mismatch", `pane=${paneId} subscriber_pid=${pid ?? ""} expected_session=${expected} actual_session=${actual || ""} pi_pid=${piPid ?? ""} socket=${piSocket ?? ""}; reaping for respawn`);
 		emitPiSubscriberMismatch(activity, paneId, { pid, expectedSessionId: expected, actualSessionId: actual, piPid, piSocket });
 		reapSubscriberForPane(paneId, "pi-session-mismatch");
@@ -702,15 +707,19 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const target = paneCache.target(innerId);
 			if (!target) continue;
 			const winId = paneCache.windowId(innerId);
-			const harness = paneHarness.get(innerId) ?? opts.defaultHarness;
 			if (subscriberRespawnNeeded.has(innerId)) {
 				const entry = trackedEntryForPane(innerId);
+				const respawnHarness = entry?.harness || subscriberRespawnHarness.get(innerId) || paneHarness.get(innerId) || opts.defaultHarness;
 				const resolvedTarget = entry ? (resolvePaneTargetForEntry(opts.paneRegistryBin, entry.paneId) || target) : target;
-				if (harness && trySpawnSubscriberForPane(innerId, resolvedTarget, harness, entry, { forceSpawn: true })) {
+				if (respawnHarness && trySpawnSubscriberForPane(innerId, resolvedTarget, respawnHarness, entry, { forceSpawn: true })) {
 					subscriberRespawnNeeded.delete(innerId);
+					subscriberRespawnHarness.delete(innerId);
+					paneHarness.set(innerId, respawnHarness);
+					ocPaneTarget.set(innerId, resolvedTarget);
 					continue;
 				}
 			}
+			const harness = paneHarness.get(innerId) ?? opts.defaultHarness;
 			const bell = paneCache.bell(innerId);
 			const paneActivity = paneCache.activity(innerId);
 
