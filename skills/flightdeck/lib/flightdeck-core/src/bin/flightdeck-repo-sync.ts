@@ -6,14 +6,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { emitRepoMainSync, type RepoMainSyncResult } from "../activity/workflow-emit.ts";
+import { emitRepoMainSync, type RepoMainSyncDiagnostic, type RepoMainSyncResult } from "../activity/workflow-emit.ts";
 import { statePath } from "../state/master-state.ts";
 
 interface GitRun {
+	args: string[];
+	command: string;
+	error?: NodeJS.ErrnoException;
+	signal: NodeJS.Signals | null;
 	status: number | null;
 	stdout: string;
 	stderr: string;
-	error?: Error;
 }
 
 interface Options {
@@ -61,16 +64,33 @@ function isSafeRefComponent(value: string): boolean {
 }
 
 function runGit(cwd: string, args: string[]): GitRun {
-	const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
-	return { error: r.error, status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+	const fullArgs = ["-C", cwd, ...args];
+	const r = spawnSync("git", fullArgs, { encoding: "utf8" });
+	return {
+		args: ["git", ...fullArgs],
+		command: shellCommand(["git", ...fullArgs]),
+		error: r.error as NodeJS.ErrnoException | undefined,
+		signal: r.signal,
+		status: r.status,
+		stderr: r.stderr ?? "",
+		stdout: r.stdout ?? "",
+	};
 }
 
 function ok(run: GitRun): boolean {
 	return !run.error && run.status === 0;
 }
 
-function fail(reason: string, commands: string[], stderr = "", ahead = 0, behind = 0, dirtyPaths: string[] = []): RepoMainSyncResult {
-	return { ahead, behind, commands_suggested: commands, dirty_paths: dirtyPaths, reason: withStderr(reason, stderr), status: "failed" };
+function fail(reason: string, commands: string[], ahead = 0, behind = 0, dirtyPaths: string[] = [], diagnostics: RepoMainSyncDiagnostic[] = []): RepoMainSyncResult {
+	return {
+		ahead,
+		behind,
+		commands_suggested: commands,
+		...(diagnostics.length > 0 ? { diagnostics } : {}),
+		dirty_paths: dirtyPaths,
+		reason: reasonWithDiagnostics(reason, diagnostics),
+		status: "failed",
+	};
 }
 
 function blocked(reason: string, commands: string[], ahead = 0, behind = 0, dirtyPaths: string[] = []): RepoMainSyncResult {
@@ -81,14 +101,53 @@ function success(status: "synced" | "already-synced", reason: string, ahead = 0,
 	return { ahead, behind, commands_suggested: [], dirty_paths: [], reason, status };
 }
 
-function withStderr(reason: string, stderr: string): string {
-	const clean = stderr.trim().replace(/\s+/g, " ");
-	return clean ? `${reason}: ${clean}` : reason;
+function failGit(reason: string, run: GitRun, commands: string[] = [], ahead = 0, behind = 0, dirtyPaths: string[] = []): RepoMainSyncResult {
+	return fail(reason, commands.length ? commands : [run.command], ahead, behind, dirtyPaths, [gitDiagnostic(run)]);
+}
+
+function cleanOneLine(value: string): string {
+	return value.trim().replace(/\s+/g, " ");
+}
+
+function reasonWithDiagnostics(reason: string, diagnostics: RepoMainSyncDiagnostic[]): string {
+	const first = diagnostics[0];
+	if (!first) return reason;
+	const status = first.error_code
+		? `spawn ${first.error_code}`
+		: first.exit_status !== undefined && first.exit_status !== null
+			? `exit ${first.exit_status}`
+			: first.signal
+				? `signal ${first.signal}`
+				: "failed";
+	const stderr = cleanOneLine(first.stderr ?? "");
+	const error = cleanOneLine(first.error_message ?? "");
+	const suffix = [first.command, status, stderr || error].filter(Boolean).join("; ");
+	return suffix ? `${reason}: ${suffix}` : reason;
+}
+
+function gitDiagnostic(run: GitRun): RepoMainSyncDiagnostic {
+	const diagnostic: RepoMainSyncDiagnostic = {
+		args: run.args,
+		command: run.command,
+		exit_status: run.status,
+		signal: run.signal,
+	};
+	if (run.stderr.trim()) diagnostic.stderr = run.stderr.trim();
+	if (run.stdout.trim()) diagnostic.stdout = run.stdout.trim();
+	if (run.error) {
+		if (run.error.code) diagnostic.error_code = run.error.code;
+		diagnostic.error_message = run.error.message;
+	}
+	return diagnostic;
 }
 
 function shellQuote(value: string): string {
 	if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
 	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function shellCommand(args: string[]): string {
+	return args.map(shellQuote).join(" ");
 }
 
 function suggestedRerun(root: string, remote: string, branch: string): string {
@@ -110,34 +169,50 @@ function repoTopLevel(projectRoot: string): { root?: string; result?: RepoMainSy
 	const dir = ensureDirectory(projectRoot);
 	if (!dir) return { result: fail("project-root-not-directory", []) };
 	const top = runGit(dir, ["rev-parse", "--show-toplevel"]);
-	if (!ok(top)) return { result: fail("git-repo-invalid", [], top.stderr) };
+	if (!ok(top)) return { result: failGit("git-repo-invalid", top) };
 	return { root: top.stdout.trim() || dir };
 }
 
-function revParse(root: string, ref: string): string | null {
+type RevParseResult =
+	| { ok: true; sha: string }
+	| { missing: true; ok: false }
+	| { ok: false; result: RepoMainSyncResult };
+
+function revParse(root: string, ref: string): RevParseResult {
 	const r = runGit(root, ["rev-parse", "--verify", "--quiet", ref]);
-	return ok(r) ? r.stdout.trim() : null;
+	if (ok(r)) return { ok: true, sha: r.stdout.trim() };
+	if (!r.error && r.status === 1) return { missing: true, ok: false };
+	return { ok: false, result: failGit("git-rev-parse-failed", r) };
 }
 
-function aheadBehind(root: string, localRef: string, remoteRef: string): { ahead: number; behind: number; error?: string } {
+type AheadBehindResult =
+	| { ahead: number; behind: number; ok: true }
+	| { ok: false; result: RepoMainSyncResult };
+
+function aheadBehind(root: string, localRef: string, remoteRef: string): AheadBehindResult {
 	const r = runGit(root, ["rev-list", "--left-right", "--count", `${localRef}...${remoteRef}`]);
-	if (!ok(r)) return { ahead: 0, behind: 0, error: withStderr("ahead-behind-failed", r.stderr) };
+	if (!ok(r)) return { ok: false, result: failGit("ahead-behind-failed", r) };
 	const [aheadRaw, behindRaw] = r.stdout.trim().split(/\s+/);
 	const ahead = Number.parseInt(aheadRaw ?? "0", 10);
 	const behind = Number.parseInt(behindRaw ?? "0", 10);
-	if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return { ahead: 0, behind: 0, error: "ahead-behind-parse-failed" };
-	return { ahead, behind };
+	if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return { ok: false, result: fail("ahead-behind-parse-failed", [r.command], 0, 0, [], [gitDiagnostic(r)]) };
+	return { ahead, behind, ok: true };
 }
 
-function dirtyPaths(root: string): string[] {
+type DirtyStatusResult =
+	| { ok: true; paths: string[] }
+	| { ok: false; result: RepoMainSyncResult };
+
+function dirtyStatus(root: string, ahead = 0, behind = 0): DirtyStatusResult {
 	const r = runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
-	if (!ok(r)) return ["<git-status-failed>"];
-	return r.stdout
+	if (!ok(r)) return { ok: false, result: failGit("git-status-failed", r, [r.command], ahead, behind) };
+	const paths = r.stdout
 		.split("\n")
 		.map((line) => line.trimEnd())
 		.filter(Boolean)
 		.map((line) => line.length > 3 ? line.slice(3) : line)
 		.filter(Boolean);
+	return { ok: true, paths };
 }
 
 function currentBranch(root: string): string {
@@ -145,9 +220,13 @@ function currentBranch(root: string): string {
 	return ok(r) ? r.stdout.trim() : "";
 }
 
-function branchCheckoutPaths(root: string, branchRef: string): string[] {
+type BranchCheckoutResult =
+	| { ok: true; paths: string[] }
+	| { ok: false; result: RepoMainSyncResult };
+
+function branchCheckoutPaths(root: string, branchRef: string, ahead: number, behind: number): BranchCheckoutResult {
 	const r = runGit(root, ["worktree", "list", "--porcelain"]);
-	if (!ok(r)) return [];
+	if (!ok(r)) return { ok: false, result: failGit("git-worktree-list-failed", r, [r.command], ahead, behind) };
 	const matches: string[] = [];
 	let worktree = "";
 	for (const raw of r.stdout.split("\n")) {
@@ -156,7 +235,7 @@ function branchCheckoutPaths(root: string, branchRef: string): string[] {
 		if (line.startsWith("worktree ")) { worktree = line.slice("worktree ".length); continue; }
 		if (line === `branch ${branchRef}` && worktree) matches.push(resolve(worktree));
 	}
-	return matches;
+	return { ok: true, paths: matches };
 }
 
 function commandsForDirty(root: string, remote: string, branch: string): string[] {
@@ -191,43 +270,53 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 	try { process.chdir(root); } catch { /* best effort: git -C still pins repo operations */ }
 
 	const fetch = runGit(root, ["fetch", opts.remote, "--prune"]);
-	if (!ok(fetch)) return { projectRoot: root, result: fail("git-fetch-failed", [], fetch.stderr) };
+	if (!ok(fetch)) return { projectRoot: root, result: failGit("git-fetch-failed", fetch) };
 
 	const localRef = `refs/heads/${opts.branch}`;
 	const remoteRef = `refs/remotes/${opts.remote}/${opts.branch}`;
 	const localSha = revParse(root, localRef);
 	const remoteSha = revParse(root, remoteRef);
-	if (!remoteSha) {
+	if (!remoteSha.ok && "result" in remoteSha) return { projectRoot: root, result: remoteSha.result };
+	if (!localSha.ok && "result" in localSha) return { projectRoot: root, result: localSha.result };
+	const statusBeforeRefBlock = !remoteSha.ok || !localSha.ok ? dirtyStatus(root) : null;
+	if (statusBeforeRefBlock && !statusBeforeRefBlock.ok) return { projectRoot: root, result: statusBeforeRefBlock.result };
+	if (!remoteSha.ok) {
 		return { projectRoot: root, result: blocked("missing-remote-branch", [
 			`git -C ${shellQuote(root)} remote -v`,
 			`git -C ${shellQuote(root)} fetch ${shellQuote(opts.remote)} --prune`,
-		], 0, 0, dirtyPaths(root)) };
+		], 0, 0, statusBeforeRefBlock?.paths ?? []) };
 	}
-	if (!localSha) {
+	if (!localSha.ok) {
 		return { projectRoot: root, result: blocked("missing-local-branch", [
 			`git -C ${shellQuote(root)} branch --list ${shellQuote(opts.branch)}`,
 			`git -C ${shellQuote(root)} switch -c ${shellQuote(opts.branch)} ${shellQuote(remoteRef)}`,
-		], 0, 0, dirtyPaths(root)) };
+		], 0, 0, statusBeforeRefBlock?.paths ?? []) };
 	}
 
 	const counts = aheadBehind(root, localRef, remoteRef);
-	if (counts.error) return { projectRoot: root, result: fail(counts.error, [], "") };
-	const dirty = dirtyPaths(root);
-	if (dirty.length > 0) return { projectRoot: root, result: blocked("dirty-worktree", commandsForDirty(root, opts.remote, opts.branch), counts.ahead, counts.behind, dirty) };
+	if (!counts.ok) return { projectRoot: root, result: counts.result };
+	const dirty = dirtyStatus(root, counts.ahead, counts.behind);
+	if (!dirty.ok) return { projectRoot: root, result: dirty.result };
+	if (dirty.paths.length > 0) return { projectRoot: root, result: blocked("dirty-worktree", commandsForDirty(root, opts.remote, opts.branch), counts.ahead, counts.behind, dirty.paths) };
 
 	if (counts.ahead === 0 && counts.behind === 0) return { projectRoot: root, result: success("already-synced", "already-synced") };
 	if (counts.ahead > 0 && counts.behind > 0) return { projectRoot: root, result: blocked("local-branch-diverged", commandsForDiverged(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
 	if (counts.ahead > 0) return { projectRoot: root, result: blocked("local-branch-ahead", commandsForAhead(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
 
 	const ancestor = runGit(root, ["merge-base", "--is-ancestor", localRef, remoteRef]);
-	if (!ok(ancestor)) return { projectRoot: root, result: blocked("fast-forward-ambiguous", commandsForDiverged(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
+	if (!ok(ancestor)) {
+		if (!ancestor.error && ancestor.status === 1) return { projectRoot: root, result: blocked("fast-forward-ambiguous", commandsForDiverged(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
+		return { projectRoot: root, result: failGit("git-merge-base-failed", ancestor, commandsForDiverged(root, remoteRef, opts.branch), counts.ahead, counts.behind) };
+	}
 
 	const current = currentBranch(root);
 	if (current === opts.branch) {
 		const merge = runGit(root, ["merge", "--ff-only", remoteRef]);
-		if (!ok(merge)) return { projectRoot: root, result: fail("fast-forward-failed", commandsForDirty(root, opts.remote, opts.branch), merge.stderr, counts.ahead, counts.behind) };
+		if (!ok(merge)) return { projectRoot: root, result: failGit("fast-forward-failed", merge, commandsForDirty(root, opts.remote, opts.branch), counts.ahead, counts.behind) };
 	} else {
-		const checkoutPaths = branchCheckoutPaths(root, localRef).filter((path) => path !== resolve(root));
+		const checkoutResult = branchCheckoutPaths(root, localRef, counts.ahead, counts.behind);
+		if (!checkoutResult.ok) return { projectRoot: root, result: checkoutResult.result };
+		const checkoutPaths = checkoutResult.paths.filter((path) => path !== resolve(root));
 		if (checkoutPaths.length > 0) {
 			return { projectRoot: root, result: blocked("branch-checked-out-in-other-worktree", [
 				`run from worktree: ${checkoutPaths[0]}`,
@@ -235,13 +324,13 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 				suggestedRerun(checkoutPaths[0]!, opts.remote, opts.branch),
 			], counts.ahead, counts.behind) };
 		}
-		const update = runGit(root, ["update-ref", localRef, remoteSha, localSha]);
-		if (!ok(update)) return { projectRoot: root, result: fail("fast-forward-ref-update-failed", [], update.stderr, counts.ahead, counts.behind) };
+		const update = runGit(root, ["update-ref", localRef, remoteSha.sha, localSha.sha]);
+		if (!ok(update)) return { projectRoot: root, result: failGit("fast-forward-ref-update-failed", update, [], counts.ahead, counts.behind) };
 	}
 
 	const after = aheadBehind(root, localRef, remoteRef);
-	if (after.error) return { projectRoot: root, result: fail(after.error, [], "") };
-	if (after.ahead !== 0 || after.behind !== 0) return { projectRoot: root, result: fail("post-sync-verify-failed", [], "", after.ahead, after.behind) };
+	if (!after.ok) return { projectRoot: root, result: after.result };
+	if (after.ahead !== 0 || after.behind !== 0) return { projectRoot: root, result: fail("post-sync-verify-failed", [], after.ahead, after.behind) };
 	return { projectRoot: root, result: success("synced", current === opts.branch ? "fast-forwarded-worktree" : "fast-forwarded-local-ref") };
 }
 
@@ -254,16 +343,19 @@ function tmuxSessionName(): string {
 
 function emitIfManaged(result: RepoMainSyncResult, projectRoot: string | undefined, opts: Options): void {
 	if (!process.env.FLIGHTDECK_ACTIVITY_FILE && process.env.FLIGHTDECK_MANAGED !== "1") return;
+	let session = "";
 	try {
-		const session = tmuxSessionName();
+		session = tmuxSessionName();
+		const explicitActivityPath = process.env.FLIGHTDECK_ACTIVITY_FILE?.trim();
 		emitRepoMainSync({
-			activityPath: process.env.FLIGHTDECK_ACTIVITY_FILE,
+			activityPath: explicitActivityPath || undefined,
 			sessionId: session || undefined,
-			stateFile: session ? statePath(session) : undefined,
+			stateFile: !explicitActivityPath && session ? statePath(session) : undefined,
 			tmuxSession: session || undefined,
 		}, result, { branch: opts.branch, projectRoot, remote: opts.remote });
-	} catch {
-		// Activity is best-effort; helper JSON is the source of truth for callers.
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`flightdeck-repo-sync: activity emit failed status=${result.status} reason=${result.reason} session=${session || "<none>"}: ${message}\n`);
 	}
 }
 

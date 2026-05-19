@@ -147,8 +147,8 @@ describe("workflow activity helpers", () => {
 		emitRepoMainSync({ sessionId: "S3b" }, {
 			ahead: 8,
 			behind: 9,
-			commands_suggested: ["git log --left-right main...origin/main"],
-			dirty_paths: [],
+			commands_suggested: ["git log --left-right main...origin/main", "leave local main divergent"],
+			dirty_paths: ["local.txt"],
 			reason: "local-branch-diverged",
 			status: "blocked",
 		});
@@ -156,16 +156,44 @@ describe("workflow activity helpers", () => {
 			ahead: 0,
 			behind: 0,
 			commands_suggested: [],
+			diagnostics: [{ command: "git -C /repo fetch origin --prune", exit_status: 128, stderr: "fatal: network down" }],
 			dirty_paths: [],
-			reason: "git-fetch-failed",
+			reason: "git-fetch-failed: git -C /repo fetch origin --prune; exit 128; fatal: network down",
 			status: "failed",
 		});
 
-		expect(events(file).map((row) => [row.type, row.severity, row.details?.reason])).toEqual([
-			["repo.main_synced", "success", "fast-forwarded-worktree"],
-			["repo.main_sync_blocked", "warning", "local-branch-diverged"],
-			["repo.main_sync_failed", "error", "git-fetch-failed"],
-		]);
+		const rows = events(file);
+		expect(rows[0]).toMatchObject({ severity: "success", source: "workflow", summary: "Local main synced to origin/main", type: "repo.main_synced" });
+		expect(rows[0]?.details).toMatchObject({
+			ahead: 0,
+			behind: 0,
+			branch: "main",
+			commands_suggested: [],
+			dirty_paths: [],
+			project_root: null,
+			reason: "fast-forwarded-worktree",
+			remote: "origin",
+			status: "synced",
+		});
+		expect(rows[1]).toMatchObject({ severity: "warning", summary: "Local main sync blocked: local-branch-diverged", type: "repo.main_sync_blocked" });
+		expect(rows[1]?.details).toMatchObject({
+			ahead: 8,
+			behind: 9,
+			branch: "main",
+			commands_suggested: ["git log --left-right main...origin/main", "leave local main divergent"],
+			dirty_paths: ["local.txt"],
+			reason: "local-branch-diverged",
+			remote: "origin",
+			status: "blocked",
+		});
+		expect(rows[2]).toMatchObject({ severity: "error", summary: "Local main sync failed: git-fetch-failed: git -C /repo fetch origin --prune; exit 128; fatal: network down", type: "repo.main_sync_failed" });
+		expect(rows[2]?.details).toMatchObject({
+			ahead: 0,
+			behind: 0,
+			diagnostics: [{ command: "git -C /repo fetch origin --prune", exit_status: 128, stderr: "fatal: network down" }],
+			reason: "git-fetch-failed: git -C /repo fetch origin --prune; exit 128; fatal: network down",
+			status: "failed",
+		});
 	});
 });
 

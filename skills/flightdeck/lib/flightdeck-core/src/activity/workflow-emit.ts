@@ -43,6 +43,16 @@ export interface MergeActionDetails extends Record<string, unknown> {
 }
 
 export type RepoMainSyncStatus = "synced" | "already-synced" | "blocked" | "failed";
+export interface RepoMainSyncDiagnostic {
+	args?: string[];
+	command: string;
+	error_code?: string;
+	error_message?: string;
+	exit_status?: number | null;
+	signal?: string | null;
+	stderr?: string;
+	stdout?: string;
+}
 export interface RepoMainSyncResult {
 	status: RepoMainSyncStatus;
 	ahead: number;
@@ -50,6 +60,7 @@ export interface RepoMainSyncResult {
 	dirty_paths: string[];
 	reason: string;
 	commands_suggested: string[];
+	diagnostics?: RepoMainSyncDiagnostic[];
 }
 
 export interface RepoMainSyncContext {
@@ -160,6 +171,7 @@ export function emitRepoMainSync(ctx: WorkflowEmitContext, result: RepoMainSyncR
 			branch,
 			commands_suggested: result.commands_suggested,
 			dedup_key: `${workflowSessionId(ctx)}:${type}:${branch}:${result.reason}:${result.ahead}:${result.behind}:${result.dirty_paths.join(",")}`,
+			...(result.diagnostics && result.diagnostics.length > 0 ? { diagnostics: result.diagnostics } : {}),
 			dirty_paths: result.dirty_paths,
 			project_root: nonEmpty(repo.projectRoot) ?? null,
 			reason: result.reason,

@@ -25,7 +25,7 @@ Generic Flightdeck loop for tracked tmux-window sessions. It owns session state 
 | `cancelled` | Entry was intentionally stopped or declined. |
 | `dead` | Pane/window disappeared unexpectedly. |
 
-Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `watch.md` maps them onto the generic states via `domain.issue.phase` / `domain.issue.outcome`. Generic `workflow` / `adhoc` entries may still bind a top-level `pr_number`; only after authoritative `gh pr view` reports `state === "MERGED"` plus non-null `mergeCommit` may the generic terminal handler run the safe local-main sync helper.
+Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `watch.md` maps them onto the generic states via `domain.issue.phase` / `domain.issue.outcome`. Generic `workflow` / `adhoc` entries stay domain-neutral even when they record a top-level `pr_number`; they do not load GitHub, infer PR state, or run repository sync without an explicit PR-capable domain workflow.
 
 ---
 

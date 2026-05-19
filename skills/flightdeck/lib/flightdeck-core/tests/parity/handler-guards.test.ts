@@ -123,25 +123,49 @@ describe("handler domain guards", () => {
 		expect(doc.indexOf("gh pr view <PR> --json state,mergeStateStatus,mergeCommit")).toBeLessThan(doc.lastIndexOf("gh issue close <N> --reason completed"));
 	});
 
-	test("post-merge repo sync runs only after observed MERGED state", () => {
-		const docs = [
-			readFileSync(HANDLER_DOC, "utf8"),
-			readFileSync(GITHUB_CLOSE_DOC, "utf8"),
-			readFileSync(LINEAR_CLOSE_DOC, "utf8"),
-			readFileSync(LINEAR_MERGE_DOC, "utf8"),
-			readFileSync(PLAN_CLOSE_DOC, "utf8"),
-		];
-		for (const doc of docs) {
-			expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
-			expect(doc).toContain("repo.main_synced");
-			expect(doc).toContain("repo.main_sync_blocked");
-			expect(doc).toContain("repo.main_sync_failed");
-		}
-		expect(readFileSync(GITHUB_CLOSE_DOC, "utf8")).toContain('state === "MERGED"');
-		expect(readFileSync(PLAN_CLOSE_DOC, "utf8")).toContain('state === "MERGED"');
-		expect(readFileSync(HANDLER_DOC, "utf8")).toContain('state === "MERGED"');
-		expect(readFileSync(LINEAR_MERGE_DOC, "utf8")).toContain("It does not run for exit `75` queued auto-merge");
-		expect(docs.join("\n")).toContain("Do not run this helper for queued auto-merge");
+
+	test("generic terminal handler stays domain-neutral and does not sync repos", () => {
+		const doc = readFileSync(HANDLER_DOC, "utf8");
+		expect(doc).toContain("Do not query GitHub, infer PR state, or run repository sync from the generic lane");
+		expect(doc).not.toContain("flightdeck-repo-sync main");
+	});
+
+	test("github close post-merge repo sync requires authoritative MERGED state", () => {
+		const doc = readFileSync(GITHUB_CLOSE_DOC, "utf8");
+		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+		expect(doc).toContain("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
+		expect(doc).toContain('state === "MERGED"');
+		expect(doc).toContain("mergeCommit !== null");
+		expect(doc).toContain("Do not run this helper for queued auto-merge");
+		expect(doc).toContain("repo.main_sync_blocked");
+	});
+
+	test("plan close post-merge repo sync requires authoritative MERGED state", () => {
+		const doc = readFileSync(PLAN_CLOSE_DOC, "utf8");
+		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+		expect(doc).toContain("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
+		expect(doc).toContain('state === "MERGED"');
+		expect(doc).toContain("mergeCommit !== null");
+		expect(doc).toContain("Do not run this helper for queued auto-merge");
+		expect(doc).toContain("repo.main_sync_failed");
+	});
+
+	test("linear close post-merge repo sync is not driven by pane text", () => {
+		const doc = readFileSync(LINEAR_CLOSE_DOC, "utf8");
+		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+		expect(doc).toContain("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
+		expect(doc).toContain('state === "MERGED"');
+		expect(doc).toContain("mergeCommit !== null");
+		expect(doc).toContain("If the `merged` outcome came only from pane text");
+		expect(doc).toContain("Do not run this helper for queued auto-merge");
+	});
+
+	test("linear direct merge sync skips queued auto-merge", () => {
+		const doc = readFileSync(LINEAR_MERGE_DOC, "utf8");
+		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+		expect(doc).toContain("This step only runs after exit `0` (MERGED)");
+		expect(doc).toContain("It does not run for exit `75` queued auto-merge");
+		expect(doc).toContain("repo.main_synced");
 	});
 
 	test("github force-merge handlers honor FLIGHTDECK_AUTO_MERGE=0", () => {

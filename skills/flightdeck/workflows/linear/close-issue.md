@@ -64,7 +64,13 @@ Capture the outcome's summary fields from the buffer if present (PR number, merg
 
 Persist any captured summary fields via `pane-registry set <ISSUE_ID> <field> <value>`.
 
-For merged outcomes only, immediately run the safe post-merge local-main sync helper after the state/pr/merge fields are recorded and before teardown:
+For merged outcomes only, immediately run the safe post-merge local-main sync helper after the state/pr/merge fields are recorded and before teardown, but only when authoritative GitHub proof exists for the PR:
+
+```bash
+gh pr view <PR> --json state,mergeStateStatus,mergeCommit
+```
+
+Required: `state === "MERGED"` AND `mergeCommit !== null`. If the `merged` outcome came only from pane text, a buffer banner, or any signal that did not include this authoritative PR proof, do not sync; return to the watch loop until a later poll can verify the PR.
 
 ```bash
 .agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
