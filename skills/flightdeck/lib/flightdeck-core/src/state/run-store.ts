@@ -325,6 +325,8 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 		const paths = resolveRunPaths(loaded.paths, requestedRunId);
 		const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
+		const active = readActivePointer(loaded.paths.active_run_json);
+		if (active !== JSON_MISSING) validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 		const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 		const nextMetadata: RunMetadata = {
 			...metadata,
@@ -346,7 +348,6 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 			copyFileAtomic(paths.activity_jsonl, activitySnapshotPath);
 		}
 		writeJsonAtomic(paths.metadata_json, nextMetadata);
-		const active = readActivePointer(loaded.paths.active_run_json);
 		let activeCleared = false;
 		if (active !== JSON_MISSING && active.project_id === ctx.identity.project_id && active.run_id === requestedRunId) {
 			rmSync(loaded.paths.active_run_json, { force: true });
@@ -436,6 +437,7 @@ function withProjectLock<T>(projectRoot: string, fn: (ctx: ProjectLockContext) =
 function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso()): { project: ProjectIndex; paths: ProjectRunPaths } {
 	mkdirSync(ctx.paths.runs_dir, { recursive: true });
 	const existing = readProjectIndex(ctx.paths.project_json);
+	if (existing !== JSON_MISSING) validateProjectIndexIdentity(existing, ctx.identity, ctx.paths.project_json);
 	const createdAt = existing !== JSON_MISSING ? existing.created_at : timestamp;
 	const project: ProjectIndex = {
 		created_at: createdAt,

@@ -131,12 +131,30 @@ describe("Flightdeck durable run store", () => {
 		const mismatch = /project index.*project_id .*does not match current project/;
 
 		expect(() => loadProjectIndex(repo)).toThrow(mismatch);
+		expect(() => ensureProjectIndex(repo)).toThrow(mismatch);
+		expect(() => createRun(repo, "CREATE")).toThrow(mismatch);
+		expect(() => importLegacyArchives(repo, "tmp")).toThrow(mismatch);
 		expect(() => readActiveRun(repo)).toThrow(mismatch);
 		expect(() => listRuns(repo)).toThrow(mismatch);
 		expect(() => showRun(repo, created.metadata.run_id)).toThrow(mismatch);
 		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(mismatch);
+		expect((JSON.parse(readFileSync(projectPaths.project_json, "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
 		expect((JSON.parse(readFileSync(projectPaths.active_run_json, "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
 		expect((JSON.parse(readFileSync(created.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
+	});
+
+	test("forged active pointer project fails terminate before mutating run files", () => {
+		const created = createRun(repo, SESSION);
+		const projectPaths = resolveProjectRunPaths(created.project);
+		const forgedProjectId = resolveProjectIdentity(makeRepo("forged", "https://example.invalid/acme/forged.git")).project_id;
+		writeFileSync(projectPaths.active_run_json, JSON.stringify({ ...created.active, project_id: forgedProjectId }), "utf8");
+		const stateBefore = readFileSync(created.paths.state_json, "utf8");
+		const metadataBefore = readFileSync(created.paths.metadata_json, "utf8");
+
+		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(/active run pointer.*project_id .*does not match project/);
+		expect(readFileSync(created.paths.state_json, "utf8")).toBe(stateBefore);
+		expect(readFileSync(created.paths.metadata_json, "utf8")).toBe(metadataBefore);
+		expect((JSON.parse(readFileSync(projectPaths.active_run_json, "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
 	});
 
 	test("snapshot lookup rejects traversal and unsafe basenames", () => {
