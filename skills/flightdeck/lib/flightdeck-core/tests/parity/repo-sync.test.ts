@@ -80,7 +80,7 @@ function failStatusShim(): Record<string, string> {
 }
 
 function failFetchShim(): Record<string, string> {
-	return gitShim(`  *" fetch --prune --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
+	return gitShim(`  *" fetch --prune --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
 }
 
 function failWorktreeListShim(): Record<string, string> {
@@ -142,6 +142,10 @@ function rev(repo: string, ref: string): string {
 	return git(repo, ["rev-parse", ref]);
 }
 
+function hasRef(repo: string, ref: string): boolean {
+	return sh("git", ["-C", repo, "rev-parse", "--verify", "--quiet", ref]).status === 0;
+}
+
 describe("flightdeck-repo-sync main", () => {
 	test("helper source never shells out to destructive cleanup commands", () => {
 		const source = readFileSync(resolve(HERE, "../../src/bin/flightdeck-repo-sync.ts"), "utf8");
@@ -180,7 +184,7 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "missing-remote-branch", status: "blocked" });
 		expect(result.json.diagnostics).toBeUndefined();
 		expect(result.json.commands_suggested.join("\n")).toContain("ls-remote --exit-code origin refs/heads/local-only");
-		expect(result.json.commands_suggested.join("\n")).toContain("fetch --prune --refmap= origin +refs/heads/local-only:refs/remotes/origin/local-only");
+		expect(result.json.commands_suggested.join("\n")).toContain("fetch --prune --no-tags --refmap= origin +refs/heads/local-only:refs/remotes/origin/local-only");
 	});
 
 	test("git fetch failure returns failed diagnostics", () => {
@@ -191,7 +195,7 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json.reason).toContain("exit 47");
 		expect(result.json.reason).toContain("fetch exploded");
 		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 47, stderr: "fetch exploded" });
-		expect(result.json.diagnostics?.[0]?.command).toContain("fetch --prune --refmap= origin +refs/heads/main:refs/remotes/origin/main");
+		expect(result.json.diagnostics?.[0]?.command).toContain("fetch --prune --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main");
 	});
 
 	test("clean behind local main fast-forwards to origin/main", () => {
@@ -202,6 +206,32 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "fast-forwarded-worktree", status: "synced" });
 		expect(rev(fixture.clone, "main")).toBe(rev(fixture.clone, "origin/main"));
 		expect(readFileSync(join(fixture.clone, "remote.txt"), "utf8")).toBe("remote\n");
+	});
+
+	test("fetch uses no-tags and does not auto-follow remote tags", () => {
+		if (!fixture) throw new Error("fixture missing");
+		const tagName = "repo-sync-auto-follow";
+		const tagRef = `refs/tags/${tagName}`;
+		const control = join(fixture.tmp, "control");
+		const controlClone = sh("git", ["clone", "-q", fixture.origin, control]);
+		expect(controlClone.status).toBe(0);
+		commitFile(fixture.seed, "tagged.txt", "tagged\n", "tagged update");
+		git(fixture.seed, ["tag", "-a", tagName, "-m", "tag that default fetch would auto-follow"]);
+		git(fixture.seed, ["push", "-q", "origin", "main", tagRef]);
+
+		expect(hasRef(control, tagRef)).toBe(false);
+		const controlFetch = sh("git", ["-C", control, "fetch", "--prune", "--refmap=", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+		expect(controlFetch.status).toBe(0);
+		expect(hasRef(control, tagRef)).toBe(true);
+
+		git(fixture.clone, ["config", "remote.origin.tagOpt", "--tags"]);
+		expect(hasRef(fixture.clone, tagRef)).toBe(false);
+		const result = runSync();
+		expect(result.status).toBe(0);
+		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "fast-forwarded-worktree", status: "synced" });
+		expect(rev(fixture.clone, "main")).toBe(rev(fixture.clone, "origin/main"));
+		expect(readFileSync(join(fixture.clone, "tagged.txt"), "utf8")).toBe("tagged\n");
+		expect(hasRef(fixture.clone, tagRef)).toBe(false);
 	});
 
 	test("ignored file collision blocks before checked-out main fast-forward", () => {

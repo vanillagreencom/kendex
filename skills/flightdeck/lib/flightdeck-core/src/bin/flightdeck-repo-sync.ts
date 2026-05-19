@@ -276,7 +276,7 @@ function remoteBranchExists(root: string, remote: string, branch: string): Remot
 function fetchRemoteTracking(root: string, remote: string, branch: string): GitRun {
 	const sourceRef = `refs/heads/${branch}`;
 	const destinationRef = `refs/remotes/${remote}/${branch}`;
-	return runGit(root, ["fetch", "--prune", "--refmap=", remote, `+${sourceRef}:${destinationRef}`]);
+	return runGit(root, ["fetch", "--prune", "--no-tags", "--refmap=", remote, `+${sourceRef}:${destinationRef}`]);
 }
 
 type CurrentBranchResult =
@@ -348,7 +348,7 @@ function commandsForMissingRemote(root: string, remote: string, branch: string):
 	return [
 		`git -C ${shellQuote(root)} remote -v`,
 		`git -C ${shellQuote(root)} ls-remote --exit-code ${shellQuote(remote)} ${shellQuote(`refs/heads/${branch}`)}`,
-		`git -C ${shellQuote(root)} fetch --prune --refmap= ${shellQuote(remote)} ${shellQuote(`+refs/heads/${branch}:refs/remotes/${remote}/${branch}`)}`,
+		`git -C ${shellQuote(root)} fetch --prune --no-tags --refmap= ${shellQuote(remote)} ${shellQuote(`+refs/heads/${branch}:refs/remotes/${remote}/${branch}`)}`,
 	];
 }
 
