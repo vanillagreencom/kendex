@@ -411,6 +411,9 @@ describe("handler domain guards", () => {
 		expect(doc).toContain("mergeCommit !== null");
 		expect(doc).toContain("If the `merged` outcome came only from pane text");
 		expect(doc).toContain("Leave the entry non-terminal and return to the watch loop");
+		expect(doc).toContain("proceed to § 2 with candidate `state = merged`");
+		expect(doc).toContain("This fast-path only satisfies signal counting");
+		expect(doc).not.toContain("proceed directly to § 3 with `state = merged`");
 		expect(doc).toContain("Do not run this helper for queued auto-merge");
 		expect(proof).toBeGreaterThanOrEqual(0);
 		expect(setState).toBeGreaterThanOrEqual(0);
@@ -423,10 +426,19 @@ describe("handler domain guards", () => {
 
 	test("linear direct merge sync skips queued auto-merge", () => {
 		const doc = readFileSync(LINEAR_MERGE_DOC, "utf8");
+		const proof = doc.indexOf("gh pr view <PR> --json state,mergeStateStatus,mergeCommit");
 		expect(doc).toContain("flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
-		expect(doc).toContain("This step only runs after exit `0` (MERGED)");
+		expect(doc).toContain("The `pr-merge` exit code is not proof by itself");
+		expect(doc).toContain('state === "MERGED"');
+		expect(doc).toContain("mergeCommit !== null");
+		expect(doc).toContain("do **not** call `pane-registry set-state`, persist `merge_commit`, run repo sync, recompute the graph, or perform terminal handling");
+		expect(doc).toContain("This step only runs after exit `0` plus authoritative");
 		expect(doc).toContain("It does not run for exit `75` queued auto-merge");
 		expect(doc).toContain("repo.main_synced");
+		expectTextBefore(doc, "gh pr view <PR> --json state,mergeStateStatus,mergeCommit", "pane-registry set-state <ISSUE_ID> merged");
+		expectTextBefore(doc, "gh pr view <PR> --json state,mergeStateStatus,mergeCommit", "pane-registry set <ISSUE_ID> merge_commit <mergeCommit.oid>");
+		expectTextBefore(doc, "gh pr view <PR> --json state,mergeStateStatus,mergeCommit", "flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json");
+		expect(proof).toBeGreaterThanOrEqual(0);
 	});
 
 	test("github force-merge handlers honor FLIGHTDECK_AUTO_MERGE=0", () => {

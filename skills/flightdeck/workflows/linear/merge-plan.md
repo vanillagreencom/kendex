@@ -56,15 +56,20 @@ See `patterns/decision-biases.md` § Smaller-PR-first merge order and § Merge-o
      github pr-merge <PR> --squash --delete-branch
      ```
      Branch on exit code (the wrapper distinguishes outcomes that raw `gh pr merge` collapses to a single 0):
-     - `0` (MERGED) → § 4. The PR landed immediately.
+     - `0` (merge command completed) → immediately verify authoritative GitHub proof before any terminal mutation:
+       ```bash
+       gh pr view <PR> --json state,mergeStateStatus,mergeCommit
+       ```
+       Required: `state === "MERGED"` AND `mergeCommit !== null`. The `pr-merge` exit code is not proof by itself. If proof is missing, `state !== "MERGED"`, or `mergeCommit === null`, set `paused_for_user = {issue_id:<ISSUE_ID>, reason:"gh-pr-merge-proof-missing", prompt_text:<raw gh payload/stderr>}` (or return non-terminal for the next watch poll) and do **not** call `pane-registry set-state`, persist `merge_commit`, run repo sync, recompute the graph, or perform terminal handling. If proof passes, continue to § 4 with the authoritative `mergeCommit` payload.
      - `75` (QUEUED FOR AUTO-MERGE) → set the issue's `substate = queued-for-auto-merge`; do NOT mark merged. The merge will fire when CI / branch protection clear; the watch loop will catch the eventual MERGED state on a later poll. Push the issue back to the queue tail.
      - `1` (BLOCKED) → escalate (`paused_for_user`); the wrapper's stderr classifies the block as transient or permanent — surface that in the pause message.
    - `UNKNOWN` AND elapsed since first observed < `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` → push back to queue tail; return to § 1 (graph unchanged).
    - `UNKNOWN` AND elapsed ≥ threshold AND force-merge predicate satisfied (see `patterns/conflict-detection.md`) → direct the per-issue agent to force-merge. If no live pane, invoke `github pr-merge <PR> --force --squash --delete-branch` (admin path) and apply the same exit-code branching above.
    - `DIRTY | BEHIND` with overlap → escalate (set `paused_for_user`); return to caller.
-4. On successful merge (exit 0):
+4. On successful merge proof (exit 0 plus authoritative `gh pr view` payload):
    - `pane-registry set-state <ISSUE_ID> merged`.
    - `pane-registry set <ISSUE_ID> pr_number <number>` (if not already set).
+   - `pane-registry set <ISSUE_ID> merge_commit <mergeCommit.oid>` using the authoritative `gh pr view` payload, not wrapper stdout or pane text alone.
    - Run post-merge local-main sync from the primary project checkout:
      ```bash
      .agents/skills/flightdeck/scripts/flightdeck-repo-sync main --project-root <PROJECT_ROOT> --remote origin --branch main --json
@@ -73,7 +78,7 @@ See `patterns/decision-biases.md` § Smaller-PR-first merge order and § Merge-o
      - `synced|already-synced` → continue to § 4; the helper records `repo.main_synced` activity when Flightdeck-managed.
      - `blocked` → keep the PR outcome merged, record/report `repo.main_sync_blocked` with `ahead`, `behind`, `dirty_paths`, `reason`, and `commands_suggested`; do not reset, stash, discard, or force-push.
      - `failed` → keep the PR outcome merged, record/report `repo.main_sync_failed` and surface the helper JSON in the cycle notes.
-     This step only runs after exit `0` (MERGED). It does not run for exit `75` queued auto-merge; a later watch poll must observe actual `MERGED` state first.
+     This step only runs after exit `0` plus authoritative `state === "MERGED"` and non-null `mergeCommit`. It does not run for exit `75` queued auto-merge, missing merge proof, or GitHub states that are not actually merged; a later watch poll must observe actual `MERGED` state first.
 
 ### § 3.5: Bounded UNKNOWN wait (optional)
 

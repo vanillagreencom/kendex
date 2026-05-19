@@ -220,6 +220,18 @@ function dirtyStatus(root: string, ahead = 0, behind = 0): DirtyStatusResult {
 	return { ok: true, paths };
 }
 
+type RemoteBranchResult =
+	| { ok: true }
+	| { missing: true; ok: false }
+	| { ok: false; result: RepoMainSyncResult };
+
+function remoteBranchExists(root: string, remote: string, branch: string): RemoteBranchResult {
+	const r = runGit(root, ["ls-remote", "--exit-code", remote, `refs/heads/${branch}`]);
+	if (ok(r)) return { ok: true };
+	if (!r.error && r.status === 2) return { missing: true, ok: false };
+	return { ok: false, result: failGit("git-ls-remote-failed", r) };
+}
+
 function fetchRemoteTracking(root: string, remote: string, branch: string): GitRun {
 	const sourceRef = `refs/heads/${branch}`;
 	const destinationRef = `refs/remotes/${remote}/${branch}`;
@@ -281,11 +293,27 @@ function commandsForDiverged(root: string, remoteRef: string, branch: string): s
 	];
 }
 
+function commandsForMissingRemote(root: string, remote: string, branch: string): string[] {
+	return [
+		`git -C ${shellQuote(root)} remote -v`,
+		`git -C ${shellQuote(root)} ls-remote --exit-code ${shellQuote(remote)} ${shellQuote(`refs/heads/${branch}`)}`,
+		`git -C ${shellQuote(root)} fetch --prune --refmap= ${shellQuote(remote)} ${shellQuote(`+refs/heads/${branch}:refs/remotes/${remote}/${branch}`)}`,
+	];
+}
+
 function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncResult } {
 	const top = repoTopLevel(opts.projectRoot);
 	if (top.result) return { result: top.result };
 	const root = top.root!;
 	try { process.chdir(root); } catch { /* best effort: git -C still pins repo operations */ }
+
+	const remoteBranch = remoteBranchExists(root, opts.remote, opts.branch);
+	if (!remoteBranch.ok) {
+		if ("result" in remoteBranch) return { projectRoot: root, result: remoteBranch.result };
+		const dirty = dirtyStatus(root);
+		if (!dirty.ok) return { projectRoot: root, result: dirty.result };
+		return { projectRoot: root, result: blocked("missing-remote-branch", commandsForMissingRemote(root, opts.remote, opts.branch), 0, 0, dirty.paths) };
+	}
 
 	const fetch = fetchRemoteTracking(root, opts.remote, opts.branch);
 	if (!ok(fetch)) return { projectRoot: root, result: failGit("git-fetch-failed", fetch) };
@@ -299,10 +327,7 @@ function syncMain(opts: Options): { projectRoot?: string; result: RepoMainSyncRe
 	const statusBeforeRefBlock = !remoteSha.ok || !localSha.ok ? dirtyStatus(root) : null;
 	if (statusBeforeRefBlock && !statusBeforeRefBlock.ok) return { projectRoot: root, result: statusBeforeRefBlock.result };
 	if (!remoteSha.ok) {
-		return { projectRoot: root, result: blocked("missing-remote-branch", [
-			`git -C ${shellQuote(root)} remote -v`,
-			`git -C ${shellQuote(root)} fetch --prune --refmap= ${shellQuote(opts.remote)} ${shellQuote(`+refs/heads/${opts.branch}:refs/remotes/${opts.remote}/${opts.branch}`)}`,
-		], 0, 0, statusBeforeRefBlock?.paths ?? []) };
+		return { projectRoot: root, result: blocked("missing-remote-branch", commandsForMissingRemote(root, opts.remote, opts.branch), 0, 0, statusBeforeRefBlock?.paths ?? []) };
 	}
 	if (!localSha.ok) {
 		return { projectRoot: root, result: blocked("missing-local-branch", [

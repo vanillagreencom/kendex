@@ -79,6 +79,10 @@ function failStatusShim(): Record<string, string> {
 	return gitShim(`  *" status --porcelain=v1 --untracked-files=all "*) echo "status exploded" >&2; exit 44 ;;`);
 }
 
+function failFetchShim(): Record<string, string> {
+	return gitShim(`  *" fetch --prune --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
+}
+
 function failWorktreeListShim(): Record<string, string> {
 	return gitShim(`  *" worktree list --porcelain "*) echo "worktree list exploded" >&2; exit 45 ;;`);
 }
@@ -123,9 +127,13 @@ function pushSeed(file: string, content: string, message: string): void {
 }
 
 function runSync(extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string; json: SyncResult } {
+	return runSyncForBranch("main", extraEnv);
+}
+
+function runSyncForBranch(branch: string, extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string; json: SyncResult } {
 	if (!fixture) throw new Error("fixture missing");
 	const env = { ...GIT_ENV, ...extraEnv };
-	const r = sh(SCRIPT, ["main", "--project-root", fixture.clone, "--remote", "origin", "--branch", "main", "--json"], { env });
+	const r = sh(SCRIPT, ["main", "--project-root", fixture.clone, "--remote", "origin", "--branch", branch, "--json"], { env });
 	const json = JSON.parse(r.stdout) as SyncResult;
 	return { ...r, json };
 }
@@ -162,6 +170,28 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.stderr).toContain("flightdeck-repo-sync: activity emit failed");
 		expect(result.stderr).toContain("status=already-synced");
 		expect(result.stderr).toContain("session=managed-session");
+	});
+
+	test("missing remote branch blocks instead of reporting fetch failure", () => {
+		if (!fixture) throw new Error("fixture missing");
+		git(fixture.clone, ["switch", "-q", "-c", "local-only"]);
+		const result = runSyncForBranch("local-only");
+		expect(result.status).toBe(0);
+		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "missing-remote-branch", status: "blocked" });
+		expect(result.json.diagnostics).toBeUndefined();
+		expect(result.json.commands_suggested.join("\n")).toContain("ls-remote --exit-code origin refs/heads/local-only");
+		expect(result.json.commands_suggested.join("\n")).toContain("fetch --prune --refmap= origin +refs/heads/local-only:refs/remotes/origin/local-only");
+	});
+
+	test("git fetch failure returns failed diagnostics", () => {
+		const result = runSync(failFetchShim());
+		expect(result.status).toBe(1);
+		expect(result.json.status).toBe("failed");
+		expect(result.json.reason).toContain("git-fetch-failed");
+		expect(result.json.reason).toContain("exit 47");
+		expect(result.json.reason).toContain("fetch exploded");
+		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 47, stderr: "fetch exploded" });
+		expect(result.json.diagnostics?.[0]?.command).toContain("fetch --prune --refmap= origin +refs/heads/main:refs/remotes/origin/main");
 	});
 
 	test("clean behind local main fast-forwards to origin/main", () => {
