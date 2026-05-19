@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// One entry in `<scope>/.vstack-source.json`. Records where a package was
 /// copied from so update detection can compare installed vs source versions.
@@ -384,9 +385,11 @@ fn remove_same_scope_legacy_packages(name: &str, global: bool) -> Result<()> {
 ///    — to switch scopes, the user explicitly runs
 ///    `vstack remove [--global] <name>` then re-installs at the desired scope.
 /// 3. Copy the package directory into `<scope>/packages/<name>/`.
-/// 4. For every entry in the package.json `bin` field, create a symlink
+/// 4. If `package.json` declares production dependencies, run `npm install`
+///    in the deployed package directory so Pi can resolve runtime modules.
+/// 5. For every entry in the package.json `bin` field, create a symlink
 ///    at `<scope>/bin/<cli-name>` pointing at the installed binary.
-/// 5. Add a relative path entry (`./packages/<name>`) to Pi's `settings.json`
+/// 6. Add a relative path entry (`./packages/<name>`) to Pi's `settings.json`
 ///    `packages` array, preserving any existing entries.
 ///
 /// Pi resolves relative path entries against the settings file directory:
@@ -444,6 +447,7 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<Pa
     clear_path(&dest)?;
 
     copy_dir(&ext.source_dir, &dest)?;
+    install_production_dependencies_if_needed(&ext.name, &dest)?;
     install_bin_links(ext, &dest, global)?;
     register_in_pi_settings(&ext.name, &dest, global)?;
     let _ = update_source_index(ext, global);
@@ -754,6 +758,79 @@ const COPY_DIR_SKIP_NAMES: &[&str] = &[
 
 fn should_skip_copy_entry(name: &str) -> bool {
     COPY_DIR_SKIP_NAMES.contains(&name)
+}
+
+const NPM_PRODUCTION_INSTALL_ARGS: &[&str] = &[
+    "install",
+    "--omit=dev",
+    "--package-lock=false",
+    "--legacy-peer-deps",
+    "--no-audit",
+    "--no-fund",
+];
+
+fn manifest_object_field_non_empty(manifest: &serde_json::Value, key: &str) -> bool {
+    manifest
+        .get(key)
+        .and_then(|v| v.as_object())
+        .is_some_and(|map| !map.is_empty())
+}
+
+fn package_declares_runtime_dependencies(package_dir: &Path) -> Result<bool> {
+    let manifest = package_dir.join("package.json");
+    let raw = std::fs::read_to_string(&manifest)
+        .with_context(|| format!("reading {}", manifest.display()))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", manifest.display()))?;
+    Ok(manifest_object_field_non_empty(&parsed, "dependencies")
+        || manifest_object_field_non_empty(&parsed, "optionalDependencies"))
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    format!("'{}'", raw.replace('\'', "'\\''"))
+}
+
+fn npm_production_install_command(package_dir: &Path) -> String {
+    format!(
+        "cd {} && npm {}",
+        shell_quote_path(package_dir),
+        NPM_PRODUCTION_INSTALL_ARGS.join(" ")
+    )
+}
+
+fn install_production_dependencies_if_needed(package_name: &str, package_dir: &Path) -> Result<()> {
+    if !package_declares_runtime_dependencies(package_dir)? {
+        return Ok(());
+    }
+
+    let recovery = npm_production_install_command(package_dir);
+    let output = Command::new("npm")
+        .args(NPM_PRODUCTION_INSTALL_ARGS)
+        .current_dir(package_dir)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| {
+            format!(
+                "pi-package {package_name} declares production dependencies, but npm could not run. Recovery: `{recovery}`"
+            )
+        })?;
+
+    if !output.status.success() {
+        let mut details = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if details.is_empty() {
+            details = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        if details.is_empty() {
+            details = output.status.to_string();
+        }
+        anyhow::bail!(
+            "pi-package {package_name} declares production dependencies, but `npm install` failed in {}: {details}. Recovery: `{recovery}`",
+            package_dir.display()
+        );
+    }
+
+    Ok(())
 }
 
 /// Path to the scope's `APPEND_SYSTEM.md`. Pi reads global from
@@ -1158,6 +1235,61 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(unix)]
+    fn write_fake_npm(bin_dir: &Path, log_path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::create_dir_all(bin_dir).unwrap();
+        let npm = bin_dir.join("npm");
+        std::fs::write(
+            &npm,
+            format!(
+                r#"#!/bin/sh
+set -eu
+log={log}
+printf 'cwd=%s\n' "$PWD" > "$log"
+printf 'args=' >> "$log"
+for arg in "$@"; do
+  printf '[%s]' "$arg" >> "$log"
+done
+printf '\n' >> "$log"
+mkdir -p node_modules/left-pad
+printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
+"#,
+                log = shell_quote_path(log_path)
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&npm).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&npm, perms).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn with_fake_npm_on_path<R>(bin_dir: &Path, body: impl FnOnce() -> R) -> R {
+        let prev_path = std::env::var_os("PATH");
+        let mut paths = vec![bin_dir.to_path_buf()];
+        if let Some(prev) = prev_path.as_ref() {
+            paths.extend(std::env::split_paths(prev));
+        }
+        let next_path = std::env::join_paths(paths).unwrap();
+        unsafe {
+            std::env::set_var("PATH", next_path);
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        unsafe {
+            if let Some(prev) = prev_path {
+                std::env::set_var("PATH", prev);
+            } else {
+                std::env::remove_var("PATH");
+            }
+        }
+        match result {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
     #[test]
     fn install_and_remove_pi_extension_round_trip() {
         let sandbox =
@@ -1206,6 +1338,89 @@ mod tests {
             assert!(
                 after.get("packages").is_none(),
                 "expected packages key gone after sole package removed, got {after}"
+            );
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn runtime_dependency_detection_ignores_dev_and_peer_dependencies() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_pi_runtime_dep_detect_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_pkg(
+            &dir,
+            r#"{
+                "name": "pi-dev-only",
+                "devDependencies": { "tsx": "^4.0.0" },
+                "peerDependencies": { "@earendil-works/pi-coding-agent": "*" }
+            }"#,
+        );
+        assert!(!package_declares_runtime_dependencies(&dir).unwrap());
+
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{
+                "name": "pi-runtime",
+                "optionalDependencies": { "left-pad": "^1.3.0" }
+            }"#,
+        )
+        .unwrap();
+        assert!(package_declares_runtime_dependencies(&dir).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_pi_extension_installs_declared_production_dependencies() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_install_runtime_deps_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-needs-deps");
+        std::fs::create_dir_all(source.join("extensions")).unwrap();
+        std::fs::write(source.join("extensions").join("mini.ts"), "// noop\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{
+                "name": "pi-needs-deps",
+                "pi": { "extensions": ["./extensions/mini.ts"] },
+                "dependencies": { "left-pad": "^1.3.0" },
+                "devDependencies": { "tsx": "^4.0.0" },
+                "peerDependencies": { "@earendil-works/pi-coding-agent": "*" }
+            }"#,
+        )
+        .unwrap();
+
+        let fake_bin = sandbox.join("fake-bin");
+        let npm_log = sandbox.join("npm.log");
+        write_fake_npm(&fake_bin, &npm_log);
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = with_fake_npm_on_path(&fake_bin, || {
+                install_pi_extension(&ext, true).unwrap().unwrap()
+            });
+
+            assert!(
+                dest.join("node_modules")
+                    .join("left-pad")
+                    .join("index.js")
+                    .exists()
+            );
+            let log = std::fs::read_to_string(&npm_log).unwrap();
+            assert!(
+                log.contains(&format!("cwd={}", dest.display())),
+                "npm should run inside deployed package dir, got log: {log}"
+            );
+            assert!(
+                log.contains("args=[install][--omit=dev][--package-lock=false][--legacy-peer-deps][--no-audit][--no-fund]"),
+                "npm should install production deps only, got log: {log}"
             );
         });
 
