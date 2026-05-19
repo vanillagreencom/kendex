@@ -18,6 +18,7 @@ const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
 const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
 const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
+const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
 
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -176,15 +177,35 @@ describe("handler domain guards", () => {
 
 	test("plan start validates graph before dry-run or mutation", () => {
 		const doc = readFileSync(PLAN_START_DOC, "utf8");
-		expect(doc.indexOf("Validate the plan graph before dry-run preview")).toBeLessThan(doc.indexOf("<parse_preview_format>"));
+		expect(doc.indexOf("Validate the parse mode and plan graph before dry-run preview")).toBeLessThan(doc.indexOf("<parse_preview_format>"));
 		expect(doc).toContain('reason:"plan-parse-invalid"');
 		expect(doc).toContain('prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"');
 		expect(doc).toContain('reason:"plan-dependency-unresolved"');
-		expect(doc).toContain("depends on '<BAD_NAME>' which doesn't match any H2");
+		expect(doc).toContain("depends on '<BAD_NAME>' which doesn't match any item title or id");
 		expect(doc).toContain('reason:"plan-self-dependency"');
 		expect(doc).toContain('prompt_text:"<ITEM_ID> depends on itself"');
 		expect(doc).toContain('reason:"plan-dependency-cycle"');
 		expect(doc).toContain('prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"');
+	});
+
+	test("plan lane supports phase-style docs without treating context H2s as items", () => {
+		const start = readFileSync(PLAN_START_DOC, "utf8");
+		const planFile = readFileSync(PLAN_FILE_DOC, "utf8");
+		for (const doc of [start, planFile]) {
+			expect(doc).toContain("phase-style");
+			expect(doc).toContain("Implementation phases");
+			expect(doc).toContain("### Phase");
+			expect(doc).toContain("shared context");
+		}
+		expect(start).toContain("H2 sections outside recognized implementation workstreams are shared context, not work items");
+		expect(start).toContain("Additional workstream");
+		expect(start).toContain("Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items");
+		expect(start).toContain("Context-only H2 sections such as `Problem`, `Goals`, `Non-goals`, `Proposed model`, `Acceptance criteria`, `Context`, and `Notes` must never appear as preview Item rows");
+		expect(start).toContain('reason:"plan-format-ambiguous"');
+		expect(start).toContain("Mode: [PARSE_MODE]");
+		expect(start).toContain("Shared context: [global H2/workstream-local titles or —]");
+		expect(planFile).toContain("Preview must show only `phase-1-normalize-error-payloads`, `phase-2-render-diagnostics`, and `phase-3-update-troubleshooting-guide` as items");
+		expect(planFile).toContain("`Problem`, `Goals`, `Additional workstream — Documentation follow-ups`, and `Context` are shared context, not work items");
 	});
 
 	test("plan spawn docs require atomic claim and transactional failure handling", () => {

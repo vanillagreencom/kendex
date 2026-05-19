@@ -25,30 +25,43 @@ Start a Flightdeck plan-file session from one markdown plan. This lane is intent
 
 ## § 2: Parse work items with dry-run preview
 
-Parse with master judgment. No parser code is required.
+Parse with master judgment. No parser code is required. First choose exactly one parse mode, then derive items.
+
+Parse modes:
+
+- `h2-items`: default simple format. Each `## <Work item title>` H2 section is one work item.
+- `phase-style`: long-plan format. One or more recognized implementation workstream H2 sections contain item H3s. Recognized workstream headings are `## Implementation phases`, `## Implementation plan`, `## Work items`, `## Workstreams`, `## Additional workstream ...`, and `## Execution plan`; any H2 containing `workstream` is a workstream. Inside those sections, `### Phase <N> ...` and `### Work item ...` H3 headings become work items. H2 sections outside recognized implementation workstreams are shared context, not work items. Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items.
+
+Safety guard:
+
+- If phase-style indicators exist but do not match the recognized shape, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"}` and stop before dry-run preview.
+- If a phase-style document also appears to contain standalone H2 work items mixed with shared context H2s, use phase-style only when every implementation item is a matching H3 under a recognized implementation workstream. Otherwise stop with `plan-format-ambiguous` before any worktree, state, or pane mutation.
+- Context-only H2 sections such as `Problem`, `Goals`, `Non-goals`, `Proposed model`, `Acceptance criteria`, `Context`, and `Notes` must never appear as preview Item rows in phase-style mode.
 
 Rules:
 
-- Each `## <Work item title>` H2 section is one work item.
-- `item_id` = slugified title: lowercase, dash-separated, alphanumeric plus dash only, collapsed repeats, trimmed, truncated to 32 chars.
+- `item_id` = slugified item title: lowercase, dash-separated, alphanumeric plus dash only, collapsed repeats, trimmed, truncated to 32 chars.
 - If two titles slugify to the same id, append a stable numeric suffix (`-2`, `-3`) and show the collision in the preview.
-- Worktree name = optional `### Worktree` body, else `flightdeck-plan-<ITEM_ID>`.
+- Worktree name = optional `Worktree` control body, else `flightdeck-plan-<ITEM_ID>`. Use `### Worktree` in `h2-items` mode and `#### Worktree` in `phase-style` mode.
 - Branch name matches the worktree name.
-- Optional `### Depends on` body names other H2 titles or item ids. Normalize each dependency to an `item_id`.
-- Section content excluding only the optional `### Worktree` and `### Depends on` subsections becomes the child brief. Other H3 subsections remain part of the brief.
+- Optional `Depends on` control body names other item titles or item ids. Normalize each dependency to an `item_id`. Use `### Depends on` in `h2-items` mode and `#### Depends on` in `phase-style` mode.
+- In `h2-items` mode, the H2 section content excluding only optional `### Worktree` and `### Depends on` subsections becomes the child brief. Other H3 subsections remain part of the brief.
+- In `phase-style` mode, shared context is the plan intro plus H2 sections outside recognized implementation workstreams. Workstream-local shared context is the recognized workstream H2 intro plus non-item H3 sections inside that workstream. The child brief is global shared context plus workstream-local shared context plus the item H3 content, excluding only optional `#### Worktree` and `#### Depends on` subsections. Other H4 subsections remain part of the item brief.
 
-Validate the plan graph before dry-run preview and before any worktree, state, or pane mutation:
+Validate the parse mode and plan graph before dry-run preview and before any worktree, state, or pane mutation:
 
-1. Require at least one H2 work item. If none, set `paused_for_user = {entry_id:"plan", reason:"plan-parse-invalid", prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"}` and stop.
-2. Resolve every `Depends on` token against known H2 titles and slug ids. If any token fails, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-unresolved", prompt_text:"<ITEM_ID> depends on '<BAD_NAME>' which doesn't match any H2"}` and stop.
+1. Require at least one parsed work item. If none, set `paused_for_user = {entry_id:"plan", reason:"plan-parse-invalid", prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"}` and stop.
+2. Resolve every `Depends on` token against known item titles and slug ids. If any token fails, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-unresolved", prompt_text:"<ITEM_ID> depends on '<BAD_NAME>' which doesn't match any item title or id"}` and stop.
 3. Reject self-dependencies. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-self-dependency", prompt_text:"<ITEM_ID> depends on itself"}` and stop.
 4. Detect cycles. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-cycle", prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"}` and stop.
 
-Only after graph validation passes, print a dry-run preview and ask the user to confirm.
+Only after parse-mode and graph validation pass, print a dry-run preview and ask the user to confirm.
 
 <parse_preview_format>
 Plan: [PLAN_TITLE]
 Source: [ABSOLUTE_PLAN_PATH]
+Mode: [PARSE_MODE]
+Shared context: [global H2/workstream-local titles or —]
 
 | Item | Depends on | Worktree | Brief preview |
 |------|------------|----------|---------------|
@@ -110,7 +123,7 @@ For each item with no unmet dependencies, in dependency-graph topological order,
    ```bash
    WT_PATH=$(.agents/skills/worktree/scripts/worktree create <WORKTREE_NAME>)
    ```
-4. Create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The file body must be:
+4. Create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include shared context when parse mode is `phase-style`. The file body must be:
 
    ```markdown
    # Plan: <PLAN_TITLE>
@@ -121,7 +134,7 @@ For each item with no unmet dependencies, in dependency-graph topological order,
 
    ---
 
-   <SECTION_CONTENT_FROM_PLAN_FILE>
+   <ITEM_BRIEF_CONTENT_FROM_PARSE_MODE>
    ```
 
 5. Spawn through Flightdeck's native session launcher and check the return code. Do not hand-roll tmux or harness commands:
