@@ -271,9 +271,9 @@ export function readActiveRun(projectRoot: string): { project: ProjectIndex; act
 		if (!loaded) return null;
 		const active = readActivePointer(loaded.paths.active_run_json);
 		if (active === JSON_MISSING) return null;
-		validateActivePointerProject(active, loaded.project, loaded.paths.active_run_json);
+		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 		const runPaths = resolveRunPaths(loaded.paths, active.run_id);
-		const metadata = readRunMetadataForRun(runPaths.metadata_json, loaded.project.project_id, active.run_id);
+		const metadata = readRunMetadataForRun(runPaths.metadata_json, ctx.identity.project_id, active.run_id);
 		return { active, metadata: metadata === JSON_MISSING ? null : metadata, project: loaded.project };
 	});
 }
@@ -285,7 +285,7 @@ export function listRuns(projectRoot: string): { project: ProjectIndex; runs: Ru
 		if (existsSync(loaded.paths.runs_dir)) {
 			for (const entry of readdirSync(loaded.paths.runs_dir)) {
 				if (!isSafeBasename(entry)) continue;
-				const metadata = readRunMetadataForRun(join(loaded.paths.runs_dir, entry, "metadata.json"), loaded.project.project_id, entry);
+				const metadata = readRunMetadataForRun(join(loaded.paths.runs_dir, entry, "metadata.json"), ctx.identity.project_id, entry);
 				if (metadata !== JSON_MISSING) runs.push(metadata);
 			}
 		}
@@ -300,7 +300,7 @@ export function showRun(projectRoot: string, runId: string, snapshot?: string): 
 		if (!loaded) throw new Error("project has no Flightdeck run store");
 		const requestedRunId = safeRunId(runId);
 		const paths = resolveRunPaths(loaded.paths, requestedRunId);
-		const metadata = readRunMetadataForRun(paths.metadata_json, loaded.project.project_id, requestedRunId);
+		const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 		const snapshotName = snapshot ? safeSnapshotName(snapshot) : null;
 		const statePath = snapshotName ? safeSnapshotPath(paths.snapshots_dir, snapshotName) : paths.state_json;
@@ -323,7 +323,7 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 		if (!loaded) throw new Error("project has no Flightdeck run store");
 		const requestedRunId = safeRunId(runId);
 		const paths = resolveRunPaths(loaded.paths, requestedRunId);
-		const metadata = readRunMetadataForRun(paths.metadata_json, loaded.project.project_id, requestedRunId);
+		const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 		const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 		const nextMetadata: RunMetadata = {
@@ -348,7 +348,7 @@ export function terminateRun(projectRoot: string, runId: string): RunTerminateRe
 		writeJsonAtomic(paths.metadata_json, nextMetadata);
 		const active = readActivePointer(loaded.paths.active_run_json);
 		let activeCleared = false;
-		if (active !== JSON_MISSING && active.project_id === loaded.project.project_id && active.run_id === requestedRunId) {
+		if (active !== JSON_MISSING && active.project_id === ctx.identity.project_id && active.run_id === requestedRunId) {
 			rmSync(loaded.paths.active_run_json, { force: true });
 			activeCleared = true;
 		}
@@ -455,6 +455,7 @@ function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso())
 function loadProjectIndexLocked(ctx: ProjectLockContext): { project: ProjectIndex; paths: ProjectRunPaths } | null {
 	const project = readProjectIndex(ctx.paths.project_json);
 	if (project === JSON_MISSING) return null;
+	validateProjectIndexIdentity(project, ctx.identity, ctx.paths.project_json);
 	return { paths: ctx.paths, project };
 }
 
@@ -733,9 +734,30 @@ function validateRunMetadataIdentity(metadata: RunMetadata, path: string, expect
 	}
 }
 
-function validateActivePointerProject(active: ActiveRunPointer, project: ProjectIndex, path: string): void {
-	if (active.project_id !== project.project_id) {
-		throw new Error(`invalid active run pointer JSON ${path}: project_id ${active.project_id} does not match project ${project.project_id}`);
+function validateProjectIndexIdentity(project: ProjectIndex, identity: ProjectIdentity, path: string): void {
+	if (project.project_id !== identity.project_id) {
+		throw new Error(`invalid project index JSON ${path}: project_id ${project.project_id} does not match current project ${identity.project_id}`);
+	}
+	if (project.root_path !== identity.root_path) {
+		throw new Error(`invalid project index JSON ${path}: root_path ${project.root_path} does not match current project ${identity.root_path}`);
+	}
+	if (project.root_hash !== identity.root_hash) {
+		throw new Error(`invalid project index JSON ${path}: root_hash ${project.root_hash} does not match current project ${identity.root_hash}`);
+	}
+	if (project.remote_url !== identity.remote_url) {
+		throw new Error(`invalid project index JSON ${path}: remote_url ${String(project.remote_url)} does not match current project ${String(identity.remote_url)}`);
+	}
+	if (project.id_source !== identity.id_source) {
+		throw new Error(`invalid project index JSON ${path}: id_source ${project.id_source} does not match current project ${identity.id_source}`);
+	}
+	if (project.name !== identity.name) {
+		throw new Error(`invalid project index JSON ${path}: name ${project.name} does not match current project ${identity.name}`);
+	}
+}
+
+function validateActivePointerProject(active: ActiveRunPointer, expectedProjectId: string, path: string): void {
+	if (active.project_id !== expectedProjectId) {
+		throw new Error(`invalid active run pointer JSON ${path}: project_id ${active.project_id} does not match project ${expectedProjectId}`);
 	}
 }
 

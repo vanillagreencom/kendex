@@ -25,7 +25,7 @@ Durable run history lives outside project `tmp/` so it survives cleanup:
         <timestamp>.activity.jsonl
 ```
 
-`<project-id>` is stable and human-safe. With Git remotes, the id is based on `remote.origin.url` when present, otherwise the first configured remote, plus a SHA-256 hash of the absolute project root. Without a remote it falls back to the absolute project-root hash. The human-readable prefix comes from the remote repo name or project directory name.
+`<project-id>` is stable and human-safe. With Git remotes, the id is based on `remote.origin.url` when present, otherwise the first configured remote, plus a SHA-256 hash of the absolute project root. Without a remote it falls back to the absolute project-root hash. The human-readable prefix comes from the remote repo name or project directory name. Durable readers derive the current project identity from the resolved project root and reject mutable `project.json` contents that do not match that context.
 
 `project.json`:
 

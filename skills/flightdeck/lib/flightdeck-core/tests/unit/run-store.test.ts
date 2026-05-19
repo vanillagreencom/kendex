@@ -121,6 +121,24 @@ describe("Flightdeck durable run store", () => {
 		expect((JSON.parse(readFileSync(first.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
 	});
 
+	test("forged project index cannot bless matching run metadata", () => {
+		const created = createRun(repo, SESSION);
+		const projectPaths = resolveProjectRunPaths(created.project);
+		const forgedProjectId = resolveProjectIdentity(makeRepo("forged", "https://example.invalid/acme/forged.git")).project_id;
+		writeFileSync(projectPaths.project_json, JSON.stringify({ ...created.project, project_id: forgedProjectId }), "utf8");
+		writeFileSync(created.paths.metadata_json, JSON.stringify({ ...created.metadata, project_id: forgedProjectId }), "utf8");
+		writeFileSync(projectPaths.active_run_json, JSON.stringify({ ...created.active, project_id: forgedProjectId }), "utf8");
+		const mismatch = /project index.*project_id .*does not match current project/;
+
+		expect(() => loadProjectIndex(repo)).toThrow(mismatch);
+		expect(() => readActiveRun(repo)).toThrow(mismatch);
+		expect(() => listRuns(repo)).toThrow(mismatch);
+		expect(() => showRun(repo, created.metadata.run_id)).toThrow(mismatch);
+		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(mismatch);
+		expect((JSON.parse(readFileSync(projectPaths.active_run_json, "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
+		expect((JSON.parse(readFileSync(created.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
+	});
+
 	test("snapshot lookup rejects traversal and unsafe basenames", () => {
 		const created = createRun(repo, SESSION);
 		terminateRun(repo, created.metadata.run_id);
