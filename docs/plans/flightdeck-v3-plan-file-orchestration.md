@@ -92,7 +92,10 @@ domain?: {
   issue?: { ... };          // linear
   github_issue?: { ... };   // github
   plan_item?: {             // NEW for v3
-    plan_path: string;      // absolute path to the plan file
+    plan_path: string;      // absolute path to the source plan; traceability only after start
+    plan_snapshot_sha256: string; // hash of the frozen source text captured at start
+    brief_artifact_path: string;  // immutable sanitized brief under <project-root>/<FLIGHTDECK_STATE_DIR or tmp>/plan-briefs/.../<item_id>.md
+    brief_sha256: string;   // hash of the sanitized brief artifact consumed by dependent spawns/recovery
     plan_title: string;     // H1 from the plan file
     item_id: string;        // slug
     item_title: string;     // original section title
@@ -140,7 +143,7 @@ If the GitHub lane's prose can be parameterized to also serve plan items (probab
 
 ### 2.8 Spawn shape per work item
 
-Same self-contained-child-prompt pattern as the github lane (no `/skill:` recursion). The brief written to `<worktree>/tmp/brief.md` is the section content from the plan file, prepended with a small header:
+Same self-contained-child-prompt pattern as the github lane (no `/skill:` recursion). At plan start, the master freezes the source plan text, writes one sanitized immutable item brief artifact per item under the canonical state-owned `plan-briefs/` root, and stores `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` in `domain.plan_item`. Initial and dependency-spawned panes write `<worktree>/tmp/brief.md` from that verified artifact, not by reparsing mutable `plan_path` after start. The brief content is prepended with a small header:
 
 ```
 # Plan: <plan_title>
@@ -151,7 +154,7 @@ You are a Pi engineering agent working on ONE work item of a larger plan. The pl
 
 ---
 
-<section content from plan file>
+<verified sanitized item brief artifact content>
 ```
 
 The pane is spawned with prompt = "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line." — identical to what the master has been doing manually in this very session.
@@ -204,7 +207,7 @@ Tests:
 |------|------------|
 | Plan parsing is LLM-driven, so malformed plans could be silently misinterpreted | Document the convention clearly in `PLAN-FILE.md`. Master should DRY-RUN the parsing (print identified items + deps) before any worktree creation; user can abort. |
 | Dependency cycles in the plan | Detect during parsing; refuse to start if a cycle exists; emit `paused_for_user` with the cycle. |
-| Plan file moved/deleted mid-session | Master should `realpathSync` at start and store the resolved path; check existence on watch re-entry and pause if gone. |
+| Plan file moved/deleted mid-session | Master should `realpathSync` and hash the source text at start, then treat `domain.plan_item.plan_path` as non-blocking traceability only. Watch re-entry and dependent spawns must not pause solely because the mutable source plan moved or disappeared; they verify `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` under the canonical state-owned `plan-briefs/` root instead. |
 | One item's failure shouldn't block others | Items without inter-dependencies should be independent. A single failed PR pauses ITS item; other items continue. `terminate` summarizes per-item outcomes. |
 | Worktree name collisions with existing `issue-<N>` worktrees | Plan worktrees use `flightdeck-plan-<item_id>` prefix; namespace can't collide with `issue-<N>` form. |
 | PR scope conflicts between items (same files touched) | Apply the existing conflict-graph approach from `pr-conflict-graph` if the plan items end up overlapping. May escalate via `paused_for_user`. |
@@ -216,7 +219,7 @@ Tests:
 - Strict plan file schema. Loose convention only.
 - Multiple plans in one session. One session = one plan file.
 - Cross-tracker plans (mix of Linear + GitHub items in one plan). Plan items are tracker-agnostic; PR routes through the github lane handlers.
-- Plan editing mid-session. The plan file is frozen at `plan start` time; later edits are ignored unless the user re-runs `plan start`.
+- Plan editing mid-session. The plan file is frozen into immutable sanitized brief artifacts at `plan start` time; later edits to `plan_path` are ignored for recovery/spawning unless the user re-runs `plan start`.
 - Replacing project-management's `roadmap-*` workflows. Those are separate; if someone wants a roadmap to become a plan file, they can output one.
 
 ---
