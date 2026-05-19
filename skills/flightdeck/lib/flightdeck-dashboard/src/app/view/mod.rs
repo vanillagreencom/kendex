@@ -20,7 +20,7 @@ use crate::app::hitmap::{ClickAction, HitMap};
 use crate::app::model::{Model, Tab};
 use crate::app::theme::Palette;
 use crate::cost::{format_cost, format_summary};
-use crate::state::snapshot::Staleness;
+use crate::state::snapshot::{DashboardSnapshot, Staleness};
 use crate::util::display_width::display_width;
 
 const HEADER_COMPACT_WIDTH: u16 = 200;
@@ -161,7 +161,7 @@ fn render_status(
         .unwrap_or_else(|| String::from("unknown"));
     let daemon = daemon_label(model, compact).to_owned();
     let kind_counts = kind_counts_label(model);
-    let staleness = staleness_label(snapshot.staleness(model.now));
+    let staleness = staleness_label(snapshot_staleness(model, snapshot));
     let compact_cost_chip = format!(
         "{} · {}t",
         format_cost(model.cost_totals.grand.cost_usd),
@@ -541,6 +541,35 @@ fn staleness_label(staleness: Staleness) -> String {
         Staleness::Fresh => String::from("fresh"),
         Staleness::WarnAfter(age) => format!("{} old", duration_label(age)),
         Staleness::StaleAfter(age) => format!("{} old · stale", duration_label(age)),
+    }
+}
+
+fn snapshot_staleness(model: &Model, snapshot: &DashboardSnapshot) -> Staleness {
+    let basis = snapshot
+        .daemon
+        .last_heartbeat_at
+        .unwrap_or(snapshot.updated_at);
+    let age = model
+        .now
+        .signed_duration_since(basis)
+        .to_std()
+        .unwrap_or(std::time::Duration::ZERO);
+    let warn_after = model
+        .settings
+        .value_u64("FLIGHTDECK_DASHBOARD_STALE_WARN_SECS")
+        .unwrap_or(30);
+    let stale_after = model
+        .settings
+        .value_u64("FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS")
+        .unwrap_or(300);
+    let warn_after = std::time::Duration::from_secs(warn_after.max(1));
+    let stale_after = std::time::Duration::from_secs(stale_after.max(1));
+    if age >= stale_after {
+        Staleness::StaleAfter(age)
+    } else if age >= warn_after {
+        Staleness::WarnAfter(age)
+    } else {
+        Staleness::Fresh
     }
 }
 

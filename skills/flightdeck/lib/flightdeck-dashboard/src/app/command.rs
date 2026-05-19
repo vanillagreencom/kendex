@@ -19,7 +19,7 @@ pub enum Cmd {
     RequestSnapshot(SnapshotSource),
     ReloadFromSource(SnapshotSource),
     LogAction(String),
-    PauseSideEffects,
+    PauseSideEffects { bell: bool },
     ProbePanes,
     Spawn(BoxFuture<'static, Msg>),
 }

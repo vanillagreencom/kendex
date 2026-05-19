@@ -6,9 +6,12 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 
 Rust dashboard users can press `S` (or `Alt+S`) to open the Settings popup.
 Editable values are persisted in `<project-root>/tmp/flightdeck-settings.toml`;
-dashboard commands load that file at startup and apply its values as process-env
-overrides without mutating the parent shell. Rows marked as restart-required in
-the popup take effect on the next `flightdeck session start` / dashboard launch.
+`flightdeck-dashboard` commands load that file at startup and apply its values
+inside the dashboard process without mutating the parent shell. These overrides
+are dashboard-scoped: they affect dashboard launch/TUI/daemon behavior, not the
+master workflow shell or already-running child panes. Rows marked as
+restart-required in the popup take effect on the next dashboard launch or
+`flightdeck-dashboard` command.
 
 Master-loop env vars consulted by workflows:
 

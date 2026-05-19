@@ -531,10 +531,7 @@ impl Model {
         theme: Theme,
         clock: Clock,
     ) -> Self {
-        let settings = SettingsState::load(
-            crate::settings_catalog::resolve_project_root(),
-            crate::settings_catalog::capture_ambient_env(),
-        );
+        let settings = SettingsState::load_current();
         Self::new_with_settings(snapshot, snapshot_source, motion, theme, settings, clock)
     }
 

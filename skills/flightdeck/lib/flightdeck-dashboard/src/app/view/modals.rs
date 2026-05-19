@@ -588,7 +588,7 @@ pub fn render_settings(
     let chrome = PopupChrome {
         title: "Settings",
         subtitle: Some(
-            "edit dashboard-local env overrides; restart rows apply on next launch/session",
+            "edit dashboard-local env overrides; restart rows apply on next dashboard launch",
         ),
         footer_hints: &[
             "↑/↓ select",
@@ -604,9 +604,16 @@ pub fn render_settings(
         let mut status_lines = vec![
             Line::from(vec![
                 Span::styled("Override file ", theme.status_label()),
-                Span::raw(model.settings.override_path.display().to_string()),
+                Span::raw(
+                    model
+                        .settings
+                        .override_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| String::from("unavailable")),
+                ),
             ]),
-            Line::from("Unset values show defaults from ENV.md; override file values win over process env for this dashboard process."),
+            Line::from("Unset values show defaults from ENV.md; override file values are dashboard-scoped."),
         ];
         if let Some(error) = &model.settings.last_error {
             status_lines.push(Line::from(Span::styled(error.clone(), theme.error())));

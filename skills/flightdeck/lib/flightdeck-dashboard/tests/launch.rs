@@ -45,6 +45,90 @@ fn launch_disabled_exits_silently() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn startup_override_file_can_disable_dashboard_launch() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    std::fs::write(
+        project.join("tmp/flightdeck-settings.toml"),
+        "FLIGHTDECK_DASHBOARD = \"0\"\n",
+    )?;
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["launch", "--session", SESSION])
+        .env_remove("TMUX")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .output()?;
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    Ok(())
+}
+
+#[test]
+fn startup_override_file_forwards_theme_and_motion() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    std::fs::write(
+        project.join("tmp/flightdeck-settings.toml"),
+        "FLIGHTDECK_DASHBOARD_THEME = \"pantera\"\nFLIGHTDECK_DASHBOARD_MOTION = \"off\"\n",
+    )?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    write_capturing_flightdeck_session(&bin_dir.join("flightdeck-session"), &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output =
+        launch_command_without_daemon(&path, &temp.path().join("runtime"), &project).output()?;
+
+    assert!(
+        output.status.success(),
+        "launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cmd = captured_cmd_arg(&capture)?;
+    assert!(cmd.contains("--theme pantera"), "missing theme in {cmd}");
+    assert!(cmd.contains("--motion off"), "missing motion in {cmd}");
+    Ok(())
+}
+
+#[test]
+fn malformed_settings_file_surfaces_for_non_tty_tui() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    std::fs::write(
+        project.join("tmp/flightdeck-settings.toml"),
+        "FLIGHTDECK_DASHBOARD_COST_POLL_SECS = \"0.5\"\n",
+    )?;
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["tui", "--demo"])
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .output()?;
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("settings override ignored")
+            && stderr.contains("FLIGHTDECK_DASHBOARD_COST_POLL_SECS"),
+        "stderr missing settings warning: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn skill_dir_from_env() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");

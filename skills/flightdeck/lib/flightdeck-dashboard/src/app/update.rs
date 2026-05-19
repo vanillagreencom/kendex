@@ -3,7 +3,7 @@ use futures::FutureExt;
 
 use crate::actions::{self, WriteAction};
 use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
-use crate::settings_catalog::{SettingChange, SettingsError, SettingsState};
+use crate::settings_catalog::{SettingsError, SettingsSaveRequest};
 use crate::state::snapshot::{DaemonStatus as SnapshotDaemonStatus, EventImportance};
 use crate::watcher::WatcherEvent;
 
@@ -83,6 +83,23 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 vec![Cmd::Render]
             }
         }
+        Msg::SettingsSaved(result) => {
+            match result {
+                Ok(result) => {
+                    let notice = result.change.notice();
+                    model.settings.apply_save_result(result);
+                    set_status(model, notice, true);
+                    model.error = None;
+                }
+                Err(error) => {
+                    model.settings.set_error(error.clone());
+                    set_status(model, error.clone(), false);
+                    model.error = Some(error);
+                    push_effect(model, EffectKind::ErrorFlash, EffectTarget::Global);
+                }
+            }
+            vec![Cmd::Render]
+        }
         Msg::ActionCompleted(result) => {
             match result {
                 Ok(message) => {
@@ -138,7 +155,12 @@ fn handle_snapshot_updated(
     model.initialize_overview_selection();
     let mut commands = vec![Cmd::ProbePanes, Cmd::Render];
     if pause_edge && model.motion.allows_rich_motion() {
-        commands.push(Cmd::PauseSideEffects);
+        commands.push(Cmd::PauseSideEffects {
+            bell: model
+                .settings
+                .value_bool("FLIGHTDECK_DASHBOARD_BELL")
+                .unwrap_or(true),
+        });
     }
     commands.extend(pending_reload);
     commands
@@ -348,7 +370,7 @@ fn handle_settings_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Enter => {
             if model.settings.selected_is_bool() {
-                apply_settings_change(model, |settings| settings.toggle_selected())
+                queue_settings_save(model, |settings| settings.toggle_selected_request())
             } else {
                 match model.settings.begin_edit_selected() {
                     Ok(()) => vec![Cmd::Render],
@@ -358,13 +380,13 @@ fn handle_settings_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Char(' ') => {
             if model.settings.selected_is_bool() {
-                apply_settings_change(model, |settings| settings.toggle_selected())
+                queue_settings_save(model, |settings| settings.toggle_selected_request())
             } else {
                 Vec::new()
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
-            apply_settings_change(model, |settings| settings.reset_selected())
+            queue_settings_save(model, |settings| settings.reset_selected_request())
         }
         _ => Vec::new(),
     }
@@ -372,7 +394,7 @@ fn handle_settings_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
 
 fn handle_settings_edit_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
     match key.code {
-        KeyCode::Enter => apply_settings_change(model, |settings| settings.commit_edit()),
+        KeyCode::Enter => queue_settings_save(model, |settings| settings.commit_edit_request()),
         KeyCode::Esc => {
             model.settings.cancel_edit();
             vec![Cmd::Render]
@@ -503,20 +525,36 @@ fn clamp_settings_scroll(model: &mut Model) {
     }
 }
 
-fn apply_settings_change<F>(model: &mut Model, action: F) -> Vec<Cmd>
+fn queue_settings_save<F>(model: &mut Model, action: F) -> Vec<Cmd>
 where
-    F: FnOnce(&mut SettingsState) -> Result<SettingChange, SettingsError>,
+    F: FnOnce(
+        &crate::settings_catalog::SettingsState,
+    ) -> Result<SettingsSaveRequest, SettingsError>,
 {
-    match action(&mut model.settings) {
-        Ok(change) => {
-            set_status(model, change.notice(), true);
-            vec![Cmd::Render]
+    match action(&model.settings) {
+        Ok(request) => {
+            set_status(model, "settings save queued", true);
+            vec![save_settings(request), Cmd::Render]
         }
         Err(error) => settings_error(model, error.to_string()),
     }
 }
 
+fn save_settings(request: SettingsSaveRequest) -> Cmd {
+    Cmd::Spawn(
+        async move {
+            let result = tokio::task::spawn_blocking(move || request.save())
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            Msg::SettingsSaved(result)
+        }
+        .boxed(),
+    )
+}
+
 fn settings_error(model: &mut Model, error: String) -> Vec<Cmd> {
+    model.settings.set_error(error.clone());
     set_status(model, error.clone(), false);
     model.error = Some(error);
     push_effect(model, EffectKind::ErrorFlash, EffectTarget::Global);
@@ -704,7 +742,7 @@ fn prompt_focus(model: &mut Model, index: usize) -> Vec<Cmd> {
     let action = WriteAction::FocusWindow {
         pane_target: pane_target.clone(),
     };
-    if quick_focus_enabled() {
+    if quick_focus_enabled(model) {
         return vec![run_write_action(action)];
     }
     model.confirm = Some(ConfirmDialog {
@@ -748,10 +786,11 @@ fn set_status(model: &mut Model, message: impl Into<String>, success: bool) {
     });
 }
 
-fn quick_focus_enabled() -> bool {
-    std::env::var("FLIGHTDECK_DASHBOARD_QUICK_FOCUS")
-        .ok()
-        .is_some_and(|value| value.trim() == "1")
+fn quick_focus_enabled(model: &Model) -> bool {
+    model
+        .settings
+        .value_bool("FLIGHTDECK_DASHBOARD_QUICK_FOCUS")
+        .unwrap_or(false)
 }
 
 fn open_theme_picker(model: &mut Model) -> Vec<Cmd> {

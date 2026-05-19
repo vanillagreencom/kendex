@@ -33,7 +33,7 @@ impl Effects {
                     self.request_snapshot(source);
                 }
                 Cmd::LogAction(action) => tracing::info!(action = %action, "dashboard action"),
-                Cmd::PauseSideEffects => self.pause_side_effects(),
+                Cmd::PauseSideEffects { bell } => self.pause_side_effects(bell),
                 Cmd::ProbePanes => self.probe_panes(),
                 Cmd::Spawn(future) => self.spawn_msg(future),
             }
@@ -99,8 +99,8 @@ impl Effects {
         });
     }
 
-    fn pause_side_effects(&self) {
-        if std::env::var("FLIGHTDECK_DASHBOARD_BELL").map_or(true, |value| value.trim() != "0") {
+    fn pause_side_effects(&self, bell: bool) {
+        if bell {
             print!("\x07");
             if let Err(error) = std::io::stdout().flush() {
                 tracing::debug!(%error, "failed to flush dashboard pause bell");

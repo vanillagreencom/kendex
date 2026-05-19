@@ -107,6 +107,12 @@ Most sessions work with defaults. These are the knobs users most often change.
 
 Full env reference: [`ENV.md`](./ENV.md).
 
+Dashboard settings can also be edited from inside the Rust dashboard. The
+dashboard writes overrides to `<project-root>/tmp/flightdeck-settings.toml` and
+reloads them on the next dashboard launch/command. Those overrides are scoped to
+dashboard behavior; set shell env vars when the master workflow itself needs a
+different value.
+
 ## Dashboard
 
 The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked sessions, current tmux window names, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners.
