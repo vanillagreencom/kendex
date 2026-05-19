@@ -769,6 +769,23 @@ const NPM_PRODUCTION_INSTALL_ARGS: &[&str] = &[
     "--no-fund",
 ];
 
+#[cfg(test)]
+static NPM_COMMAND_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn npm_command() -> PathBuf {
+    #[cfg(test)]
+    {
+        let guard = match NPM_COMMAND_OVERRIDE.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(command) = guard.as_ref() {
+            return command.clone();
+        }
+    }
+    PathBuf::from("npm")
+}
+
 fn manifest_object_field_non_empty(manifest: &serde_json::Value, key: &str) -> bool {
     manifest
         .get(key)
@@ -805,7 +822,8 @@ fn install_production_dependencies_if_needed(package_name: &str, package_dir: &P
     }
 
     let recovery = npm_production_install_command(package_dir);
-    let output = Command::new("npm")
+    let command = npm_command();
+    let output = Command::new(&command)
         .args(NPM_PRODUCTION_INSTALL_ARGS)
         .current_dir(package_dir)
         .stdin(Stdio::null())
@@ -1266,28 +1284,75 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
     }
 
     #[cfg(unix)]
-    fn with_fake_npm_on_path<R>(bin_dir: &Path, body: impl FnOnce() -> R) -> R {
-        let prev_path = std::env::var_os("PATH");
-        let mut paths = vec![bin_dir.to_path_buf()];
-        if let Some(prev) = prev_path.as_ref() {
-            paths.extend(std::env::split_paths(prev));
-        }
-        let next_path = std::env::join_paths(paths).unwrap();
-        unsafe {
-            std::env::set_var("PATH", next_path);
-        }
+    fn write_failing_npm(bin_dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::create_dir_all(bin_dir).unwrap();
+        let npm = bin_dir.join("npm");
+        std::fs::write(
+            &npm,
+            "#!/bin/sh\nprintf 'fixture npm failed for pi deps\\n' >&2\nexit 42\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&npm).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&npm, perms).unwrap();
+        npm
+    }
+
+    #[cfg(test)]
+    fn with_npm_command_override<R>(command: &Path, body: impl FnOnce() -> R) -> R {
+        let mut guard = match NPM_COMMAND_OVERRIDE.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let previous = guard.replace(command.to_path_buf());
+        drop(guard);
+
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
-        unsafe {
-            if let Some(prev) = prev_path {
-                std::env::set_var("PATH", prev);
-            } else {
-                std::env::remove_var("PATH");
-            }
-        }
+
+        let mut guard = match NPM_COMMAND_OVERRIDE.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = previous;
+
         match result {
             Ok(value) => value,
             Err(panic) => std::panic::resume_unwind(panic),
         }
+    }
+
+    fn write_runtime_dep_source(dir: &Path, name: &str) {
+        std::fs::create_dir_all(dir.join("extensions")).unwrap();
+        std::fs::write(dir.join("extensions").join("mini.ts"), "// noop\n").unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            format!(
+                r#"{{
+                "name": "{name}",
+                "pi": {{ "extensions": ["./extensions/mini.ts"] }},
+                "dependencies": {{ "left-pad": "^1.3.0" }},
+                "devDependencies": {{ "tsx": "^4.0.0" }},
+                "peerDependencies": {{ "@earendil-works/pi-coding-agent": "*" }}
+            }}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn assert_dependency_install_recovery_message(message: &str, package: &str, dest: &Path) {
+        let expected_recovery = npm_production_install_command(dest);
+        assert!(
+            message.contains(&format!(
+                "pi-package {package} declares production dependencies"
+            )),
+            "error should name package {package}, got: {message}"
+        );
+        assert!(
+            message.contains(&format!("Recovery: `{expected_recovery}`")),
+            "error should include exact recovery command, got: {message}"
+        );
     }
 
     #[test]
@@ -1382,19 +1447,7 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         ));
         let _ = std::fs::remove_dir_all(&sandbox);
         let source = sandbox.join("src").join("pi-needs-deps");
-        std::fs::create_dir_all(source.join("extensions")).unwrap();
-        std::fs::write(source.join("extensions").join("mini.ts"), "// noop\n").unwrap();
-        std::fs::write(
-            source.join("package.json"),
-            r#"{
-                "name": "pi-needs-deps",
-                "pi": { "extensions": ["./extensions/mini.ts"] },
-                "dependencies": { "left-pad": "^1.3.0" },
-                "devDependencies": { "tsx": "^4.0.0" },
-                "peerDependencies": { "@earendil-works/pi-coding-agent": "*" }
-            }"#,
-        )
-        .unwrap();
+        write_runtime_dep_source(&source, "pi-needs-deps");
 
         let fake_bin = sandbox.join("fake-bin");
         let npm_log = sandbox.join("npm.log");
@@ -1403,7 +1456,7 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
 
         with_pi_dir(&pi_dir, || {
             let ext = PiExtension::from_dir(&source).unwrap();
-            let dest = with_fake_npm_on_path(&fake_bin, || {
+            let dest = with_npm_command_override(&fake_bin.join("npm"), || {
                 install_pi_extension(&ext, true).unwrap().unwrap()
             });
 
@@ -1422,6 +1475,72 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
                 log.contains("args=[install][--omit=dev][--package-lock=false][--legacy-peer-deps][--no-audit][--no-fund]"),
                 "npm should install production deps only, got log: {log}"
             );
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_pi_extension_reports_missing_npm_with_recovery_command() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_missing_npm_runtime_deps_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-missing-npm");
+        write_runtime_dep_source(&source, "pi-missing-npm");
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let missing_npm = sandbox.join("bin").join("npm-does-not-exist");
+            let err = with_npm_command_override(&missing_npm, || {
+                install_pi_extension(&ext, true).unwrap_err()
+            });
+            let message = format!("{err:#}");
+            let dest = pi_dir.join("packages").join("pi-missing-npm");
+
+            assert!(
+                message.contains("npm could not run"),
+                "missing npm error should explain npm could not run, got: {message}"
+            );
+            assert_dependency_install_recovery_message(&message, "pi-missing-npm", &dest);
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_pi_extension_reports_npm_nonzero_with_recovery_command() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_failing_npm_runtime_deps_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-failing-npm");
+        write_runtime_dep_source(&source, "pi-failing-npm");
+        let fake_npm = write_failing_npm(&sandbox.join("fake-bin"));
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let err = with_npm_command_override(&fake_npm, || {
+                install_pi_extension(&ext, true).unwrap_err()
+            });
+            let message = format!("{err:#}");
+            let dest = pi_dir.join("packages").join("pi-failing-npm");
+
+            assert!(
+                message.contains("`npm install` failed"),
+                "non-zero npm error should explain npm install failed, got: {message}"
+            );
+            assert!(
+                message.contains("fixture npm failed for pi deps"),
+                "non-zero npm error should include stderr details, got: {message}"
+            );
+            assert_dependency_install_recovery_message(&message, "pi-failing-npm", &dest);
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);
