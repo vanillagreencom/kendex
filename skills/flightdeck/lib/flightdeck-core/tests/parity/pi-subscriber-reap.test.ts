@@ -145,6 +145,64 @@ describe("reapSubscriber SIGTERM->grace->SIGKILL with mocked deps (vstack#58)", 
 		expect(lines.some((l) => l.msg.includes("cleanup=skipped-current-pid") && l.msg.includes("current_pid=4242"))).toBe(true);
 	});
 
+	test("process-group ESRCH never falls back to positive pid", () => {
+		const { pidFile, logFile } = mkPidLogFiles(42);
+		const { lines, log } = buildLog();
+		const signals: Array<{ pid: number; sig: NodeJS.Signals | 0 }> = [];
+		const result = reapSubscriber(
+			{ paneId: "%7", reason: "pane-gone", pidFile, logFile, graceMs: 50 },
+			{
+				log,
+				signal: (pid, sig) => {
+					signals.push({ pid, sig });
+					if (pid > 0) throw new Error(`unsafe positive pid signal ${pid}`);
+					const e: NodeJS.ErrnoException = new Error("ESRCH");
+					e.code = "ESRCH";
+					throw e;
+				},
+				scheduleAfter: (_ms, _fn) => ({ cancel: () => undefined }),
+			},
+		);
+		expect(result.outcome).toBe("already-gone");
+		expect(signals).toEqual([{ pid: -42, sig: 0 }]);
+		expect(lines.some((l) => l.msg.includes("outcome=already-gone"))).toBe(true);
+	});
+
+	test("grace SIGKILL path never falls back to positive pid when pidfile now points at replacement", () => {
+		const { pidFile, logFile } = mkPidLogFiles(42);
+		const { lines, log } = buildLog();
+		const signals: Array<{ pid: number; sig: NodeJS.Signals | 0 }> = [];
+		const scheduled: Array<{ ms: number; fn: () => void }> = [];
+		const result = reapSubscriber(
+			{ paneId: "%7", reason: "pi-session-mismatch", pidFile, logFile, graceMs: 50, harness: "pi" },
+			{
+				log,
+				signal: (pid, sig) => {
+					signals.push({ pid, sig });
+					if (pid > 0) throw new Error(`unsafe positive pid signal ${pid}`);
+					if (sig === 0 || sig === "SIGTERM") return;
+					if (sig === "SIGKILL") {
+						const e: NodeJS.ErrnoException = new Error("ESRCH");
+						e.code = "ESRCH";
+						throw e;
+					}
+				},
+				scheduleAfter: (ms, fn) => { scheduled.push({ ms, fn }); return { cancel: () => undefined }; },
+			},
+		);
+		expect(result.outcome).toBe("term-ok");
+		writeFileSync(pidFile, "4242\n");
+		writeFileSync(logFile, "replacement subscriber log\n");
+		scheduled[0]?.fn();
+		expect(signals.every((s) => s.pid < 0)).toBe(true);
+		expect(signals.some((s) => s.sig === "SIGKILL" && s.pid === -42)).toBe(true);
+		expect(readFileSync(pidFile, "utf8").trim()).toBe("4242");
+		expect(readFileSync(logFile, "utf8")).toContain("replacement subscriber log");
+		expect(result.pidFileRemoved).toBe(false);
+		expect(result.logFileRemoved).toBe(false);
+		expect(lines.some((l) => l.msg.includes("cleanup=skipped-current-pid") && l.msg.includes("current_pid=4242"))).toBe(true);
+	});
+
 	test("stubborn process: SIGKILL fires after grace, logged kill-required", () => {
 		const { pidFile, logFile } = mkPidLogFiles(99);
 		const { lines, log } = buildLog();
