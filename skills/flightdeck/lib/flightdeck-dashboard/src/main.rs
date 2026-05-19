@@ -47,16 +47,19 @@ const DEFAULT_COST_POLL_SECS: u64 = 5;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-    let _log_guard = logging::init_file_logging()?;
     let cli = Cli::parse();
     let settings_project_root = settings_catalog::resolve_project_root();
     let ambient_settings = settings_catalog::capture_ambient_env();
+    // Keep env mutation before logging/runtime setup. `init_file_logging` starts
+    // a tracing appender worker thread, and `env::set_var` is only safe here
+    // while the process is still single-threaded.
     let settings_error = match &settings_project_root {
         Ok(project_root) => settings_catalog::apply_project_overrides_pre_runtime(project_root)
             .err()
             .map(|error| error.to_string()),
         Err(error) => Some(error.to_string()),
     };
+    let _log_guard = logging::init_file_logging()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

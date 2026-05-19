@@ -91,3 +91,4 @@ Additional tuning:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FD_ADAPTER_READ_TIMEOUT_SEC` | `2` | Bounds per-adapter read subprocesses in `pane-poll` (fractional values honored). Stale adapters fall through to tmux capture rather than wedging the tick. |
+| `FD_ADAPTER_FRESHNESS_TTL` | `5` | Freshness probe cache TTL in seconds for adapter reads; set `0` to disable cache reuse. |
