@@ -11,6 +11,7 @@ export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
 
 export interface ReadTrackedEntriesOptions {
+	strictPlanItemDomain?: boolean;
 	warn?: (message: string) => void;
 }
 
@@ -39,8 +40,12 @@ function invalidEntryIdWarning(entryKey: string, rawId: unknown): string {
 }
 
 function invalidEntryDomainWarning(entryKey: string, error: unknown): string {
+	return `Warning: ${invalidEntryDomainError(entryKey, error)}; skipping.`;
+}
+
+function invalidEntryDomainError(entryKey: string, error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
-	return `Warning: invalid .entries[${JSON.stringify(entryKey)}].domain: ${message}; skipping.`;
+	return `invalid .entries[${JSON.stringify(entryKey)}].domain: ${message}`;
 }
 
 export function validateEntryId(value: unknown, label = "entry id"): string {
@@ -67,6 +72,11 @@ function validateEntryIdOrNull(value: unknown): string | null {
 	}
 }
 
+function hasPlanItemDomain(entry: Pick<TrackedEntry, "domain">): boolean {
+	const domain = entry.domain;
+	return isRecord(domain) && domain.plan_item !== undefined && domain.plan_item !== null;
+}
+
 export function readTrackedEntries(state: FlightdeckStateLike | undefined | null, options: ReadTrackedEntriesOptions = {}): Record<string, TrackedEntry> {
 	if (!state || typeof state !== "object") return {};
 	const out: Record<string, TrackedEntry> = {};
@@ -76,6 +86,7 @@ export function readTrackedEntries(state: FlightdeckStateLike | undefined | null
 		try {
 			validateTrackedEntryDomain(entry);
 		} catch (error) {
+			if (options.strictPlanItemDomain && hasPlanItemDomain(entry)) throw new Error(invalidEntryDomainError(id, error));
 			options.warn?.(invalidEntryDomainWarning(id, error));
 			continue;
 		}

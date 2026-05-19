@@ -292,6 +292,30 @@ describe("flightdeck-state CLI", () => {
 		});
 	});
 
+	test("tracked-entries fails loud instead of omitting invalid plan item brief paths", () => {
+		const directEntry = samplePlanEntry();
+		const directInvalid = {
+			...directEntry,
+			domain: { plan_item: { ...directEntry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/plan-briefs/plan/item-one.md" } },
+		};
+		const warnings: string[] = [];
+		expect(readTrackedEntries({ entries: { [directInvalid.id]: directInvalid } }, { warn: (message) => warnings.push(message) })).toEqual({});
+		expect(warnings.join("\n")).toContain('Warning: invalid .entries["item-one"].domain: invalid domain.plan_item.brief_artifact_path');
+		expect(() => readTrackedEntries({ entries: { [directInvalid.id]: directInvalid } }, { strictPlanItemDomain: true })).toThrow(/invalid \.entries\["item-one"\]\.domain: invalid domain\.plan_item\.brief_artifact_path/);
+
+		const entry = samplePlanEntry(repo);
+		const invalid = {
+			...entry,
+			domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/plan-briefs/plan/item-one.md" } },
+		};
+		writeState(repo, { entries: { [invalid.id]: invalid } });
+		const r = run(repo, ["tracked-entries"]);
+		expect(r.status).toBe(2);
+		expect(r.stdout).toBe("");
+		expect(r.stderr).toContain('Error: invalid .entries["item-one"].domain: invalid domain.plan_item.brief_artifact_path');
+		expect(r.stderr).toContain("must be under state-owned plan-briefs root");
+	});
+
 	test("write-entry rejects plan item mixed with Linear or GitHub domains", () => {
 		const plan = samplePlanEntry();
 		const linear = sampleTrackedEntry().domain!.issue!;

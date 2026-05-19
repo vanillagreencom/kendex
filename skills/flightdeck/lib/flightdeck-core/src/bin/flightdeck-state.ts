@@ -105,7 +105,12 @@ switch (action) {
 	case "tracked-entries": {
 		if (!existsSync(file)) process.exit(1);
 		const state = readStateJson();
-		process.stdout.write(`${JSON.stringify(readTrackedEntries(state, { warn: warnLine }))}\n`);
+		try {
+			process.stdout.write(`${JSON.stringify(readTrackedEntries(state, { strictPlanItemDomain: true, warn: warnLine }))}\n`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			die(`Error: ${message}`);
+		}
 		break;
 	}
 	case "write-entry": {

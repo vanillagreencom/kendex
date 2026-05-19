@@ -36,7 +36,7 @@ For each item id in the active plan graph:
 2. Require no `entry.domain.issue` and no `entry.domain.github_issue`; those keys belong to Linear and GitHub issue lanes.
 3. If a pre-existing entry uses another domain key, do not mutate it in place. Pause with `reason="domain-mismatch"`.
 4. Reconcile only liveness, adapter metadata, `pr_number`, `merge_commit`, `scope_files_actual`, and `phase`. Preserve decisions and timers such as `unknown_since`.
-5. Verify `domain.plan_item.plan_path` still exists. If missing, pause with `reason="plan-file-missing"` and do not spawn newly unblocked items.
+5. Treat `domain.plan_item.plan_path` as traceability only after plan start. Do not pause, block refresh, or block newly unblocked spawns because the mutable source plan moved or disappeared. Spawning/recovery must instead require and verify `domain.plan_item.brief_artifact_path`, `domain.plan_item.brief_sha256`, and `domain.plan_item.plan_snapshot_sha256` under the canonical state-owned `plan-briefs` root as described in § 7.
 
 ---
 

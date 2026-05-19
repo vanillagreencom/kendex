@@ -464,6 +464,8 @@ describe("handler domain guards", () => {
 		expect(start).toContain("Plan watch and dependency-edge resolution must consume only these immutable brief artifacts");
 		expect(start).toContain("They must not reread mutable `plan_path` to rebuild child briefs after compaction/re-entry");
 		expect(watch).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
+		expect(watch).toContain("Treat `domain.plan_item.plan_path` as traceability only after plan start");
+		expect(watch).not.toContain('reason="plan-file-missing"');
 		expect(watch).toContain("The artifact hash matches `domain.plan_item.brief_sha256`");
 		expect(handle).toContain("Do not reread `domain.plan_item.plan_path` to rebuild child briefs");
 		expect(handle).toContain("Require `domain.plan_item.brief_artifact_path`, `domain.plan_item.brief_sha256`, and `domain.plan_item.plan_snapshot_sha256`");
