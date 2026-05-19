@@ -354,8 +354,24 @@ describe("flightdeck-state CLI", () => {
 		symlinkSync(symlinkPlanOutside, symlinkPlanDir, "dir");
 		const missingViaSymlink = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(symlinkPlanDir, "missing", "item-one.md") } } })]);
 		expect(missingViaSymlink.status).toBe(2);
-		expect(missingViaSymlink.stderr).toContain("invalid domain.plan_item.brief_artifact_path: parent directory escapes state-owned plan-briefs root");
+		expect(missingViaSymlink.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not traverse symlinks");
 		rmSync(symlinkPlanDir, { force: true, recursive: true });
+
+		const outsideState = mkdtempSync(join(tmpdir(), "fd-state-outside-"));
+		const stateLink = join(repo, "tmp", "state-link");
+		symlinkSync(outsideState, stateLink, "dir");
+		expect(run(repo, ["init"], { FLIGHTDECK_STATE_DIR: "tmp/state-link" }).status).toBe(0);
+		const stateLinkBriefPath = join(stateLink, "plan-briefs", "plan", "item-one.md");
+		const stateDirSymlinkMissing = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: stateLinkBriefPath } } })], { FLIGHTDECK_STATE_DIR: "tmp/state-link" });
+		expect(stateDirSymlinkMissing.status).toBe(2);
+		expect(stateDirSymlinkMissing.stderr).toContain("invalid domain.plan_item.brief_artifact_path: state directory must not be a symlink");
+		mkdirSync(join(outsideState, "plan-briefs", "plan"), { recursive: true });
+		writeFileSync(join(outsideState, "plan-briefs", "plan", "item-one.md"), "brief", "utf8");
+		const stateDirSymlinkExisting = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: stateLinkBriefPath } } })], { FLIGHTDECK_STATE_DIR: "tmp/state-link" });
+		expect(stateDirSymlinkExisting.status).toBe(2);
+		expect(stateDirSymlinkExisting.stderr).toContain("invalid domain.plan_item.brief_artifact_path: state directory must not be a symlink");
+		rmSync(outsideState, { force: true, recursive: true });
+		rmSync(stateLink, { force: true, recursive: true });
 
 		const outside = mkdtempSync(join(repo, "outside-"));
 		rmSync(symlinkRoot, { force: true, recursive: true });
