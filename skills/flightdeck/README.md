@@ -137,14 +137,16 @@ Flightdeck can create and inspect durable run records separately from the live t
 
 ```bash
 flightdeck-state run create --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
+flightdeck-state run ensure --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
 flightdeck-state run active --project-root "$PWD"
 flightdeck-state run list --project-root "$PWD" --json
 flightdeck-state run show <run-id> --project-root "$PWD"
 flightdeck-state run terminate <run-id> --project-root "$PWD"
+flightdeck-state run terminate-active --project-root "$PWD" --tmux-session <name>
 flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
 ```
 
-Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
+Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
 
 ## High-level architecture
 

@@ -603,10 +603,19 @@ archive_stale_state_if_needed() {
   fi
 }
 
+ensure_active_run_for_session() {
+  local session_name
+  session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
+  [[ -n "$session_name" ]] || { echo "Error: unable to resolve tmux session for Flightdeck run" >&2; exit 2; }
+  if ! "$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name" >/dev/null; then
+    echo "Error: failed to create or reuse Flightdeck active run" >&2
+    exit 2
+  fi
+}
+
 
 cmd_start() {
   require_tmux
-  archive_stale_state_if_needed
   local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override="" tracker="linear" github_url=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -656,6 +665,8 @@ cmd_start() {
   PI_SNAPSHOT_ERROR=""
   PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
+  archive_stale_state_if_needed
+  ensure_active_run_for_session
   if [[ -n "$prompt" ]]; then
     prepare_launch_metadata "$harness" "$kind" "prompt" "$model_override" "$effort_override"
   else
@@ -765,6 +776,8 @@ cmd_attach() {
     [[ -n "$github_url" ]] || { echo "Error: github tracker requires --github-url" >&2; exit 2; }
   fi
   tmux list-panes -t "$pane" >/dev/null 2>&1 || { echo "Error: pane not found: $pane" >&2; exit 1; }
+  archive_stale_state_if_needed
+  ensure_active_run_for_session
   capture_pane_meta "$pane"
   if [[ "$harness" == "pi" ]]; then
     pi_discover_for_pane "$CAPTURE_PANE_ID" || true

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	createRun,
+	ensureActiveRun,
 	ensureProjectIndex,
 	flightdeckRunStoreRoot,
 	importLegacyArchives,
@@ -18,6 +19,7 @@ import {
 	resolveProjectRunPaths,
 	resolveRunPaths,
 	showRun,
+	terminateActiveRun,
 	terminateRun,
 } from "../../src/state/run-store.ts";
 
@@ -108,6 +110,44 @@ describe("Flightdeck durable run store", () => {
 		const terminated = terminateRun(repo, first.metadata.run_id);
 		expect(terminated.active_cleared).toBe(false);
 		expect(readActiveRun(repo)?.active.run_id).toBe(second.metadata.run_id);
+	});
+
+	test("ensure reuses active run and creates fresh after active termination", () => {
+		const first = ensureActiveRun(repo, SESSION);
+		expect(first.action).toBe("created");
+		const reused = ensureActiveRun(repo, SESSION);
+		expect(reused.action).toBe("reused");
+		expect(reused.metadata.run_id).toBe(first.metadata.run_id);
+
+		const terminated = terminateActiveRun(repo, SESSION);
+		expect(terminated.reason).toBe("terminated");
+		expect(terminated.terminated?.active_cleared).toBe(true);
+		expect(readActiveRun(repo)).toBeNull();
+
+		const next = ensureActiveRun(repo, SESSION);
+		expect(next.action).toBe("created");
+		expect(next.metadata.run_id).not.toBe(first.metadata.run_id);
+	});
+
+	test("terminate syncs live compatibility state and summary into durable run", () => {
+		const created = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		const summary = join(stateDir, "flightdeck-summary-RUNSTORE-2026-05-19T000000Z.md");
+		writeFileSync(summary, "# Summary\n", "utf8");
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { live: { id: "live", kind: "adhoc", pane_id: "%9", state: "complete" } },
+			session_id: SESSION,
+			summary_path: "tmp/flightdeck-summary-RUNSTORE-2026-05-19T000000Z.md",
+		}), "utf8");
+
+		const terminated = terminateRun(repo, created.metadata.run_id, { tmuxSession: SESSION });
+		expect(terminated.metadata.summary_path).toBe(created.paths.summary_md);
+		expect(readFileSync(created.paths.summary_md, "utf8")).toBe("# Summary\n");
+		const state = JSON.parse(readFileSync(created.paths.state_json, "utf8"));
+		expect(state.entries.live.id).toBe("live");
+		expect(state.terminated).toBe(true);
+		expect(existsSync(terminated.snapshot_path)).toBe(true);
 	});
 
 	test("corrupt metadata cannot claim another run id to clear the active pointer", () => {

@@ -31,10 +31,12 @@ import {
 } from "../state/tracked-entry.ts";
 import {
 	createRun,
+	ensureActiveRun,
 	importLegacyArchives,
 	listRuns,
 	readActiveRun,
 	showRun,
+	terminateActiveRun,
 	terminateRun,
 } from "../state/run-store.ts";
 import { ActivityValidationError } from "../activity/types.ts";
@@ -140,6 +142,7 @@ switch (action) {
 	}
 	case "archive": {
 		emitSessionCompleted({ sessionId: session, stateFile: file, tmuxSession: session });
+		terminateActiveRunForArchive();
 		const ap = archiveState(file);
 		if (ap) process.stdout.write(`${ap}\n`);
 		break;
@@ -480,18 +483,30 @@ function validateDomainIssueIdOrDie(entry: TrackedEntry): string | undefined {
 	}
 }
 
+function terminateActiveRunForArchive(): void {
+	try {
+		const result = terminateActiveRun(resolveProjectRoot(), session, { stateDir: process.env.FLIGHTDECK_STATE_DIR });
+		if (result.reason === "session-mismatch" && result.active) {
+			process.stderr.write(`Warning: active Flightdeck run ${result.active.run_id} belongs to tmux session ${result.active.tmux_session}; archive for ${session} left durable active pointer unchanged.\n`);
+		}
+	} catch (error) {
+		die(`Error: failed to terminate active Flightdeck run before archive: ${error instanceof Error ? error.message : String(error)}`, 1);
+	}
+}
+
 interface RunFlags {
 	json: boolean;
 	positionals: string[];
 	projectRoot?: string;
 	snapshot?: string;
 	stateDir?: string;
+	summaryPath?: string;
 	tmuxSession?: string;
 }
 
 function runRun(args: string[], globalSession: string): void {
 	const sub = args[0];
-	if (!sub) die("Usage: run <active|list|show|create|terminate|import-legacy> [args]");
+	if (!sub) die("Usage: run <active|list|show|create|ensure|terminate|terminate-active|import-legacy> [args]");
 	const flags = parseRunFlags(args.slice(1));
 	const projectRoot = flags.projectRoot || resolveProjectRoot();
 	try {
@@ -503,6 +518,11 @@ function runRun(args: string[], globalSession: string): void {
 			case "create": {
 				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
 				writeJson(createRun(projectRoot, tmuxSession, flags.stateDir));
+				break;
+			}
+			case "ensure": {
+				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
+				writeJson(ensureActiveRun(projectRoot, tmuxSession, flags.stateDir));
 				break;
 			}
 			case "list": {
@@ -525,7 +545,12 @@ function runRun(args: string[], globalSession: string): void {
 			case "terminate": {
 				const runId = flags.positionals[0];
 				if (!runId) die("Usage: run terminate <run-id> [--project-root <path>]");
-				writeJson(terminateRun(projectRoot, runId));
+				writeJson(terminateRun(projectRoot, runId, { stateDir: flags.stateDir, summaryPath: flags.summaryPath, tmuxSession: flags.tmuxSession }));
+				break;
+			}
+			case "terminate-active": {
+				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
+				writeJson(terminateActiveRun(projectRoot, tmuxSession, { stateDir: flags.stateDir, summaryPath: flags.summaryPath }));
 				break;
 			}
 			case "import-legacy": {
@@ -533,7 +558,7 @@ function runRun(args: string[], globalSession: string): void {
 				break;
 			}
 			default:
-				die("Usage: run <active|list|show|create|terminate|import-legacy> [args]");
+				die("Usage: run <active|list|show|create|ensure|terminate|terminate-active|import-legacy> [args]");
 		}
 	} catch (error) {
 		die(`Error: ${error instanceof Error ? error.message : String(error)}`, 1);
@@ -551,6 +576,8 @@ function parseRunFlags(args: string[]): RunFlags {
 		if (arg.startsWith("--tmux-session=")) { flags.tmuxSession = arg.slice("--tmux-session=".length); continue; }
 		if (arg === "--state-dir") { flags.stateDir = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--state-dir=")) { flags.stateDir = arg.slice("--state-dir=".length); continue; }
+		if (arg === "--summary-path") { flags.summaryPath = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--summary-path=")) { flags.summaryPath = arg.slice("--summary-path=".length); continue; }
 		if (arg === "--snapshot") { flags.snapshot = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--snapshot=")) { flags.snapshot = arg.slice("--snapshot=".length); continue; }
 		if (arg.startsWith("--")) die(`Unknown run flag: ${arg}`);

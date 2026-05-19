@@ -121,10 +121,11 @@ flightdeck-state set terminated true
 flightdeck-state set terminated_at '"<ISO8601>"'
 flightdeck-state set summary_path '"<tmp/flightdeck-summary-<SESSION>-<TS>.md>"'
 flightdeck-daemon stop --session "$SESSION"
+flightdeck-state run terminate-active --tmux-session "$SESSION" --summary-path "<tmp/flightdeck-summary-<SESSION>-<TS>.md>"
 flightdeck-state archive
 ```
 
-Do not remove GitHub entries before archive. Archive preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, and worktree history for dashboard/post-mortem inspection.
+Do not remove GitHub entries before archive. `run terminate-active` syncs the final state/activity and summary into the durable run, clears the active pointer, and leaves the project-local archive for compatibility. `archive` is an idempotent safety net for active-run termination and preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, and worktree history for dashboard/post-mortem inspection.
 
 ---
 
