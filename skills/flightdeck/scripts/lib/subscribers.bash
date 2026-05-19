@@ -310,18 +310,34 @@ pi_subscriber_loop() {
         >> "$sub_log" 2>/dev/null || true
     elif [[ -n "${preflight_state//[[:space:]]/}" ]]; then
       rm -f "$preflight_err_file"
-      preflight_session_id=$(pi_subscriber_extract_session_id <<< "$preflight_state")
-      printf '%s [pi-sub-session-preflight] pane=%s pi_session_id=%s expected_session=%s\n' \
-        "$(date -Iseconds)" "$pane_id" "$preflight_session_id" "$expected_pi_session_id" \
-        >> "$sub_log" 2>/dev/null || true
-      pi_subscriber_emit_session_connected "$pane_id" "$preflight_session_id" "$expected_pi_session_id" "$pi_pid" "$pi_socket"
-      if [[ "$preflight_session_id" == "$expected_pi_session_id" ]]; then
-        pi_session_verified=1
-      else
-        printf '%s [pi-sub-session-mismatch] pane=%s pi_session_id=%s expected_session=%s phase=preflight; exiting before drain\n' \
-          "$(date -Iseconds)" "$pane_id" "$preflight_session_id" "$expected_pi_session_id" \
+      if ! jq -e 'type == "object"' <<< "$preflight_state" >/dev/null 2>&1; then
+        local preflight_excerpt
+        preflight_excerpt=$(printf '%s' "$preflight_state" | head -c 200 | tr '\n' ' ')
+        printf '%s [pi-sub-session-preflight-malformed] pane=%s expected_session=%s excerpt=%s; skip initial drain until bridge_hello\n' \
+          "$(date -Iseconds)" "$pane_id" "$expected_pi_session_id" "${preflight_excerpt:-<empty>}" \
           >> "$sub_log" 2>/dev/null || true
-        return 1
+      else
+        preflight_session_id=$(pi_subscriber_extract_session_id <<< "$preflight_state")
+        if [[ -z "$preflight_session_id" || "$preflight_session_id" == "null" ]]; then
+          local preflight_excerpt
+          preflight_excerpt=$(printf '%s' "$preflight_state" | head -c 200 | tr '\n' ' ')
+          printf '%s [pi-sub-session-preflight-malformed] pane=%s expected_session=%s reason=missing-session excerpt=%s; skip initial drain until bridge_hello\n' \
+            "$(date -Iseconds)" "$pane_id" "$expected_pi_session_id" "${preflight_excerpt:-<empty>}" \
+            >> "$sub_log" 2>/dev/null || true
+        else
+          printf '%s [pi-sub-session-preflight] pane=%s pi_session_id=%s expected_session=%s\n' \
+            "$(date -Iseconds)" "$pane_id" "$preflight_session_id" "$expected_pi_session_id" \
+            >> "$sub_log" 2>/dev/null || true
+          pi_subscriber_emit_session_connected "$pane_id" "$preflight_session_id" "$expected_pi_session_id" "$pi_pid" "$pi_socket"
+          if [[ "$preflight_session_id" == "$expected_pi_session_id" ]]; then
+            pi_session_verified=1
+          else
+            printf '%s [pi-sub-session-mismatch] pane=%s pi_session_id=%s expected_session=%s phase=preflight; exiting before drain\n' \
+              "$(date -Iseconds)" "$pane_id" "$preflight_session_id" "$expected_pi_session_id" \
+              >> "$sub_log" 2>/dev/null || true
+            return 1
+          fi
+        fi
       fi
     else
       rm -f "$preflight_err_file"

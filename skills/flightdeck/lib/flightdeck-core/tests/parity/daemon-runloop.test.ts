@@ -384,6 +384,7 @@ exit 1
 		});
 		try {
 			const subLogFile = join(stateDir, `fd-daemon-${testSessionKey}.log.pi-sub-${innerPaneId.replace(/^%/, "")}`);
+			const pidFile = join(stateDir, `fd-pi-subscriber-${testSessionKey}-${innerPaneId.replace(/^%/, "")}.pid`);
 			const sawExpectedSessionArg = await waitFor(() => existsSync(subLogFile) && readFileSync(subLogFile, "utf8").includes("[pi-sub-start]") && readFileSync(subLogFile, "utf8").includes("expected_session=pi-new"), 3000);
 			expect(sawExpectedSessionArg).toBe(true);
 			const sawRespawn = await waitFor(() => {
@@ -391,6 +392,11 @@ exit 1
 				return Number.parseInt(readFileSync(streamCountFile, "utf8").trim() || "0", 10) >= 2;
 			}, 8000);
 			expect(sawRespawn).toBe(true);
+			const replacementPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			expect(Number.isFinite(replacementPid) && replacementPid > 0).toBe(true);
+			await sleep(5200);
+			expect(readFileSync(pidFile, "utf8").trim()).toBe(String(replacementPid));
+			expect(existsSync(subLogFile)).toBe(true);
 			const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
 			const sawMismatchLog = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[pi-subscriber-mismatch]") && readFileSync(logFile, "utf8").includes("force-spawn requested"), 3000);
 			expect(sawMismatchLog).toBe(true);
@@ -411,16 +417,12 @@ exit 1
 					try { process.kill(pid, "SIGTERM"); } catch { /* */ }
 				}
 			}
-			// Mismatch recovery schedules a 5s reap grace callback. Let it
-			// finish before afterEach removes stateDir, so the callback can
-			// write its final reap line without noisy ENOENT diagnostics.
-			await sleep(5200);
 			if (savedBridge === undefined) delete process.env.PI_BRIDGE_BIN;
 			else process.env.PI_BRIDGE_BIN = savedBridge;
 			if (savedStateDir === undefined) delete process.env.FD_STATE_DIR;
 			else process.env.FD_STATE_DIR = savedStateDir;
 		}
-	}, 15000);
+	}, 22000);
 
 	test("PID lock held externally → start fails within 6.1s grace (round-4 #2)", async () => {
 		// Pre-fix bug: withInprocFlock blocked on LOCK_EX so the daemon's

@@ -10,8 +10,10 @@
 //   1. SIGTERM the pid.
 //   2. Wait up to graceMs (default 5s) for clean exit.
 //   3. If still alive: SIGKILL.
-//   4. Remove the pid file (after the signal sequence resolves).
-//   5. Remove the matching log file if known.
+//   4. Remove the pid file (after the signal sequence resolves) only
+//      if it still points at the reaped pid.
+//   5. Remove the matching log file if known and the pidfile guard did
+//      not detect a replacement subscriber.
 //
 // Failures (permission denied, missing pid file, malformed pid) warn-log
 // and continue — never throw. The reap is best-effort cleanup.
@@ -99,6 +101,27 @@ function tryRemove(rm: (path: string) => void, path: string | undefined, log: (t
 	}
 }
 
+function cleanupIfPidStillMatches(opts: {
+	pid: number;
+	pidFile: string;
+	logFile?: string;
+	rm: (path: string) => void;
+	readPidFile: (path: string) => number | null;
+	log: (tag: string, msg: string) => void;
+	harnessLabel: string;
+	paneId: string;
+	reason: string;
+}): { pidFileRemoved: boolean; logFileRemoved: boolean } {
+	const currentPid = opts.readPidFile(opts.pidFile);
+	if (currentPid !== null && currentPid !== opts.pid) {
+		opts.log("reap", `${opts.harnessLabel} pid=${opts.pid} pane=${opts.paneId} reason=${opts.reason} cleanup=skipped-current-pid current_pid=${currentPid}`);
+		return { pidFileRemoved: false, logFileRemoved: false };
+	}
+	const pidFileRemoved = tryRemove(opts.rm, opts.pidFile, opts.log, "pid-file");
+	const logFileRemoved = tryRemove(opts.rm, opts.logFile, opts.log, "log-file");
+	return { pidFileRemoved, logFileRemoved };
+}
+
 /**
  * Reap a subscriber bash process. Returns immediately after the SIGTERM
  * is sent or the no-process path resolves; the grace SIGKILL is fired
@@ -128,8 +151,17 @@ export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberD
 		};
 	}
 	if (!pidAlive(signal, pid)) {
-		const pidFileRemoved = tryRemove(rm, input.pidFile, deps.log, "pid-file");
-		const logFileRemoved = tryRemove(rm, input.logFile, deps.log, "log-file");
+		const { pidFileRemoved, logFileRemoved } = cleanupIfPidStillMatches({
+			pid,
+			pidFile: input.pidFile,
+			logFile: input.logFile,
+			rm,
+			readPidFile,
+			log: deps.log,
+			harnessLabel,
+			paneId: input.paneId,
+			reason: input.reason,
+		});
 		deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=already-gone`);
 		return {
 			paneId: input.paneId,
@@ -177,8 +209,17 @@ export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberD
 				deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok`);
 			}
 		} finally {
-			const pidFileRemoved = tryRemove(rm, input.pidFile, deps.log, "pid-file");
-			const logFileRemoved = tryRemove(rm, input.logFile, deps.log, "log-file");
+			const { pidFileRemoved, logFileRemoved } = cleanupIfPidStillMatches({
+				pid,
+				pidFile: input.pidFile,
+				logFile: input.logFile,
+				rm,
+				readPidFile,
+				log: deps.log,
+				harnessLabel,
+				paneId: input.paneId,
+				reason: input.reason,
+			});
 			result.pidFileRemoved = pidFileRemoved;
 			result.logFileRemoved = logFileRemoved;
 		}
