@@ -31,7 +31,7 @@ interface ShimState {
 function makeRepo(prefix = "fdopen-"): string {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
 	spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-	spawnSync("git", ["-C", dir, "commit", "-q", "--allow-empty", "-m", "init"], {
+	spawnSync("git", ["-C", dir, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
 		env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
 	});
 	return dir;

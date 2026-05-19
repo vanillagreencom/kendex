@@ -17,7 +17,7 @@ const SESSION = "PARITY";
 function makeRepo(): string {
 	const dir = mkdtempSync(join(tmpdir(), "fdstate-"));
 	spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-	spawnSync("git", ["-C", dir, "commit", "-q", "--allow-empty", "-m", "init"], {
+	spawnSync("git", ["-C", dir, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
 		env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
 	});
 	return dir;
@@ -40,6 +40,24 @@ function run(cwd: string, args: string[], extraEnv: Record<string, string | unde
 	const [action, ...rest] = args;
 	const full = action ? [action, "--session", SESSION, ...rest] : ["--session", SESSION];
 	const r = spawnSync(SCRIPT, full, { cwd, encoding: "utf8", env, input });
+	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function runDirect(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}, input?: string): { stdout: string; stderr: string; status: number | null } {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_OWNER_HARNESS = "pi";
+	env.FLIGHTDECK_OWNER_PANE_ID = "%42";
+	env.FLIGHTDECK_OWNER_PANE_TARGET = "PARITY:7.0";
+	env.FLIGHTDECK_OWNER_CWD = "/tmp/flightdeck-owner-parity";
+	env.FLIGHTDECK_OWNER_PID = "4242";
+	env.FLIGHTDECK_OWNER_PI_SESSION_ID = "pi-session-parity";
+	env.FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET = "/tmp/pi-session-bridge/parity.sock";
+	for (const [key, value] of Object.entries(extraEnv)) {
+		if (value === undefined) delete env[key];
+		else env[key] = value;
+	}
+	const r = spawnSync(SCRIPT, args, { cwd, encoding: "utf8", env, input });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
@@ -578,6 +596,41 @@ fi
 		);
 		expect(repeated.imported).toHaveLength(0);
 		expect(repeated.skipped).toHaveLength(1);
+	});
+
+	test("run subcommands work without injected global --session", () => {
+		const home = join(repo, "home-direct");
+		const created = parseRunJson<{ metadata: { run_id: string }; active: { run_id: string } }>(
+			runDirect(repo, ["run", "create", "--project-root", repo, "--tmux-session", "DIRECT"], { HOME: home }),
+		);
+		expect(created.active.run_id).toBe(created.metadata.run_id);
+		const active = parseRunJson<{ active: { run_id: string } }>(
+			runDirect(repo, ["run", "active", "--project-root", repo], { HOME: home }),
+		);
+		expect(active.active.run_id).toBe(created.metadata.run_id);
+		const listed = parseRunJson<{ runs: Array<{ run_id: string }> }>(
+			runDirect(repo, ["run", "list", "--project-root", repo, "--json"], { HOME: home }),
+		);
+		expect(listed.runs.map((item) => item.run_id)).toContain(created.metadata.run_id);
+		const shown = parseRunJson<{ metadata: { run_id: string }; state: { session_id: string } }>(
+			runDirect(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(shown.state.session_id).toBe("DIRECT");
+		const terminated = parseRunJson<{ active_cleared: boolean }>(
+			runDirect(repo, ["run", "terminate", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(terminated.active_cleared).toBe(true);
+
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		const archive = join(stateDir, "flightdeck-state-DIRECT-2026-05-19T000000Z.json.archive");
+		const activity = join(stateDir, "flightdeck-activity-DIRECT-2026-05-19T000000Z.jsonl.archive");
+		writeFileSync(activity, '{"type":"session.completed"}\n', "utf8");
+		writeFileSync(archive, JSON.stringify({ entries: {}, terminated: true }), "utf8");
+		const imported = parseRunJson<{ imported: Array<{ tmux_session: string }>; skipped: unknown[] }>(
+			runDirect(repo, ["run", "import-legacy", "--project-root", repo, "--state-dir", "tmp"], { HOME: home }),
+		);
+		expect(imported.imported.map((item) => item.tmux_session)).toContain("DIRECT");
 	});
 
 	test("activity path returns canonical activity JSONL path", () => {

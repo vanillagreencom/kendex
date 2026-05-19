@@ -11,12 +11,46 @@
 // never via interpolation into the script source — no shell injection.
 
 import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 
 interface SpawnResult { status: number | null; stdout: string; stderr: string }
 
 function run(args: string[], opts?: { input?: string }): SpawnResult {
 	const r = spawnSync("flock", args, { encoding: "utf8", input: opts?.input });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function sleepSync(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Hold a synchronous in-process critical-section lock. Most helpers in
+// this file run the whole critical section inside a child `flock(1)`
+// command; run-store needs to protect multi-step TypeScript reads/writes
+// in-process, so this helper uses atomic mkdir/rmdir next to the lock file
+// and the same temp+rename discipline for file contents.
+export function withFlockHeldSync<T>(lockFile: string, fn: () => T): T {
+	mkdirSync(dirname(lockFile), { recursive: true });
+	const lockDir = `${lockFile}.dir`;
+	const deadline = Date.now() + 30_000;
+	for (;;) {
+		try {
+			mkdirSync(lockDir);
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		if (Date.now() > deadline) {
+			throw new Error(`timed out acquiring lock: ${lockFile}`);
+		}
+		sleepSync(5);
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lockDir, { force: true, recursive: true });
+	}
 }
 
 // jq read-modify-write of a JSON file under flock.

@@ -5,7 +5,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { appendActivityEvent } from "../activity/append.ts";
 import { emitActivity } from "../activity/emit.ts";
 import { formatActivityJsonl, formatActivityLine, formatActivityMarkdown } from "../activity/format.ts";
@@ -488,7 +488,7 @@ function runRun(args: string[], globalSession: string): void {
 	const sub = args[0];
 	if (!sub) die("Usage: run <active|list|show|create|terminate|import-legacy> [args]");
 	const flags = parseRunFlags(args.slice(1));
-	const projectRoot = flags.projectRoot ? resolve(flags.projectRoot) : resolveProjectRoot();
+	const projectRoot = flags.projectRoot || resolveProjectRoot();
 	try {
 		switch (sub) {
 			case "active": {
@@ -497,7 +497,7 @@ function runRun(args: string[], globalSession: string): void {
 			}
 			case "create": {
 				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
-				writeJson(createRun(projectRoot, tmuxSession));
+				writeJson(createRun(projectRoot, tmuxSession, flags.stateDir));
 				break;
 			}
 			case "list": {

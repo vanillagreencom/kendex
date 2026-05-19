@@ -25,7 +25,7 @@ Durable run history lives outside project `tmp/` so it survives cleanup:
         <timestamp>.activity.jsonl
 ```
 
-`<project-id>` is stable and human-safe. With a Git remote, the id is based on `remote.origin.url` plus a SHA-256 hash of the absolute project root; without a remote it falls back to the absolute project-root hash. The human-readable prefix comes from the remote repo name or project directory name.
+`<project-id>` is stable and human-safe. With Git remotes, the id is based on `remote.origin.url` when present, otherwise the first configured remote, plus a SHA-256 hash of the absolute project root. Without a remote it falls back to the absolute project-root hash. The human-readable prefix comes from the remote repo name or project directory name.
 
 `project.json`:
 
@@ -51,8 +51,8 @@ Durable run history lives outside project `tmp/` so it survives cleanup:
   "project_id": "<project-id>",
   "run_id": "<run-id>",
   "tmux_session": "<TMUX_SESSION_NAME>",
-  "state_path": "~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/state.json",
-  "activity_path": "~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/activity.jsonl",
+  "state_path": "<absolute-home>/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/state.json",
+  "activity_path": "<absolute-home>/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/activity.jsonl",
   "updated_at": "<ISO8601>"
 }
 ```

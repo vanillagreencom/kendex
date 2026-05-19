@@ -135,7 +135,7 @@ For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
 Flightdeck can create and inspect durable run records separately from the live tmux session files. This is mostly for dashboard/history tooling and post-mortems.
 
 ```bash
-flightdeck-state run create --project-root "$PWD" --tmux-session <name>
+flightdeck-state run create --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
 flightdeck-state run active --project-root "$PWD"
 flightdeck-state run list --project-root "$PWD" --json
 flightdeck-state run show <run-id> --project-root "$PWD"

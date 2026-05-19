@@ -45,7 +45,7 @@ let shimState = "";
 beforeEach(() => {
 	repo = mkdtempSync(join(tmpdir(), "fd-activity-instrument-"));
 	spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
-	spawnSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", "init"], {
+	spawnSync("git", ["-C", repo, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
 		env: { ...process.env, GIT_AUTHOR_EMAIL: "t@t", GIT_AUTHOR_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_COMMITTER_NAME: "t" },
 	});
 	shimState = writeShimState({ panes: {}, session: SESSION, windows: {} });
