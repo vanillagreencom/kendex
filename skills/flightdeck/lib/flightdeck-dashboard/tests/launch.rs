@@ -167,6 +167,206 @@ fn focus_or_launch_relaunches_stale_tracked_dashboard() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn focus_or_launch_rejects_reused_pane_window_mismatch() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%99", "@dead")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_with_select_log(&bin_dir, &windows_file, &select_log)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["focus-or-launch", "--session", SESSION, "--json"])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "error");
+    assert!(report["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("window mismatch"));
+    assert!(report["path"]
+        .as_str()
+        .expect("path")
+        .ends_with("flightdeck-state-test-fd.json"));
+    assert!(report["command"]
+        .as_str()
+        .expect("command")
+        .contains("tmux display-message"));
+    assert!(!capture.exists(), "identity mismatch must not relaunch");
+    assert!(!select_log.exists(), "identity mismatch must not focus");
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_surfaces_malformed_state_without_launching() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    std::fs::write(
+        project.join("tmp/flightdeck-state-test-fd.json"),
+        "{not json",
+    )?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["focus-or-launch", "--session", SESSION, "--json"])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "error");
+    assert!(report["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("failed to parse dashboard state JSON"));
+    assert!(report["path"]
+        .as_str()
+        .expect("path")
+        .ends_with("flightdeck-state-test-fd.json"));
+    assert!(
+        !capture.exists(),
+        "malformed state must not launch duplicate app"
+    );
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_refuses_untracked_same_name_window() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    std::fs::write(&windows_file, "flightdeck-test\n")?;
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--window-name",
+            "flightdeck-test",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "error");
+    assert!(report["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("refusing duplicate launch"));
+    assert!(
+        !capture.exists(),
+        "untracked existing app must not duplicate"
+    );
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_dashboard_self_launch_sets_active_run_skip_markers() -> Result<(), Box<dyn Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let active_run = temp.path().join("active-run-created");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_lifecycle_guarding_flightdeck_session(&flightdeck_session, &capture, &active_run)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--no-daemon",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "focus-or-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = std::fs::read_to_string(&capture)?;
+    assert!(
+        args.contains("--no-active-run"),
+        "missing no-run flag: {args}"
+    );
+    assert!(
+        args.contains("FLIGHTDECK_DASHBOARD_LAUNCHING=1"),
+        "missing dashboard launch marker: {args}"
+    );
+    assert!(
+        args.contains("FLIGHTDECK_SKIP_ACTIVE_RUN=1"),
+        "missing active-run skip marker: {args}"
+    );
+    assert!(
+        !active_run.exists(),
+        "fake lifecycle should not create active run"
+    );
+    Ok(())
+}
+
+#[test]
 fn launch_forwards_after_window_id_to_flightdeck_session() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");
@@ -525,20 +725,19 @@ fn probe_failure_warns_and_attempts_launch() -> Result<(), Box<dyn Error>> {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("tmux window probe failed; attempting dashboard launch anyway"),
-        "stderr missing window-probe warning: {stderr}"
+        stderr.contains("tmux window probe failed"),
+        "stderr missing window-probe failure: {stderr}"
     );
     assert!(stderr.contains("tmux list-windows failed"));
-    assert!(stderr.contains("tmux list-panes failed"));
     assert!(
-        capture.exists(),
-        "flightdeck-session attempted despite probe failure"
+        !capture.exists(),
+        "flightdeck-session must not launch after probe failure"
     );
     Ok(())
 }
 
 #[test]
-fn stale_same_name_window_does_not_satisfy_launch() -> Result<(), Box<dyn Error>> {
+fn stale_same_name_window_refuses_duplicate_launch() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");
     std::fs::create_dir_all(&project)?;
@@ -557,19 +756,15 @@ fn stale_same_name_window_does_not_satisfy_launch() -> Result<(), Box<dyn Error>
         .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
         .output()?;
 
-    assert!(
-        output.status.success(),
-        "launch failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("exists but no live tracked dashboard entry was verified"),
-        "stderr missing stale-window warning: {stderr}"
+        stderr.contains("refusing duplicate launch"),
+        "stderr missing duplicate guard: {stderr}"
     );
     assert!(
-        capture.exists(),
-        "stale same-name window did not skip launch"
+        !capture.exists(),
+        "stale same-name window must not spawn another dashboard"
     );
     Ok(())
 }
@@ -585,8 +780,9 @@ fn stale_tracked_dashboard_entry_does_not_satisfy_launch() -> Result<(), Box<dyn
     let bin_dir = temp.path().join("bin");
     std::fs::create_dir_all(&bin_dir)?;
     let windows_file = temp.path().join("tmux-windows");
-    std::fs::write(&windows_file, "flightdeck-test\n")?;
-    write_fake_tmux(&bin_dir, &windows_file)?;
+    std::fs::write(&windows_file, "")?;
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_stale_then_select(&bin_dir, &windows_file, &select_log)?;
     let capture = temp.path().join("session-args");
     let flightdeck_session = bin_dir.join("flightdeck-session");
     write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
@@ -600,11 +796,6 @@ fn stale_tracked_dashboard_entry_does_not_satisfy_launch() -> Result<(), Box<dyn
         output.status.success(),
         "launch failed: {}",
         String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("exists but no live tracked dashboard entry was verified"),
-        "stderr missing stale tracked-entry warning: {stderr}"
     );
     let entry = read_dashboard_entry(&state_file)?;
     assert_eq!(entry["pane_id"], "%99");
@@ -1027,6 +1218,58 @@ cat > "$state_dir/flightdeck-state-{SESSION}.json" <<'JSON'
 JSON
 "##,
             capture = capture_file.display()
+        ),
+    )?;
+    make_executable(path)?;
+    Ok(path.to_path_buf())
+}
+
+fn write_lifecycle_guarding_flightdeck_session(
+    path: &Path,
+    capture_file: &Path,
+    active_run_file: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+capture={capture:?}
+active_run={active_run:?}
+{{
+  printf '%s\n' "$@"
+  printf 'FLIGHTDECK_DASHBOARD_LAUNCHING=%s\n' "${{FLIGHTDECK_DASHBOARD_LAUNCHING:-}}"
+  printf 'FLIGHTDECK_SKIP_ACTIVE_RUN=%s\n' "${{FLIGHTDECK_SKIP_ACTIVE_RUN:-}}"
+  printf 'FLIGHTDECK_NO_ACTIVE_RUN=%s\n' "${{FLIGHTDECK_NO_ACTIVE_RUN:-}}"
+}} > "$capture"
+args=" $* "
+if [[ "${{FLIGHTDECK_SKIP_ACTIVE_RUN:-0}}" != "1" || "$args" != *" --no-active-run "* ]]; then
+  printf 'created\n' > "$active_run"
+fi
+state_dir="${{FLIGHTDECK_STATE_DIR:-tmp}}"
+mkdir -p "$state_dir"
+cat > "$state_dir/flightdeck-state-{SESSION}.json" <<'JSON'
+{{
+  "session_id": "{SESSION}",
+  "updated_at": "2026-05-15T00:00:01Z",
+  "entries": {{
+    "flightdeck-dashboard": {{
+      "id": "flightdeck-dashboard",
+      "title": "flightdeck-test",
+      "kind": "workflow",
+      "state": "waiting",
+      "harness": "shell",
+      "pane_id": "%99"
+    }}
+  }}
+}}
+JSON
+"##,
+            capture = capture_file.display(),
+            active_run = active_run_file.display()
         ),
     )?;
     make_executable(path)?;

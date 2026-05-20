@@ -920,6 +920,9 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 // Terminated archive snapshots are preserved for explicit readers, but the
 // Pi mini-dashboard is active-run-only. Completed history belongs in the Rust
 // app/history surface, not in the default inline status widget.
+// `state-error`: the live master-state file exists but failed to read or
+// parse. Renders an error banner with the path/diagnostic instead of clearing
+// the widget as inactive.
 // `archive-error`: a terminated archive was selected but every candidate
 // failed to parse. Renders an error banner with the diagnostic so the
 // user sees "state was lost" instead of a blank "no session" view
@@ -929,7 +932,7 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 // Normal state between `session start` and `session watch`. Distinct
 // from `stale` so the dashboard can show a friendly hint instead of a
 // red "daemon dead" + "restart" framing that implies something broke.
-export type FlightdeckSessionStatus = "live" | "awaiting-watch" | "stale" | "inactive" | "archive-error";
+export type FlightdeckSessionStatus = "live" | "awaiting-watch" | "stale" | "inactive" | "state-error" | "archive-error";
 
 // True when the daemon has ever been started for this tmux session
 // (pid file exists OR heartbeat file exists). Used by the daemon-health
@@ -977,6 +980,7 @@ export function flightdeckSessionStatus(
 	// diagnostic banner instead of falling through to `inactive` — the
 	// user otherwise can't tell a corrupted archive from a missing one.
 	if (snapshot.masterArchiveError) return "archive-error";
+	if (snapshot.masterError) return "state-error";
 	const master = snapshot.master;
 	const hasAnySessions = readTrackedEntries(master).length > 0;
 	if (master?.terminated && hasAnySessions) return "inactive";

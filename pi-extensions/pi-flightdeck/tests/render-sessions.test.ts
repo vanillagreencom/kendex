@@ -12,6 +12,7 @@ import { dashboardVisibleInPane } from "../extensions/dashboard-visibility.js";
 import {
 	renderAwaitingWatchHintLine,
 	renderDashboardLines,
+	renderStateErrorBanner,
 	renderStaleHintLine,
 	type DashboardState,
 } from "../extensions/flightdeck.js";
@@ -289,6 +290,19 @@ test("stale daemon renders stale session-state copy", () => {
 	assert.match(text, /session state from/);
 	assert.match(text, /daemon stopped/);
 	assert.doesNotMatch(text, /issue tree/);
+});
+
+test("live master-state parse errors render a state-error banner", () => {
+	const snap = snapshot([], {
+		master: undefined,
+		masterError: "Unexpected token n in JSON at position 1",
+		masterStatePath: "/repo/tmp/flightdeck-state-HT.json",
+	});
+	assert.equal(flightdeckSessionStatus(snap), "state-error");
+	const text = joinRendered(renderStateErrorBanner(snap, plainTheme() as never, 140));
+	assert.match(text, /FLIGHTDECK STATE ERROR/);
+	assert.match(text, /flightdeck-state-HT\.json/);
+	assert.match(text, /Unexpected token/);
 });
 
 test("never-started daemon classifies as awaiting-watch, not stale", () => {

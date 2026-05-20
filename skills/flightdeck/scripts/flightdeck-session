@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--after-window-id <@ID>] [--strict-discovery]
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--after-window-id <@ID>] [--no-active-run] [--strict-discovery]
   flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--worktree <path>] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
@@ -286,8 +286,21 @@ ensure_dashboard_launched() {
   state_file=$("$SCRIPT_DIR/flightdeck-state" path 2>/dev/null || true)
   if [[ -n "$state_file" && -f "$state_file" ]]; then
     window_id=$(jq -r '.entries["flightdeck-dashboard"].window_id // empty' "$state_file" 2>/dev/null || true)
-    [[ -n "$window_id" && "$window_id" != "null" ]] && DASHBOARD_WINDOW_ID="$window_id"
+    if [[ -n "$window_id" && "$window_id" != "null" ]]; then
+      DASHBOARD_WINDOW_ID="$window_id"
+    fi
   fi
+  return 0
+}
+
+should_skip_active_run_ensure() {
+  local entry_id="$1" explicit_skip="${2:-0}"
+  [[ "$entry_id" == "flightdeck-dashboard" ]] && return 0
+  [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" == "1" ]] && return 0
+  [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" ]] && return 0
+  [[ "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]] && return 0
+  [[ "$explicit_skip" == "1" ]] && return 0
+  return 1
 }
 
 capture_pane_meta() {
@@ -615,7 +628,7 @@ archive_stale_state_if_needed() {
 cmd_start() {
   require_tmux
   archive_stale_state_if_needed
-  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override="" tracker="linear" github_url="" after_window_id=""
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 skip_active_run=0 model_override="" effort_override="" tracker="linear" github_url="" after_window_id=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session-id) session_id="$2"; shift 2 ;;
@@ -647,6 +660,7 @@ cmd_start() {
       --pr) pr="$2"; shift 2 ;;
       --pr=*) pr="${1#--pr=}"; shift ;;
       --strict-discovery) strict_discovery=1; shift ;;
+      --no-active-run|--no-run) skip_active_run=1; shift ;;
       --help|-h) usage ;;
       *) echo "Unknown flag: $1" >&2; usage ;;
     esac
@@ -666,6 +680,13 @@ cmd_start() {
   PI_SNAPSHOT_ERROR=""
   PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
+  # Forward-compatible lifecycle guard: durable active-run wiring must not
+  # create a user run for the dashboard app's self-entry. PRs that add active
+  # run ensure should honor FLIGHTDECK_SKIP_ACTIVE_RUN before creating pointers.
+  if should_skip_active_run_ensure "$session_id" "$skip_active_run"; then
+    export FLIGHTDECK_SKIP_ACTIVE_RUN=1
+    export FLIGHTDECK_NO_ACTIVE_RUN=1
+  fi
   if [[ -n "$prompt" ]]; then
     prepare_launch_metadata "$harness" "$kind" "prompt" "$model_override" "$effort_override"
   else
@@ -707,12 +728,27 @@ cmd_start() {
   if [[ -n "$insert_after_window_id" ]]; then
     new_window_args=(-a -t "$insert_after_window_id" "${new_window_args[@]}")
   fi
-  if ! pane_id=$(tmux new-window "${new_window_args[@]}" 2>/dev/null); then
+  local new_window_err new_window_rc new_window_stderr insert_desc
+  new_window_err=$(mktemp -t flightdeck-session-new-window.XXXXXX)
+  set +e
+  pane_id=$(tmux new-window "${new_window_args[@]}" 2>"$new_window_err")
+  new_window_rc=$?
+  set -e
+  new_window_stderr=$(cat "$new_window_err" 2>/dev/null || true)
+  rm -f "$new_window_err"
+  insert_desc="default"
+  [[ -n "$insert_after_window_id" ]] && insert_desc="after-window-id=$insert_after_window_id"
+  if (( new_window_rc != 0 )); then
     [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
-    echo "Error: tmux new-window failed" >&2
+    printf 'Error: tmux new-window failed (rc=%s, %s, title=%s)\n' "$new_window_rc" "$insert_desc" "$title" >&2
+    [[ -n "$new_window_stderr" ]] && printf '%s\n' "$new_window_stderr" >&2
     exit 2
   fi
-  [[ -n "$pane_id" ]] || { [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"; echo "Error: tmux new-window failed" >&2; exit 2; }
+  if [[ -z "$pane_id" ]]; then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    printf 'Error: tmux new-window returned empty pane id (%s, title=%s)\n' "$insert_desc" "$title" >&2
+    exit 2
+  fi
   disable_auto_rename_if_requested "$pane_id"
   if ! tmux send-keys -t "$pane_id" "clear" Enter; then
     [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"

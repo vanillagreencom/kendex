@@ -18,7 +18,7 @@ The Flightdeck skill and Rust dashboard work without this extension.
 
 The Flightdeck skill owns state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck only renders active status from on-disk state and delegates full inspection/control to the Rust app.
 
-Terminated archives are not shown as active mini-dashboard state. Open the Rust app for full dashboard/history views.
+Terminated archives are not shown as active mini-dashboard state. Use the Rust app for active dashboard context and supported archive/session inspection commands; a dedicated History UI is not part of this status-shell extension.
 
 ## Install
 

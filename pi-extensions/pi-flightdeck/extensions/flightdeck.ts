@@ -214,6 +214,19 @@ export function renderStaleHintLine(snapshot: FlightdeckSnapshot, theme: Theme, 
 	return [truncateToWidth(line, Math.max(1, width), "…")];
 }
 
+export function renderStateErrorBanner(snapshot: FlightdeckSnapshot, theme: Theme, width: number): string[] {
+	const path = snapshot.masterStatePath ? ` ${snapshot.masterStatePath}` : "";
+	const error = snapshot.masterError ?? "unknown state read error";
+	const inner = frameContentWidth(width) - 2;
+	const lines = [
+		`${theme.fg("error", "▲ FLIGHTDECK STATE ERROR")}${theme.fg("dim", path)}`,
+		...wrapLine(theme.fg("dim", error), inner).slice(0, 4),
+		"",
+		theme.fg("dim", "Fix or archive the state file; the mini-dashboard is hidden until state can be read."),
+	];
+	return framePanel(lines, width, theme, "error", " STATE — read/parse error ");
+}
+
 // Awaiting-watch: tracked sessions exist but the daemon has never started
 // for this tmux session. This is the normal state between `session start`
 // and `session watch`. Friendly, non-alarming copy.
@@ -350,14 +363,19 @@ function focusOrLaunchFlightdeckApp(ctx: ExtensionCommandContext | ExtensionCont
 	if (stdout) {
 		try {
 			report = JSON.parse(stdout) as FocusOrLaunchReport;
-		} catch {
-			// Fall through to process-status reporting below.
+		} catch (error) {
+			const snippet = stdout.length > 240 ? `${stdout.slice(0, 240)}…` : stdout;
+			report = {
+				status: "error",
+				reason: `flightdeck-dashboard returned malformed JSON: ${error instanceof Error ? error.message : String(error)}; stdout=${JSON.stringify(snippet)}`,
+				stderr: (result.stderr ?? "").trim() || null,
+			};
 		}
 	}
 	if (!report) {
 		const stderr = (result.stderr ?? "").trim();
-		const error = result.error?.message ?? (stderr || `flightdeck-dashboard exited ${result.status ?? "unknown"}`);
-		report = { status: result.status === 0 ? "focused" : "error", reason: error, stderr };
+		const error = result.error?.message ?? (stderr || `flightdeck-dashboard returned no JSON (exit ${result.status ?? "unknown"})`);
+		report = { status: "error", reason: error, stderr };
 	}
 	if (result.status !== 0 && report.status !== "blocked" && report.status !== "error") {
 		report = { ...report, status: "error", reason: report.reason ?? `flightdeck-dashboard exited ${result.status}` };
@@ -448,6 +466,8 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			status,
 			awaitingWatchSessionCount,
 			master: snapshot?.master ?? null,
+			masterError: snapshot?.masterError ?? null,
+			masterStatePath: snapshot?.masterStatePath ?? null,
 			daemonAlive: snapshot?.daemon?.pidAlive ?? null,
 			daemonHeartbeat: snapshot?.daemon?.heartbeatAgeSec ?? null,
 			polledAt: mostRecentPollMs(snapshot) ?? null,
@@ -469,6 +489,9 @@ export default function flightdeck(pi: ExtensionAPI): void {
 					} else if (status === "stale") {
 						if (lines.length > 0) lines.push("");
 						lines.push(...renderStaleHintLine(snapshot, theme, width));
+					} else if (status === "state-error") {
+						if (lines.length > 0) lines.push("");
+						lines.push(...renderStateErrorBanner(snapshot, theme, width));
 					} else if (status === "archive-error") {
 						if (lines.length > 0) lines.push("");
 						lines.push(...renderArchiveErrorBanner(snapshot, theme, width));

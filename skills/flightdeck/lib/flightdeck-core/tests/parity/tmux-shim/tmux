@@ -113,6 +113,9 @@ format_pane() {
 
 subcmd="${1:-}"
 shift || true
+if [[ -n "${TMUX_SHIM_CALL_LOG:-}" ]]; then
+  printf '%s\t%s\n' "$subcmd" "$*" >> "$TMUX_SHIM_CALL_LOG"
+fi
 
 case "$subcmd" in
   display-message)
@@ -135,6 +138,14 @@ case "$subcmd" in
     fi
     if [[ -z "$target" && "$format" == "#S" ]]; then
       jq -r '.session' "$STATE_FILE"
+      exit 0
+    fi
+    if [[ -z "$target" && "$format" == "#{window_id}" ]]; then
+      jq -r '.current_window_id // (.windows | to_entries | sort_by(.value.index // 0) | .[0].key // empty)' "$STATE_FILE"
+      exit 0
+    fi
+    if [[ -z "$target" && "$format" == "#{pane_id}" ]]; then
+      jq -r '.current_pane_id // (.panes | to_entries | sort_by(.value.window_index // 0, .value.pane_index // 0) | .[0].key // empty)' "$STATE_FILE"
       exit 0
     fi
     pane=$(resolve_pane "$target")

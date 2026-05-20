@@ -26,7 +26,7 @@ This is the issue-mode start workflow. For ad-hoc or workflow sessions that are 
 
 ### 1.2.1 Rust Dashboard Verification
 
-Run the Rust dashboard launch hook after session init and before the watch loop path. This verifies a live tracked `flightdeck-dashboard` entry/pane and ignores stale same-name windows. `FLIGHTDECK_DASHBOARD=0` is the only explicit opt-out.
+Run the Rust dashboard launch hook after session init and before the watch loop path. This verifies a live tracked `flightdeck-dashboard` entry/pane and refuses untracked same-name windows instead of spawning duplicates. `FLIGHTDECK_DASHBOARD=0` is the only explicit opt-out.
 
 ```bash
 if ! .agents/skills/flightdeck/scripts/flightdeck-dashboard launch 2>&1; then
