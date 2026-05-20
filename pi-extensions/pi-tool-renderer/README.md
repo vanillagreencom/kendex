@@ -77,7 +77,7 @@ Open `/extensions:settings`; settings appear under the **Tool Renderer** tab.
 
 | Setting | What it does |
 | --- | --- |
-| Compact user messages | Green border + red π marker instead of filled background. |
+| Compact user messages | Green border + red π marker instead of filled background; preserves Pi's prompt-zone markers around the full framed card. |
 | User message trailing blank line | Extra blank line after user messages. |
 | Compact compaction summaries | Compact bullet style instead of Pi's padded box. |
 | Compact skill invocation messages | Compact `/skill:name` rows. |

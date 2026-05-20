@@ -28,8 +28,57 @@ const COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-rend
 const SKILL_INVOCATION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.skill-invocation-renderer-patch");
 const MARKDOWN_CODE_BLOCK_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.markdown-code-block-patch");
 
+const OSC133_ZONE_START = "\x1b]133;A\x07";
+const OSC133_ZONE_END = "\x1b]133;B\x07";
+const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+
+interface PromptZoneMarkers {
+	end: boolean;
+	final: boolean;
+	start: boolean;
+}
+
+function stripPromptZoneMarkers(lines: string[]): { lines: string[]; markers: PromptZoneMarkers } {
+	const markers: PromptZoneMarkers = { end: false, final: false, start: false };
+	const stripped = lines.map((line) => {
+		let next = line;
+		if (next.includes(OSC133_ZONE_START)) {
+			markers.start = true;
+			next = next.split(OSC133_ZONE_START).join("");
+		}
+		if (next.includes(OSC133_ZONE_END)) {
+			markers.end = true;
+			next = next.split(OSC133_ZONE_END).join("");
+		}
+		if (next.includes(OSC133_ZONE_FINAL)) {
+			markers.final = true;
+			next = next.split(OSC133_ZONE_FINAL).join("");
+		}
+		return next;
+	});
+	return { lines: stripped, markers };
+}
+
+function applyPromptZoneMarkers(lines: string[], markers: PromptZoneMarkers): string[] {
+	if (lines.length === 0) return lines;
+	const marked = [...lines];
+	if (markers.start) marked[0] = `${OSC133_ZONE_START}${marked[0] ?? ""}`;
+	const endPrefix = `${markers.end ? OSC133_ZONE_END : ""}${markers.final ? OSC133_ZONE_FINAL : ""}`;
+	if (endPrefix) {
+		const last = marked.length - 1;
+		marked[last] = `${endPrefix}${marked[last] ?? ""}`;
+	}
+	return marked;
+}
+
 function renderUserMessageBorder(lines: string[], width: number, theme: any): string[] {
 	if (lines.length === 0 || width < 4) return lines;
+	// Pi wraps user messages with OSC 133 prompt-zone markers. With compact
+	// padding, a single-line message can carry start/end/final markers on the
+	// content row; terminals that honor OSC 133 then treat the middle of the box
+	// as prompt chrome. Strip those markers from the body and rewrap the whole
+	// framed card so the terminal sees one stable prompt zone.
+	const unwrapped = stripPromptZoneMarkers(lines);
 	const innerWidth = Math.max(1, width - 2);
 	const border = (text: string) => ansiGreen(text);
 	const marker = (text: string) => ansiRed(text);
@@ -44,12 +93,14 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any): st
 		return applyBaseTextFg(clipped, theme) + " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
 	};
 
-	return [
+	return applyPromptZoneMarkers([
 		`${border("┏")}${topBorder()}${border("┓")}`,
-		...lines.map((line) => `${border("┃")}${fitLine(line)}${border("┃")}`),
+		...unwrapped.lines.map((line) => `${border("┃")}${fitLine(line)}${border("┃")}`),
 		`${border("┗")}${border("━".repeat(innerWidth))}${border("┛")}`,
-	];
+	], unwrapped.markers);
 }
+
+export const __test = { applyPromptZoneMarkers, renderUserMessageBorder, stripPromptZoneMarkers };
 
 function appendUserMessageBreak(lines: string[], width: number, cwd?: string): string[] {
 	if (lines.length === 0 || !settingBoolean("userMessageTrailingBlankLine", true, cwd)) return lines;

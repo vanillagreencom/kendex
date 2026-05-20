@@ -189,6 +189,7 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 |---|---|
 | [`decider`](skills/decider/)* | Architectural decision document management and indexing. |
 | [`deep-research`](skills/deep-research/) | Exa-powered deep research and portable findings report generation. |
+| [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
 | [`github`](skills/github/)* | GitHub PR, thread, review, CI, and merge workflows. |
 | [`issue-lifecycle`](skills/issue-lifecycle/)* | Delegated implementation, review, and QA issue workflows. |
 | [`linear`](skills/linear/)* | Linear issue, cycle, milestone, and project workflows. |

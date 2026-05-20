@@ -607,7 +607,20 @@ archive_stale_state_if_needed() {
     else
       paneids=$(jq -r '(.entries // {}) | to_entries[] | .value.pane_id // empty' "$state_file" 2>/dev/null | awk 'NF' || true)
       [[ -n "$paneids" ]] || return 0
-      alive_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)
+      local tmux_err tmux_status=0
+      tmux_err=$(mktemp -t flightdeck-tmux-list-panes.XXXXXX) || { echo "Error: unable to create tmux liveness diagnostic tempfile" >&2; exit 2; }
+      alive_panes=$(tmux list-panes -a -F '#{pane_id}' 2>"$tmux_err") || tmux_status=$?
+      if (( tmux_status != 0 )); then
+        local tmux_stderr
+        tmux_stderr=$(cat "$tmux_err" 2>/dev/null || true)
+        rm -f "$tmux_err"
+        echo "Error: unable to verify live tmux panes before archiving stale Flightdeck state" >&2
+        echo "tmux list-panes -a -F '#{pane_id}' failed with status $tmux_status" >&2
+        [[ -n "$tmux_stderr" ]] && printf '%s\n' "$tmux_stderr" >&2
+        echo "Refusing to archive $state_file; retry when tmux liveness is available or terminate/archive explicitly after verifying panes are gone." >&2
+        exit 2
+      fi
+      rm -f "$tmux_err"
       local any_alive=0
       while IFS= read -r pid; do
         [[ -n "$pid" ]] || continue
@@ -617,17 +630,33 @@ archive_stale_state_if_needed() {
       reason="no-live-panes"
     fi
   fi
-  local archived
-  archived=$("$SCRIPT_DIR/flightdeck-state" archive 2>/dev/null || true)
+  local archived archive_status=0
+  archived=$("$SCRIPT_DIR/flightdeck-state" archive) || archive_status=$?
+  if (( archive_status != 0 )); then
+    echo "Error: flightdeck-state archive failed while archiving stale state ($reason): $state_file" >&2
+    exit "$archive_status"
+  fi
   if [[ -n "$archived" ]]; then
     printf 'flightdeck-session: archived stale state (%s) -> %s\n' "$reason" "$archived" >&2
+  fi
+}
+
+ensure_active_run_for_session() {
+  if [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" || "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]]; then
+    return 0
+  fi
+  local session_name
+  session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
+  [[ -n "$session_name" ]] || { echo "Error: unable to resolve tmux session for Flightdeck run" >&2; exit 2; }
+  if ! "$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name" >/dev/null; then
+    echo "Error: failed to create or reuse Flightdeck active run" >&2
+    exit 2
   fi
 }
 
 
 cmd_start() {
   require_tmux
-  archive_stale_state_if_needed
   local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 skip_active_run=0 model_override="" effort_override="" tracker="linear" github_url="" after_window_id=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -680,13 +709,15 @@ cmd_start() {
   PI_SNAPSHOT_ERROR=""
   PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
-  # Forward-compatible lifecycle guard: durable active-run wiring must not
-  # create a user run for the dashboard app's self-entry. PRs that add active
-  # run ensure should honor FLIGHTDECK_SKIP_ACTIVE_RUN before creating pointers.
+  # Durable active-run wiring must not create a user run for the dashboard app's
+  # self-entry. The dashboard launcher passes --no-active-run and marker envs;
+  # real supervised sessions continue through run ensure below.
   if should_skip_active_run_ensure "$session_id" "$skip_active_run"; then
     export FLIGHTDECK_SKIP_ACTIVE_RUN=1
     export FLIGHTDECK_NO_ACTIVE_RUN=1
   fi
+  archive_stale_state_if_needed
+  ensure_active_run_for_session
   if [[ -n "$prompt" ]]; then
     prepare_launch_metadata "$harness" "$kind" "prompt" "$model_override" "$effort_override"
   else
@@ -830,6 +861,8 @@ cmd_attach() {
     [[ -n "$github_url" ]] || { echo "Error: github tracker requires --github-url" >&2; exit 2; }
   fi
   tmux list-panes -t "$pane" >/dev/null 2>&1 || { echo "Error: pane not found: $pane" >&2; exit 1; }
+  archive_stale_state_if_needed
+  ensure_active_run_for_session
   capture_pane_meta "$pane"
   if [[ "$harness" == "pi" ]]; then
     pi_discover_for_pane "$CAPTURE_PANE_ID" || true
