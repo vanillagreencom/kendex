@@ -487,7 +487,11 @@ function terminateActiveRunForArchive(): void {
 	try {
 		const result = terminateActiveRun(resolveProjectRoot(), session, { stateDir: process.env.FLIGHTDECK_STATE_DIR });
 		if (result.reason === "session-mismatch" && result.active) {
-			process.stderr.write(`Warning: active Flightdeck run ${result.active.run_id} belongs to tmux session ${result.active.tmux_session}; archive for ${session} left durable active pointer unchanged.\n`);
+			const diagnostic = result.diagnostic ? ` ${result.diagnostic}` : ` active_tmux_session=${result.active.tmux_session}`;
+			if (result.active.tmux_session === session) {
+				die(`Error: active Flightdeck run metadata mismatch before archive; durable active pointer unchanged.${diagnostic}`, 1);
+			}
+			process.stderr.write(`Warning: active Flightdeck run ${result.active.run_id} does not match archive tmux session ${session}; durable active pointer unchanged.${diagnostic}\n`);
 		}
 	} catch (error) {
 		die(`Error: failed to terminate active Flightdeck run before archive: ${error instanceof Error ? error.message : String(error)}`, 1);
@@ -576,8 +580,19 @@ function parseRunFlags(args: string[]): RunFlags {
 		if (arg.startsWith("--tmux-session=")) { flags.tmuxSession = arg.slice("--tmux-session=".length); continue; }
 		if (arg === "--state-dir") { flags.stateDir = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--state-dir=")) { flags.stateDir = arg.slice("--state-dir=".length); continue; }
-		if (arg === "--summary-path") { flags.summaryPath = args[++i] ?? ""; continue; }
-		if (arg.startsWith("--summary-path=")) { flags.summaryPath = arg.slice("--summary-path=".length); continue; }
+		if (arg === "--summary-path") {
+			const value = args[i + 1];
+			if (value === undefined || value.trim() === "" || value.startsWith("--")) die("Usage: --summary-path requires a non-empty value");
+			flags.summaryPath = value;
+			i += 1;
+			continue;
+		}
+		if (arg.startsWith("--summary-path=")) {
+			const value = arg.slice("--summary-path=".length);
+			if (value.trim() === "") die("Usage: --summary-path requires a non-empty value");
+			flags.summaryPath = value;
+			continue;
+		}
 		if (arg === "--snapshot") { flags.snapshot = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--snapshot=")) { flags.snapshot = arg.slice("--snapshot=".length); continue; }
 		if (arg.startsWith("--")) die(`Unknown run flag: ${arg}`);

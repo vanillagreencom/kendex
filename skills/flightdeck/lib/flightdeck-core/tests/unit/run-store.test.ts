@@ -60,6 +60,68 @@ exit ${status}
 	process.env.PATH = `${binDir}:${ORIGINAL_PATH ?? ""}`;
 }
 
+function runFileSnapshot(created: ReturnType<typeof createRun>): { active: string; metadata: string; state: string } {
+	return {
+		active: JSON.stringify(readActiveRun(repo)),
+		metadata: readFileSync(created.paths.metadata_json, "utf8"),
+		state: readFileSync(created.paths.state_json, "utf8"),
+	};
+}
+
+function expectRunFilesUnchanged(created: ReturnType<typeof createRun>, before: { active: string; metadata: string; state: string }): void {
+	expect(JSON.stringify(readActiveRun(repo))).toBe(before.active);
+	expect(readFileSync(created.paths.metadata_json, "utf8")).toBe(before.metadata);
+	expect(readFileSync(created.paths.state_json, "utf8")).toBe(before.state);
+}
+
+interface SummaryFailureCase {
+	name: string;
+	setup: (created: ReturnType<typeof createRun>) => string;
+}
+
+const SUMMARY_FAILURE_CASES: SummaryFailureCase[] = [
+	{
+		name: "missing",
+		setup: () => "tmp/missing-summary.md",
+	},
+	{
+		name: "directory",
+		setup: () => {
+			mkdirSync(join(repo, "tmp", "summary-dir"), { recursive: true });
+			return "tmp/summary-dir";
+		},
+	},
+	{
+		name: "symlink",
+		setup: () => {
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			const real = join(repo, "tmp", "real-summary.md");
+			const link = join(repo, "tmp", "summary-link.md");
+			writeFileSync(real, "# Summary\n", "utf8");
+			symlinkSync(real, link);
+			return "tmp/summary-link.md";
+		},
+	},
+	{
+		name: "outside project root",
+		setup: () => {
+			const outside = join(sandbox, "outside-summary.md");
+			writeFileSync(outside, "# Outside\n", "utf8");
+			return outside;
+		},
+	},
+	{
+		name: "copy failure",
+		setup: (created) => {
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			const source = join(repo, "tmp", "valid-summary.md");
+			writeFileSync(source, "# Summary\n", "utf8");
+			mkdirSync(created.paths.summary_md, { recursive: true });
+			return "tmp/valid-summary.md";
+		},
+	},
+];
+
 beforeEach(() => {
 	sandbox = mkdtempSync(join(tmpdir(), "fd-run-store-"));
 	home = join(sandbox, "home");
@@ -219,6 +281,26 @@ describe("Flightdeck durable run store", () => {
 		expect(showRun(repo, created.metadata.run_id).metadata.terminated).toBe(false);
 	});
 
+	test("terminate-active refuses active pointer metadata tmux session mismatch before mutation", () => {
+		const created = createRun(repo, SESSION);
+		writeFileSync(created.paths.metadata_json, JSON.stringify({ ...created.metadata, tmux_session: "OTHERSESSION" }), "utf8");
+		const before = runFileSnapshot(created);
+
+		const result = terminateActiveRun(repo, SESSION);
+		expect(result.reason).toBe("session-mismatch");
+		expect(result.terminated).toBeNull();
+		expect(result.diagnostic).toContain("metadata_tmux_session=OTHERSESSION");
+		expectRunFilesUnchanged(created, before);
+	});
+
+	test("explicit terminate refuses tmux session mismatch before mutation", () => {
+		const created = createRun(repo, SESSION);
+		const before = runFileSnapshot(created);
+
+		expect(() => terminateRun(repo, created.metadata.run_id, { tmuxSession: "OTHERSESSION" })).toThrow(/tmux session does not match requested termination session/);
+		expectRunFilesUnchanged(created, before);
+	});
+
 	test("ensure refuses stale detection when tmux liveness query fails", () => {
 		const created = createRun(repo, SESSION);
 		const stateDir = join(repo, "tmp");
@@ -259,6 +341,23 @@ describe("Flightdeck durable run store", () => {
 		expect(() => terminateRun(repo, created.metadata.run_id, { summaryPath: "tmp/missing-summary.md" })).toThrow(/invalid explicit --summary-path/);
 		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
 	});
+
+	for (const mode of ["terminateRun", "terminateActiveRun"] as const) {
+		for (const failureCase of SUMMARY_FAILURE_CASES) {
+			test(`${mode} preserves run files when explicit summary path is invalid: ${failureCase.name}`, () => {
+				const created = createRun(repo, SESSION);
+				const summaryPath = failureCase.setup(created);
+				const before = runFileSnapshot(created);
+
+				if (mode === "terminateRun") {
+					expect(() => terminateRun(repo, created.metadata.run_id, { summaryPath })).toThrow(/invalid explicit --summary-path/);
+				} else {
+					expect(() => terminateActiveRun(repo, SESSION, { summaryPath })).toThrow(/invalid explicit --summary-path/);
+				}
+				expectRunFilesUnchanged(created, before);
+			});
+		}
+	}
 
 	test("corrupt metadata cannot claim another run id to clear the active pointer", () => {
 		const first = createRun(repo, SESSION);

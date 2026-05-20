@@ -119,6 +119,7 @@ export interface ActiveRunTerminateResult {
 	active: ActiveRunPointer | null;
 	terminated: RunTerminateResult | null;
 	reason: "terminated" | "no-active-run" | "session-mismatch";
+	diagnostic?: string;
 }
 
 export interface RunTerminateOptions {
@@ -362,8 +363,14 @@ export function terminateActiveRun(projectRoot: string, tmuxSession: string, opt
 		const active = readActivePointer(loaded.paths.active_run_json);
 		if (active === JSON_MISSING) return { active: null, project: loaded.project, reason: "no-active-run", terminated: null };
 		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
+		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
+		const metadata = readRunMetadataForRun(activePaths.metadata_json, ctx.identity.project_id, active.run_id);
+		if (metadata === JSON_MISSING) throw new Error(`run not found: ${active.run_id}`);
 		if (active.tmux_session !== session) {
-			return { active, project: loaded.project, reason: "session-mismatch", terminated: null };
+			return { active, diagnostic: `active pointer tmux_session=${active.tmux_session} requested_tmux_session=${session}`, project: loaded.project, reason: "session-mismatch", terminated: null };
+		}
+		if (metadata.tmux_session !== session) {
+			return { active, diagnostic: runTmuxSessionMismatchMessage(metadata, session), project: loaded.project, reason: "session-mismatch", terminated: null };
 		}
 		const terminated = terminateRunLocked(ctx, loaded, active.run_id, { ...options, syncLegacy: true, tmuxSession: session });
 		return { active, project: loaded.project, reason: "terminated", terminated };
@@ -525,14 +532,20 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	const paths = resolveRunPaths(loaded.paths, requestedRunId);
 	const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
 	if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
+	const requestedTmuxSession = options.tmuxSession !== undefined
+		? safeLegacySessionName(requireNonEmpty(options.tmuxSession, "tmux session"))
+		: null;
+	if (requestedTmuxSession && metadata.tmux_session !== requestedTmuxSession) {
+		throw new Error(runTmuxSessionMismatchMessage(metadata, requestedTmuxSession));
+	}
 	const active = readActivePointer(loaded.paths.active_run_json);
 	if (active !== JSON_MISSING) validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 	const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 	mkdirSync(paths.snapshots_dir, { recursive: true });
 	let state = readStateObject(paths.state_json, "run state");
 	if (state === JSON_MISSING) throw new Error(`state not found for run: ${runId}`);
-	if (options.syncLegacy === true || !!options.tmuxSession || !!options.summaryPath) {
-		const synced = syncRunStateFromLegacy(loaded.project.root_path, metadata, paths, options.stateDir, options.tmuxSession);
+	if (options.syncLegacy === true || requestedTmuxSession || !!options.summaryPath) {
+		const synced = syncRunStateFromLegacy(loaded.project.root_path, metadata, paths, options.stateDir, requestedTmuxSession ?? undefined);
 		if (synced) state = synced;
 	}
 	state.activity_path = paths.activity_jsonl;
@@ -607,6 +620,16 @@ function activeRunSessionMismatchMessage(activeRunPath: string, active: ActiveRu
 		`metadata_tmux_session=${metadata.tmux_session}`,
 		`requested_tmux_session=${requestedSession}`,
 		"requested recovery: return to the owning tmux session, terminate/archive that run, or verify all recorded panes are gone before starting a replacement",
+	].join("; ");
+}
+
+function runTmuxSessionMismatchMessage(metadata: RunMetadata, requestedSession: string): string {
+	return [
+		"Flightdeck run metadata tmux session does not match requested termination session",
+		`run_id=${metadata.run_id}`,
+		`metadata_tmux_session=${metadata.tmux_session}`,
+		`requested_tmux_session=${requestedSession}`,
+		"requested recovery: terminate from the owning tmux session or inspect the active pointer and run metadata before retrying",
 	].join("; ");
 }
 

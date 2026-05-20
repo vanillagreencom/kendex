@@ -384,6 +384,72 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(started.stderr).toContain("flightdeck-state-test-session-");
 		});
 
+		test(`start aborts stale archive when tmux liveness fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { maybe_live: { id: "maybe_live", kind: "adhoc", pane_id: "%maybe", state: "waiting" } },
+				session_id: "test-session",
+				terminated: false,
+			}, null, 2));
+			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
+			const stateBefore = readFileSync(stateFile(repo), "utf8");
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			], { TMUX_SHIM_FAIL_LIST_PANES_A: "1" });
+			expect(started.status).not.toBe(0);
+			expect(started.stderr).toContain("unable to verify live tmux panes before archiving stale Flightdeck state");
+			expect(started.stderr).toContain("shim: list-panes -a refused");
+			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
+			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+			const shown = JSON.parse(runState(repo, shim, ["run", "show", created.metadata.run_id]).stdout);
+			expect(shown.metadata.terminated).toBe(false);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout).active.run_id).toBe(created.metadata.run_id);
+			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
+		});
+
+		test(`start aborts when stale archive command fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { done: { id: "done", kind: "adhoc", pane_id: "%gone", state: "complete" } },
+				session_id: "test-session",
+				terminated: true,
+				terminated_at: "2026-05-20T00:00:00Z",
+			}, null, 2));
+			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
+			const activePath = join(repo, "home", ".vstack", "flightdeck", "projects", created.project.project_id, "active-run.json");
+			const activeBefore = readFileSync(activePath, "utf8");
+			const stateBefore = readFileSync(stateFile(repo), "utf8");
+			rmSync(created.paths.metadata_json, { force: true });
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			]);
+			expect(started.status).not.toBe(0);
+			expect(started.stderr).toContain("failed to terminate active Flightdeck run before archive");
+			expect(started.stderr).toContain("flightdeck-state archive failed while archiving stale state");
+			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
+			expect(readFileSync(activePath, "utf8")).toBe(activeBefore);
+			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
+		});
+
 		test(`start --prompt launches Pi through a tempfile without ANSI-C shell quoting`, () => {
 			const repo = makeRepo();
 			repos.push(repo);

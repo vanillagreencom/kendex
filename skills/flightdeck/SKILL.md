@@ -137,7 +137,7 @@ Durable run commands are read/write state helpers only. They do not start dashbo
 | `state run list` | `[--project-root <path>] [--json]` | `flightdeck-state run list` | Lists known runs newest-first; use `--json` for machine output. |
 | `state run show` | `<run-id> [--snapshot <timestamp>] [--project-root <path>]` | `flightdeck-state run show` | Prints run metadata, state, activity path, and snapshot names as JSON. |
 | `state run terminate` | `<run-id> [--project-root <path>] [--summary-path <path>]` | `flightdeck-state run terminate` | Marks run metadata/state terminated, writes a final snapshot, copies project-local summary to run `summary.md` when available, and clears `active-run.json` when it points at that run. |
-| `state run terminate-active` | `--tmux-session <name> [--project-root <path>] [--summary-path <path>]` | `flightdeck-state run terminate-active` | Terminates only when the active pointer belongs to that tmux session; used by `flightdeck-state archive` before rotating legacy files. |
+| `state run terminate-active` | `--tmux-session <name> [--project-root <path>] [--summary-path <path>]` | `flightdeck-state run terminate-active` | Terminates only when both active pointer and run metadata belong to that tmux session; used by `flightdeck-state archive` before rotating legacy files. |
 | `state run import-legacy` | `[--project-root <path>] [--state-dir <dir>]` | `flightdeck-state run import-legacy` | Imports `flightdeck-state-*.json.archive` files into durable run storage without deleting legacy files. |
 
 ## Skill Rules
