@@ -44,21 +44,33 @@ Applies to `gh pr view`, `gh pr edit`, and any label/check inspection.
 
 ---
 
-## § 3: Reused GitHub PR handlers
+## § 3: Handler — `pre-pr-ready-for-review`
+
+Child has pushed commits and is waiting for the supervisor to gate PR creation. Mirrors `workflows/github/handle-prompt.md` § 3, adapted to `domain.plan_item`.
+
+1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0`, `pane-respond` the approval instruction from `workflows/shared/pre-pr-review.md` § 5 step 2 (adjust the PR body wording to reference the plan path + item id), set `domain.plan_item.review_status = "pre-pr-approved"`, and return.
+2. Otherwise set `domain.plan_item.review_status = "pre-pr-reviewing"` (initialize `review_rounds=1`, `review_reports=[]` on first entry; increment `review_rounds` on subsequent entries).
+3. Invoke `⤵ workflows/shared/pre-pr-review.md <ITEM_ID> plan_item`.
+4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason="pre-pr-review-loop-stalled"` and pane-responds accordingly. Do not duplicate that logic here.
+5. Return to `plan/watch.md` § 4 without further action.
+
+---
+
+## § 4: Reused GitHub PR handlers
 
 For these tags, follow the named section in `workflows/github/handle-prompt.md`, adapted only by replacing the domain reads/writes:
 
 | Tag | GitHub handler section | Plan adaptation |
 |-----|------------------------|-----------------|
-| `merge-now` | § 3 | Read/write `entry.domain.plan_item.pr_number`; require `mergeStateStatus === "CLEAN"` before answering Merge. |
-| `merge-ready-but-unknown` | § 4 | Preserve `entry.unknown_since`; gate wait, Merge, and force-merge transition with `FLIGHTDECK_AUTO_MERGE=0`. |
-| `force-merge-confirm` | § 5 | Re-run the strict force-merge predicate immediately before answering; `FLIGHTDECK_AUTO_MERGE=0` pauses instead of answering. |
-| `bot-review-wait-stuck` and issue `pi-bg-task-exit` | § 6 | Use plan PR number; never call Linear or project-management. |
-| `rebase-multi-choice` | § 7 | Same preserve / apply / verify triplet; plan item worktree is `domain.plan_item.worktree`. |
-| `force-push-prompt` | § 8 | Branch must be the current plan item branch / worktree; never approve sibling item force pushes. |
-| `cleanup-prompt`, `stale-no-pr-branch`, `stale-orphan-worktree` | § 9 | Cleanup only when target equals `domain.plan_item.worktree` or this item branch, and terminal PR merge is already authoritative. |
-| `multi-select-tabbed` | § 10 | Handle GitHub review, merge, rebase, and cleanup choices only. Linear audit/relation tabs are domain mismatch. |
-| `bash-permission-prompt` issue extension | § 11 | Allow only read-only `gh` inspection; writes require the specific prompt tags above. |
+| `merge-now` | § 4 | Read/write `entry.domain.plan_item.pr_number`; require `mergeStateStatus === "CLEAN"` before answering Merge. |
+| `merge-ready-but-unknown` | § 5 | Preserve `entry.unknown_since`; gate wait, Merge, and force-merge transition with `FLIGHTDECK_AUTO_MERGE=0`. |
+| `force-merge-confirm` | § 6 | Re-run the strict force-merge predicate immediately before answering; `FLIGHTDECK_AUTO_MERGE=0` pauses instead of answering. |
+| `bot-review-wait-stuck` and issue `pi-bg-task-exit` | § 7 | Use plan PR number; never call Linear or project-management. |
+| `rebase-multi-choice` | § 8 | Same preserve / apply / verify triplet; plan item worktree is `domain.plan_item.worktree`. |
+| `force-push-prompt` | § 9 | Branch must be the current plan item branch / worktree; never approve sibling item force pushes. |
+| `cleanup-prompt`, `stale-no-pr-branch`, `stale-orphan-worktree` | § 10 | Cleanup only when target equals `domain.plan_item.worktree` or this item branch, and terminal PR merge is already authoritative. |
+| `multi-select-tabbed` | § 11 | Handle GitHub review, merge, rebase, and cleanup choices only. Linear audit/relation tabs are domain mismatch. |
+| `bash-permission-prompt` issue extension | § 12 | Allow only read-only `gh` inspection; writes require the specific prompt tags above. |
 
 Load-bearing safety rules inherited from the GitHub handler:
 
@@ -70,7 +82,7 @@ Load-bearing safety rules inherited from the GitHub handler:
 
 ---
 
-## § 4: Handler — `dependency-edge-resolution`
+## § 5: Handler — `dependency-edge-resolution`
 
 This is a plan-only internal routing step used by `workflows/plan/watch.md` after one item merges.
 
@@ -99,7 +111,7 @@ Never ask a child pane to run a master-side plan command. Spawned item prompts a
 
 ---
 
-## § 5: Plan-specific cleanup scope
+## § 6: Plan-specific cleanup scope
 
 Plan cleanup may affect only the tracked item's own resources:
 
@@ -110,4 +122,4 @@ Plan cleanup may affect only the tracked item's own resources:
 
 ## Returns
 
-To `plan/watch.md` § 4.
+To `plan/watch.md` § 4 (or back to it after the shared review workflow returns).

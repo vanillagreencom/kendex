@@ -47,6 +47,9 @@ For each issue number in the spawn batch:
 | `waiting` | `waiting` | unchanged |
 | `prompting` | `prompting` | `substate=<tag>` |
 | `submitting` | `submitting` | child work in progress |
+| `pre-pr-reviewing` | `submitting` | `domain.github_issue.review_status = "pre-pr-reviewing"`, `review_rounds`, `review_reports` populated by `workflows/shared/pre-pr-review.md` |
+| `pre-pr-fixing` | `submitting` | `domain.github_issue.review_status = "pre-pr-fixing"`, child applying round-N findings |
+| `pre-pr-approved` | `submitting` | `domain.github_issue.review_status = "pre-pr-approved"`, child instructed to open PR |
 | `merge-ready` | `ready` | `domain.github_issue.phase = "merge-ready"` |
 | `merged` | `complete` | `domain.github_issue.outcome = "merged"`, `merge_commit` set |
 | `aborted` | `cancelled` | `domain.github_issue.outcome = "aborted"` |
@@ -69,6 +72,7 @@ POLL_INPUT=$(jq '[.[]
 ```
 
 GitHub issue-only tags:
+- `pre-pr-ready-for-review`
 - `cleanup-prompt`
 - `bot-review-wait-stuck`
 - `rebase-multi-choice`
@@ -176,8 +180,9 @@ On re-entry:
 1. Run generic recovery from `session-watch.md` first.
 2. Re-read `entry.domain.github_issue` for issue number, PR, merge commit, worktree, and actual file count.
 3. Preserve `unknown_since` so the UNKNOWN timer does not reset.
-4. Re-run `gh pr view` for open PRs unless `gh` is unavailable; unavailable follows § 6.
-5. Re-evaluate `paused_for_user`; if the user fixed the issue in the pane or via GitHub, reclassify and proceed.
+4. Re-read `entry.domain.github_issue.review_status` and `review_rounds`; if `review_status == "pre-pr-fixing"`, await the next `pre-pr-ready-for-review` signal instead of re-invoking the loop. If `review_status == "pre-pr-reviewing"`, the prior reviewer fan-out did not complete; rerun `workflows/shared/pre-pr-review.md` at the same round.
+5. Re-run `gh pr view` for open PRs unless `gh` is unavailable; unavailable follows § 6.
+6. Re-evaluate `paused_for_user`; if the user fixed the issue in the pane or via GitHub, reclassify and proceed.
 
 ## Returns
 

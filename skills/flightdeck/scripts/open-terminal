@@ -468,7 +468,8 @@ resolve_github_repo() {
 
 compose_github_child_prompt() {
   local repo="$1" issue="$2" title="$3" body="$4" url="$5"
-  cat <<EOF
+  if [[ "${FLIGHTDECK_PRE_PR_REVIEW:-1}" == "0" ]]; then
+    cat <<EOF
 Fix GitHub issue ${repo}#${issue}: ${title}
 
 Issue body:
@@ -484,6 +485,27 @@ Instructions:
 - Do NOT bump any version numbers.
 - Do NOT merge the PR yourself; the supervisor reviews + merges.
 - Print the PR URL as the LAST line of your final message.
+EOF
+    return 0
+  fi
+  cat <<EOF
+Fix GitHub issue ${repo}#${issue}: ${title}
+
+Issue body:
+${body}
+
+URL: ${url}
+
+Instructions:
+- Read the project's CLAUDE.md or AGENTS.md for binding repo rules.
+- Verify the bug or scope against the actual source before writing code (verify-don't-trust).
+- Push commits to branch issue-${issue}. Do NOT open a PR yet.
+- Do NOT bump any version numbers.
+- When implementation is done, write the marker file \`tmp/ready-for-review.txt\` (any non-empty content) and print exactly \`PRE-PR-REVIEW-READY: tmp/ready-for-review.txt\` as the LAST line of your message. Then stop and wait.
+- The supervisor will reply with either:
+    - \`tmp/pre-pr-approved.md\` -> open a PR with \`Fixes #${issue}\` in the body and print the PR URL as the LAST line of your final message.
+    - \`tmp/pre-pr-review/round-<N>.md\` -> apply the fix items, push to \`issue-${issue}\`, then signal \`PRE-PR-REVIEW-READY: tmp/ready-for-review.txt\` again. Repeat until approved.
+- Do NOT merge the PR yourself; the supervisor merges.
 EOF
 }
 

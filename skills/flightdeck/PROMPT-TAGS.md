@@ -14,6 +14,7 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 |-----|----------------|---------|
 | `rendering` | generic | Pane still rendering; do not answer yet. |
 | `terminal-state-reached` | generic + issue | Pane reached a completion/terminal state; route to summary or close workflow. Adapter text with a GitHub pull URL on the final non-empty line also maps here so PR-producing children wake the supervisor. |
+| `pre-pr-ready-for-review` | issue | Child pushed commits and printed `PRE-PR-REVIEW-READY: <path>` on the last non-empty line, awaiting supervisor-side reviewer fan-out before opening the PR. Issue-only; routes to `workflows/shared/pre-pr-review.md` via the lane handler. Detected only when an adapter is used (`noFooterGate=true`). |
 | `bash-permission-prompt` | generic | Harness asks whether to allow a shell command. |
 | `force-merge-confirm` | issue | Prompt asks whether to force-merge. Apply conflict/UNKNOWN gate first. |
 | `merge-ready-but-unknown` | issue | GitHub merge state is `UNKNOWN`; apply timer and force-merge predicate before acting. |

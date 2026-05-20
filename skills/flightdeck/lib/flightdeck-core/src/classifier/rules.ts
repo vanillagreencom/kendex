@@ -18,6 +18,7 @@ export interface Rule {
 // `domain-mismatch` so the watch loop can warn/escalate instead of taking
 // destructive issue-mode action against an ad-hoc pane.
 export const ISSUE_ONLY_TAGS = new Set<string>([
+	"pre-pr-ready-for-review",
 	"force-merge-confirm",
 	"merge-ready-but-unknown",
 	"merge-now",
@@ -53,6 +54,16 @@ export const IDLE_CURSOR = /(❯|>|■■■|⠋|⠙|⠸|⠴|⠦|⠧)\s*$/m;
 
 // Post-footer sentinel matchers in priority order.
 export const POST_FOOTER_RULES: Rule[] = [
+	{
+		tag: "pre-pr-ready-for-review",
+		matched: "pre-pr review ready sentinel",
+		// Child prints exactly `PRE-PR-REVIEW-READY: <path>` as the last
+		// non-empty line after pushing commits. Anchor to end-of-buffer so
+		// the same string embedded mid-buffer (e.g. quoted in the issue
+		// body itself) does not falsely fire the handler.
+		pattern: /(?:^|\r?\n)PRE-PR-REVIEW-READY:\s*\S+\s*$/,
+		requiresNoFooterGate: true,
+	},
 	{
 		tag: "bash-permission-prompt",
 		matched: "permission prompt",

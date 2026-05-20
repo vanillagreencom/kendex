@@ -48,6 +48,9 @@ For each item id in the active plan graph:
 | `spawning` | `spawning` | atomic spawn claim held; worktree/pane transaction in progress |
 | `in-progress` | `submitting` | child work in progress |
 | `prompting` | `prompting` | `substate=<tag>` |
+| `pre-pr-reviewing` | `submitting` | `domain.plan_item.review_status = "pre-pr-reviewing"`, `review_rounds`, `review_reports` populated by `workflows/shared/pre-pr-review.md` |
+| `pre-pr-fixing` | `submitting` | `domain.plan_item.review_status = "pre-pr-fixing"`, child applying round-N findings |
+| `pre-pr-approved` | `submitting` | `domain.plan_item.review_status = "pre-pr-approved"`, child instructed to open PR |
 | `merge-ready` | `ready` | `domain.plan_item.phase = "merge-ready"` |
 | `merged` | `complete` | `domain.plan_item.phase = "merged"`, `merge_commit` set |
 | `aborted` | `cancelled` | `domain.plan_item.phase = "aborted"` |
@@ -72,6 +75,7 @@ POLL_INPUT=$(jq '[.[]
 ```
 
 Plan PR tags shared with the GitHub lane:
+- `pre-pr-ready-for-review`
 - `cleanup-prompt`
 - `bot-review-wait-stuck`
 - `rebase-multi-choice`
