@@ -357,6 +357,33 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(firstRun.state.entries["first-entry"].id).toBe("first-entry");
 		});
 
+		test(`start archives stale compatibility state when recorded panes are gone`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { stale: { id: "stale", kind: "adhoc", pane_id: "%404", state: "waiting" } },
+				session_id: "test-session",
+				terminated: false,
+			}, null, 2));
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			]);
+			expect(started.status).toBe(0);
+			expect(started.stderr).toContain("archived stale state (no-live-panes)");
+			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(Object.keys(liveState.entries)).toEqual(["replacement-entry"]);
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json.archive"))).toBe(false);
+			expect(started.stderr).toContain("flightdeck-state-test-session-");
+		});
+
 		test(`start --prompt launches Pi through a tempfile without ANSI-C shell quoting`, () => {
 			const repo = makeRepo();
 			repos.push(repo);

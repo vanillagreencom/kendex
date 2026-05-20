@@ -108,7 +108,7 @@ export interface RunEnsureResult {
 	active: ActiveRunPointer;
 	metadata: RunMetadata;
 	paths: RunPaths;
-	action: "created" | "reused" | "created-after-terminated" | "created-after-stale" | "created-after-missing-metadata";
+	action: "created" | "reused" | "created-after-terminated" | "created-after-stale";
 	previous_run_id: string | null;
 	previous_termination: RunTerminateResult | null;
 	legacy_archive_path: string | null;
@@ -126,6 +126,19 @@ export interface RunTerminateOptions {
 	summaryPath?: string;
 	syncLegacy?: boolean;
 	tmuxSession?: string;
+}
+
+interface StaleActiveRunCheck {
+	stale: boolean;
+	reason: "no-entries" | "no-pane-ids" | "all-panes-missing" | "live-pane-found" | "tmux-query-failed";
+	paneIds: string[];
+	error?: string;
+}
+
+interface LivePaneIdsResult {
+	ok: boolean;
+	panes: Set<string>;
+	error?: string;
 }
 
 export interface LegacyImportResult {
@@ -259,14 +272,20 @@ export function ensureActiveRun(projectRoot: string, tmuxSession: string, stateD
 		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
 		const metadata = readRunMetadataForRun(activePaths.metadata_json, ctx.identity.project_id, active.run_id);
 		if (metadata === JSON_MISSING) {
-			const legacyArchivePath = archiveLegacyStateIfPresent(loaded.project.root_path, active.tmux_session, stateDir);
-			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-missing-metadata", active.run_id, null, legacyArchivePath);
+			throw new Error(activeRunMissingMetadataMessage(loaded.paths.active_run_json, active, activePaths.metadata_json, loaded.project.root_path));
 		}
 		if (metadata.terminated) {
 			const legacyArchivePath = archiveLegacyStateIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
 			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-terminated", metadata.run_id, null, legacyArchivePath);
 		}
-		if (activeRunHasEntriesButNoLivePanes(loaded.project.root_path, metadata, activePaths, stateDir)) {
+		if (active.tmux_session !== session || metadata.tmux_session !== session) {
+			throw new Error(activeRunSessionMismatchMessage(loaded.paths.active_run_json, active, metadata, session));
+		}
+		const stale = checkActiveRunStale(loaded.project.root_path, metadata, activePaths, stateDir);
+		if (stale.reason === "tmux-query-failed") {
+			throw new Error(activeRunLivenessUnknownMessage(loaded.paths.active_run_json, metadata, session, stale));
+		}
+		if (stale.stale) {
 			const terminated = terminateRunLocked(ctx, loaded, metadata.run_id, { stateDir, syncLegacy: true, tmuxSession: metadata.tmux_session });
 			const legacyArchivePath = archiveLegacyStateIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
 			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-stale", metadata.run_id, terminated, legacyArchivePath);
@@ -519,6 +538,7 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	state.activity_path = paths.activity_jsonl;
 	state.terminated = true;
 	state.terminated_at = timestamp.iso;
+	const summaryPath = copySummaryIfAvailable(loaded.project.root_path, paths, options.summaryPath, state);
 	writeJsonAtomic(paths.state_json, state);
 	const snapshotPath = safeSnapshotPath(paths.snapshots_dir, `${timestamp.basename}.json`);
 	writeJsonAtomic(snapshotPath, state);
@@ -527,7 +547,6 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 		activitySnapshotPath = safeSnapshotPath(paths.snapshots_dir, `${timestamp.basename}.activity.jsonl`);
 		copyFileAtomic(paths.activity_jsonl, activitySnapshotPath);
 	}
-	const summaryPath = copySummaryIfAvailable(loaded.project.root_path, paths, options.summaryPath, state);
 	const nextMetadata: RunMetadata = {
 		...metadata,
 		last_seen_at: timestamp.iso,
@@ -557,6 +576,40 @@ function ensureResult(reused: RunCreateResult, action: RunEnsureResult["action"]
 	};
 }
 
+function activeRunMissingMetadataMessage(activeRunPath: string, active: ActiveRunPointer, metadataPath: string, projectRoot: string): string {
+	return [
+		`active Flightdeck run metadata is missing: ${metadataPath}`,
+		`active_run_json=${activeRunPath}`,
+		`run_id=${active.run_id}`,
+		`active_tmux_session=${active.tmux_session}`,
+		`requested recovery: inspect the active pointer and either restore/import the missing run metadata or explicitly terminate/remove the stale pointer for project ${projectRoot}; refusing to overwrite active-run.json automatically`,
+	].join("; ");
+}
+
+function activeRunLivenessUnknownMessage(activeRunPath: string, metadata: RunMetadata, requestedSession: string, stale: StaleActiveRunCheck): string {
+	return [
+		`cannot verify active Flightdeck run liveness: ${stale.error ?? "tmux liveness query failed"}`,
+		`active_run_json=${activeRunPath}`,
+		`run_id=${metadata.run_id}`,
+		`active_tmux_session=${metadata.tmux_session}`,
+		`requested_tmux_session=${requestedSession}`,
+		`recorded_pane_ids=${stale.paneIds.join(",") || "<none>"}`,
+		"requested recovery: retry when tmux liveness is available, or explicitly terminate/archive the old run after verifying no panes are alive",
+	].join("; ");
+}
+
+function activeRunSessionMismatchMessage(activeRunPath: string, active: ActiveRunPointer, metadata: RunMetadata, requestedSession: string): string {
+	return [
+		"active Flightdeck run belongs to a different tmux session and is not proven stale",
+		`active_run_json=${activeRunPath}`,
+		`run_id=${metadata.run_id}`,
+		`active_pointer_tmux_session=${active.tmux_session}`,
+		`metadata_tmux_session=${metadata.tmux_session}`,
+		`requested_tmux_session=${requestedSession}`,
+		"requested recovery: return to the owning tmux session, terminate/archive that run, or verify all recorded panes are gone before starting a replacement",
+	].join("; ");
+}
+
 function legacyStateDirForRoot(projectRoot: string, stateDir?: string): string {
 	const raw = stateDir && stateDir.trim()
 		? stateDir.trim()
@@ -578,26 +631,31 @@ function syncRunStateFromLegacy(projectRoot: string, metadata: RunMetadata, path
 	return liveStateJson;
 }
 
-function activeRunHasEntriesButNoLivePanes(projectRoot: string, metadata: RunMetadata, paths: RunPaths, stateDir?: string): boolean {
+function checkActiveRunStale(projectRoot: string, metadata: RunMetadata, paths: RunPaths, stateDir?: string): StaleActiveRunCheck {
 	const liveState = readStateObject(join(legacyStateDirForRoot(projectRoot, stateDir), `flightdeck-state-${metadata.tmux_session}.json`), "live state");
 	const durableState = liveState === JSON_MISSING ? readStateObject(paths.state_json, "run state") : liveState;
-	if (durableState === JSON_MISSING) return false;
+	if (durableState === JSON_MISSING) return { paneIds: [], reason: "no-entries", stale: false };
 	const entries = isRecord(durableState.entries) ? durableState.entries : {};
 	const entryValues = Object.values(entries).filter(isRecord);
-	if (entryValues.length === 0) return false;
+	if (entryValues.length === 0) return { paneIds: [], reason: "no-entries", stale: false };
 	const paneIds = entryValues.map((entry) => typeof entry.pane_id === "string" ? entry.pane_id : "").filter(Boolean);
-	if (paneIds.length === 0) return true;
+	if (paneIds.length === 0) return { paneIds, reason: "no-pane-ids", stale: false };
 	const live = livePaneIds();
-	if (live === null) return false;
-	return paneIds.every((paneId) => !live.has(paneId));
+	if (!live.ok) return { error: live.error ?? "tmux list-panes failed", paneIds, reason: "tmux-query-failed", stale: false };
+	const stale = paneIds.every((paneId) => !live.panes.has(paneId));
+	return { paneIds, reason: stale ? "all-panes-missing" : "live-pane-found", stale };
 }
 
-function livePaneIds(): Set<string> | null {
-	const r = spawnSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}"], { encoding: "utf8" });
-	if (r.status !== 0) return null;
+function livePaneIds(): LivePaneIdsResult {
+	const r = spawnSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}"], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
+	if (r.error) return { error: `tmux list-panes -a spawn failed: ${r.error.message}`, ok: false, panes: new Set() };
+	if (r.status !== 0) {
+		const stderr = (r.stderr ?? "").trim();
+		return { error: `tmux list-panes -a failed (status=${r.status ?? "unknown"})${stderr ? `: ${stderr}` : ""}`, ok: false, panes: new Set() };
+	}
 	const panes = new Set<string>();
 	for (const line of (r.stdout ?? "").split("\n")) if (line) panes.add(line);
-	return panes;
+	return { ok: true, panes };
 }
 
 function archiveLegacyStateIfPresent(projectRoot: string, tmuxSession: string, stateDir?: string): string | null {
@@ -621,28 +679,27 @@ function archiveLegacyStateIfPresent(projectRoot: string, tmuxSession: string, s
 }
 
 function copySummaryIfAvailable(projectRoot: string, paths: RunPaths, explicitSummaryPath: string | undefined, state: Record<string, unknown>): string | null {
-	const raw = explicitSummaryPath && explicitSummaryPath.trim()
-		? explicitSummaryPath.trim()
-		: typeof state.summary_path === "string" && state.summary_path.trim()
-			? state.summary_path.trim()
-			: "";
+	const explicit = explicitSummaryPath && explicitSummaryPath.trim() ? explicitSummaryPath.trim() : "";
+	const raw = explicit || (typeof state.summary_path === "string" && state.summary_path.trim() ? state.summary_path.trim() : "");
 	if (!raw) return null;
 	const source = isAbsolute(raw) ? resolve(raw) : resolve(projectRoot, raw);
-	let realRoot: string;
-	let realSource: string;
+	const explicitLabel = explicit ? "explicit --summary-path" : "state.summary_path";
 	try {
 		const lst = lstatSync(source);
-		if (lst.isSymbolicLink()) return null;
+		if (lst.isSymbolicLink()) throw new Error("symlinks are not allowed");
 		const st = statSync(source);
-		if (!st.isFile()) return null;
-		realRoot = realpathSync(projectRoot);
-		realSource = realpathSync(source);
-	} catch {
+		if (!st.isFile()) throw new Error("not a regular file");
+		const realRoot = realpathSync(projectRoot);
+		const realSource = realpathSync(source);
+		if (!isPathInside(realRoot, realSource)) throw new Error(`path escapes project root: ${source}`);
+		copyFileAtomic(realSource, paths.summary_md);
+		return paths.summary_md;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (explicit) throw new Error(`invalid ${explicitLabel} ${raw}: ${message}`);
+		process.stderr.write(`Warning: ignored ${explicitLabel} ${raw}: ${message}\n`);
 		return null;
 	}
-	if (!isPathInside(realRoot, realSource)) return null;
-	copyFileAtomic(realSource, paths.summary_md);
-	return paths.summary_md;
 }
 
 function projectIdentityForRoot(rootPath: string): ProjectIdentity {

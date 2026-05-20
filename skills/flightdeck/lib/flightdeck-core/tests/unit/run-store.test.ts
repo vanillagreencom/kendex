@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,6 +25,7 @@ import {
 
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_STATE_DIR = process.env.FLIGHTDECK_STATE_DIR;
+const ORIGINAL_PATH = process.env.PATH;
 const SESSION = "RUNSTORE";
 
 let sandbox = "";
@@ -42,6 +43,23 @@ function makeRepo(name = "repo", remote?: string): string {
 	return dir;
 }
 
+function installTmuxShim(output: string, status = 0): void {
+	const binDir = join(sandbox, `tmux-shim-${Math.random().toString(16).slice(2)}`);
+	mkdirSync(binDir, { recursive: true });
+	const bin = join(binDir, "tmux");
+	const script = status === 0
+		? `#!/usr/bin/env bash
+printf '%b' ${JSON.stringify(output)}
+`
+		: `#!/usr/bin/env bash
+echo ${JSON.stringify(output)} >&2
+exit ${status}
+`;
+	writeFileSync(bin, script);
+	chmodSync(bin, 0o755);
+	process.env.PATH = `${binDir}:${ORIGINAL_PATH ?? ""}`;
+}
+
 beforeEach(() => {
 	sandbox = mkdtempSync(join(tmpdir(), "fd-run-store-"));
 	home = join(sandbox, "home");
@@ -54,6 +72,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	process.env.HOME = ORIGINAL_HOME;
+	process.env.PATH = ORIGINAL_PATH;
 	if (ORIGINAL_STATE_DIR === undefined) delete process.env.FLIGHTDECK_STATE_DIR;
 	else process.env.FLIGHTDECK_STATE_DIR = ORIGINAL_STATE_DIR;
 	if (sandbox && existsSync(sandbox)) rmSync(sandbox, { force: true, recursive: true });
@@ -129,6 +148,91 @@ describe("Flightdeck durable run store", () => {
 		expect(next.metadata.run_id).not.toBe(first.metadata.run_id);
 	});
 
+	test("ensure does not finalize plan/workflow graph entries before panes are recorded", () => {
+		const created = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: {
+				"plan-item": {
+					domain: { plan_item: { item_id: "plan-item", plan_path: join(repo, "plan.md"), plan_title: "Plan" } },
+					id: "plan-item",
+					kind: "workflow",
+					pane_id: null,
+					state: "waiting",
+				},
+			},
+			session_id: SESSION,
+		}), "utf8");
+
+		const ensured = ensureActiveRun(repo, SESSION);
+		expect(ensured.action).toBe("reused");
+		expect(ensured.metadata.run_id).toBe(created.metadata.run_id);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
+	test("ensure finalizes stale active run when recorded panes are absent", () => {
+		const created = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { stale: { id: "stale", kind: "adhoc", pane_id: "%gone", state: "waiting" } },
+			session_id: SESSION,
+		}), "utf8");
+		installTmuxShim("%other\n");
+
+		const ensured = ensureActiveRun(repo, SESSION);
+		expect(ensured.action).toBe("created-after-stale");
+		expect(ensured.previous_run_id).toBe(created.metadata.run_id);
+		expect(ensured.previous_termination?.metadata.terminated).toBe(true);
+		expect(existsSync(ensured.previous_termination!.snapshot_path)).toBe(true);
+		expect(readActiveRun(repo)?.active.run_id).toBe(ensured.metadata.run_id);
+		expect(ensured.metadata.run_id).not.toBe(created.metadata.run_id);
+		expect(showRun(repo, created.metadata.run_id).metadata.terminated).toBe(true);
+	});
+
+	test("ensure fails closed when active metadata is missing", () => {
+		const created = createRun(repo, SESSION);
+		rmSync(created.paths.metadata_json, { force: true });
+		expect(() => ensureActiveRun(repo, SESSION)).toThrow(/active Flightdeck run metadata is missing/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
+	test("ensure refuses non-stale active run from another tmux session", () => {
+		const created = createRun(repo, SESSION);
+		expect(() => ensureActiveRun(repo, "OTHERSESSION")).toThrow(/belongs to a different tmux session/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
+	test("ensure refuses tmux session mismatch even when recorded panes are gone", () => {
+		const created = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { stale: { id: "stale", kind: "adhoc", pane_id: "%gone", state: "waiting" } },
+			session_id: SESSION,
+		}), "utf8");
+		installTmuxShim("%other\n");
+
+		expect(() => ensureActiveRun(repo, "OTHERSESSION")).toThrow(/belongs to a different tmux session/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+		expect(showRun(repo, created.metadata.run_id).metadata.terminated).toBe(false);
+	});
+
+	test("ensure refuses stale detection when tmux liveness query fails", () => {
+		const created = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { maybe: { id: "maybe", kind: "adhoc", pane_id: "%maybe", state: "waiting" } },
+			session_id: SESSION,
+		}), "utf8");
+		installTmuxShim("tmux unavailable", 7);
+
+		expect(() => ensureActiveRun(repo, SESSION)).toThrow(/cannot verify active Flightdeck run liveness/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
 	test("terminate syncs live compatibility state and summary into durable run", () => {
 		const created = createRun(repo, SESSION);
 		const stateDir = join(repo, "tmp");
@@ -148,6 +252,12 @@ describe("Flightdeck durable run store", () => {
 		expect(state.entries.live.id).toBe("live");
 		expect(state.terminated).toBe(true);
 		expect(existsSync(terminated.snapshot_path)).toBe(true);
+	});
+
+	test("explicit summary path failures are surfaced", () => {
+		const created = createRun(repo, SESSION);
+		expect(() => terminateRun(repo, created.metadata.run_id, { summaryPath: "tmp/missing-summary.md" })).toThrow(/invalid explicit --summary-path/);
+		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
 	});
 
 	test("corrupt metadata cannot claim another run id to clear the active pointer", () => {
