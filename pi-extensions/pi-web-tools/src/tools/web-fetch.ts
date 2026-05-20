@@ -157,6 +157,18 @@ function manifestRow(item: StoredWebContent): string {
 	return `- ${item.id}  ${target} (${formatBytesApprox(item.content.length)}${extPart})`;
 }
 
+// vstack#185: id-only fallback row when the full manifest cannot fit the
+// aggregate cap. Caller can still resolve every content id via
+// get_web_content; URL/extension/byte metadata is dropped to keep rows
+// short and predictable in length.
+function manifestIdOnlyRow(item: StoredWebContent): string {
+	return `- ${item.id}`;
+}
+
+function renderManifestHeader(count: number, totalFullChars: number): string {
+	return `Fetched ${count} URLs (${formatBytesApprox(totalFullChars)} total, stored as ${count} content ids):`;
+}
+
 interface AggregatePolicy {
 	perUrlMax: number;
 	aggregateCap?: number;
@@ -233,9 +245,8 @@ export function buildWebFetchToolResult(
 	let body: string;
 	let tail: string;
 	if (policy.useManifest) {
-		const manifestHeader = `Fetched ${stored.length} URLs (${formatBytesApprox(totalFull)} total, stored as ${stored.length} content ids):`;
 		const manifestRows = stored.map(manifestRow).join("\n");
-		head = `${manifestHeader}\n${manifestRows}`;
+		head = `${renderManifestHeader(stored.length, totalFull)}\n${manifestRows}`;
 		const capNote = `Per-URL preview heads capped at ${policy.perUrlMax} chars to fit the multi-URL aggregate cap. Pass textMaxCharacters to opt back into larger inlined previews.`;
 		body = previewBlocks ? `\n\n${capNote}\n\n${previewBlocks}` : `\n\n${capNote}`;
 		tail = `\n\nCall get_web_content <id> [offset] [maxCharacters] to load full stored text per id.`;
@@ -254,8 +265,25 @@ export function buildWebFetchToolResult(
 		}
 		combined = head + body + tail;
 		if (combined.length > policy.aggregateCap) {
-			const fallbackBudget = Math.max(0, policy.aggregateCap - truncationMarker.length);
-			combined = combined.slice(0, fallbackBudget) + truncationMarker;
+			// vstack#185: head + body + tail still exceeds the cap, usually
+			// because the manifest itself (head) has too many or too-long
+			// rows. Rebuild head with id-only rows so every content id stays
+			// resolvable through get_web_content, drop the preview body
+			// entirely, and replace it with a recovery note pointing at
+			// get_web_content. Pre-fix the original slice would silently
+			// drop manifest rows mid-text and leave the caller no way to
+			// recover the missing ids.
+			const idOnlyRows = stored.map(manifestIdOnlyRow).join("\n");
+			const idOnlyHead = `${renderManifestHeader(stored.length, totalFull)}\n${idOnlyRows}`;
+			const idOnlyNote = `\n\n[manifest rendered as id-only rows to fit aggregate cap; ${stored.length} ids preserved. Use get_web_content with any id for full stored text.]`;
+			combined = idOnlyHead + idOnlyNote + tail;
+			if (combined.length > policy.aggregateCap) {
+				// Even id-only rows do not fit. Surface the count so caller
+				// knows to split the batch; do not silently drop ids.
+				const overflowNote = `\n\n[ERROR: ${stored.length} content ids do not fit in the ${policy.aggregateCap}-byte aggregate cap even as id-only rows. Reduce batch size or call get_web_content for ids reported elsewhere.]`;
+				const idsCompact = stored.map((item) => item.id).join(" ");
+				combined = `${renderManifestHeader(stored.length, totalFull)}\n${idsCompact}${overflowNote}`;
+			}
 		}
 	} else {
 		combined = head + body + tail;
@@ -317,8 +345,13 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			if (params.provider === "exa" && list.some(isLocalFileInput)) throw new Error("provider=exa can only fetch remote URLs. Use provider=auto or provider=http for local PDF paths.");
 			async function fetchWithExa(failedUrls: string[]) {
 				const client = new ExaClient({ apiKey: settings.apiKeys.exa });
-				const response = await client.contents({ urls: failedUrls, textMaxCharacters: params.textMaxCharacters }, signal);
-				return response.results.map((result) => storeWebContent(pi, { title: result.title?.trim() || fallbackTitle(result.url), url: result.url, content: result.text || result.summary || "", metadata: { provider: "exa", tool: name } }));
+				// vstack#185: Exa /contents stores excerpts (default 6k chars).
+				// Tag each stored item with the provider cap so `get_web_content`
+				// and operator-facing docs can distinguish Exa excerpts from
+				// direct/GitHub/PDF/HTTP full-text fetches.
+				const providerTextMaxCharacters = params.textMaxCharacters ?? 6000;
+				const response = await client.contents({ urls: failedUrls, textMaxCharacters: providerTextMaxCharacters }, signal);
+				return response.results.map((result) => storeWebContent(pi, { title: result.title?.trim() || fallbackTitle(result.url), url: result.url, content: result.text || result.summary || "", metadata: { provider: "exa", tool: name, contentKind: "excerpt", providerTextMaxCharacters } }));
 			}
 			if (params.provider !== "exa") {
 				const stored = [];

@@ -48,7 +48,8 @@ Restart Pi after installation.
 
 `web_fetch` returns a compact preview and stores extracted content in the current Pi session under a generated content id (e.g. `web-...`). Use `get_web_content` with that id to retrieve the stored text — it doesn't refetch the URL.
 
-- GitHub, direct HTTP, PDF, and Exa-fallback paths all store full extracted text before preview truncation.
+- GitHub, direct HTTP, and PDF paths store full extracted text before preview truncation.
+- Exa-provider paths (`provider=exa` and auto-mode Exa fallback) store provider-capped excerpts (default 6000 chars; override per call with `textMaxCharacters`). `get_web_content` labels these as `stored excerpt` so the caller knows to set a larger cap or fetch directly if it needs the full document.
 - Local PDFs supported via `filePath`/`filePaths`, `file://...`, or PDF-looking paths.
 - `textMaxCharacters` caps the immediate preview (default 4k chars).
 - `get_web_content.maxCharacters` caps retrieval (default 50k chars).
@@ -63,7 +64,7 @@ A single `web_fetch` call accepts many URLs via `urls`/`filePaths`. To keep `con
 | 2–5 | `min(textMaxCharacters, floor(16 KB / count))` | 16 KB | preview blocks |
 | 6+ | 512 chars head | 25 KB | manifest of all URLs + short preview heads |
 
-The sidecar (`pi-web-tools.content` events + `get_web_content`) still stores the full extracted text per URL — the cap only applies to the inline preview returned to the model. Pass `textMaxCharacters` to opt back into larger inlined previews when the caller knows the context budget allows it.
+The sidecar (`pi-web-tools.content` events + `get_web_content`) stores per-URL full extracted text for direct/GitHub/PDF/HTTP paths and provider-capped excerpts for Exa paths. The aggregate cap only applies to the inline preview returned to the model. Pass `textMaxCharacters` to opt back into larger inlined previews when the caller knows the context budget allows it; for Exa paths the same flag also raises the provider-side excerpt cap.
 
 ## API keys
 

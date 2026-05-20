@@ -255,6 +255,23 @@ test("web_fetch emits a manifest for large multi-URL batches (6+ URLs) and stays
 	for (const item of stored) assert.ok(text.includes(item.id), `manifest missing ${item.id}`);
 });
 
+test("vstack#185: manifest with extremely long URLs falls back to id-only rows so every content id stays resolvable", () => {
+	// 50 URLs each with a 1000-char URL string — the full manifest with
+	// URL + bytes annotations vastly exceeds the 25 KiB aggregate cap.
+	// Pre-fix the head + body + tail was sliced mid-text and the bottom
+	// content ids were lost. Post-fix the manifest collapses to id-only
+	// rows so every id remains in the visible output.
+	const longUrlPrefix = `https://example.com/${"a".repeat(900)}/path`;
+	const stored = makeStored(50, 8000, longUrlPrefix);
+	const result = buildWebFetchToolResult(stored, "http");
+	const text = textOfResult(result);
+	assert.ok(text.length <= MULTI_URL_AGGREGATE_CAP_LARGE_BATCH, `expected <= ${MULTI_URL_AGGREGATE_CAP_LARGE_BATCH} chars, got ${text.length}`);
+	for (const item of stored) {
+		assert.ok(text.includes(item.id), `id-only manifest must preserve ${item.id}`);
+	}
+	assert.match(text, /manifest rendered as id-only rows to fit aggregate cap; 50 ids preserved/);
+});
+
 test("web_fetch threshold for large-batch manifest matches the constant", () => {
 	assert.equal(MULTI_URL_LARGE_BATCH_THRESHOLD, 6);
 	const smallBatch = buildWebFetchToolResult(makeStored(MULTI_URL_LARGE_BATCH_THRESHOLD - 1, 8000), "http");
