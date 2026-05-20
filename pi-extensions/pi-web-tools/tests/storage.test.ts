@@ -6,7 +6,7 @@ import test from "node:test";
 import { clearMemoryForTests, getWebContent, restoreStoredContent, storeWebContent } from "../src/storage.js";
 import { createCodeSearchToolDefinition } from "../src/tools/code-search.js";
 import { createGetWebContentToolDefinition } from "../src/tools/get-web-content.js";
-import { buildWebFetchToolResult, createWebFetchToolDefinition, DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS } from "../src/tools/web-fetch.js";
+import { buildWebFetchToolResult, createWebFetchToolDefinition, DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS, MULTI_URL_AGGREGATE_CAP_LARGE_BATCH, MULTI_URL_AGGREGATE_CAP_SMALL_BATCH, MULTI_URL_LARGE_BATCH_PER_URL_HEAD, MULTI_URL_LARGE_BATCH_THRESHOLD } from "../src/tools/web-fetch.js";
 import { createWebAnswerToolDefinition } from "../src/tools/web-answer.js";
 import { createWebFindSimilarToolDefinition } from "../src/tools/web-find-similar.js";
 import { createWebSearchToolDefinition } from "../src/tools/web-search.js";
@@ -204,6 +204,91 @@ test("advanced Exa tools render compact provider-labeled summaries", () => {
 	assert.ok(expandedAnswerResult.length > answerResult.length);
 	assert.match(similarResult, /Web Find Similar \(Exa\) https:\/\/ghostty.org · 2 results/);
 	assert.match(similarResult, /Docs · https:\/\/ghostty.org\/docs/);
+});
+
+function makeStored(count: number, perItemChars: number, urlPrefix = "https://example.com/file"): Array<{ id: string; title: string; url: string; content: string; createdAt: string }> {
+	const items = [];
+	for (let index = 0; index < count; index++) {
+		items.push({
+			id: `web-${index.toString(36)}`,
+			title: `Item ${index}`,
+			url: `${urlPrefix}-${index}.rs`,
+			content: "y".repeat(perItemChars),
+			createdAt: "2026-01-01T00:00:00.000Z",
+		});
+	}
+	return items;
+}
+
+function textOfResult(result: ReturnType<typeof buildWebFetchToolResult>): string {
+	const block = result.content[0]!;
+	return block.type === "text" ? block.text : "";
+}
+
+test("web_fetch caps aggregate content[0].text for small multi-URL batches (2-5 URLs)", () => {
+	const stored = makeStored(5, 50000);
+	const result = buildWebFetchToolResult(stored, "http");
+	const text = textOfResult(result);
+	assert.ok(text.length <= MULTI_URL_AGGREGATE_CAP_SMALL_BATCH, `expected <= ${MULTI_URL_AGGREGATE_CAP_SMALL_BATCH} chars, got ${text.length}`);
+	const expectedPerUrl = Math.min(DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS, Math.floor(MULTI_URL_AGGREGATE_CAP_SMALL_BATCH / 5));
+	assert.equal(result.details.preview.perUrlMaxCharacters, expectedPerUrl);
+	assert.ok(expectedPerUrl < DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS, "5 URLs should shrink per-URL preview below the default cap");
+	assert.equal(result.details.preview.aggregateCap, MULTI_URL_AGGREGATE_CAP_SMALL_BATCH);
+	assert.equal(result.details.preview.manifest, false);
+	assert.equal(result.details.preview.explicitMaxCharacters, false);
+	assert.match(text, /Fetched 5 URL\(s\)/);
+	assert.match(text, /Use get_web_content with the content id for stored full text/);
+});
+
+test("web_fetch emits a manifest for large multi-URL batches (6+ URLs) and stays under 25 KB", () => {
+	const stored = makeStored(30, 50000);
+	const result = buildWebFetchToolResult(stored, "exa");
+	const text = textOfResult(result);
+	assert.ok(text.length <= MULTI_URL_AGGREGATE_CAP_LARGE_BATCH, `expected <= ${MULTI_URL_AGGREGATE_CAP_LARGE_BATCH} chars, got ${text.length}`);
+	assert.equal(result.details.preview.manifest, true);
+	assert.equal(result.details.preview.perUrlMaxCharacters, MULTI_URL_LARGE_BATCH_PER_URL_HEAD);
+	assert.match(text, /Fetched 30 URLs/);
+	assert.match(text, /stored as 30 content ids/);
+	assert.match(text, /Per-URL preview heads capped at 512 chars/);
+	assert.match(text, /Call get_web_content <id>/);
+	// Every content id should appear in the manifest section.
+	for (const item of stored) assert.ok(text.includes(item.id), `manifest missing ${item.id}`);
+});
+
+test("web_fetch threshold for large-batch manifest matches the constant", () => {
+	assert.equal(MULTI_URL_LARGE_BATCH_THRESHOLD, 6);
+	const smallBatch = buildWebFetchToolResult(makeStored(MULTI_URL_LARGE_BATCH_THRESHOLD - 1, 8000), "http");
+	const largeBatch = buildWebFetchToolResult(makeStored(MULTI_URL_LARGE_BATCH_THRESHOLD, 8000), "http");
+	assert.equal(smallBatch.details.preview.manifest, false);
+	assert.equal(largeBatch.details.preview.manifest, true);
+});
+
+test("web_fetch honors explicit textMaxCharacters and bypasses aggregate cap", () => {
+	const stored = makeStored(30, 50000);
+	const result = buildWebFetchToolResult(stored, "exa", { maxCharacters: 8000, explicit: true });
+	const text = textOfResult(result);
+	assert.equal(result.details.preview.manifest, false);
+	assert.equal(result.details.preview.perUrlMaxCharacters, 8000);
+	assert.equal(result.details.preview.aggregateCap, undefined);
+	assert.equal(result.details.preview.explicitMaxCharacters, true);
+	assert.ok(text.length > MULTI_URL_AGGREGATE_CAP_LARGE_BATCH, `expected > ${MULTI_URL_AGGREGATE_CAP_LARGE_BATCH} chars when caller opts in, got ${text.length}`);
+});
+
+test("web_fetch single-URL behavior is unchanged when textMaxCharacters omitted", () => {
+	const stored = makeStored(1, DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS + 5);
+	const result = buildWebFetchToolResult(stored, "http");
+	const text = textOfResult(result);
+	assert.equal(result.details.preview.perUrlMaxCharacters, DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS);
+	assert.equal(result.details.preview.manifest, false);
+	assert.match(text, /Fetched 1 URL\(s\)/);
+	assert.match(text, /Preview returned \(4000\/4005 chars shown\)/);
+});
+
+test("web_fetch backwards-compatible positional maxCharacters argument still works", () => {
+	const stored = makeStored(1, 4005);
+	const result = buildWebFetchToolResult(stored, "http", 4000);
+	const text = textOfResult(result);
+	assert.match(text, /Preview returned \(4000\/4005 chars shown\)/);
 });
 
 test("web_fetch extracts local PDF file paths into session storage", async () => {

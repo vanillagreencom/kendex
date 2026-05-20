@@ -20,13 +20,20 @@ export const webFetchSchema = Type.Object({
 	urls: Type.Optional(Type.Array(Type.String())),
 	filePath: Type.Optional(Type.String({ description: "Local file path to extract. Currently supports PDFs. Relative paths resolve against ctx.cwd; leading @ is stripped." })),
 	filePaths: Type.Optional(Type.Array(Type.String({ description: "Local file paths to extract. Currently supports PDFs." }))),
-	textMaxCharacters: Type.Optional(Type.Number({ description: "Preview character cap for direct/GitHub/PDF fetches and provider extraction cap for Exa fallback/override. Direct fetches still store the full extracted text in session storage before preview truncation." })),
+	textMaxCharacters: Type.Optional(Type.Number({ description: "Preview character cap for direct/GitHub/PDF fetches and provider extraction cap for Exa fallback/override. Direct fetches still store the full extracted text in session storage before preview truncation. Multi-URL calls otherwise cap the aggregate `content[0].text` (16 KB for 2–5 URLs, 25 KB for 6+ URLs with a manifest); passing this flag opts back into larger per-URL previews." })),
 	provider: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("http"), Type.Literal("exa")])),
 	prompt: Type.Optional(Type.String({ description: "Optional prompt for video/YouTube understanding (passed to Gemini Web/API). Ignored for non-video URLs." })),
 });
 export type WebFetchInput = Static<typeof webFetchSchema>;
 
 export const DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS = 4000;
+
+// Multi-URL aggregate caps for `content[0].text` so a single tool call can't blow the model's input window.
+// Single-URL fetches and callers passing `textMaxCharacters` explicitly bypass these caps.
+export const MULTI_URL_AGGREGATE_CAP_SMALL_BATCH = 16 * 1024;
+export const MULTI_URL_AGGREGATE_CAP_LARGE_BATCH = 25 * 1024;
+export const MULTI_URL_LARGE_BATCH_THRESHOLD = 6;
+export const MULTI_URL_LARGE_BATCH_PER_URL_HEAD = 512;
 
 interface WebFetchPreviewItem {
 	id: string;
@@ -41,6 +48,16 @@ interface WebFetchPreviewDetails {
 	fullCharacters: number;
 	truncated: boolean;
 	items: WebFetchPreviewItem[];
+	perUrlMaxCharacters?: number;
+	aggregateCap?: number;
+	manifest?: boolean;
+	explicitMaxCharacters?: boolean;
+}
+
+export interface BuildWebFetchToolResultOptions {
+	maxCharacters?: number;
+	explicit?: boolean;
+	pageImages?: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }>;
 }
 
 function fallbackTitle(url: string | undefined, fallback = "content"): string {
@@ -108,9 +125,58 @@ function storedProvider(stored: any[]): string {
 	return labels.length === 1 ? labels[0]! : "mixed";
 }
 
-function previewLimit(params: WebFetchInput): number {
-	const raw = params.textMaxCharacters ?? DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
-	return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
+function previewLimit(params: WebFetchInput): { maxCharacters: number; explicit: boolean } {
+	const raw = params.textMaxCharacters;
+	const explicit = raw != null && Number.isFinite(raw);
+	const max = explicit ? Math.max(0, Math.floor(raw as number)) : DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
+	return { maxCharacters: max, explicit };
+}
+
+function formatBytesApprox(chars: number): string {
+	if (chars < 1024) return `${chars} chars`;
+	return `${(chars / 1024).toFixed(1)} KB`;
+}
+
+function urlExtension(url: string | undefined): string {
+	if (!url) return "";
+	try {
+		const leaf = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+		const dot = leaf.lastIndexOf(".");
+		return dot > 0 ? leaf.slice(dot) : "";
+	} catch {
+		const leaf = url.split("/").filter(Boolean).pop() ?? "";
+		const dot = leaf.lastIndexOf(".");
+		return dot > 0 ? leaf.slice(dot) : "";
+	}
+}
+
+function manifestRow(item: StoredWebContent): string {
+	const target = item.url || displayTitle(item);
+	const ext = urlExtension(item.url);
+	const extPart = ext ? `, ${ext}` : "";
+	return `- ${item.id}  ${target} (${formatBytesApprox(item.content.length)}${extPart})`;
+}
+
+interface AggregatePolicy {
+	perUrlMax: number;
+	aggregateCap?: number;
+	useManifest: boolean;
+}
+
+function aggregatePolicy(count: number, requested: number, explicit: boolean): AggregatePolicy {
+	if (explicit || count <= 1) return { perUrlMax: requested, aggregateCap: undefined, useManifest: false };
+	if (count < MULTI_URL_LARGE_BATCH_THRESHOLD) {
+		return {
+			perUrlMax: Math.min(requested, Math.max(0, Math.floor(MULTI_URL_AGGREGATE_CAP_SMALL_BATCH / count))),
+			aggregateCap: MULTI_URL_AGGREGATE_CAP_SMALL_BATCH,
+			useManifest: false,
+		};
+	}
+	return {
+		perUrlMax: Math.min(requested, MULTI_URL_LARGE_BATCH_PER_URL_HEAD),
+		aggregateCap: MULTI_URL_AGGREGATE_CAP_LARGE_BATCH,
+		useManifest: true,
+	};
 }
 
 function previewStats(content: string, maxCharacters: number): WebFetchPreviewItem {
@@ -123,29 +189,82 @@ function previewStats(content: string, maxCharacters: number): WebFetchPreviewIt
 	};
 }
 
-export function buildWebFetchToolResult(stored: StoredWebContent[], provider: string, maxCharacters = DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS, pageImages: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }> = []) {
+export function buildWebFetchToolResult(
+	stored: StoredWebContent[],
+	provider: string,
+	optionsOrMaxCharacters: BuildWebFetchToolResultOptions | number = {},
+	legacyPageImages: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }> = []
+) {
+	const options: BuildWebFetchToolResultOptions = typeof optionsOrMaxCharacters === "number"
+		? { maxCharacters: optionsOrMaxCharacters, pageImages: legacyPageImages }
+		: optionsOrMaxCharacters;
+	const requestedMax = options.maxCharacters ?? DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
+	const explicit = options.explicit ?? false;
+	const pageImages = options.pageImages ?? legacyPageImages ?? [];
+
+	const policy = aggregatePolicy(stored.length, requestedMax, explicit);
+
 	const previewItems = stored.map((item) => {
-		const stats = previewStats(item.content, maxCharacters);
-		const { text } = truncateText(item.content, maxCharacters);
+		const stats = previewStats(item.content, policy.perUrlMax);
+		const { text } = truncateText(item.content, policy.perUrlMax);
 		return { item, text, stats: { ...stats, id: item.id } };
 	});
 	const preview: WebFetchPreviewDetails = {
-		maxCharacters,
+		maxCharacters: policy.perUrlMax,
 		shownCharacters: previewItems.reduce((sum, item) => sum + item.stats.shownCharacters, 0),
 		fullCharacters: previewItems.reduce((sum, item) => sum + item.stats.fullCharacters, 0),
 		truncated: previewItems.some((item) => item.stats.truncated),
 		items: previewItems.map((item) => item.stats),
+		perUrlMaxCharacters: policy.perUrlMax,
+		aggregateCap: policy.aggregateCap,
+		manifest: policy.useManifest,
+		explicitMaxCharacters: explicit,
 	};
 	const ids = stored.map((item) => item.id).join(", ");
-	const previewText = previewItems.map(({ item, text, stats }) => {
+	const previewBlocks = previewItems.map(({ item, text, stats }) => {
 		const label = displayTitle(item);
 		const meta = `preview ${stats.shownCharacters}/${stats.fullCharacters} chars${stats.truncated ? "; full text stored" : ""}`;
 		return `- ${item.id}: ${label}\n[${meta}]\n${text}`;
 	}).join("\n\n");
 	const previewMeta = preview.truncated ? ` (${preview.shownCharacters}/${preview.fullCharacters} chars shown)` : "";
+	const totalFull = stored.reduce((sum, item) => sum + item.content.length, 0);
+
+	let head: string;
+	let body: string;
+	let tail: string;
+	if (policy.useManifest) {
+		const manifestHeader = `Fetched ${stored.length} URLs (${formatBytesApprox(totalFull)} total, stored as ${stored.length} content ids):`;
+		const manifestRows = stored.map(manifestRow).join("\n");
+		head = `${manifestHeader}\n${manifestRows}`;
+		const capNote = `Per-URL preview heads capped at ${policy.perUrlMax} chars to fit the multi-URL aggregate cap. Pass textMaxCharacters to opt back into larger inlined previews.`;
+		body = previewBlocks ? `\n\n${capNote}\n\n${previewBlocks}` : `\n\n${capNote}`;
+		tail = `\n\nCall get_web_content <id> [offset] [maxCharacters] to load full stored text per id.`;
+	} else {
+		head = `Fetched ${stored.length} URL(s). Preview returned${previewMeta}. Full extracted text is stored under content id(s): ${ids || "none"}.`;
+		body = previewBlocks ? `\n\n${previewBlocks}` : "";
+		tail = `\n\nUse get_web_content with the content id for stored full text.`;
+	}
+
+	let combined: string;
+	if (policy.aggregateCap !== undefined) {
+		const truncationMarker = `\n\n[multi-URL preview truncated to fit aggregate cap; use get_web_content with content ids for full stored text]`;
+		const bodyBudget = Math.max(0, policy.aggregateCap - head.length - tail.length - truncationMarker.length);
+		if (body.length > bodyBudget) {
+			body = body.slice(0, bodyBudget) + truncationMarker;
+		}
+		combined = head + body + tail;
+		if (combined.length > policy.aggregateCap) {
+			const fallbackBudget = Math.max(0, policy.aggregateCap - truncationMarker.length);
+			combined = combined.slice(0, fallbackBudget) + truncationMarker;
+		}
+	} else {
+		combined = head + body + tail;
+	}
+
 	const imagesNote = pageImages.length ? `\n\n[${pageImages.length} scanned PDF page image${pageImages.length === 1 ? "" : "s"} attached for vision OCR]` : "";
+	const finalText = combined + imagesNote;
 	const content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> = [
-		{ type: "text", text: `Fetched ${stored.length} URL(s). Preview returned${previewMeta}. Full extracted text is stored under content id(s): ${ids || "none"}.\n\n${previewText}${imagesNote}\n\nUse get_web_content with the content id for stored full text.` },
+		{ type: "text", text: finalText },
 	];
 	for (const image of pageImages) content.push({ type: "image", mimeType: image.mimeType, data: image.data });
 	return {
@@ -276,10 +395,12 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 					stored.push(...await fetchWithExa(failed.map((item) => item.url)));
 				}
 				const actualProvider = storedProvider(stored);
-				return buildWebFetchToolResult(stored, params.provider === "http" ? "http" : actualProvider, previewLimit(params), pageImages);
+				const { maxCharacters, explicit } = previewLimit(params);
+				return buildWebFetchToolResult(stored, params.provider === "http" ? "http" : actualProvider, { maxCharacters, explicit, pageImages });
 			}
 			const stored = await fetchWithExa(list);
-			return buildWebFetchToolResult(stored, "exa", previewLimit(params));
+			const { maxCharacters, explicit } = previewLimit(params);
+			return buildWebFetchToolResult(stored, "exa", { maxCharacters, explicit });
 		},
 	};
 }

@@ -148,7 +148,11 @@ export class ExaClient {
 	}
 
 	async contents(params: ExaContentsParams, signal?: AbortSignal): Promise<NormalizedExaResponse> {
-		const raw = await this.post("/contents", { urls: params.urls, text: { maxCharacters: params.textMaxCharacters ?? 12000 } }, signal);
+		// Default contents text cap is intentionally lower than search/findSimilar:
+		// `web_fetch` callers can pass dozens of URLs in one call, and the previously-12k
+		// default produced hundreds of KB of inlined preview that blew the model input window.
+		// Callers can opt back into larger payloads with `textMaxCharacters`.
+		const raw = await this.post("/contents", { urls: params.urls, text: { maxCharacters: params.textMaxCharacters ?? 6000 } }, signal);
 		return { answer: synthesized(raw), results: normalizeResults(raw), raw, metadata: { urls: params.urls } };
 	}
 

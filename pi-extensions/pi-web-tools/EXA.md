@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `web_search provider=exa` | `POST /search` with `type: auto` by default | General web search with optional text/highlights. | Stores Exa-returned text as a **stored excerpt** capped by `textMaxCharacters` (default 12k/result). |
 | `web_research` | `POST /search` with `type: deep-lite`, `deep`, or `deep-reasoning` | Evidence-backed research. Modes tune result count, text/highlight caps, summaries, structured output, and report sidecars. | Usually writes findings/raw files; source text is provider-capped evidence, not a local crawl. |
-| `web_fetch provider=exa` or URL fetch fallback | `POST /contents` | Extract known remote URLs when forced or when direct fetch fails. | Stores Exa-returned page contents; capped by `textMaxCharacters` (default 12k/url). |
+| `web_fetch provider=exa` or URL fetch fallback | `POST /contents` | Extract known remote URLs when forced or when direct fetch fails. | Stores Exa-returned page contents; capped by `textMaxCharacters` (default 6k/url — lower than search/findSimilar because `web_fetch` can pass dozens of URLs in one call). |
 | `web_answer` | `POST /answer` | Exa performs search + LLM synthesis for a direct answer. | Answer text is returned directly; any sources with text are stored as excerpts. |
 | `web_find_similar` | `POST /findSimilar` | Find pages similar to one URL. | Stores returned source text as excerpts capped by `textMaxCharacters` (default 12k/result). |
 | `code_search` | `POST /search` with code/docs domain hints | Search code and technical docs, currently biased to GitHub/docs/Stack Overflow. | Stores returned text as excerpts. |

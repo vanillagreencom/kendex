@@ -53,6 +53,18 @@ Restart Pi after installation.
 - `textMaxCharacters` caps the immediate preview (default 4k chars).
 - `get_web_content.maxCharacters` caps retrieval (default 50k chars).
 
+### Multi-URL preview caps
+
+A single `web_fetch` call accepts many URLs via `urls`/`filePaths`. To keep `content[0].text` from blowing past the model's input window, multi-URL calls cap the aggregate preview size and emit a manifest for large batches. Single-URL calls and explicit `textMaxCharacters` opt-ins are unaffected.
+
+| URLs in call | Per-URL preview | Aggregate cap | Format |
+| --- | --- | --- | --- |
+| 1 | `textMaxCharacters` (default 4k) | — | preview blocks |
+| 2–5 | `min(textMaxCharacters, floor(16 KB / count))` | 16 KB | preview blocks |
+| 6+ | 512 chars head | 25 KB | manifest of all URLs + short preview heads |
+
+The sidecar (`pi-web-tools.content` events + `get_web_content`) still stores the full extracted text per URL — the cap only applies to the inline preview returned to the model. Pass `textMaxCharacters` to opt back into larger inlined previews when the caller knows the context budget allows it.
+
 ## API keys
 
 Set via environment variables, project `.env.local`/`.env`, or a private config file. Process env wins over files.
