@@ -1,8 +1,9 @@
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use color_eyre::eyre::{bail, Result, WrapErr};
+use fs2::FileExt;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
@@ -25,6 +26,42 @@ const SESSION_BIN_ENV: &str = "FLIGHTDECK_SESSION_BIN";
 const SKILL_DIR_ENV: &str = "FLIGHTDECK_SKILL_DIR";
 const NO_MOTION_ENV: &str = "NO_MOTION";
 const NO_COLOR_ENV: &str = "NO_COLOR";
+
+struct DashboardLaunchLock {
+    file: File,
+    path: PathBuf,
+}
+
+impl DashboardLaunchLock {
+    fn acquire(session_key: &str) -> Result<Self> {
+        let state_dir = fd_resolve_state_dir();
+        fs::create_dir_all(&state_dir).wrap_err_with(|| {
+            format!(
+                "failed to create dashboard launch lock directory {}",
+                state_dir.display()
+            )
+        })?;
+        let path = state_dir.join(format!("dashboard-launch-{session_key}.lock"));
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .wrap_err_with(|| format!("failed to open dashboard launch lock {}", path.display()))?;
+        file.lock_exclusive()
+            .wrap_err_with(|| format!("failed to lock dashboard launch lock {}", path.display()))?;
+        Ok(Self { file, path })
+    }
+}
+
+impl Drop for DashboardLaunchLock {
+    fn drop(&mut self) {
+        if let Err(error) = fs2::FileExt::unlock(&self.file) {
+            tracing::warn!(path = %self.path.display(), %error, "failed to unlock dashboard launch lock");
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FocusOrLaunchReport {
@@ -161,69 +198,22 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
     let project_root = resolve_project_root();
     let explicit_state_file = args.state_file.as_deref().map(absolutize);
     let state_file = resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
-
-    if !args.force {
-        match tracked_dashboard_alive(state_file.as_deref(), &session, &project_root, &window_name)
-            .await
-        {
-            Ok(true) => {
-                tracing::info!(
-                    entry = DASHBOARD_ENTRY_ID,
-                    "flightdeck dashboard entry already alive; launch skipped"
-                );
-                return Ok(());
-            }
-            Ok(false) => {}
-            Err(error) => bail!("dashboard tracked-entry probe failed: {error}"),
-        }
-        match tmux_window_exists(&window_name).await {
-            Ok(true) => {
-                bail!(
-                    "dashboard window '{window_name}' exists but no live tracked dashboard entry was verified; refusing duplicate launch"
-                );
-            }
-            Ok(false) => {}
-            Err(error) => bail!("tmux window probe failed: {error}"),
-        }
-    }
-
-    let daemon_state_file = explicit_state_file.clone();
-
-    if !args.no_daemon && rust_daemon_enabled() {
-        start_daemon_if_needed(
-            &session,
-            &session_key,
-            daemon_state_file.as_deref(),
-            args.force,
-        )
-        .await;
-    } else if args.no_daemon {
-        tracing::info!("flightdeck dashboard launch skipping daemon by --no-daemon");
-    } else {
-        tracing::info!(
-            "flightdeck dashboard launch defers daemon to canonical TS flightdeck daemon"
-        );
-    }
-
-    launch_window(
-        &session,
-        &window_name,
-        args.after_window_id.as_deref(),
+    let _launch_lock = DashboardLaunchLock::acquire(&session_key)?;
+    let launch_plan = DashboardLaunchPlan {
+        session: &session,
+        session_key: &session_key,
+        window_name: &window_name,
+        after_window_id: args.after_window_id.as_deref(),
         theme,
         motion,
-        explicit_state_file.as_deref(),
-        &project_root,
-    )
-    .await?;
-    let Some(path) = state_file.as_deref() else {
-        bail!("flightdeck dashboard launch could not resolve state file for verification");
+        explicit_state_file: explicit_state_file.as_deref(),
+        state_file: state_file.as_deref(),
+        project_root: &project_root,
+        no_daemon: args.no_daemon,
+        force: args.force,
     };
-    if !tracked_dashboard_alive(Some(path), &session, &project_root, &window_name).await? {
-        bail!(
-            "flightdeck dashboard launch did not register a live tracked entry in {}",
-            path.display()
-        );
-    }
+
+    launch_dashboard_locked(&launch_plan).await?;
     Ok(())
 }
 
@@ -237,6 +227,103 @@ pub async fn run_focus_or_launch(args: FocusOrLaunchArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashboardLaunchOutcome {
+    AlreadyAlive,
+    Launched,
+}
+
+struct DashboardLaunchPlan<'a> {
+    session: &'a str,
+    session_key: &'a str,
+    window_name: &'a str,
+    after_window_id: Option<&'a str>,
+    theme: Option<ThemeArg>,
+    motion: Option<MotionArg>,
+    explicit_state_file: Option<&'a Path>,
+    state_file: Option<&'a Path>,
+    project_root: &'a Path,
+    no_daemon: bool,
+    force: bool,
+}
+
+async fn launch_dashboard_locked(plan: &DashboardLaunchPlan<'_>) -> Result<DashboardLaunchOutcome> {
+    if !plan.force {
+        match tracked_dashboard_alive(
+            plan.state_file,
+            plan.session,
+            plan.project_root,
+            plan.window_name,
+        )
+        .await
+        {
+            Ok(true) => {
+                tracing::info!(
+                    entry = DASHBOARD_ENTRY_ID,
+                    "flightdeck dashboard entry already alive; launch skipped"
+                );
+                return Ok(DashboardLaunchOutcome::AlreadyAlive);
+            }
+            Ok(false) => {}
+            Err(error) => bail!("dashboard tracked-entry probe failed: {error}"),
+        }
+        match tmux_window_exists(plan.window_name).await {
+            Ok(true) => {
+                bail!(
+                    "dashboard window '{}' exists but no live tracked dashboard entry was verified; refusing duplicate launch",
+                    plan.window_name
+                );
+            }
+            Ok(false) => {}
+            Err(error) => bail!("tmux window probe failed: {error}"),
+        }
+    }
+
+    if !plan.no_daemon && rust_daemon_enabled() {
+        start_daemon_if_needed(
+            plan.session,
+            plan.session_key,
+            plan.explicit_state_file,
+            plan.force,
+        )
+        .await;
+    } else if plan.no_daemon {
+        tracing::info!("flightdeck dashboard launch skipping daemon by --no-daemon");
+    } else {
+        tracing::info!(
+            "flightdeck dashboard launch defers daemon to canonical TS flightdeck daemon"
+        );
+    }
+
+    launch_window(
+        plan.session,
+        plan.window_name,
+        plan.after_window_id,
+        plan.theme,
+        plan.motion,
+        plan.explicit_state_file,
+        plan.project_root,
+    )
+    .await?;
+    let Some(path) = plan.state_file else {
+        bail!("flightdeck dashboard launch could not resolve state file for verification");
+    };
+    if !tracked_dashboard_alive(
+        Some(path),
+        plan.session,
+        plan.project_root,
+        plan.window_name,
+    )
+    .await?
+    {
+        bail!(
+            "flightdeck dashboard launch did not register a live tracked entry in {}",
+            path.display()
+        );
+    }
+    Ok(DashboardLaunchOutcome::Launched)
 }
 
 async fn focus_or_launch(
@@ -264,10 +351,28 @@ async fn focus_or_launch(
             ))
         }
     };
+    let session_key = match resolve_session_key(&session) {
+        Ok(session_key) => session_key,
+        Err(error) => {
+            return Err(FocusOrLaunchReport::new(
+                "error",
+                format!("failed to resolve tmux session key: {error}"),
+            ))
+        }
+    };
     let project_root = resolve_project_root();
     let window_name = select_window_name(args.window_name.as_deref());
     let explicit_state_file = args.state_file.as_deref().map(absolutize);
     let state_file = resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+    let _launch_lock = match DashboardLaunchLock::acquire(&session_key) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return Err(FocusOrLaunchReport::new(
+                "error",
+                format!("dashboard launch lock failed: {error}"),
+            ))
+        }
+    };
 
     match dashboard_target(state_file.as_deref(), &session, &project_root, &window_name).await {
         Ok(DashboardProbe::Found(target)) => match focus_dashboard_target(&target).await {
@@ -296,23 +401,43 @@ async fn focus_or_launch(
         }
     }
 
-    let launch_args = LaunchArgs::from(args);
-    let mut launch_stderr = None;
-    if let Err(error) = run(launch_args).await {
-        launch_stderr = Some(error.to_string());
-        return Err(FocusOrLaunchReport {
-            stderr: launch_stderr,
-            ..FocusOrLaunchReport::new("error", format!("dashboard app launch failed: {error}"))
-        });
-    }
+    let launch_plan = DashboardLaunchPlan {
+        session: &session,
+        session_key: &session_key,
+        window_name: &window_name,
+        after_window_id: args.after_window_id.as_deref(),
+        theme: args.theme,
+        motion: args.motion,
+        explicit_state_file: explicit_state_file.as_deref(),
+        state_file: state_file.as_deref(),
+        project_root: &project_root,
+        no_daemon: args.no_daemon,
+        force: args.force,
+    };
+    let launch_outcome = match launch_dashboard_locked(&launch_plan).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let launch_stderr = Some(error.to_string());
+            return Err(FocusOrLaunchReport {
+                stderr: launch_stderr,
+                ..FocusOrLaunchReport::new("error", format!("dashboard app launch failed: {error}"))
+            });
+        }
+    };
 
     match dashboard_target(state_file.as_deref(), &session, &project_root, &window_name).await {
         Ok(DashboardProbe::Found(target)) => match focus_dashboard_target(&target).await {
             Ok(()) => {
-                let mut report =
-                    FocusOrLaunchReport::new("launched", "dashboard app launched and focused")
-                        .with_target(&target);
-                report.stderr = launch_stderr;
+                let report = match launch_outcome {
+                    DashboardLaunchOutcome::AlreadyAlive => FocusOrLaunchReport::new(
+                        "focused",
+                        "dashboard app became available while waiting for launch lock",
+                    ),
+                    DashboardLaunchOutcome::Launched => {
+                        FocusOrLaunchReport::new("launched", "dashboard app launched and focused")
+                    }
+                }
+                .with_target(&target);
                 Ok(report)
             }
             Err(error) => Err(FocusOrLaunchReport::new(
@@ -323,7 +448,6 @@ async fn focus_or_launch(
             .with_probe_error(&DashboardProbeError::new(error.to_string()))),
         },
         Ok(probe) => Err(FocusOrLaunchReport {
-            stderr: launch_stderr,
             path: match &probe {
                 DashboardProbe::Missing { path, .. } | DashboardProbe::Stale { path, .. } => {
                     path.as_ref().map(|path| path.display().to_string())

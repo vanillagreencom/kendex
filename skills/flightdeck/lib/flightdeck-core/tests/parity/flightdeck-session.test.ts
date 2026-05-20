@@ -76,6 +76,16 @@ printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
 	return bin;
 }
 
+function makeFailingDashboardShim(repo: string): string {
+	const bin = join(repo, "flightdeck-dashboard-fail-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+echo dashboard boom >&2
+exit 17
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makeDashboardStateShim(repo: string, captureFile: string, dashboardWindowId = "@2"): string {
 	const bin = join(repo, "flightdeck-dashboard-state-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -817,6 +827,33 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("shim: new-window refused");
 			expect(promptFiles(runtimeDir)).toEqual([]);
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt cleans tempfile when dashboard launch fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-dashboard-cleanup");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "fail-dashboard-prompt",
+				"--title", "Fail dashboard prompt",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "cleanup dashboard failure",
+			], {
+				FLIGHTDECK_DASHBOARD: "1",
+				FLIGHTDECK_DASHBOARD_BIN: makeFailingDashboardShim(repo),
+				PI_BIN: makePiBinShim(repo),
+				PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo),
+				XDG_RUNTIME_DIR: runtimeDir,
+			});
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("dashboard boom");
+			expect(r.stderr).toContain("dashboard launch failed before launching fail-dashboard-prompt");
+			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
 		});
 
 		test(`start --prompt surfaces mkdir failure before tmux mutation`, () => {

@@ -714,14 +714,21 @@ cmd_start() {
     launch_cmd="$(flightdeck_session_pane_env_str "$session_id") $cmd"
   fi
 
-  local insert_after_window_id="$after_window_id" dashboard_after_window_id="" current_window_id="" pane_id
+  local insert_after_window_id="$after_window_id" dashboard_after_window_id="" current_window_id="" pane_id dashboard_rc
   if [[ -z "$insert_after_window_id" ]]; then
     current_window_id=$(tmux display-message -p '#{window_id}' 2>/dev/null || true)
     dashboard_after_window_id="$current_window_id"
   else
     dashboard_after_window_id="$insert_after_window_id"
   fi
+  set +e
   ensure_dashboard_launched "$session_id" "$dashboard_after_window_id"
+  dashboard_rc=$?
+  set -e
+  if (( dashboard_rc != 0 )); then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    exit "$dashboard_rc"
+  fi
   [[ -n "${DASHBOARD_WINDOW_ID:-}" ]] && insert_after_window_id="$DASHBOARD_WINDOW_ID"
 
   local new_window_args=(-d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd")

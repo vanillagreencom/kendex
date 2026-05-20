@@ -862,6 +862,55 @@ fn launch_starts_rust_daemon_registers_window_and_is_idempotent() -> Result<(), 
     Ok(())
 }
 
+#[test]
+fn concurrent_launches_share_session_lock_and_do_not_duplicate_window() -> Result<(), Box<dyn Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    std::fs::write(&windows_file, "")?;
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let count_file = temp.path().join("session-count");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_slow_counting_flightdeck_session(&flightdeck_session, &count_file, &windows_file)?;
+    let path = path_with_bin(&bin_dir);
+    let runtime_dir = temp.path().join("runtime");
+
+    let first = launch_command_without_daemon(&path, &runtime_dir, &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .spawn()?;
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let second = launch_command_without_daemon(&path, &runtime_dir, &project)
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .spawn()?;
+
+    let first_output = first.wait_with_output()?;
+    let second_output = second.wait_with_output()?;
+    assert!(
+        first_output.status.success(),
+        "first launch failed: {}",
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    assert!(
+        second_output.status.success(),
+        "second launch failed: {}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let launches = std::fs::read_to_string(&count_file)?;
+    assert_eq!(
+        launches.lines().count(),
+        1,
+        "concurrent launches should spawn one dashboard window: {launches}"
+    );
+    let entry = read_dashboard_entry(&project.join("tmp/flightdeck-state-test-fd.json"))?;
+    assert_eq!(entry["pane_id"], "%99");
+    Ok(())
+}
+
 fn launch_command(
     path: &str,
     runtime_dir: &Path,
@@ -1327,6 +1376,58 @@ JSON
     )?;
     make_executable(&path)?;
     Ok(path)
+}
+
+fn write_slow_counting_flightdeck_session(
+    path: &Path,
+    count_file: &Path,
+    windows_file: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+count_file={count:?}
+windows={windows:?}
+printf 'launch\n' >> "$count_file"
+sleep 0.25
+title="flightdeck-test"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --title) title="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$title" >> "$windows"
+state_dir="${{FLIGHTDECK_STATE_DIR:-tmp}}"
+mkdir -p "$state_dir"
+cat > "$state_dir/flightdeck-state-{SESSION}.json" <<'JSON'
+{{
+  "session_id": "{SESSION}",
+  "updated_at": "2026-05-15T00:00:01Z",
+  "entries": {{
+    "flightdeck-dashboard": {{
+      "id": "flightdeck-dashboard",
+      "title": "flightdeck-test",
+      "kind": "workflow",
+      "state": "waiting",
+      "harness": "shell",
+      "pane_id": "%99"
+    }}
+  }}
+}}
+JSON
+"##,
+            count = count_file.display(),
+            windows = windows_file.display()
+        ),
+    )?;
+    make_executable(path)?;
+    Ok(path.to_path_buf())
 }
 
 fn make_executable(path: &Path) -> Result<(), Box<dyn Error>> {
