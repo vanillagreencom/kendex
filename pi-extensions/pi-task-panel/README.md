@@ -75,6 +75,8 @@ The panel toggle cycles visible modes and hides the panel; toggling back in rest
 
 Open `/extensions:settings`; settings appear under the **Task Panel** tab.
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ### Panel
 
 | Setting | What it does |

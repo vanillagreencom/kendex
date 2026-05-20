@@ -2,6 +2,7 @@ import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { basename, extname } from "node:path";
 
 import { stableRenderWidth, stripAnsi } from "./ansi.js";
+import { glyphs, truncateText } from "./glyphs.js";
 import { pendingStatusAnimation, settingNumber, stackToolCalls } from "./settings.js";
 import { stackPrefix, toolLabel, treeConnector, type TreeBranch } from "./theme.js";
 
@@ -66,7 +67,7 @@ export function textContent(result: any): string {
 
 export function clipLine(line: string, cwd?: string): string {
 	const max = Math.max(40, Math.floor(settingNumber("maxLineWidth", 1000, cwd)));
-	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+	return truncateText(line, max, cwd);
 }
 
 export function preview(text: string, count: number, direction: "head" | "tail", cwd?: string): string {
@@ -162,16 +163,17 @@ export function clearBlink(context: any): void {
 	}
 }
 
-export function blinkingPrefix(theme: any, context: any): string {
+export function blinkingPrefix(theme: any, context: any, cwd?: string): string {
 	trackBlink(context);
 	const on = Math.floor(Date.now() / 450) % 2 === 0;
-	return theme.fg(on ? "success" : "muted", on ? "● " : "○ ");
+	const g = glyphs(context?.cwd ?? cwd);
+	return theme.fg(on ? "success" : "muted", on ? g.bullet : g.emptyBullet);
 }
 
 export function pendingStatusPrefix(theme: any, context: any, cwd?: string): string {
-	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context);
+	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, cwd);
 	clearBlink(context);
-	return theme.fg("warning", "● ");
+	return theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet);
 }
 
 export function renderPendingCall(call: string, theme: any, context: any, cwd?: string): TruncatedLines | ReturnType<typeof makeEmpty> {
@@ -179,8 +181,8 @@ export function renderPendingCall(call: string, theme: any, context: any, cwd?: 
 	return makeTruncatedLines(`${pendingStatusPrefix(theme, context, cwd)}${call}`);
 }
 
-export function renderPendingDetail(text: string, theme: any): TruncatedLines {
-	return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("warning", text)}`);
+export function renderPendingDetail(text: string, theme: any, cwd?: string): TruncatedLines {
+	return makeTruncatedLines(`${treeConnector(theme, "└", cwd)}${theme.fg("warning", text)}`);
 }
 
 const NF_DIR = "";
@@ -230,7 +232,9 @@ const ICON_BY_EXT: Record<string, string> = {
 	zsh: "",
 };
 
-export function nerdIcon(pathText: string, isDirectory = false, theme?: any): string {
+
+export function nerdIcon(pathText: string, isDirectory = false, theme?: any, cwd?: string): string {
+	if (glyphs(cwd).line === "-") return theme?.fg ? theme.fg(isDirectory ? "accent" : "muted", isDirectory ? "d" : "f") : (isDirectory ? "d" : "f");
 	if (isDirectory) return theme?.fg ? theme.fg("accent", NF_DIR) : NF_DIR;
 	const clean = stripAnsi(pathText).trim().replace(/\/$/, "");
 	const name = basename(clean).toLowerCase();
@@ -248,14 +252,14 @@ export function renderPathListPreview(output: string, toolName: "find" | "ls", t
 		const clean = stripAnsi(item).trim();
 		const isDir = clean.endsWith("/");
 		const branch = index === shown.length - 1 && shown.length === rawItems.length ? "└" : "├";
-		const icon = nerdIcon(clean, isDir, theme);
+		const icon = nerdIcon(clean, isDir, theme, cwd);
 		const label = isDir ? theme.fg("accent", theme.bold(clean)) : theme.fg("dim", clean);
 		return `${treeConnector(theme, branch as "├" | "└", cwd)}${icon} ${label}`;
 	});
 	const remaining = rawItems.length - shown.length;
 	if (remaining > 0) {
 		const noun = toolName === "ls" ? (remaining === 1 ? "entry" : "entries") : `file${remaining === 1 ? "" : "s"}`;
-		lines.push(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", `… ${remaining} more ${noun}`)}`);
+		lines.push(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", `${glyphs(cwd).ellipsis} ${remaining} more ${noun}`)}`);
 	}
 	return lines.join("\n");
 }
@@ -268,7 +272,7 @@ export function readCallText(args: any, theme: any): string {
 export function bashCallText(args: any, theme: any, cwd?: string): string {
 	const max = Math.max(20, Math.floor(settingNumber("commandPreviewChars", 96, cwd)));
 	const rawCommand = typeof args?.command === "string" ? args.command : "";
-	const command = rawCommand.length > max ? `${rawCommand.slice(0, max - 1)}…` : rawCommand;
+	const command = truncateText(rawCommand, max, cwd);
 	const commandLines = command.split(/\r?\n/);
 	const [firstLine = "", ...continuationLines] = commandLines;
 	const styledFirstLine = theme.fg("accent", firstLine);

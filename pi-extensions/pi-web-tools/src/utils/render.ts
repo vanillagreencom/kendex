@@ -1,4 +1,5 @@
 import { Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { glyphs, treeGlyph, truncateText } from "../glyphs.js";
 
 export function emptyComponent(): Component {
 	return { invalidate() {}, render: () => [] };
@@ -10,11 +11,11 @@ export function textComponent(text: string): Component {
 
 export function oneLine(value: unknown, max = 88): string {
 	const text = String(value ?? "").replace(/\s+/g, " ").trim();
-	return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+	return truncateText(text, max);
 }
 
 export function bullet(theme: any, tone: "accent" | "success" | "error" | "warning" = "accent"): string {
-	return theme.fg(tone, "● ");
+	return theme.fg(tone, glyphs().bullet);
 }
 
 export function toolLabel(theme: any, label: string): string {
@@ -34,8 +35,7 @@ export function accent(theme: any, text: string): string {
 }
 
 export function tree(theme: any, branch: "├" | "└" | "│" = "└"): string {
-	if (branch === "│") return theme.fg("muted", "  │ ");
-	return theme.fg("muted", `  ${branch}─ `);
+	return theme.fg("muted", `  ${treeGlyph(branch)}`);
 }
 
 export function firstText(result: any): string {
@@ -80,7 +80,7 @@ export function providerDisplayName(provider: unknown): string {
 	if (value === "mixed") return "Mixed";
 	if (value === "auto") return "Auto";
 	if (value === "session" || value === "stored") return "Session";
-	if (value === "resolving…" || value === "resolving...") return "Resolving…";
+	if (value === "resolving…" || value === "resolving...") return `Resolving${glyphs().ellipsis}`;
 	return value ? value.replace(/(^|-)([a-z])/g, (_match, sep, char) => `${sep === "-" ? " " : ""}${char.toUpperCase()}`) : "Provider";
 }
 

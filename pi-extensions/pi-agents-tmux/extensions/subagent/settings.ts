@@ -12,6 +12,7 @@ import {
 	type ResultLimits,
 	type VstackConfig,
 } from "./types.js";
+import { glyphStyle } from "./glyphs.js";
 
 export function expandHome(input: string): string {
 	if (input === "~") return os.homedir();
@@ -193,8 +194,7 @@ export function formatShortcutHint(shortcut: string): string {
 }
 
 export function subagentTreeStyle(cwd?: string): "unicode" | "ascii" {
-	const value = readVstackConfig(cwd).treeStyle;
-	return value === "ascii" || value === "unicode" ? value : "unicode";
+	return glyphStyle(cwd);
 }
 
 export function resultLimits(cwd?: string): ResultLimits {

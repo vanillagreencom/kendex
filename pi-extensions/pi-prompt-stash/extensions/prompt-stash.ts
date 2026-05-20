@@ -7,6 +7,7 @@ import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
 const DEFAULT_STORE_FILE = "prompt-stash.json";
@@ -284,23 +285,24 @@ function framePopup(lines: string[], width: number, theme: Theme, title = "", ri
 
 	const border = (text: string) => theme.fg("borderAccent", text);
 	const contentWidth = popupContentWidth(width);
-	const blank = `${border("┃")}${" ".repeat(width - 2)}${border("┃")}`;
+	const frame = frameGlyphs();
+	const blank = `${border(frame.v)}${" ".repeat(width - 2)}${border(frame.v)}`;
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(width - 2))}${border(frame.tr)}`;
 		const rightPlain = right ? ` ${right} ` : "";
 		const titleBudget = Math.max(1, width - 2 - visibleWidth(rightPlain) - 1);
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} `;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), glyphs().ellipsis)} `;
 		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border("┓")}`;
+		return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border(frame.tr)}`;
 	};
 	const framed = [top()];
 
 	for (let i = 0; i < PADDING_Y; i += 1) framed.push(blank);
 	for (const line of lines) {
-		framed.push(`${border("┃")}${" ".repeat(PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PADDING_X)}${border("┃")}`);
+		framed.push(`${border(frame.v)}${" ".repeat(PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PADDING_X)}${border(frame.v)}`);
 	}
 	for (let i = 0; i < PADDING_Y; i += 1) framed.push(blank);
-	framed.push(`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`);
+	framed.push(`${border(frame.bl)}${border(frame.h.repeat(width - 2))}${border(frame.br)}`);
 	return framed.map((line) => truncateToWidth(line, width, ""));
 }
 

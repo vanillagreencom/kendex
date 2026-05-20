@@ -9,6 +9,7 @@ import { loadSettings, settingsDiagnostics } from "./settings.js";
 import { createApplyPatchToolDefinition } from "./tools/apply-patch.js";
 import { createImageGenerationToolDefinition } from "./tools/image-generation.js";
 import { viewImage, viewImageToolSchema, type ValidatedImage, type ViewImageInput } from "./tools/view-image.js";
+import { glyphs } from "./glyphs.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-codex-minimal-tools.installed");
 
@@ -25,16 +26,16 @@ function formatBytes(bytes: number): string {
 
 function viewImageCallText(args: ViewImageInput | undefined, theme: any): string {
 	const path = typeof args?.path === "string" ? args.path : "image";
-	const detail = args?.detail && args.detail !== "auto" ? ` ${theme.fg("dim", `· ${args.detail}`)}` : "";
-	return `${theme.fg("accent", "● ")}${theme.fg("text", theme.bold("View Image "))}${theme.fg("accent", path)}${detail}`;
+	const detail = args?.detail && args.detail !== "auto" ? ` ${theme.fg("dim", `${glyphs().dot.trim()} ${args.detail}`)}` : "";
+	return `${theme.fg("accent", glyphs().bullet)}${theme.fg("text", theme.bold("View Image "))}${theme.fg("accent", path)}${detail}`;
 }
 
 function viewImageResultText(details: ValidatedImage | undefined, theme: any): string {
-	if (!details) return `${theme.fg("accent", "● ")}${theme.fg("text", theme.bold("View Image"))}${theme.fg("dim", " · image loaded")}`;
+	if (!details) return `${theme.fg("accent", glyphs().bullet)}${theme.fg("text", theme.bold("View Image"))}${theme.fg("dim", `${glyphs().dot}image loaded`)}`;
 	const type = details.mimeType.replace(/^image\//, "").toUpperCase();
 	const protocol = terminalImageProtocol();
 	const preview = protocol ? theme.fg("success", `inline ${protocol}`) : theme.fg("warning", "fallback");
-	return `${theme.fg("accent", "● ")}${theme.fg("text", theme.bold("View Image "))}${theme.fg("accent", details.displayPath)}${theme.fg("dim", " · ")}${theme.fg("success", type)}${theme.fg("dim", ` · ${formatBytes(details.sizeBytes)} · `)}${preview}`;
+	return `${theme.fg("accent", glyphs().bullet)}${theme.fg("text", theme.bold("View Image "))}${theme.fg("accent", details.displayPath)}${theme.fg("dim", glyphs().dot)}${theme.fg("success", type)}${theme.fg("dim", `${glyphs().dot}${formatBytes(details.sizeBytes)}${glyphs().dot}`)}${preview}`;
 }
 
 function emptyComponent(): Component {

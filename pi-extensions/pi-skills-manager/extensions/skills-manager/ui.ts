@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { ansiGreen, ansiYellow, VSTACK_MODAL_LOCK_SYMBOL } from "./constants.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 import type { MessageTone, SkillEntry, VstackModalLock } from "./types.js";
 
 export function inlineLine(text: string): string {
@@ -48,12 +49,13 @@ export function skillSelectedLine(theme: Theme, line: string, width: number): st
 export function skillKeyHints(theme: Theme, hints: Array<[key: string, description: string]>): string {
 	return hints
 		.map(([key, description]) => `${ansiYellow(key)} ${theme.fg("dim", description)}`)
-		.join(theme.fg("dim", " • "));
+		.join(theme.fg("dim", ` ${glyphs().bullet.trim()} `));
 }
 
 function frameLine(theme: Theme, line: string, innerWidth: number): string {
 	const clipped = truncateToWidth(inlineLine(line), innerWidth, theme.fg("dim", "..."));
-	return `${theme.fg("borderAccent", "┃ ")}${padAnsi(clipped, innerWidth)}${theme.fg("borderAccent", " ┃")}`;
+	const frame = frameGlyphs();
+	return `${theme.fg("borderAccent", `${frame.v} `)}${padAnsi(clipped, innerWidth)}${theme.fg("borderAccent", ` ${frame.v}`)}`;
 }
 
 function fitFrameBody(theme: Theme, lines: string[], fixedInnerRows?: number): string[] {
@@ -71,19 +73,20 @@ export function renderFrame(theme: Theme, width: number, lines: string[], fixedI
 	const body = fitFrameBody(theme, lines, fixedInnerRows);
 	if (width < 6) return body.map((line) => truncateToWidth(inlineLine(line), width, ""));
 	const innerWidth = Math.max(1, width - 4);
+	const frame = frameGlyphs();
 	const top = () => {
 		const contentWidth = innerWidth + 2;
-		if (!title && !right) return theme.fg("borderAccent", `┏${"━".repeat(contentWidth)}┓`);
+		if (!title && !right) return theme.fg("borderAccent", `${frame.tl}${frame.h.repeat(contentWidth)}${frame.tr}`);
 		const rightPlain = right ? ` ${right} ` : "";
 		const titleBudget = Math.max(1, contentWidth - visibleWidth(rightPlain) - 1);
-		const titlePlain = title ? ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} ` : "";
+		const titlePlain = title ? ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), glyphs().ellipsis)} ` : "";
 		const fill = Math.max(1, contentWidth - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-		return `${theme.fg("borderAccent", "┏")}${titlePlain ? ansiGreen(titlePlain) : ""}${theme.fg("borderAccent", "━".repeat(fill))}${rightPlain ? theme.fg("dim", rightPlain) : ""}${theme.fg("borderAccent", "┓")}`;
+		return `${theme.fg("borderAccent", frame.tl)}${titlePlain ? ansiGreen(titlePlain) : ""}${theme.fg("borderAccent", frame.h.repeat(fill))}${rightPlain ? theme.fg("dim", rightPlain) : ""}${theme.fg("borderAccent", frame.tr)}`;
 	};
 	return [
 		top(),
 		...body.map((line) => frameLine(theme, line, innerWidth)),
-		theme.fg("borderAccent", `┗${"━".repeat(innerWidth + 2)}┛`),
+		theme.fg("borderAccent", `${frame.bl}${frame.h.repeat(innerWidth + 2)}${frame.br}`),
 	].map((line) => truncateToWidth(inlineLine(line), width, ""));
 }
 
@@ -96,10 +99,11 @@ function centerLines(lines: string[], width: number): string[] {
 export function renderCenteredDialog(theme: Theme, width: number, lines: string[], maxInnerWidth = 68): string[] {
 	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
 	const innerWidth = Math.max(1, Math.min(width - 4, maxInnerWidth));
+	const frame = frameGlyphs();
 	const framed = [
-		theme.fg("borderAccent", `┏${"━".repeat(innerWidth + 2)}┓`),
+		theme.fg("borderAccent", `${frame.tl}${frame.h.repeat(innerWidth + 2)}${frame.tr}`),
 		...lines.map((line) => frameLine(theme, line, innerWidth)),
-		theme.fg("borderAccent", `┗${"━".repeat(innerWidth + 2)}┛`),
+		theme.fg("borderAccent", `${frame.bl}${frame.h.repeat(innerWidth + 2)}${frame.br}`),
 	];
 	return centerLines(framed, width);
 }

@@ -35,6 +35,19 @@
           "requiresReload": true
         },
         {
+          "key": "glyphStyle",
+          "label": "Glyph style",
+          "description": "Glyphs for vstack-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
+          "type": "enum",
+          "enumValues": [
+            "unicode",
+            "ascii"
+          ],
+          "default": "unicode",
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
           "key": "panelDefaultState",
           "label": "Default panel state",
           "description": "Panel state when tasks first appear. User-hidden state is respected for the rest of the session.",

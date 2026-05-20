@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-wor
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { supportsImageInput, type ModelLike } from "./capabilities.js";
+import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import {
 	buildGeneratedImageDisplayText,
@@ -160,16 +161,16 @@ function panelFrame(lines: string[], width: number, theme: Theme): string[] {
 	const inner = Math.max(1, safeWidth - 2);
 	const contentWidth = panelFrameContentWidth(safeWidth);
 	const border = (text: string) => theme.fg(PANEL_BAR_COLOR, text);
+	const frame = frameGlyphs();
 	return [
-		`${border("┏")}${border("━".repeat(inner))}${border("┓")}`,
-		...lines.map((line) => `${border("┃")}${" ".repeat(PANEL_CARD_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(inner))}${border("┛")}`,
+		`${border(frame.tl)}${border(frame.h.repeat(inner))}${border(frame.tr)}`,
+		...lines.map((line) => `${border(frame.v)}${" ".repeat(PANEL_CARD_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(inner))}${border(frame.br)}`,
 	].map((line) => truncateToWidth(line, safeWidth, ""));
 }
 
 function panelBranch(theme: Theme, branch: "├" | "└" | "│"): string {
-	if (branch === "│") return theme.fg(PANEL_RULE_COLOR, "│  ");
-	return theme.fg(PANEL_RULE_COLOR, `${branch}─ `);
+	return theme.fg(PANEL_RULE_COLOR, treeGlyph(branch));
 }
 
 function renderStatusHeader(jobs: ActiveImageJob[], theme: Theme): string {
@@ -185,7 +186,7 @@ function renderStatusHeader(jobs: ActiveImageJob[], theme: Theme): string {
 function renderJobLines(theme: Theme, width: number): string[] {
 	const jobs = Array.from(activeImageJobs.values()).sort((a, b) => a.startedAt - b.startedAt);
 	if (jobs.length === 0) return [];
-	const dot = theme.fg("dim", " · ");
+	const dot = theme.fg("dim", glyphs().dot);
 	const lines = [renderStatusHeader(jobs, theme)];
 	const shown = jobs.slice(0, 4);
 	for (const [index, job] of shown.entries()) {
@@ -193,10 +194,10 @@ function renderJobLines(theme: Theme, width: number): string[] {
 		const isLast = index === shown.length - 1 && jobs.length <= shown.length;
 		const refs = job.referenceCount > 0 ? `${dot}${theme.fg("dim", `${job.referenceCount} ref${job.referenceCount === 1 ? "" : "s"}`)}` : "";
 		const promptWidth = Math.max(16, width - 36);
-		lines.push(`${panelBranch(theme, isLast ? "└" : "├")}${theme.fg("accent", "●")} ${theme.fg("accent", truncateToWidth(job.prompt, promptWidth, "…"))}${dot}${theme.fg("muted", job.imageModel)}${refs}${dot}${theme.fg("dim", `${ageSeconds}s`)}`);
+		lines.push(`${panelBranch(theme, isLast ? "└" : "├")}${theme.fg("accent", glyphs().bullet.trim())} ${theme.fg("accent", truncateToWidth(job.prompt, promptWidth, glyphs().ellipsis))}${dot}${theme.fg("muted", job.imageModel)}${refs}${dot}${theme.fg("dim", `${ageSeconds}s`)}`);
 	}
 	const hidden = jobs.length - shown.length;
-	if (hidden > 0) lines.push(`${panelBranch(theme, "└")}${theme.fg("muted", `… ${hidden} more`)}`);
+	if (hidden > 0) lines.push(`${panelBranch(theme, "└")}${theme.fg("muted", `${glyphs().ellipsis} ${hidden} more`)}`);
 	return panelFrame(lines, width, theme);
 }
 

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
+import { frameGlyphs, glyphs, glyphStyle, treeGlyph } from "./glyphs.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
 	applyTaskPanelContentVisibility,
@@ -172,35 +173,30 @@ function panelFrameContentWidth(width: number): number {
 	return Math.max(1, width - 2 - PANEL_CARD_PADDING_X * 2);
 }
 
-function panelFrame(lines: string[], width: number, theme: Theme): string[] {
+function panelFrame(lines: string[], width: number, theme: Theme, cwd?: string): string[] {
 	const safeWidth = Math.max(1, width);
 	if (safeWidth < 8) return lines.map((line) => truncateToWidth(line, safeWidth, ""));
 	const inner = Math.max(1, safeWidth - 2);
 	const contentWidth = panelFrameContentWidth(safeWidth);
+	const frame = frameGlyphs(cwd);
 	const border = (text: string) => theme.fg(PANEL_BAR_COLOR, text);
 	return [
-		`${border("┏")}${border("━".repeat(inner))}${border("┓")}`,
-		...lines.map((line) => `${border("┃")}${" ".repeat(PANEL_CARD_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(inner))}${border("┛")}`,
+		`${border(frame.tl)}${border(frame.h.repeat(inner))}${border(frame.tr)}`,
+		...lines.map((line) => `${border(frame.v)}${" ".repeat(PANEL_CARD_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(inner))}${border(frame.br)}`,
 	].map((line) => truncateToWidth(line, safeWidth, ""));
 }
 
 function panelTreeStyle(cwd?: string): "unicode" | "ascii" {
-	const value = readVstackConfig(cwd).treeStyle;
-	return value === "ascii" || value === "unicode" ? value : "unicode";
+	return glyphStyle(cwd);
 }
 
 function panelBranch(theme: Theme, branch: "├" | "└" | "│", cwd?: string): string {
-	if (panelTreeStyle(cwd) === "ascii") {
-		if (branch === "│") return theme.fg(PANEL_RULE_COLOR, "|  ");
-		return theme.fg(PANEL_RULE_COLOR, branch === "└" ? "`-- " : "|-- ");
-	}
-	if (branch === "│") return theme.fg(PANEL_RULE_COLOR, "│  ");
-	return theme.fg(PANEL_RULE_COLOR, `${branch}─ `);
+	return theme.fg(PANEL_RULE_COLOR, treeGlyph(branch, cwd));
 }
 
 function panelGroupRoot(theme: Theme, title: string, count: number, isLastGroup: boolean, cwd?: string): string {
-	const prefix = panelTreeStyle(cwd) === "ascii" ? (isLastGroup ? "`-- " : "|-- ") : (isLastGroup ? "└─ " : "├─ ");
+	const prefix = isLastGroup ? glyphs(cwd).tree.last : glyphs(cwd).tree.mid;
 	const titleText = theme.fg("mdHeading", theme.bold(title));
 	const countText = theme.fg("dim", ` ${count}`);
 	return `${theme.fg(PANEL_RULE_COLOR, prefix)}${titleText}${countText}`;
@@ -218,22 +214,23 @@ function panelGroupStem(theme: Theme, isLastTask: boolean, isLastGroup: boolean,
 
 function framePopup(lines: string[], width: number, theme: Theme, title = ""): string[] {
 	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
+	const frame = frameGlyphs();
 	const border = (text: string) => theme.fg("borderAccent", text);
 	const contentWidth = Math.max(1, width - 2 - POPUP_PADDING_X * 2);
-	const blank = `${border("┃")}${" ".repeat(width - 2)}${border("┃")}`;
+	const blank = `${border(frame.v)}${" ".repeat(width - 2)}${border(frame.v)}`;
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, width - 4), "…")} `;
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(width - 2))}${border(frame.tr)}`;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, width - 4), glyphs().ellipsis)} `;
 		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${border("┓")}`;
+		return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${border(frame.tr)}`;
 	};
 	const framed = [top()];
 	for (let i = 0; i < POPUP_PADDING_Y; i += 1) framed.push(blank);
 	for (const line of lines) {
-		framed.push(`${border("┃")}${" ".repeat(POPUP_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(POPUP_PADDING_X)}${border("┃")}`);
+		framed.push(`${border(frame.v)}${" ".repeat(POPUP_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(POPUP_PADDING_X)}${border(frame.v)}`);
 	}
 	for (let i = 0; i < POPUP_PADDING_Y; i += 1) framed.push(blank);
-	framed.push(`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`);
+	framed.push(`${border(frame.bl)}${border(frame.h.repeat(width - 2))}${border(frame.br)}`);
 	return framed.map((line) => truncateToWidth(line, width, ""));
 }
 
@@ -273,8 +270,8 @@ function normalizeState(value: unknown, cwd?: string): TaskPanelState {
 }
 
 function taskIcon(status: Status, active = false): string {
-	if (active || status === "in_progress" || status === "completed") return "●";
-	return "○";
+	if (active || status === "in_progress" || status === "completed") return glyphs().bullet.trim();
+	return glyphs().emptyBullet.trim();
 }
 
 function markerColor(status: Status, active = false): string {
@@ -298,7 +295,7 @@ function renderTaskLine(task: TaskItem, theme: Theme, active = false, prefix = "
 }
 
 function mutedRule(theme: Theme, width: number): string {
-	const rule = "─".repeat(Math.max(1, width));
+	const rule = glyphs().line.repeat(Math.max(1, width));
 	for (const token of ["borderMuted", "muted", "dim"] as const) {
 		try {
 			const styled = theme.fg(token, rule);
@@ -347,7 +344,7 @@ function panelToggleHint(cwd: string): string {
 	const parts: string[] = [];
 	if (toggle !== "none") parts.push(`${formatShortcutHint(toggle)} toggle`);
 	if (manager !== "none") parts.push(`${formatShortcutHint(manager)} manage`);
-	return parts.join(" · ");
+	return parts.join(glyphs(cwd).dot);
 }
 
 function activeTask(state: TaskPanelState): TaskItem | undefined {
@@ -540,7 +537,7 @@ function parseEditableText(text: string, cwd?: string, visibility = rememberTask
 function renderPanelWidgetLines(state: TaskPanelState, theme: Theme, cwd: string, width: number): string[] {
 	const lines = renderPanelLines(state, theme, cwd);
 	if (lines.length === 0) return [];
-	return panelFrame(lines, Math.max(1, width), theme);
+	return panelFrame(lines, Math.max(1, width), theme, cwd);
 }
 
 /**
@@ -556,7 +553,7 @@ function clampAboveEditorWidget(lines: string[], terminalRows: number, theme: Th
 	const maxLines = Math.max(4, terminalRows - reserveForOtherUi);
 	if (lines.length <= maxLines) return lines;
 	const hidden = lines.length - (maxLines - 1);
-	return [...lines.slice(0, maxLines - 1), theme.fg("muted", `… ${hidden} more (open task manager for full view)`)];
+	return [...lines.slice(0, maxLines - 1), theme.fg("muted", `${glyphs().ellipsis} ${hidden} more (open task manager for full view)`)];
 }
 
 function renderPanelHeader(state: TaskPanelState, theme: Theme, active?: TaskItem, hint = ""): string {
@@ -565,8 +562,8 @@ function renderPanelHeader(state: TaskPanelState, theme: Theme, active?: TaskIte
 	const phaseBadge = state.panel === "compact" && activePhase && activePhase !== "Tasks"
 		? ` ${theme.fg("dim", "›")} ${theme.fg("muted", activePhase)}`
 		: "";
-	const toggleHint = hint ? ` ${theme.fg("dim", `· ${hint}`)}` : "";
-	return `${theme.fg(PANEL_TITLE_COLOR, theme.bold("Tasks"))}${phaseBadge} ${theme.fg("muted", `${completedCount(state)}/${state.tasks.length} done · ${remaining} remaining`)}${toggleHint}`;
+	const toggleHint = hint ? ` ${theme.fg("dim", `${glyphs().dot.trim()} ${hint}`)}` : "";
+	return `${theme.fg(PANEL_TITLE_COLOR, theme.bold("Tasks"))}${phaseBadge} ${theme.fg("muted", `${completedCount(state)}/${state.tasks.length} done${glyphs().dot}${remaining} remaining`)}${toggleHint}`;
 }
 
 function pushTaskGroup(lines: string[], title: string, tasks: TaskItem[], theme: Theme, cwd: string, isLastGroup: boolean): void {
@@ -594,7 +591,7 @@ function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): str
 		}
 		const shown = visible.length + (active ? 1 : 0);
 		const hidden = Math.max(0, remaining - shown);
-		if (hidden > 0) lines.push(`${panelBranch(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more`)}`);
+		if (hidden > 0) lines.push(`${panelBranch(theme, "└", cwd)}${theme.fg("muted", `${glyphs(cwd).ellipsis} ${hidden} more`)}`);
 		return lines;
 	}
 	const lines = [header];
@@ -674,7 +671,7 @@ function resultColor(action: string, summary: string): string {
 
 function renderTaskToolSummary(summary: string, action: string, theme: Theme): string {
 	const color = resultColor(action, summary);
-	const bullet = theme.fg(color, "● ");
+	const bullet = theme.fg(color, glyphs().bullet);
 	const taskMatch = summary.match(/^(Task )("[^"]+")( .+)$/);
 	if (taskMatch) {
 		return `${bullet}${theme.fg("text", taskMatch[1] ?? "Task ")}${theme.fg("accent", taskMatch[2] ?? "")}${theme.fg(color, taskMatch[3] ?? "")}`;
@@ -697,8 +694,9 @@ function taskContextMessage(state: TaskPanelState): string {
 }
 
 function toolResultContent(summary: string, state: TaskPanelState, cwd: string): string {
-	if (!settingBoolean("showWorkflowReminder", true, cwd) || remainingCount(state) === 0) return `• ${summary}`;
-	return `• ${summary}\n${workflowReminder(state)}`;
+	const bullet = glyphs(cwd).bullet.trimEnd();
+	if (!settingBoolean("showWorkflowReminder", true, cwd) || remainingCount(state) === 0) return `${bullet} ${summary}`;
+	return `${bullet} ${summary}\n${workflowReminder(state)}`;
 }
 
 const TaskToolParams = Type.Object({
@@ -1092,10 +1090,10 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		},
 		renderResult(result, _options, theme) {
 			if (result.details?.deferDisplay) return singleLine("");
-			const summary = result.details?.summary ?? result.content?.find((part: any) => part?.type === "text")?.text?.replace(/^•\s*/, "") ?? "tasks updated";
+			const summary = result.details?.summary ?? result.content?.find((part: any) => part?.type === "text")?.text?.replace(/^[•*●]\s*/, "") ?? "tasks updated";
 			const action = result.details?.action ?? "";
 			if (compactToolOutput) return singleLine(renderTaskToolSummary(summary, action, theme));
-			return singleLine(theme.fg("text", `• ${summary}`));
+			return singleLine(theme.fg("text", `${glyphs(activeCtx?.cwd).bullet.trimEnd()} ${summary}`));
 		},
 	});
 

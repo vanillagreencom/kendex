@@ -10,6 +10,7 @@ import {
 	type StructuredDiffLine,
 } from "./diff.js";
 import { mcpOutputMode, settingBoolean, settingNumber } from "./settings.js";
+import { glyphs, truncateText } from "./glyphs.js";
 import { stackPrefix, toolLabel, treeConnector, treeStem } from "./theme.js";
 import {
 	clearBlink,
@@ -83,9 +84,9 @@ export function humanizeToolName(name: string): string {
 		.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export function oneLine(value: string, max = 72): string {
+export function oneLine(value: string, max = 72, cwd?: string): string {
 	const normalized = value.replace(/\s+/g, " ").trim();
-	return normalized.length > max ? `${normalized.slice(0, Math.max(0, max - 1))}…` : normalized;
+	return truncateText(normalized, max, cwd);
 }
 
 function stringArg(args: any, ...keys: string[]): string {
@@ -109,7 +110,7 @@ function stringArrayArg(args: any, ...keys: string[]): string[] {
 export function genericStatusPrefix(context: any, theme: any): string {
 	if (!context?.executionStarted || context?.isPartial) return pendingStatusPrefix(theme, context);
 	clearBlink(context);
-	return theme.fg(context?.isError ? "error" : "success", "● ");
+	return theme.fg(context?.isError ? "error" : "success", glyphs(context?.cwd).bullet);
 }
 
 function patchTextFromArgs(args: any): string {
@@ -223,7 +224,7 @@ function parseApplyPatchPreview(patchText: string): ApplyPatchChange[] {
 				? buildStructuredDiff(body.map((line) => line.startsWith("-") ? line.slice(1) : line).join("\n"), "")
 				: parseApplyPatchUpdateDiff(body);
 		diff.path = moveTo || path;
-		changes.push({ diff, displayPath: moveTo ? `${path} → ${moveTo}` : path, kind, line: firstChangedLine(diff), moveTo, path });
+		changes.push({ diff, displayPath: moveTo ? `${path} ${glyphs().arrow} ${moveTo}` : path, kind, line: firstChangedLine(diff), moveTo, path });
 	}
 	return changes;
 }

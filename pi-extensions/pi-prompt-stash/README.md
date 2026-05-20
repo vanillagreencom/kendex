@@ -38,6 +38,8 @@ The stash shortcut both stashes (when the editor has text) and opens the popup (
 
 ## Settings
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 Open `/extensions:settings`; settings appear under the **Prompt Stash** tab.
 
 | Setting | What it does |

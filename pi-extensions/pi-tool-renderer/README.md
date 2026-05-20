@@ -56,6 +56,8 @@ If the combined output would exceed Pi's normal tool-result budget, child output
 
 Open `/extensions:settings`; settings appear under the **Tool Renderer** tab.
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ### General
 
 | Setting | What it does |

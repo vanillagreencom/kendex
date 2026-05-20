@@ -6,6 +6,7 @@ export const PACKAGE_ID = "@vanillagreen/pi-codex-minimal-tools";
 
 export interface CodexMinimalToolsSettings {
 	enabled: boolean;
+	glyphStyle: "unicode" | "ascii";
 	autoEnable: boolean;
 	nativeProviderTools: boolean;
 	imageGeneration: boolean;
@@ -22,6 +23,7 @@ export interface CodexMinimalToolsSettings {
 
 export const DEFAULT_SETTINGS: CodexMinimalToolsSettings = {
 	enabled: true,
+	glyphStyle: "unicode",
 	autoEnable: true,
 	nativeProviderTools: true,
 	imageGeneration: true,
@@ -110,10 +112,16 @@ function imageModelSetting(raw: SettingsRecord): CodexMinimalToolsSettings["imag
 	return value === "gpt-image-2" || value === "gpt-image-1.5" || value === "gpt-image-1" ? value : DEFAULT_SETTINGS.imageModel;
 }
 
+function glyphStyleSetting(raw: SettingsRecord): CodexMinimalToolsSettings["glyphStyle"] {
+	const value = raw.glyphStyle;
+	return value === "ascii" || value === "unicode" ? value : DEFAULT_SETTINGS.glyphStyle;
+}
+
 export function loadSettings(cwd?: string): CodexMinimalToolsSettings {
 	const raw = readRawVstackConfig(cwd);
 	return {
 		enabled: boolSetting(raw, "enabled"),
+		glyphStyle: glyphStyleSetting(raw),
 		autoEnable: boolSetting(raw, "autoEnable"),
 		nativeProviderTools: boolSetting(raw, "nativeProviderTools"),
 		imageGeneration: boolSetting(raw, "imageGeneration"),

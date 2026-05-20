@@ -31,6 +31,19 @@
           "requiresReload": true
         },
         {
+          "key": "glyphStyle",
+          "label": "Glyph style",
+          "description": "Glyphs for vstack-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
+          "type": "enum",
+          "enumValues": [
+            "unicode",
+            "ascii"
+          ],
+          "default": "unicode",
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
           "key": "defaultSaveScope",
           "label": "Default save scope",
           "description": "Where manager setting edits are written when the selected item scope is ambiguous.",

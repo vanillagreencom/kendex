@@ -58,6 +58,8 @@ Arguments support autocomplete.
 
 Open `/extensions:settings`; settings appear under the **QOL** tab. Names below match the labels shown there.
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ### Statusline
 
 | Setting | What it does |

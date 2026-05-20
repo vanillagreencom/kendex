@@ -50,6 +50,8 @@ Restart Pi after installation.
 
 Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** tab.
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ### General
 
 | Setting | What it does |

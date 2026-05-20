@@ -50,6 +50,8 @@ Open `/extensions:settings`; settings appear under the **Extension Manager** tab
 | Default save scope | Where setting edits are written when scope is ambiguous (`project` or `user`). |
 | Notify on extension updates | Post a one-line notification at session start listing extensions with newer versions. |
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ## Notes
 
 Package enable/disable and updates take effect after `/reload` or restart — Pi doesn't currently support unloading already-loaded extensions. npm update/uninstall actions run inside Pi's scope-local npm directory (`<scope>/npm`), matching Pi 0.75+ user package installs under `~/.pi/agent/npm/`. Command execution resolves Windows npm-family shims without requiring external runtime dependencies.

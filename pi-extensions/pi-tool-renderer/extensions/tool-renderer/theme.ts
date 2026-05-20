@@ -1,4 +1,4 @@
-import { settingEnum, treeStyle } from "./settings.js";
+import { glyphs, glyphStyle, treeGlyph as configuredTreeGlyph } from "./glyphs.js";
 
 export const FALLBACK_THEME = {
 	bg(_token: string, text: string) {
@@ -48,12 +48,8 @@ export function borderMuted(theme: any, text: string): string {
 export type TreeBranch = "├" | "└" | "│";
 
 export function treeGlyph(branch: TreeBranch, cwd?: string): string {
-	if (treeStyle(cwd) === "ascii") {
-		if (branch === "│") return "|  ";
-		return branch === "└" ? "`-- " : "|-- ";
-	}
-	if (branch === "│") return "  │ ";
-	return `  ${branch}─ `;
+	const glyph = configuredTreeGlyph(branch, cwd);
+	return glyphStyle(cwd) === "ascii" ? glyph : `  ${glyph}`;
 }
 
 export function treeConnector(theme: any, branch: TreeBranch = "├", cwd?: string): string {
@@ -61,7 +57,7 @@ export function treeConnector(theme: any, branch: TreeBranch = "├", cwd?: stri
 }
 
 export function treeStem(theme: any, branch: TreeBranch, cwd?: string): string {
-	if (branch === "└") return theme.fg("muted", treeStyle(cwd) === "ascii" ? "    " : "     ");
+	if (branch === "└") return theme.fg("muted", glyphStyle(cwd) === "ascii" ? "    " : "     ");
 	return treeConnector(theme, "│", cwd);
 }
 
@@ -69,6 +65,6 @@ export function toolLabel(theme: any, label: string): string {
 	return theme.fg("text", theme.bold(label));
 }
 
-export function stackPrefix(theme: any): string {
-	return theme.fg("accent", "● ");
+export function stackPrefix(theme: any, cwd?: string): string {
+	return theme.fg("accent", glyphs(cwd).bullet);
 }

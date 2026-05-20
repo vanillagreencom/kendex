@@ -1,5 +1,6 @@
 import { exaDeepResearchAvailable, isOpenAiNativeModel, resolveWebProviderCandidates, type ModelLike } from "./provider-selection.js";
 import type { WebToolsSettings } from "./settings.js";
+import { glyphs } from "./glyphs.js";
 
 export const BASE_TOOL_NAMES = ["web_search", "web_fetch", "get_web_content"] as const;
 export const ADVANCED_TOOL_NAMES = ["web_answer", "web_find_similar", "code_search"] as const;
@@ -44,7 +45,7 @@ export function statusLines(model: ModelLike | undefined, settings: WebToolsSett
 		`autoEnable: ${settings.autoEnable}`,
 		`defaultProvider: ${settings.defaultProvider}`,
 		`enabledProviders: ${settings.enabledProviders.join(",")}`,
-		`auto provider order: ${resolveWebProviderCandidates("auto", settings, model).join(" → ") || "none"}`,
+		`auto provider order: ${resolveWebProviderCandidates("auto", settings, model).join(` ${glyphs().arrow} `) || "none"}`,
 		`OpenAI native available: ${settings.nativeOpenAiWebSearch && isOpenAiNativeModel(model)}`,
 		`Exa key: ${settings.apiKeys.exa ? "present" : "not set"}`,
 		`Exa deep research: ${exaDeepResearchAvailable(settings) ? "available" : "not available"}`,

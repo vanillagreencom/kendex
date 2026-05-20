@@ -10,6 +10,7 @@ export type ResolvedWebProvider = Exclude<WebProvider, "auto">;
 
 export interface WebToolsSettings {
 	enabled: boolean;
+	glyphStyle: "unicode" | "ascii";
 	autoEnable: boolean;
 	defaultProvider: WebProvider;
 	enabledProviders: ResolvedWebProvider[];
@@ -32,6 +33,7 @@ export interface WebToolsSettings {
 
 export const DEFAULT_SETTINGS: Omit<WebToolsSettings, "apiKeys" | "warnings" | "privateConfigFile"> = {
 	enabled: true,
+	glyphStyle: "unicode",
 	autoEnable: true,
 	defaultProvider: "auto",
 	enabledProviders: ["exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"],
@@ -136,6 +138,11 @@ function stringSetting(raw: SettingsRecord, key: string, fallback: string): stri
 function providerSetting(raw: SettingsRecord): WebProvider {
 	const value = raw.defaultProvider;
 	return WEB_PROVIDERS.includes(value as WebProvider) ? value as WebProvider : DEFAULT_SETTINGS.defaultProvider;
+}
+
+function glyphStyleSetting(raw: SettingsRecord): WebToolsSettings["glyphStyle"] {
+	const value = raw.glyphStyle;
+	return value === "ascii" || value === "unicode" ? value : DEFAULT_SETTINGS.glyphStyle;
 }
 
 function enabledProvidersSetting(raw: SettingsRecord): ResolvedWebProvider[] {
@@ -252,6 +259,7 @@ export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const jinaKey = process.env.JINA_API_KEY || secretFrom(secrets, ["JINA_API_KEY", "jinaApiKey"]);
 	return {
 		enabled: boolSetting(raw, "enabled"),
+		glyphStyle: glyphStyleSetting(raw),
 		autoEnable: boolSetting(raw, "autoEnable"),
 		defaultProvider: providerSetting(raw),
 		enabledProviders: enabledProvidersSetting(raw),

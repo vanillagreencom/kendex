@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { buildFrontmatterBlock } from "./format.js";
+import { glyphs } from "./glyphs.js";
 import { isDeletableSkill } from "./registry.js";
 import {
 	getEditorTheme,
@@ -79,7 +80,7 @@ export class ScrollableSkillPreview implements Component {
 		const status = this.skill.enabled ? this.theme.fg("success", "enabled") : this.theme.fg("warning", "disabled");
 		const source = packageLabel(this.skill) ? `${packageLabel(this.skill)}` : this.skill.path;
 		content.addChild(new Text(skillEntityTitle(this.theme, this.skill.name), 0, 0));
-		content.addChild(new Text(`${this.theme.fg("muted", scopeLabel(this.skill))}${this.theme.fg("dim", " • ")}${this.theme.fg("muted", source)}${this.theme.fg("dim", " • ")}${status}`, 0, 0));
+		content.addChild(new Text(`${this.theme.fg("muted", scopeLabel(this.skill))}${this.theme.fg("dim", ` ${glyphs().bullet.trim()} `)}${this.theme.fg("muted", source)}${this.theme.fg("dim", ` ${glyphs().bullet.trim()} `)}${status}`, 0, 0));
 		content.addChild(new Spacer(1));
 		content.addChild(new Text(this.theme.fg("muted", this.theme.bold("Description")), 0, 0));
 		content.addChild(new Text(this.skill.description, 0, 0));
@@ -97,7 +98,7 @@ export class ScrollableSkillPreview implements Component {
 	}
 	private footer(innerWidth: number, visibleHeight: number, totalLines: number): string {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);
-		const scroll = maxScroll > 0 ? this.theme.fg("dim", ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}`) : "";
+		const scroll = maxScroll > 0 ? this.theme.fg("dim", ` ${glyphs().bullet.trim()} ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}`) : "";
 		const hints: Array<[string, string]> = [["-/=", "page"]];
 		hints.push(["alt+x", "enable/disable"]);
 		if (isDeletableSkill(this.skill)) hints.push(["alt+e", "edit"], ["alt+r", "rename"], ["backspace", "delete"]);

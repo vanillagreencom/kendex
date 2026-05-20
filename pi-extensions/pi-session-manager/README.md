@@ -53,6 +53,8 @@ Open `/extensions:settings`; settings appear under the **Session Manager** tab.
 | Overlay width | Preferred width in terminal columns. |
 | Use trash for delete | Try `trash` before permanent unlink. |
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ## Notes
 
 Pi's built-in `/resume`, `/tree`, `/fork`, `/clone`, and `/name` remain available.

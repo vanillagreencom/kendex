@@ -17,6 +17,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { publishQuestionActivity } from "./activity.js";
+import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-questions.installed");
 const CONFIG_ID = "@vanillagreen/pi-questions";
@@ -205,7 +206,7 @@ function formatQuestionTruncationNotice(truncation: TruncationResult, fullOutput
 function sanitizeDetailValue(value: unknown, depth = 0): unknown {
 	if (depth > 4) return "[Max detail depth reached]";
 	if (value == null || typeof value === "number" || typeof value === "boolean") return value;
-	if (typeof value === "string") return value.length > 8 * 1024 ? `${value.slice(0, 8 * 1024)}… [detail string truncated]` : value;
+	if (typeof value === "string") return value.length > 8 * 1024 ? `${value.slice(0, 8 * 1024)}${glyphs().ellipsis} [detail string truncated]` : value;
 	if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitizeDetailValue(item, depth + 1));
 	if (typeof value === "object") {
 		const out: Record<string, unknown> = {};
@@ -330,24 +331,25 @@ function framePopup(lines: string[], width: number, theme: Theme, title = "", ri
 	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
 
 	const border = (text: string) => theme.fg("borderAccent", text);
+	const frame = frameGlyphs();
 	const contentWidth = popupContentWidth(width);
-	const blank = `${border("┃")}${" ".repeat(width - 2)}${border("┃")}`;
+	const blank = `${border(frame.v)}${" ".repeat(width - 2)}${border(frame.v)}`;
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(width - 2))}${border(frame.tr)}`;
 		const rightPlain = right ? ` ${right} ` : "";
 		const titleBudget = Math.max(1, width - 2 - visibleWidth(rightPlain) - 1);
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} `;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), glyphs().ellipsis)} `;
 		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border("┓")}`;
+		return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border(frame.tr)}`;
 	};
 	const framed = [top()];
 
 	for (let i = 0; i < PADDING_Y; i += 1) framed.push(blank);
 	for (const line of lines) {
-		framed.push(`${border("┃")}${" ".repeat(PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PADDING_X)}${border("┃")}`);
+		framed.push(`${border(frame.v)}${" ".repeat(PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PADDING_X)}${border(frame.v)}`);
 	}
 	for (let i = 0; i < PADDING_Y; i += 1) framed.push(blank);
-	framed.push(`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`);
+	framed.push(`${border(frame.bl)}${border(frame.h.repeat(width - 2))}${border(frame.br)}`);
 	return framed.map((line) => truncateToWidth(line, width, ""));
 }
 
@@ -405,7 +407,7 @@ function wrapPlain(text: string, width: number, maxLines = 3): string[] {
 	}
 	if (current && lines.length < maxLines) lines.push(current);
 	if (lines.length === maxLines && words.join(" ").length > lines.join(" ").length) {
-		lines[maxLines - 1] = truncateToWidth(`${lines[maxLines - 1]}…`, width, "");
+		lines[maxLines - 1] = truncateToWidth(`${lines[maxLines - 1]}${glyphs().ellipsis}`, width, "");
 	}
 	return lines.length > 0 ? lines : [""];
 }
@@ -428,18 +430,18 @@ function renderCompactAnswerLines(request: QuestionRequest | undefined, answers:
 		const tab = request?.questions[index];
 		const labelText = tab?.header ?? `Q${index + 1}`;
 		const answerText = formatAnswers(answers[index]);
-		const label = `  ${theme.fg("muted", "•")} ${theme.fg("accent", `${labelText}: `)}`;
+		const label = `  ${theme.fg("muted", glyphs().bullet.trim())} ${theme.fg("accent", `${labelText}: `)}`;
 		lines.push(...wrapStyled(label, theme.fg("text", answerText), width));
 	}
 	return lines;
 }
 
 function answerBranch(theme: Theme, last: boolean): string {
-	return theme.fg("muted", last ? "  └─ " : "  ├─ ");
+	return theme.fg("muted", `  ${treeGlyph(last ? "└" : "├")}`);
 }
 
 function answerStem(theme: Theme, last: boolean): string {
-	return theme.fg("muted", last ? "     " : "  │  ");
+	return theme.fg("muted", last ? "     " : `  ${treeGlyph("│")}`);
 }
 
 function optionIcon(selected: boolean, theme: Theme): string {
@@ -900,7 +902,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 				const lines = [panelLine(theme.fg("text", "Review answers, then press enter to submit."), width), panelLine("", width)];
 				for (const [index, question] of request.questions.entries()) {
 					const answerText = formatAnswers(currentAnswers[index]);
-					const label = `  ${theme.fg("muted", "•")} ${theme.fg("accent", `${question.header}: `)}`;
+					const label = `  ${theme.fg("muted", glyphs().bullet.trim())} ${theme.fg("accent", `${question.header}: `)}`;
 					lines.push(...wrapStyled(label, theme.fg("text", answerText), width, 4).map((line) => panelLine(line, width)));
 				}
 				return lines;
@@ -1113,9 +1115,9 @@ export default function questions(pi: ExtensionAPI): void {
 					catch { return undefined; }
 				})();
 				const title = request?.header ?? "Question";
-				const prefix = details && "answers" in details ? theme.fg("success", "● ") : theme.fg("warning", "● ");
+				const prefix = details && "answers" in details ? theme.fg("success", glyphs().bullet) : theme.fg("warning", glyphs().bullet);
 				const state = details && "answers" in details ? theme.fg("success", "answered") : theme.fg("warning", "cancelled");
-				const expandHint = details && "answers" in details && !options?.expanded ? theme.fg("dim", " · ctrl+o to expand") : "";
+				const expandHint = details && "answers" in details && !options?.expanded ? theme.fg("dim", `${glyphs().dot}ctrl+o to expand`) : "";
 				const head = `${prefix}${theme.fg("toolTitle", theme.bold("Question"))} ${state}${title ? ` ${theme.fg("muted", "—")} ${theme.fg("text", title)}` : ""}${expandHint}`;
 				if (!details || !("answers" in details)) return [head];
 

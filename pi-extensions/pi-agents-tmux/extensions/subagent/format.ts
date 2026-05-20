@@ -5,6 +5,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { discoverAgents, type AgentConfig } from "./agents.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 import { subagentTreeStyle } from "./settings.js";
 import {
 	AGENT_ASCII_COLOR_SEQUENCE,
@@ -213,15 +214,17 @@ export function simpleFrame(lines: string[], width: number, theme: Theme, title 
 	const border = (text: string) => theme.fg("borderAccent", text);
 	const innerWidth = Math.max(1, width - 4);
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, width - 4), "…")} `;
+		const frame = frameGlyphs();
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(width - 2))}${border(frame.tr)}`;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, width - 4), glyphs().ellipsis)} `;
 		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${border("┓")}`;
+		return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${border(frame.tr)}`;
 	};
+	const frame = frameGlyphs();
 	return [
 		top(),
-		...lines.map((line) => `${border("┃")} ${padAnsi(truncateToWidth(line, innerWidth, ""), innerWidth)} ${border("┃")}`),
-		`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`,
+		...lines.map((line) => `${border(frame.v)} ${padAnsi(truncateToWidth(line, innerWidth, ""), innerWidth)} ${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(width - 2))}${border(frame.br)}`,
 	].map((line) => truncateToWidth(line, width, ""));
 }
 
@@ -234,7 +237,7 @@ export function inactivePill(theme: Theme, label: string): string {
 }
 
 export function divider(width: number, theme: Theme): string {
-	return theme.fg("borderMuted", "─".repeat(Math.max(1, width)));
+	return theme.fg("borderMuted", glyphs().line.repeat(Math.max(1, width)));
 }
 
 export async function parseTranscriptUsage(transcriptPath: string | undefined): Promise<{ usage: UsageStats; model?: string } | undefined> {
@@ -640,7 +643,7 @@ export function formatToolCall(
 }
 
 export function toolChromeRule(theme: Theme, width: number): string {
-	const rule = "─".repeat(Math.max(1, width));
+	const rule = glyphs().line.repeat(Math.max(1, width));
 	for (const token of ["borderMuted", "muted", "dim"] as const) {
 		try {
 			const styled = theme.fg(token, rule);
@@ -693,7 +696,8 @@ export function framedMessage(content: string, theme: Theme): Component {
 }
 
 export function sectionHeading(theme: Theme, label: string): string {
-	return `${theme.fg("muted", "─── ")}${theme.fg("toolTitle", theme.bold(label))}${theme.fg("muted", " ───")}`;
+	const rule = glyphs().line.repeat(3);
+	return `${theme.fg("muted", `${rule} `)}${theme.fg("toolTitle", theme.bold(label))}${theme.fg("muted", ` ${rule}`)}`;
 }
 
 export function addSectionHeading(container: Container, theme: Theme, label: string): void {
@@ -712,7 +716,7 @@ export function addArtifactPathSection(container: Container, theme: Theme, label
 }
 
 export function agentsCommandBullet(theme: Theme): string {
-	return theme.fg("accent", "● ");
+	return theme.fg("accent", glyphs().bullet);
 }
 
 export function agentWord(theme: Theme): string {

@@ -57,6 +57,8 @@ Open `/extensions:settings`; settings appear under the **Skills Manager** tab.
 | Popup max height | Number of rows or percentage. |
 | Visible list rows | Maximum rows shown before scrolling; short terminals shrink this so controls remain visible. |
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ## Notes
 
 Native `/skill:<name>` registration is controlled by Pi's `enableSkillCommands` setting (`/settings` → **Skill commands**). This manager doesn't change it.

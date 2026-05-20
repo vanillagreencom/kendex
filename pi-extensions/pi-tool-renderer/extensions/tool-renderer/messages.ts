@@ -17,6 +17,7 @@ import {
 	wrapTextWithAnsi,
 } from "./ansi.js";
 import { settingBoolean } from "./settings.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 import { FALLBACK_THEME, stackPrefix, toolLabel, treeConnector } from "./theme.js";
 import { makeTruncatedLines } from "./text.js";
 
@@ -71,7 +72,7 @@ function applyPromptZoneMarkers(lines: string[], markers: PromptZoneMarkers): st
 	return marked;
 }
 
-function renderUserMessageBorder(lines: string[], width: number, theme: any): string[] {
+function renderUserMessageBorder(lines: string[], width: number, theme: any, cwd?: string): string[] {
 	if (lines.length === 0 || width < 4) return lines;
 	// Pi wraps user messages with OSC 133 prompt-zone markers. With compact
 	// padding, a single-line message can carry start/end/final markers on the
@@ -80,13 +81,15 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any): st
 	// framed card so the terminal sees one stable prompt zone.
 	const unwrapped = stripPromptZoneMarkers(lines);
 	const innerWidth = Math.max(1, width - 2);
+	const frame = frameGlyphs(cwd);
+	const prompt = glyphs(cwd).prompt;
 	const border = (text: string) => ansiGreen(text);
 	const marker = (text: string) => ansiRed(text);
 	const topBorder = () => {
-		if (innerWidth < 5) return border("━".repeat(innerWidth));
-		const left = "━ ";
-		const right = ` ${"━".repeat(Math.max(0, innerWidth - visibleWidth(left) - 2))}`;
-		return `${border(left)}${marker("π")}${border(right)}`;
+		if (innerWidth < 5) return border(frame.h.repeat(innerWidth));
+		const left = `${frame.h} `;
+		const right = ` ${frame.h.repeat(Math.max(0, innerWidth - visibleWidth(left) - visibleWidth(prompt) - 1))}`;
+		return `${border(left)}${marker(prompt)}${border(right)}`;
 	};
 	const fitLine = (line: string) => {
 		const clipped = truncateAnsi(line, innerWidth);
@@ -94,9 +97,9 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any): st
 	};
 
 	return applyPromptZoneMarkers([
-		`${border("┏")}${topBorder()}${border("┓")}`,
-		...unwrapped.lines.map((line) => `${border("┃")}${fitLine(line)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(innerWidth))}${border("┛")}`,
+		`${border(frame.tl)}${topBorder()}${border(frame.tr)}`,
+		...unwrapped.lines.map((line) => `${border(frame.v)}${fitLine(line)}${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(innerWidth))}${border(frame.br)}`,
 	], unwrapped.markers);
 }
 
@@ -158,7 +161,7 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 					const theme = ctx.ui?.theme ?? FALLBACK_THEME;
 					const frameWidth = stableRenderWidth(width, cwd);
 					const lines = state!.originalRender.call(this, Math.max(1, frameWidth - 2));
-					return appendUserMessageBreak(renderUserMessageBorder(lines, frameWidth, theme), width, cwd);
+					return appendUserMessageBreak(renderUserMessageBorder(lines, frameWidth, theme, cwd), width, cwd);
 				}
 			}
 
@@ -426,7 +429,8 @@ function renderStyledCodeBlock(token: any, width: number, markdownTheme: any, ct
 		highlightedLines = code.split("\n").map((line: string) => (markdownTheme?.codeBlock ? markdownTheme.codeBlock(line) : line));
 	}
 
-	const strip = markdownTheme?.codeBlockBorder ? markdownTheme.codeBlockBorder("▌") : "▌";
+	const bar = glyphs(ctx?.cwd).codeBar;
+	const strip = markdownTheme?.codeBlockBorder ? markdownTheme.codeBlockBorder(bar) : bar;
 	const stripWidth = Math.max(1, visibleWidth(strip));
 	const bodyWidth = Math.max(1, panelWidth - stripWidth);
 	const codeWidth = Math.max(1, bodyWidth - 2);

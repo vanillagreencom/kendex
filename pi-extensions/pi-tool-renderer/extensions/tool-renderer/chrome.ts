@@ -22,6 +22,7 @@ import {
 	componentDefinesRenderer,
 } from "./generic.js";
 import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
+import { glyphs } from "./glyphs.js";
 import { subtleRule } from "./theme.js";
 
 const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-execution-renderer-patch.v2");
@@ -121,11 +122,11 @@ function prepareToolChromeTheme(theme: any, cwd?: string): void {
 let activeToolChromeCtx: ExtensionContext | undefined;
 
 function mutedHorizontalRule(theme: any, width: number, cwd?: string): string {
-	return subtleRule(theme, "─".repeat(stableRenderWidth(width, cwd)));
+	return subtleRule(theme, glyphs(cwd).line.repeat(stableRenderWidth(width, cwd)));
 }
 
 function shouldOmitBottomToolChromeRule(core: string[]): boolean {
-	return core.some((line) => /└─+(?:┴─+)?┘/.test(stripAnsi(line ?? "")));
+	return core.some((line) => /(?:└─+(?:┴─+)?┘|\+-+(?:\+-+)?\+)/.test(stripAnsi(line ?? "")));
 }
 
 export function installToolChromePatch(): void {
@@ -185,8 +186,9 @@ export function installWorkingIndicator(pi: ExtensionAPI): void {
 			ctx.ui.setWorkingIndicator({ frames: [] });
 			return;
 		}
+		const g = glyphs(ctx.cwd);
 		ctx.ui.setWorkingIndicator({
-			frames: [ctx.ui.theme.fg("dim", "·"), ctx.ui.theme.fg("muted", "•"), ctx.ui.theme.fg("accent", "●"), ctx.ui.theme.fg("muted", "•")],
+			frames: [ctx.ui.theme.fg("dim", g.dot.trim()), ctx.ui.theme.fg("muted", g.emptyBullet.trim()), ctx.ui.theme.fg("accent", g.bullet.trim()), ctx.ui.theme.fg("muted", g.emptyBullet.trim())],
 			intervalMs: 120,
 		});
 	});

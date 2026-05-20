@@ -53,6 +53,7 @@ import {
 import { headerChipForSnapshot, renderArchiveErrorBanner } from "./render-terminated.js";
 import { formatSessionTotals, formatStateBreakdown, issueDomain, renderSessionDetailLines, renderSessionLine, sessionLabel } from "./session-ui.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
+import { glyphs, glyphStyle } from "./glyphs.js";
 import {
 	createFlightdeckDashboardVisibility,
 	cycleFlightdeckDashboardVisibility,
@@ -254,15 +255,15 @@ export function renderAwaitingWatchHintLine(snapshot: FlightdeckSnapshot, theme:
 	const sessions = readAwaitingWatchTrackedEntries(snapshot);
 	const count = sessions.length;
 	const noun = count === 1 ? "session" : "sessions";
-	const line = `${daemon} ${theme.fg("dim", "·")} ${theme.fg("dim", `${count} tracked ${noun} — run /skill:flightdeck session watch to start supervising.`)}`;
-	return [truncateToWidth(line, Math.max(1, width), "…")];
+	const line = `${daemon} ${theme.fg("dim", glyphs().dot.trim())} ${theme.fg("dim", `${count} tracked ${noun} — run /skill:flightdeck session watch to start supervising.`)}`;
+	return [truncateToWidth(line, Math.max(1, width), glyphs().ellipsis)];
 }
 
 export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width: number, state: DashboardState, cwd: string, paneMap: Map<string, string>): string[] {
 	if (state === "hidden") return [];
 	const sessions = readTrackedEntries(snapshot.master);
 	const max = Math.max(1, Math.floor(settingNumber("dashboardMaxItems", 8, cwd)));
-	const treeStyle = (settingString("treeStyle", "unicode", cwd) === "ascii" ? "ascii" : "unicode") as TreeStyle;
+	const treeStyle = glyphStyle(cwd) as TreeStyle;
 	const terminated = !!snapshot.master?.terminated;
 	const headerRight = headerChipForSnapshot(snapshot, theme);
 	const queueLen = snapshot.master?.merge_queue?.length ?? 0;
@@ -293,7 +294,7 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 			lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(session, theme, stats, paneGone)}`);
 		}
 		const hidden = Math.max(0, sessions.length - visible.length);
-		if (hidden > 0) lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", `… ${hidden} more`)}`);
+		if (hidden > 0) lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", `${glyphs(cwd).ellipsis} ${hidden} more`)}`);
 		if (anyGone) {
 			lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("dim", "pane gone — run /flightdeck for full app context")}`);
 		}

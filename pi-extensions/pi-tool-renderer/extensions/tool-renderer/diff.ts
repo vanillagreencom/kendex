@@ -23,6 +23,7 @@ import {
 	settingBoolean,
 	settingNumber,
 } from "./settings.js";
+import { dot, glyphs } from "./glyphs.js";
 import { borderMuted, stackPrefix, toolLabel, treeConnector } from "./theme.js";
 import {
 	makeEmpty,
@@ -470,7 +471,7 @@ export function buildStructuredDiff(oldText: string, newText: string): Structure
 	return { additions, chars: oldText.length + newText.length, hunks: numbered.hunks, lines: numbered.lines, removals };
 }
 
-function diffStatBar(additions: number, removals: number, theme: any): string {
+function diffStatBar(additions: number, removals: number, theme: any, cwd?: string): string {
 	const total = additions + removals;
 	if (total <= 0) return "";
 	const slots = Math.max(6, Math.min(18, Math.ceil(total / 3)));
@@ -478,7 +479,8 @@ function diffStatBar(additions: number, removals: number, theme: any): string {
 	if (additions > 0 && addSlots === 0) addSlots = 1;
 	if (removals > 0 && addSlots === slots) addSlots = slots - 1;
 	const delSlots = slots - addSlots;
-	return `${theme.fg("dim", "[")}${theme.fg("toolDiffAdded", "━".repeat(addSlots))}${theme.fg("toolDiffRemoved", "━".repeat(delSlots))}${theme.fg("dim", "]")}`;
+	const bar = glyphs(cwd).line;
+	return `${theme.fg("dim", "[")}${theme.fg("toolDiffAdded", bar.repeat(addSlots))}${theme.fg("toolDiffRemoved", bar.repeat(delSlots))}${theme.fg("dim", "]")}`;
 }
 
 export function diffSummary(diff: StructuredDiff, theme: any, cwd?: string): string {
@@ -486,10 +488,10 @@ export function diffSummary(diff: StructuredDiff, theme: any, cwd?: string): str
 	if (diff.additions > 0) parts.push(theme.fg("success", `+${diff.additions}`));
 	if (diff.removals > 0) parts.push(theme.fg("error", `-${diff.removals}`));
 	if (parts.length === 0) return theme.fg("muted", "no changes");
-	const bar = diffStatBar(diff.additions, diff.removals, theme);
+	const bar = diffStatBar(diff.additions, diff.removals, theme, cwd);
 	const hunks = diff.hunks ?? countStructuredHunks(diff.lines);
 	let summary = `${parts.join(" ")}${bar ? ` ${bar}` : ""}`;
-	if (settingBoolean("showDiffHunkMeta", true, cwd) && hunks > 0) summary += theme.fg("dim", ` · ${hunks} hunk${hunks === 1 ? "" : "s"}`);
+	if (settingBoolean("showDiffHunkMeta", true, cwd) && hunks > 0) summary += theme.fg("dim", `${dot(cwd)}${hunks} hunk${hunks === 1 ? "" : "s"}`);
 	return summary;
 }
 
@@ -517,8 +519,13 @@ function lineWordRanges(line: StructuredDiffLine, mate: StructuredDiffLine | nul
 }
 
 function highlightedLineBody(line: StructuredDiffLine, theme: any, path: string | undefined, cwd?: string): string {
-	if (line.type === "sep") return line.content || " ";
+	if (line.type === "sep") return (line.content || " ").replaceAll("…", glyphs(cwd).ellipsis).replaceAll(" · ", glyphs(cwd).dot);
 	return highlightDiffContent(line.content, path, theme, cwd) || " ";
+}
+
+function diffFrame(cwd?: string): { bl: string; br: string; h: string; joint: string; tl: string; tm: string; tr: string; v: string } {
+	if (glyphs(cwd).line === "-") return { bl: "+", br: "+", h: "-", joint: "+", tl: "+", tm: "+", tr: "+", v: "|" };
+	return { bl: "└", br: "┘", h: "─", joint: "┴", tl: "┌", tm: "┬", tr: "┐", v: "│" };
 }
 
 function renderUnifiedLine(
@@ -542,12 +549,13 @@ function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wid
 	const tableWidth = Math.max(40, width);
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	const leftBorder = borderMuted(theme, "│");
-	const rightBorder = borderMuted(theme, "│");
+	const frame = diffFrame(cwd);
+	const leftBorder = borderMuted(theme, frame.v);
+	const rightBorder = borderMuted(theme, frame.v);
 	const cellWidth = Math.max(1, tableWidth - visibleLength(leftBorder) - visibleLength(rightBorder));
 	const contentWidth = Math.max(1, cellWidth - 2);
-	const ruleSegment = borderMuted(theme, "─".repeat(Math.max(1, cellWidth)));
-	const out: string[] = [`${borderMuted(theme, "┌")}${ruleSegment}${borderMuted(theme, "┐")}`];
+	const ruleSegment = borderMuted(theme, frame.h.repeat(Math.max(1, cellWidth)));
+	const out: string[] = [`${borderMuted(theme, frame.tl)}${ruleSegment}${borderMuted(theme, frame.tr)}`];
 	const pushLine = (line: StructuredDiffLine, renderedLine: string) => {
 		const cell = ` ${padVisible(renderedLine, contentWidth)} `;
 		const bgToken = diffLineBgToken(line);
@@ -573,7 +581,7 @@ function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wid
 			if (add) pushLine(add, renderUnifiedLine(add, contentWidth, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(add, del ?? null, cwd)));
 		}
 	}
-	out.push(`${borderMuted(theme, "└")}${ruleSegment}${borderMuted(theme, "┘")}`);
+	out.push(`${borderMuted(theme, frame.bl)}${ruleSegment}${borderMuted(theme, frame.br)}`);
 	return out;
 }
 
@@ -657,15 +665,16 @@ function renderSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width
 	const tableWidth = Math.max(DIFF_SPLIT_MIN_WIDTH, width);
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	const leftBorder = borderMuted(theme, "│");
-	const divider = borderMuted(theme, "│");
-	const rightBorder = borderMuted(theme, "│");
+	const frame = diffFrame(cwd);
+	const leftBorder = borderMuted(theme, frame.v);
+	const divider = borderMuted(theme, frame.v);
+	const rightBorder = borderMuted(theme, frame.v);
 	const innerWidth = Math.max(2, tableWidth - visibleLength(leftBorder) - visibleLength(divider) - visibleLength(rightBorder));
 	const leftCellWidth = Math.max(1, Math.floor(innerWidth / 2));
 	const rightCellWidth = Math.max(1, innerWidth - leftCellWidth);
-	const ruleSegment = (width: number) => borderMuted(theme, "─".repeat(Math.max(1, width)));
-	const topRule = `${borderMuted(theme, "┌")}${ruleSegment(leftCellWidth)}${borderMuted(theme, "┬")}${ruleSegment(rightCellWidth)}${borderMuted(theme, "┐")}`;
-	const bottomRule = `${borderMuted(theme, "└")}${ruleSegment(leftCellWidth)}${borderMuted(theme, "┴")}${ruleSegment(rightCellWidth)}${borderMuted(theme, "┘")}`;
+	const ruleSegment = (width: number) => borderMuted(theme, frame.h.repeat(Math.max(1, width)));
+	const topRule = `${borderMuted(theme, frame.tl)}${ruleSegment(leftCellWidth)}${borderMuted(theme, frame.tm)}${ruleSegment(rightCellWidth)}${borderMuted(theme, frame.tr)}`;
+	const bottomRule = `${borderMuted(theme, frame.bl)}${ruleSegment(leftCellWidth)}${borderMuted(theme, frame.joint)}${ruleSegment(rightCellWidth)}${borderMuted(theme, frame.br)}`;
 	const out = [topRule];
 	for (const pair of pairDiffRows(rows)) {
 		const leftRanges = pair.left && pair.right ? lineWordRanges(pair.left, pair.right, cwd) : [];
@@ -682,22 +691,24 @@ function configuredDiffRowLimit(expanded: boolean, cwd?: string): number | null 
 	return expanded && configuredLimit <= 0 ? null : Math.max(4, configuredLimit);
 }
 
-function collapsedDiffHint(remainingLines: number, hiddenHunks: number, expanded: boolean, shown: number, total: number, width = terminalWidth()): string {
+
+function collapsedDiffHint(remainingLines: number, hiddenHunks: number, expanded: boolean, shown: number, total: number, width = terminalWidth(), cwd?: string): string {
+	const g = glyphs(cwd);
 	const candidates = expanded
 		? [
-			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · UI cap ${shown}/${total}`,
-			`… ${remainingLines} more lines${hiddenHunks > 0 ? ` · ${hiddenHunks} hunks` : ""}`,
-			`… +${remainingLines}${hiddenHunks > 0 ? ` · +${hiddenHunks}h` : ""}`,
-			"…",
+			`${g.ellipsis} ${remainingLines} more diff lines${hiddenHunks > 0 ? `${g.dot}${hiddenHunks} more hunks` : ""}${g.dot}UI cap ${shown}/${total}`,
+			`${g.ellipsis} ${remainingLines} more lines${hiddenHunks > 0 ? `${g.dot}${hiddenHunks} hunks` : ""}`,
+			`${g.ellipsis} +${remainingLines}${hiddenHunks > 0 ? `${g.dot}+${hiddenHunks}h` : ""}`,
+			g.ellipsis,
 		]
 		: [
-			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · ctrl+o to expand`,
-			`… ${remainingLines} more lines${hiddenHunks > 0 ? ` · ${hiddenHunks} hunks` : ""}`,
-			`… +${remainingLines}${hiddenHunks > 0 ? ` · +${hiddenHunks}h` : ""}`,
-			"…",
+			`${g.ellipsis} ${remainingLines} more diff lines${hiddenHunks > 0 ? `${g.dot}${hiddenHunks} more hunks` : ""}${g.dot}ctrl+o to expand`,
+			`${g.ellipsis} ${remainingLines} more lines${hiddenHunks > 0 ? `${g.dot}${hiddenHunks} hunks` : ""}`,
+			`${g.ellipsis} +${remainingLines}${hiddenHunks > 0 ? `${g.dot}+${hiddenHunks}h` : ""}`,
+			g.ellipsis,
 		];
 	for (const candidate of candidates) if (visibleWidth(candidate) <= width) return candidate;
-	return "…";
+	return g.ellipsis;
 }
 
 export function renderStructuredDiff(diff: StructuredDiff, theme: any, expanded: boolean, cwd?: string, rowLimit?: number | null, path?: string, widthOffset = 0): string {
@@ -709,7 +720,7 @@ export function renderStructuredDiff(diff: StructuredDiff, theme: any, expanded:
 	const useSplit = settingBoolean("splitDiffs", true, cwd) && shouldUseSplitDiff(diff, rows, width);
 	const rendered = useSplit ? renderSplitDiff(diff, rows, width, theme, path ?? diff.path, cwd) : renderUnifiedDiff(diff, rows, width, theme, path ?? diff.path, cwd);
 	const remaining = diff.lines.length - rows.length;
-	if (remaining > 0) rendered.push(theme.fg("dim", collapsedDiffHint(remaining, hiddenHunksAfter(diff.lines, rows), expanded, rows.length, diff.lines.length, width)));
+	if (remaining > 0) rendered.push(theme.fg("dim", collapsedDiffHint(remaining, hiddenHunksAfter(diff.lines, rows), expanded, rows.length, diff.lines.length, width, cwd)));
 	return rendered.join("\n");
 }
 

@@ -10,6 +10,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 type ThemeColor = Parameters<Theme["fg"]>[0];
 
 import type { TrackedState } from "./state.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 
 export const ANSI_YELLOW_FG = "\x1b[33m";
 export const ANSI_RED_FG = "\x1b[31m";
@@ -45,7 +46,7 @@ export function wrapLine(line: string, width: number): string[] {
 }
 
 export function divider(width: number, theme: Theme): string {
-	return theme.fg("dim", "─".repeat(Math.max(1, width)));
+	return theme.fg("dim", glyphs().line.repeat(Math.max(1, width)));
 }
 
 export function frameContentWidth(width: number): number {
@@ -66,16 +67,17 @@ export function framePanel(lines: string[], width: number, theme: Theme, color: 
 	const inner = Math.max(1, safeWidth - 2);
 	const contentWidth = panelFrameContentWidth(safeWidth);
 	const border = (text: string): string => theme.fg(color, text);
+	const frame = frameGlyphs();
 	const top = (): string => {
-		if (!title) return `${border("┏")}${border("━".repeat(inner))}${border("┓")}`;
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, inner - 2), "…")} `;
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(inner))}${border(frame.tr)}`;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, inner - 2), glyphs().ellipsis)} `;
 		const fill = Math.max(1, inner - visibleWidth(titlePlain));
-		return `${border("┏")}${theme.fg(color, titlePlain)}${border("━".repeat(fill))}${border("┓")}`;
+		return `${border(frame.tl)}${theme.fg(color, titlePlain)}${border(frame.h.repeat(fill))}${border(frame.tr)}`;
 	};
 	return [
 		top(),
-		...lines.map((line) => `${border("┃")}${" ".repeat(PANEL_CARD_PADDING_X)}${pad(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(inner))}${border("┛")}`,
+		...lines.map((line) => `${border(frame.v)}${" ".repeat(PANEL_CARD_PADDING_X)}${pad(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(inner))}${border(frame.br)}`,
 	].map((line) => truncateToWidth(line, safeWidth, ""));
 }
 
@@ -118,17 +120,17 @@ export function stateColor(state: TrackedState | string | undefined | null): "su
 
 export function stateGlyph(state: TrackedState | string | undefined | null): string {
 	switch (state) {
-		case "complete": return "✓";
-		case "merged": return "✓";
-		case "ready": return "●";
-		case "merge-ready": return "▲";
-		case "submitting": return "◆";
+		case "complete": return glyphs().ok;
+		case "merged": return glyphs().ok;
+		case "ready": return glyphs().bullet.trim();
+		case "merge-ready": return glyphs().warn;
+		case "submitting": return glyphs().diamond;
 		case "prompting": return "?";
 		case "waiting": return COG_GLYPH;
-		case "cancelled": return "✗";
-		case "aborted": return "✗";
-		case "dead": return "×";
-		default: return "·";
+		case "cancelled": return glyphs().fail;
+		case "aborted": return glyphs().fail;
+		case "dead": return glyphs().fail;
+		default: return glyphs().dot.trim();
 	}
 }
 
@@ -185,7 +187,7 @@ export function bool(theme: Theme, value: boolean | undefined, ok = "yes", bad =
 }
 
 export function dotIndicator(theme: Theme, alive: boolean): string {
-	return alive ? theme.fg("success", "●") : theme.fg("error", "●");
+	return alive ? theme.fg("success", glyphs().bullet.trim()) : theme.fg("error", glyphs().bullet.trim());
 }
 
 // Combined daemon health chip. Five visual states, matching the
@@ -207,12 +209,13 @@ export interface DaemonChipInput {
 
 export function daemonHealthChip(theme: Theme, input: DaemonChipInput): string {
 	const { alive, heartbeatAgeSec, everStarted } = input;
-	if (!alive && !everStarted) return `${theme.fg("dim", "●")} ${theme.fg("dim", "daemon standby")}`;
-	if (!alive) return `${theme.fg("error", "●")} ${theme.fg("error", "daemon dead")}`;
-	if (heartbeatAgeSec === undefined) return `${theme.fg("warning", "●")} ${theme.fg("warning", "daemon no-pulse")}`;
-	if (heartbeatAgeSec >= 120) return `${theme.fg("error", "●")} ${theme.fg("error", `daemon stale ${formatAgeShort(heartbeatAgeSec)}`)}`;
-	if (heartbeatAgeSec >= 30) return `${theme.fg("warning", "●")} ${theme.fg("warning", `daemon stale ${formatAgeShort(heartbeatAgeSec)}`)}`;
-	return `${theme.fg("success", "●")} ${theme.fg("dim", "daemon")}`;
+	const bullet = glyphs().bullet.trim();
+	if (!alive && !everStarted) return `${theme.fg("dim", bullet)} ${theme.fg("dim", "daemon standby")}`;
+	if (!alive) return `${theme.fg("error", bullet)} ${theme.fg("error", "daemon dead")}`;
+	if (heartbeatAgeSec === undefined) return `${theme.fg("warning", bullet)} ${theme.fg("warning", "daemon no-pulse")}`;
+	if (heartbeatAgeSec >= 120) return `${theme.fg("error", bullet)} ${theme.fg("error", `daemon stale ${formatAgeShort(heartbeatAgeSec)}`)}`;
+	if (heartbeatAgeSec >= 30) return `${theme.fg("warning", bullet)} ${theme.fg("warning", `daemon stale ${formatAgeShort(heartbeatAgeSec)}`)}`;
+	return `${theme.fg("success", bullet)} ${theme.fg("dim", "daemon")}`;
 }
 
 // Header chip rendered in place of `daemonHealthChip` when the master
@@ -220,7 +223,7 @@ export function daemonHealthChip(theme: Theme, input: DaemonChipInput): string {
 // `terminate.md § 5`; the alarming red "daemon dead" badge was the
 // previous (wrong) signal in the post-completion view (issue #17).
 export function sessionCompleteChip(theme: Theme): string {
-	return `${theme.fg("success", "✔")} ${theme.fg("success", "session complete")}`;
+	return `${theme.fg("success", glyphs().ok)} ${theme.fg("success", "session complete")}`;
 }
 
 function formatAgeShort(sec: number): string {

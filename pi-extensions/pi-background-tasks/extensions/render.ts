@@ -23,7 +23,8 @@ import {
 	taskDisplayName,
 } from "./format.js";
 import { latestSnapshot } from "./snapshot.js";
-import { readVstackConfig, settingEnum, settingNumber } from "./settings.js";
+import { frameGlyphs, glyphs, glyphStyle, treeGlyph } from "./glyphs.js";
+import { settingEnum, settingNumber } from "./settings.js";
 import type {
 	BackgroundTaskEventDetails,
 	BackgroundTaskSnapshot,
@@ -44,7 +45,7 @@ export function splitOutputLines(output: string): string[] {
 	const lines = text.split(/\r?\n/);
 	const maxLines = Math.max(20, Math.floor(settingNumber("dashboardOutputMaxLines", 800)));
 	if (lines.length <= maxLines) return lines;
-	return [`… ${lines.length - maxLines} older line(s) omitted from dashboard; use bg_task log or the Log file for full output`, ...lines.slice(-maxLines)];
+	return [`${glyphs().ellipsis} ${lines.length - maxLines} older line(s) omitted from dashboard; use bg_task log or the Log file for full output`, ...lines.slice(-maxLines)];
 }
 
 export function acquireVstackModalLock(): () => void {
@@ -69,27 +70,28 @@ export function frameDashboard(lines: string[], width: number, theme: Theme, tit
 	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
 
 	const border = (text: string) => theme.fg("borderAccent", text);
+	const frame = frameGlyphs();
 	const contentWidth = dashboardContentWidth(width);
-	const blank = `${border("┃")}${" ".repeat(width - 2)}${border("┃")}`;
+	const blank = `${border(frame.v)}${" ".repeat(width - 2)}${border(frame.v)}`;
 	const paddingTop = options.paddingTop ?? DASHBOARD_PADDING_Y;
 	const paddingBottom = options.paddingBottom ?? DASHBOARD_PADDING_Y;
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
+		if (!title) return `${border(frame.tl)}${border(frame.h.repeat(width - 2))}${border(frame.tr)}`;
 		const rightPlain = right ? ` ${right} ` : "";
 		const titleBudget = Math.max(1, width - 2 - visibleWidth(rightPlain) - 1);
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} `;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), glyphs().ellipsis)} `;
 		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border("┓")}`;
+		return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border(frame.tr)}`;
 	};
 	const framed = [top()];
 
 	for (let i = 0; i < paddingTop; i += 1) framed.push(blank);
 	for (const line of lines) {
 		const content = padAnsi(line, contentWidth);
-		framed.push(`${border("┃")}${" ".repeat(DASHBOARD_PADDING_X)}${content}${" ".repeat(DASHBOARD_PADDING_X)}${border("┃")}`);
+		framed.push(`${border(frame.v)}${" ".repeat(DASHBOARD_PADDING_X)}${content}${" ".repeat(DASHBOARD_PADDING_X)}${border(frame.v)}`);
 	}
 	for (let i = 0; i < paddingBottom; i += 1) framed.push(blank);
-	framed.push(`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`);
+	framed.push(`${border(frame.bl)}${border(frame.h.repeat(width - 2))}${border(frame.br)}`);
 	return framed.map((line) => truncateToWidth(line, width, ""));
 }
 
@@ -97,11 +99,12 @@ export function frameWidget(lines: string[], width: number, theme: Theme): strin
 	const safeWidth = Math.max(1, width);
 	if (safeWidth < 8) return lines.map((line) => truncateToWidth(line, safeWidth, ""));
 	const border = (text: string) => theme.fg("borderAccent", text);
+	const frame = frameGlyphs();
 	const contentWidth = Math.max(1, safeWidth - 2 - WIDGET_PADDING_X * 2);
 	return [
-		`${border("┏")}${border("━".repeat(safeWidth - 2))}${border("┓")}`,
-		...lines.map((line) => `${border("┃")}${" ".repeat(WIDGET_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(WIDGET_PADDING_X)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(safeWidth - 2))}${border("┛")}`,
+		`${border(frame.tl)}${border(frame.h.repeat(safeWidth - 2))}${border(frame.tr)}`,
+		...lines.map((line) => `${border(frame.v)}${" ".repeat(WIDGET_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(WIDGET_PADDING_X)}${border(frame.v)}`),
+		`${border(frame.bl)}${border(frame.h.repeat(safeWidth - 2))}${border(frame.br)}`,
 	].map((line) => truncateToWidth(line, safeWidth, ""));
 }
 
@@ -141,13 +144,7 @@ export function renderEmpty() {
 }
 
 function bgTreeGlyph(branch: TreeBranch, cwd?: string): string {
-	const style = readVstackConfig(cwd).treeStyle === "ascii" ? "ascii" : "unicode";
-	if (style === "ascii") {
-		if (branch === "│") return "|  ";
-		return branch === "└" ? "`-- " : "|-- ";
-	}
-	if (branch === "│") return "│  ";
-	return `${branch}─ `;
+	return treeGlyph(branch, cwd);
 }
 
 export function bgTree(theme: Theme, branch: TreeBranch = "├", cwd?: string): string {
@@ -166,10 +163,11 @@ function bgStatusColor(status: BackgroundTaskStatus): "success" | "error" | "war
 }
 
 export function bgStatusIcon(status: BackgroundTaskStatus, theme: Theme): string {
-	if (status === "running") return theme.fg("warning", "●");
-	if (status === "completed") return theme.fg("success", ICONS.check);
-	if (status === "failed" || status === "timed_out") return theme.fg("error", ICONS.times);
-	return theme.fg("muted", "■");
+	const g = glyphs();
+	if (status === "running") return theme.fg("warning", g.bullet.trim());
+	if (status === "completed") return theme.fg("success", glyphStyle() === "ascii" ? g.ok : ICONS.check);
+	if (status === "failed" || status === "timed_out") return theme.fg("error", glyphStyle() === "ascii" ? g.fail : ICONS.times);
+	return theme.fg("muted", glyphStyle() === "ascii" ? "-" : "■");
 }
 
 export function bgStatusText(task: Pick<BackgroundTaskSnapshot, "status" | "exitCode">, theme: Theme): string {
@@ -210,7 +208,7 @@ export function makeToolResult(text: string, details: Record<string, unknown> = 
 }
 
 function backgroundRule(theme: Theme, width: number): string {
-	const rule = "─".repeat(Math.max(1, width));
+	const rule = glyphs().line.repeat(Math.max(1, width));
 	for (const token of ["borderMuted", "muted", "dim"] as const) {
 		try {
 			const styled = theme.fg(token, rule);

@@ -45,9 +45,36 @@
           "requiresReload": true
         },
         {
+          "key": "globalGlyphStyleOverride",
+          "label": "Global glyph style override",
+          "description": "Force glyph style for vstack-owned Pi extension UI chrome only. inherit leaves each extension's local glyphStyle/treeStyle setting in control.",
+          "type": "enum",
+          "enumValues": [
+            "inherit",
+            "unicode",
+            "ascii"
+          ],
+          "default": "inherit",
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "glyphStyle",
+          "label": "Glyph style",
+          "description": "Glyphs for vstack-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
+          "type": "enum",
+          "enumValues": [
+            "unicode",
+            "ascii"
+          ],
+          "default": "unicode",
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
           "key": "treeStyle",
-          "label": "Tree connector style",
-          "description": "Connector glyphs for compact nested tool rows. Unicode is prettier; ASCII uses |--/`-- for maximum terminal compatibility.",
+          "label": "Legacy tree connector style",
+          "description": "Legacy fallback for tree connectors when glyphStyle is unset and pi-tool-renderer globalGlyphStyleOverride is inherit. Prefer Glyph style for all UI chrome.",
           "type": "enum",
           "enumValues": [
             "unicode",

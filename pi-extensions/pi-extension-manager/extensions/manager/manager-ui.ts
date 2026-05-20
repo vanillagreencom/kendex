@@ -5,6 +5,7 @@ import { filteredItems, packageExtensions } from "./filters.js";
 import { ansiGreen, ansiRed, ansiYellow, isPlainSearchInput, kindLabel, scopeFilterLabel } from "./format.js";
 import { applyUpdateMetadata, buildInventory, npmCandidatesFromInventory } from "./inventory.js";
 import { compactPath } from "./paths.js";
+import { glyphs } from "./glyphs.js";
 import {
 	countBy,
 	divider,
@@ -101,7 +102,7 @@ function renderDiagnosticsViewport(inventory: Inventory, ui: ManagerUiState, wid
 	const before = ui.diagnosticsScroll > 0 ? `↑ ${ui.diagnosticsScroll}` : "";
 	const afterCount = Math.max(0, all.length - ui.diagnosticsScroll - contentRows);
 	const after = afterCount > 0 ? `↓ ${afterCount}` : "";
-	return [...visible, theme.fg("dim", [before, after].filter(Boolean).join(" · "))];
+	return [...visible, theme.fg("dim", [before, after].filter(Boolean).join(glyphs().dot))];
 }
 
 function itemToggleHintLabel(item: InventoryItem | undefined): string | undefined {
@@ -113,9 +114,9 @@ function itemToggleHintLabel(item: InventoryItem | undefined): string | undefine
 }
 
 function stateToken(item: InventoryItem): string {
-	if (item.state === "active") return ansiGreen("●");
-	if (item.state === "broken") return ansiRed("×");
-	return ansiYellow("○");
+	if (item.state === "active") return ansiGreen(glyphs().bullet.trim());
+	if (item.state === "broken") return ansiRed(glyphs().fail);
+	return ansiYellow(glyphs().emptyBullet.trim());
 }
 
 function installSourceLabel(item: InventoryItem): string {
@@ -145,9 +146,9 @@ function renderList(items: InventoryItem[], ui: ManagerUiState, width: number, t
 		const scopeText = scopeFilterLabel(item.scope);
 		const meta = item.kind === "package"
 			? managerMutedForSelection(theme, ` ${scopeText}`, selected)
-			: managerMutedForSelection(theme, ` ${kindLabel(item.kind)} · ${scopeText}`, selected);
+			: managerMutedForSelection(theme, ` ${kindLabel(item.kind)}${glyphs().dot}${scopeText}`, selected);
 		const updateBadge = item.updateAvailable ? ` ${ansiRed("Update Needed")}` : "";
-		const row = truncateToWidth(`${marker}${stateIcon} ${name}${meta}${updateBadge}`, width, "…");
+		const row = truncateToWidth(`${marker}${stateIcon} ${name}${meta}${updateBadge}`, width, glyphs().ellipsis);
 		lines.push(selected ? managerSelectedLine(theme, row, width) : row);
 	}
 	const hidden = Math.max(0, items.length - (ui.scroll + listRows));

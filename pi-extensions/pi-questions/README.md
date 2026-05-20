@@ -83,6 +83,8 @@ Open `/extensions:settings`; settings appear under the **Questions** tab.
 | Default question header | Fallback title when a request has no header. |
 | Bridge replies enabled | Allow `pi-session-bridge` to answer/reject pending questions. |
 
+Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
 ## Bridge control
 
 Requires `pi-session-bridge`. From any shell:

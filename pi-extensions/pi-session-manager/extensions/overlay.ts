@@ -8,6 +8,7 @@ import { isNamed, sessionResumeTitle, sessionUserMessagesCache } from "./session
 import { settingNumber, settingScope, settingSort } from "./settings.js";
 import { ansiGreen, ansiRed, ansiYellow, centerAnsi, formatAge, oneLine, padAnsi, shortenPath } from "./text.js";
 import { buildSessionTree, flattenSessionTree, rowTreePrefix } from "./tree.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 import {
 	DEFAULT_ROWS,
 	DEFAULT_WIDTH,
@@ -522,6 +523,7 @@ class SessionManagerOverlay implements Focusable {
 		const warning = (s: string) => th.fg("warning", s);
 		const error = (s: string) => th.fg("error", s);
 		const success = (s: string) => th.fg("success", s);
+		const frame = frameGlyphs();
 
 		const fixed = (content = "", rowWidth = bodyWidth): string => {
 			const safe = content.replace(/[\r\n\t]+/g, " ");
@@ -531,14 +533,14 @@ class SessionManagerOverlay implements Focusable {
 		const top = (title: string, right = "") => {
 			const rightPlain = right ? ` ${right} ` : "";
 			const titleBudget = Math.max(1, frameInner - visibleWidth(rightPlain) - 1);
-			const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} `;
+			const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), glyphs().ellipsis)} `;
 			const fill = Math.max(1, frameInner - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-			return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${right ? dim(rightPlain) : ""}${border("┓")}`;
+			return `${border(frame.tl)}${ansiGreen(titlePlain)}${border(frame.h.repeat(fill))}${right ? dim(rightPlain) : ""}${border(frame.tr)}`;
 		};
-		const blank = () => border("┃") + " ".repeat(frameInner) + border("┃");
-		const row = (content = "") => border("┃") + " ".repeat(POPUP_PADDING_X) + fixed(content) + " ".repeat(POPUP_PADDING_X) + border("┃");
-		const filledRow = (content = "") => border("┃") + " ".repeat(POPUP_PADDING_X) + th.bg("toolPendingBg", fixed(content)) + " ".repeat(POPUP_PADDING_X) + border("┃");
-		const divider = () => row(muted("━".repeat(bodyWidth)));
+		const blank = () => border(frame.v) + " ".repeat(frameInner) + border(frame.v);
+		const row = (content = "") => border(frame.v) + " ".repeat(POPUP_PADDING_X) + fixed(content) + " ".repeat(POPUP_PADDING_X) + border(frame.v);
+		const filledRow = (content = "") => border(frame.v) + " ".repeat(POPUP_PADDING_X) + th.bg("toolPendingBg", fixed(content)) + " ".repeat(POPUP_PADDING_X) + border(frame.v);
+		const divider = () => row(muted(frame.h.repeat(bodyWidth)));
 		const lines: string[] = [];
 
 		lines.push(top("Session Manager", `${this.filtered.length}/${this.sessions.length} shown`));
@@ -552,7 +554,7 @@ class SessionManagerOverlay implements Focusable {
 			const targetRows = Math.max(10, this.maxPopupRows() - rowsBeforeConfirmBody - rowsAfterConfirmBody);
 			lines.push(...this.renderDeleteConfirmationRows(bodyWidth, targetRows, { row, dim, muted, accent, warning, error, border }));
 			for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
-			lines.push(border(`┗${"━".repeat(frameInner)}┛`));
+			lines.push(border(`${frame.bl}${frame.h.repeat(frameInner)}${frame.br}`));
 			return lines.map((line) => truncateToWidth(line, renderWidth, ""));
 		}
 
@@ -562,7 +564,7 @@ class SessionManagerOverlay implements Focusable {
 			const targetRows = Math.max(12, this.maxPopupRows() - rowsBeforeConfirmBody - rowsAfterConfirmBody);
 			lines.push(...this.renderModelConfirmationRows(bodyWidth, targetRows, { row, dim, muted, accent, warning }));
 			for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
-			lines.push(border(`┗${"━".repeat(frameInner)}┛`));
+			lines.push(border(`${frame.bl}${frame.h.repeat(frameInner)}${frame.br}`));
 			return lines.map((line) => truncateToWidth(line, renderWidth, ""));
 		}
 
@@ -572,7 +574,7 @@ class SessionManagerOverlay implements Focusable {
 
 		if (this.mode === "loading") {
 			const progress = this.loadingProgress ? ` ${this.loadingProgress.loaded}/${this.loadingProgress.total}` : "";
-			lines.push(row(dim(`Loading sessions${progress}…`)));
+			lines.push(row(dim(`Loading sessions${progress}${glyphs().ellipsis}`)));
 			for (let i = 1; i < this.visibleRows; i++) lines.push(row(""));
 		} else {
 			lines.push(...this.renderListRows(bodyWidth, { row, fixed, dim, muted, accent, warning, error }));
@@ -583,7 +585,7 @@ class SessionManagerOverlay implements Focusable {
 		lines.push(row(""));
 		for (const footerLine of this.renderFooter(bodyWidth, dim, warning, error)) lines.push(row(footerLine));
 		for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
-		lines.push(border(`┗${"━".repeat(frameInner)}┛`));
+		lines.push(border(`${frame.bl}${frame.h.repeat(frameInner)}${frame.br}`));
 		return lines.map((line) => truncateToWidth(line, renderWidth, ""));
 	}
 

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
 import { Box, Container, getCapabilities, getImageDimensions, Image, Spacer, Text } from "@earendil-works/pi-tui";
@@ -1476,14 +1477,14 @@ function renderImageGenerationMessage(savedImage: SavedGeneratedImage | undefine
 	const dimensions = preview?.widthPx && preview?.heightPx ? `${preview.widthPx}x${preview.heightPx}` : undefined;
 	const size = formatImageBytes(preview?.bytes);
 	const imageModel = savedImage?.imageModel ? `model ${savedImage.imageModel}` : undefined;
-	const meta = [imageModel, type, dimensions, size].filter(Boolean).join(" · ");
-	const label = `${themeFg(theme, "accent", "● ")}${themeFg(theme, "text", themeBold(theme, "Image Generation "))}`;
+	const meta = [imageModel, type, dimensions, size].filter(Boolean).join(glyphs().dot);
+	const label = `${themeFg(theme, "accent", glyphs().bullet)}${themeFg(theme, "text", themeBold(theme, "Image Generation "))}`;
 	const pathText = savedImage?.relativePath ?? (typeof messageContent === "string" ? messageContent : "generated image");
-	const lines = [`${label}${themeFg(theme, "accent", pathText)}${meta ? themeFg(theme, "dim", ` · ${meta}`) : ""}`];
-	if (savedImage?.latestRelativePath) lines.push(`${themeFg(theme, "muted", "  ├─ ")}${themeFg(theme, "text", "Latest ")}${themeFg(theme, "accent", savedImage.latestRelativePath)}`);
-	if (options?.expanded && savedImage?.revisedPrompt) lines.push(`${themeFg(theme, "muted", "  ├─ ")}${themeFg(theme, "text", "Prompt ")}${themeFg(theme, "dim", savedImage.revisedPrompt)}`);
+	const lines = [`${label}${themeFg(theme, "accent", pathText)}${meta ? themeFg(theme, "dim", `${glyphs().dot}${meta}`) : ""}`];
+	if (savedImage?.latestRelativePath) lines.push(`${themeFg(theme, "muted", `  ${treeGlyph("├")}`)}${themeFg(theme, "text", "Latest ")}${themeFg(theme, "accent", savedImage.latestRelativePath)}`);
+	if (options?.expanded && savedImage?.revisedPrompt) lines.push(`${themeFg(theme, "muted", `  ${treeGlyph("├")}`)}${themeFg(theme, "text", "Prompt ")}${themeFg(theme, "dim", savedImage.revisedPrompt)}`);
 	const inline = shouldRenderInlineImage();
-	if (!inline.ok) lines.push(`${themeFg(theme, "muted", "  └─ ")}${themeFg(theme, "warning", inline.reason ?? "inline preview unavailable")}`);
+	if (!inline.ok) lines.push(`${themeFg(theme, "muted", `  ${treeGlyph("└")}`)}${themeFg(theme, "warning", inline.reason ?? "inline preview unavailable")}`);
 	container.addChild(new Text(lines.join("\n"), 0, 0));
 	if (savedImage && preview && inline.ok) {
 		container.addChild(new Spacer(1));

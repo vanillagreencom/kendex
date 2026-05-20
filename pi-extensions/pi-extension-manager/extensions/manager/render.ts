@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { ansiGreen } from "./format.js";
+import { frameGlyphs, glyphs } from "./glyphs.js";
 import { POPUP_PADDING_X, POPUP_PADDING_Y, type ManagerTab, type TopTab } from "./types.js";
 
 export function frameContentWidth(width: number): number {
@@ -8,7 +9,7 @@ export function frameContentWidth(width: number): number {
 }
 
 export function divider(width: number, theme: Theme): string {
-	return theme.fg("dim", "─".repeat(Math.max(1, width)));
+	return theme.fg("dim", glyphs().line.repeat(Math.max(1, width)));
 }
 
 export function pad(text: string, width: number): string {
@@ -47,18 +48,19 @@ export function frame(lines: string[], width: number, theme: Theme, fixedInnerRo
 		const hidden = body.length - fixedInnerRows + 1;
 		body = [...body.slice(0, Math.max(0, fixedInnerRows - 1)), theme.fg("dim", `↓ ${hidden} more line(s)`)].slice(0, fixedInnerRows);
 	}
-	const blank = `${border("┃")}${" ".repeat(inner)}${border("┃")}`;
+	const frameGlyph = frameGlyphs();
+	const blank = `${border(frameGlyph.v)}${" ".repeat(inner)}${border(frameGlyph.v)}`;
 	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(inner))}${border("┓")}`;
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, inner - 2), "…")} `;
+		if (!title) return `${border(frameGlyph.tl)}${border(frameGlyph.h.repeat(inner))}${border(frameGlyph.tr)}`;
+		const titlePlain = ` ${truncateToWidth(title, Math.max(1, inner - 2), glyphs().ellipsis)} `;
 		const fill = Math.max(1, inner - visibleWidth(titlePlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${border("┓")}`;
+		return `${border(frameGlyph.tl)}${ansiGreen(titlePlain)}${border(frameGlyph.h.repeat(fill))}${border(frameGlyph.tr)}`;
 	};
 	const out = [top()];
 	for (let i = 0; i < POPUP_PADDING_Y; i += 1) out.push(blank);
-	for (const line of body) out.push(`${border("┃")}${" ".repeat(POPUP_PADDING_X)}${pad(line, contentWidth)}${" ".repeat(POPUP_PADDING_X)}${border("┃")}`);
+	for (const line of body) out.push(`${border(frameGlyph.v)}${" ".repeat(POPUP_PADDING_X)}${pad(line, contentWidth)}${" ".repeat(POPUP_PADDING_X)}${border(frameGlyph.v)}`);
 	for (let i = 0; i < POPUP_PADDING_Y; i += 1) out.push(blank);
-	out.push(`${border("┗")}${border("━".repeat(inner))}${border("┛")}`);
+	out.push(`${border(frameGlyph.bl)}${border(frameGlyph.h.repeat(inner))}${border(frameGlyph.br)}`);
 	return out.map((line) => truncateToWidth(line, width, ""));
 }
 

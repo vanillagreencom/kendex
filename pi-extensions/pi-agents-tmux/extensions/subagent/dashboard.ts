@@ -32,6 +32,7 @@ import {
 	type SubagentDashboardState,
 	type UsageStats,
 } from "./types.js";
+import { glyphs, glyphStyle } from "./glyphs.js";
 
 export function dashboardKindLabel(kind: DashboardKind): string {
 	return kind === "oneshot" ? "bg" : kind;
@@ -77,20 +78,22 @@ export function sortDashboardItems(items: SubagentDashboardItem[]): SubagentDash
 const WORKING_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function workingSpinnerFrame(): string {
-	return WORKING_SPINNER_FRAMES[Math.floor(Date.now() / 120) % WORKING_SPINNER_FRAMES.length] ?? "•";
+	if (glyphStyle() === "ascii") return "*";
+	return WORKING_SPINNER_FRAMES[Math.floor(Date.now() / 120) % WORKING_SPINNER_FRAMES.length] ?? glyphs().emptyBullet.trim();
 }
 
 export function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme, options: { animateSpinners?: boolean } = {}): string {
 	const animateSpinners = options.animateSpinners ?? true;
-	if (status === "completed") return theme.fg("success", ICONS.check);
-	if (status === "failed") return theme.fg("error", ICONS.times);
-	if (status === "blocked") return theme.fg("error", ICONS.times);
-	if (status === "needs_completion") return theme.fg("warning", ICONS.warning);
+	const ascii = glyphStyle() === "ascii";
+	if (status === "completed") return theme.fg("success", ascii ? glyphs().ok : ICONS.check);
+	if (status === "failed") return theme.fg("error", ascii ? glyphs().fail : ICONS.times);
+	if (status === "blocked") return theme.fg("error", ascii ? glyphs().fail : ICONS.times);
+	if (status === "needs_completion") return theme.fg("warning", ascii ? glyphs().warn : ICONS.warning);
 	if (status === "running") return theme.fg("warning", animateSpinners ? workingSpinnerFrame() : ICONS.cog);
 	if (status === "waiting") return theme.fg("warning", ICONS.clock);
 	if (status === "queued") return theme.fg("warning", ICONS.clock);
-	if (status === "unknown") return theme.fg("warning", ICONS.warning);
-	return theme.fg("accent", ICONS.circleFilled);
+	if (status === "unknown") return theme.fg("warning", ascii ? glyphs().warn : ICONS.warning);
+	return theme.fg("accent", ascii ? glyphs().bullet.trim() : ICONS.circleFilled);
 }
 
 export function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): string {

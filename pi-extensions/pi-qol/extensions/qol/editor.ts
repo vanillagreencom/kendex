@@ -3,6 +3,7 @@ import { matchesKey, truncateToWidth, visibleWidth, type AutocompleteItem, type 
 import { stripAnsi } from "./ansi.js";
 import { readCavemanBridge } from "./bridges.js";
 import { STATUS_KEY } from "./constants.js";
+import { glyphs } from "./glyphs.js";
 import { statusText, styleImageChips } from "./images.js";
 import { newlineFallbackKey, settingBoolean } from "./settings.js";
 
@@ -145,9 +146,10 @@ export class QolCompactPromptEditor extends CustomEditor {
 
 	render(width: number): string[] {
 		syncQolEditorStatus(this.ctx, this.getText(), this.statusCache);
-		const prompt = this.borderColor("π");
+		const promptGlyph = glyphs(this.ctx.cwd).prompt;
+		const prompt = this.borderColor(promptGlyph);
 		const prefix = `${prompt} `;
-		const prefixWidth = visibleWidth("π ");
+		const prefixWidth = visibleWidth(`${promptGlyph} `);
 		const continuationPrefix = " ".repeat(prefixWidth);
 		const innerWidth = Math.max(1, width - prefixWidth);
 		const rendered = super.render(innerWidth);

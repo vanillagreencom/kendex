@@ -34,6 +34,19 @@
           "requiresReload": true
         },
         {
+          "key": "glyphStyle",
+          "label": "Glyph style",
+          "description": "Glyphs for vstack-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
+          "type": "enum",
+          "enumValues": [
+            "unicode",
+            "ascii"
+          ],
+          "default": "unicode",
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
           "key": "autoEnable",
           "label": "Auto-add tools to active set",
           "description": "When a supported OpenAI/Codex model is selected, add this package's enabled tools to the model's active tool list. Off = activate manually.",

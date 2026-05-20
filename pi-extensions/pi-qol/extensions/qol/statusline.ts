@@ -5,6 +5,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { subagentStatuslineMarker } from "./agent-statusline.js";
 import { stripAnsi } from "./ansi.js";
 import { readCavemanBridge } from "./bridges.js";
+import { glyphs } from "./glyphs.js";
 import { CAVEMAN_ICON_ACTIVE, CAVEMAN_ICON_INACTIVE } from "./constants.js";
 import { settingBoolean, settingNumber } from "./settings.js";
 
@@ -136,14 +137,14 @@ export function sessionNameHeader(width: number, pi: ExtensionAPI, theme: Pick<T
 	const prefixPlain = "Session ";
 	const prefix = theme.fg("muted", prefixPlain);
 	const innerWidth = Math.max(1, width - visibleWidth(prefixPlain) - 2);
-	const inner = truncateToWidth(name, innerWidth, "…");
+	const inner = truncateToWidth(name, innerWidth, glyphs().ellipsis);
 	const plain = ` ${inner} `;
 	const badge = theme.bg("selectedBg", theme.fg("text", plain));
 	return [truncateToWidth(`${prefix}${badge}`, width, "")];
 }
 
 export function formatTmuxSessionTitle(sessionName: string): string {
-	return `π ${sessionName}`;
+	return `${glyphs().prompt} ${sessionName}`;
 }
 
 export function tmuxPaneTarget(): string | undefined {
@@ -201,7 +202,7 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 	const cavemanSegment = caveman ? `${statusSeparator}${cavemanGlyph}` : "";
 	const contextSeparator = caveman ? ` ${statusSeparator}` : "";
 	const leftPlain = `${projectChunk}${statusSeparator}${thinkingChunk}${cavemanSegment}${contextSeparator}${contextChunk.trimStart()}`;
-	const percentPlain = percent === null ? "…%" : `${percent}%`;
+	const percentPlain = percent === null ? `${glyphs(ctx.cwd).ellipsis}%` : `${percent}%`;
 	const subagentMarker = subagentStatuslineMarker(ctx.cwd);
 	const rightPlain = subagentMarker ? `${percentPlain} ${subagentMarker.plain}` : percentPlain;
 	const percentColor = percent === null ? "muted" : percent <= 15 ? "error" : percent <= 30 ? "warning" : "success";
@@ -214,6 +215,6 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 	const gapWidth = Math.max(minimumGap, width - visibleWidth(leftPlain) - visibleWidth(rightPlain) - 2);
 	const filled = percent === null ? 0 : Math.round(gapWidth * (percent / 100));
 	const empty = Math.max(0, gapWidth - filled);
-	const bar = " ".repeat(empty) + theme.fg("warning", "─".repeat(filled));
+	const bar = " ".repeat(empty) + theme.fg("warning", glyphs(ctx.cwd).line.repeat(filled));
 	return truncateToWidth(`${leftColored} ${bar} ${right}`, width, "");
 }

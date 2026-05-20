@@ -8,6 +8,7 @@ import {
 	DEFAULT_PERMISSION_GATE_PREVIEW_LINES,
 } from "./constants.js";
 import { currentEditorText } from "./editor.js";
+import { glyphs } from "./glyphs.js";
 import { attachmentLabels } from "./images.js";
 import { permissionGateCommands } from "./permission-gate.js";
 import { autoRenameEnabled } from "./session-rename.js";
@@ -19,7 +20,7 @@ export function statusMessage(ctx: ExtensionContext): string {
 	const searchShortcut = sessionSearchShortcut(ctx.cwd);
 	return [
 		"Pi QOL status",
-		`Statusline: ${settingBoolean("replaceFooter", true, ctx.cwd) ? "replaces footer" : "footer preserved"}; prompt=${settingBoolean("compactPrompt", true, ctx.cwd) ? "π compact" : "default chrome"}`,
+		`Statusline: ${settingBoolean("replaceFooter", true, ctx.cwd) ? "replaces footer" : "footer preserved"}; prompt=${settingBoolean("compactPrompt", true, ctx.cwd) ? `${glyphs(ctx.cwd).prompt} compact` : "default chrome"}`,
 		`shift+enter newline: ${settingBoolean("newlineOnShiftEnter", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Fallback newline key: ${newlineFallbackKey(ctx.cwd)}`,
 		`Pending queue preview: ${settingBoolean("pendingQueue.asciiGreen", true, ctx.cwd) ? "ANSI green" : "Pi default"}`,
