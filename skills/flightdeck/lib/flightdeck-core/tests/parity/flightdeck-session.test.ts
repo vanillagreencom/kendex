@@ -54,6 +54,7 @@ function stateFile(repo: string): string {
 
 function run(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.HOME = join(repo, "home");
 	env.TMUX = "/tmp/tmux-test";
 	env.TMUX_SHIM_STATE = statePath;
 	env.TMUX_PARITY_SESSION = "test-session";
@@ -62,6 +63,20 @@ function run(repo: string, statePath: string, args: string[], extraEnv: Record<s
 	env.FLIGHTDECK_DASHBOARD = "0";
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
+	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+function runState(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.HOME = join(repo, "home");
+	env.TMUX = "/tmp/tmux-test";
+	env.TMUX_SHIM_STATE = statePath;
+	env.TMUX_PARITY_SESSION = "test-session";
+	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_DASHBOARD = "0";
+	Object.assign(env, extraEnv);
+	const r = spawnSync(resolve(HERE, "../../../../scripts/flightdeck-state"), args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
@@ -295,6 +310,144 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.status).toBe(2);
 			expect(r.stderr).toContain("--model <id>");
 			expect(r.stderr).toContain("--effort <level>|--thinking <level>");
+		});
+
+		test(`start after terminated same-tmux run creates a fresh durable run`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+
+			const first = run(repo, shim, [
+				"start",
+				"--session-id", "first-entry",
+				"--title", "First entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo first",
+			]);
+			expect(first.status).toBe(0);
+			const firstActive = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+			const firstRunId = firstActive.active.run_id;
+			expect(firstRunId).toMatch(/^run-/);
+
+			expect(runState(repo, shim, ["set", "terminated", "true"]).status).toBe(0);
+			expect(runState(repo, shim, ["set", "terminated_at", '"2026-05-19T00:00:00Z"']).status).toBe(0);
+			const archived = runState(repo, shim, ["archive"]);
+			expect(archived.status).toBe(0);
+			expect(archived.stdout.trim()).toContain("flightdeck-state-test-session-2026-05-19T000000Z.json.archive");
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
+
+			const second = run(repo, shim, [
+				"start",
+				"--session-id", "second-entry",
+				"--title", "Second entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo second",
+			]);
+			expect(second.status).toBe(0);
+			const secondActive = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+			expect(secondActive.active.run_id).toMatch(/^run-/);
+			expect(secondActive.active.run_id).not.toBe(firstRunId);
+
+			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(Object.keys(liveState.entries)).toEqual(["second-entry"]);
+			const firstRun = JSON.parse(runState(repo, shim, ["run", "show", firstRunId]).stdout);
+			expect(firstRun.metadata.terminated).toBe(true);
+			expect(firstRun.state.entries["first-entry"].id).toBe("first-entry");
+		});
+
+		test(`start archives stale compatibility state when recorded panes are gone`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { stale: { id: "stale", kind: "adhoc", pane_id: "%404", state: "waiting" } },
+				session_id: "test-session",
+				terminated: false,
+			}, null, 2));
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			]);
+			expect(started.status).toBe(0);
+			expect(started.stderr).toContain("archived stale state (no-live-panes)");
+			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(Object.keys(liveState.entries)).toEqual(["replacement-entry"]);
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json.archive"))).toBe(false);
+			expect(started.stderr).toContain("flightdeck-state-test-session-");
+		});
+
+		test(`start aborts stale archive when tmux liveness fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { maybe_live: { id: "maybe_live", kind: "adhoc", pane_id: "%maybe", state: "waiting" } },
+				session_id: "test-session",
+				terminated: false,
+			}, null, 2));
+			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
+			const stateBefore = readFileSync(stateFile(repo), "utf8");
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			], { TMUX_SHIM_FAIL_LIST_PANES_A: "1" });
+			expect(started.status).not.toBe(0);
+			expect(started.stderr).toContain("unable to verify live tmux panes before archiving stale Flightdeck state");
+			expect(started.stderr).toContain("shim: list-panes -a refused");
+			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
+			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+			const shown = JSON.parse(runState(repo, shim, ["run", "show", created.metadata.run_id]).stdout);
+			expect(shown.metadata.terminated).toBe(false);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout).active.run_id).toBe(created.metadata.run_id);
+			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
+		});
+
+		test(`start aborts when stale archive command fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { done: { id: "done", kind: "adhoc", pane_id: "%gone", state: "complete" } },
+				session_id: "test-session",
+				terminated: true,
+				terminated_at: "2026-05-20T00:00:00Z",
+			}, null, 2));
+			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
+			const activePath = join(repo, "home", ".vstack", "flightdeck", "projects", created.project.project_id, "active-run.json");
+			const activeBefore = readFileSync(activePath, "utf8");
+			const stateBefore = readFileSync(stateFile(repo), "utf8");
+			rmSync(created.paths.metadata_json, { force: true });
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "replacement-entry",
+				"--title", "Replacement entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo replacement",
+			]);
+			expect(started.status).not.toBe(0);
+			expect(started.stderr).toContain("failed to terminate active Flightdeck run before archive");
+			expect(started.stderr).toContain("flightdeck-state archive failed while archiving stale state");
+			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
+			expect(readFileSync(activePath, "utf8")).toBe(activeBefore);
+			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
 		});
 
 		test(`start --prompt launches Pi through a tempfile without ANSI-C shell quoting`, () => {

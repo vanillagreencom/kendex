@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -667,6 +667,30 @@ fi
 		expect(JSON.parse(activeAfter.stdout)).toBeNull();
 	});
 
+	test("run terminate rejects explicit summary-path without a non-empty value", () => {
+		const home = join(repo, "home-summary-usage");
+		const created = parseRunJson<{ metadata: { run_id: string } }>(
+			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
+		);
+
+		for (const args of [
+			["run", "terminate", created.metadata.run_id, "--project-root", repo, "--summary-path"],
+			["run", "terminate", created.metadata.run_id, "--project-root", repo, "--summary-path", ""],
+			["run", "terminate", created.metadata.run_id, "--project-root", repo, "--summary-path="],
+			["run", "terminate", created.metadata.run_id, "--project-root", repo, "--summary-path", "--tmux-session", SESSION],
+		]) {
+			const r = run(repo, args, { HOME: home });
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("Usage: --summary-path requires a non-empty value");
+		}
+
+		const activeAfter = parseRunJson<{ metadata: { terminated: boolean; run_id: string } }>(
+			run(repo, ["run", "active", "--project-root", repo], { HOME: home }),
+		);
+		expect(activeAfter.metadata.run_id).toBe(created.metadata.run_id);
+		expect(activeAfter.metadata.terminated).toBe(false);
+	});
+
 	test("run import-legacy copies archives without deleting legacy files", () => {
 		const home = join(repo, "home");
 		const stateDir = join(repo, "tmp");
@@ -880,6 +904,69 @@ fi
 		expect(existsSync(archived.activity_archive_path!)).toBe(true);
 		expect(readFileSync(archived.activity_archive_path!, "utf8")).toContain("session.started");
 		expect(existsSync(join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl.archived`))).toBe(true);
+	});
+
+	test("archive terminates active durable run after session.completed and preserves compatibility archive", () => {
+		const home = join(repo, "home-archive-durable");
+		run(repo, ["init"], { HOME: home });
+		const entry = { ...sampleTrackedEntry(), id: "archive-entry", kind: "adhoc", pane_id: "%77", state: "complete" };
+		run(repo, ["write-entry", entry.id, JSON.stringify(entry)], { HOME: home });
+		const summaryRel = "tmp/flightdeck-summary-PARITY-2026-05-20T000000Z.md";
+		writeFileSync(join(repo, summaryRel), "# Durable archive summary\n", "utf8");
+		run(repo, ["set", "summary_path", JSON.stringify(summaryRel)], { HOME: home });
+		run(repo, ["activity", "append", JSON.stringify({ natural_key: "archive-entry:done", source: "flightdeck", summary: "entry done", type: "entry.completed" })], { HOME: home });
+		const created = parseRunJson<{ metadata: { run_id: string }; paths: { activity_jsonl: string; snapshots_dir: string; summary_md: string } }>(
+			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
+		);
+		run(repo, ["set", "terminated", "true"], { HOME: home });
+		run(repo, ["set", "terminated_at", '"2026-05-20T00:00:00Z"'], { HOME: home });
+
+		const archiveEnv = { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home };
+		const archived = run(repo, ["archive"], archiveEnv);
+		expect(archived.status).toBe(0);
+		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout)).toBeNull();
+
+		const shown = parseRunJson<{ metadata: { summary_path: string | null; terminated: boolean }; snapshots: string[]; state: { entries: Record<string, unknown>; terminated: boolean } }>(
+			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(shown.metadata.terminated).toBe(true);
+		expect(shown.metadata.summary_path).toBe(created.paths.summary_md);
+		expect(readFileSync(created.paths.summary_md, "utf8")).toBe("# Durable archive summary\n");
+		expect(shown.state.terminated).toBe(true);
+		expect(shown.state.entries["archive-entry"]).toBeTruthy();
+
+		const activitySnapshot = readdirSync(created.paths.snapshots_dir).find((name) => name.endsWith(".activity.jsonl"));
+		expect(activitySnapshot).toBeTruthy();
+		const durableActivitySnapshot = readFileSync(join(created.paths.snapshots_dir, activitySnapshot!), "utf8");
+		expect(durableActivitySnapshot).toContain("entry.completed");
+		expect(durableActivitySnapshot).toContain("session.completed");
+		expect(readFileSync(created.paths.activity_jsonl, "utf8")).toContain("session.completed");
+
+		const compatibilityArchive = JSON.parse(readFileSync(archived.stdout.trim(), "utf8")) as { activity_archive_path?: string; entries?: Record<string, unknown> };
+		expect(compatibilityArchive.entries?.["archive-entry"]).toBeTruthy();
+		expect(compatibilityArchive.activity_archive_path).toMatch(/flightdeck-activity-PARITY-2026-05-20T000000Z\.jsonl\.archive$/);
+		expect(readFileSync(compatibilityArchive.activity_archive_path!, "utf8")).toContain("session.completed");
+	});
+
+	test("archive aborts before durable termination when required session.completed append fails", () => {
+		const home = join(repo, "home-archive-append-failure");
+		run(repo, ["init"], { HOME: home });
+		const created = parseRunJson<{ metadata: { run_id: string } }>(
+			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
+		);
+		const liveActivity = join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+		rmSync(liveActivity, { force: true });
+		mkdirSync(liveActivity, { recursive: true });
+
+		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home });
+		expect(archived.status).not.toBe(0);
+		expect(archived.stderr).toContain("failed to append session.completed before archive");
+		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout).active.run_id).toBe(created.metadata.run_id);
+		const shown = parseRunJson<{ metadata: { terminated: boolean } }>(
+			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(shown.metadata.terminated).toBe(false);
+		expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
 	});
 
 	test("activity append after archive reports archived without recreating live sidecar", () => {

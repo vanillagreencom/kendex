@@ -142,14 +142,16 @@ Flightdeck can create and inspect durable run records separately from the live t
 
 ```bash
 flightdeck-state run create --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
+flightdeck-state run ensure --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
 flightdeck-state run active --project-root "$PWD"
 flightdeck-state run list --project-root "$PWD" --json
 flightdeck-state run show <run-id> --project-root "$PWD"
 flightdeck-state run terminate <run-id> --project-root "$PWD"
+flightdeck-state run terminate-active --project-root "$PWD" --tmux-session <name>
 flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
 ```
 
-On this branch head, `run create` initializes a fresh durable run record and active pointer; `run terminate <run-id>` marks that run terminated, writes final snapshots, copies matching activity when present, and clears the active pointer only when it still references that run. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place. Lifecycle wrappers that create/reuse matching runs or terminate the active run by tmux session are PR #165/#166 follow-up work, not PR #167 behavior. Flightdeck does not delete durable runs or imported legacy archives by default; remove old `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/` directories only as an explicit manual retention decision.
+Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place. Flightdeck does not delete durable runs or imported legacy archives by default; remove old `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/` directories only as an explicit manual retention decision.
 
 ## High-level architecture
 

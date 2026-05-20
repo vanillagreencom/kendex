@@ -153,10 +153,11 @@ fn handle_snapshot_updated(
     }
     let had_error = model.error.is_some();
     model.error = None;
+    let cleared_write_confirmation = clear_write_confirmation_if_blocked(model, &source_state);
     if model.snapshot.structural_eq(&snapshot) && model.read_source_state == source_state {
         model.snapshot_diff_drops = model.snapshot_diff_drops.saturating_add(1);
         let mut commands = pending_reload;
-        if had_error {
+        if had_error || cleared_write_confirmation {
             commands.push(Cmd::Render);
         }
         return commands;
@@ -181,6 +182,19 @@ fn handle_snapshot_updated(
     }
     commands.extend(pending_reload);
     commands
+}
+
+fn clear_write_confirmation_if_blocked(model: &mut Model, source_state: &ReadSourceState) -> bool {
+    if !source_state.blocks_write_actions() {
+        return false;
+    }
+    let had_pending_write_modal =
+        model.confirm.is_some() || model.modal == ModalState::ConfirmAction;
+    model.confirm = None;
+    if model.modal == ModalState::ConfirmAction {
+        close_overlay(model);
+    }
+    had_pending_write_modal
 }
 
 fn handle_history_loaded(
@@ -321,6 +335,7 @@ fn apply_no_active_run_snapshot(model: &mut Model, mut loaded: NoActiveRunSnapsh
     model.snapshot_source = loaded.source;
     model.snapshot = loaded.snapshot;
     model.read_source_state = ReadSourceState::NoActiveRun;
+    clear_write_confirmation_if_blocked(model, &ReadSourceState::NoActiveRun);
     model.history.loading = false;
     model.history.error = None;
     model.error = None;
@@ -377,6 +392,8 @@ fn apply_loaded_run_snapshot(
     });
     model.snapshot = loaded.snapshot;
     model.read_source_state = source_state;
+    let blocked_source_state = model.read_source_state.clone();
+    clear_write_confirmation_if_blocked(model, &blocked_source_state);
     model.history.loading = false;
     model.history.error = None;
     model.error = None;
@@ -992,10 +1009,14 @@ fn prompt_focus_selected(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn prompt_prune(model: &mut Model, index: usize) -> Vec<Cmd> {
-    if model.read_source_state.is_read_only() {
+    if model.read_source_state.blocks_write_actions() {
         set_status(
             model,
-            "Archive view is read-only; return to active run before pruning",
+            write_blocked_message(
+                &model.read_source_state,
+                "Archive view is read-only; return to active run before pruning",
+                "No active Flightdeck run; start or return to an active run before pruning",
+            ),
             false,
         );
         return vec![Cmd::Render];
@@ -1038,10 +1059,14 @@ fn prompt_prune(model: &mut Model, index: usize) -> Vec<Cmd> {
 }
 
 fn prompt_focus(model: &mut Model, index: usize) -> Vec<Cmd> {
-    if model.read_source_state.is_read_only() {
+    if model.read_source_state.blocks_write_actions() {
         set_status(
             model,
-            "Archive view is read-only; return to active run before focusing panes",
+            write_blocked_message(
+                &model.read_source_state,
+                "Archive view is read-only; return to active run before focusing panes",
+                "No active Flightdeck run; start or return to an active run before focusing panes",
+            ),
             false,
         );
         return vec![Cmd::Render];
@@ -1079,14 +1104,34 @@ fn confirm_action(model: &mut Model) -> Vec<Cmd> {
         close_overlay(model);
         return vec![Cmd::Render];
     };
-    if model.read_source_state.is_read_only() {
+    if model.read_source_state.blocks_write_actions() {
         close_overlay(model);
-        set_status(model, "Archive view is read-only; action blocked", false);
+        set_status(
+            model,
+            write_blocked_message(
+                &model.read_source_state,
+                "Archive view is read-only; action blocked",
+                "No active Flightdeck run; action blocked",
+            ),
+            false,
+        );
         return vec![Cmd::Render];
     }
     model.modal = ModalState::None;
     model.ui.filter_open = false;
     vec![run_write_action(dialog.action), Cmd::Render]
+}
+
+fn write_blocked_message<'a>(
+    source_state: &ReadSourceState,
+    archive_message: &'a str,
+    no_active_message: &'a str,
+) -> &'a str {
+    if source_state.is_no_active() {
+        no_active_message
+    } else {
+        archive_message
+    }
 }
 
 fn run_write_action(action: WriteAction) -> Cmd {
@@ -1236,6 +1281,16 @@ fn load_active_live_snapshot(
                 actual_session.unwrap_or_else(|| String::from("unknown"))
             ),
         )),
+        run_history::ActiveRunLookup::Matched(metadata) if metadata.terminated => {
+            Ok(no_active_load(
+                resolution,
+                now,
+                format!(
+                    "Active run {} is terminated; press H for History",
+                    metadata.run_id
+                ),
+            ))
+        }
         run_history::ActiveRunLookup::Matched(metadata) => {
             let mut snapshot = match tracked_entries::read_session_snapshot(&resolution, now) {
                 Ok(snapshot) if !snapshot.terminated => snapshot,

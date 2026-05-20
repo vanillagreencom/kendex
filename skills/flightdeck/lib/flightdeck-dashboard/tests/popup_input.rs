@@ -4,9 +4,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use flightdeck_dashboard::actions::WriteAction;
 use flightdeck_dashboard::app::command::{Cmd, SnapshotSource};
 use flightdeck_dashboard::app::hitmap::{ClickAction, ScrollSource};
-use flightdeck_dashboard::app::model::{ModalState, ReadSourceState, Tab};
+use flightdeck_dashboard::app::model::{ConfirmDialog, ModalState, ReadSourceState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
 use flightdeck_dashboard::app::msg::{ActiveRunLoad, Msg, NoActiveRunSnapshot};
 use flightdeck_dashboard::app::theme::Theme;
@@ -305,6 +306,49 @@ fn read_only_archive_blocks_focus_and_prune() {
 }
 
 #[test]
+fn no_active_run_blocks_focus_and_prune() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.read_source_state = ReadSourceState::NoActiveRun;
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('g'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+    assert!(model
+        .status_message
+        .as_ref()
+        .is_some_and(|status| status.message.contains("No active Flightdeck run")));
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('D'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+}
+
+#[test]
+fn no_active_snapshot_update_clears_pending_write_confirmation() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::ConfirmAction;
+    model.confirm = Some(confirm_dialog());
+    let mut snapshot = DashboardSnapshot::empty_for_session(
+        "S",
+        PathBuf::from("/repo/demo/tmp/flightdeck-state-S.json"),
+        common::fixed_now(),
+    );
+    snapshot.project_root = PathBuf::from("/repo/demo");
+
+    update(
+        &mut model,
+        Msg::SnapshotUpdated {
+            snapshot: Box::new(snapshot),
+            source_state: ReadSourceState::NoActiveRun,
+        },
+    );
+
+    assert_eq!(model.read_source_state, ReadSourceState::NoActiveRun);
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+}
+
+#[test]
 fn active_run_no_active_result_clears_archive_snapshot_and_activity() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
@@ -534,6 +578,19 @@ fn history_run(run_id: &str, with_summary: bool) -> HistoryRun {
         snapshots: Vec::new(),
         snapshots_truncated: false,
         snapshot_warning: None,
+    }
+}
+
+fn confirm_dialog() -> ConfirmDialog {
+    ConfirmDialog {
+        title: String::from("Focus this session?"),
+        body: String::from("Switch tmux window"),
+        destructive: false,
+        primary_label: String::from("Focus"),
+        secondary_label: String::from("Cancel"),
+        action: WriteAction::FocusWindow {
+            pane_target: String::from("%1"),
+        },
     }
 }
 

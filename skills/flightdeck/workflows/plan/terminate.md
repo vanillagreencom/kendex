@@ -131,7 +131,7 @@ flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
 
-Do not remove plan entries before archive. Archive preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, dependencies, and worktree history for dashboard/post-mortem inspection.
+Do not remove plan entries before archive. `archive` emits completion activity before syncing the final state/activity and summary into the durable run, clears the active pointer, leaves the project-local archive for compatibility, and preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, dependencies, and worktree history for dashboard/post-mortem inspection.
 
 ---
 

@@ -72,8 +72,8 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 | Command | Arguments | Workflow / Script | Notes |
 |---------|-----------|-------------------|-------|
-| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates a new tmux window (never a split), launches command/harness, records a generic `.entries[ID]` row, records launch model/effort metadata, exports Flightdeck child env, and launches/verifies the Rust dashboard unless `FLIGHTDECK_DASHBOARD=0`. Prompt launches pass harness-aware model/effort argv. |
-| `session attach` | `--pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Attaches an existing pane by stable pane id, records supplied or unsupported launch metadata, and launches/verifies the dashboard unless disabled. Pi attach probes `pi-bridge` when available. |
+| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates/reuses the active durable run, creates a new tmux window (never a split), launches command/harness, records a generic `.entries[ID]` row, records launch model/effort metadata, exports Flightdeck child env, and launches/verifies the Rust dashboard unless `FLIGHTDECK_DASHBOARD=0`. Prompt launches pass harness-aware model/effort argv. |
+| `session attach` | `--pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Creates/reuses the active durable run, attaches an existing pane by stable pane id, records supplied or unsupported launch metadata, and launches/verifies the dashboard unless disabled. Pi attach probes `pi-bridge` when available. |
 | `session watch` | `[ENTRY_ID...]` | `workflows/shared/session-watch.md` | Generic daemon/poll/handler loop. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
 | `session prompt routing` | nested from `session watch` | `workflows/shared/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
 | `session status` | — | inline / `flightdeck-state tracked-entries` | Read-only normalized `.entries` snapshot. |
@@ -127,15 +127,17 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 ### Run storage helpers
 
-Durable run commands are read/write state helpers only. They do not start dashboard UI, spawn panes, or change lane lifecycle beyond active-pointer metadata.
+Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`.
 
 | Command | Arguments | Script | Notes |
 |---------|-----------|--------|-------|
 | `state run create` | `--project-root <path> --tmux-session <name> [--state-dir <dir>]` | `flightdeck-state run create` | Creates a durable run under `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/`, writes `metadata.json`, `state.json`, `activity.jsonl`, and sets `active-run.json`. Honors `FLIGHTDECK_STATE_DIR` / `.env.local` unless `--state-dir` is supplied. |
+| `state run ensure` | `--tmux-session <name> [--project-root <path>] [--state-dir <dir>]` | `flightdeck-state run ensure` | Lifecycle-safe start/attach helper: reuses a live active run only for the requested tmux session, creates one when absent, creates fresh after termination, finalizes stale active runs only when recorded pane ids are all absent, and fails closed on session mismatch, missing metadata, or tmux liveness failure. |
 | `state run active` | `[--project-root <path>]` | `flightdeck-state run active` | Prints the active pointer plus run metadata as JSON, or `null` if none exists. |
 | `state run list` | `[--project-root <path>] [--json]` | `flightdeck-state run list` | Lists known runs newest-first; use `--json` for machine output. |
 | `state run show` | `<run-id> [--snapshot <timestamp>] [--project-root <path>]` | `flightdeck-state run show` | Prints run metadata, state, activity path, and snapshot names as JSON. |
-| `state run terminate` | `<run-id> [--project-root <path>]` | `flightdeck-state run terminate` | Marks run metadata/state terminated, writes a final snapshot, and clears `active-run.json` when it points at that run. |
+| `state run terminate` | `<run-id> [--project-root <path>] [--summary-path <path>]` | `flightdeck-state run terminate` | Marks run metadata/state terminated, writes a final snapshot, copies project-local summary to run `summary.md` when available, and clears `active-run.json` when it points at that run. |
+| `state run terminate-active` | `--tmux-session <name> [--project-root <path>] [--summary-path <path>]` | `flightdeck-state run terminate-active` | Terminates only when both active pointer and run metadata belong to that tmux session; used by `flightdeck-state archive` before rotating legacy files. |
 | `state run import-legacy` | `[--project-root <path>] [--state-dir <dir>]` | `flightdeck-state run import-legacy` | Imports `flightdeck-state-*.json.archive` files into durable run storage without deleting legacy files. |
 
 ## Skill Rules

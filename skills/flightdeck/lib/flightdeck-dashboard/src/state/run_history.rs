@@ -215,6 +215,7 @@ pub fn load_active_run(
 ) -> Result<Option<LoadedRunSnapshot>, RunHistoryError> {
     match load_active_run_metadata(project_root, expected_session)? {
         ActiveRunLookup::None | ActiveRunLookup::Mismatched { .. } => Ok(None),
+        ActiveRunLookup::Matched(metadata) if metadata.terminated => Ok(None),
         ActiveRunLookup::Matched(metadata) => {
             load_run_snapshot(project_root, &metadata.run_id, None, now).map(Some)
         }

@@ -169,6 +169,10 @@ fn active_session_snapshot_for_lookup(
                 ReadSourceState::NoActiveRun,
             ))
         }
+        run_history::ActiveRunLookup::Matched(metadata) if metadata.terminated => Ok((
+            no_active_snapshot(resolution, now),
+            ReadSourceState::NoActiveRun,
+        )),
         run_history::ActiveRunLookup::Matched(metadata) => {
             let mut snapshot = match tracked_entries::read_session_snapshot(resolution, now) {
                 Ok(snapshot) if !snapshot.terminated => snapshot,
@@ -311,6 +315,25 @@ mod tests {
                 &ctx.resolution("S"),
                 fixed_now(),
                 ActiveRunLookup::Matched(run_metadata("run-1", "S")),
+            )
+            .expect("no-active snapshot");
+
+            assert_no_active_snapshot(snapshot, source_state, &ctx.project, "S");
+        });
+    }
+
+    #[test]
+    fn watched_session_reload_with_terminated_active_metadata_stays_no_active() {
+        with_reload_fixture(|ctx| {
+            write_live_state(&ctx.project, "S", false);
+            let mut metadata = run_metadata("run-1", "S");
+            metadata.terminated = true;
+            metadata.terminated_at = Some(fixed_now());
+
+            let (snapshot, source_state) = active_session_snapshot_for_lookup(
+                &ctx.resolution("S"),
+                fixed_now(),
+                ActiveRunLookup::Matched(metadata),
             )
             .expect("no-active snapshot");
 

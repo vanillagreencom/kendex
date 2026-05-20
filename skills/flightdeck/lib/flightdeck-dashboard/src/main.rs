@@ -31,7 +31,7 @@ use flightdeck_dashboard::state::snapshot::{
 use flightdeck_dashboard::state::tracked_entries::{self, SnapshotError};
 use flightdeck_dashboard::util::logging;
 use flightdeck_dashboard::util::paths::{
-    dashboard_socket_file, fd_resolve_state_dir, fd_session_key_from_id, resolve_session_key,
+    dashboard_socket_file, fd_resolve_state_dir, resolve_session_key,
 };
 use flightdeck_dashboard::watcher::{StateWatcher, WatcherEvent};
 use futures::StreamExt;
@@ -188,13 +188,9 @@ async fn initial_socket_snapshot(path: &Path) -> Result<InitialSnapshot> {
     })
 }
 
-async fn discover_socket_snapshot(args: &TuiArgs) -> Option<InitialSnapshot> {
-    if args.demo.is_some() || !args.wants_live_state() {
-        return None;
-    }
-    let session_key = match tui_session_key(args) {
-        Ok(Some(session_key)) => session_key,
-        Ok(None) => return None,
+async fn discover_socket_snapshot_for_session(session: &str) -> Option<InitialSnapshot> {
+    let session_key = match resolve_session_key(session) {
+        Ok(session_key) => session_key,
         Err(error) => {
             tracing::debug!(%error, "dashboard socket discovery skipped");
             return None;
@@ -214,35 +210,6 @@ async fn discover_socket_snapshot(args: &TuiArgs) -> Option<InitialSnapshot> {
             tracing::debug!(path = %socket.display(), "dashboard socket discovery timed out");
             None
         }
-    }
-}
-
-fn tui_session_key(args: &TuiArgs) -> Result<Option<String>> {
-    if let Some(session) = &args.session {
-        return Ok(Some(resolve_session_key(session)?));
-    }
-    if let Some(path) = args.state_file.as_ref().or(args.archive.as_ref()) {
-        return Ok(Some(file_session_key(
-            &tracked_entries::session_id_from_state_path(path),
-        )));
-    }
-    if args.run_id.is_some() {
-        return Ok(None);
-    }
-    if args.wants_live_state() {
-        let resolution = tracked_entries::resolve_session_state(None)?;
-        return Ok(Some(resolve_session_key(&resolution.session)?));
-    }
-    Ok(None)
-}
-
-fn file_session_key(session: &str) -> String {
-    if session.starts_with('s') && session[1..].chars().all(|ch| ch.is_ascii_digit()) {
-        session.to_owned()
-    } else if session.starts_with('$') {
-        fd_session_key_from_id(session)
-    } else {
-        session.to_owned()
     }
 }
 
@@ -306,9 +273,6 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
     let now = utc_now();
     if let Some(path) = &args.socket {
         return initial_socket_snapshot(path).await;
-    }
-    if let Some(snapshot) = discover_socket_snapshot(args).await {
-        return Ok(snapshot);
     }
     if let Some(run_id) = &args.run_id {
         let project_root = tracked_entries::resolve_project_root(&std::env::current_dir()?)?;
@@ -381,7 +345,24 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
     let resolution = tracked_entries::resolve_session_state(args.session.as_deref())?;
     let source = SnapshotSource::Session(resolution.clone());
     match run_history::load_active_run_metadata(&resolution.project_root, &resolution.session) {
+        Ok(run_history::ActiveRunLookup::Matched(metadata)) if metadata.terminated => {
+            Ok(no_active_snapshot(
+                &resolution,
+                now,
+                source,
+                Some(format!(
+                    "active run {} is terminated; press H for History",
+                    metadata.run_id
+                )),
+            ))
+        }
         Ok(run_history::ActiveRunLookup::Matched(metadata)) => {
+            if let Some(mut snapshot) = discover_socket_snapshot_for_session(&resolution.session).await {
+                snapshot.source_state = ReadSourceState::ActiveRun {
+                    run_id: Some(metadata.run_id.clone()),
+                };
+                return Ok(snapshot);
+            }
             initial_from_active_live_session(&resolution, source, now, Some(metadata.run_id), None)
         }
         Ok(run_history::ActiveRunLookup::None) => Ok(no_active_snapshot(
@@ -919,9 +900,12 @@ fn event_to_msg(
 mod tests {
     use std::env;
     use std::fs;
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
+    use std::thread;
 
     use serde_json::json;
 
@@ -976,8 +960,8 @@ mod tests {
     #[test]
     fn terminated_or_mismatched_active_pointer_clears_live_display() {
         with_startup_fixture(|ctx| {
-            write_active(&ctx.responses, "run-1", "S", false);
-            write_live_state(&ctx.project, "S", true);
+            write_active_with_terminated(&ctx.responses, "run-1", "S", false, true);
+            write_live_state(&ctx.project, "S", false);
             let terminated = initial_snapshot(&tui_args("S"));
             assert_eq!(terminated.source_state, ReadSourceState::NoActiveRun);
 
@@ -989,6 +973,26 @@ mod tests {
                 .status_error
                 .as_deref()
                 .is_some_and(|message| message.contains("belongs to session OTHER")));
+        });
+    }
+
+    #[test]
+    fn archive_flag_is_processed_before_auto_socket_discovery() {
+        with_startup_fixture(|ctx| {
+            let archive = ctx.project.join("tmp/flightdeck-state-S.json");
+            fs::write(&archive, state_json("S", true).to_string()).expect("archive state");
+            start_fake_dashboard_socket(&ctx.runtime_state.join("dashboard-S.sock"), &ctx.project);
+            let mut args = tui_args("S");
+            args.archive = Some(archive.clone());
+            args.session = None;
+
+            let initial = initial_snapshot(&args);
+
+            assert!(matches!(initial.source, SnapshotSource::File(path) if path == archive));
+            assert!(matches!(
+                initial.source_state,
+                ReadSourceState::LegacyArchive { .. }
+            ));
         });
     }
 
@@ -1045,6 +1049,7 @@ mod tests {
     struct StartupFixture {
         project: PathBuf,
         responses: PathBuf,
+        runtime_state: PathBuf,
     }
 
     fn with_startup_fixture(test: impl FnOnce(&StartupFixture)) {
@@ -1052,19 +1057,28 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("project");
         let responses = temp.path().join("responses");
+        let runtime_state = temp.path().join("runtime");
         fs::create_dir_all(project.join("tmp")).expect("project tmp");
         fs::create_dir_all(&responses).expect("responses");
+        fs::create_dir_all(&runtime_state).expect("runtime state");
         fs::write(project.join("vstack.toml"), "").expect("project marker");
         write_fake_state_bin(&temp.path().join("flightdeck-state"), &responses);
         let old_bin = env::var_os("FLIGHTDECK_STATE_BIN");
+        let old_fd_state_dir = env::var_os("FD_STATE_DIR");
         let old_state_dir = env::var_os("FLIGHTDECK_STATE_DIR");
         let old_cwd = env::current_dir().expect("cwd");
         env::set_var("FLIGHTDECK_STATE_BIN", temp.path().join("flightdeck-state"));
+        env::set_var("FD_STATE_DIR", &runtime_state);
         env::set_var("FLIGHTDECK_STATE_DIR", "tmp");
         env::set_current_dir(&project).expect("set cwd");
-        test(&StartupFixture { project, responses });
+        test(&StartupFixture {
+            project,
+            responses,
+            runtime_state,
+        });
         env::set_current_dir(old_cwd).expect("restore cwd");
         restore_env("FLIGHTDECK_STATE_BIN", old_bin);
+        restore_env("FD_STATE_DIR", old_fd_state_dir);
         restore_env("FLIGHTDECK_STATE_DIR", old_state_dir);
     }
 
@@ -1106,6 +1120,16 @@ cat {responses}/active.json
     }
 
     fn write_active(responses: &Path, run_id: &str, session: &str, imported: bool) {
+        write_active_with_terminated(responses, run_id, session, imported, false);
+    }
+
+    fn write_active_with_terminated(
+        responses: &Path,
+        run_id: &str,
+        session: &str,
+        imported: bool,
+        terminated: bool,
+    ) {
         fs::write(
             responses.join("active.json"),
             json!({
@@ -1120,8 +1144,8 @@ cat {responses}/active.json
                     "snapshots_path": format!("/store/{run_id}/snapshots"),
                     "started_at": "2026-05-19T12:00:00Z",
                     "last_seen_at": "2026-05-19T12:01:00Z",
-                    "terminated": false,
-                    "terminated_at": null,
+                    "terminated": terminated,
+                    "terminated_at": if terminated { Some("2026-05-19T12:02:00Z") } else { None },
                     "imported": imported,
                     "imported_from": null
                 }
@@ -1129,6 +1153,57 @@ cat {responses}/active.json
             .to_string(),
         )
         .expect("active json");
+    }
+
+    fn start_fake_dashboard_socket(path: &Path, project: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("socket parent");
+        }
+        let _ = fs::remove_file(path);
+        let listener = UnixListener::bind(path).expect("dashboard socket bind");
+        let snapshot =
+            DashboardSnapshot::empty_for_session("S", live_state_path(project, "S"), utc_now());
+        let status = json!({
+            "session": "S",
+            "running": true,
+            "pid": null,
+            "socket": path,
+            "uptime_secs": 1,
+            "last_change_at": null,
+            "listener_path": path
+        });
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let Ok(reader_stream) = stream.try_clone() else {
+                return;
+            };
+            let mut reader = BufReader::new(reader_stream);
+            for _ in 0..2 {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or_default() == 0 {
+                    return;
+                }
+                let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    return;
+                };
+                let method = request.get("method").and_then(serde_json::Value::as_str);
+                let result = match method {
+                    Some("get_snapshot") => serde_json::to_value(&snapshot).expect("snapshot json"),
+                    Some("get_status") => status.clone(),
+                    _ => json!(null),
+                };
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                    "result": result,
+                });
+                if writeln!(stream, "{response}").is_err() {
+                    return;
+                }
+            }
+        });
     }
 
     fn write_live_state(project: &Path, session: &str, terminated: bool) {

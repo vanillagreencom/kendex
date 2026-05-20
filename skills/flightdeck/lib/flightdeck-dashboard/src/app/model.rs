@@ -485,6 +485,11 @@ impl ReadSourceState {
     }
 
     #[must_use]
+    pub const fn blocks_write_actions(&self) -> bool {
+        self.is_read_only() || self.is_no_active()
+    }
+
+    #[must_use]
     pub fn header_label(&self, session_id: &str) -> String {
         match self {
             Self::Demo => format!("session {session_id}"),

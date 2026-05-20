@@ -88,7 +88,13 @@ If the user rejects or corrects the preview, stop without mutation. This verify-
 
 ## § 3: Register plan graph
 
-After confirmation, create one tracked entry per item. Items blocked by dependencies may have no pane yet; they still get a state row so the graph survives compaction.
+After confirmation, create/reuse the active durable run before writing any tracked entries. This keeps plan graph rows attached to a run even when dependency-blocked items are recorded before their panes exist:
+
+```bash
+flightdeck-state run ensure --tmux-session "$SESSION"
+```
+
+Then create one tracked entry per item. Items blocked by dependencies may have no pane yet; they still get a state row so the graph survives compaction.
 
 Before writing entries or spawning panes, materialize immutable sanitized item brief artifacts from the already-confirmed parse result:
 
