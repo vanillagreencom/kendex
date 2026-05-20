@@ -281,6 +281,16 @@ describe("open-terminal smoke", () => {
 			const brief = readFileSync(join(repo, "tmp", "brief.md"), "utf8");
 			expect(brief).toContain("Fix GitHub issue owner/repo#120");
 			expect(brief).toContain("Body for github issue");
+			// vstack#182: default brief drives the supervisor-handshake pre-PR
+			// review loop. Verify the brief asks the child to push without
+			// opening a PR, emits the PRE-PR-REVIEW-READY sentinel, and waits
+			// for tmp/pre-pr-approved.md / tmp/pre-pr-review/round-<N>.md.
+			expect(brief).toContain("Do NOT open a PR yet.");
+			expect(brief).toContain("PRE-PR-REVIEW-READY: tmp/ready-for-review.txt");
+			expect(brief).toContain("tmp/pre-pr-approved.md");
+			expect(brief).toContain("tmp/pre-pr-review/round-<N>.md");
+			expect(brief).toContain("<<<ISSUE_BODY_BEGIN>>>");
+			expect(brief).toContain("<<<ISSUE_BODY_END>>>");
 			for (const forbidden of forbiddenSupervisorSubstrings()) expect(brief).not.toContain(forbidden);
 
 			const state = JSON.parse(readFileSync(stateFile(repo), "utf8"));

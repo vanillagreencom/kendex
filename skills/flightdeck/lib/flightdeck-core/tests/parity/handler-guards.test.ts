@@ -468,7 +468,11 @@ describe("handler domain guards", () => {
 		const spawnPrompts = combined.match(/--prompt "[^"]*"/g) ?? [];
 		expect(combined).toContain("flightdeck-session start");
 		expect(combined).toContain("--kind workflow");
-		expect(combined).toContain("Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line.");
+		// vstack#182: plan spawn prompts now defer the final-line contract to
+		// the brief's supervisor-handshake instructions so the pre-PR review
+		// gate is wired in for both first-spawn and dependency-edge spawns.
+		expect(combined).toContain("Read tmp/brief.md and execute end-to-end. Follow its supervisor-handshake instructions. Print only what the brief tells you to print as the LAST line.");
+		expect(combined).not.toContain("Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line.");
 		expect(spawnPrompts.length).toBeGreaterThan(0);
 		expect(spawnPrompts.join("\n")).not.toMatch(/\/skill:flightdeck plan|\$flightdeck plan|\/flightdeck plan (start|watch|close|terminate)/);
 		expect(spawnPrompts.join("\n")).not.toContain("/skill:");

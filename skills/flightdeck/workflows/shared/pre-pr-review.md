@@ -53,6 +53,8 @@ Filter the default list by changed paths:
 
 Never drop `reviewer-arch`, `reviewer-error`, `reviewer-security` for code changes.
 
+If the resulting reviewer list is empty (env override set to empty, or every default reviewer dropped by the filter) set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"no reviewers selected for round <N>; check FLIGHTDECK_PRE_PR_REVIEWERS and § 3 filter"}` and return. Never approve a round with zero reviewer returns.
+
 ---
 
 ## § 4: Delegate
@@ -96,8 +98,8 @@ For each reviewer in the selected list, exactly one task must return. For each r
 
 Aggregate verdict:
 
-- `pass` only when every reviewer returned `verdict == "pass"` AND no item with `category == "fix"` exists across reviewers.
-- `action_required` otherwise. Items with `category == "issue"` are non-blocking by themselves but a reviewer that returned `action_required` is always blocking.
+- `pass` when no item with `category == "fix"` exists across reviewers, regardless of per-reviewer verdict. A reviewer that returned `action_required` but produced only `category == "issue"` items is non-blocking; the items are recorded as non-blocking suggestions in the approval marker.
+- `action_required` when any item has `category == "fix"`. Reviewers that return non-pass verdicts without any items are also treated as blocking (their items list is empty, but the verdict signals a failure mode the reviewer could not enumerate).
 
 ---
 
@@ -117,7 +119,8 @@ When aggregate is `pass`:
    Pre-PR review passed. Open the PR now with `Fixes #<N>` in the body (or the plan-item PR body for plan mode). Print the PR URL as the LAST line of your final message.
    ```
    On `pane-respond` failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
-3. Only after both writes succeed, set `entry.domain.<KEY>.review_status = "pre-pr-approved"` and log decision `pre-pr-review pass round=<N> reviewers=<CSV>`. Return to caller.
+3. Only after both writes succeed, set `entry.domain.<KEY>.review_status = "pre-pr-approved"`. On state-write failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
+4. Log decision `pre-pr-review pass round=<N> reviewers=<CSV>`. Log failure is non-blocking; the next compaction recovery re-reads `review_status` from the persisted entry. Return to caller.
 
 ---
 
@@ -143,8 +146,9 @@ When aggregate is `action_required`:
    Pre-PR review round <N> found blockers. Read `tmp/pre-pr-review/round-<N>.md`, apply the fix items (issue suggestions are non-blocking), push to `<BRANCH>`, then print `PRE-PR-REVIEW-READY: tmp/ready-for-review.txt` again as the LAST line.
    ```
    On `pane-respond` failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
-3. Only after both writes succeed, increment `entry.domain.<KEY>.review_rounds`, set `entry.domain.<KEY>.review_status = "pre-pr-fixing"`, and log decision `pre-pr-review action-required round=<N> blockers=<count>`.
-4. Return to caller. The next `pre-pr-ready-for-review` from the child re-enters this workflow at round `<N+1>`, where § 1 evaluates the round-cap before fanning out again.
+3. Only after both writes succeed, increment `entry.domain.<KEY>.review_rounds` and set `entry.domain.<KEY>.review_status = "pre-pr-fixing"`. On either state-write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; the next entry resumes the same round.
+4. Log decision `pre-pr-review action-required round=<N> blockers=<count>`. Log failure is non-blocking.
+5. Return to caller. The next `pre-pr-ready-for-review` from the child re-enters this workflow at round `<N+1>`, where § 1 evaluates the round-cap before fanning out again.
 
 ## Returns
 

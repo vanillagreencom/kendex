@@ -168,7 +168,7 @@ After `workflows/plan/close-item.md` verifies an item merged:
    - Refuse to spawn if a live pane is already registered for this entry.
 4. Create the dependent item's worktree.
 5. Write its `<worktree>/tmp/brief.md` from the verified immutable brief artifact and check the write return code. Omitted orchestration context must not be reintroduced for dependency-spawned items.
-6. Spawn via `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."` and check the return code.
+6. Spawn via `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Follow its supervisor-handshake instructions. Print only what the brief tells you to print as the LAST line."` (matches `plan/start.md` § 4 step 5) and check the return code.
 7. Re-register / restore `entry.domain.plan_item` while preserving launch metadata, then transition item to in-progress with `state="submitting"` and `domain.plan_item.phase="in-progress"`.
 8. On any create/write/spawn/register failure, remove the brief if written, kill any spawned-but-unregistered pane, mark `state="failed"` with `domain.plan_item.error = {phase:"<PHASE>", reason:"<REASON>", stderr:"<STDERR>"}`, emit activity, and continue to the next unblocked item.
 9. Yield.

@@ -136,4 +136,11 @@ describe("isCanonicalTag", () => {
 	test("pi-bg-task-exit is canonical", () => {
 		expect(isCanonicalTag("pi-bg-task-exit")).toBe(true);
 	});
+
+	// vstack#182: pre-PR reviewer fan-out gate. Without this on the wake
+	// allowlist the daemon records the sentinel hash as notified and never
+	// fires wake, so the round-1 review-loop fix is silently undone.
+	test("pre-pr-ready-for-review is canonical", () => {
+		expect(isCanonicalTag("pre-pr-ready-for-review")).toBe(true);
+	});
 });
