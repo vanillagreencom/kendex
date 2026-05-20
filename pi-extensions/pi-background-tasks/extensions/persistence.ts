@@ -50,6 +50,38 @@ export function isBgTasksBoundedManifest(value: unknown): value is BgTasksBounde
 	return candidate.version === 2 && candidate.fullSnapshot === false;
 }
 
+// vstack#184: extracted from background-tasks.ts so the barrier semantics
+// can be unit tested without dragging the full @earendil-works/pi-coding-agent
+// dependency chain into the test runtime. Handles a single session-branch
+// custom entry of type BG_STATE_TYPE.
+//
+// When the entry is a bounded manifest (`fullSnapshot: false`, any
+// version), and a sidecar restore has already loaded the canonical
+// task set, re-apply the sidecar tasks. The manifest signals "sidecar
+// is authoritative as of this point"; without this, an older full
+// snapshot earlier in the branch can replace the sidecar-restored
+// state before the manifest is reached and regress canonical state.
+export interface ApplyCustomEntryArgs<T> {
+	data: unknown;
+	sidecarLoaded: boolean;
+	sidecarTasks: T[] | undefined;
+	clear: () => void;
+	apply: (snapshot: T) => void;
+}
+
+export function applyCustomEntryWithBarrier<T>(args: ApplyCustomEntryArgs<T>): void {
+	const data = args.data as { tasks?: unknown; fullSnapshot?: unknown } | undefined;
+	if (data?.fullSnapshot === false) {
+		if (args.sidecarLoaded && args.sidecarTasks) {
+			args.clear();
+			for (const snapshot of args.sidecarTasks) args.apply(snapshot);
+		}
+		return;
+	}
+	args.clear();
+	if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) args.apply(snapshot as T);
+}
+
 function stableValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stableValue);
 	if (!value || typeof value !== "object") return value;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
 	BG_TASKS_SNAPSHOT_MAX_BYTES,
+	applyCustomEntryWithBarrier,
 	createPersistence,
 	isBgTasksBoundedManifest,
 } from "../extensions/persistence.js";
@@ -128,7 +129,7 @@ describe("pi-background-tasks bounded snapshots", () => {
 		expect(fingerprint.length).toBeLessThanOrEqual(128);
 	});
 
-	test("manifest restores degrade gracefully: restore loop does not wipe sidecar state", () => {
+	test("manifest type guard matches v2 fullSnapshot:false envelope only", () => {
 		const manifest = {
 			version: 2,
 			fullSnapshot: false,
@@ -140,5 +141,72 @@ describe("pi-background-tasks bounded snapshots", () => {
 		};
 		expect(isBgTasksBoundedManifest(manifest)).toBe(true);
 		expect(isBgTasksBoundedManifest({ version: 1, tasks: [], updatedAt: 0 })).toBe(false);
+	});
+
+	test("vstack#184: restore barrier - manifest entry re-applies sidecar state", () => {
+		// Repro shape: branch contains [older-full-snapshot, later bounded
+		// manifest]. Sidecar has the latest task set ("bg-new"). Pre-fix the
+		// older full snapshot replaced the sidecar state and the manifest
+		// was skipped, regressing canonical state to "bg-old". The barrier
+		// helper now restores the sidecar when it hits the manifest.
+		const sidecarTasks: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-new", status: "completed" })];
+		const olderTasks: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-old", status: "completed" })];
+		let current: BackgroundTaskSnapshot[] = [];
+		const clear = () => { current = []; };
+		const apply = (snapshot: BackgroundTaskSnapshot) => { current.push(snapshot); };
+
+		// Sidecar restore happened first (current = sidecar tasks).
+		current = [...sidecarTasks];
+
+		// Branch entry #1: older full snapshot. Expected to replace.
+		applyCustomEntryWithBarrier({
+			data: { tasks: olderTasks, updatedAt: 1 },
+			sidecarLoaded: true,
+			sidecarTasks,
+			clear,
+			apply,
+		});
+		expect(current.map((t) => t.id)).toEqual(["bg-old"]);
+
+		// Branch entry #2: bounded manifest. Expected to restore sidecar.
+		applyCustomEntryWithBarrier({
+			data: { version: 2, fullSnapshot: false, reason: "payload-too-large", byteSize: 999_999, fingerprint: "abc", counts: { tasks: 1 }, updatedAt: 2 },
+			sidecarLoaded: true,
+			sidecarTasks,
+			clear,
+			apply,
+		});
+		expect(current.map((t) => t.id)).toEqual(["bg-new"]);
+	});
+
+	test("vstack#184: barrier without sidecar leaves state untouched (no crash)", () => {
+		let current: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-pre", status: "completed" })];
+		const clear = () => { current = []; };
+		const apply = (snapshot: BackgroundTaskSnapshot) => { current.push(snapshot); };
+		applyCustomEntryWithBarrier({
+			data: { version: 2, fullSnapshot: false, reason: "payload-too-large", byteSize: 1, fingerprint: "x", counts: { tasks: 0 }, updatedAt: 0 },
+			sidecarLoaded: false,
+			sidecarTasks: undefined,
+			clear,
+			apply,
+		});
+		// Sidecar load failed earlier; manifest is a no-op so state is preserved.
+		expect(current.map((t) => t.id)).toEqual(["bg-pre"]);
+	});
+
+	test("vstack#184: forward-compat - any fullSnapshot:false manifest counts as barrier", () => {
+		const sidecarTasks: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-sidecar" })];
+		let current: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-old" })];
+		const clear = () => { current = []; };
+		const apply = (snapshot: BackgroundTaskSnapshot) => { current.push(snapshot); };
+		applyCustomEntryWithBarrier({
+			// Hypothetical future version 3 manifest.
+			data: { version: 3, fullSnapshot: false, reason: "some-new-reason" },
+			sidecarLoaded: true,
+			sidecarTasks,
+			clear,
+			apply,
+		});
+		expect(current.map((t) => t.id)).toEqual(["bg-sidecar"]);
 	});
 });

@@ -62,7 +62,7 @@ import { logBackgroundDiagnostic } from "./diagnostics.js";
 import { registerAll } from "./registrations.js";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
-import { createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
+import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import {
 	defaultReadProcessIdentity,
@@ -193,23 +193,13 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === BG_STATE_TYPE) {
-				const data = entry.data as { tasks?: unknown; version?: unknown; fullSnapshot?: unknown } | undefined;
-				// vstack#184: any `fullSnapshot: false` manifest is a sidecar-wins
-				// barrier. Without this, an older full snapshot earlier in the
-				// branch can replace the sidecar-restored state before the manifest
-				// is reached, regressing canonical state to stale data. Re-load
-				// sidecar at the barrier so canonical state survives the iteration.
-				if (data?.fullSnapshot === false) {
-					if (sidecarLoaded && sidecarTasks) {
-						tasks.clear();
-						taskCounter = 0;
-						for (const snapshot of sidecarTasks) rememberRestoredSnapshot(snapshot);
-					}
-					continue;
-				}
-				tasks.clear();
-				taskCounter = 0;
-				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
+				applyCustomEntryWithBarrier({
+					data: entry.data,
+					sidecarLoaded,
+					sidecarTasks,
+					clear: () => { tasks.clear(); taskCounter = 0; },
+					apply: (snapshot) => rememberRestoredSnapshot(snapshot),
+				});
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && (entry.message.toolName === "bg_task" || entry.message.toolName === "bg_status")) {
 				const details = entry.message.details as { task?: unknown; tasks?: unknown } | undefined;
