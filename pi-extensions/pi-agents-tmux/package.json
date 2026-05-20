@@ -103,7 +103,7 @@
         {
           "key": "dashboard",
           "label": "Show agent dashboard",
-          "description": "Render a persistent agent activity card above the editor with active/completed agents, bridge state, recent activity, and usage.",
+          "description": "Render a persistent agent activity card above the editor with active/completed agents, bridge state, recent activity, and usage. After the user hides it, lifecycle updates do not reopen it until an explicit toggle/show.",
           "type": "boolean",
           "default": true,
           "category": "Rendering",
@@ -148,7 +148,7 @@
         {
           "key": "dashboardShortcut",
           "label": "Dashboard display shortcut",
-          "description": "Keyboard shortcut that cycles the agent dashboard through hidden → compact → normal → expanded → hidden. Use none to disable.",
+          "description": "Keyboard shortcut that cycles the agent dashboard through compact → normal → expanded → hidden, then restores the last visible mode. Use none to disable.",
           "type": "string",
           "default": "alt+a",
           "category": "Keyboard",

@@ -143,7 +143,7 @@
         {
           "key": "showWidget",
           "label": "Show task widget",
-          "description": "Show the compact background-task widget while tasks are tracked.",
+          "description": "Show the compact background-task widget while tasks are tracked. Manual hide remains latched across lifecycle refreshes until explicit toggle-in.",
           "type": "boolean",
           "default": true,
           "category": "UI",
@@ -206,7 +206,7 @@
         {
           "key": "widgetToggleShortcut",
           "label": "Mini-dashboard toggle shortcut",
-          "description": "Keyboard shortcut to show/hide the inline mini-dashboard. Requires restart because shortcuts register at extension load.",
+          "description": "Keyboard shortcut to show/hide the inline mini-dashboard and restore the last visible mode when toggled back in. Requires restart because shortcuts register at extension load.",
           "type": "string",
           "default": "alt+h",
           "category": "UI",
@@ -216,7 +216,7 @@
         {
           "key": "widgetDefaultMode",
           "label": "Mini-dashboard default mode",
-          "description": "Initial inline mini-dashboard mode.",
+          "description": "Initial inline mini-dashboard mode at session start; runtime hide/show state is controlled by the toggle.",
           "type": "enum",
           "enumValues": [
             "compact",

@@ -53,11 +53,21 @@ import {
 import { headerChipForSnapshot, renderArchiveErrorBanner } from "./render-terminated.js";
 import { formatSessionTotals, formatStateBreakdown, issueDomain, renderSessionDetailLines, renderSessionLine, sessionLabel } from "./session-ui.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
+import {
+	createFlightdeckDashboardVisibility,
+	cycleFlightdeckDashboardVisibility,
+	flightdeckWidgetSuppressedByUser,
+	normalizeDashboardState,
+	resetFlightdeckDashboardVisibility,
+	shouldRenderFlightdeckInlineWidget,
+	type DashboardState,
+	type FlightdeckDashboardVisibilityState,
+} from "./visibility.js";
+export type { DashboardState } from "./visibility.js";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-flightdeck.installed");
 const CONFIG_ID = "@vanillagreen/pi-flightdeck";
 const SETTINGS_EVENT = "vstack:extension-settings-changed";
 const WIDGET_KEY = "vstack-flightdeck-widget";
-export type DashboardState = "hidden" | "compact" | "expanded";
 function expandHome(input: string): string {
 	if (!input) return input;
 	if (input === "~") return homedir();
@@ -128,7 +138,7 @@ function settingsLike(cwd?: string): SettingsLike {
 }
 
 interface DashboardCache {
-	state: DashboardState;
+	visibility: FlightdeckDashboardVisibilityState;
 	lastSnapshot?: FlightdeckSnapshot;
 	pauseSeenIssue?: string;
 	pauseSeenAt?: number;
@@ -165,7 +175,7 @@ function usageForSession(session: TrackedSession, paneMap: Map<string, string>, 
 	return bridge.getByPaneId(paneId);
 }
 
-function defaultDashboardState(cwd?: string): DashboardState { const value = settingString("dashboardDefaultState", "compact", cwd); return value === "hidden" || value === "expanded" ? value : "compact"; }
+function defaultDashboardState(cwd?: string): DashboardState { return normalizeDashboardState(settingString("dashboardDefaultState", "compact", cwd), "compact"); }
 
 function dashboardVisibility(cwd?: string): DashboardVisibility { return normalizeDashboardVisibility(settingString("dashboardVisibility", "owner", cwd)); }
 
@@ -400,7 +410,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	if (!settingBoolean("enabled", true)) return;
 
 	const cache: DashboardCache = {
-		state: defaultDashboardState(),
+		visibility: createFlightdeckDashboardVisibility(defaultDashboardState()),
 		paneTargetToId: new Map(),
 	};
 	let activeCtx: ExtensionContext | undefined;
@@ -452,10 +462,11 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		const dashboardPaneAllowed = dashboardVisibleForSnapshot(snapshot, visibility);
 		const staleAfterMin = Math.max(0, Math.floor(settingNumber("dashboardStaleAfterMin", 5, ctx.cwd)));
 		const status = flightdeckSessionStatus(snapshot, { staleAfterMin });
-		const showBanner = dashboardPaneAllowed && settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
-		const dashboardEnabled = dashboardAllowedForStatus(dashboardPaneAllowed, status) && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
+		const suppressedByUser = flightdeckWidgetSuppressedByUser(cache.visibility);
+		const showBanner = !suppressedByUser && dashboardPaneAllowed && settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
+		const dashboardEnabled = !suppressedByUser && dashboardAllowedForStatus(dashboardPaneAllowed, status) && settingBoolean("dashboard", true, ctx.cwd) && cache.visibility.state !== "hidden";
 		const awaitingWatchSessionCount = readAwaitingWatchTrackedEntries(snapshot).length;
-		if (status === "inactive" && !showBanner) {
+		if (!shouldRenderFlightdeckInlineWidget(cache.visibility, { dashboardEnabled, showBanner, status })) {
 			if (cache.lastSyncKey !== "__off__") {
 				setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.FLIGHTDECK, undefined);
 				cache.lastSyncKey = "__off__";
@@ -463,7 +474,8 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			return;
 		}
 		const syncKey = JSON.stringify({
-			state: cache.state,
+			state: cache.visibility.state,
+			hiddenByUser: cache.visibility.hiddenByUser,
 			showBanner,
 			dashboardEnabled,
 			dashboardVisibility: visibility,
@@ -487,7 +499,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 				if (dashboardEnabled && snapshot) {
 					if (status === "live") {
 						if (lines.length > 0) lines.push("");
-						lines.push(...renderDashboardLines(snapshot, theme, width, cache.state, ctx.cwd, cache.paneTargetToId));
+						lines.push(...renderDashboardLines(snapshot, theme, width, cache.visibility.state, ctx.cwd, cache.paneTargetToId));
 					} else if (status === "awaiting-watch") {
 						if (lines.length > 0) lines.push("");
 						lines.push(...renderAwaitingWatchHintLine(snapshot, theme, width));
@@ -546,13 +558,14 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	};
 
 	const cycleDashboard = (ctx: ExtensionContext) => {
-		cache.state = cache.state === "hidden" ? "compact" : cache.state === "compact" ? "expanded" : "hidden";
+		cycleFlightdeckDashboardVisibility(cache.visibility);
 		syncWidget(ctx);
-		ctx.ui.notify(`Flightdeck dashboard ${cache.state}`, "info");
+		ctx.ui.notify(`Flightdeck dashboard ${cache.visibility.state}`, "info");
 	};
 
 	pi.on("session_start", (_event, ctx) => {
 		activeCtx = ctx;
+		resetFlightdeckDashboardVisibility(cache.visibility, defaultDashboardState(ctx.cwd));
 		startPoller(ctx);
 	});
 	pi.on("session_tree", (_event, ctx) => {
@@ -567,9 +580,6 @@ export default function flightdeck(pi: ExtensionAPI): void {
 	pi.events.on(SETTINGS_EVENT, (_payload: unknown) => {
 		const ctx = activeCtx;
 		if (!ctx) return;
-		if (cache.state === "hidden" && settingBoolean("dashboard", true, ctx.cwd)) {
-			cache.state = defaultDashboardState(ctx.cwd);
-		}
 		tick(ctx);
 	});
 
@@ -578,7 +588,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => focusOrLaunchFlightdeckApp(ctx, args),
 	});
 	pi.registerCommand("flightdeck:toggle", {
-		description: "Cycle the persistent flightdeck dashboard widget hidden → compact → expanded.",
+		description: "Cycle the persistent flightdeck dashboard widget; user-hidden state stays hidden until toggled back in.",
 		handler: async (_args, ctx) => cycleDashboard(ctx as ExtensionContext),
 	});
 

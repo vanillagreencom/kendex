@@ -1,6 +1,7 @@
 import type { ExtensionCommandContext, ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatAgentList, type AgentScope } from "./agents.js";
 import { activeDashboardItems, openAgentsBrowser, openTraceViewer, traceViewerItems } from "./browser.js";
+import { cycleAgentDashboard } from "./dashboard-visibility.js";
 import { taskNumberById } from "./task-records.js";
 import { compactPath, oneLinePreview } from "./format.js";
 import { ensurePersistentPane, hasSavedPaneSession, paneExists, queuePersistentPaneTask, resetPersistentPaneSession, restoreArchivedPaneSession, stopPersistentPane, tmux } from "./pane.js";
@@ -132,7 +133,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 				sendMarkdown(await formatTraceView(record, parts.includes("--verbose")));
 				return;
 			} else if (command === "toggle") {
-				dashboardState.visible = !dashboardState.visible;
+				cycleAgentDashboard(dashboardState);
 				syncDashboard(ctx as ExtensionContext);
 				content = `Agent dashboard ${dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden"}.`;
 				messageDetails = { action: "toggle", status: dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden" };

@@ -37,7 +37,7 @@
         {
           "key": "panelDefaultState",
           "label": "Default panel state",
-          "description": "Panel state when tasks first appear.",
+          "description": "Panel state when tasks first appear. User-hidden state is respected for the rest of the session.",
           "type": "enum",
           "enumValues": [
             "hidden",
@@ -61,7 +61,7 @@
         {
           "key": "alternateShortcut",
           "label": "Alternate shortcut",
-          "description": "Always-available task panel shortcut when ctrl+t is not taken over. Cycles hidden → show compact → show all.",
+          "description": "Always-available task panel shortcut when ctrl+t is not taken over. Restores the last visible mode when toggling in and keeps user-hidden state latched until then.",
           "type": "string",
           "default": "alt+t",
           "category": "Keyboard",
@@ -99,7 +99,7 @@
         {
           "key": "autoShowOnFirstTask",
           "label": "Auto-show on first task",
-          "description": "Show the compact panel automatically when the first task is added.",
+          "description": "Show the panel automatically only for the first non-empty task state in a session; user-hidden panels stay hidden until explicit show/toggle.",
           "type": "boolean",
           "default": true,
           "category": "Panel",

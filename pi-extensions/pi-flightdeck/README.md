@@ -6,8 +6,8 @@ The Flightdeck skill and Rust dashboard work without this extension.
 
 ## Highlights
 
-- **Pause banner** — yellow frame above the editor when Flightdeck master pauses for the user. Clears on resume.
-- **Persistent mini-dashboard widget** — compact tree of active tracked sessions with state, kind, harness, last decision, age, and per-pane cost/turns/tokens.
+- **Pause banner** — yellow frame above the editor when Flightdeck master pauses for the user. Clears on resume, and respects user-hidden widget state.
+- **Persistent mini-dashboard widget** — compact tree of active tracked sessions with state, kind, harness, last decision, age, and per-pane cost/turns/tokens. Once hidden by the user, state-file ticks and settings events do not reopen it until explicit toggle-in.
 - **`/flightdeck` app focus/open** — delegates to `flightdeck-dashboard focus-or-launch --json`, focusing an existing app window or launching it in tmux.
 - **Owner-scoped by default** — dashboard renders only in the Flightdeck owner pane. Child panes remain suppressed. Visibility is configurable. State/archive read errors still render a diagnostic banner so corrupted state is visible even when owner metadata cannot be read.
 - **Stale-pane guard** — standby/watch hints ignore state files whose tracked entries only point at tmux pane ids that no longer exist.
@@ -41,7 +41,7 @@ Restart Pi after installation.
 | Command | Action |
 | --- | --- |
 | `/flightdeck` | Focus the Rust Flightdeck app, or launch it if missing. Outside tmux, reports a clear blocked error. |
-| `/flightdeck:toggle` | Cycle the persistent Flightdeck mini-dashboard widget. |
+| `/flightdeck:toggle` | Cycle the persistent Flightdeck mini-dashboard widget; toggling in restores the last visible mode. |
 
 ## Settings
 
@@ -51,9 +51,9 @@ Open `/extensions:settings`; settings appear under the **Flightdeck Status** tab
 
 | Setting | What it does |
 | --- | --- |
-| Show dashboard widget | Render the persistent mini-dashboard above the editor. |
+| Show dashboard widget | Render the persistent mini-dashboard above the editor. User-hidden state suppresses the whole inline widget until explicit toggle-in. |
 | Dashboard visibility | Where the persistent mini-dashboard may render: `owner` (default), `tmux-session` (any pane in the same tmux session), or `always`. Child panes remain suppressed in all modes. |
-| Dashboard default state | Initial state: `hidden`, `compact`, or `expanded`. |
+| Dashboard default state | Initial state at session start: `hidden`, `compact`, or `expanded`; settings changes do not reopen a user-hidden widget mid-session. |
 | Dashboard max sessions | Max tracked-session rows shown. |
 | Dashboard stale-after (min) | Suppress the session tree with a one-line hint when the daemon is dead and the last poll is older than N minutes. `0` disables. |
 | Tree connector style | `unicode` or `ascii`. |
@@ -62,14 +62,14 @@ Open `/extensions:settings`; settings appear under the **Flightdeck Status** tab
 
 | Setting | What it does |
 | --- | --- |
-| Show pause banner | Render the pause-for-user banner. |
+| Show pause banner | Render the pause-for-user banner unless the inline widget is user-hidden. |
 | Terminal bell on pause | Ring the bell when master first pauses. |
 
 ### Keyboard
 
 | Setting | What it does |
 | --- | --- |
-| Dashboard cycle shortcut | Configurable; defaults to `alt+m`. Use `none` to disable. |
+| Dashboard cycle shortcut | Configurable; defaults to `alt+m`. Restores the last visible mode when toggled back in. Use `none` to disable. |
 
 ### Refresh
 

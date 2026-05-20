@@ -12,3 +12,4 @@ Rules:
 - Never end a turn with a stale `in_progress` task. If work has moved on, `start_task` the right one or `drop_task` it before replying.
 - Do not narrate task transitions in prose ("now I'll start X") — just call the tool.
 - For one-shot trivial requests, do not create a task panel at all.
+- If the user hides the panel, `tasks_write` updates keep state current but do not auto-reopen the widget; only explicit `/tasks show`, `/tasks show-all`, or toggle-in reveals it again.

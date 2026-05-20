@@ -29,6 +29,11 @@ import {
 	sortDashboardItems,
 } from "./dashboard.js";
 import {
+	autoShowAgentDashboardOnce,
+	cycleAgentDashboard,
+	normalizeAgentDashboardVisibility,
+} from "./dashboard-visibility.js";
+import {
 	addArtifactPathSection,
 	addSectionHeading,
 	addWrappedSection,
@@ -527,7 +532,8 @@ export default function (pi: ExtensionAPI) {
 		},
 		logWarn: logIdleStallDiagnostic,
 	});
-	let dashboardState: SubagentDashboardState = { collapsed: false, mode: "normal", visible: true, items: {} };
+	const defaultDashboardMode = (cwd?: string) => dashboardDefaultCollapsed(cwd) ? "compact" as const : "normal" as const;
+	let dashboardState: SubagentDashboardState = { collapsed: false, mode: "normal", visible: true, lastVisibleMode: "normal", hiddenByUser: false, autoShownThisSession: false, items: {} };
 	let dashboardCtx: ExtensionContext | undefined;
 	let dashboardBatchDepth = 0;
 	let dashboardSyncPending = false;
@@ -700,6 +706,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const updateDashboard = (item: SubagentDashboardItem) => {
+		autoShowAgentDashboardOnce(dashboardState, defaultDashboardMode(dashboardCtx?.cwd));
 		const key = dashboardItemKey(item);
 		const duplicateKeys = Object.entries(dashboardState.items)
 			.filter(([existingKey, existingItem]) => {
@@ -832,7 +839,6 @@ export default function (pi: ExtensionAPI) {
 				const backfilled = taskNeedsSummaryBackfill(refreshed.record)
 					? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
 					: { record: refreshed.record, updated: false };
-				if (backfilled.record.status === "needs_completion") dashboardState.visible = true;
 				updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
 			}
 		});
@@ -936,7 +942,6 @@ export default function (pi: ExtensionAPI) {
 		const sessionKey = normalizeEventSessionKey(event.sessionKey);
 		const eventEffort = normalizeReasoningEffort(event.effort);
 		persistTaskEvent(event, "queued");
-		dashboardState.visible = true;
 		updateDashboard({
 			agent,
 			artifacts: true,
@@ -966,7 +971,6 @@ export default function (pi: ExtensionAPI) {
 		const sessionKey = normalizeEventSessionKey(event.sessionKey);
 		const eventEffort = normalizeReasoningEffort(event.effort);
 		persistTaskEvent(event, "running");
-		dashboardState.visible = true;
 		updateDashboard({
 			agent,
 			kind: event.mode === "pane" ? "pane" : "oneshot",
@@ -992,7 +996,6 @@ export default function (pi: ExtensionAPI) {
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
 		const runtimeRoot = typeof event.runtimeRoot === "string" ? event.runtimeRoot : undefined;
 		if (!taskId || !agent) return;
-		dashboardState.visible = true;
 		const existingKey = dashboardKeyForTask(taskId);
 		const paneKey = `pane:${agent}`;
 		const currentPane = dashboardState.items[paneKey];
@@ -1136,7 +1139,9 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		dashboardCtx = ctx;
-		dashboardState = { collapsed: dashboardDefaultCollapsed(ctx.cwd), mode: dashboardDefaultCollapsed(ctx.cwd) ? "compact" : "normal", visible: true, items: {} };
+		const mode = defaultDashboardMode(ctx.cwd);
+		Object.assign(dashboardState, { collapsed: dashboardDefaultCollapsed(ctx.cwd), mode, visible: true, lastVisibleMode: mode, hiddenByUser: false, autoShownThisSession: false, items: {} });
+		normalizeAgentDashboardVisibility(dashboardState, mode);
 		refreshAgentCommandCompletions(ctx);
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
@@ -1441,16 +1446,7 @@ export default function (pi: ExtensionAPI) {
 
 	const toggleDashboardMode = async (ctx: ExtensionContext) => {
 		dashboardCtx = ctx;
-		if (!dashboardState.visible) {
-			dashboardState.visible = true;
-			dashboardState.mode = "compact";
-		} else if (dashboardState.mode === "compact") {
-			dashboardState.mode = "normal";
-		} else if (dashboardState.mode === "normal") {
-			dashboardState.mode = "expanded";
-		} else {
-			dashboardState.visible = false;
-		}
+		cycleAgentDashboard(dashboardState);
 		dashboardState.collapsed = false;
 		syncDashboard(ctx);
 	};

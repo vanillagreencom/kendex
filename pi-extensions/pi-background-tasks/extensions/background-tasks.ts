@@ -73,6 +73,12 @@ import {
 	taskSnapshot,
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
+import {
+	createBackgroundWidgetVisibility,
+	shouldRenderBackgroundWidget,
+	toggleBackgroundWidgetVisibility,
+	type BackgroundWidgetMode,
+} from "./widget-visibility.js";
 import type {
 	BackgroundTaskSnapshot,
 	BackgroundTaskStatus,
@@ -123,8 +129,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	const backgroundBashShortcut = settingString("backgroundBashShortcut", DEFAULT_BACKGROUND_BASH_SHORTCUT);
 	const dashboardShortcut = settingString("dashboardShortcut", DEFAULT_BG_SHORTCUT);
 	const widgetToggleShortcut = settingString("widgetToggleShortcut", DEFAULT_WIDGET_TOGGLE_SHORTCUT);
-	let widgetMode: "compact" | "expanded" | "hidden" = settingEnum("widgetDefaultMode", ["compact", "expanded", "hidden"] as const, "compact");
-	let lastVisibleWidgetMode: "compact" | "expanded" = widgetMode === "expanded" ? "expanded" : "compact";
+	const widgetVisibility = createBackgroundWidgetVisibility(settingEnum("widgetDefaultMode", ["compact", "expanded", "hidden"] as const, "compact") as BackgroundWidgetMode);
 	let taskCounter = 0;
 	let shuttingDown = false;
 	const tasks = new Map<string, ManagedTask>();
@@ -247,7 +252,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			`${running.length} running · ${finished} finished${toggleHint}${dashboardHint}`,
 		)}`;
 		if (display.length === 0) return [summary];
-		const shown = display.slice(0, widgetMode === "expanded" ? display.length : WIDGET_COMPACT_TASKS);
+		const shown = display.slice(0, widgetVisibility.mode === "expanded" ? display.length : WIDGET_COMPACT_TASKS);
 		const lines = [summary];
 		shown.forEach((task, index) => {
 			const isLast = index === shown.length - 1 && shown.length === display.length;
@@ -264,7 +269,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	const syncWidget = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		if (tasks.size === 0 || widgetTasks().length === 0 || !ctx.hasUI || widgetMode === "hidden" || !settingBoolean("showWidget", true, ctx.cwd)) {
+		const visibleTaskCount = widgetTasks().length;
+		if (!shouldRenderBackgroundWidget({
+			hasUi: ctx.hasUI,
+			mode: widgetVisibility.mode,
+			showWidget: settingBoolean("showWidget", true, ctx.cwd),
+			trackedTaskCount: tasks.size,
+			visibleTaskCount,
+		})) {
 			clearWidget();
 			return;
 		}
@@ -850,11 +862,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		clearFinishedTasks,
 		armForcedBackground,
 		toggleWidget: () => {
-			if (widgetMode === "hidden") widgetMode = lastVisibleWidgetMode;
-			else {
-				lastVisibleWidgetMode = widgetMode;
-				widgetMode = "hidden";
-			}
+			toggleBackgroundWidgetVisibility(widgetVisibility);
 			if (activeCtx) syncWidget(activeCtx);
 		},
 		dashboardDeps,

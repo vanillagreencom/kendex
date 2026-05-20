@@ -23,7 +23,7 @@
         {
           "key": "enabled",
           "label": "Enable Flightdeck Pi status shell",
-          "description": "Register /flightdeck focus/open command, owner-scoped persistent mini-dashboard, and pause banner.",
+          "description": "Register /flightdeck focus/open command, owner-scoped persistent mini-dashboard, and pause banner. User-hidden widget state suppresses inline dashboard/banner until explicit toggle-in.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -33,7 +33,7 @@
         {
           "key": "dashboardShortcut",
           "label": "Dashboard cycle shortcut",
-          "description": "Keyboard shortcut that cycles the persistent mini-dashboard widget through hidden \u2192 compact \u2192 expanded. Use none to disable.",
+          "description": "Keyboard shortcut that cycles the persistent mini-dashboard widget and restores the last visible mode when toggled back in. Use none to disable.",
           "type": "string",
           "default": "alt+m",
           "category": "Keyboard",
@@ -43,7 +43,7 @@
         {
           "key": "dashboard",
           "label": "Show mini-dashboard widget",
-          "description": "Render a persistent sessions mini-dashboard above the owner editor when a Flightdeck session is active.",
+          "description": "Render a persistent sessions mini-dashboard above the owner editor when a Flightdeck session is active. User-hidden state blocks automatic reopen until explicit toggle-in.",
           "type": "boolean",
           "default": true,
           "category": "Dashboard",
@@ -66,7 +66,7 @@
         {
           "key": "dashboardDefaultState",
           "label": "Dashboard default state",
-          "description": "Initial dashboard state when a flightdeck session first appears.",
+          "description": "Initial dashboard state at session start; settings changes do not reopen a user-hidden widget mid-session.",
           "type": "enum",
           "enumValues": [
             "hidden",
@@ -98,7 +98,7 @@
         {
           "key": "pauseBanner",
           "label": "Show pause banner",
-          "description": "Render a high-contrast banner above the editor whenever flightdeck master sets paused_for_user. Banner clears automatically when master resumes.",
+          "description": "Render a high-contrast banner above the editor whenever flightdeck master sets paused_for_user, unless the inline widget is user-hidden. Banner clears automatically when master resumes.",
           "type": "boolean",
           "default": true,
           "category": "Pause banner",

@@ -6,6 +6,20 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
+import {
+	applyTaskPanelContentVisibility,
+	createTaskPanelVisibility,
+	cycleTaskPanelVisibility,
+	ensureTaskPanelVisibility,
+	normalizePanelState,
+	rememberTaskPanelVisibility,
+	restoreTaskPanelVisibility,
+	userHideTaskPanel,
+	userShowTaskPanel,
+	visiblePanelFor,
+	type PanelState,
+	type VisiblePanelState,
+} from "./visibility.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
@@ -29,7 +43,6 @@ function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI
 function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 
 type Status = "pending" | "in_progress" | "completed" | "abandoned";
-type PanelState = "hidden" | "compact" | "expanded";
 type VstackConfig = Record<string, unknown>;
 
 interface TaskItem {
@@ -50,6 +63,9 @@ interface PhaseItem {
 interface TaskPanelState {
 	version: 1;
 	panel: PanelState;
+	lastVisiblePanel: VisiblePanelState;
+	hiddenByUser: boolean;
+	autoShownThisSession: boolean;
 	phases: PhaseItem[];
 	tasks: TaskItem[];
 	updatedAt: string;
@@ -225,9 +241,13 @@ function newId(prefix: string): string {
 	return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function defaultPanelState(cwd?: string): PanelState {
+	return normalizePanelState(settingString("panelDefaultState", "compact", cwd), "compact");
+}
+
 function emptyState(cwd?: string): TaskPanelState {
-	const panel = settingString("panelDefaultState", "compact", cwd) as PanelState;
-	return { panel: panel === "hidden" || panel === "expanded" ? panel : "compact", phases: [], tasks: [], updatedAt: new Date().toISOString(), version: 1 };
+	const visibility = createTaskPanelVisibility(defaultPanelState(cwd));
+	return { ...visibility, phases: [], tasks: [], updatedAt: new Date().toISOString(), version: 1 };
 }
 
 function cloneState(state: TaskPanelState): TaskPanelState {
@@ -237,13 +257,19 @@ function cloneState(state: TaskPanelState): TaskPanelState {
 function normalizeState(value: unknown, cwd?: string): TaskPanelState {
 	if (!value || typeof value !== "object") return emptyState(cwd);
 	const candidate = value as Partial<TaskPanelState>;
-	return {
+	const panel = normalizePanelState(candidate.panel, defaultPanelState(cwd));
+	const state: TaskPanelState = {
 		version: 1,
-		panel: candidate.panel === "hidden" || candidate.panel === "expanded" ? candidate.panel : "compact",
+		panel,
+		lastVisiblePanel: visiblePanelFor(candidate.lastVisiblePanel, visiblePanelFor(panel)),
+		hiddenByUser: candidate.hiddenByUser === true,
+		autoShownThisSession: candidate.autoShownThisSession === true,
 		phases: Array.isArray(candidate.phases) ? candidate.phases.filter((p): p is PhaseItem => Boolean(p?.id && p.title)) : [],
 		tasks: Array.isArray(candidate.tasks) ? candidate.tasks.filter((t): t is TaskItem => Boolean(t?.id && t.content && t.status)) : [],
 		updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date().toISOString(),
 	};
+	ensureTaskPanelVisibility(state);
+	return state;
 }
 
 function taskIcon(status: Status, active = false): string {
@@ -365,14 +391,13 @@ function updatePanelAfterTaskChange(state: TaskPanelState, cwd?: string): void {
 	const active = sortTasks(state.tasks.filter((task) => task.status === "in_progress"));
 	for (const task of active.slice(1)) task.status = "pending";
 	const remaining = remainingCount(state);
-	if (remaining === 0 && state.tasks.length > 0) {
-		state.panel = "hidden";
-		return;
-	}
-	if (remaining > 0) {
-		ensureActiveTask(state);
-		if (state.panel === "hidden" && settingBoolean("autoShowOnFirstTask", true, cwd)) state.panel = "compact";
-	}
+	if (remaining > 0) ensureActiveTask(state);
+	applyTaskPanelContentVisibility(state, {
+		autoShowOnFirstTask: settingBoolean("autoShowOnFirstTask", true, cwd),
+		defaultPanel: defaultPanelState(cwd),
+		hasTasks: state.tasks.length > 0,
+		remainingTasks: remaining,
+	});
 }
 
 function addTask(state: TaskPanelState, content: string, phaseTitleText?: string, cwd?: string): TaskItem {
@@ -480,8 +505,9 @@ function statusFromLegacyBox(box: string | undefined): Status | undefined {
 	return "pending";
 }
 
-function parseEditableText(text: string, cwd?: string): TaskPanelState {
+function parseEditableText(text: string, cwd?: string, visibility = rememberTaskPanelVisibility(emptyState(cwd))): TaskPanelState {
 	const state = emptyState(cwd);
+	restoreTaskPanelVisibility(state, visibility);
 	let currentPhase: string | undefined;
 	let lastTask: TaskItem | undefined;
 	for (const line of text.split(/\r?\n/)) {
@@ -803,7 +829,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	async function editTasks(ctx: ExtensionCommandContext | ExtensionContext): Promise<void> {
 		const text = await ctx.ui.editor("Edit tasks — one '- task' per line; optional: (active), (done), (dropped)", toEditableText(state));
 		if (text === undefined) return;
-		state = parseEditableText(text, ctx.cwd);
+		state = parseEditableText(text, ctx.cwd, rememberTaskPanelVisibility(state));
 		ctx.ui.notify(mutate(ctx, () => `Saved ${state.tasks.length} task(s)`), "info");
 	}
 
@@ -926,8 +952,6 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		if (postManageAction === "edit") await editTasks(ctx);
 	}
 
-	let lastShownPanel: "compact" | "expanded" = state.panel === "expanded" ? "expanded" : "compact";
-
 	function handleTasksCommand(args: string, ctx: ExtensionCommandContext): Promise<void> | void {
 		const trimmed = args.trim();
 		if (!trimmed || trimmed === "manage") return manage(ctx);
@@ -945,20 +969,16 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			case "drop": message = mutate(ctx, () => markStatus(state, rest, "abandoned", ctx.cwd)?.content ?? `No task matched: ${rest}`); break;
 			case "remove": message = mutate(ctx, () => removeTask(state, rest, ctx.cwd) ? `Removed ${rest}` : `No task matched: ${rest}`); break;
 			case "clear-completed": message = mutate(ctx, () => { const before = state.tasks.length; state.tasks = state.tasks.filter((task) => task.status !== "completed"); updatePanelAfterTaskChange(state, ctx.cwd); return `Removed ${before - state.tasks.length} completed task(s)`; }); break;
-			case "hide": message = mutate(ctx, () => { if (state.panel !== "hidden") lastShownPanel = state.panel; state.panel = "hidden"; return "Task panel hidden"; }); break;
-			case "show": message = mutate(ctx, () => { state.panel = "compact"; lastShownPanel = "compact"; return `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`; }); break;
-			case "show-all": message = mutate(ctx, () => { state.panel = "expanded"; lastShownPanel = "expanded"; return "Task panel showing all tasks"; }); break;
+			case "hide": message = mutate(ctx, () => { userHideTaskPanel(state); return "Task panel hidden"; }); break;
+			case "show": message = mutate(ctx, () => { userShowTaskPanel(state, "compact"); return `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`; }); break;
+			case "show-all": message = mutate(ctx, () => { userShowTaskPanel(state, "expanded"); return "Task panel showing all tasks"; }); break;
 			case "toggle": message = mutate(ctx, () => {
-				if (state.panel === "hidden") {
-					state.panel = lastShownPanel;
-					return lastShownPanel === "expanded" ? "Task panel showing all tasks" : `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`;
-				}
-				lastShownPanel = state.panel;
-				state.panel = "hidden";
-				return "Task panel hidden";
+				cycleTaskPanelVisibility(state);
+				if (state.panel === "hidden") return "Task panel hidden";
+				return state.panel === "expanded" ? "Task panel showing all tasks" : `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`;
 			}); break;
 			case "export": { const out = rest || join(ctx.cwd, ".pi", "tasks.md"); writeFileSafe(resolve(ctx.cwd, out), toEditableText(state)); message = `Exported tasks to ${out}`; break; }
-			case "import": { const input = resolve(ctx.cwd, rest || join(".pi", "tasks.md")); state = parseEditableText(readFileSync(input, "utf8"), ctx.cwd); message = mutate(ctx, () => `Imported ${state.tasks.length} task(s)`); break; }
+			case "import": { const input = resolve(ctx.cwd, rest || join(".pi", "tasks.md")); state = parseEditableText(readFileSync(input, "utf8"), ctx.cwd, rememberTaskPanelVisibility(state)); message = mutate(ctx, () => `Imported ${state.tasks.length} task(s)`); break; }
 			case "edit": return editTasks(ctx);
 			default: message = "Unknown /tasks action. Try add, edit, manage, start, done, drop, remove, hide, show, or show-all.";
 		}
@@ -1042,7 +1062,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			"Before final replies that claim work is done, fixed, committed, verified, or no longer relevant, call tasks_write to reconcile the panel first: mark_done completed tasks, drop_task obsolete tasks, and add_task follow-ups.",
 			"Do not leave stale in_progress tasks; if the active task no longer matches the work, call start_task or drop_task before continuing.",
 			"tasks_write runs sequentially and automatically advances to the next pending task after mark_done/drop_task; do not issue a separate start_task unless switching to a non-next task.",
-			"tasks_write hides the panel when all tasks are complete and shows it again when pending work appears.",
+			"tasks_write hides the panel when all tasks are complete; auto-show happens only for the first non-empty task state in a session and never overrides a user-hidden panel.",
 		],
 		parameters: TaskToolParams,
 		async execute(_id, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
@@ -1050,7 +1070,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			if (!runCtx) throw new Error("No active Pi context for tasks_write");
 			const message = mutate(runCtx, () => {
 				switch (params.action) {
-					case "replace": state = emptyState(runCtx.cwd); for (const input of params.tasks ?? []) { const text = input.content ?? input.task ?? ""; if (!text) continue; const task = addTask(state, text, input.phase, runCtx.cwd); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`;
+					case "replace": { const visibility = rememberTaskPanelVisibility(state); state = emptyState(runCtx.cwd); restoreTaskPanelVisibility(state, visibility); for (const input of params.tasks ?? []) { const text = input.content ?? input.task ?? ""; if (!text) continue; const task = addTask(state, text, input.phase, runCtx.cwd); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`; }
 					case "add_phase": ensurePhase(state, params.phase ?? "General"); return params.phase ?? "General";
 					case "add_task": return addTask(state, params.task ?? "Task", params.phase, runCtx.cwd).content;
 					case "start_task": return startTask(state, params.task ?? "", runCtx.cwd)?.content ?? "No task matched";
@@ -1058,7 +1078,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 					case "drop_task": return markStatus(state, params.task ?? "", "abandoned", runCtx.cwd)?.content ?? "No task matched";
 					case "remove_task": { const task = findTask(state, params.task ?? ""); if (!task) return "No task matched"; state.tasks = state.tasks.filter((candidate) => candidate.id !== task.id); updatePanelAfterTaskChange(state, runCtx.cwd); return task.content; }
 					case "append_note": { const task = findTaskOrActive(state, params.task ?? ""); if (!task) return "No task matched"; task.notes.push(params.note ?? ""); return task.content; }
-					case "set_panel": state.panel = params.panel ?? "compact"; return `Panel ${state.panel}`;
+					case "set_panel": if (params.panel === "hidden") userHideTaskPanel(state); else userShowTaskPanel(state, params.panel === "expanded" ? "expanded" : "compact"); return `Panel ${state.panel}`;
 					default: return "No task action matched";
 				}
 			});
@@ -1120,7 +1140,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, ctx) => setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, undefined));
 
 	const toggle = async (ctx: ExtensionContext) => {
-		state.panel = state.panel === "hidden" ? "compact" : state.panel === "compact" ? "expanded" : "hidden";
+		cycleTaskPanelVisibility(state);
 		persist();
 		syncWidget(ctx);
 	};

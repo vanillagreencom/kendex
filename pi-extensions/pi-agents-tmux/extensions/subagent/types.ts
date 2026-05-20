@@ -368,6 +368,9 @@ export interface SubagentDashboardState {
 	collapsed: boolean;
 	mode: DashboardDisplayMode;
 	visible: boolean;
+	lastVisibleMode?: DashboardDisplayMode;
+	hiddenByUser?: boolean;
+	autoShownThisSession?: boolean;
 	items: Record<string, SubagentDashboardItem>;
 }
 

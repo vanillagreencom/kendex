@@ -15,7 +15,7 @@ Run shell commands in the background without blocking the conversation.
 - Long-running monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) are auto-backgrounded.
 - Wakeups when a task exits, with optional wakeups on matching output.
 - When `pi-session-bridge` is loaded, task start/output/terminal transitions also publish structured `bg_task.*` activity broker events without adding chat messages (`bg_task.started`, `bg_task.output_matched`, `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, `bg_task.stopped`).
-- Inline mini-dashboard above the editor; full dashboard popup for browsing details.
+- Inline mini-dashboard above the editor; full dashboard popup for browsing details. Manual hide stays hidden across task output, exit, restore, and retention updates until toggled back in.
 - Inline mini-dashboard participates in vstack's stable stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Persistent log files keep full output even when tool output is truncated.
 - Per-session sidecar state keeps `/bg` task history resumable for both tool-spawned and slash-command-spawned tasks.
@@ -95,15 +95,15 @@ Open `/extensions:settings`; settings appear under the **Background Tasks** tab.
 
 | Setting | What it does |
 | --- | --- |
-| Show task widget | Compact background-task widget. |
+| Show task widget | Compact background-task widget. Manual hide wins over task lifecycle refreshes until you toggle it back in. |
 | Widget placement | Above or below the editor. |
 | Tool output style | `compact` one-liner or `stacked` rows with expandable details. |
 | Expanded tool log lines | Maximum lines shown when expanding log output. |
 | Dashboard output line cap | Maximum lines in the interactive dashboard viewport. |
-| Mini-dashboard default mode | `compact`, `expanded`, or `hidden`. |
+| Mini-dashboard default mode | `compact`, `expanded`, or `hidden` at session start; runtime hide/show is user-controlled for the rest of the session. |
 | Mini-dashboard finished retention | Seconds finished tasks stay visible in the inline widget. |
 | Background next bash shortcut | Configurable. |
-| Mini-dashboard toggle shortcut | Configurable. |
+| Mini-dashboard toggle shortcut | Configurable show/hide toggle; toggling back in restores the last visible mode. |
 | Dashboard shortcut | Configurable. |
 
 ### Storage

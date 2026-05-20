@@ -10,7 +10,7 @@ Persistent task panel above the Pi status line. Tasks are managed by the agent t
 - Compact panel above the editor shows active and pending tasks at a glance.
 - Expanded mode groups by phase and shows notes for the active task.
 - Auto-advance moves to the next pending task when the active one is completed or dropped.
-- Auto-hide when all tasks are done; reappears when pending work is added.
+- Auto-hide when all tasks are done; auto-show happens only for the first non-empty task state each session and never overrides a panel you hid.
 - Bulk-edit, import, and export tasks as plain markdown.
 - Workflow reminders nudge the agent to keep the panel in sync.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
@@ -69,7 +69,7 @@ Status suffixes: `(active)`, `(done)`, `(dropped)`.
 
 ## Visibility cycle
 
-The panel toggle cycles `hidden → show 4 → show all`. The manager popup opens with its own shortcut and documents its keys in the footer. All bindings are configurable via `/extensions:settings`; Pi's thinking-visibility binding is preserved unless you opt in to taking it over.
+The panel toggle cycles visible modes and hides the panel; toggling back in restores the last visible mode. After `/tasks hide` or a hide shortcut, task mutations stay hidden until `/tasks show`, `/tasks show-all`, or an explicit toggle-in. The manager popup opens with its own shortcut and documents its keys in the footer. All bindings are configurable via `/extensions:settings`; Pi's thinking-visibility binding is preserved unless you opt in to taking it over.
 
 ## Settings
 
@@ -80,10 +80,10 @@ Open `/extensions:settings`; settings appear under the **Task Panel** tab.
 | Setting | What it does |
 | --- | --- |
 | Enable task panel | Master toggle for `tasks_write`, panel rendering, shortcuts, and reminders. |
-| Default panel state | `hidden`, `compact`, or `expanded` when tasks first appear. |
+| Default panel state | `hidden`, `compact`, or `expanded` when tasks first appear; later settings changes do not override a user-hidden panel in the current session. |
 | Compact task count | Max tasks shown in compact mode. |
 | Show active notes | Show notes for the active task in expanded mode. |
-| Auto-show on first task | Reveal the panel automatically when the first task is added. |
+| Auto-show on first task | Reveal the panel automatically only for the first non-empty task state in a session; user-hidden panels stay hidden until explicit show/toggle. |
 
 ### Keyboard
 
