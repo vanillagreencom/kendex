@@ -60,16 +60,18 @@ exit ${status}
 	process.env.PATH = `${binDir}:${ORIGINAL_PATH ?? ""}`;
 }
 
-function runFileSnapshot(created: ReturnType<typeof createRun>): { active: string; metadata: string; state: string } {
+function runFileSnapshot(created: ReturnType<typeof createRun>): { active: string; activity: string; metadata: string; state: string } {
 	return {
 		active: JSON.stringify(readActiveRun(repo)),
+		activity: existsSync(created.paths.activity_jsonl) ? readFileSync(created.paths.activity_jsonl, "utf8") : "<missing>",
 		metadata: readFileSync(created.paths.metadata_json, "utf8"),
 		state: readFileSync(created.paths.state_json, "utf8"),
 	};
 }
 
-function expectRunFilesUnchanged(created: ReturnType<typeof createRun>, before: { active: string; metadata: string; state: string }): void {
+function expectRunFilesUnchanged(created: ReturnType<typeof createRun>, before: { active: string; activity: string; metadata: string; state: string }): void {
 	expect(JSON.stringify(readActiveRun(repo))).toBe(before.active);
+	expect(existsSync(created.paths.activity_jsonl) ? readFileSync(created.paths.activity_jsonl, "utf8") : "<missing>").toBe(before.activity);
 	expect(readFileSync(created.paths.metadata_json, "utf8")).toBe(before.metadata);
 	expect(readFileSync(created.paths.state_json, "utf8")).toBe(before.state);
 }
@@ -360,6 +362,23 @@ describe("Flightdeck durable run store", () => {
 		const created = createRun(repo, SESSION);
 		expect(() => terminateRun(repo, created.metadata.run_id, { summaryPath: "tmp/missing-summary.md" })).toThrow(/invalid explicit --summary-path/);
 		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
+	test("terminate-active explicit summary failure preserves durable activity before legacy sync", () => {
+		const created = createRun(repo, SESSION);
+		writeFileSync(created.paths.activity_jsonl, '{"type":"old.event"}\n', "utf8");
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { live: { id: "live", kind: "adhoc", pane_id: "%9", state: "complete" } },
+			session_id: SESSION,
+		}), "utf8");
+		writeFileSync(join(stateDir, `flightdeck-activity-${SESSION}.jsonl`), '{"type":"current.event"}\n', "utf8");
+		const before = runFileSnapshot(created);
+
+		expect(() => terminateActiveRun(repo, SESSION, { summaryPath: "tmp/missing-summary.md" })).toThrow(/invalid explicit --summary-path/);
+		expectRunFilesUnchanged(created, before);
+		expect(readFileSync(created.paths.activity_jsonl, "utf8")).toBe('{"type":"old.event"}\n');
 	});
 
 	test("terminating older run with explicit summary path does not sync current live state or activity", () => {

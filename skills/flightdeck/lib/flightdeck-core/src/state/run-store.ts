@@ -142,6 +142,16 @@ interface LivePaneIdsResult {
 	error?: string;
 }
 
+interface LegacySyncCandidate {
+	activityPath: string | null;
+	state: Record<string, unknown>;
+}
+
+interface StagedSummaryCopy {
+	finalPath: string;
+	stagedPath: string;
+}
+
 export interface LegacyImportResult {
 	project: ProjectIndex;
 	state_dir: string;
@@ -548,14 +558,23 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	mkdirSync(paths.snapshots_dir, { recursive: true });
 	let state = readStateObject(paths.state_json, "run state");
 	if (state === JSON_MISSING) throw new Error(`state not found for run: ${runId}`);
+	let summaryStage = options.summaryPath && options.summaryPath.trim()
+		? stageSummaryIfAvailable(loaded.project.root_path, paths, options.summaryPath, state)
+		: null;
+	let legacyActivityPath: string | null = null;
 	if (options.syncLegacy === true || requestedTmuxSession) {
-		const synced = syncRunStateFromLegacy(loaded.project.root_path, metadata, paths, options.stateDir, requestedTmuxSession ?? undefined);
-		if (synced) state = synced;
+		const synced = readRunStateFromLegacy(loaded.project.root_path, metadata, paths, options.stateDir, requestedTmuxSession ?? undefined);
+		if (synced) {
+			state = synced.state;
+			legacyActivityPath = synced.activityPath;
+		}
 	}
 	state.activity_path = paths.activity_jsonl;
 	state.terminated = true;
 	state.terminated_at = timestamp.iso;
-	const summaryPath = copySummaryIfAvailable(loaded.project.root_path, paths, options.summaryPath, state);
+	if (!summaryStage) summaryStage = stageSummaryIfAvailable(loaded.project.root_path, paths, undefined, state);
+	const summaryPath = commitStagedSummary(summaryStage);
+	if (legacyActivityPath) copyFileAtomic(legacyActivityPath, paths.activity_jsonl);
 	writeJsonAtomic(paths.state_json, state);
 	const snapshotPath = safeSnapshotPath(paths.snapshots_dir, `${timestamp.basename}.json`);
 	writeJsonAtomic(snapshotPath, state);
@@ -657,16 +676,15 @@ function legacyStateDirForRoot(projectRoot: string, stateDir?: string): string {
 	return isAbsolute(raw) ? resolve(raw) : resolve(projectRoot, raw);
 }
 
-function syncRunStateFromLegacy(projectRoot: string, metadata: RunMetadata, paths: RunPaths, stateDir?: string, tmuxSession?: string): Record<string, unknown> | null {
+function readRunStateFromLegacy(projectRoot: string, metadata: RunMetadata, paths: RunPaths, stateDir?: string, tmuxSession?: string): LegacySyncCandidate | null {
 	const session = safeLegacySessionName(tmuxSession || metadata.tmux_session);
 	const dir = legacyStateDirForRoot(projectRoot, stateDir);
 	const liveState = join(dir, `flightdeck-state-${session}.json`);
 	const liveStateJson = readStateObject(liveState, "live state");
 	if (liveStateJson === JSON_MISSING) return null;
 	const liveActivity = activityPathForSession(session, dir);
-	if (existsSync(liveActivity)) copyFileAtomic(liveActivity, paths.activity_jsonl);
 	liveStateJson.activity_path = paths.activity_jsonl;
-	return liveStateJson;
+	return { activityPath: existsSync(liveActivity) ? liveActivity : null, state: liveStateJson };
 }
 
 function checkActiveRunStale(projectRoot: string, metadata: RunMetadata, paths: RunPaths, stateDir?: string): StaleActiveRunCheck {
@@ -716,12 +734,13 @@ function archiveLegacyStateIfPresent(projectRoot: string, tmuxSession: string, s
 	return archivePath;
 }
 
-function copySummaryIfAvailable(projectRoot: string, paths: RunPaths, explicitSummaryPath: string | undefined, state: Record<string, unknown>): string | null {
+function stageSummaryIfAvailable(projectRoot: string, paths: RunPaths, explicitSummaryPath: string | undefined, state: Record<string, unknown>): StagedSummaryCopy | null {
 	const explicit = explicitSummaryPath && explicitSummaryPath.trim() ? explicitSummaryPath.trim() : "";
 	const raw = explicit || (typeof state.summary_path === "string" && state.summary_path.trim() ? state.summary_path.trim() : "");
 	if (!raw) return null;
 	const source = isAbsolute(raw) ? resolve(raw) : resolve(projectRoot, raw);
 	const explicitLabel = explicit ? "explicit --summary-path" : "state.summary_path";
+	const stagedPath = `${paths.summary_md}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
 	try {
 		const lst = lstatSync(source);
 		if (lst.isSymbolicLink()) throw new Error("symlinks are not allowed");
@@ -730,14 +749,23 @@ function copySummaryIfAvailable(projectRoot: string, paths: RunPaths, explicitSu
 		const realRoot = realpathSync(projectRoot);
 		const realSource = realpathSync(source);
 		if (!isPathInside(realRoot, realSource)) throw new Error(`path escapes project root: ${source}`);
-		copyFileAtomic(realSource, paths.summary_md);
-		return paths.summary_md;
+		const existingDestination = existsSync(paths.summary_md) ? lstatSync(paths.summary_md) : null;
+		if (existingDestination && !existingDestination.isFile()) throw new Error(`summary destination is not a regular file: ${paths.summary_md}`);
+		copyFileAtomic(realSource, stagedPath);
+		return { finalPath: paths.summary_md, stagedPath };
 	} catch (error) {
+		rmSync(stagedPath, { force: true });
 		const message = error instanceof Error ? error.message : String(error);
 		if (explicit) throw new Error(`invalid ${explicitLabel} ${raw}: ${message}`);
 		process.stderr.write(`Warning: ignored ${explicitLabel} ${raw}: ${message}\n`);
 		return null;
 	}
+}
+
+function commitStagedSummary(stage: StagedSummaryCopy | null): string | null {
+	if (!stage) return null;
+	renameSync(stage.stagedPath, stage.finalPath);
+	return stage.finalPath;
 }
 
 function projectIdentityForRoot(rootPath: string): ProjectIdentity {
