@@ -14,6 +14,7 @@ pub struct RunSnapshotSource {
     pub snapshot: Option<String>,
     pub state_path: PathBuf,
     pub activity_path: PathBuf,
+    pub run_dir: PathBuf,
     pub imported: bool,
     pub terminated_at: Option<DateTime<Utc>>,
     pub read_only: bool,

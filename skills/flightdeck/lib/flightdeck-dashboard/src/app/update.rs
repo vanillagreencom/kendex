@@ -386,6 +386,7 @@ fn apply_loaded_run_snapshot(
         snapshot: loaded.snapshot_name.clone(),
         state_path: loaded.snapshot.master_state_path.clone(),
         activity_path: loaded.metadata.activity_path.clone(),
+        run_dir: loaded.metadata.run_dir(),
         imported: loaded.metadata.imported,
         terminated_at: loaded.metadata.terminated_at,
         read_only: force_archive || loaded.metadata.terminated || loaded.metadata.imported,

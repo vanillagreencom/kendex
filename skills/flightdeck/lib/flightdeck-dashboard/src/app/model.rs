@@ -1278,14 +1278,9 @@ fn activity_source_for(
             (resolution.state_dir.clone(), resolution.session.clone())
         }
         SnapshotSource::Run(source) => {
-            let run_dir = source
-                .state_path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| source.project_root.clone());
             return Some(JsonlActivitySource::from_run_path(
                 source.activity_path.clone(),
-                run_dir,
+                source.run_dir.clone(),
             ));
         }
     };

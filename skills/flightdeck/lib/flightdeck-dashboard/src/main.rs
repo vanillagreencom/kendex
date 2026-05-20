@@ -471,6 +471,7 @@ fn initial_from_loaded_run(loaded: LoadedRunSnapshot, force_archive: bool) -> In
             snapshot: loaded.snapshot_name.clone(),
             state_path: loaded.snapshot.master_state_path.clone(),
             activity_path: loaded.metadata.activity_path.clone(),
+            run_dir: loaded.metadata.run_dir(),
             imported: loaded.metadata.imported,
             terminated_at: loaded.metadata.terminated_at,
             read_only: force_archive || loaded.metadata.terminated || loaded.metadata.imported,
@@ -1014,6 +1015,54 @@ mod tests {
     }
 
     #[test]
+    fn run_id_snapshot_activity_uses_canonical_run_dir() {
+        with_startup_fixture(|ctx| {
+            let run_dir = ctx.project.join("runs/run-1");
+            let snapshots_dir = run_dir.join("snapshots");
+            let snapshot_name = "2026-05-19T120000Z.json";
+            fs::create_dir_all(&snapshots_dir).expect("snapshots dir");
+            fs::write(
+                run_dir.join("activity.jsonl"),
+                concat!(
+                    "{\"schema_version\":1,\"id\":\"run-activity\",",
+                    "\"ts\":\"2026-05-19T12:00:00Z\",",
+                    "\"session_id\":\"S\",\"source\":\"flightdeck\",",
+                    "\"type\":\"session.started\",\"severity\":\"info\",",
+                    "\"importance\":\"normal\",\"summary\":\"run activity\"}\n",
+                ),
+            )
+            .expect("activity");
+            write_run_show(&ctx.responses, &ctx.project, &run_dir, snapshot_name);
+            let mut args = tui_args("S");
+            args.session = None;
+            args.run_id = Some(String::from("run-1"));
+            args.snapshot = Some(snapshot_name.to_owned());
+
+            let initial = initial_snapshot(&args);
+            assert!(matches!(
+                &initial.source,
+                SnapshotSource::Run(source)
+                    if source.state_path == snapshots_dir.join(snapshot_name)
+                        && source.run_dir == run_dir
+            ));
+            let InitialSnapshot {
+                snapshot,
+                source,
+                source_state,
+                ..
+            } = initial;
+            let mut model = Model::new(snapshot, source, MotionLevel::Off, Theme::Moon, utc_now);
+            model.read_source_state = source_state;
+            model.sync_activity_source();
+            model.poll_activity_source();
+
+            assert!(model.activity.source_error.is_none());
+            assert_eq!(model.activity.events.len(), 1);
+            assert_eq!(model.activity.events[0].id, "run-activity");
+        });
+    }
+
+    #[test]
     fn archive_flag_forces_read_only_legacy_archive() {
         with_startup_fixture(|ctx| {
             let archive = ctx
@@ -1105,8 +1154,14 @@ mod tests {
         let script = format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
-if [[ -f {responses}/fail-active ]]; then echo forced failure >&2; exit 9; fi
-cat {responses}/active.json
+case "$1 $2" in
+  "run active")
+    if [[ -f {responses}/fail-active ]]; then echo forced failure >&2; exit 9; fi
+    cat {responses}/active.json
+    ;;
+  "run show") cat {responses}/show.json ;;
+  *) echo unexpected "$@" >&2; exit 64 ;;
+esac
 "#,
             responses = shell_path(responses),
         );
@@ -1150,6 +1205,34 @@ cat {responses}/active.json
             .to_string(),
         )
         .expect("active json");
+    }
+
+    fn write_run_show(responses: &Path, project: &Path, run_dir: &Path, snapshot_name: &str) {
+        fs::write(
+            responses.join("show.json"),
+            json!({
+                "metadata": {
+                    "run_id": "run-1",
+                    "project_root": project,
+                    "tmux_session": "S",
+                    "state_path": run_dir.join("state.json"),
+                    "activity_path": run_dir.join("activity.jsonl"),
+                    "summary_path": null,
+                    "snapshots_path": run_dir.join("snapshots"),
+                    "started_at": "2026-05-19T12:00:00Z",
+                    "last_seen_at": "2026-05-19T12:01:00Z",
+                    "terminated": false,
+                    "terminated_at": null,
+                    "imported": false,
+                    "imported_from": null
+                },
+                "state": state_json("S", false),
+                "snapshot": snapshot_name,
+                "snapshots": [snapshot_name]
+            })
+            .to_string(),
+        )
+        .expect("show json");
     }
 
     fn start_fake_dashboard_socket(path: &Path, project: &Path) {

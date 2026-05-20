@@ -423,7 +423,7 @@ Keep existing fields for compatibility.
 
 ### Phase 2 — State command support
 
-- Implement `flightdeck-state run active/list/show/create/terminate/import-legacy`.
+- Implement `flightdeck-state run active/list/show/create/ensure/terminate/terminate-active/import-legacy`.
 - Keep existing `path`, `init`, `archive`, and activity commands working.
 - Add tests for active pointer creation/clearing and legacy archive import.
 

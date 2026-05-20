@@ -50,6 +50,16 @@ pub struct RunMetadata {
     pub imported_from: Option<PathBuf>,
 }
 
+impl RunMetadata {
+    #[must_use]
+    pub fn run_dir(&self) -> PathBuf {
+        self.state_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.project_root.clone())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryRun {
     pub metadata: RunMetadata,
