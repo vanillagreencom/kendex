@@ -85,7 +85,7 @@ Plan PR tags shared with the GitHub lane:
 
 Do not route Linear-only tags in plan mode: `audit-relation-prompt`, `descope-related`, `external-fix-suggestions`, `cycle-fix-suggestions`. If one appears, set `paused_for_user = {entry_id:<ITEM_ID>, reason:"domain-mismatch", prompt_text:<excerpt>}`.
 
-`terminal-state-reached` on a plan entry invokes `⤵ workflows/plan/close-item.md <ITEM_ID>` after generic completion detection.
+`terminal-state-reached` on a plan entry invokes `⤵ workflows/plan/close-item.md <ITEM_ID>` after generic completion detection. If the `pane-poll` row includes `detected_pr_number` / `detected_pr_url` and `entry.domain.plan_item.pr_number` is null, validate with `gh pr view <PR> --json url,headRefName,state` before invoking close: URL must match the detected URL and the head branch must match the plan item worktree branch. On success, persist `pane-registry set <ITEM_ID> pr_number <PR>`; on `gh` failure follow § 6 and pause rather than closing from pane text alone.
 
 ---
 

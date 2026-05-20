@@ -17,7 +17,7 @@ These tags do not require GitHub, Linear, PR, or worktree context.
 
 | Tag | Sentinel / source | Handler |
 |-----|-------------------|---------|
-| `terminal-state-reached` | Work-complete / session-complete / destroyed-cwd completion signal | Mark generic entry complete; issue mode verifies through `close-issue.md`. |
+| `terminal-state-reached` | Work-complete / session-complete / destroyed-cwd completion signal, including adapter text whose final non-empty line is a GitHub pull URL | Mark generic entry complete; issue mode records/validates PR metadata before `close-issue.md`. |
 | `bash-permission-prompt` | Harness asks to run a command | Conservative read-only/skill-script allowlist; otherwise escalate. |
 | `awaiting-direction` | `Awaiting user direction`, declined questions, standing by | Synthesize a continuation from decision history or escalate. |
 | `generic-multi-choice` | Numbered option list with no specific sentinel | Safe bounded-choice policy; no PR conflict graph. |

@@ -11,6 +11,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
+import { FINAL_GITHUB_PULL_URL_PATTERN } from "../classifier/github-pr-url.ts";
+
 export interface PaneMeta {
 	target: string;
 	windowId: string;
@@ -131,6 +133,7 @@ export function classifyBuffer(buf: string, opts: ClassifyOpts = {}): string {
 	if (/merge now|merge.?ready|ready to merge/i.test(buf)) return "merge-now";
 	if (/cleanup|delete worktree|keep worktree/i.test(buf)) return "cleanup-prompt";
 	if (/rebase.*conflict|how.*resolve.*conflict/i.test(buf)) return "rebase-multi-choice";
+	if (noFooterGate && FINAL_GITHUB_PULL_URL_PATTERN.test(buf)) return "terminal-state-reached";
 	if (/\[1\][^\n]*\[2\]|\(1\)[^\n]*\(2\)/.test(buf)) return "generic-multi-choice";
 	if (/allow.*\?|permission.*to run|approve this command/i.test(buf)) return "bash-permission-prompt";
 	return "rendering";

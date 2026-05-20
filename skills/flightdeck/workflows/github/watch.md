@@ -82,7 +82,7 @@ GitHub issue-only tags:
 
 Do not route Linear-only tags in GitHub mode: `audit-relation-prompt`, `descope-related`, `external-fix-suggestions`, `cycle-fix-suggestions`. If one appears, set `paused_for_user = {issue_id: <N>, reason: "domain-mismatch", prompt_text: <excerpt>}`.
 
-`terminal-state-reached` on a GitHub entry invokes `⤵ workflows/github/close-issue.md <N>` after generic completion detection.
+`terminal-state-reached` on a GitHub entry invokes `⤵ workflows/github/close-issue.md <N>` after generic completion detection. If the `pane-poll` row includes `detected_pr_number` / `detected_pr_url` and `entry.domain.github_issue.pr_number` is null, validate with `gh pr view <PR> --json url,headRefName,state` before invoking close: URL must match the detected URL and the head branch must be `issue-<N>` (or the existing registered branch for this entry). On success, persist `pane-registry set <N> pr_number <PR>`; on `gh` failure follow § 6 and pause rather than closing from pane text alone.
 
 ---
 

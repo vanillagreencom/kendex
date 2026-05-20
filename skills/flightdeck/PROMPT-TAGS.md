@@ -13,7 +13,7 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 | Tag | Handler domain | Purpose |
 |-----|----------------|---------|
 | `rendering` | generic | Pane still rendering; do not answer yet. |
-| `terminal-state-reached` | generic + issue | Pane reached a completion/terminal state; route to summary or close workflow. |
+| `terminal-state-reached` | generic + issue | Pane reached a completion/terminal state; route to summary or close workflow. Adapter text with a GitHub pull URL on the final non-empty line also maps here so PR-producing children wake the supervisor. |
 | `bash-permission-prompt` | generic | Harness asks whether to allow a shell command. |
 | `force-merge-confirm` | issue | Prompt asks whether to force-merge. Apply conflict/UNKNOWN gate first. |
 | `merge-ready-but-unknown` | issue | GitHub merge state is `UNKNOWN`; apply timer and force-merge predicate before acting. |

@@ -173,6 +173,16 @@ write 25-generic-parens generic-multi-choice \
 
 $FOOTER"
 
+# A PR URL inside an interactive prompt is not a completion signal;
+# the final-PR-URL sentinel is adapter/no-footer only.
+write 26-generic-with-pr-url generic-multi-choice \
+	"Review https://github.com/vanillagreencom/vstack/pull/172?
+
+1. Wait
+2. Stop
+
+$FOOTER"
+
 # Adapter-text path with --no-footer-gate. Same content, no TUI chrome.
 write_nofooter 30-no-footer-merge-now merge-now \
 	"PR #999 is approved with CI passing. Merge now?"
@@ -182,5 +192,14 @@ write_nofooter 31-no-footer-rebase rebase-multi-choice \
 
 # Adapter-text path with no detectable prompt → idle.
 write_nofooter 32-no-footer-idle idle "All quiet."
+
+# Pi/GitHub issue child contract: final non-empty line is the PR URL.
+write_nofooter 33-no-footer-final-pr-url terminal-state-reached \
+	"Implementation complete.
+
+1. Tests pass
+2. Branch pushed
+
+https://github.com/vanillagreencom/vstack/pull/172"
 
 echo "wrote $(ls -1 *.buffer | wc -l) fixtures"

@@ -57,6 +57,12 @@ describe("classifyBuffer built-in stub", () => {
 		expect(classifyBuffer("(1) yes (2) no")).toBe("generic-multi-choice");
 	});
 
+	test("final GitHub pull URL requires no-footer adapter mode", () => {
+		const text = "Done.\n\nhttps://github.com/vanillagreencom/vstack/pull/172";
+		expect(classifyBuffer(text)).toBe("rendering");
+		expect(classifyBuffer(text, { noFooterGate: true })).toBe("terminal-state-reached");
+	});
+
 	test("bash-permission-prompt", () => {
 		expect(classifyBuffer("Allow this?")).toBe("bash-permission-prompt");
 		expect(classifyBuffer("permission to run rm")).toBe("bash-permission-prompt");

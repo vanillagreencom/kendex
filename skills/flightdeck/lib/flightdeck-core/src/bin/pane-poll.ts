@@ -12,6 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { classifyBuffer } from "../classifier/classify.ts";
+import { extractFinalGithubPullUrl, type GithubPullUrlMatch } from "../classifier/github-pr-url.ts";
 import { OC_LAST_ASSISTANT_JQ, ocAdapterIsFresh, ocIssueFromPaneTarget, ocSpawnFile } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ, ccAdapterIsFresh, ccSpawnFile } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ, piBridgeIsFresh, piResolveBridgeBin, piSpawnFile } from "../paths/pi.ts";
@@ -115,6 +116,7 @@ function jsonResult(
 	bell: string, activity: string, silence: string,
 	tag: string, captureHash: string,
 	fingerprintMatch: boolean, paneIndexSuggest: number | null,
+	detectedPull: GithubPullUrlMatch | null = null,
 ): string {
 	const obj: Record<string, unknown> = {};
 	if (issue) obj.issue = issue;
@@ -125,6 +127,10 @@ function jsonResult(
 	obj.activity = activity === "1";
 	obj.silence = silence === "1";
 	obj.tag = tag;
+	if (detectedPull) {
+		obj.detected_pr_number = detectedPull.number;
+		obj.detected_pr_url = detectedPull.url;
+	}
 	obj.capture_hash = captureHash;
 	obj.fingerprint_match = fingerprintMatch;
 	obj.pane_index_suggest = paneIndexSuggest;
@@ -419,6 +425,7 @@ function pollOne(row: PollRow): string {
 	}
 
 	const captureHash = `sha256:${createHash("sha256").update(buf).digest("hex")}`;
+	const detectedPull = adapterUsed ? extractFinalGithubPullUrl(buf) : null;
 	const classifyResult = classifyBuffer(buf, { entryKind: row.entryKind, noFooterGate: adapterUsed });
 	let tag = classifyResult.tag;
 
@@ -457,7 +464,7 @@ function pollOne(row: PollRow): string {
 		}
 	}
 
-	return jsonResult(issue, windowTarget, outputPane, windowNameCurrent, bell, activity, silence, tag, captureHash, fingerprintMatch, paneIndexSuggest);
+	return jsonResult(issue, windowTarget, outputPane, windowNameCurrent, bell, activity, silence, tag, captureHash, fingerprintMatch, paneIndexSuggest, detectedPull);
 }
 
 // ---- main ---------------------------------------------------------------

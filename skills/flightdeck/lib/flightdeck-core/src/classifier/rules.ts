@@ -4,10 +4,13 @@
 // Order matters: more-specific shapes are listed before more-general ones,
 // and the first match wins.
 
+import { FINAL_GITHUB_PULL_URL_PATTERN } from "./github-pr-url.ts";
+
 export interface Rule {
 	tag: string;
 	pattern: RegExp;
 	matched: string;
+	requiresNoFooterGate?: boolean;
 }
 
 // Tags that assume issue/worktree/PR context. When prompt-classify is told
@@ -133,6 +136,12 @@ export const POST_FOOTER_RULES: Rule[] = [
 		tag: "multi-select-tabbed",
 		matched: "tabbed checkbox select",
 		pattern: /(←|→).*(☐|☒|✔|✓)|(☐|☒|✔|✓).*(←|→)/,
+	},
+	{
+		tag: "terminal-state-reached",
+		matched: "final GitHub pull URL",
+		pattern: FINAL_GITHUB_PULL_URL_PATTERN,
+		requiresNoFooterGate: true,
 	},
 	{
 		tag: "generic-multi-choice",

@@ -18,6 +18,7 @@ export interface ClassifyOptions {
 //   4. fallback: idle
 export function classifyBuffer(buf: string, options: ClassifyOptions = {}): ClassifyResult {
 	for (const rule of PRE_FOOTER_RULES) {
+		if (rule.requiresNoFooterGate && !options.noFooterGate) continue;
 		if (rule.pattern.test(buf)) return applyDomainGuard({ matched: rule.matched, tag: rule.tag }, options.entryKind, options.entryKindUnknown);
 	}
 
@@ -29,6 +30,7 @@ export function classifyBuffer(buf: string, options: ClassifyOptions = {}): Clas
 	}
 
 	for (const rule of POST_FOOTER_RULES) {
+		if (rule.requiresNoFooterGate && !options.noFooterGate) continue;
 		if (rule.pattern.test(buf)) return applyDomainGuard({ matched: rule.matched, tag: rule.tag }, options.entryKind, options.entryKindUnknown);
 	}
 

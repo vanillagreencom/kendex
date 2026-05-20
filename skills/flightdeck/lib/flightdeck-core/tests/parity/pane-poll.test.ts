@@ -157,6 +157,85 @@ describe("pane-poll parity", () => {
 		expect(row.capture_hash).not.toBe("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 	});
 
+	test("pi history final GitHub pull URL classifies terminal and exposes PR", async () => {
+		const { chmodSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+		const net = require("node:net") as typeof import("node:net");
+		const { tmpdir } = require("node:os") as typeof import("node:os");
+		const { join } = require("node:path") as typeof import("node:path");
+		const dir = mkdtempSync(join(tmpdir(), "fd-pi-pr-url-"));
+		const bridgeDir = join(dir, "bin");
+		const statePath = join(dir, "tmux-state.json");
+		const sockPath = join(dir, "pi.sock");
+		try {
+			writeFileSync(statePath, JSON.stringify({
+				panes: {
+					"%212": { pane_index: 0, path: dir, window_id: "@22", window_index: 22, window_name: "Pi PR URL" },
+				},
+				session: "test-session",
+				windows: { "@22": { index: 22, name: "Pi PR URL" } },
+			}, null, 2));
+			const { mkdirSync } = require("node:fs") as typeof import("node:fs");
+			mkdirSync(bridgeDir, { recursive: true });
+			const bridge = join(bridgeDir, "pi-bridge");
+			writeFileSync(bridge, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  state)
+    printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1"}}'
+    ;;
+  history)
+    python3 - <<'PY'
+import json
+events = [
+  {"data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Implementation complete.\\n\\n1. Tests pass\\n2. Branch pushed\\n\\nhttps://github.com/vanillagreencom/vstack/pull/172"}]}}},
+]
+print(json.dumps({"data":{"events":events}}))
+PY
+    ;;
+  *)
+    echo "unexpected pi-bridge command: $*" >&2
+    exit 2
+    ;;
+esac
+`);
+			chmodSync(bridge, 0o755);
+			const server = net.createServer();
+			await new Promise<void>((resolveListen, rejectListen) => {
+				server.once("error", rejectListen);
+				server.listen(sockPath, () => {
+					server.off("error", rejectListen);
+					resolveListen();
+				});
+			});
+			try {
+				const env: Record<string, string> = {
+					...(process.env as Record<string, string>),
+					PATH: `${bridgeDir}:${SHIM_DIR}:${process.env.PATH ?? ""}`,
+					TMUX: "/tmp/tmux-test",
+					TMUX_SHIM_STATE: statePath,
+				};
+				const batch = JSON.stringify([{
+					harness: "pi",
+					issue: "174",
+					kind: "issue",
+					pane_id: "%212",
+					pi_bridge_pid: process.pid,
+					pi_bridge_socket: sockPath,
+				}]);
+				const r = spawnSync(SCRIPT, ["--batch", "-"], { encoding: "utf8", env, input: batch });
+				expect(r.status).toBe(0);
+				const row = JSON.parse(r.stdout.trim());
+				expect(row.tag).toBe("terminal-state-reached");
+				expect(row.detected_pr_number).toBe(172);
+				expect(row.detected_pr_url).toBe("https://github.com/vanillagreencom/vstack/pull/172");
+			} finally {
+				await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+			}
+		} finally {
+			rmSync(dir, { force: true, recursive: true });
+		}
+	});
+
 	test("pi history above node default buffer still classifies from bridge", async () => {
 		const { chmodSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
 		const net = require("node:net") as typeof import("node:net");
