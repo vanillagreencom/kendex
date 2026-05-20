@@ -1149,14 +1149,22 @@ function cmdHydratePi(issue: string): void {
 	const pidNum = typeof pid === "number" ? pid : Number(pid);
 	if (!Number.isFinite(pidNum) || pidNum <= 0) die(`pane-registry: hydrate-pi spawn file ${piSpawnFile(issue)} missing numeric pid`);
 	if (!socket || !sessionId) die(`pane-registry: hydrate-pi spawn file ${piSpawnFile(issue)} missing socket or session_id`);
-	const idJson = JSON.stringify(issue);
-	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_bridge_pid`, JSON.stringify(pidNum)]);
-	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_bridge_socket`, JSON.stringify(socket)]);
-	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_session_id`, JSON.stringify(sessionId)]);
+	// vstack#186: write all four adapter fields in one write-entry call so
+	// the daemon's reconcile tick never observes a half-hydrated entry
+	// (pi_bridge_pid set but pi_session_id still null, for example). The
+	// previous implementation chained three or four separate jq-set
+	// mutations, each acquiring its own lock; an interleaved daemon read
+	// could see any intermediate state.
+	const adapter = isRecord(entry.adapter) ? { ...entry.adapter } : {};
+	adapter.pi_bridge_pid = pidNum;
+	adapter.pi_bridge_socket = socket;
+	adapter.pi_session_id = sessionId;
+	const updated: EntryRecord = { ...entry, adapter };
 	const existingError = typeof entry.discovery_error === "string" ? entry.discovery_error : "";
 	if (existingError && existingError.startsWith("pi_bridge_")) {
-		fdStateOrDie(["set", `.entries[${idJson}].discovery_error`, "null"]);
+		updated.discovery_error = null;
 	}
+	fdStateOrDie(["write-entry", issue, JSON.stringify(updated)]);
 	process.stdout.write(JSON.stringify({ ok: true, issue, pi_bridge_pid: pidNum, pi_bridge_socket: socket, pi_session_id: sessionId }) + "\n");
 }
 

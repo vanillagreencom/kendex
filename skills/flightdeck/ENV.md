@@ -57,6 +57,8 @@ Daemon hygiene env vars (operator-facing; details in `DEVELOPMENT.md`):
 | `FD_BELL_WAKE_INTERVAL_SEC` | `60` | Per-pane-per-tag bell-wake rate-limit; suppresses storm-y duplicates within the window. |
 | `FD_RECONCILE_INTERVAL_SEC` | `5` | Mid-session reconcile cadence: spawn subscribers for newly tracked panes, reap subscribers for departed panes, drop dead `.entries` rows. |
 | `FD_HEARTBEAT_OWNER_CGROUP` | `1` | Set to `0` to skip the optional `MemoryCurrent` / `MemoryPeak` cgroup probe attached to heartbeat events. |
+| `FD_PI_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Per-(pane,reason) throttle interval for `[pi-subscriber-bind-skip]` daemon log lines. Lower for more verbose bind-attempt logging during diagnosis; raise to quiet a chronically-unbindable pane. |
+| `FD_PI_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive `[pi-subscriber-bind-skip]` ticks for the same pane before the daemon emits a one-shot `[pi-subscriber-bind-stuck]` warning naming the missing adapter fields. Reset when the binder succeeds or the pane is reaped. |
 
 
 Rust dashboard env vars:

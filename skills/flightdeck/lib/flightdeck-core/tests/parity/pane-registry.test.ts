@@ -1205,4 +1205,44 @@ describe("pane-registry hydrate-pi (vstack#180)", () => {
 		expect(after.discovery_error).toBeNull();
 		expect((after.adapter as Record<string, unknown>).pi_bridge_pid).toBe(4242);
 	});
+
+	test("vstack#186: hydrate-pi writes pid/socket/session atomically and preserves other adapter fields", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: { "%9001": { pane_index: 0, path: "/tmp/wt-186", window_id: "@186", window_index: 1, window_name: "186" } },
+			windows: { "@186": { index: 1, name: "186" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+
+		// Register with a pre-existing adapter field that hydrate-pi must preserve.
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "186",
+			"--title", "186", "--kind", "issue",
+			"--cwd", "/tmp/wt-186", "--worktree", "/tmp/wt-186",
+			"--window", "1", "--harness", "pi",
+			"--pane-id", "%9001", "--pane-target", "test-session:1.0",
+		], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		// Inject a sibling adapter field that hydrate-pi must NOT clobber.
+		runShim(tsRepo, statePath, ["set", "186", "adapter.cc_url", JSON.stringify("ws://example/cc")], { FD_STATE_DIR: stateDir });
+
+		writeFileSync(
+			join(stateDir, "pi-spawn-186.json"),
+			JSON.stringify({ pid: 4242, socket: "/tmp/pi-bridge/186.sock", session_id: "sess-186", directory: "/tmp/wt-186" }),
+		);
+		expect(runShim(tsRepo, statePath, ["hydrate-pi", "186"], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		const after = JSON.parse(runShim(tsRepo, statePath, ["get", "186"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		// All three Pi adapter fields present together (no half-hydrated state).
+		expect(after.adapter.pi_bridge_pid).toBe(4242);
+		expect(after.adapter.pi_bridge_socket).toBe("/tmp/pi-bridge/186.sock");
+		expect(after.adapter.pi_session_id).toBe("sess-186");
+		// Sibling adapter field preserved (write-entry replaces entry but the
+		// hydrate-pi path read the full entry first and merged in changes).
+		expect(after.adapter.cc_url).toBe("ws://example/cc");
+		// Non-adapter fields unchanged.
+		expect(after.title).toBe("186");
+		expect(after.pane_id).toBe("%9001");
+		expect(after.cwd).toBe("/tmp/wt-186");
+	});
 });
