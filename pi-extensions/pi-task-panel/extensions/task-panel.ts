@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -37,7 +38,10 @@ function stableValue(value: unknown): unknown {
 
 function stableTaskPanelFingerprint(state: TaskPanelState): string {
 	const { updatedAt: _ignored, ...rest } = state as TaskPanelState & { updatedAt?: string };
-	return JSON.stringify(stableValue(rest));
+	// vstack#183: hash to a fixed-size digest. Returning the full canonical
+	// JSON would embed the entire state inside the overflow manifest and
+	// defeat the 64 KiB cap.
+	return createHash("sha256").update(JSON.stringify(stableValue(rest))).digest("hex");
 }
 
 interface TaskPanelBoundedManifest {
@@ -831,6 +835,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		const byteSize = Buffer.byteLength(serialized, "utf8");
 		if (byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
 			pi.appendEntry<TaskPanelState>(STATE_TYPE, snapshot);
+			lastFingerprintBySession.set(sessionKey, fingerprint);
 		} else {
 			const manifest: TaskPanelBoundedManifest = {
 				version: 2,
@@ -841,18 +846,34 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				counts: { tasks: state.tasks.length, phases: state.phases.length },
 				updatedAt: state.updatedAt,
 			};
-			pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
+			// vstack#183 defensive: the manifest itself must stay under cap.
+			const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
+			if (manifestBytes <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+				pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
+				lastFingerprintBySession.set(sessionKey, fingerprint);
+			} else {
+				// Skip the session-entry write entirely; sidecar (already written above) remains canonical.
+				lastFingerprintBySession.set(sessionKey, fingerprint);
+			}
 		}
-		lastFingerprintBySession.set(sessionKey, fingerprint);
 	};
 
 	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		state = readSidecar(ctx) ?? emptyState(ctx.cwd);
+		const sidecarState = readSidecar(ctx);
+		state = sidecarState ?? emptyState(ctx.cwd);
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
-				// Bounded manifests carry only counts; sidecar restore wins (vstack#177).
-				if (isTaskPanelBoundedManifest(entry.data)) continue;
+				// vstack#184: any `fullSnapshot: false` manifest is a sidecar-wins
+				// barrier. Without this, an older full snapshot earlier in the
+				// branch can replace the sidecar-restored state before the manifest
+				// is reached, regressing canonical state to stale data. Re-load
+				// sidecar at the barrier so canonical state survives the iteration.
+				const candidate = entry.data as { fullSnapshot?: unknown } | undefined;
+				if (candidate?.fullSnapshot === false) {
+					if (sidecarState) state = sidecarState;
+					continue;
+				}
 				state = normalizeState(entry.data, ctx.cwd);
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {

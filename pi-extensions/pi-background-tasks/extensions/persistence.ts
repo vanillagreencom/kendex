@@ -12,6 +12,7 @@
 // can pass it the current view of the task map without re-importing
 // everything per call.
 
+import { createHash } from "node:crypto";
 import {
 	mkdirSync,
 	renameSync,
@@ -57,15 +58,19 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
+// vstack#183: fingerprints are persisted inside the overflow manifest;
+// returning the full canonical JSON defeats the byte cap. Hash to a
+// fixed-size hex digest so an oversized task list yields a small
+// manifest even when the underlying payload is many MB.
 export function stableSnapshotFingerprint(value: unknown): string {
-	return JSON.stringify(stableValue(value));
+	return createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex");
 }
 
 export interface PersistResult {
 	appendEntry: boolean;
 	sidecar: boolean;
 	/** Why the session-entry write resolved the way it did. */
-	appendReason?: "appended" | "unchanged" | "manifest" | "no-active-context" | "error";
+	appendReason?: "appended" | "unchanged" | "manifest" | "manifest-oversize-skipped" | "no-active-context" | "error";
 }
 
 export interface PersistencePayload {
@@ -183,6 +188,8 @@ export function createPersistence(deps: PersistenceDeps): {
 					if (byteSize <= maxBytes) {
 						deps.pi.appendEntry(deps.customType, payload);
 						appendReason = "appended";
+						lastFingerprintBySession.set(sessionKey, fingerprint);
+						appendEntryOk = true;
 					} else {
 						const manifest: BgTasksBoundedManifest = {
 							version: 2,
@@ -193,11 +200,18 @@ export function createPersistence(deps: PersistenceDeps): {
 							counts: { tasks: payload.tasks.length },
 							updatedAt: payload.updatedAt,
 						};
-						deps.pi.appendEntry(deps.customType, manifest);
-						appendReason = "manifest";
+						// vstack#183 defensive: the manifest must stay under the cap.
+						const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
+						if (manifestBytes > maxBytes) {
+							appendReason = "manifest-oversize-skipped";
+							reportPersistFailure("appendEntry", new Error(`bounded manifest ${manifestBytes}B exceeds cap ${maxBytes}B; sidecar remains canonical`), notify);
+						} else {
+							deps.pi.appendEntry(deps.customType, manifest);
+							appendReason = "manifest";
+							lastFingerprintBySession.set(sessionKey, fingerprint);
+							appendEntryOk = true;
+						}
 					}
-					lastFingerprintBySession.set(sessionKey, fingerprint);
-					appendEntryOk = true;
 				} catch (error) {
 					appendReason = "error";
 					reportPersistFailure("appendEntry", error, notify);

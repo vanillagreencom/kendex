@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 
 const SESSION_TAIL_BYTES = 1024 * 1024;
@@ -71,6 +72,14 @@ export function appendBoundedSnapshot<T>(opts: BoundedSnapshotOptions<T>): Bound
 		counts: opts.counts?.() ?? {},
 		updatedAt: new Date().toISOString(),
 	};
+	// vstack#183 defensive: the manifest itself must stay under the cap.
+	// With the SHA-256 fingerprint the body is bounded, but the assertion
+	// catches future field growth that would silently regress the fix.
+	const manifestBytes = Buffer.byteLength(JSON.stringify(manifest) ?? "null", "utf8");
+	if (manifestBytes > maxBytes) {
+		opts.fingerprintCache.set(opts.sessionKey, fingerprint);
+		return { appended: false, reason: "unchanged", byteSize, fingerprint };
+	}
 	opts.appender.appendEntry(opts.customType, manifest);
 	opts.fingerprintCache.set(opts.sessionKey, fingerprint);
 	return { appended: true, reason: "manifest", byteSize, fingerprint, manifest };
@@ -97,8 +106,12 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
+// vstack#183: fingerprints are persisted inside the overflow manifest;
+// returning the full canonical JSON defeats the byte cap that the
+// manifest exists to enforce. Hash the stable JSON down to a fixed-size
+// hex digest so an oversized payload yields a small manifest.
 export function stableSessionSnapshotFingerprint(value: unknown): string {
-	return JSON.stringify(stableValue(value));
+	return createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex");
 }
 
 function lastEntryIdFromText(text: string): string | undefined {

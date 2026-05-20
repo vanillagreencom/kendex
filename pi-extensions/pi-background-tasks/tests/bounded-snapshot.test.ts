@@ -100,6 +100,34 @@ describe("pi-background-tasks bounded snapshots", () => {
 		expect(appended[0].payload.byteSize).toBeGreaterThan(BG_TASKS_SNAPSHOT_MAX_BYTES);
 	});
 
+	test("bounded manifest itself stays under the byte cap regardless of payload size (vstack#183)", () => {
+		const appended: { customType: string; payload: any }[] = [];
+		const ctx = fakeCtx("session-massive");
+		// ~10 MB worst case: 1000 tasks * 10 KiB heredoc command each.
+		const heredoc = "x".repeat(10 * 1024);
+		const snapshots: BackgroundTaskSnapshot[] = Array.from({ length: 1000 }, (_value, index) => fakeSnapshot({
+			id: `bg-${index}`,
+			command: heredoc,
+			logFile: `/tmp/bg-${index}.log`,
+			status: "completed",
+		}));
+		const persistence = createPersistence({
+			customType: "vstack-background-tasks:state",
+			getActiveCtx: () => ctx,
+			listSnapshots: () => snapshots,
+			pi: { appendEntry: (customType: string, payload: any) => appended.push({ customType, payload }) } as any,
+		});
+		const result = persistence.persistSnapshots();
+		expect(result.appendReason).toBe("manifest");
+		expect(appended).toHaveLength(1);
+		const manifestBytes = Buffer.byteLength(JSON.stringify(appended[0].payload), "utf8");
+		expect(manifestBytes).toBeLessThanOrEqual(BG_TASKS_SNAPSHOT_MAX_BYTES);
+		// Fingerprint must be a fixed-size hex digest, not the full canonical JSON.
+		const fingerprint = appended[0].payload.fingerprint as string;
+		expect(fingerprint).toMatch(/^[0-9a-f]+$/);
+		expect(fingerprint.length).toBeLessThanOrEqual(128);
+	});
+
 	test("manifest restores degrade gracefully: restore loop does not wipe sidecar state", () => {
 		const manifest = {
 			version: 2,
