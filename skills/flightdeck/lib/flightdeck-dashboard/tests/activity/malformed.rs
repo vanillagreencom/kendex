@@ -1,7 +1,14 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 
+use chrono::{DateTime, TimeZone, Utc};
 use flightdeck_dashboard::activity::{ActivitySource, JsonlActivitySource};
+use flightdeck_dashboard::app::command::SnapshotSource;
+use flightdeck_dashboard::app::model::{Model, ReadSourceState};
+use flightdeck_dashboard::app::motion::MotionLevel;
+use flightdeck_dashboard::app::theme::Theme;
+use flightdeck_dashboard::state::snapshot::DashboardSnapshot;
+use flightdeck_dashboard::state::tracked_entries::SessionResolution;
 
 #[test]
 fn malformed_jsonl_lines_are_skipped_and_counted() {
@@ -126,4 +133,46 @@ fn oversized_malformed_record_is_dropped_and_counted() {
     assert!(source
         .last_warning()
         .is_some_and(|warning| warning.contains("oversized")));
+}
+
+#[test]
+fn no_active_run_clears_stale_archive_activity_source() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        dir.path()
+            .join("flightdeck-activity-S-2026-05-15T100000Z.jsonl.archive"),
+        "{\"schema_version\":1,\"id\":\"stale\",\"ts\":\"2026-05-15T10:00:00Z\",\"session_id\":\"S\",\"source\":\"flightdeck\",\"type\":\"session.completed\",\"severity\":\"success\",\"importance\":\"normal\",\"summary\":\"old run\"}\n",
+    )
+    .expect("write archive activity");
+
+    let state_path = dir.path().join("flightdeck-state-S.json");
+    let mut snapshot = DashboardSnapshot::empty_for_session("S", state_path.clone(), fixed_now());
+    snapshot.project_root = dir.path().to_path_buf();
+    let resolution = SessionResolution {
+        project_root: dir.path().to_path_buf(),
+        state_dir: dir.path().to_path_buf(),
+        session: String::from("S"),
+        state_path,
+    };
+    let mut model = Model::new(
+        snapshot,
+        SnapshotSource::Session(resolution),
+        MotionLevel::Off,
+        Theme::Moon,
+        fixed_now,
+    );
+    assert_eq!(model.activity.events.len(), 1);
+
+    model.read_source_state = ReadSourceState::NoActiveRun;
+    model.sync_activity_source();
+    let events = model.poll_activity_source();
+
+    assert!(events.is_empty());
+    assert!(model.activity.events.is_empty());
+}
+
+fn fixed_now() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 5, 15, 10, 10, 0)
+        .single()
+        .expect("fixed timestamp")
 }

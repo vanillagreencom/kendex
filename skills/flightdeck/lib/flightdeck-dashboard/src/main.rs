@@ -127,6 +127,8 @@ async fn run_tui(
         utc_now,
     );
     model.read_source_state = initial.source_state;
+    model.sync_activity_source();
+    model.poll_activity_source();
     if let Some(error) = initial.status_error {
         model.error = Some(error);
     }

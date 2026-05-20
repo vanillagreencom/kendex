@@ -1171,6 +1171,13 @@ impl Model {
     }
 
     pub fn sync_activity_source(&mut self) {
+        if matches!(self.snapshot_source, SnapshotSource::Demo(_)) {
+            return;
+        }
+        if self.read_source_state.is_no_active() {
+            self.activity.set_source(None);
+            return;
+        }
         let Some(source) = activity_source_for(&self.snapshot, &self.snapshot_source) else {
             self.activity.set_source(None);
             return;
