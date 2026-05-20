@@ -921,7 +921,8 @@ fi
 		run(repo, ["set", "terminated", "true"], { HOME: home });
 		run(repo, ["set", "terminated_at", '"2026-05-20T00:00:00Z"'], { HOME: home });
 
-		const archived = run(repo, ["archive"], { HOME: home });
+		const archiveEnv = { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home };
+		const archived = run(repo, ["archive"], archiveEnv);
 		expect(archived.status).toBe(0);
 		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout)).toBeNull();
 
@@ -945,6 +946,27 @@ fi
 		expect(compatibilityArchive.entries?.["archive-entry"]).toBeTruthy();
 		expect(compatibilityArchive.activity_archive_path).toMatch(/flightdeck-activity-PARITY-2026-05-20T000000Z\.jsonl\.archive$/);
 		expect(readFileSync(compatibilityArchive.activity_archive_path!, "utf8")).toContain("session.completed");
+	});
+
+	test("archive aborts before durable termination when required session.completed append fails", () => {
+		const home = join(repo, "home-archive-append-failure");
+		run(repo, ["init"], { HOME: home });
+		const created = parseRunJson<{ metadata: { run_id: string } }>(
+			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
+		);
+		const liveActivity = join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+		rmSync(liveActivity, { force: true });
+		mkdirSync(liveActivity, { recursive: true });
+
+		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home });
+		expect(archived.status).not.toBe(0);
+		expect(archived.stderr).toContain("failed to append session.completed before archive");
+		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout).active.run_id).toBe(created.metadata.run_id);
+		const shown = parseRunJson<{ metadata: { terminated: boolean } }>(
+			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
+		);
+		expect(shown.metadata.terminated).toBe(false);
+		expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
 	});
 
 	test("activity append after archive reports archived without recreating live sidecar", () => {

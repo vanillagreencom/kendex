@@ -10,7 +10,7 @@ import { appendActivityEvent } from "../activity/append.ts";
 import { emitActivity } from "../activity/emit.ts";
 import { formatActivityJsonl, formatActivityLine, formatActivityMarkdown } from "../activity/format.ts";
 import { activityPathForSession, activityPathFromStatePath } from "../activity/paths.ts";
-import { emitMergePlanUpdated, emitSessionCompleted, emitSessionStarted } from "../activity/workflow-emit.ts";
+import { emitMergePlanUpdated, emitSessionStarted } from "../activity/workflow-emit.ts";
 import { ActivityFilterError, readActivityEvents, readActivityJsonlLines, tailActivityEvents } from "../activity/read.ts";
 import {
 	archiveState,
@@ -141,7 +141,7 @@ switch (action) {
 		break;
 	}
 	case "archive": {
-		emitSessionCompleted({ sessionId: session, stateFile: file, tmuxSession: session });
+		appendSessionCompletedForArchive();
 		terminateActiveRunForArchive();
 		const ap = archiveState(file);
 		if (ap) process.stdout.write(`${ap}\n`);
@@ -495,6 +495,24 @@ function terminateActiveRunForArchive(): void {
 		}
 	} catch (error) {
 		die(`Error: failed to terminate active Flightdeck run before archive: ${error instanceof Error ? error.message : String(error)}`, 1);
+	}
+}
+
+function appendSessionCompletedForArchive(): void {
+	const activityPath = activityPathFromStatePath(file);
+	try {
+		const result = appendActivityEvent(activityPath, {
+			details: { dedup_key: `${session}:session.completed` },
+			importance: "important",
+			natural_key: `${session}:session.completed`,
+			severity: "success",
+			source: "flightdeck",
+			summary: `Flightdeck session completed: ${session}`,
+			type: "session.completed",
+		}, { sessionId: session });
+		if (result.archived) die(`Error: failed to append session.completed before archive: activity sidecar is already archived (${activityPath})`, 1);
+	} catch (error) {
+		die(`Error: failed to append session.completed before archive: ${error instanceof Error ? error.message : String(error)}`, 1);
 	}
 }
 

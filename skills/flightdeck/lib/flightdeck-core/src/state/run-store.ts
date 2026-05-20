@@ -540,11 +540,15 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	}
 	const active = readActivePointer(loaded.paths.active_run_json);
 	if (active !== JSON_MISSING) validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
+	if (active !== JSON_MISSING && active.run_id === requestedRunId) {
+		if (active.tmux_session !== metadata.tmux_session) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
+		if (requestedTmuxSession && active.tmux_session !== requestedTmuxSession) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
+	}
 	const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 	mkdirSync(paths.snapshots_dir, { recursive: true });
 	let state = readStateObject(paths.state_json, "run state");
 	if (state === JSON_MISSING) throw new Error(`state not found for run: ${runId}`);
-	if (options.syncLegacy === true || requestedTmuxSession || !!options.summaryPath) {
+	if (options.syncLegacy === true || requestedTmuxSession) {
 		const synced = syncRunStateFromLegacy(loaded.project.root_path, metadata, paths, options.stateDir, requestedTmuxSession ?? undefined);
 		if (synced) state = synced;
 	}
@@ -630,6 +634,17 @@ function runTmuxSessionMismatchMessage(metadata: RunMetadata, requestedSession: 
 		`metadata_tmux_session=${metadata.tmux_session}`,
 		`requested_tmux_session=${requestedSession}`,
 		"requested recovery: terminate from the owning tmux session or inspect the active pointer and run metadata before retrying",
+	].join("; ");
+}
+
+function activePointerTerminateMismatchMessage(active: ActiveRunPointer, metadata: RunMetadata, requestedSession: string | null): string {
+	return [
+		"active Flightdeck run pointer tmux session does not match run termination metadata",
+		`run_id=${metadata.run_id}`,
+		`active_pointer_tmux_session=${active.tmux_session}`,
+		`metadata_tmux_session=${metadata.tmux_session}`,
+		`requested_tmux_session=${requestedSession ?? "<none>"}`,
+		"requested recovery: inspect active-run.json and run metadata before retrying; refusing to mutate run state or clear active pointer",
 	].join("; ");
 }
 

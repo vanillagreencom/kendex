@@ -111,6 +111,16 @@ const SUMMARY_FAILURE_CASES: SummaryFailureCase[] = [
 		},
 	},
 	{
+		name: "source unreadable",
+		setup: () => {
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			const source = join(repo, "tmp", "unreadable-summary.md");
+			writeFileSync(source, "# Summary\n", "utf8");
+			chmodSync(source, 0o000);
+			return "tmp/unreadable-summary.md";
+		},
+	},
+	{
 		name: "copy failure",
 		setup: (created) => {
 			mkdirSync(join(repo, "tmp"), { recursive: true });
@@ -301,6 +311,16 @@ describe("Flightdeck durable run store", () => {
 		expectRunFilesUnchanged(created, before);
 	});
 
+	test("explicit terminate refuses matching active pointer with mismatched tmux session before mutation", () => {
+		const created = createRun(repo, SESSION);
+		const projectPaths = resolveProjectRunPaths(created.project);
+		writeFileSync(projectPaths.active_run_json, JSON.stringify({ ...created.active, tmux_session: "OTHERSESSION" }), "utf8");
+		const before = runFileSnapshot(created);
+
+		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(/active Flightdeck run pointer tmux session does not match/);
+		expectRunFilesUnchanged(created, before);
+	});
+
 	test("ensure refuses stale detection when tmux liveness query fails", () => {
 		const created = createRun(repo, SESSION);
 		const stateDir = join(repo, "tmp");
@@ -340,6 +360,34 @@ describe("Flightdeck durable run store", () => {
 		const created = createRun(repo, SESSION);
 		expect(() => terminateRun(repo, created.metadata.run_id, { summaryPath: "tmp/missing-summary.md" })).toThrow(/invalid explicit --summary-path/);
 		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+	});
+
+	test("terminating older run with explicit summary path does not sync current live state or activity", () => {
+		const first = createRun(repo, SESSION);
+		writeFileSync(first.paths.state_json, JSON.stringify({ entries: { old: { id: "old", kind: "adhoc", state: "complete" } }, session_id: SESSION }), "utf8");
+		writeFileSync(first.paths.activity_jsonl, '{"type":"old.event"}\n', "utf8");
+		const second = createRun(repo, SESSION);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, `flightdeck-state-${SESSION}.json`), JSON.stringify({
+			entries: { current: { id: "current", kind: "adhoc", state: "waiting" } },
+			session_id: SESSION,
+		}), "utf8");
+		writeFileSync(join(stateDir, `flightdeck-activity-${SESSION}.jsonl`), '{"type":"current.event"}\n', "utf8");
+		const summary = join(stateDir, "old-summary.md");
+		writeFileSync(summary, "# Old summary\n", "utf8");
+
+		const terminated = terminateRun(repo, first.metadata.run_id, { summaryPath: "tmp/old-summary.md" });
+		expect(terminated.metadata.summary_path).toBe(first.paths.summary_md);
+		expect(terminated.active_cleared).toBe(false);
+		expect(readActiveRun(repo)?.active.run_id).toBe(second.metadata.run_id);
+		const state = JSON.parse(readFileSync(first.paths.state_json, "utf8"));
+		expect(Object.keys(state.entries)).toEqual(["old"]);
+		expect(readFileSync(first.paths.activity_jsonl, "utf8")).toContain("old.event");
+		expect(readFileSync(first.paths.activity_jsonl, "utf8")).not.toContain("current.event");
+		const activitySnapshotPath = terminated.activity_snapshot_path!;
+		expect(readFileSync(activitySnapshotPath, "utf8")).toContain("old.event");
+		expect(readFileSync(activitySnapshotPath, "utf8")).not.toContain("current.event");
 	});
 
 	for (const mode of ["terminateRun", "terminateActiveRun"] as const) {
