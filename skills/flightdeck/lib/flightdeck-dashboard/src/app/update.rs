@@ -1261,9 +1261,20 @@ fn load_active_live_snapshot(
     resolution: tracked_entries::SessionResolution,
 ) -> Result<ActiveRunLoad, String> {
     let now = crate::app::model::utc_now();
-    match run_history::load_active_run_metadata(&resolution.project_root, &resolution.session)
-        .map_err(|error| error.to_string())?
-    {
+    let lookup = match run_history::load_active_run_metadata(
+        &resolution.project_root,
+        &resolution.session,
+    ) {
+        Ok(lookup) => lookup,
+        Err(error) => {
+            return Ok(no_active_load(
+                resolution,
+                now,
+                format!("run history unavailable: {error}"),
+            ));
+        }
+    };
+    match lookup {
         run_history::ActiveRunLookup::None => Ok(no_active_load(
             resolution,
             now,

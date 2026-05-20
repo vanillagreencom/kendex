@@ -132,6 +132,7 @@ struct ActiveRunOutput {
 #[derive(Debug, Deserialize)]
 struct ActivePointer {
     run_id: String,
+    tmux_session: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,6 +199,13 @@ pub fn load_active_run_metadata(
             run_id: active.active.run_id,
         });
     };
+    if active.active.tmux_session != expected_session {
+        return Ok(ActiveRunLookup::Mismatched {
+            run_id: active.active.run_id,
+            expected_session: expected_session.to_owned(),
+            actual_session: Some(active.active.tmux_session),
+        });
+    }
     if metadata.tmux_session != expected_session {
         return Ok(ActiveRunLookup::Mismatched {
             run_id: metadata.run_id,
@@ -460,6 +468,23 @@ mod tests {
     }
 
     #[test]
+    fn active_pointer_tmux_session_mismatch_blocks_match() {
+        with_fake_state_bin(|ctx| {
+            let mut active = active_output("run-1", "S");
+            active["active"]["tmux_session"] = json!("OTHER");
+            write_json(&ctx.responses.join("active.json"), active);
+
+            let lookup = load_active_run_metadata(&ctx.project, "S").expect("active mismatch");
+
+            assert!(matches!(
+                lookup,
+                ActiveRunLookup::Mismatched { run_id, actual_session: Some(session), .. }
+                    if run_id == "run-1" && session == "OTHER"
+            ));
+        });
+    }
+
+    #[test]
     fn active_null_returns_none_and_failed_command_errors() {
         with_fake_state_bin(|ctx| {
             fs::write(ctx.responses.join("active.json"), "null\n").expect("active null");
@@ -641,7 +666,7 @@ esac
         let snapshots = project.join("runs").join(run_id).join("snapshots");
         json!({
             "project": { "project_id": "project-123" },
-            "active": { "run_id": run_id },
+            "active": { "run_id": run_id, "tmux_session": session },
             "metadata": metadata(run_id, session, &project, &snapshots)
         })
     }

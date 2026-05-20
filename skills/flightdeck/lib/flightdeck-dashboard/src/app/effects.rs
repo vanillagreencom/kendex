@@ -153,7 +153,23 @@ fn active_session_snapshot(
 ) -> Result<(DashboardSnapshot, ReadSourceState), String> {
     let lookup =
         run_history::load_active_run_metadata(&resolution.project_root, &resolution.session)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string());
+    active_session_snapshot_for_lookup_result(resolution, now, lookup)
+}
+
+fn active_session_snapshot_for_lookup_result(
+    resolution: &SessionResolution,
+    now: DateTime<Utc>,
+    lookup: Result<run_history::ActiveRunLookup, String>,
+) -> Result<(DashboardSnapshot, ReadSourceState), String> {
+    let lookup = match lookup {
+        Ok(lookup) => lookup,
+        Err(error) => {
+            let mut snapshot = no_active_snapshot(resolution, now);
+            snapshot.master_error = Some(format!("run history unavailable: {error}"));
+            return Ok((snapshot, ReadSourceState::NoActiveRun));
+        }
+    };
     active_session_snapshot_for_lookup(resolution, now, lookup)
 }
 
@@ -299,6 +315,22 @@ mod tests {
                     expected_session: String::from("S"),
                     actual_session: Some(String::from("OTHER")),
                 },
+            )
+            .expect("no-active snapshot");
+
+            assert_no_active_snapshot(snapshot, source_state, &ctx.project, "S");
+        });
+    }
+
+    #[test]
+    fn watched_session_reload_with_active_lookup_error_stays_no_active() {
+        with_reload_fixture(|ctx| {
+            write_live_state(&ctx.project, "S", false);
+
+            let (snapshot, source_state) = active_session_snapshot_for_lookup_result(
+                &ctx.resolution("S"),
+                fixed_now(),
+                Err(String::from("invalid run metadata JSON: forged path")),
             )
             .expect("no-active snapshot");
 

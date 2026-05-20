@@ -384,13 +384,12 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
                 actual_session.unwrap_or_else(|| String::from("unknown"))
             )),
         )),
-        Err(error) => initial_from_active_live_session(
+        Err(error) => Ok(no_active_snapshot(
             &resolution,
-            source,
             now,
-            None,
+            source,
             Some(format!("run history unavailable: {error}")),
-        ),
+        )),
     }
 }
 
@@ -997,7 +996,7 @@ mod tests {
     }
 
     #[test]
-    fn active_command_failure_falls_back_to_live_file_with_error() {
+    fn active_command_failure_lands_on_no_active_even_with_live_file() {
         with_startup_fixture(|ctx| {
             fs::write(ctx.responses.join("fail-active"), "1").expect("fail marker");
             write_live_state(&ctx.project, "S", false);
@@ -1005,10 +1004,8 @@ mod tests {
             let initial = initial_snapshot(&tui_args("S"));
 
             assert!(matches!(initial.source, SnapshotSource::Session(_)));
-            assert!(matches!(
-                initial.source_state,
-                ReadSourceState::ActiveRun { run_id: None }
-            ));
+            assert_eq!(initial.source_state, ReadSourceState::NoActiveRun);
+            assert!(initial.snapshot.sessions.is_empty());
             assert!(initial
                 .status_error
                 .as_deref()
@@ -1133,7 +1130,7 @@ cat {responses}/active.json
         fs::write(
             responses.join("active.json"),
             json!({
-                "active": { "run_id": run_id },
+                "active": { "run_id": run_id, "tmux_session": session },
                 "metadata": {
                     "run_id": run_id,
                     "project_root": "/project",

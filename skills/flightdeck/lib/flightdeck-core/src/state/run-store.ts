@@ -323,6 +323,7 @@ export function listRuns(projectRoot: string): { project: ProjectIndex; runs: Ru
 		const loaded = loadProjectIndexLocked(ctx) ?? ensureProjectIndexLocked(ctx);
 		const runs: RunMetadata[] = [];
 		if (existsSync(loaded.paths.runs_dir)) {
+			assertStorageDirectory(loaded.paths.runs_dir, "runs directory");
 			for (const entry of readdirSync(loaded.paths.runs_dir)) {
 				if (!isSafeBasename(entry)) continue;
 				const metadata = readRunMetadataForRun(resolveRunPaths(loaded.paths, entry), ctx.identity.project_id, entry, loaded.project.root_path);
@@ -345,6 +346,7 @@ export function showRun(projectRoot: string, runId: string, snapshot?: string): 
 		const snapshotName = snapshot ? safeSnapshotName(snapshot) : null;
 		const statePath = snapshotName ? safeSnapshotPath(paths.snapshots_dir, snapshotName) : paths.state_json;
 		if (!existsSync(statePath)) throw new Error(snapshotName ? `snapshot not found: ${snapshot}` : `state not found for run: ${runId}`);
+		assertRunStorageFile(paths, statePath, snapshotName ? "run snapshot" : "run state");
 		const state = readStateObject(statePath, "run state");
 		if (state === JSON_MISSING) throw new Error(snapshotName ? `snapshot not found: ${snapshot}` : `state not found for run: ${runId}`);
 		return {
@@ -420,7 +422,7 @@ export function importLegacyArchives(projectRoot: string, stateDir?: string): Le
 				skipped.push(existing);
 				continue;
 			}
-			mkdirSync(paths.snapshots_dir, { recursive: true });
+			ensureRunStorageDirectories(paths);
 			const legacyActivity = resolveLegacyActivityArchive(state, archivePath, session, terminatedAt.basename, diagnostics);
 			const normalizedState = { ...state, activity_path: paths.activity_jsonl, activity_archive_path: legacyActivity ? paths.activity_jsonl : null, session_id: session };
 			writeJsonAtomic(paths.state_json, normalizedState);
@@ -461,11 +463,14 @@ function withProjectLock<T>(projectRoot: string, fn: (ctx: ProjectLockContext) =
 	const identity = projectIdentityForRoot(root);
 	const paths = resolveProjectRunPaths(identity);
 	mkdirSync(paths.project_dir, { recursive: true });
+	assertStorageDirectory(paths.project_dir, "project directory");
 	return withFlockHeldSync(paths.project_lock, () => fn({ identity, paths, root }));
 }
 
 function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso()): { project: ProjectIndex; paths: ProjectRunPaths } {
 	mkdirSync(ctx.paths.runs_dir, { recursive: true });
+	assertStorageDirectory(ctx.paths.project_dir, "project directory");
+	assertStorageDirectory(ctx.paths.runs_dir, "runs directory");
 	const existing = readProjectIndex(ctx.paths.project_json);
 	if (existing !== JSON_MISSING) validateProjectIndexIdentity(existing, ctx.identity, ctx.paths.project_json);
 	const createdAt = existing !== JSON_MISSING ? existing.created_at : timestamp;
@@ -485,6 +490,7 @@ function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso())
 }
 
 function loadProjectIndexLocked(ctx: ProjectLockContext): { project: ProjectIndex; paths: ProjectRunPaths } | null {
+	assertStorageDirectory(ctx.paths.project_dir, "project directory");
 	const project = readProjectIndex(ctx.paths.project_json);
 	if (project === JSON_MISSING) return null;
 	validateProjectIndexIdentity(project, ctx.identity, ctx.paths.project_json);
@@ -495,7 +501,7 @@ function createRunLocked(ctx: ProjectLockContext, session: string, stateDir?: st
 	const { project, paths: projectPaths } = ensureProjectIndexLocked(ctx, timestamp);
 	const runId = newRunId(timestamp);
 	const paths = resolveRunPaths(projectPaths, runId);
-	mkdirSync(paths.snapshots_dir, { recursive: true });
+	ensureRunStorageDirectories(paths);
 	const liveStateDir = legacyStateDirForRoot(project.root_path, stateDir);
 	const liveState = join(liveStateDir, `flightdeck-state-${session}.json`);
 	const liveActivity = activityPathForSession(session, liveStateDir);
@@ -555,7 +561,8 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 		if (requestedTmuxSession && active.tmux_session !== requestedTmuxSession) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
 	}
 	const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
-	mkdirSync(paths.snapshots_dir, { recursive: true });
+	ensureRunStorageDirectories(paths);
+	assertRunStorageFile(paths, paths.state_json, "run state");
 	let state = readStateObject(paths.state_json, "run state");
 	if (state === JSON_MISSING) throw new Error(`state not found for run: ${runId}`);
 	let summaryStage = options.summaryPath && options.summaryPath.trim()
@@ -580,6 +587,7 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	writeJsonAtomic(snapshotPath, state);
 	let activitySnapshotPath: string | null = null;
 	if (existsSync(paths.activity_jsonl)) {
+		assertRunStorageFile(paths, paths.activity_jsonl, "run activity");
 		activitySnapshotPath = safeSnapshotPath(paths.snapshots_dir, `${timestamp.basename}.activity.jsonl`);
 		copyFileAtomic(paths.activity_jsonl, activitySnapshotPath);
 	}
@@ -881,6 +889,7 @@ function initialRunState(session: string, startedAt: string, activityPath: strin
 
 function listSnapshotFiles(snapshotsDir: string): string[] {
 	if (!existsSync(snapshotsDir)) return [];
+	assertStorageDirectory(snapshotsDir, "snapshots directory");
 	return readdirSync(snapshotsDir).filter((entry) => /^\d{4}-\d{2}-\d{2}T\d{6}Z\.json$/.test(entry)).sort().reverse();
 }
 
@@ -965,8 +974,71 @@ function fileMtimeIso(file: string): string {
 	}
 }
 
+function ensureRunStorageDirectories(paths: RunPaths): void {
+	assertStorageDirectory(dirname(paths.run_dir), "runs directory");
+	mkdirSync(paths.run_dir, { recursive: true });
+	assertStorageDirectory(paths.run_dir, "run directory");
+	mkdirSync(paths.snapshots_dir, { recursive: true });
+	assertStorageDirectory(paths.snapshots_dir, "snapshots directory");
+	assertPathContained(paths.run_dir, paths.snapshots_dir, "snapshots directory");
+}
+
+function assertRunStoragePaths(paths: RunPaths): void {
+	assertStorageDirectoryIfExists(dirname(paths.run_dir), "runs directory");
+	if (!assertStorageDirectoryIfExists(paths.run_dir, "run directory")) return;
+	assertStorageFileIfExists(paths.metadata_json, "run metadata");
+	assertStorageFileIfExists(paths.state_json, "run state");
+	assertStorageFileIfExists(paths.activity_jsonl, "run activity");
+	assertStorageDirectoryIfExists(paths.snapshots_dir, "snapshots directory");
+	for (const candidate of [paths.metadata_json, paths.state_json, paths.activity_jsonl, paths.snapshots_dir]) {
+		if (existsSync(candidate)) assertPathContained(paths.run_dir, candidate, candidate === paths.snapshots_dir ? "snapshots directory" : "run file");
+	}
+}
+
+function assertRunStorageFile(paths: RunPaths, file: string, label: string): void {
+	assertRunStoragePaths(paths);
+	assertStorageFileIfExists(file, label);
+	assertPathContained(paths.run_dir, file, label);
+}
+
+function assertStorageDirectoryIfExists(path: string, label: string): boolean {
+	let stat;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw new Error(`failed to inspect ${label} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (stat.isSymbolicLink()) throw new Error(`invalid ${label} ${path}: symlinks are not allowed`);
+	if (!stat.isDirectory()) throw new Error(`invalid ${label} ${path}: expected directory`);
+	return true;
+}
+
+function assertStorageDirectory(path: string, label: string): void {
+	if (!assertStorageDirectoryIfExists(path, label)) throw new Error(`invalid ${label} ${path}: missing directory`);
+}
+
+function assertStorageFileIfExists(path: string, label: string): boolean {
+	let stat;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw new Error(`failed to inspect ${label} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (stat.isSymbolicLink()) throw new Error(`invalid ${label} ${path}: symlinks are not allowed`);
+	if (!stat.isFile()) throw new Error(`invalid ${label} ${path}: expected regular file`);
+	return true;
+}
+
+function assertPathContained(root: string, candidate: string, label: string): void {
+	const realRoot = realpathSync(root);
+	const realCandidate = realpathSync(candidate);
+	if (!isPathInside(realRoot, realCandidate)) throw new Error(`invalid ${label} ${candidate}: path escapes ${root}`);
+}
+
 function readProjectIndex(path: string): ProjectIndex | JsonMissing {
-	const raw = readJsonObject(path, "project index");
+	const raw = readStorageJsonObject(path, "project index");
 	if (raw === JSON_MISSING) return JSON_MISSING;
 	return {
 		created_at: expectString(raw, "created_at", path, "project index"),
@@ -982,7 +1054,7 @@ function readProjectIndex(path: string): ProjectIndex | JsonMissing {
 }
 
 function readActivePointer(path: string): ActiveRunPointer | JsonMissing {
-	const raw = readJsonObject(path, "active run pointer");
+	const raw = readStorageJsonObject(path, "active run pointer");
 	if (raw === JSON_MISSING) return JSON_MISSING;
 	return {
 		activity_path: expectString(raw, "activity_path", path, "active run pointer"),
@@ -996,7 +1068,7 @@ function readActivePointer(path: string): ActiveRunPointer | JsonMissing {
 }
 
 function readRunMetadata(path: string): RunMetadata | JsonMissing {
-	const raw = readJsonObject(path, "run metadata");
+	const raw = readStorageJsonObject(path, "run metadata");
 	if (raw === JSON_MISSING) return JSON_MISSING;
 	return {
 		activity_path: expectString(raw, "activity_path", path, "run metadata"),
@@ -1019,6 +1091,7 @@ function readRunMetadata(path: string): RunMetadata | JsonMissing {
 }
 
 function readRunMetadataForRun(paths: RunPaths, expectedProjectId: string, expectedRunId: string, expectedProjectRoot: string): RunMetadata | JsonMissing {
+	assertRunStoragePaths(paths);
 	const metadata = readRunMetadata(paths.metadata_json);
 	if (metadata === JSON_MISSING) return JSON_MISSING;
 	validateRunMetadataIdentity(metadata, paths.metadata_json, expectedProjectId, expectedRunId);
@@ -1089,6 +1162,13 @@ function readStateObject(path: string, label: string): Record<string, unknown> |
 	return readJsonObject(path, label);
 }
 
+function readStorageJsonObject(path: string, label: string): Record<string, unknown> | JsonMissing {
+	if (!assertStorageFileIfExists(path, label)) return JSON_MISSING;
+	const raw = readJsonObject(path, label);
+	if (raw !== JSON_MISSING) assertStorageFileIfExists(path, label);
+	return raw;
+}
+
 function readJsonObject(path: string, label: string): Record<string, unknown> | JsonMissing {
 	const value = readJsonValue(path);
 	if (value === JSON_MISSING) return JSON_MISSING;
@@ -1151,9 +1231,14 @@ function writeJsonAtomic(path: string, value: unknown): void {
 
 function writeFileAtomic(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
+	assertStorageDirectory(dirname(path), "destination directory");
+	assertStorageFileIfExists(path, "destination file");
 	const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
 	try {
 		writeFileSync(tmp, text, "utf8");
+		assertStorageFileIfExists(tmp, "temporary file");
+		assertStorageDirectory(dirname(path), "destination directory");
+		assertStorageFileIfExists(path, "destination file");
 		renameSync(tmp, path);
 	} catch (error) {
 		rmSync(tmp, { force: true });
@@ -1163,9 +1248,14 @@ function writeFileAtomic(path: string, text: string): void {
 
 function copyFileAtomic(src: string, dst: string): void {
 	mkdirSync(dirname(dst), { recursive: true });
+	assertStorageDirectory(dirname(dst), "destination directory");
+	assertStorageFileIfExists(dst, "destination file");
 	const tmp = `${dst}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
 	try {
 		copyFileSync(src, tmp);
+		assertStorageFileIfExists(tmp, "temporary file");
+		assertStorageDirectory(dirname(dst), "destination directory");
+		assertStorageFileIfExists(dst, "destination file");
 		renameSync(tmp, dst);
 	} catch (error) {
 		rmSync(tmp, { force: true });
