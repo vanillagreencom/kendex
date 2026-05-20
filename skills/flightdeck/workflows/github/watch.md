@@ -88,6 +88,8 @@ Do not route Linear-only tags in GitHub mode: `audit-relation-prompt`, `descope-
 
 `terminal-state-reached` on a GitHub entry invokes `⤵ workflows/github/close-issue.md <N>` after generic completion detection. If the `pane-poll` row includes `detected_pr_number` / `detected_pr_url` and `entry.domain.github_issue.pr_number` is null, validate with `gh pr view <PR> --json url,headRefName,state` before invoking close: URL must match the detected URL and the head branch must be `issue-<N>` (or the existing registered branch for this entry). On success, persist `pane-registry set <N> pr_number <PR>`; on `gh` failure follow § 6 and pause rather than closing from pane text alone.
 
+Pre-PR review gate: when `FLIGHTDECK_PRE_PR_REVIEW != 0` and `entry.domain.github_issue.review_status != "pre-pr-approved"`, do NOT record a detected PR number or invoke close-issue from a `terminal-state-reached` PR-URL on this entry. The child opened a PR before review approval (either bug or prompt-injected sentinel-skip). Set `paused_for_user = {issue_id:<N>, reason:"pre-pr-review-bypassed", prompt_text:"<detected_pr_url> opened before pre-pr-approved"}` and return without closing the issue.
+
 ---
 
 ## § 4: GitHub prompt routing

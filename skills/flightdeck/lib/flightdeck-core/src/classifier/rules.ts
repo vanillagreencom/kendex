@@ -60,8 +60,10 @@ export const POST_FOOTER_RULES: Rule[] = [
 		// Child prints exactly `PRE-PR-REVIEW-READY: <path>` as the last
 		// non-empty line after pushing commits. Anchor to end-of-buffer so
 		// the same string embedded mid-buffer (e.g. quoted in the issue
-		// body itself) does not falsely fire the handler.
-		pattern: /(?:^|\r?\n)PRE-PR-REVIEW-READY:\s*\S+\s*$/,
+		// body itself) does not falsely fire the handler. Require
+		// horizontal whitespace only between marker and path so a stray
+		// newline cannot split a path across lines and still match.
+		pattern: /(?:^|\r?\n)PRE-PR-REVIEW-READY:[ \t]+\S+\s*$/,
 		requiresNoFooterGate: true,
 	},
 	{

@@ -48,10 +48,10 @@ Applies to `gh pr view`, `gh pr edit`, and any label/check inspection.
 
 Child has pushed commits and is waiting for the supervisor to gate PR creation. Mirrors `workflows/github/handle-prompt.md` § 3, adapted to `domain.plan_item`.
 
-1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0`, `pane-respond` the approval instruction from `workflows/shared/pre-pr-review.md` § 5 step 2 (adjust the PR body wording to reference the plan path + item id), set `domain.plan_item.review_status = "pre-pr-approved"`, and return.
-2. Otherwise set `domain.plan_item.review_status = "pre-pr-reviewing"` (initialize `review_rounds=1`, `review_reports=[]` on first entry; increment `review_rounds` on subsequent entries).
+1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0`, `pane-respond` the approval instruction from `workflows/shared/pre-pr-review.md` § 6 step 2 (adjust the PR body wording to reference the plan path + item id), set `domain.plan_item.review_status = "pre-pr-approved"`, and return.
+2. Otherwise initialize-only on first entry: if `domain.plan_item.review_status` is null/unset, set it to `"pre-pr-reviewing"` and `domain.plan_item.review_reports = []`. Do NOT touch `domain.plan_item.review_rounds`; the shared workflow owns it (`workflows/shared/pre-pr-review.md` § 1, § 7).
 3. Invoke `⤵ workflows/shared/pre-pr-review.md <ITEM_ID> plan_item`.
-4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason="pre-pr-review-loop-stalled"` and pane-responds accordingly. Do not duplicate that logic here.
+4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-loop-stalled` / `pre-pr-review-error` / `pre-pr-review-empty-diff` and pane-responds accordingly. Do not duplicate that logic here.
 5. Return to `plan/watch.md` § 4 without further action.
 
 ---
@@ -102,7 +102,7 @@ This is a plan-only internal routing step used by `workflows/plan/watch.md` afte
      - On refusal, leave the entry unchanged, emit activity `plan-spawn-refused item=<ITEM_ID> reason=<reason>`, and continue to the next unblocked item.
    - Create its worktree with the worktree skill.
    - Write `<worktree>/tmp/brief.md` with the same header and verified immutable brief artifact documented in `workflows/plan/start.md` § 4; do not reintroduce omitted orchestration context. Track whether the brief was written so failure cleanup can remove it.
-   - Spawn with `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Print the PR URL as the LAST line."` and record the spawned pane id/entry metadata if creation succeeds.
+   - Spawn with `flightdeck-session start --kind workflow --prompt "Read tmp/brief.md and execute end-to-end. Follow its supervisor-handshake instructions. Print only what the brief tells you to print as the LAST line."` (matches `plan/start.md` § 4 step 5) and record the spawned pane id/entry metadata if creation succeeds.
    - Re-register / restore `entry.domain.plan_item` while preserving launch metadata, then transition item to in-progress with `state="submitting"` and `domain.plan_item.phase="in-progress"`.
    - On any create/write/spawn/register failure, remove `<worktree>/tmp/brief.md` if it was written, kill any spawned-but-unregistered pane, mark the entry `state="failed"` with `domain.plan_item.error = {phase:"<PHASE>", reason:"<REASON>", stderr:"<STDERR>"}`, emit activity `plan-spawn-failed item=<ITEM_ID> phase=<PHASE> reason=<REASON>`, and continue to the next unblocked item.
 5. Yield after all now-unblocked items either spawn, fail, or are refused.

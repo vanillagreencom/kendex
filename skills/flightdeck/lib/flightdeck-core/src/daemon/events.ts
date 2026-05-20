@@ -97,6 +97,7 @@ const CANONICAL_TAGS = new Set<string>([
 	"force-push-prompt",
 	"merge-now",
 	"cleanup-prompt",
+	"pre-pr-ready-for-review",
 	// Flightdeck cleanup-scope defensive tags (issue #18). Per-issue
 	// orchestration should never surface these under FLIGHTDECK_MANAGED=1,
 	// but if an older orchestration build does, master needs to wake on

@@ -48,10 +48,10 @@ Applies to `gh pr view`, `gh pr edit`, `gh issue view`, and any label/check insp
 
 Child has pushed commits and is waiting for the supervisor to gate PR creation. Master fans out reviewers, hands findings back, and loops until approved.
 
-1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0`, `pane-respond` the approval instruction from `workflows/shared/pre-pr-review.md` § 5 step 2, set `domain.github_issue.review_status = "pre-pr-approved"`, and return.
-2. Otherwise set `domain.github_issue.review_status = "pre-pr-reviewing"` (initialize `review_rounds=1`, `review_reports=[]` on first entry; increment `review_rounds` on subsequent entries).
+1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0`, `pane-respond` the approval instruction from `workflows/shared/pre-pr-review.md` § 6 step 2, set `domain.github_issue.review_status = "pre-pr-approved"`, and return.
+2. Otherwise initialize-only on first entry: if `domain.github_issue.review_status` is null/unset, set it to `"pre-pr-reviewing"` and `domain.github_issue.review_reports = []`. Do NOT touch `domain.github_issue.review_rounds`; the shared workflow owns it (`workflows/shared/pre-pr-review.md` § 1, § 7).
 3. Invoke `⤵ workflows/shared/pre-pr-review.md <ISSUE_NUMBER> github_issue`.
-4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason="pre-pr-review-loop-stalled"` and pane-responds accordingly. Do not duplicate that logic here.
+4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-loop-stalled` / `pre-pr-review-error` / `pre-pr-review-empty-diff` and pane-responds accordingly. Do not duplicate that logic here.
 5. Return to `github/watch.md` § 4 without further action.
 
 ---

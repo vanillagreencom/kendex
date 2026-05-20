@@ -262,7 +262,11 @@ describe("open-terminal smoke", () => {
 			expect(pane.window_name).toBe("120");
 			const launchLine = pane.sent_keys!.find((line) => line.includes(harness === "claude" ? "claude" : harness))!;
 			expect(launchLine).toContain("Read tmp/brief.md and execute");
-			expect(launchLine).toContain("Print the PR URL as the LAST line");
+			// vstack#180+: child brief now drives the final-line contract through
+			// the supervisor-handshake instructions in tmp/brief.md, so the
+			// launch-line pointer no longer hardcodes "Print the PR URL".
+			expect(launchLine).toContain("Follow its supervisor-handshake instructions");
+			expect(launchLine).toContain("Print only what the brief tells you to print as the LAST line");
 			expect(launchLine).not.toContain("Fix GitHub issue owner/repo#120");
 			for (const forbidden of forbiddenSupervisorSubstrings()) expect(launchLine).not.toContain(forbidden);
 			if (harness === "opencode") expect(launchLine).toContain("--prompt");
