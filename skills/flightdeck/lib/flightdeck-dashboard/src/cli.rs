@@ -35,6 +35,15 @@ pub struct TuiArgs {
     /// Read state for a Flightdeck tmux session.
     #[arg(long, value_name = "NAME")]
     pub session: Option<String>,
+    /// Load a durable run-store run read-only.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run_id: Option<String>,
+    /// Load a specific durable run snapshot timestamp/name with --run-id.
+    #[arg(long, value_name = "TIMESTAMP_OR_FILE")]
+    pub snapshot: Option<String>,
+    /// Load a legacy project-local archive read-only.
+    #[arg(long, value_name = "PATH")]
+    pub archive: Option<PathBuf>,
     /// Subscribe to a dashboard daemon Unix socket.
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
@@ -192,6 +201,8 @@ impl TuiArgs {
     pub fn wants_live_state(&self) -> bool {
         self.socket.is_some()
             || self.state_file.is_some()
+            || self.archive.is_some()
+            || self.run_id.is_some()
             || self.session.is_some()
             || std::env::var_os("TMUX").is_some()
     }

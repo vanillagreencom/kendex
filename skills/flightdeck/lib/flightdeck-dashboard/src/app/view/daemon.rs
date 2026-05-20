@@ -68,7 +68,7 @@ pub fn render(
         ]),
         Line::from(vec![
             Span::styled("Read source ", theme.status_label()),
-            Span::raw(read_source_label(model.read_source_state)),
+            Span::raw(read_source_label(&model.read_source_state)),
         ]),
     ];
     if let Some(error) = &model.snapshot.master_archive_error {
@@ -97,10 +97,18 @@ pub fn render(
 
 fn render_file_mode(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Palette) {
     let updated = model.snapshot.updated_at;
+    let source_label = read_source_label(&model.read_source_state);
+    let note = if model.read_source_state.is_read_only() {
+        "Dashboard is showing a read-only history/archive snapshot. Live daemon and pane mutations are disabled for this view."
+    } else if model.read_source_state.is_no_active() {
+        "No active durable run pointer exists for this project. Open History with H or start a new Flightdeck session."
+    } else {
+        "Dashboard is in normal state-file mode. Socket telemetry is optional and separate from the Flightdeck supervisor daemon that wakes the master."
+    };
     let lines = vec![
         Line::from(vec![
             Span::styled("Status        ", theme.status_label()),
-            Span::raw("watching live state file"),
+            Span::raw(source_label),
         ]),
         Line::from(vec![
             Span::styled("State file     ", theme.status_label()),
@@ -116,7 +124,7 @@ fn render_file_mode(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Pa
         ]),
         Line::from(vec![
             Span::styled("Note           ", theme.status_label()),
-            Span::raw("Dashboard is in normal state-file mode. Socket telemetry is optional and separate from the Flightdeck supervisor daemon that wakes the master."),
+            Span::raw(note),
         ]),
     ];
     let block = Block::default()
@@ -130,11 +138,28 @@ fn render_file_mode(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Pa
     );
 }
 
-fn read_source_label(source: ReadSourceState) -> String {
+fn read_source_label(source: &ReadSourceState) -> String {
     match source {
-        ReadSourceState::Live => String::from("live state file"),
-        ReadSourceState::Archive { archived_at } => format!("archive from {archived_at}"),
-        ReadSourceState::Missing => String::from("missing"),
+        ReadSourceState::Demo => String::from("demo fixture"),
+        ReadSourceState::LiveFile => String::from("live state file"),
+        ReadSourceState::ActiveRun {
+            run_id: Some(run_id),
+        } => {
+            format!("active durable run {run_id}")
+        }
+        ReadSourceState::ActiveRun { run_id: None } => String::from("active durable run"),
+        ReadSourceState::NoActiveRun => String::from("no active run"),
+        ReadSourceState::ArchivedRun {
+            run_id,
+            archived_at,
+        } => format!("archived run {run_id} from {archived_at}"),
+        ReadSourceState::ImportedArchive {
+            run_id,
+            archived_at,
+        } => format!("imported archive {run_id} from {archived_at}"),
+        ReadSourceState::LegacyArchive { archived_at } => {
+            format!("legacy archive from {archived_at}")
+        }
     }
 }
 

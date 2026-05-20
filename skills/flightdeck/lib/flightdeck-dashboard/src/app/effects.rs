@@ -4,11 +4,13 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
+use crate::app::command::RunSnapshotSource;
 use crate::app::model::{Clock, ReadSourceState};
 use crate::daemon::client::DaemonClient;
 use crate::fixtures;
+use crate::state::run_history;
 use crate::state::snapshot::DashboardSnapshot;
-use crate::state::tracked_entries::{self, ArchiveError, SessionResolution, SnapshotError};
+use crate::state::tracked_entries::{self, SessionResolution, SnapshotError};
 
 use super::command::{Cmd, SnapshotSource};
 use super::msg::Msg;
@@ -44,7 +46,7 @@ impl Effects {
         match source {
             SnapshotSource::Demo(name) => {
                 let msg = match fixtures::load_demo_snapshot(name, (self.clock)()) {
-                    Ok(snapshot) => snapshot_msg(snapshot, ReadSourceState::Live),
+                    Ok(snapshot) => snapshot_msg(snapshot, ReadSourceState::Demo),
                     Err(error) => Msg::Error(error.to_string()),
                 };
                 send_msg(&self.tx, msg);
@@ -65,12 +67,22 @@ impl Effects {
                     send_msg(&tx, msg);
                 });
             }
+            SnapshotSource::Run(source) => {
+                let tx = self.tx.clone();
+                let clock = self.clock;
+                tokio::spawn(async move {
+                    let msg = snapshot_run_msg(&source, clock());
+                    send_msg(&tx, msg);
+                });
+            }
             SnapshotSource::Socket(path) => {
                 let tx = self.tx.clone();
                 tokio::spawn(async move {
                     let msg = match DaemonClient::connect(&path).await {
                         Ok(mut client) => match client.get_snapshot().await {
-                            Ok(snapshot) => snapshot_msg(snapshot, ReadSourceState::Live),
+                            Ok(snapshot) => {
+                                snapshot_msg(snapshot, ReadSourceState::ActiveRun { run_id: None })
+                            }
                             Err(error) => Msg::Error(error.to_string()),
                         },
                         Err(error) => Msg::Error(error.to_string()),
@@ -111,7 +123,10 @@ impl Effects {
 
 fn snapshot_file_msg(path: &Path, now: DateTime<Utc>) -> Msg {
     match tracked_entries::snapshot_from_file(path, now) {
-        Ok(snapshot) => snapshot_msg(snapshot, ReadSourceState::Live),
+        Ok(snapshot) => {
+            let source_state = ReadSourceState::from_snapshot(&snapshot);
+            snapshot_msg(snapshot, source_state)
+        }
         Err(SnapshotError::PrePurgeState) => snapshot_msg(
             tracked_entries::snapshot_for_error_path(
                 path,
@@ -119,7 +134,7 @@ fn snapshot_file_msg(path: &Path, now: DateTime<Utc>) -> Msg {
                 SnapshotError::PrePurgeState.to_string(),
                 true,
             ),
-            ReadSourceState::Live,
+            ReadSourceState::LiveFile,
         ),
         Err(error) => Msg::Error(error.to_string()),
     }
@@ -139,16 +154,49 @@ fn snapshot_session_msg(resolution: &SessionResolution, now: DateTime<Utc>) -> M
                 SnapshotError::PrePurgeState.to_string(),
                 true,
             ),
-            ReadSourceState::Live,
+            ReadSourceState::LiveFile,
         ),
-        Err(SnapshotError::Archive(ArchiveError::NoArchives { .. })) => snapshot_msg(
+        Err(SnapshotError::StateFileMissing { .. }) => snapshot_msg(
             DashboardSnapshot::empty_for_session(
                 &resolution.session,
                 resolution.state_path.clone(),
                 now,
             ),
-            ReadSourceState::Missing,
+            ReadSourceState::NoActiveRun,
         ),
+        Err(error) => Msg::Error(error.to_string()),
+    }
+}
+
+fn snapshot_run_msg(source: &RunSnapshotSource, now: DateTime<Utc>) -> Msg {
+    match run_history::load_run_snapshot(
+        &source.project_root,
+        &source.run_id,
+        source.snapshot.as_deref(),
+        now,
+    ) {
+        Ok(loaded) => {
+            let archived_at = loaded
+                .metadata
+                .terminated_at
+                .unwrap_or(loaded.snapshot.updated_at);
+            let source_state = if loaded.metadata.imported {
+                ReadSourceState::ImportedArchive {
+                    run_id: loaded.metadata.run_id,
+                    archived_at,
+                }
+            } else if loaded.metadata.terminated {
+                ReadSourceState::ArchivedRun {
+                    run_id: loaded.metadata.run_id,
+                    archived_at,
+                }
+            } else {
+                ReadSourceState::ActiveRun {
+                    run_id: Some(loaded.metadata.run_id),
+                }
+            };
+            snapshot_msg(loaded.snapshot, source_state)
+        }
         Err(error) => Msg::Error(error.to_string()),
     }
 }

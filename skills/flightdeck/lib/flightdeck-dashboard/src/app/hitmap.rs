@@ -19,6 +19,7 @@ pub enum ClickAction {
     ActivityExport,
     ClearFilter,
     OpenHelp,
+    OpenHistory,
     OpenThemePicker,
     OpenPricingDetail,
     SelectSetting(usize),

@@ -8,7 +8,7 @@ use crate::activity::format::event_chip_for;
 use crate::activity::ActivityEvent;
 use crate::app::hitmap::{ClickAction, HitMap, ScrollSource};
 use crate::app::labels::{kind_badge, kind_label_for, state_label_for};
-use crate::app::model::{Model, ReadSourceState};
+use crate::app::model::Model;
 use crate::app::theme::Palette;
 use crate::app::view::{fx, human_duration};
 use crate::cost::{format_compact, format_cost, format_tokens};
@@ -103,26 +103,13 @@ fn render_transition_banners(
     } else if let Some(error) = &model.snapshot.master_error {
         area = render_banner(frame, area, " state read error ", error, theme.error());
     }
-    match model.read_source_state {
-        ReadSourceState::Archive { archived_at } => {
-            area = render_banner(
-                frame,
-                area,
-                " archive state ",
-                &format!("Live state archived; showing terminated snapshot from {archived_at}."),
-                theme.warning(),
-            );
-        }
-        ReadSourceState::Missing => {
-            area = render_banner(
-                frame,
-                area,
-                " missing state ",
-                "No live state file or terminated archive found yet.",
-                theme.muted(),
-            );
-        }
-        ReadSourceState::Live => {}
+    if let Some((title, message)) = model.read_source_state.banner() {
+        let style = if model.read_source_state.is_no_active() {
+            theme.muted()
+        } else {
+            theme.warning()
+        };
+        area = render_banner(frame, area, title, &message, style);
     }
     area
 }
@@ -595,15 +582,22 @@ fn detail_lines(
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Actions", theme.header())));
-    if session.pane_target.is_some() {
-        let line = lines.len();
-        lines.push(Line::from(Span::styled("[ Focus tmux tab ]", theme.ok())));
-        buttons.push((line, ClickAction::PromptFocus(model.selected_index()), 22));
-    }
-    if model.session_is_stale(session) {
-        let line = lines.len();
-        lines.push(Line::from(Span::styled("[ Prune ]", theme.error())));
-        buttons.push((line, ClickAction::PromptPrune(model.selected_index()), 10));
+    if model.read_source_state.is_read_only() {
+        lines.push(Line::from(Span::styled(
+            "read-only archive view; return to active run before mutating panes",
+            theme.muted(),
+        )));
+    } else {
+        if session.pane_target.is_some() {
+            let line = lines.len();
+            lines.push(Line::from(Span::styled("[ Focus tmux tab ]", theme.ok())));
+            buttons.push((line, ClickAction::PromptFocus(model.selected_index()), 22));
+        }
+        if model.session_is_stale(session) {
+            let line = lines.len();
+            lines.push(Line::from(Span::styled("[ Prune ]", theme.error())));
+            buttons.push((line, ClickAction::PromptPrune(model.selected_index()), 10));
+        }
     }
     (lines, buttons)
 }

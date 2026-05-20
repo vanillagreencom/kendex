@@ -493,6 +493,16 @@ pub const SETTING_DEFINITIONS: &[SettingDefinition] = &[
         true
     ),
     setting!(
+        "FLIGHTDECK_STATE_BIN",
+        None,
+        "unset",
+        "Explicit flightdeck-state command path for dashboard history.",
+        MasterLoop,
+        String,
+        SettingValidation::String,
+        true
+    ),
+    setting!(
         "FLIGHTDECK_ACTIVITY_FILE",
         None,
         "unset",

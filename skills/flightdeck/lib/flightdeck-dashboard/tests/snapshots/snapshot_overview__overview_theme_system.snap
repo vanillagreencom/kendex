@@ -66,5 +66,5 @@ warning=Style::new().yellow().bg(Color::Reset).bold()
 "│                          ││                                                                                                                              ││                                          │"
 "│                          ││                                                                                                                              ││                                          │"
 "└──────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────┘"
-" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   f filters   n noise   s session   d decisions   e export   ? help   q quit                                                        noise: hidden  ·  filter: off"
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   H history   f filters   n noise   s session   d decisions   e export   ? help   q quit                                            noise: hidden  ·  filter: off"
 "                                                                                                                                                                                                        "

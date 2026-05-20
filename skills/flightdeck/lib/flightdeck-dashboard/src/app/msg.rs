@@ -6,6 +6,7 @@ use crate::app::model::ReadSourceState;
 use crate::cost::SessionTotals;
 use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use crate::settings_catalog::SettingsSaveResult;
+use crate::state::run_history::{HistoryRun, ImportSummary, LoadedRunSnapshot};
 use crate::state::snapshot::{DashboardSnapshot, Event};
 use crate::tmux::panes::PaneSnapshot;
 use crate::watcher::WatcherEvent;
@@ -25,6 +26,10 @@ pub enum Msg {
     ActivityRefreshed(Vec<ActivityEvent>),
     ActivityFilterChanged,
     ActivityExport,
+    HistoryLoaded(Result<Vec<HistoryRun>, String>),
+    HistorySnapshotLoaded(Result<LoadedRunSnapshot, String>),
+    ActiveRunLoaded(Result<Option<LoadedRunSnapshot>, String>),
+    LegacyImportCompleted(Result<ImportSummary, String>),
     WatcherEvent(WatcherEvent),
     DaemonStatus(RuntimeDaemonStatus),
     CostUpdated(SessionTotals),

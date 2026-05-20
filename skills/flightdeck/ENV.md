@@ -70,7 +70,8 @@ Rust dashboard env vars:
 | `FLIGHTDECK_DASHBOARD_PI_HISTORY_EVENTS` | `25` | Number of Pi bridge history events sampled per Pi entry for dashboard cost totals. |
 | `FLIGHTDECK_DASHBOARD_PI_HISTORY_TIMEOUT_MS` | `1000` | Per-entry timeout for dashboard Pi cost polling so a slow bridge cannot freeze rendering. |
 | `FLIGHTDECK_DASHBOARD_PRICING_FILE` | bundled table | Optional pricing TOML override for dashboard cost calculations; malformed files warn and fall back to bundled rates. |
-| `FLIGHTDECK_DASHBOARD_QUICK_FOCUS` | `0` | Set to `1` to let `g` focus the selected tmux window without a confirmation popup. |
+| `FLIGHTDECK_DASHBOARD_QUICK_FOCUS` | `0` | Set to `1` to let `g` focus the selected tmux window without a confirmation popup. Ignored in read-only history/archive views. |
+| `FLIGHTDECK_STATE_BIN` | auto-discovered | Optional path to `flightdeck-state` for dashboard History/run-store integration when skill-dir and `PATH` lookup do not resolve it. |
 | `TMUX_PROBE_TTL` | `5` | Cached `tmux list-panes` TTL used to mark stale dashboard rows. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` | `30` | Stale-chip warning threshold in seconds. |
 | `FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS` | `300` | Stale/dead chip threshold in seconds. |

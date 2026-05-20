@@ -3,7 +3,7 @@ source: tests/snapshot_tabs.rs
 expression: rendered
 ---
 "┌ Flightdeck ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck   session VS  ·  Supervisor pi  ·  state: live file  ·  uptime 0m  ·  Adhoc 0 · Issues 3 · Tasks 0  ·  fresh  $0.00 · 0t                                        moon ▾ │"
+"│ Flightdeck   live state session VS  ·  Supervisor pi  ·  state: live file  ·  uptime 0m  ·  Adhoc 0 · Issues 3 · Tasks 0  ·  fresh  $0.00 · 0t                             moon ▾ │"
 "└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Activity │ Conversations │ Merges │ Decisions │ Costs │ Daemon                                                                                                         │"
@@ -36,5 +36,5 @@ expression: rendered
 "│                                                                                                                                                                                   │"
 "│                                                                                                                                                                                   │"
 "└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   f filters   n noise   s session   d decisions   e export   ? help   q quit                                     noise: hidden  ·  filter: off"
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   H history   f filters   n noise   s session   d decisions   e export   ? help   q quit                         noise: hidden  ·  filter: off"
 "                                                                                                                                                                                     "

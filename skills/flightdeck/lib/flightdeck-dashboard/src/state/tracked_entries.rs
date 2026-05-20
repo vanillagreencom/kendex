@@ -216,14 +216,9 @@ pub fn read_session_snapshot_with_warn(
             Ok(snapshot)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            read_archive_fallback_with_warn(
-                &resolution.state_dir,
-                &resolution.session,
-                &resolution.project_root,
-                now,
-                warn,
-            )
-            .map_err(SnapshotError::Archive)
+            Err(SnapshotError::StateFileMissing {
+                path: resolution.state_path.clone(),
+            })
         }
         Err(source) => Err(SnapshotError::ReadFile {
             path: resolution.state_path.clone(),

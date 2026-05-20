@@ -8,6 +8,7 @@ use flightdeck_dashboard::activity::{ActivityEvent, ActivityType, Importance, Se
 use flightdeck_dashboard::app::model::{ConfirmDialog, ModalState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
 use flightdeck_dashboard::settings_catalog::SettingsState;
+use flightdeck_dashboard::state::run_history::{HistoryRun, RunMetadata};
 
 #[test]
 fn popup_theme_picker() {
@@ -76,6 +77,26 @@ fn popup_activity_filter() {
 }
 
 #[test]
+fn popup_history() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    let mut run = history_run("run-2026-05-15T101500Z-abcdef12", false, false);
+    run.snapshots = vec![
+        "2026-05-15T101500Z.json".to_owned(),
+        "2026-05-15T100000Z.json".to_owned(),
+    ];
+    model.history.set_runs(vec![
+        run,
+        history_run("imported-VS-2026-05-14T091500Z-deadbeef", true, true),
+    ]);
+    model.modal = ModalState::History;
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("History"));
+    assert!(rendered.contains("imported"));
+    assert!(rendered.contains("snapshot"));
+    insta::assert_snapshot!("popup_history", rendered);
+}
+
+#[test]
 fn popup_settings() {
     let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
     model.settings = SettingsState::load(PathBuf::from("/project"), BTreeMap::new());
@@ -113,6 +134,30 @@ fn popup_filter_input() {
     model.ui.filter_open = true;
     model.modal = ModalState::FilterInput;
     insta::assert_snapshot!("popup_filter_input", common::render_model(&model));
+}
+
+fn history_run(run_id: &str, imported: bool, with_summary: bool) -> HistoryRun {
+    HistoryRun {
+        metadata: RunMetadata {
+            activity_path: PathBuf::from(format!("/history/{run_id}/activity.jsonl")),
+            imported,
+            imported_from: imported.then(|| {
+                PathBuf::from("/repo/demo/tmp/flightdeck-state-VS-20260514T091500Z.json.archive")
+            }),
+            last_seen_at: common::fixed_now(),
+            project_root: PathBuf::from("/repo/demo"),
+            run_id: run_id.to_owned(),
+            snapshots_path: PathBuf::from(format!("/history/{run_id}/snapshots")),
+            started_at: common::fixed_now(),
+            state_path: PathBuf::from(format!("/history/{run_id}/state.json")),
+            summary_path: with_summary
+                .then(|| PathBuf::from(format!("/history/{run_id}/summary.md"))),
+            terminated: true,
+            terminated_at: Some(common::fixed_now()),
+            tmux_session: "VS".to_owned(),
+        },
+        snapshots: Vec::new(),
+    }
 }
 
 fn activity_event(

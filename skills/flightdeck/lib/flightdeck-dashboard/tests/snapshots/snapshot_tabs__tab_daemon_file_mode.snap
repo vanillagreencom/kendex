@@ -3,13 +3,13 @@ source: tests/snapshot_tabs.rs
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck   session demo-mixed  ·  Supervisor pi at /repo/demo  ·  state: live file  ·  uptime 2h25m  ·  Adhoc 1 · Issues 1 · Tasks 1  ·  4m old  $0.00 · 0 turns · in 0 / out 0             moon ▾ │"
+"│ Flightdeck   live state session demo-mixed  ·  Supervisor pi at /repo/demo  ·  state: live file  ·  uptime 2h25m  ·  Adhoc 1 · Issues 1 · Tasks 1  ·  4m old  $0.00 · 0 turns · in 0 / out 0  moon ▾ │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Activity │ Conversations │ Merges │ Decisions │ Costs │ Daemon                                                                                                                            │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ state source ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│Status        watching live state file                                                                                                                                                                │"
+"│Status        live state file                                                                                                                                                                         │"
 "│State file     /mnt/Tertiary/dev/vstack/main/tmp/flightdeck-state-VS.json                                                                                                                             │"
 "│File mtime     2026-05-15T10:06:00Z (4m ago)                                                                                                                                                          │"
 "│Note           Dashboard is in normal state-file mode. Socket telemetry is optional and separate from the Flightdeck supervisor daemon that wakes the master.                                         │"
@@ -60,5 +60,5 @@ expression: rendered
 "│                                                                                                                                                                                                      │"
 "│                                                                                                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   f filters   n noise   s session   d decisions   e export   ? help   q quit                                                        noise: hidden  ·  filter: off"
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   H history   f filters   n noise   s session   d decisions   e export   ? help   q quit                                            noise: hidden  ·  filter: off"
 "                                                                                                                                                                                                        "

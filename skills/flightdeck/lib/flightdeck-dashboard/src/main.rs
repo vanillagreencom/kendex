@@ -7,7 +7,7 @@ use std::time::Duration;
 use clap::Parser;
 use color_eyre::eyre::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseButton, MouseEventKind};
-use flightdeck_dashboard::app::command::SnapshotSource;
+use flightdeck_dashboard::app::command::{RunSnapshotSource, SnapshotSource};
 use flightdeck_dashboard::app::effects::Effects;
 use flightdeck_dashboard::app::hitmap::{ClickAction, HitMap};
 use flightdeck_dashboard::app::model::{utc_now, Model, ReadSourceState};
@@ -24,10 +24,11 @@ use flightdeck_dashboard::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use flightdeck_dashboard::events::{self, EventSource};
 use flightdeck_dashboard::fixtures;
 use flightdeck_dashboard::settings_catalog::{self, SettingsState};
+use flightdeck_dashboard::state::run_history::{self, LoadedRunSnapshot};
 use flightdeck_dashboard::state::snapshot::{
     DaemonStatus as SnapshotDaemonStatus, DashboardSnapshot,
 };
-use flightdeck_dashboard::state::tracked_entries::{self, ArchiveError, SnapshotError};
+use flightdeck_dashboard::state::tracked_entries::{self, SnapshotError};
 use flightdeck_dashboard::util::logging;
 use flightdeck_dashboard::util::paths::{
     dashboard_socket_file, fd_resolve_state_dir, fd_session_key_from_id, resolve_session_key,
@@ -111,7 +112,7 @@ async fn run_tui(
 ) -> Result<()> {
     let mut initial = initial_snapshot(&args).await?;
     if !matches!(initial.source, SnapshotSource::Socket(_)) {
-        initial.snapshot.daemon = file_mode_daemon_status();
+        initial.snapshot.daemon = file_mode_daemon_status_for(&initial.source_state);
     }
     let theme = theme_choice(args.theme);
     let settings = SettingsState::load_from_root_result(settings_project_root, ambient_settings);
@@ -180,7 +181,7 @@ async fn initial_socket_snapshot(path: &Path) -> Result<InitialSnapshot> {
     Ok(InitialSnapshot {
         snapshot,
         source: SnapshotSource::Socket(path.to_path_buf()),
-        source_state: ReadSourceState::Live,
+        source_state: ReadSourceState::ActiveRun { run_id: None },
         status_error,
     })
 }
@@ -218,10 +219,13 @@ fn tui_session_key(args: &TuiArgs) -> Result<Option<String>> {
     if let Some(session) = &args.session {
         return Ok(Some(resolve_session_key(session)?));
     }
-    if let Some(path) = &args.state_file {
+    if let Some(path) = args.state_file.as_ref().or(args.archive.as_ref()) {
         return Ok(Some(file_session_key(
             &tracked_entries::session_id_from_state_path(path),
         )));
+    }
+    if args.run_id.is_some() {
+        return Ok(None);
     }
     if args.wants_live_state() {
         let resolution = tracked_entries::resolve_session_state(None)?;
@@ -254,9 +258,17 @@ fn motion_level(args: &TuiArgs) -> MotionLevel {
     }
 }
 
-fn file_mode_daemon_status() -> SnapshotDaemonStatus {
+fn file_mode_daemon_status_for(source_state: &ReadSourceState) -> SnapshotDaemonStatus {
+    let label = match source_state {
+        ReadSourceState::Demo => "state: demo",
+        ReadSourceState::LiveFile | ReadSourceState::ActiveRun { .. } => "state: live file",
+        ReadSourceState::NoActiveRun => "state: no active run",
+        ReadSourceState::ArchivedRun { .. } => "state: history archive",
+        ReadSourceState::ImportedArchive { .. } => "state: imported archive",
+        ReadSourceState::LegacyArchive { .. } => "state: legacy archive",
+    };
     SnapshotDaemonStatus {
-        label: String::from("state: live file"),
+        label: String::from(label),
         healthy: Some(true),
         pid: None,
         last_heartbeat_at: None,
@@ -296,14 +308,23 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
     if let Some(snapshot) = discover_socket_snapshot(args).await {
         return Ok(snapshot);
     }
-    if let Some(path) = &args.state_file {
+    if let Some(run_id) = &args.run_id {
+        let project_root = tracked_entries::resolve_project_root(&std::env::current_dir()?)?;
+        let loaded =
+            run_history::load_run_snapshot(&project_root, run_id, args.snapshot.as_deref(), now)?;
+        return Ok(initial_from_loaded_run(loaded, true));
+    }
+    if let Some(path) = &args.archive {
         return Ok(match tracked_entries::snapshot_from_file(path, now) {
-            Ok(snapshot) => InitialSnapshot {
-                snapshot,
-                source: SnapshotSource::File(path.clone()),
-                source_state: ReadSourceState::Live,
-                status_error: None,
-            },
+            Ok(snapshot) => {
+                let source_state = ReadSourceState::from_snapshot(&snapshot);
+                InitialSnapshot {
+                    snapshot,
+                    source: SnapshotSource::File(path.clone()),
+                    source_state,
+                    status_error: None,
+                }
+            }
             Err(SnapshotError::PrePurgeState) => InitialSnapshot {
                 snapshot: tracked_entries::snapshot_for_error_path(
                     path,
@@ -312,7 +333,32 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
                     true,
                 ),
                 source: SnapshotSource::File(path.clone()),
-                source_state: ReadSourceState::Live,
+                source_state: ReadSourceState::LegacyArchive { archived_at: now },
+                status_error: None,
+            },
+            Err(error) => return Err(error.into()),
+        });
+    }
+    if let Some(path) = &args.state_file {
+        return Ok(match tracked_entries::snapshot_from_file(path, now) {
+            Ok(snapshot) => {
+                let source_state = ReadSourceState::from_snapshot(&snapshot);
+                InitialSnapshot {
+                    snapshot,
+                    source: SnapshotSource::File(path.clone()),
+                    source_state,
+                    status_error: None,
+                }
+            }
+            Err(SnapshotError::PrePurgeState) => InitialSnapshot {
+                snapshot: tracked_entries::snapshot_for_error_path(
+                    path,
+                    now,
+                    SnapshotError::PrePurgeState.to_string(),
+                    true,
+                ),
+                source: SnapshotSource::File(path.clone()),
+                source_state: ReadSourceState::LiveFile,
                 status_error: None,
             },
             Err(error) => return Err(error.into()),
@@ -325,14 +371,122 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
         return Ok(InitialSnapshot {
             snapshot,
             source: SnapshotSource::Demo(demo_name),
-            source_state: ReadSourceState::Live,
+            source_state: ReadSourceState::Demo,
             status_error: None,
         });
     }
 
     let resolution = tracked_entries::resolve_session_state(args.session.as_deref())?;
     let source = SnapshotSource::Session(resolution.clone());
-    match tracked_entries::read_session_snapshot(&resolution, now) {
+    match run_history::load_active_run(&resolution.project_root, now) {
+        Ok(Some(loaded)) if !loaded.snapshot.terminated => {
+            Ok(initial_from_loaded_run(loaded, false))
+        }
+        Ok(Some(_)) | Ok(None) => Ok(no_active_snapshot(&resolution, now, source, None)),
+        Err(error) => match tracked_entries::read_session_snapshot(&resolution, now) {
+            Ok(snapshot) if !snapshot.terminated => {
+                let mut initial = InitialSnapshot {
+                    snapshot,
+                    source,
+                    source_state: ReadSourceState::LiveFile,
+                    status_error: Some(format!("run history unavailable: {error}")),
+                };
+                initial.snapshot.project_root = resolution.project_root;
+                Ok(initial)
+            }
+            Ok(_) | Err(SnapshotError::StateFileMissing { .. }) => Ok(no_active_snapshot(
+                &resolution,
+                now,
+                source,
+                Some(format!("run history unavailable: {error}")),
+            )),
+            Err(SnapshotError::PrePurgeState) => Ok(InitialSnapshot {
+                snapshot: tracked_entries::snapshot_for_error(
+                    &resolution.session,
+                    resolution.state_path.clone(),
+                    now,
+                    SnapshotError::PrePurgeState.to_string(),
+                    true,
+                ),
+                source,
+                source_state: ReadSourceState::LiveFile,
+                status_error: Some(format!("run history unavailable: {error}")),
+            }),
+            Err(read_error) => Ok(no_active_snapshot(
+                &resolution,
+                now,
+                source,
+                Some(format!("run history unavailable: {error}; {read_error}")),
+            )),
+        },
+    }
+}
+
+fn initial_from_loaded_run(loaded: LoadedRunSnapshot, force_archive: bool) -> InitialSnapshot {
+    let archived_at = loaded
+        .metadata
+        .terminated_at
+        .unwrap_or(loaded.snapshot.updated_at);
+    let source_state = if force_archive || loaded.metadata.terminated || loaded.metadata.imported {
+        if loaded.metadata.imported {
+            ReadSourceState::ImportedArchive {
+                run_id: loaded.metadata.run_id.clone(),
+                archived_at,
+            }
+        } else {
+            ReadSourceState::ArchivedRun {
+                run_id: loaded.metadata.run_id.clone(),
+                archived_at,
+            }
+        }
+    } else {
+        ReadSourceState::ActiveRun {
+            run_id: Some(loaded.metadata.run_id.clone()),
+        }
+    };
+    InitialSnapshot {
+        source: SnapshotSource::Run(RunSnapshotSource {
+            project_root: loaded.metadata.project_root.clone(),
+            run_id: loaded.metadata.run_id.clone(),
+            snapshot: loaded.snapshot_name.clone(),
+            state_path: loaded.snapshot.master_state_path.clone(),
+            activity_path: loaded.metadata.activity_path.clone(),
+            imported: loaded.metadata.imported,
+            terminated_at: loaded.metadata.terminated_at,
+        }),
+        snapshot: loaded.snapshot,
+        source_state,
+        status_error: None,
+    }
+}
+
+fn no_active_snapshot(
+    resolution: &tracked_entries::SessionResolution,
+    now: chrono::DateTime<chrono::Utc>,
+    source: SnapshotSource,
+    status_error: Option<String>,
+) -> InitialSnapshot {
+    let mut snapshot = DashboardSnapshot::empty_for_session(
+        &resolution.session,
+        resolution.state_path.clone(),
+        now,
+    );
+    snapshot.project_root = resolution.project_root.clone();
+    InitialSnapshot {
+        snapshot,
+        source,
+        source_state: ReadSourceState::NoActiveRun,
+        status_error,
+    }
+}
+
+#[allow(dead_code)]
+fn legacy_session_snapshot(
+    resolution: &tracked_entries::SessionResolution,
+    now: chrono::DateTime<chrono::Utc>,
+    source: SnapshotSource,
+) -> Result<InitialSnapshot> {
+    match tracked_entries::read_session_snapshot(resolution, now) {
         Ok(snapshot) => {
             let source_state = ReadSourceState::from_snapshot(&snapshot);
             Ok(InitialSnapshot {
@@ -351,17 +505,17 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
                 true,
             ),
             source,
-            source_state: ReadSourceState::Live,
+            source_state: ReadSourceState::LiveFile,
             status_error: None,
         }),
-        Err(SnapshotError::Archive(ArchiveError::NoArchives { .. })) => Ok(InitialSnapshot {
+        Err(SnapshotError::StateFileMissing { .. }) => Ok(InitialSnapshot {
             snapshot: DashboardSnapshot::empty_for_session(
                 &resolution.session,
                 resolution.state_path.clone(),
                 now,
             ),
             source,
-            source_state: ReadSourceState::Missing,
+            source_state: ReadSourceState::NoActiveRun,
             status_error: None,
         }),
         Err(error) => Ok(InitialSnapshot {
@@ -373,7 +527,7 @@ async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
                 false,
             ),
             source,
-            source_state: ReadSourceState::Live,
+            source_state: ReadSourceState::LiveFile,
             status_error: Some(error.to_string()),
         }),
     }
@@ -385,7 +539,9 @@ fn start_state_watcher(
     model: &mut Model,
 ) -> Option<StateWatcher> {
     let (live_path, archive_dir) = match source {
-        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
+        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) | SnapshotSource::Run(_) => {
+            return None
+        }
         SnapshotSource::File(path) => {
             let archive_dir = path
                 .parent()
@@ -416,7 +572,9 @@ fn start_event_sources(
     tx: mpsc::UnboundedSender<Msg>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let session = match source {
-        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
+        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) | SnapshotSource::Run(_) => {
+            return None
+        }
         SnapshotSource::File(path) => tracked_entries::session_id_from_state_path(path),
         SnapshotSource::Session(resolution) => resolution.session.clone(),
     };
@@ -443,9 +601,10 @@ fn start_socket_subscription(
 ) -> Option<tokio::task::JoinHandle<()>> {
     let path = match source {
         SnapshotSource::Socket(path) => path.clone(),
-        SnapshotSource::Demo(_) | SnapshotSource::File(_) | SnapshotSource::Session(_) => {
-            return None
-        }
+        SnapshotSource::Demo(_)
+        | SnapshotSource::File(_)
+        | SnapshotSource::Session(_)
+        | SnapshotSource::Run(_) => return None,
     };
     Some(tokio::spawn(async move {
         let msg = match DaemonClient::connect(&path).await {
@@ -456,7 +615,7 @@ fn start_socket_subscription(
                         let msg = match result {
                             Ok(snapshot) => Msg::SnapshotUpdated {
                                 snapshot: Box::new(snapshot),
-                                source_state: ReadSourceState::Live,
+                                source_state: ReadSourceState::ActiveRun { run_id: None },
                             },
                             Err(error) => Msg::Error(format!("daemon: {error}")),
                         };
@@ -482,9 +641,10 @@ fn start_daemon_status_poll(
 ) -> Option<tokio::task::JoinHandle<()>> {
     let path = match source {
         SnapshotSource::Socket(path) => path.clone(),
-        SnapshotSource::Demo(_) | SnapshotSource::File(_) | SnapshotSource::Session(_) => {
-            return None
-        }
+        SnapshotSource::Demo(_)
+        | SnapshotSource::File(_)
+        | SnapshotSource::Session(_)
+        | SnapshotSource::Run(_) => return None,
     };
     Some(tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));

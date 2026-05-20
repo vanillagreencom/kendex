@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::state::snapshot::DashboardSnapshot;
-use crate::state::tracked_entries::{self, ArchiveError, SessionResolution, SnapshotError};
+use crate::state::tracked_entries::{self, SessionResolution, SnapshotError};
 use crate::watcher::{StateWatcher, WatcherEvent};
 
 use super::lifecycle::RuntimePaths;
@@ -128,7 +128,7 @@ pub fn load_snapshot(
         DaemonSnapshotSource::Session(resolution) => {
             match tracked_entries::read_session_snapshot(resolution, now) {
                 Ok(snapshot) => Ok(snapshot),
-                Err(SnapshotError::Archive(ArchiveError::NoArchives { .. })) => {
+                Err(SnapshotError::StateFileMissing { .. }) => {
                     Ok(DashboardSnapshot::empty_for_session(
                         &resolution.session,
                         resolution.state_path.clone(),

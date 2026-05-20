@@ -22,6 +22,7 @@ pub enum Action {
     ToggleNoise,
     ToggleCompact,
     ToggleHelp,
+    OpenHistory,
     OpenThemePicker,
     OpenPricingDetail,
     OpenSettings,
@@ -138,6 +139,11 @@ pub const BINDINGS: &[KeyBinding] = &[
         action: Action::ToggleHelp,
     },
     KeyBinding {
+        keys: "H",
+        description: "Open run history popup",
+        action: Action::OpenHistory,
+    },
+    KeyBinding {
         keys: "T",
         description: "Choose dashboard theme",
         action: Action::OpenThemePicker,
@@ -192,6 +198,7 @@ pub fn action_for(key: &KeyEvent) -> Option<Action> {
             Some(Action::ToggleCompact)
         }
         KeyCode::Char('?') => Some(Action::ToggleHelp),
+        KeyCode::Char('h') | KeyCode::Char('H') => Some(Action::OpenHistory),
         KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::OpenThemePicker),
         KeyCode::Char('p') if key.modifiers.is_empty() => Some(Action::OpenPricingDetail),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),

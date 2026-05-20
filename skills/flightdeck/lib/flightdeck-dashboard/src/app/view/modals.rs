@@ -8,7 +8,7 @@ use crate::activity::format::{event_chip_for, severity_label};
 use crate::app::hitmap::{ClickAction, HitMap};
 use crate::app::keymap::BINDINGS;
 use crate::app::labels::{kind_label_for, state_label_for};
-use crate::app::model::{Model, ACTIVITY_TYPE_CHIPS};
+use crate::app::model::{HistoryCursor, HistoryItem, Model, ACTIVITY_TYPE_CHIPS};
 use crate::app::theme::{Palette, Theme};
 use crate::app::view::activity::severity_style;
 use crate::app::view::popup::{render_popup, PopupChrome, PopupHeight, PopupWidth};
@@ -66,6 +66,225 @@ pub fn render_help(
         ]));
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), body);
     });
+}
+
+pub fn render_history(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &Model,
+    theme: &Palette,
+    hitmap: &mut HitMap,
+) {
+    let chrome = PopupChrome {
+        title: "History",
+        subtitle: Some("Browse durable Flightdeck runs; loaded archives are read-only"),
+        footer_hints: &[
+            "↑/↓ select",
+            "Enter load",
+            "A active",
+            "/ filter",
+            "I import legacy",
+            "S summary",
+            "Esc close",
+        ],
+        width: PopupWidth::PercentOfFrame(86),
+        height: PopupHeight::PercentOfFrame(82),
+    };
+    render_popup(frame, area, chrome, theme, hitmap, |frame, body, _| {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(6)])
+            .split(body);
+        render_history_filter(frame, chunks[0], model, theme);
+        render_history_table(frame, chunks[1], model, theme);
+    });
+}
+
+fn render_history_filter(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Palette) {
+    let history = &model.history;
+    let prefix = if history.editing_filter {
+        "> "
+    } else {
+        "filter "
+    };
+    let filter_value = if history.editing_filter {
+        history.input.as_str()
+    } else if history.filter.is_empty() {
+        "off"
+    } else {
+        history.filter.as_str()
+    };
+    let status = if history.loading {
+        "loading…".to_owned()
+    } else if let Some(error) = &history.error {
+        format!("error: {error}")
+    } else if let Some(notice) = &history.notice {
+        notice.clone()
+    } else {
+        format!("{} run(s)", history.runs.len())
+    };
+    let line = Line::from(vec![
+        Span::styled(prefix, theme.status_label()),
+        Span::styled(filter_value.to_owned(), theme.filter()),
+        Span::raw("  ·  "),
+        Span::styled(status, theme.muted()),
+    ]);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border())
+        .title(Span::styled(" search ", theme.muted()));
+    frame.render_widget(Paragraph::new(line).block(block), area);
+}
+
+fn render_history_table(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Palette) {
+    let history = &model.history;
+    let items = history.visible_items();
+    if items.is_empty() {
+        let message = if history.filter.is_empty() {
+            "No durable runs found. Press I to import legacy project archives."
+        } else {
+            "No runs match this filter. Press c to clear."
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_active())
+            .title(Span::styled(" runs ", theme.title()));
+        frame.render_widget(
+            Paragraph::new(message)
+                .alignment(Alignment::Center)
+                .block(block)
+                .wrap(Wrap { trim: true })
+                .style(theme.muted()),
+            area,
+        );
+        return;
+    }
+
+    let visible_rows = area.height.saturating_sub(3) as usize;
+    let start = history.scroll.min(items.len().saturating_sub(1));
+    let end = start.saturating_add(visible_rows).min(items.len());
+    let rows = items[start..end]
+        .iter()
+        .map(|item| history_row(*item, model, theme))
+        .collect::<Vec<_>>();
+    let header = Row::new([
+        Cell::from("Status"),
+        Cell::from("Run / snapshot"),
+        Cell::from("Session"),
+        Cell::from("Started"),
+        Cell::from("Ended"),
+        Cell::from("Summary"),
+    ])
+    .style(theme.header());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_active())
+        .title(Span::styled(" runs ", theme.title()));
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(12),
+            Constraint::Percentage(34),
+            Constraint::Length(16),
+            Constraint::Length(17),
+            Constraint::Length(17),
+            Constraint::Percentage(28),
+        ],
+    )
+    .header(header)
+    .block(block)
+    .column_spacing(1);
+    frame.render_widget(table, area);
+}
+
+fn history_row(item: HistoryItem, model: &Model, theme: &Palette) -> Row<'static> {
+    let selected = history_item_selected(item, model.history.cursor);
+    let style = if selected {
+        model.selection_style()
+    } else {
+        theme.frame()
+    };
+    match item {
+        HistoryItem::Run(index) => {
+            let Some(run) = model.history.runs.get(index) else {
+                return Row::new([
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                ]);
+            };
+            let status_style = match run.status_label() {
+                "active" => theme.ok(),
+                "imported" => theme.warning(),
+                _ => theme.muted(),
+            };
+            let summary = run
+                .metadata
+                .summary_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| String::from("—"));
+            Row::new([
+                Cell::from(Span::styled(run.status_label(), status_style)),
+                Cell::from(run.metadata.run_id.clone()),
+                Cell::from(run.metadata.tmux_session.clone()),
+                Cell::from(short_time(run.metadata.started_at)),
+                Cell::from(
+                    run.metadata
+                        .terminated_at
+                        .map(short_time)
+                        .unwrap_or_else(|| String::from("—")),
+                ),
+                Cell::from(summary),
+            ])
+            .style(style)
+        }
+        HistoryItem::Snapshot {
+            run_index,
+            snapshot_index,
+        } => {
+            let snapshot = model
+                .history
+                .runs
+                .get(run_index)
+                .and_then(|run| run.snapshots.get(snapshot_index))
+                .cloned()
+                .unwrap_or_else(|| String::from("snapshot"));
+            Row::new([
+                Cell::from(Span::styled("snapshot", theme.info())),
+                Cell::from(format!("  ↳ {snapshot}")),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from("Enter loads this snapshot"),
+            ])
+            .style(style)
+        }
+    }
+}
+
+fn history_item_selected(item: HistoryItem, cursor: HistoryCursor) -> bool {
+    match (item, cursor) {
+        (HistoryItem::Run(left), HistoryCursor::Run(right)) => left == right,
+        (
+            HistoryItem::Snapshot {
+                run_index: left_run,
+                snapshot_index: left_snapshot,
+            },
+            HistoryCursor::Snapshot {
+                run_index: right_run,
+                snapshot_index: right_snapshot,
+            },
+        ) => left_run == right_run && left_snapshot == right_snapshot,
+        _ => false,
+    }
+}
+
+fn short_time(ts: chrono::DateTime<chrono::Utc>) -> String {
+    ts.format("%Y-%m-%d %H:%M").to_string()
 }
 
 fn legend_lines(theme: &Palette) -> Vec<Line<'static>> {

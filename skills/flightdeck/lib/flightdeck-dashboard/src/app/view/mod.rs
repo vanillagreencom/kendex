@@ -106,6 +106,9 @@ pub fn render_with_hitmap(frame: &mut Frame<'_>, model: &Model, hitmap: &mut Hit
         crate::app::model::ModalState::Help => {
             modals::render_help(frame, area, model, theme, hitmap)
         }
+        crate::app::model::ModalState::History => {
+            modals::render_history(frame, area, model, theme, hitmap);
+        }
         crate::app::model::ModalState::ThemePicker => {
             modals::render_theme_picker(frame, area, model, theme, hitmap);
         }
@@ -181,8 +184,10 @@ fn render_status(
     )]));
     base_segments.push(BaseSegment::pinned(vec![
         Span::raw("  "),
-        Span::styled("session ", theme.status_label()),
-        Span::raw(snapshot.session_id.clone()),
+        Span::styled(
+            model.read_source_state.header_label(&snapshot.session_id),
+            theme.status_label(),
+        ),
     ]));
     let master_idx = base_segments.len();
     base_segments.push(BaseSegment::droppable(
@@ -217,7 +222,10 @@ fn render_status(
     ));
 
     let mut chips: Vec<OptionalChip> = Vec::new();
-    if !snapshot.terminated {
+    if !snapshot.terminated
+        && !model.read_source_state.is_read_only()
+        && !model.read_source_state.is_no_active()
+    {
         chips.push(OptionalChip {
             separator: "  ·  ",
             text: staleness,
@@ -474,7 +482,7 @@ fn render_footer(
             format!("filter: {}", model.feed_filter.pattern)
         };
         let left =
-            " ↹ tabs   j/k or ↑/↓ select   ⏎ detail   f filters   n noise   s session   d decisions   e export   ? help   q quit";
+            " ↹ tabs   j/k or ↑/↓ select   ⏎ detail   H history   f filters   n noise   s session   d decisions   e export   ? help   q quit";
         push_footer_target(
             hitmap,
             area,
@@ -483,17 +491,18 @@ fn render_footer(
             ClickAction::SelectTab(model.next_tab()),
         );
         push_footer_target(hitmap, area, 32, "⏎ detail", ClickAction::OpenDetail);
+        push_footer_target(hitmap, area, 43, "H history", ClickAction::OpenHistory);
         push_footer_target(
             hitmap,
             area,
-            43,
+            55,
             "f filters",
             ClickAction::OpenActivityFilter,
         );
-        push_footer_target(hitmap, area, 55, "n noise", ClickAction::ToggleNoiseFilter);
-        push_footer_target(hitmap, area, 91, "e export", ClickAction::ActivityExport);
-        push_footer_target(hitmap, area, 102, "? help", ClickAction::OpenHelp);
-        push_footer_target(hitmap, area, 111, "q quit", ClickAction::Quit);
+        push_footer_target(hitmap, area, 67, "n noise", ClickAction::ToggleNoiseFilter);
+        push_footer_target(hitmap, area, 103, "e export", ClickAction::ActivityExport);
+        push_footer_target(hitmap, area, 114, "? help", ClickAction::OpenHelp);
+        push_footer_target(hitmap, area, 123, "q quit", ClickAction::Quit);
         let right = format!("{noisy}  ·  {filter}");
         let padding = area
             .width

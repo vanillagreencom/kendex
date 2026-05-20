@@ -658,7 +658,7 @@ fn archive_banner() {
     let mut model = common::model_for_fixture("terminated", MotionLevel::Off);
     model.snapshot.master_state_path =
         PathBuf::from("tmp/flightdeck-state-demo-terminated-20260515T100700Z.json.archive");
-    model.read_source_state = ReadSourceState::Archive {
+    model.read_source_state = ReadSourceState::LegacyArchive {
         archived_at: model
             .snapshot
             .terminated_at
@@ -695,12 +695,38 @@ fn archive_fallback_from_dir() {
     model.current_pane_id = None;
     assert!(matches!(
         model.read_source_state,
-        ReadSourceState::Archive { .. }
+        ReadSourceState::LegacyArchive { .. }
     ));
     insta::assert_snapshot!(
         "overview_archive_fallback_from_dir",
         common::render_model(&model)
     );
+}
+
+#[test]
+fn no_active_run_banner() {
+    let snapshot = DashboardSnapshot::empty_for_session(
+        "VS",
+        PathBuf::from("tmp/flightdeck-state-VS.json"),
+        common::fixed_now(),
+    );
+    let mut model = Model::new(
+        snapshot,
+        SnapshotSource::Session(tracked_entries::SessionResolution {
+            project_root: PathBuf::from("/repo/demo"),
+            state_dir: PathBuf::from("/repo/demo/tmp"),
+            session: "VS".to_owned(),
+            state_path: PathBuf::from("/repo/demo/tmp/flightdeck-state-VS.json"),
+        }),
+        MotionLevel::Off,
+        Theme::Moon,
+        common::fixed_now,
+    );
+    model.read_source_state = ReadSourceState::NoActiveRun;
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("No active Flightdeck run"));
+    assert!(rendered.contains("H history"));
+    insta::assert_snapshot!("overview_no_active_run", rendered);
 }
 
 #[test]
@@ -794,10 +820,10 @@ fn non_socket_snapshot_update_preserves_file_mode_daemon_status() {
         &mut model,
         Msg::SnapshotUpdated {
             snapshot: Box::new(incoming),
-            source_state: ReadSourceState::Live,
+            source_state: ReadSourceState::LiveFile,
         },
     );
 
-    assert_eq!(model.snapshot.daemon.label, "daemon: file-mode");
+    assert_eq!(model.snapshot.daemon.label, "state: live file");
     assert_eq!(model.snapshot.daemon.healthy, Some(true));
 }

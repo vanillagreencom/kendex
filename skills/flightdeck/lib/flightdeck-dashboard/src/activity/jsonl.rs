@@ -35,6 +35,7 @@ impl FileIdentity {
 pub struct JsonlActivitySource {
     state_dir: PathBuf,
     session_name: String,
+    explicit_path: Option<PathBuf>,
     active_path: Option<PathBuf>,
     active_file_id: Option<FileIdentity>,
     offset: u64,
@@ -50,6 +51,33 @@ impl JsonlActivitySource {
         Self {
             state_dir: state_dir.into(),
             session_name: session_name.into(),
+            explicit_path: None,
+            active_path: None,
+            active_file_id: None,
+            offset: 0,
+            pending: String::new(),
+            events: VecDeque::with_capacity(MAX_EVENTS_IN_MEMORY.min(1024)),
+            malformed_lines: 0,
+            malformed_warnings: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let state_dir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let session_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("activity.jsonl")
+            .to_owned();
+        Self {
+            state_dir,
+            session_name,
+            explicit_path: Some(path),
             active_path: None,
             active_file_id: None,
             offset: 0,
@@ -134,6 +162,9 @@ impl JsonlActivitySource {
     }
 
     fn resolve_path(&self) -> Option<PathBuf> {
+        if let Some(path) = &self.explicit_path {
+            return path.exists().then(|| path.clone());
+        }
         let live = self.live_path();
         if live.exists() {
             return Some(live);

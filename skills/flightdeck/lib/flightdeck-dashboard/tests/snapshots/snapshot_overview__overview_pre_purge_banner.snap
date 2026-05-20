@@ -3,7 +3,7 @@ source: tests/snapshot_overview.rs
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck   session HT  ·  unknown  ·  state: live file  ·  uptime unknown  ·  Adhoc 0 · Issues 0 · Tasks 0  ·  fresh  $0.00 · 0 turns · in 0 / out 0                                        moon ▾ │"
+"│ Flightdeck   live state session HT  ·  unknown  ·  state: live file  ·  uptime unknown  ·  Adhoc 0 · Issues 0 · Tasks 0  ·  fresh  $0.00 · 0 turns · in 0 / out 0                             moon ▾ │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Activity │ Conversations │ Decisions │ Costs │ Daemon                                                                                                                                     │"
@@ -60,5 +60,5 @@ expression: rendered
 "│                          ││                                                                                                                              ││                                          │"
 "│                          ││                                                                                                                              ││                                          │"
 "└──────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────┘"
-" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   f filters   n noise   s session   d decisions   e export   ? help   q quit                                                        noise: hidden  ·  filter: off"
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   H history   f filters   n noise   s session   d decisions   e export   ? help   q quit                                            noise: hidden  ·  filter: off"
 "                                                                                                                                                                                                        "
