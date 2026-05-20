@@ -127,7 +127,7 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 ### Run storage helpers
 
-Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`.
+Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`. If a start/attach path creates a fresh active run and aborts before registration, `flightdeck-session` terminates that new run while preserving reused active runs.
 
 | Command | Arguments | Script | Notes |
 |---------|-----------|--------|-------|

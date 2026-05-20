@@ -979,7 +979,37 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("title=Fail");
 			expect(r.stderr).toContain("shim: new-window refused");
 			expect(existsSync(stateFile(repo))).toBe(false);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start failure preserves intentionally reused active run`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const first = run(repo, shim, [
+				"start",
+				"--session-id", "first-reused-run-entry",
+				"--title", "First reused run entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo first",
+			]);
+			expect(first.status).toBe(0);
+			const activeBefore = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+
+			const second = run(repo, shim, [
+				"start",
+				"--session-id", "failed-reused-run-entry",
+				"--title", "Failed reused run entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo second",
+			], { TMUX_SHIM_FAIL_NEW_WINDOW: "1" });
+			expect(second.status).not.toBe(0);
+			const activeAfter = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+			expect(activeAfter.active.run_id).toBe(activeBefore.active.run_id);
+			expect(activeAfter.metadata.terminated).toBe(false);
 		});
 
 		test(`start --prompt cleans tempfile when tmux new-window fails`, () => {
@@ -1000,6 +1030,7 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("title=Fail prompt");
 			expect(r.stderr).toContain("shim: new-window refused");
 			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		});
 
@@ -1026,6 +1057,7 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("dashboard boom");
 			expect(r.stderr).toContain("dashboard launch failed before launching fail-dashboard-prompt");
 			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 			expect(existsSync(stateFile(repo))).toBe(false);
 		});

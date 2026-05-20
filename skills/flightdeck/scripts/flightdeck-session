@@ -12,6 +12,34 @@ source "$SCRIPT_DIR/lib/pane-env.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 
+ACTIVE_RUN_ROLLBACK_ARMED=0
+ACTIVE_RUN_ROLLBACK_ID=""
+ACTIVE_RUN_ROLLBACK_SESSION=""
+
+active_run_arm_rollback() {
+  ACTIVE_RUN_ROLLBACK_ARMED=1
+  ACTIVE_RUN_ROLLBACK_ID="$1"
+  ACTIVE_RUN_ROLLBACK_SESSION="$2"
+}
+
+active_run_disarm_rollback() {
+  ACTIVE_RUN_ROLLBACK_ARMED=0
+  ACTIVE_RUN_ROLLBACK_ID=""
+  ACTIVE_RUN_ROLLBACK_SESSION=""
+}
+
+active_run_rollback_on_exit() {
+  local status=$?
+  if [[ "${ACTIVE_RUN_ROLLBACK_ARMED:-0}" == "1" && -n "${ACTIVE_RUN_ROLLBACK_ID:-}" ]]; then
+    ACTIVE_RUN_ROLLBACK_ARMED=0
+    if ! "$SCRIPT_DIR/flightdeck-state" run terminate "$ACTIVE_RUN_ROLLBACK_ID" --tmux-session "$ACTIVE_RUN_ROLLBACK_SESSION" >/dev/null 2>&1; then
+      printf 'Warning: failed to roll back newly created Flightdeck active run %s after pre-registration abort\n' "$ACTIVE_RUN_ROLLBACK_ID" >&2
+    fi
+  fi
+  return "$status"
+}
+trap active_run_rollback_on_exit EXIT
+
 usage() {
   cat >&2 <<'USAGE'
 Usage:
@@ -645,13 +673,24 @@ ensure_active_run_for_session() {
   if [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" || "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]]; then
     return 0
   fi
-  local session_name
+  local session_name ensure_json action run_id
   session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
   [[ -n "$session_name" ]] || { echo "Error: unable to resolve tmux session for Flightdeck run" >&2; exit 2; }
-  if ! "$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name" >/dev/null; then
+  if ! ensure_json=$("$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name"); then
     echo "Error: failed to create or reuse Flightdeck active run" >&2
     exit 2
   fi
+  action=$(jq -r '.action // empty' <<< "$ensure_json" 2>/dev/null || true)
+  run_id=$(jq -r '.active.run_id // .metadata.run_id // empty' <<< "$ensure_json" 2>/dev/null || true)
+  case "$action" in
+    created|created-after-terminated|created-after-stale)
+      if [[ -z "$run_id" ]]; then
+        echo "Error: flightdeck-state run ensure returned creation action without active run id" >&2
+        exit 2
+      fi
+      active_run_arm_rollback "$run_id" "$session_name"
+      ;;
+  esac
 }
 
 
@@ -821,6 +860,7 @@ cmd_start() {
   # parent shell's cwd before `exec pi`), but all activity/PR/worktree
   # attribution should bind to the caller-selected working directory.
   register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch" "$tracker" "$github_url"
+  active_run_disarm_rollback
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
@@ -882,6 +922,7 @@ cmd_attach() {
   [[ -n "$CAPTURE_PANE_CWD" ]] && branch=$(capture_git_branch "$CAPTURE_PANE_CWD")
   [[ -z "$worktree" && "$kind" == "issue" ]] && worktree="$CAPTURE_PANE_CWD"
   register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "$worktree" "" "$branch" "$tracker" "$github_url"
+  active_run_disarm_rollback
   ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }

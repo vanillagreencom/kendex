@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -99,6 +100,26 @@ impl FocusOrLaunchReport {
         self.command = error.command.clone();
         self
     }
+
+    fn with_probe(mut self, probe: &DashboardProbe) -> Self {
+        match probe {
+            DashboardProbe::Found(_) => {}
+            DashboardProbe::Missing { path, .. } => {
+                self.path = path.as_ref().map(|path| path.display().to_string());
+            }
+            DashboardProbe::Stale {
+                path,
+                command,
+                stderr,
+                ..
+            } => {
+                self.path = path.as_ref().map(|path| path.display().to_string());
+                self.command = command.clone();
+                self.stderr = stderr.clone();
+            }
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +149,17 @@ impl DashboardProbe {
             Self::Found(_) => "found",
             Self::Missing { reason, .. } | Self::Stale { reason, .. } => reason,
         }
+    }
+}
+
+fn merge_stderr(left: Option<String>, right: Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) if !left.is_empty() && !right.is_empty() => {
+            Some(format!("{left}; {right}"))
+        }
+        (Some(left), _) if !left.is_empty() => Some(left),
+        (_, Some(right)) if !right.is_empty() => Some(right),
+        _ => None,
     }
 }
 
@@ -374,6 +406,7 @@ async fn focus_or_launch(
         }
     };
 
+    let mut initial_stale_probe: Option<DashboardProbe> = None;
     match dashboard_target(state_file.as_deref(), &session, &project_root, &window_name).await {
         Ok(DashboardProbe::Found(target)) => match focus_dashboard_target(&target).await {
             Ok(()) => {
@@ -391,7 +424,10 @@ async fn focus_or_launch(
                 .with_probe_error(&DashboardProbeError::new(error.to_string())));
             }
         },
-        Ok(DashboardProbe::Missing { .. } | DashboardProbe::Stale { .. }) => {}
+        Ok(DashboardProbe::Missing { .. }) => {}
+        Ok(probe @ DashboardProbe::Stale { .. }) => {
+            initial_stale_probe = Some(probe);
+        }
         Err(error) => {
             return Err(FocusOrLaunchReport::new(
                 "error",
@@ -417,11 +453,21 @@ async fn focus_or_launch(
     let launch_outcome = match launch_dashboard_locked(&launch_plan).await {
         Ok(outcome) => outcome,
         Err(error) => {
-            let launch_stderr = Some(error.to_string());
-            return Err(FocusOrLaunchReport {
-                stderr: launch_stderr,
-                ..FocusOrLaunchReport::new("error", format!("dashboard app launch failed: {error}"))
-            });
+            let launch_error = error.to_string();
+            let mut report =
+                FocusOrLaunchReport::new("error", format!("dashboard app launch failed: {error}"));
+            report.stderr = Some(launch_error.clone());
+            if let Some(probe) = &initial_stale_probe {
+                report.reason = format!(
+                    "dashboard app launch failed after stale tracked-entry probe ({}): {error}",
+                    probe.reason()
+                );
+                report = report.with_probe(probe);
+                let stale_stderr = report.stderr.take();
+                report.stderr =
+                    merge_stderr(stale_stderr, Some(format!("launch error: {launch_error}")));
+            }
+            return Err(report);
         }
     };
 
@@ -447,31 +493,34 @@ async fn focus_or_launch(
             .with_target(&target)
             .with_probe_error(&DashboardProbeError::new(error.to_string()))),
         },
-        Ok(probe) => Err(FocusOrLaunchReport {
-            path: match &probe {
-                DashboardProbe::Missing { path, .. } | DashboardProbe::Stale { path, .. } => {
-                    path.as_ref().map(|path| path.display().to_string())
-                }
-                DashboardProbe::Found(_) => None,
-            },
-            command: match &probe {
-                DashboardProbe::Stale { command, .. } => command.clone(),
-                DashboardProbe::Missing { .. } | DashboardProbe::Found(_) => None,
-            },
-            ..FocusOrLaunchReport::new(
-                "error",
-                format!(
-                    "dashboard app launch finished but no live tracked pane was found: {}",
-                    probe.reason()
-                ),
-            )
-        }),
+        Ok(probe) => Err(FocusOrLaunchReport::new(
+            "error",
+            format!(
+                "dashboard app launch finished but no live tracked pane was found: {}",
+                probe.reason()
+            ),
+        )
+        .with_probe(&probe)),
         Err(error) => Err(FocusOrLaunchReport::new(
             "error",
             format!("dashboard app launch finished but target probe failed: {error}"),
         )
         .with_probe_error(&error)),
     }
+}
+
+fn focus_report_detail_suffix(report: &FocusOrLaunchReport) -> String {
+    let mut suffix = String::new();
+    if let Some(path) = report.path.as_deref() {
+        let _ = write!(suffix, " path={path}");
+    }
+    if let Some(command) = report.command.as_deref() {
+        let _ = write!(suffix, " command={command}");
+    }
+    if let Some(stderr) = report.stderr.as_deref() {
+        let _ = write!(suffix, " stderr={stderr}");
+    }
+    suffix
 }
 
 fn emit_focus_report(report: &FocusOrLaunchReport, json: bool) -> Result<()> {
@@ -494,7 +543,12 @@ fn emit_focus_report(report: &FocusOrLaunchReport, json: bool) -> Result<()> {
                 .unwrap_or_default()
         );
     } else {
-        eprintln!("flightdeck-dashboard: {}: {}", report.status, report.reason);
+        eprintln!(
+            "flightdeck-dashboard: {}: {}{}",
+            report.status,
+            report.reason,
+            focus_report_detail_suffix(report)
+        );
     }
     Ok(())
 }

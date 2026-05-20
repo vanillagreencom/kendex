@@ -127,9 +127,11 @@ Useful commands:
 ```bash
 flightdeck-dashboard focus-or-launch      # focus existing app, or launch in tmux
 flightdeck-dashboard tui                  # current tmux session, live
-flightdeck-dashboard tui --session <name> # past or current session
+flightdeck-dashboard tui --session <name> # named live/legacy state file
 flightdeck-dashboard tui --demo           # demo data
 ```
+
+`flightdeck-dashboard tui --run-id <id>`, `tui --archive <path>`, and an in-app History UI are future work. For now, use `flightdeck-state run list/show` for durable run inspection and `tui --state-file <path>` for a concrete master-state JSON file.
 
 For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
 
@@ -148,7 +150,7 @@ flightdeck-state run terminate-active --project-root "$PWD" --tmux-session <name
 flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
 ```
 
-Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
+Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. If `flightdeck-session start` / `attach` creates a fresh active run and aborts before registering an entry, it terminates that new run; reused active runs are preserved. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
 
 ## High-level architecture
 

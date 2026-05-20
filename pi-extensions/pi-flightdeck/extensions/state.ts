@@ -273,6 +273,11 @@ function nonEmpty(value: unknown): string | undefined {
 let TMUX_CONTEXT_CACHE: TmuxContext | undefined;
 let TMUX_CONTEXT_RESOLVED = false;
 
+export function resetTmuxContextCacheForTests(): void {
+	TMUX_CONTEXT_CACHE = undefined;
+	TMUX_CONTEXT_RESOLVED = false;
+}
+
 export function resolveTmuxContext(): TmuxContext | undefined {
 	if (TMUX_CONTEXT_RESOLVED) return TMUX_CONTEXT_CACHE;
 	if (!process.env.TMUX) {

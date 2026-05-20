@@ -167,6 +167,121 @@ fn focus_or_launch_relaunches_stale_tracked_dashboard() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn focus_or_launch_preserves_stale_probe_diagnostics_in_json_error() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%dead", "@dead")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_stale_then_select(&bin_dir, &windows_file, &select_log)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_failing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--no-daemon",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "error");
+    assert!(report["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("stale tracked-entry probe"));
+    assert!(report["path"]
+        .as_str()
+        .expect("path")
+        .ends_with("flightdeck-state-test-fd.json"));
+    assert!(report["command"]
+        .as_str()
+        .expect("command")
+        .contains("tmux display-message"));
+    let stderr = report["stderr"].as_str().expect("stderr");
+    assert!(
+        stderr.contains("stale pane is gone"),
+        "missing stale stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("session launch boom"),
+        "missing launch stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_preserves_stale_probe_diagnostics_in_plain_error() -> Result<(), Box<dyn Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%dead", "@dead")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    let select_log = temp.path().join("tmux-select-log");
+    write_fake_tmux_stale_then_select(&bin_dir, &windows_file, &select_log)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_failing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args(["focus-or-launch", "--session", SESSION, "--no-daemon"])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("stale tracked-entry probe"),
+        "missing stale reason: {stderr}"
+    );
+    assert!(
+        stderr.contains("flightdeck-state-test-fd.json"),
+        "missing path: {stderr}"
+    );
+    assert!(
+        stderr.contains("tmux display-message"),
+        "missing command: {stderr}"
+    );
+    assert!(
+        stderr.contains("stale pane is gone"),
+        "missing stale stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("session launch boom"),
+        "missing launch stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn focus_or_launch_rejects_reused_pane_window_mismatch() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let project = temp.path().join("project");
@@ -211,6 +326,56 @@ fn focus_or_launch_rejects_reused_pane_window_mismatch() -> Result<(), Box<dyn E
         .contains("tmux display-message"));
     assert!(!capture.exists(), "identity mismatch must not relaunch");
     assert!(!select_log.exists(), "identity mismatch must not focus");
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_rejects_identity_mismatch_after_launch() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux_launch_identity_mismatch(&bin_dir, &windows_file)?;
+    let capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--no-daemon",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .output()?;
+
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "error");
+    let reason = report["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("identity mismatch"),
+        "missing identity mismatch: {reason}"
+    );
+    assert!(
+        reason.contains("tmux display-message"),
+        "missing probe command: {reason}"
+    );
+    assert!(
+        capture.exists(),
+        "launch should have been attempted before mismatch"
+    );
     Ok(())
 }
 
@@ -1175,7 +1340,7 @@ windows={windows:?}
 select_log={select_log:?}
 if [[ "${{1:-}}" == "display-message" ]]; then
   args="$*"
-  if [[ "$args" == *"%dead"* ]]; then exit 1; fi
+  if [[ "$args" == *"%dead"* ]]; then echo 'stale pane is gone' >&2; exit 1; fi
   if [[ "$args" == *"#{{pane_id}}"* && "$args" == *"#{{window_id}}"* ]]; then echo -e '%99\t@99'; exit 0; fi
   if [[ "$args" == *"#{{session_id}}"* ]]; then echo '$42'; exit 0; fi
   if [[ "$args" == *"#S"* ]]; then echo '{SESSION}'; exit 0; fi
@@ -1199,6 +1364,47 @@ exit 0
 "##,
             windows = windows_file.display(),
             select_log = select_log.display()
+        ),
+    )?;
+    make_executable(&path)?;
+    Ok(path)
+}
+
+fn write_fake_tmux_launch_identity_mismatch(
+    dir: &Path,
+    windows_file: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let path = dir.join("tmux");
+    std::fs::write(
+        &path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+windows={windows:?}
+if [[ "${{1:-}}" == "display-message" ]]; then
+  args="$*"
+  if [[ "$args" == *"%99"* ]]; then echo -e '%77\t@77\t{SESSION}\tflightdeck-test\t/tmp/wrong-dashboard'; exit 0; fi
+  if [[ "$args" == *"#{{session_id}}"* ]]; then echo '$42'; exit 0; fi
+  if [[ "$args" == *"#S"* ]]; then echo '{SESSION}'; exit 0; fi
+  if [[ "$args" == *"#{{pane_id}}"* ]]; then echo '%99'; exit 0; fi
+  if [[ "$args" == *"#{{window_id}}"* ]]; then echo '@99'; exit 0; fi
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-panes" ]]; then
+  echo '%99'
+  exit 0
+fi
+if [[ "${{1:-}}" == "list-windows" ]]; then
+  [[ -f "$windows" ]] && cat "$windows"
+  exit 0
+fi
+if [[ "${{1:-}}" == "select-window" || "${{1:-}}" == "select-pane" ]]; then
+  echo 'must not focus mismatched dashboard' >&2
+  exit 9
+fi
+exit 0
+"##,
+            windows = windows_file.display()
         ),
     )?;
     make_executable(&path)?;
@@ -1231,6 +1437,30 @@ exit 0
     )?;
     make_executable(&path)?;
     Ok(path)
+}
+
+fn write_failing_flightdeck_session(
+    path: &Path,
+    capture_file: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        path,
+        format!(
+            r##"#!/usr/bin/env bash
+set -euo pipefail
+capture={capture:?}
+printf '%s\n' "$@" > "$capture"
+echo 'session launch boom' >&2
+exit 23
+"##,
+            capture = capture_file.display()
+        ),
+    )?;
+    make_executable(path)?;
+    Ok(path.to_path_buf())
 }
 
 fn write_capturing_flightdeck_session(

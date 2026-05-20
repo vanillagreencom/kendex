@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
 
-import flightdeck from "../extensions/flightdeck.js";
+import flightdeck, { dashboardAllowedForStatus, renderStateErrorBanner } from "../extensions/flightdeck.js";
+import { dashboardVisibleForSnapshot } from "../extensions/dashboard-visibility.js";
+import { resetMiniDashboardRegistryForTests } from "../extensions/stacked-widget.js";
+import { buildSnapshotFromInputs, flightdeckSessionStatus, resetTmuxContextCacheForTests } from "../extensions/state.js";
 
 interface RegisteredCommand {
 	description?: string;
@@ -26,20 +29,25 @@ interface MockContext {
 	};
 }
 
+type EventHandler = (event: unknown, ctx: MockContext) => void;
+
 const SAVED_ENV: Record<string, string | undefined> = {};
 let ENV_HOME = "";
 let ENV_PI_DIR = "";
 
 beforeEach(() => {
-	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE"]) {
+	for (const key of ["PI_CODING_AGENT_DIR", "HOME", "XDG_CONFIG_HOME", "USERPROFILE", "PATH", "TMUX", "FD_STATE_DIR", "FLIGHTDECK_STATE_DIR", "FLIGHTDECK_CHILD_PANE", "PI_SUBAGENT_CHILD_AGENT"]) {
 		SAVED_ENV[key] = process.env[key];
 	}
+	resetMiniDashboardRegistryForTests();
 	ENV_HOME = mkdtempSync(join(tmpdir(), "pi-flightdeck-entry-home-"));
 	ENV_PI_DIR = mkdtempSync(join(tmpdir(), "pi-flightdeck-entry-piconf-"));
 	process.env.HOME = ENV_HOME;
 	process.env.PI_CODING_AGENT_DIR = ENV_PI_DIR;
 	process.env.XDG_CONFIG_HOME = ENV_HOME;
 	process.env.USERPROFILE = ENV_HOME;
+	delete process.env.FLIGHTDECK_CHILD_PANE;
+	delete process.env.PI_SUBAGENT_CHILD_AGENT;
 });
 
 afterEach(() => {
@@ -47,6 +55,8 @@ afterEach(() => {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
 	}
+	resetTmuxContextCacheForTests();
+	resetMiniDashboardRegistryForTests();
 	if (ENV_HOME) rmSync(ENV_HOME, { force: true, recursive: true });
 	if (ENV_PI_DIR) rmSync(ENV_PI_DIR, { force: true, recursive: true });
 });
@@ -65,13 +75,14 @@ function makeProject(binBody: string): string {
 function makePi() {
 	const commands = new Map<string, RegisteredCommand>();
 	const shortcuts = new Map<string, RegisteredShortcut>();
+	const events = new Map<string, EventHandler>();
 	const pi = {
-		events: { on() { /* no-op */ } },
-		on() { /* no-op */ },
+		events: { on(_name: string, _handler: unknown) { /* settings events unused here */ } },
+		on(name: string, handler: EventHandler) { events.set(name, handler); },
 		registerCommand(name: string, command: RegisteredCommand) { commands.set(name, command); },
 		registerShortcut(name: string, shortcut: RegisteredShortcut) { shortcuts.set(name, shortcut); },
 	};
-	return { commands, pi, shortcuts };
+	return { commands, events, pi, shortcuts };
 }
 
 function makeContext(cwd: string): MockContext & { notifications: Array<{ message: string; level?: string }>; widgets: Array<{ key: string; factory: unknown; options?: unknown }> } {
@@ -87,6 +98,13 @@ function makeContext(cwd: string): MockContext & { notifications: Array<{ messag
 			setWidget(key: string, factory: unknown, options?: unknown) { widgets.push({ key, factory, options }); },
 			openPopup() { throw new Error("popup API must not be called by status shell"); },
 		},
+	};
+}
+
+function makeTheme() {
+	return {
+		bold(text: string) { return text; },
+		fg(_name: string, text: string) { return text; },
 	};
 }
 
@@ -110,6 +128,36 @@ test("extension registers only status-shell commands and toggle shortcut", async
 	}
 });
 
+test("/flightdeck reports focus-or-launch success", async () => {
+	const project = makeProject("printf '{\"status\":\"focused\",\"reason\":\"existing dashboard\",\"pane\":\"%%9\",\"window\":\"@9\"}\n'");
+	try {
+		const { commands, pi } = makePi();
+		flightdeck(pi as never);
+		const ctx = makeContext(project);
+
+		await commands.get("flightdeck")?.handler("", ctx);
+
+		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app focused (window @9 · pane %9)", level: "info" }]);
+	} finally {
+		rmSync(project, { force: true, recursive: true });
+	}
+});
+
+test("/flightdeck reports focus-or-launch blocked", async () => {
+	const project = makeProject("printf '{\"status\":\"blocked\",\"reason\":\"not in tmux\"}\n'; exit 1");
+	try {
+		const { commands, pi } = makePi();
+		flightdeck(pi as never);
+		const ctx = makeContext(project);
+
+		await commands.get("flightdeck")?.handler("", ctx);
+
+		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app blocked: not in tmux", level: "warning" }]);
+	} finally {
+		rmSync(project, { force: true, recursive: true });
+	}
+});
+
 test("/flightdeck reports malformed focus-or-launch JSON as an error", async () => {
 	const project = makeProject("echo 'not-json'; exit 0");
 	try {
@@ -123,6 +171,30 @@ test("/flightdeck reports malformed focus-or-launch JSON as an error", async () 
 		assert.equal(ctx.notifications[0]?.level, "error");
 		assert.match(ctx.notifications[0]?.message ?? "", /malformed JSON/);
 		assert.match(ctx.notifications[0]?.message ?? "", /not-json/);
+	} finally {
+		rmSync(project, { force: true, recursive: true });
+	}
+});
+
+test("malformed live state renders error banner despite owner-only visibility", () => {
+	const project = makeProject("printf '{\"status\":\"focused\"}\n'");
+	try {
+		mkdirSync(join(project, "tmp"), { recursive: true });
+		writeFileSync(join(project, "tmp", "flightdeck-state-test-fd.json"), "{not-json");
+		const snapshot = buildSnapshotFromInputs({
+			projectRoot: project,
+			stateDir: join(project, "runtime"),
+			tmux: { paneId: "%11", sessionId: "$42", sessionKey: "s42", sessionName: "test-fd" },
+		}, { flightdeckStateDir: "tmp" });
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		const ownerPaneAllowed = dashboardVisibleForSnapshot(snapshot, "owner");
+		assert.equal(ownerPaneAllowed, false);
+		assert.equal(dashboardAllowedForStatus(ownerPaneAllowed, "state-error"), true);
+		const rendered = renderStateErrorBanner(snapshot!, makeTheme() as never, 160).join("\n");
+
+		assert.match(rendered, /FLIGHTDECK STATE ERROR/);
+		assert.match(rendered, /Expected property name|Unexpected token|JSON/);
+		assert.match(rendered, /flightdeck-state-test-fd\.json/);
 	} finally {
 		rmSync(project, { force: true, recursive: true });
 	}

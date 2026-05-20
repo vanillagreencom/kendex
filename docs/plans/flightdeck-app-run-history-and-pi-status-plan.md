@@ -72,7 +72,7 @@ Relevant merged deltas for this plan:
 **Order-of-execution recommendation:**
 
 - The cleanup/dashboard handoff is already complete. Start this plan from `origin/main` after the #150 merge commit (`6bd4bd6b21297339d921f5bc8b7929cb8020e6be`) or later.
-- The state-mode and run-identity scaffolding (Phases 1-4) and History popup (Phase 5) remain the load-bearing additions. Phase 6.5 should be scoped to the remaining archive/history behavior because #143 already handled the stale awaiting-watch hint subset.
+- The state-mode and run-identity scaffolding (Phases 1-4) are the load-bearing additions now in scope. History popup/UI work from Phase 5 is explicitly future work; current code should remain compatible with it without documenting it as shipped. Phase 6.5 should be scoped to the remaining archive/history behavior because #143 already handled the stale awaiting-watch hint subset.
 - Phase 7 (post-merge main sync) is independent and could land any time, but use the real current example as a regression case: after the cleanup session the primary `main` checkout was clean but `ahead 8, behind 9`; the helper must report that as blocked/diverged and must not reset, stash, or discard local commits.
 
 ## Problem
@@ -204,14 +204,14 @@ Dashboard load behavior should become:
 1. If active run exists: load active run state as live.
 2. If no active run exists: show the normal dashboard shell with a clear no-active-run empty state and a key hint to open history.
 3. Persistent Pi mini-dashboard banners should stay hidden or show a compact `No active Flightdeck run · H history` hint; they must not render the newest archived run as an active/completed session on fresh Pi startup.
-4. Only load archives when the user explicitly chooses a run/snapshot from the History popup, or when launched with `--archive`/`--run-id`.
+4. Only load archives when a future History popup or future `tui --archive` / `tui --run-id` flags explicitly select a run/snapshot; PR #166 does not ship those UI/CLI entry points.
 5. Archive mode is always read-only and visually distinct.
 
 ## Dashboard UX
 
-### History popup, not a tab
+### History popup, not a tab (future work)
 
-Add a `History` popup to the Rust dashboard. Do **not** add a permanent tab. The main tab model should stay focused on the active/current run; history is an overlay opened on demand.
+Add a `History` popup to the Rust dashboard in a later PR. Do **not** add a permanent tab. The main tab model should stay focused on the active/current run; history is an overlay opened on demand.
 
 Keybind proposal:
 
@@ -377,7 +377,8 @@ flightdeck-state run import-legacy [--project-root <path>] [--state-dir tmp]
 `flightdeck-dashboard`:
 
 ```bash
-flightdeck-dashboard tui --session <tmux-session>          # active run or landing/history
+flightdeck-dashboard tui --session <tmux-session>          # active/named live-state read
+# future work, not shipped in PR #166:
 flightdeck-dashboard tui --run-id <run-id>                 # read-only selected run
 flightdeck-dashboard tui --archive <path>                  # read-only legacy archive
 flightdeck-dashboard launch [--window-name <name>]         # ensure app window exists
@@ -449,7 +450,7 @@ Keep existing fields for compatibility.
 - Add read-only archive guard for mutating actions.
 - Add snapshot tests for active, no-active, archived, and imported views.
 
-### Phase 5 — History popup UI
+### Phase 5 — History popup UI (future work, not shipped in PR #166)
 
 - Add a History popup/modal opened by keybind (for example `H`), not a top-level tab.
 - Implement scrollable run/snapshot list, filter input, inline snapshot expansion, open active, and open archived snapshot controls.
@@ -469,20 +470,20 @@ Current pi-flightdeck behavior intentionally keeps completed sessions visible fr
 
 New policy:
 
-- Terminated runs move to history; do not show them in the persistent mini-dashboard unless explicitly opened from History.
+- Terminated runs move to durable run history/future History UI; do not show them in the persistent mini-dashboard.
 - The persistent mini-dashboard should render only active runs by default.
 - If there is no active run, show nothing or a compact no-active hint; do not show old archived rows with `pane gone` prune guidance.
 - `pane-registry remove` remains a manual action for stale entries in a live active run.
 - Do not auto-prune entries inside archived/terminated runs; archives are historical records.
-- On new Flightdeck run start, create/reuse a fresh active run and leave previous terminated runs browseable in history.
+- On new Flightdeck run start, create/reuse a fresh active run and leave previous terminated runs browseable through `flightdeck-state run list/show` until direct History UI ships.
 - If a live active run has zero live panes and is not marked terminated, archive/finalize it as stale before starting a new run rather than pruning rows one-by-one.
 
 Implementation targets:
 
-- Update pi-flightdeck state loading so terminated archive fallback feeds the History popup/explicit archive view, not the persistent active banner.
-- Update Rust dashboard startup similarly: no automatic newest-archive-as-active rendering.
-- Keep explicit archive launch (`--archive`, `--run-id`) read-only.
-- Add tests for new Pi startup after a terminated archive: no `Flightdeck 2 sessions · ✓ 2 · session complete` persistent banner; History popup can still load that archive.
+- Update pi-flightdeck state loading so terminated archive fallback does not feed the persistent active banner; future History/explicit archive views can consume archives separately.
+- Update Rust dashboard startup similarly: no automatic newest-archive-as-active rendering for active views.
+- Keep direct archive/run launch (`tui --archive`, `tui --run-id`) as future read-only work; PR #166 does not add those CLI flags.
+- Add tests for new Pi startup after a terminated archive: no `Flightdeck 2 sessions · ✓ 2 · session complete` persistent banner; durable history remains available through `flightdeck-state run list/show`.
 - Add tests for live active stale rows: `pane gone` chip and manual prune still appear only for active run state.
 
 ### Phase 6.6 — Trim `@vanillagreen/pi-flightdeck` to a status shell
@@ -953,7 +954,7 @@ If any Pi extension behavior changes:
 - Terminating a Flightdeck run clears active state and dashboard shows no active run/history view.
 - Continuing the same Pi/tmux chat after termination does not show an archived run as if it were active.
 - Starting a new tracked delegation in the same tmux session creates a fresh run.
-- Dashboard can browse previous runs and snapshots from a keybind-opened History popup.
+- Future History UI can browse previous runs and snapshots from a keybind-opened popup; until then, `flightdeck-state run list/show` provides durable history inspection.
 - Archived views are clearly read-only and cannot perform live mutations.
 - Existing `tmp/flightdeck-state-*.json.archive` files remain viewable/importable.
 - Fresh Pi sessions with only terminated archives do not show stale `session complete` / `pane gone` persistent banners; those archives are accessible only through History or explicit archive mode.

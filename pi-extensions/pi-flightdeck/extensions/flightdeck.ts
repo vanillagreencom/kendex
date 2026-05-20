@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
+	type FlightdeckSessionStatus,
 	type FlightdeckSnapshot,
 	type TrackedSession,
 	buildSnapshot,
@@ -169,6 +170,10 @@ function defaultDashboardState(cwd?: string): DashboardState { const value = set
 function dashboardVisibility(cwd?: string): DashboardVisibility { return normalizeDashboardVisibility(settingString("dashboardVisibility", "owner", cwd)); }
 
 function pollIntervalMs(cwd?: string): number { return Math.max(500, Math.floor(settingNumber("pollIntervalMs", 1500, cwd))); }
+
+export function dashboardAllowedForStatus(dashboardPaneAllowed: boolean, status: FlightdeckSessionStatus): boolean {
+	return dashboardPaneAllowed || status === "state-error" || status === "archive-error";
+}
 
 // ============================================================================
 // Widget render — pause banner + persistent dashboard
@@ -445,10 +450,10 @@ export default function flightdeck(pi: ExtensionAPI): void {
 		const snapshot = cache.lastSnapshot;
 		const visibility = dashboardVisibility(ctx.cwd);
 		const dashboardPaneAllowed = dashboardVisibleForSnapshot(snapshot, visibility);
-		const showBanner = dashboardPaneAllowed && settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
-		const dashboardEnabled = dashboardPaneAllowed && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
 		const staleAfterMin = Math.max(0, Math.floor(settingNumber("dashboardStaleAfterMin", 5, ctx.cwd)));
 		const status = flightdeckSessionStatus(snapshot, { staleAfterMin });
+		const showBanner = dashboardPaneAllowed && settingBoolean("pauseBanner", true, ctx.cwd) && Boolean(snapshot?.master?.paused_for_user);
+		const dashboardEnabled = dashboardAllowedForStatus(dashboardPaneAllowed, status) && settingBoolean("dashboard", true, ctx.cwd) && cache.state !== "hidden";
 		const awaitingWatchSessionCount = readAwaitingWatchTrackedEntries(snapshot).length;
 		if (status === "inactive" && !showBanner) {
 			if (cache.lastSyncKey !== "__off__") {

@@ -58,6 +58,11 @@ function registry(): MiniDashboardRegistry {
 	return value;
 }
 
+export function resetMiniDashboardRegistryForTests(): void {
+	const globals = globalThis as unknown as Record<PropertyKey, MiniDashboardRegistry | undefined>;
+	delete globals[REGISTRY_SYMBOL];
+}
+
 function sortedEntries(value: MiniDashboardRegistry, placement: MiniDashboardPlacement): MiniDashboardEntry[] {
 	return [...value.entries.values()]
 		.filter((entry) => entry.placement === placement)

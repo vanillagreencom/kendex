@@ -9,7 +9,7 @@ The Flightdeck skill and Rust dashboard work without this extension.
 - **Pause banner** — yellow frame above the editor when Flightdeck master pauses for the user. Clears on resume.
 - **Persistent mini-dashboard widget** — compact tree of active tracked sessions with state, kind, harness, last decision, age, and per-pane cost/turns/tokens.
 - **`/flightdeck` app focus/open** — delegates to `flightdeck-dashboard focus-or-launch --json`, focusing an existing app window or launching it in tmux.
-- **Owner-scoped by default** — dashboard renders only in the Flightdeck owner pane. Child panes remain suppressed. Visibility is configurable.
+- **Owner-scoped by default** — dashboard renders only in the Flightdeck owner pane. Child panes remain suppressed. Visibility is configurable. State/archive read errors still render a diagnostic banner so corrupted state is visible even when owner metadata cannot be read.
 - **Stale-pane guard** — standby/watch hints ignore state files whose tracked entries only point at tmux pane ids that no longer exist.
 - Optional terminal bell when master pauses.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
