@@ -5,6 +5,7 @@ use crate::actions::{self, WriteAction};
 use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use crate::settings_catalog::{SettingsError, SettingsSaveRequest};
 use crate::state::snapshot::{DaemonStatus as SnapshotDaemonStatus, EventImportance};
+use crate::state::tracked_entries::{self, SnapshotError};
 use crate::watcher::WatcherEvent;
 
 use crate::state::run_history::{self, LoadedRunSnapshot};
@@ -14,7 +15,7 @@ use super::hitmap::{ClickAction, ScrollSource};
 use super::keymap::{self, Action};
 use super::model::{ActionStatus, ConfirmDialog, ModalState, Model, ReadSourceState, Tab};
 use super::motion::{self, EffectKind, EffectTarget};
-use super::msg::Msg;
+use super::msg::{ActiveRunLoad, ActiveRunSnapshot, Msg};
 use super::theme::Theme;
 
 const PAGE_STEP: usize = 10;
@@ -39,6 +40,9 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             source_state,
         } => handle_snapshot_updated(model, *snapshot, source_state),
         Msg::EventReceived(event) => {
+            if model.read_source_state.is_read_only() || model.read_source_state.is_no_active() {
+                return Vec::new();
+            }
             let important = event.importance >= EventImportance::Important;
             model.push_event(event);
             push_effect(model, EffectKind::ActivityRowEnter, EffectTarget::Row(0));
@@ -152,6 +156,7 @@ fn handle_snapshot_updated(
         return pending_reload;
     }
     let pause_edge = model.snapshot.paused_for_user.is_none() && snapshot.paused_for_user.is_some();
+    model.recent_events = snapshot.recent_events.clone();
     model.snapshot = snapshot;
     model.read_source_state = source_state;
     model.sync_activity_source();
@@ -195,11 +200,11 @@ fn handle_history_loaded(
 
 fn handle_history_snapshot_loaded(
     model: &mut Model,
-    result: Result<LoadedRunSnapshot, String>,
+    result: Result<Box<LoadedRunSnapshot>, String>,
 ) -> Vec<Cmd> {
     match result {
         Ok(loaded) => {
-            apply_loaded_run_snapshot(model, loaded, true);
+            apply_loaded_run_snapshot(model, *loaded, true);
             close_overlay(model);
             set_status(model, "Loaded history snapshot read-only", true);
             vec![Cmd::ProbePanes, Cmd::Render]
@@ -214,21 +219,20 @@ fn handle_history_snapshot_loaded(
     }
 }
 
-fn handle_active_run_loaded(
-    model: &mut Model,
-    result: Result<Option<LoadedRunSnapshot>, String>,
-) -> Vec<Cmd> {
+fn handle_active_run_loaded(model: &mut Model, result: Result<ActiveRunLoad, String>) -> Vec<Cmd> {
     match result {
-        Ok(Some(loaded)) => {
-            apply_loaded_run_snapshot(model, loaded, false);
+        Ok(ActiveRunLoad::Loaded(loaded)) => {
+            apply_active_run_snapshot(model, *loaded);
             close_overlay(model);
             set_status(model, "Returned to active run", true);
             vec![Cmd::ProbePanes, Cmd::Render]
         }
-        Ok(None) => {
+        Ok(ActiveRunLoad::NoActive(message)) => {
             model.history.loading = false;
-            model.history.notice = Some(String::from("No active run found"));
-            set_status(model, "No active Flightdeck run", false);
+            model.history.notice = Some(message.clone());
+            model.history.error = None;
+            model.error = None;
+            set_status(model, message, false);
             vec![Cmd::Render]
         }
         Err(error) => {
@@ -248,14 +252,33 @@ fn handle_legacy_import_completed(
     match result {
         Ok(summary) => {
             let diagnostics = summary.diagnostics.len();
-            let notice = format!(
+            let mut notice = format!(
                 "Imported {} legacy run(s); skipped {}; diagnostics {}",
                 summary.imported, summary.skipped, diagnostics
             );
+            if diagnostics > 0 {
+                let preview = summary
+                    .diagnostics
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                notice = format!("{notice}: {preview}");
+            }
+            let success = summary.imported > 0 || diagnostics == 0;
             model.history.set_runs(summary.runs);
-            model.history.notice = Some(notice.clone());
-            set_status(model, notice, true);
-            model.error = None;
+            if success {
+                model.history.notice = Some(notice.clone());
+                model.history.error = None;
+                model.error = None;
+            } else {
+                model.history.notice = None;
+                model.history.error = Some(notice.clone());
+                model.error = Some(notice.clone());
+                push_effect(model, EffectKind::ErrorFlash, EffectTarget::Global);
+            }
+            set_status(model, notice, success);
         }
         Err(error) => {
             model.history.loading = false;
@@ -265,6 +288,30 @@ fn handle_legacy_import_completed(
         }
     }
     vec![Cmd::Render]
+}
+
+fn apply_active_run_snapshot(model: &mut Model, mut loaded: ActiveRunSnapshot) {
+    if !matches!(loaded.snapshot_source(), SnapshotSource::Socket(_)) {
+        loaded.snapshot.daemon = file_mode_daemon_status_for(&loaded.source_state);
+    }
+    model.recent_events = loaded.snapshot.recent_events.clone();
+    model.snapshot_source = loaded.source;
+    model.snapshot = loaded.snapshot;
+    model.read_source_state = loaded.source_state;
+    model.history.loading = false;
+    model.history.error = None;
+    model.error = None;
+    model.sync_activity_source();
+    model.poll_activity_source();
+    model.refresh_now();
+    model.refresh_tabs_enabled();
+    model.initialize_overview_selection();
+}
+
+impl ActiveRunSnapshot {
+    fn snapshot_source(&self) -> &SnapshotSource {
+        &self.source
+    }
 }
 
 fn apply_loaded_run_snapshot(
@@ -294,6 +341,7 @@ fn apply_loaded_run_snapshot(
         }
     };
     loaded.snapshot.daemon = file_mode_daemon_status_for(&source_state);
+    model.recent_events = loaded.snapshot.recent_events.clone();
     model.snapshot_source = SnapshotSource::Run(RunSnapshotSource {
         project_root: loaded.metadata.project_root.clone(),
         run_id: loaded.metadata.run_id.clone(),
@@ -302,10 +350,13 @@ fn apply_loaded_run_snapshot(
         activity_path: loaded.metadata.activity_path.clone(),
         imported: loaded.metadata.imported,
         terminated_at: loaded.metadata.terminated_at,
+        read_only: force_archive || loaded.metadata.terminated || loaded.metadata.imported,
     });
     model.snapshot = loaded.snapshot;
     model.read_source_state = source_state;
     model.history.loading = false;
+    model.history.error = None;
+    model.error = None;
     model.sync_activity_source();
     model.poll_activity_source();
     model.refresh_now();
@@ -861,6 +912,12 @@ fn handle_click(model: &mut Model, action: ClickAction) -> Vec<Cmd> {
             clamp_settings_scroll(model);
             vec![Cmd::Render]
         }
+        ClickAction::SelectHistoryItem(index) => {
+            if model.modal == ModalState::History {
+                model.history.select_visible_index(index);
+            }
+            vec![Cmd::Render]
+        }
         ClickAction::SelectTheme(theme) => {
             model.theme = theme;
             model.theme_picker_index = theme.index();
@@ -1081,7 +1138,7 @@ fn load_selected_history_snapshot(model: &mut Model) -> Vec<Cmd> {
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));
-                Msg::HistorySnapshotLoaded(result)
+                Msg::HistorySnapshotLoaded(result.map(Box::new))
             }
             .boxed(),
         ),
@@ -1090,23 +1147,86 @@ fn load_selected_history_snapshot(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn load_active_run(model: &mut Model) -> Vec<Cmd> {
-    let project_root = model.snapshot.project_root.clone();
+    let resolution = match active_resolution_for_model(model) {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            model.history.loading = false;
+            model.history.error = Some(error.clone());
+            set_status(model, error, false);
+            return vec![Cmd::Render];
+        }
+    };
     model.history.loading = true;
     vec![
         Cmd::Spawn(
             async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    run_history::load_active_run(&project_root, crate::app::model::utc_now())
-                })
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
+                let result =
+                    tokio::task::spawn_blocking(move || load_active_live_snapshot(resolution))
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result.map_err(|error| error.to_string()));
                 Msg::ActiveRunLoaded(result)
             }
             .boxed(),
         ),
         Cmd::Render,
     ]
+}
+
+fn active_resolution_for_model(
+    model: &Model,
+) -> Result<tracked_entries::SessionResolution, String> {
+    if let SnapshotSource::Session(resolution) = &model.snapshot_source {
+        return Ok(resolution.clone());
+    }
+    tracked_entries::resolve_session_state(None)
+        .or_else(|_| {
+            tracked_entries::resolve_session_state_from(
+                &model.snapshot.project_root,
+                &model.snapshot.session_id,
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn load_active_live_snapshot(
+    resolution: tracked_entries::SessionResolution,
+) -> Result<ActiveRunLoad, String> {
+    let now = crate::app::model::utc_now();
+    match run_history::load_active_run_metadata(&resolution.project_root, &resolution.session)
+        .map_err(|error| error.to_string())?
+    {
+        run_history::ActiveRunLookup::None => Ok(ActiveRunLoad::NoActive(String::from(
+            "No active Flightdeck run",
+        ))),
+        run_history::ActiveRunLookup::Mismatched {
+            run_id,
+            expected_session,
+            actual_session,
+        } => Ok(ActiveRunLoad::NoActive(format!(
+            "Active run {run_id} belongs to session {}; requested {expected_session}",
+            actual_session.unwrap_or_else(|| String::from("unknown"))
+        ))),
+        run_history::ActiveRunLookup::Matched(metadata) => {
+            let mut snapshot = match tracked_entries::read_session_snapshot(&resolution, now) {
+                Ok(snapshot) if !snapshot.terminated => snapshot,
+                Ok(_) | Err(SnapshotError::StateFileMissing { .. }) => {
+                    return Ok(ActiveRunLoad::NoActive(String::from(
+                        "No live active state; press H for History",
+                    )))
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            snapshot.project_root.clone_from(&resolution.project_root);
+            Ok(ActiveRunLoad::Loaded(Box::new(ActiveRunSnapshot {
+                snapshot,
+                source: SnapshotSource::Session(resolution),
+                source_state: ReadSourceState::ActiveRun {
+                    run_id: Some(metadata.run_id),
+                },
+            })))
+        }
+    }
 }
 
 fn import_legacy_archives(model: &mut Model) -> Vec<Cmd> {
@@ -1248,6 +1368,10 @@ fn close_overlay(model: &mut Model) {
 }
 
 fn handle_scroll(model: &mut Model, source: ScrollSource, delta: isize) {
+    if source == ScrollSource::History && model.modal == ModalState::History {
+        model.history.move_cursor(delta);
+        return;
+    }
     match (source, model.current_tab) {
         (ScrollSource::Sessions | ScrollSource::DetailRail, Tab::Overview)
         | (ScrollSource::Activity, Tab::Activity)

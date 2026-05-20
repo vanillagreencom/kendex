@@ -157,6 +157,8 @@ fn history_run(run_id: &str, imported: bool, with_summary: bool) -> HistoryRun {
             tmux_session: "VS".to_owned(),
         },
         snapshots: Vec::new(),
+        snapshots_truncated: false,
+        snapshot_warning: None,
     }
 }
 

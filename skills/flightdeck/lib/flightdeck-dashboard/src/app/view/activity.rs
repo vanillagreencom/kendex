@@ -30,10 +30,29 @@ pub fn render(
         .title(Span::styled(title, theme.title()));
 
     if model.activity.events.is_empty() {
+        let message = if let Some(error) = &model.activity.source_error {
+            format!("Activity source error: {error}")
+        } else if let Some(warning) = &model.activity.source_warning {
+            format!("Activity warning: {warning}")
+        } else if model.activity.malformed_lines > 0 {
+            format!(
+                "No valid activity events; {} malformed line(s) skipped.",
+                model.activity.malformed_lines
+            )
+        } else {
+            String::from("No activity events yet. This tab reads tmp/flightdeck-activity-<session>.jsonl and archived activity sidecars when a session is complete.")
+        };
+        let style = if model.activity.source_error.is_some() {
+            theme.error()
+        } else if model.activity.source_warning.is_some() || model.activity.malformed_lines > 0 {
+            theme.warning()
+        } else {
+            theme.muted()
+        };
         frame.render_widget(
-            Paragraph::new("No activity events yet. This tab reads tmp/flightdeck-activity-<session>.jsonl and archived activity sidecars when a session is complete.")
+            Paragraph::new(message)
                 .block(block)
-                .style(theme.muted())
+                .style(style)
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
             area,
@@ -104,13 +123,21 @@ fn title_for(row_count: usize, model: &Model) -> String {
         .session
         .as_deref()
         .unwrap_or("all sessions");
+    let diagnostics = if let Some(error) = &model.activity.source_error {
+        format!(" · ERR {error}")
+    } else if model.activity.malformed_lines > 0 {
+        format!(" · {} malformed", model.activity.malformed_lines)
+    } else {
+        String::new()
+    };
     format!(
-        " activity · {} row{} · {} · {} · {} ",
+        " activity · {} row{} · {} · {} · {}{} ",
         row_count,
         if row_count == 1 { "" } else { "s" },
         noise,
         session,
         model.activity.filter.severity.label(),
+        diagnostics,
     )
 }
 

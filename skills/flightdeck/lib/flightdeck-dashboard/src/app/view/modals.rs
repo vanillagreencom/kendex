@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 use crate::activity::format::{event_chip_for, severity_label};
-use crate::app::hitmap::{ClickAction, HitMap};
+use crate::app::hitmap::{ClickAction, HitMap, ScrollSource};
 use crate::app::keymap::BINDINGS;
 use crate::app::labels::{kind_label_for, state_label_for};
 use crate::app::model::{HistoryCursor, HistoryItem, Model, ACTIVITY_TYPE_CHIPS};
@@ -90,13 +90,13 @@ pub fn render_history(
         width: PopupWidth::PercentOfFrame(86),
         height: PopupHeight::PercentOfFrame(82),
     };
-    render_popup(frame, area, chrome, theme, hitmap, |frame, body, _| {
+    render_popup(frame, area, chrome, theme, hitmap, |frame, body, hitmap| {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(6)])
             .split(body);
         render_history_filter(frame, chunks[0], model, theme);
-        render_history_table(frame, chunks[1], model, theme);
+        render_history_table(frame, chunks[1], model, theme, hitmap);
     });
 }
 
@@ -136,7 +136,13 @@ fn render_history_filter(frame: &mut Frame<'_>, area: Rect, model: &Model, theme
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
 
-fn render_history_table(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: &Palette) {
+fn render_history_table(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &Model,
+    theme: &Palette,
+    hitmap: &mut HitMap,
+) {
     let history = &model.history;
     let items = history.visible_items();
     if items.is_empty() {
@@ -163,6 +169,19 @@ fn render_history_table(frame: &mut Frame<'_>, area: Rect, model: &Model, theme:
     let visible_rows = area.height.saturating_sub(3) as usize;
     let start = history.scroll.min(items.len().saturating_sub(1));
     let end = start.saturating_add(visible_rows).min(items.len());
+    hitmap.push(area, ClickAction::ScrollDown(ScrollSource::History), 20);
+    for (row_idx, item_idx) in (start..end).enumerate() {
+        hitmap.push(
+            Rect::new(
+                area.x.saturating_add(1),
+                area.y.saturating_add(2 + row_idx as u16),
+                area.width.saturating_sub(2),
+                1,
+            ),
+            ClickAction::SelectHistoryItem(item_idx),
+            30,
+        );
+    }
     let rows = items[start..end]
         .iter()
         .map(|item| history_row(*item, model, theme))
@@ -216,9 +235,15 @@ fn history_row(item: HistoryItem, model: &Model, theme: &Palette) -> Row<'static
                     Cell::from(""),
                 ]);
             };
+            let status = if run.snapshot_warning.is_some() {
+                format!("{} ⚠", run.status_label())
+            } else {
+                run.status_label().to_owned()
+            };
             let status_style = match run.status_label() {
                 "active" => theme.ok(),
                 "imported" => theme.warning(),
+                _ if run.snapshot_warning.is_some() => theme.warning(),
                 _ => theme.muted(),
             };
             let summary = run
@@ -228,7 +253,7 @@ fn history_row(item: HistoryItem, model: &Model, theme: &Palette) -> Row<'static
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| String::from("—"));
             Row::new([
-                Cell::from(Span::styled(run.status_label(), status_style)),
+                Cell::from(Span::styled(status, status_style)),
                 Cell::from(run.metadata.run_id.clone()),
                 Cell::from(run.metadata.tmux_session.clone()),
                 Cell::from(short_time(run.metadata.started_at)),
@@ -238,7 +263,7 @@ fn history_row(item: HistoryItem, model: &Model, theme: &Palette) -> Row<'static
                         .map(short_time)
                         .unwrap_or_else(|| String::from("—")),
                 ),
-                Cell::from(summary),
+                Cell::from(run.snapshot_warning.clone().unwrap_or(summary)),
             ])
             .style(style)
         }

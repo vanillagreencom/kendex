@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
-use std::fs::{self, File, Metadata};
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
@@ -15,6 +16,29 @@ pub const MAX_EVENTS_IN_MEMORY: usize = 5_000;
 const ACTIVITY_PREFIX: &str = "flightdeck-activity-";
 const LIVE_SUFFIX: &str = ".jsonl";
 const ARCHIVE_SUFFIX: &str = ".jsonl.archive";
+const READ_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_READ_BYTES_PER_POLL: usize = 2 * 1024 * 1024;
+const MAX_PENDING_LINE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActivitySourceError {
+    #[error("activity file missing {path}", path = path.display())]
+    Missing { path: PathBuf },
+    #[error("activity metadata failed {path}: {message}", path = path.display())]
+    Metadata { path: PathBuf, message: String },
+    #[error("activity file is a symlink {path}", path = path.display())]
+    Symlink { path: PathBuf },
+    #[error("activity path is not a regular file {path}", path = path.display())]
+    NotRegularFile { path: PathBuf },
+    #[error("activity path {path} escapes expected directory {expected}", path = path.display(), expected = expected.display())]
+    OutsideExpectedDirectory { path: PathBuf, expected: PathBuf },
+    #[error("activity open failed {path}: {message}", path = path.display())]
+    Open { path: PathBuf, message: String },
+    #[error("activity seek failed {path}: {message}", path = path.display())]
+    Seek { path: PathBuf, message: String },
+    #[error("activity read failed {path}: {message}", path = path.display())]
+    Read { path: PathBuf, message: String },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
@@ -36,6 +60,7 @@ pub struct JsonlActivitySource {
     state_dir: PathBuf,
     session_name: String,
     explicit_path: Option<PathBuf>,
+    expected_dir: Option<PathBuf>,
     active_path: Option<PathBuf>,
     active_file_id: Option<FileIdentity>,
     offset: u64,
@@ -43,6 +68,8 @@ pub struct JsonlActivitySource {
     events: VecDeque<ActivityEvent>,
     malformed_lines: u64,
     malformed_warnings: u64,
+    last_error: Option<ActivitySourceError>,
+    last_warning: Option<String>,
 }
 
 impl JsonlActivitySource {
@@ -52,6 +79,7 @@ impl JsonlActivitySource {
             state_dir: state_dir.into(),
             session_name: session_name.into(),
             explicit_path: None,
+            expected_dir: None,
             active_path: None,
             active_file_id: None,
             offset: 0,
@@ -59,12 +87,24 @@ impl JsonlActivitySource {
             events: VecDeque::with_capacity(MAX_EVENTS_IN_MEMORY.min(1024)),
             malformed_lines: 0,
             malformed_warnings: 0,
+            last_error: None,
+            last_warning: None,
         }
     }
 
     #[must_use]
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
+        let expected_dir = path.parent().map(Path::to_path_buf);
+        Self::from_path_with_expected_dir(path, expected_dir)
+    }
+
+    #[must_use]
+    pub fn from_run_path(path: impl Into<PathBuf>, run_dir: impl Into<PathBuf>) -> Self {
+        Self::from_path_with_expected_dir(path.into(), Some(run_dir.into()))
+    }
+
+    fn from_path_with_expected_dir(path: PathBuf, expected_dir: Option<PathBuf>) -> Self {
         let state_dir = path
             .parent()
             .map(Path::to_path_buf)
@@ -78,6 +118,7 @@ impl JsonlActivitySource {
             state_dir,
             session_name,
             explicit_path: Some(path),
+            expected_dir,
             active_path: None,
             active_file_id: None,
             offset: 0,
@@ -85,6 +126,8 @@ impl JsonlActivitySource {
             events: VecDeque::with_capacity(MAX_EVENTS_IN_MEMORY.min(1024)),
             malformed_lines: 0,
             malformed_warnings: 0,
+            last_error: None,
+            last_warning: None,
         }
     }
 
@@ -114,6 +157,16 @@ impl JsonlActivitySource {
     }
 
     #[must_use]
+    pub const fn last_error(&self) -> Option<&ActivitySourceError> {
+        self.last_error.as_ref()
+    }
+
+    #[must_use]
+    pub fn last_warning(&self) -> Option<&str> {
+        self.last_warning.as_deref()
+    }
+
+    #[must_use]
     pub fn events(&self) -> Vec<ActivityEvent> {
         self.events.iter().cloned().collect()
     }
@@ -129,14 +182,24 @@ impl JsonlActivitySource {
     }
 
     fn poll_inner(&mut self) -> Vec<ActivityEvent> {
-        let Some(path) = self.resolve_path() else {
-            self.reset_active(None, None);
-            return Vec::new();
+        self.last_error = None;
+        let path = match self.resolve_path() {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.reset_active(None, None);
+                return Vec::new();
+            }
+            Err(error) => {
+                warn!(%error, "activity source path resolution failed");
+                self.last_error = Some(error);
+                return self.events();
+            }
         };
-        let metadata = match fs::metadata(&path) {
+        let metadata = match self.validate_path(&path) {
             Ok(metadata) => metadata,
             Err(error) => {
-                warn!(path = %path.display(), %error, "activity source metadata failed");
+                warn!(%error, "activity source metadata failed");
+                self.last_error = Some(error);
                 return self.events();
             }
         };
@@ -148,7 +211,8 @@ impl JsonlActivitySource {
             self.reset_active(Some(path.clone()), Some(file_id));
         }
         if let Err(error) = self.read_new_records(&path) {
-            warn!(path = %path.display(), %error, "activity source read failed");
+            warn!(%error, "activity source read failed");
+            self.last_error = Some(error);
         }
         self.events()
     }
@@ -161,46 +225,121 @@ impl JsonlActivitySource {
         self.events.clear();
     }
 
-    fn resolve_path(&self) -> Option<PathBuf> {
+    fn resolve_path(&self) -> Result<Option<PathBuf>, ActivitySourceError> {
         if let Some(path) = &self.explicit_path {
-            return path.exists().then(|| path.clone());
+            return Ok(Some(path.clone()));
         }
         let live = self.live_path();
-        if live.exists() {
-            return Some(live);
+        if fs::symlink_metadata(&live).is_ok() {
+            return Ok(Some(live));
         }
-        self.archive_path_candidates().into_iter().next()
+        Ok(self.archive_path_candidates().into_iter().next())
     }
 
-    fn read_new_records(&mut self, path: &Path) -> Result<(), std::io::Error> {
-        let mut file = File::open(path)?;
-        file.seek(SeekFrom::Start(self.offset))?;
-        let mut bytes = Vec::new();
-        let read = file.read_to_end(&mut bytes)?;
-        if read == 0 {
-            return Ok(());
-        }
-        self.offset = self.offset.saturating_add(read as u64);
-        let chunk = String::from_utf8_lossy(&bytes);
-        self.pending.push_str(&chunk);
-        let mut start = 0;
-        let pending = std::mem::take(&mut self.pending);
-        for (idx, ch) in pending.char_indices() {
-            if ch == '\n' {
-                self.parse_line(&pending[start..idx]);
-                start = idx + 1;
+    fn validate_path(&self, path: &Path) -> Result<Metadata, ActivitySourceError> {
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ActivitySourceError::Missing {
+                    path: path.to_path_buf(),
+                }
+            } else {
+                ActivitySourceError::Metadata {
+                    path: path.to_path_buf(),
+                    message: error.to_string(),
+                }
             }
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(ActivitySourceError::Symlink {
+                path: path.to_path_buf(),
+            });
         }
-        let tail = &pending[start..];
-        if tail.trim().is_empty() {
-            self.pending.clear();
-        } else if tail.trim_start().starts_with('{') && tail.trim_end().ends_with('}') {
-            self.parse_line(tail);
-            self.pending.clear();
-        } else {
-            self.pending = tail.to_owned();
+        if !file_type.is_file() {
+            return Err(ActivitySourceError::NotRegularFile {
+                path: path.to_path_buf(),
+            });
+        }
+        if let Some(expected_dir) = &self.expected_dir {
+            ensure_path_inside_expected_dir(path, expected_dir)?;
+        }
+        Ok(metadata)
+    }
+
+    fn read_new_records(&mut self, path: &Path) -> Result<(), ActivitySourceError> {
+        let mut file = open_activity_file(path)?;
+        file.seek(SeekFrom::Start(self.offset))
+            .map_err(|error| ActivitySourceError::Seek {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+        let mut total_read = 0usize;
+        let mut buffer = [0_u8; READ_CHUNK_BYTES];
+        while total_read < MAX_READ_BYTES_PER_POLL {
+            let cap = READ_CHUNK_BYTES.min(MAX_READ_BYTES_PER_POLL - total_read);
+            let read =
+                file.read(&mut buffer[..cap])
+                    .map_err(|error| ActivitySourceError::Read {
+                        path: path.to_path_buf(),
+                        message: error.to_string(),
+                    })?;
+            if read == 0 {
+                break;
+            }
+            total_read = total_read.saturating_add(read);
+            self.offset = self.offset.saturating_add(read as u64);
+            self.consume_bytes(&buffer[..read]);
+        }
+        if total_read > 0 {
+            self.parse_complete_pending_json();
         }
         Ok(())
+    }
+
+    fn consume_bytes(&mut self, bytes: &[u8]) {
+        let chunk = String::from_utf8_lossy(bytes);
+        for segment in chunk.split_inclusive('\n') {
+            let complete = segment.ends_with('\n');
+            let text = segment.strip_suffix('\n').unwrap_or(segment);
+            if !self.append_pending(text) {
+                continue;
+            }
+            if complete {
+                let line = std::mem::take(&mut self.pending);
+                self.parse_line(&line);
+            }
+        }
+    }
+
+    fn append_pending(&mut self, text: &str) -> bool {
+        if self.pending.len().saturating_add(text.len()) > MAX_PENDING_LINE_BYTES {
+            self.malformed_lines = self.malformed_lines.saturating_add(1);
+            self.pending.clear();
+            self.last_warning = Some(format!(
+                "activity record exceeded {MAX_PENDING_LINE_BYTES} bytes; dropped oversized record"
+            ));
+            if self.should_warn_malformed() {
+                warn!(
+                    limit = MAX_PENDING_LINE_BYTES,
+                    "activity JSONL record oversized; dropping"
+                );
+            }
+            return false;
+        }
+        self.pending.push_str(text);
+        true
+    }
+
+    fn parse_complete_pending_json(&mut self) {
+        let pending = self.pending.trim();
+        if pending.is_empty() {
+            self.pending.clear();
+            return;
+        }
+        if pending.starts_with('{') && pending.ends_with('}') {
+            let line = std::mem::take(&mut self.pending);
+            self.parse_line(&line);
+        }
     }
 
     fn parse_line(&mut self, line: &str) {
@@ -212,6 +351,10 @@ impl JsonlActivitySource {
             Ok(event) => self.push_event(event),
             Err(error) => {
                 self.malformed_lines = self.malformed_lines.saturating_add(1);
+                self.last_warning = Some(format!(
+                    "{} malformed activity line(s); latest: {error}",
+                    self.malformed_lines
+                ));
                 if self.should_warn_malformed() {
                     warn!(line = self.malformed_lines, %error, "activity JSONL line malformed; skipping");
                 }
@@ -264,4 +407,45 @@ pub fn archive_candidates(state_dir: &Path, session_name: &str) -> Vec<PathBuf> 
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| archive_order::cmp_archive_paths_desc(left, right));
     candidates
+}
+
+fn open_activity_file(path: &Path) -> Result<File, ActivitySourceError> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|error| ActivitySourceError::Open {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
+}
+
+fn ensure_path_inside_expected_dir(
+    path: &Path,
+    expected_dir: &Path,
+) -> Result<(), ActivitySourceError> {
+    let expected = expected_dir
+        .canonicalize()
+        .map_err(|error| ActivitySourceError::Metadata {
+            path: expected_dir.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ActivitySourceError::OutsideExpectedDirectory {
+            path: path.to_path_buf(),
+            expected: expected_dir.to_path_buf(),
+        })?
+        .canonicalize()
+        .map_err(|error| ActivitySourceError::Metadata {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    if !parent.starts_with(&expected) {
+        return Err(ActivitySourceError::OutsideExpectedDirectory {
+            path: path.to_path_buf(),
+            expected,
+        });
+    }
+    Ok(())
 }

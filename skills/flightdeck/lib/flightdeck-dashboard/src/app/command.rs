@@ -16,6 +16,7 @@ pub struct RunSnapshotSource {
     pub activity_path: PathBuf,
     pub imported: bool,
     pub terminated_at: Option<DateTime<Utc>>,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

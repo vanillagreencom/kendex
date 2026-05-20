@@ -302,6 +302,8 @@ pub struct ActivityView {
     pub filter: ActivityFilter,
     pub filter_cursor: usize,
     pub malformed_lines: u64,
+    pub source_error: Option<String>,
+    pub source_warning: Option<String>,
     source: Option<JsonlActivitySource>,
 }
 
@@ -317,6 +319,8 @@ impl ActivityView {
             filter: ActivityFilter::new(),
             filter_cursor: 0,
             malformed_lines: 0,
+            source_error: None,
+            source_warning: None,
             source: None,
         }
     }
@@ -325,10 +329,14 @@ impl ActivityView {
         self.source = source;
         self.events.clear();
         self.malformed_lines = 0;
+        self.source_error = None;
+        self.source_warning = None;
     }
 
     pub fn set_events(&mut self, events: Vec<ActivityEvent>) {
         self.events = events;
+        self.source_error = None;
+        self.source_warning = None;
     }
 
     pub fn poll_source(&mut self) -> Vec<ActivityEvent> {
@@ -337,6 +345,8 @@ impl ActivityView {
         };
         let events = crate::activity::ActivitySource::poll(source);
         self.malformed_lines = source.malformed_lines();
+        self.source_error = source.last_error().map(ToString::to_string);
+        self.source_warning = source.last_warning().map(str::to_owned);
         self.events.clone_from(&events);
         events
     }
@@ -735,6 +745,14 @@ impl HistoryState {
         if let Some(item) = items.last().copied() {
             self.cursor = history_item_to_cursor(item);
             self.scroll = items.len().saturating_sub(18);
+        }
+    }
+
+    pub fn select_visible_index(&mut self, index: usize) {
+        let items = self.visible_items();
+        if let Some(item) = items.get(index).copied() {
+            self.cursor = history_item_to_cursor(item);
+            self.clamp_scroll(18);
         }
     }
 
@@ -1232,6 +1250,10 @@ fn activity_source_for(
     let (state_dir, session_name): (PathBuf, String) = match source {
         SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
         SnapshotSource::File(path) => {
+            if is_archive_path(path) {
+                return archive_activity_path_for_state_archive(path)
+                    .map(JsonlActivitySource::from_path);
+            }
             let state_dir = path.parent().map(Path::to_path_buf)?;
             let session = if snapshot.session_id.is_empty() {
                 tracked_entries::session_id_from_state_path(path)
@@ -1244,10 +1266,29 @@ fn activity_source_for(
             (resolution.state_dir.clone(), resolution.session.clone())
         }
         SnapshotSource::Run(source) => {
-            return Some(JsonlActivitySource::from_path(source.activity_path.clone()));
+            let run_dir = source
+                .state_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| source.project_root.clone());
+            return Some(JsonlActivitySource::from_run_path(
+                source.activity_path.clone(),
+                run_dir,
+            ));
         }
     };
     Some(JsonlActivitySource::new(state_dir, session_name))
+}
+
+fn archive_activity_path_for_state_archive(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let rest = name
+        .strip_prefix("flightdeck-state-")?
+        .strip_suffix(".json.archive")?;
+    Some(
+        path.parent()?
+            .join(format!("flightdeck-activity-{rest}.jsonl.archive")),
+    )
 }
 
 fn enabled_tabs_for(snapshot: &DashboardSnapshot) -> Vec<Tab> {

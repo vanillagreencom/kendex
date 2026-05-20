@@ -23,6 +23,7 @@ pub enum ClickAction {
     OpenThemePicker,
     OpenPricingDetail,
     SelectSetting(usize),
+    SelectHistoryItem(usize),
     OpenLegend,
     SelectTheme(crate::app::theme::Theme),
     CloseOverlay,
@@ -40,6 +41,7 @@ pub enum ScrollSource {
     Conversations,
     Costs,
     DetailRail,
+    History,
 }
 
 #[derive(Debug, Default)]

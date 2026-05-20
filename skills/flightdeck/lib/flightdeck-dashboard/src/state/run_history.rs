@@ -9,6 +9,8 @@ use thiserror::Error;
 use super::snapshot::DashboardSnapshot;
 use super::tracked_entries;
 
+const MAX_SNAPSHOTS_PER_RUN: usize = 50;
+
 #[derive(Debug, Error)]
 pub enum RunHistoryError {
     #[error(
@@ -27,6 +29,8 @@ pub enum RunHistoryError {
     Json(#[from] serde_json::Error),
     #[error("failed to load run snapshot: {0}")]
     Snapshot(#[from] tracked_entries::SnapshotError),
+    #[error("active run {run_id} has no metadata")]
+    ActiveRunMissingMetadata { run_id: String },
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -50,6 +54,8 @@ pub struct RunMetadata {
 pub struct HistoryRun {
     pub metadata: RunMetadata,
     pub snapshots: Vec<String>,
+    pub snapshots_truncated: bool,
+    pub snapshot_warning: Option<String>,
 }
 
 impl HistoryRun {
@@ -101,6 +107,17 @@ pub struct ImportSummary {
     pub runs: Vec<HistoryRun>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActiveRunLookup {
+    None,
+    Matched(RunMetadata),
+    Mismatched {
+        run_id: String,
+        expected_session: String,
+        actual_session: Option<String>,
+    },
+}
+
 #[derive(Debug, Deserialize)]
 struct RunListOutput {
     runs: Vec<RunMetadata>,
@@ -109,6 +126,7 @@ struct RunListOutput {
 #[derive(Debug, Deserialize)]
 struct ActiveRunOutput {
     active: ActivePointer,
+    metadata: Option<RunMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,17 +164,22 @@ pub fn list_runs(project_root: &Path) -> Result<Vec<HistoryRun>, RunHistoryError
     Ok(parsed
         .runs
         .into_iter()
-        .map(|metadata| HistoryRun {
-            snapshots: list_snapshot_files(&metadata.snapshots_path),
-            metadata,
+        .map(|metadata| {
+            let snapshot_list = list_snapshot_files(&metadata.snapshots_path);
+            HistoryRun {
+                metadata,
+                snapshots: snapshot_list.snapshots,
+                snapshots_truncated: snapshot_list.truncated,
+                snapshot_warning: snapshot_list.warning,
+            }
         })
         .collect())
 }
 
-pub fn load_active_run(
+pub fn load_active_run_metadata(
     project_root: &Path,
-    now: DateTime<Utc>,
-) -> Result<Option<LoadedRunSnapshot>, RunHistoryError> {
+    expected_session: &str,
+) -> Result<ActiveRunLookup, RunHistoryError> {
     let output = run_state_command(
         "run active",
         &[
@@ -167,10 +190,35 @@ pub fn load_active_run(
         ],
     )?;
     if output_is_json_null(&output) {
-        return Ok(None);
+        return Ok(ActiveRunLookup::None);
     }
     let active: ActiveRunOutput = serde_json::from_slice(&output)?;
-    load_run_snapshot(project_root, &active.active.run_id, None, now).map(Some)
+    let Some(metadata) = active.metadata else {
+        return Err(RunHistoryError::ActiveRunMissingMetadata {
+            run_id: active.active.run_id,
+        });
+    };
+    if metadata.tmux_session != expected_session {
+        return Ok(ActiveRunLookup::Mismatched {
+            run_id: metadata.run_id,
+            expected_session: expected_session.to_owned(),
+            actual_session: Some(metadata.tmux_session),
+        });
+    }
+    Ok(ActiveRunLookup::Matched(metadata))
+}
+
+pub fn load_active_run(
+    project_root: &Path,
+    expected_session: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<LoadedRunSnapshot>, RunHistoryError> {
+    match load_active_run_metadata(project_root, expected_session)? {
+        ActiveRunLookup::None | ActiveRunLookup::Mismatched { .. } => Ok(None),
+        ActiveRunLookup::Matched(metadata) => {
+            load_run_snapshot(project_root, &metadata.run_id, None, now).map(Some)
+        }
+    }
 }
 
 pub fn load_run_snapshot(
@@ -240,9 +288,26 @@ fn selected_state_path(metadata: &RunMetadata, snapshot_name: Option<&str>) -> P
     )
 }
 
-fn list_snapshot_files(path: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(path) else {
-        return Vec::new();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotList {
+    snapshots: Vec<String>,
+    truncated: bool,
+    warning: Option<String>,
+}
+
+fn list_snapshot_files(path: &Path) -> SnapshotList {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return SnapshotList {
+                snapshots: Vec::new(),
+                truncated: false,
+                warning: Some(format!(
+                    "snapshot directory unavailable {}: {error}",
+                    path.display()
+                )),
+            };
+        }
     };
     let mut snapshots = entries
         .filter_map(Result::ok)
@@ -250,7 +315,18 @@ fn list_snapshot_files(path: &Path) -> Vec<String> {
         .filter(|name| is_snapshot_name(name))
         .collect::<Vec<_>>();
     snapshots.sort_by(|left, right| right.cmp(left));
-    snapshots
+    let truncated = snapshots.len() > MAX_SNAPSHOTS_PER_RUN;
+    snapshots.truncate(MAX_SNAPSHOTS_PER_RUN);
+    SnapshotList {
+        snapshots,
+        truncated,
+        warning: truncated.then(|| {
+            format!(
+                "showing newest {MAX_SNAPSHOTS_PER_RUN} snapshots for {}",
+                path.display()
+            )
+        }),
+    }
 }
 
 fn is_snapshot_name(name: &str) -> bool {
@@ -341,4 +417,283 @@ fn shell_quote(value: &str) -> String {
 
 fn stderr_warning(message: &str) {
     eprintln!("{message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    use chrono::TimeZone;
+    use serde_json::json;
+
+    use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn active_metadata_matches_and_mismatches_expected_session() {
+        with_fake_state_bin(|ctx| {
+            write_json(
+                &ctx.responses.join("active.json"),
+                active_output("run-1", "S"),
+            );
+
+            let matched = load_active_run_metadata(&ctx.project, "S").expect("active metadata");
+            assert!(
+                matches!(matched, ActiveRunLookup::Matched(metadata) if metadata.run_id == "run-1")
+            );
+
+            let mismatched =
+                load_active_run_metadata(&ctx.project, "OTHER").expect("active mismatch");
+            assert!(matches!(
+                mismatched,
+                ActiveRunLookup::Mismatched { run_id, actual_session: Some(session), .. }
+                    if run_id == "run-1" && session == "S"
+            ));
+            assert_log_contains(&ctx.log, "run\nactive\n--project-root");
+        });
+    }
+
+    #[test]
+    fn active_null_returns_none_and_failed_command_errors() {
+        with_fake_state_bin(|ctx| {
+            fs::write(ctx.responses.join("active.json"), "null\n").expect("active null");
+            let lookup = load_active_run_metadata(&ctx.project, "S").expect("active null parsed");
+            assert_eq!(lookup, ActiveRunLookup::None);
+
+            fs::write(ctx.responses.join("fail-active"), "1").expect("fail marker");
+            let error = load_active_run_metadata(&ctx.project, "S").expect_err("active fails");
+            assert!(error
+                .to_string()
+                .contains("flightdeck-state run active failed"));
+        });
+    }
+
+    #[test]
+    fn list_runs_caps_snapshots_and_reports_snapshot_directory_warning() {
+        with_fake_state_bin(|ctx| {
+            let snapshots = ctx.project.join("runs/run-1/snapshots");
+            fs::create_dir_all(&snapshots).expect("snapshots dir");
+            for idx in 0..55 {
+                fs::write(
+                    snapshots.join(format!("2026-05-19T1200{idx:02}Z.json")),
+                    "{}",
+                )
+                .expect("snapshot");
+            }
+            let missing = ctx.project.join("runs/run-2/missing-snapshots");
+            write_json(
+                &ctx.responses.join("list.json"),
+                json!({
+                    "runs": [
+                        metadata("run-1", "S", &ctx.project, &snapshots),
+                        metadata("run-2", "S", &ctx.project, &missing)
+                    ]
+                }),
+            );
+
+            let runs = list_runs(&ctx.project).expect("list runs");
+            assert_eq!(runs.len(), 2);
+            assert_eq!(runs[0].snapshots.len(), MAX_SNAPSHOTS_PER_RUN);
+            assert!(runs[0].snapshots_truncated);
+            assert!(runs[0]
+                .snapshot_warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("showing newest")));
+            assert!(runs[1].snapshots.is_empty());
+            assert!(runs[1]
+                .snapshot_warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("snapshot directory unavailable")));
+        });
+    }
+
+    #[test]
+    fn load_run_snapshot_passes_snapshot_arg_and_parses_state() {
+        with_fake_state_bin(|ctx| {
+            let snapshots = ctx.project.join("runs/run-1/snapshots");
+            fs::create_dir_all(&snapshots).expect("snapshots dir");
+            write_json(
+                &ctx.responses.join("show.json"),
+                json!({
+                    "metadata": metadata("run-1", "S", &ctx.project, &snapshots),
+                    "state": state_json("S", false),
+                    "snapshot": "2026-05-19T120000Z.json",
+                    "snapshots": ["2026-05-19T120000Z.json"]
+                }),
+            );
+
+            let loaded = load_run_snapshot(
+                &ctx.project,
+                "run-1",
+                Some("2026-05-19T120000Z.json"),
+                Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap(),
+            )
+            .expect("load snapshot");
+            assert_eq!(loaded.metadata.run_id, "run-1");
+            assert_eq!(loaded.snapshot.session_id, "S");
+            assert_eq!(
+                loaded.snapshot_name.as_deref(),
+                Some("2026-05-19T120000Z.json")
+            );
+            assert_log_contains(&ctx.log, "--snapshot\n2026-05-19T120000Z.json");
+        });
+    }
+
+    #[test]
+    fn import_legacy_returns_summary_and_refreshes_runs() {
+        with_fake_state_bin(|ctx| {
+            let snapshots = ctx.project.join("runs/imported/snapshots");
+            fs::create_dir_all(&snapshots).expect("snapshots dir");
+            write_json(
+                &ctx.responses.join("import.json"),
+                json!({
+                    "imported": [metadata("imported", "S", &ctx.project, &snapshots)],
+                    "skipped": [],
+                    "diagnostics": ["copied legacy archive"]
+                }),
+            );
+            write_json(
+                &ctx.responses.join("list.json"),
+                json!({ "runs": [metadata("imported", "S", &ctx.project, &snapshots)] }),
+            );
+
+            let summary = import_legacy_archives(&ctx.project).expect("import legacy");
+            assert_eq!(summary.imported, 1);
+            assert_eq!(summary.skipped, 0);
+            assert_eq!(summary.diagnostics, vec!["copied legacy archive"]);
+            assert_eq!(summary.runs.len(), 1);
+            assert_log_contains(&ctx.log, "run\nimport-legacy\n--project-root");
+        });
+    }
+
+    #[test]
+    fn malformed_json_surfaces_parse_error() {
+        with_fake_state_bin(|ctx| {
+            fs::write(ctx.responses.join("list.json"), "not-json").expect("bad json");
+            let error = list_runs(&ctx.project).expect_err("malformed list fails");
+            assert!(error.to_string().contains("failed to parse"));
+        });
+    }
+
+    struct FakeCtx {
+        project: PathBuf,
+        responses: PathBuf,
+        log: PathBuf,
+    }
+
+    fn with_fake_state_bin(test: impl FnOnce(&FakeCtx)) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        let responses = temp.path().join("responses");
+        let log = temp.path().join("args.log");
+        fs::create_dir_all(&project).expect("project dir");
+        fs::create_dir_all(&responses).expect("response dir");
+        fs::write(project.join("vstack.toml"), "").expect("project marker");
+        write_fake_bin(&temp.path().join("flightdeck-state"), &responses, &log);
+        let old = env::var_os("FLIGHTDECK_STATE_BIN");
+        env::set_var("FLIGHTDECK_STATE_BIN", temp.path().join("flightdeck-state"));
+        test(&FakeCtx {
+            project,
+            responses,
+            log,
+        });
+        if let Some(old) = old {
+            env::set_var("FLIGHTDECK_STATE_BIN", old);
+        } else {
+            env::remove_var("FLIGHTDECK_STATE_BIN");
+        }
+    }
+
+    fn write_fake_bin(path: &Path, responses: &Path, log: &Path) {
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+{{ printf '%s\n' "$@"; printf -- '--END--\n'; }} >> {log}
+case "$1 $2" in
+  "run active")
+    if [[ -f {responses}/fail-active ]]; then echo forced failure >&2; exit 7; fi
+    cat {responses}/active.json
+    ;;
+  "run list") cat {responses}/list.json ;;
+  "run show") cat {responses}/show.json ;;
+  "run import-legacy") cat {responses}/import.json ;;
+  *) echo unexpected "$@" >&2; exit 64 ;;
+esac
+"#,
+            log = shell_path(log),
+            responses = shell_path(responses),
+        );
+        fs::write(path, script).expect("write fake bin");
+        let mut perms = fs::metadata(path).expect("fake bin metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).expect("chmod fake bin");
+    }
+
+    fn active_output(run_id: &str, session: &str) -> serde_json::Value {
+        let project = PathBuf::from("/project");
+        let snapshots = project.join("runs").join(run_id).join("snapshots");
+        json!({
+            "project": { "project_id": "project-123" },
+            "active": { "run_id": run_id },
+            "metadata": metadata(run_id, session, &project, &snapshots)
+        })
+    }
+
+    fn metadata(
+        run_id: &str,
+        session: &str,
+        project: &Path,
+        snapshots: &Path,
+    ) -> serde_json::Value {
+        let run_dir = snapshots.parent().unwrap_or(project);
+        json!({
+            "run_id": run_id,
+            "project_root": project,
+            "tmux_session": session,
+            "state_path": run_dir.join("state.json"),
+            "activity_path": run_dir.join("activity.jsonl"),
+            "summary_path": run_dir.join("summary.md"),
+            "snapshots_path": snapshots,
+            "started_at": "2026-05-19T12:00:00Z",
+            "last_seen_at": "2026-05-19T12:01:00Z",
+            "terminated": false,
+            "terminated_at": null,
+            "imported": false,
+            "imported_from": null
+        })
+    }
+
+    fn state_json(session: &str, terminated: bool) -> serde_json::Value {
+        json!({
+            "session_id": session,
+            "started_at": "2026-05-19T12:00:00Z",
+            "updated_at": "2026-05-19T12:01:00Z",
+            "terminated": terminated,
+            "terminated_at": null,
+            "owner": null,
+            "entries": {},
+            "merge_queue": [],
+            "conflict_graph": { "edges": [], "computed_at": "2026-05-19T12:01:00Z" },
+            "paused_for_user": null
+        })
+    }
+
+    fn write_json(path: &Path, value: serde_json::Value) {
+        fs::write(path, serde_json::to_vec(&value).expect("serialize json")).expect("write json");
+    }
+
+    fn shell_path(path: &Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+    }
+
+    fn assert_log_contains(path: &Path, needle: &str) {
+        let log = fs::read_to_string(path).expect("read arg log");
+        assert!(log.contains(needle), "arg log missing {needle:?}: {log}");
+    }
 }

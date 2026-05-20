@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::activity::ActivityEvent;
+use crate::app::command::SnapshotSource;
 use crate::app::hitmap::ClickAction;
 use crate::app::model::ReadSourceState;
 use crate::cost::SessionTotals;
@@ -10,6 +11,19 @@ use crate::state::run_history::{HistoryRun, ImportSummary, LoadedRunSnapshot};
 use crate::state::snapshot::{DashboardSnapshot, Event};
 use crate::tmux::panes::PaneSnapshot;
 use crate::watcher::WatcherEvent;
+
+#[derive(Debug)]
+pub struct ActiveRunSnapshot {
+    pub snapshot: DashboardSnapshot,
+    pub source: SnapshotSource,
+    pub source_state: ReadSourceState,
+}
+
+#[derive(Debug)]
+pub enum ActiveRunLoad {
+    Loaded(Box<ActiveRunSnapshot>),
+    NoActive(String),
+}
 
 #[derive(Debug)]
 pub enum Msg {
@@ -27,8 +41,8 @@ pub enum Msg {
     ActivityFilterChanged,
     ActivityExport,
     HistoryLoaded(Result<Vec<HistoryRun>, String>),
-    HistorySnapshotLoaded(Result<LoadedRunSnapshot, String>),
-    ActiveRunLoaded(Result<Option<LoadedRunSnapshot>, String>),
+    HistorySnapshotLoaded(Result<Box<LoadedRunSnapshot>, String>),
+    ActiveRunLoaded(Result<ActiveRunLoad, String>),
     LegacyImportCompleted(Result<ImportSummary, String>),
     WatcherEvent(WatcherEvent),
     DaemonStatus(RuntimeDaemonStatus),

@@ -185,7 +185,7 @@ fn snapshot_run_msg(source: &RunSnapshotSource, now: DateTime<Utc>) -> Msg {
                     run_id: loaded.metadata.run_id,
                     archived_at,
                 }
-            } else if loaded.metadata.terminated {
+            } else if source.read_only || loaded.metadata.terminated {
                 ReadSourceState::ArchivedRun {
                     run_id: loaded.metadata.run_id,
                     archived_at,

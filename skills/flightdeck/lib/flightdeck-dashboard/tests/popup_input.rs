@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use flightdeck_dashboard::app::command::Cmd;
+use flightdeck_dashboard::app::hitmap::{ClickAction, ScrollSource};
 use flightdeck_dashboard::app::model::{ModalState, ReadSourceState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
 use flightdeck_dashboard::app::msg::Msg;
@@ -191,6 +192,93 @@ fn history_filter_and_snapshot_cursor_stay_inside_modal() {
         model.history.selected_run().unwrap().metadata.run_id,
         "run-2"
     );
+}
+
+#[test]
+fn history_navigation_keys_and_escape_stay_modal_scoped() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(
+        (0..5)
+            .map(|idx| history_run(&format!("run-{idx}"), false))
+            .collect(),
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::End)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-4"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Home)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-0"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::PageDown)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-4"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::PageUp)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-0"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Esc)));
+    assert_eq!(model.modal, ModalState::None);
+}
+
+#[test]
+fn history_click_and_scroll_select_rows_inside_modal() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(vec![
+        history_run("run-0", false),
+        history_run("run-1", false),
+        history_run("run-2", false),
+    ]);
+
+    update(&mut model, Msg::Click(ClickAction::SelectHistoryItem(2)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-2"
+    );
+
+    update(
+        &mut model,
+        Msg::Click(ClickAction::ScrollUp(ScrollSource::History)),
+    );
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-1"
+    );
+
+    update(
+        &mut model,
+        Msg::Click(ClickAction::ScrollDown(ScrollSource::History)),
+    );
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-2"
+    );
+}
+
+#[test]
+fn history_enter_loads_selected_run() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(vec![history_run("run-1", false)]);
+
+    let commands = update(&mut model, Msg::KeyPressed(key(KeyCode::Enter)));
+
+    assert!(model.history.loading);
+    assert!(commands
+        .iter()
+        .any(|command| matches!(command, Cmd::Spawn(_))));
 }
 
 #[test]
@@ -383,6 +471,8 @@ fn history_run(run_id: &str, with_summary: bool) -> HistoryRun {
             tmux_session: "VS".to_owned(),
         },
         snapshots: Vec::new(),
+        snapshots_truncated: false,
+        snapshot_warning: None,
     }
 }
 

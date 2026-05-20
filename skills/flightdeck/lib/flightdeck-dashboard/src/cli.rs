@@ -207,3 +207,45 @@ impl TuiArgs {
             || std::env::var_os("TMUX").is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[test]
+    fn tui_parses_history_flags() {
+        let cli = Cli::try_parse_from([
+            "flightdeck-dashboard",
+            "tui",
+            "--run-id",
+            "run-123",
+            "--snapshot",
+            "2026-05-19T120000Z.json",
+        ])
+        .expect("parse run flags");
+        let Command::Tui(args) = cli.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.run_id.as_deref(), Some("run-123"));
+        assert_eq!(args.snapshot.as_deref(), Some("2026-05-19T120000Z.json"));
+        assert!(args.wants_live_state());
+    }
+
+    #[test]
+    fn tui_parses_archive_flag() {
+        let cli = Cli::try_parse_from([
+            "flightdeck-dashboard",
+            "tui",
+            "--archive",
+            "tmp/flightdeck-state-S-2026-05-19T120000Z.json.archive",
+        ])
+        .expect("parse archive flag");
+        let Command::Tui(args) = cli.command else {
+            panic!("expected tui command");
+        };
+        assert!(args.archive.is_some());
+        assert!(args.wants_live_state());
+    }
+}
