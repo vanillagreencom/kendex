@@ -178,6 +178,18 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const piExpectedSession = new Map<string, string>();
 	const subscriberRespawnNeeded = new Set<string>();
 	const subscriberRespawnHarness = new Map<string, string>();
+	// vstack#180: throttle pi-subscriber-bind-skip log lines. Without this
+	// the daemon emits one line per (paneId, reason) every poll tick
+	// (default 5s), which floods the daemon log to hundreds of lines per
+	// pane in 20 minutes and buries any other diagnostic in noise. We also
+	// track consecutive-skip counts per pane so we can emit a structured
+	// stuck-binder warning when the same pane is missing required metadata
+	// past a threshold instead of silently looping.
+	const piBindSkipLastLog = new Map<string, number>();
+	const piBindSkipConsecutive = new Map<string, number>();
+	const piBindSkipStuckWarned = new Set<string>();
+	const PI_BIND_SKIP_LOG_INTERVAL_SEC = positiveEnvInt("FD_PI_BIND_SKIP_LOG_INTERVAL_SEC", 60);
+	const PI_BIND_SKIP_STUCK_THRESHOLD = positiveEnvInt("FD_PI_BIND_SKIP_STUCK_THRESHOLD", 12);
 	// Round-4 #11: track per-pane activity flag to skip capture-pane
 	// when nothing changed since the last tick. A low-frequency sweep
 	// (every 30 ticks) still captures so we catch missed signals.
@@ -275,8 +287,26 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 						expectedSessionId,
 					});
 					if (!binding.ok) {
-						log("pi-subscriber-bind-skip", `pane=${paneId} reason=${binding.reason} pi_pid=${rawPiPid || ""} socket=${rawPiSocket || ""} expected_session=${expectedSessionId} expected_cwd=${entry?.cwd ?? ""} actual_session=${binding.sessionId ?? ""} proc_cwd=${binding.procCwd ?? ""}`);
+						const nowSec = Math.floor(Date.now() / 1000);
+						const throttleKey = `${paneId}|${binding.reason}`;
+						const lastEmit = piBindSkipLastLog.get(throttleKey) ?? 0;
+						const skipCount = (piBindSkipConsecutive.get(paneId) ?? 0) + 1;
+						piBindSkipConsecutive.set(paneId, skipCount);
+						if (nowSec - lastEmit >= PI_BIND_SKIP_LOG_INTERVAL_SEC) {
+							piBindSkipLastLog.set(throttleKey, nowSec);
+							log("pi-subscriber-bind-skip", `pane=${paneId} reason=${binding.reason} pi_pid=${rawPiPid || ""} socket=${rawPiSocket || ""} expected_session=${expectedSessionId} expected_cwd=${entry?.cwd ?? ""} actual_session=${binding.sessionId ?? ""} proc_cwd=${binding.procCwd ?? ""} consecutive=${skipCount}`);
+						}
+						if (skipCount >= PI_BIND_SKIP_STUCK_THRESHOLD && !piBindSkipStuckWarned.has(paneId)) {
+							piBindSkipStuckWarned.add(paneId);
+							const missing = piBindMissingFields(entry);
+							warn("pi-subscriber-bind-stuck", `pane=${paneId} reason=pi-bridge-bind-missing consecutive=${skipCount} threshold=${PI_BIND_SKIP_STUCK_THRESHOLD} last_reason=${binding.reason} missing=${missing.join(",") || "-"}; supervisor may need to inspect entry adapter metadata`);
+						}
 						return false;
+					}
+					piBindSkipConsecutive.delete(paneId);
+					piBindSkipStuckWarned.delete(paneId);
+					for (const key of piBindSkipLastLog.keys()) {
+						if (key.startsWith(`${paneId}|`)) piBindSkipLastLog.delete(key);
 					}
 					piPid = binding.pid;
 					piSocket = binding.socket;
@@ -309,6 +339,21 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		const h = paneHarness.get(id) ?? "";
 		const target = ocPaneTarget.get(id) ?? "";
 		if (h) trySpawnSubscriberForPane(id, target, h);
+	}
+
+	// vstack#180: startup probe. After the initial subscriber-spawn pass,
+	// surface any pane the daemon would silently bind-skip in steady state
+	// because the tracked entry is missing required pi adapter fields. Emit
+	// one structured warning per affected pane at start; without this, the
+	// only signal is the throttled bind-skip line ~60s later.
+	for (const id of innerIds) {
+		if ((paneHarness.get(id) ?? "") !== "pi") continue;
+		if (ocSubscribed.has(id)) continue;
+		const entry = trackedEntryForPane(id);
+		const missing = piBindMissingFields(entry);
+		if (missing.length > 0) {
+			warn("startup-binder-missing-fields", `pane=${id} harness=pi entry_present=${entry ? "yes" : "no"} missing=${missing.join(",")} cwd=${entry?.cwd ?? ""}; daemon will retry on each reconcile tick`);
+		}
 	}
 
 	// Auto-detect master harness when caller didn't pass --master-harness.
@@ -890,6 +935,32 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 
 function sweepResetNeeded(n: number): number {
 	return n >= 30 ? 0 : n + 1;
+}
+
+// vstack#180: report which pi-binder fields the daemon needs but the
+// tracked entry doesn't have yet. Used by the startup probe and the
+// stuck-binder warning so operators see the missing schema slots
+// directly instead of inferring them from empty values in a skip line.
+function piBindMissingFields(entry: ReconcileEntry | undefined): string[] {
+	const missing: string[] = [];
+	if (!entry) return ["entry", "pi_bridge_pid", "pi_bridge_socket", "pi_session_id"];
+	if (!entry.cwd) missing.push("cwd");
+	const meta = entry.adapterMeta ?? {};
+	if (!meta.piPid) missing.push("pi_bridge_pid");
+	if (!meta.piSocket) missing.push("pi_bridge_socket");
+	if (!meta.piSessionId) missing.push("pi_session_id");
+	return missing;
+}
+
+// Read a positive integer from the environment, falling back to a
+// hard-coded default when unset, non-numeric, or non-positive. Used so
+// daemon tests can tune cadence-bound thresholds (bind-skip log
+// interval, stuck-binder counter) without waiting real wall-clock time.
+function positiveEnvInt(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === "") return fallback;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function emitSubscriberLifecycle(ctx: DaemonActivityContext, reattached: boolean, harness: string, paneId: string, pid: number): void {

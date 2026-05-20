@@ -1108,3 +1108,101 @@ describe("pane-registry reconcile backfill safety (#16, shim-driven)", () => {
 		}
 	});
 });
+
+// vstack#180: late hydrate-pi writes adapter bridge fields after
+// open-terminal writes pi-spawn-<issue>.json, so the daemon's binder
+// stops looping pi-subscriber-bind-skip.
+describe("pane-registry hydrate-pi (vstack#180)", () => {
+	test("copies pid/socket/session_id from pi spawn file into adapter (production sequence: init-entry first, spawn file second, then hydrate)", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: {
+				"%5137": { pane_index: 0, path: "/tmp/wt-180a", window_id: "@180", window_index: 1, window_name: "180" },
+			},
+			windows: { "@180": { index: 1, name: "180" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		// Simulate open-terminal's production sequence: tmux pane is opened
+		// and registered via init-entry BEFORE the pi spawn file exists.
+		// This is the regression scenario where the bug surfaced (#180).
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "180",
+			"--title", "180", "--kind", "issue", "--tracker", "github", "--github-url", "https://github.com/owner/repo/issues/180",
+			"--cwd", "/tmp/wt-180a", "--worktree", "/tmp/wt-180a",
+			"--window", "1", "--harness", "pi",
+			"--pane-id", "%5137", "--pane-target", "test-session:1.0",
+		], { FD_STATE_DIR: stateDir }).status).toBe(0);
+		const entryBefore = JSON.parse(runShim(tsRepo, statePath, ["get", "180"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(entryBefore.adapter.pi_bridge_pid).toBeNull();
+		expect(entryBefore.adapter.pi_bridge_socket).toBeNull();
+		expect(entryBefore.adapter.pi_session_id).toBeNull();
+
+		// Now open-terminal finishes pi-bridge discovery and writes the
+		// spawn file. Without hydrate-pi, the tracked entry adapter slots
+		// stay null forever, and the daemon loops pi-subscriber-bind-skip.
+		writeFileSync(
+			join(stateDir, "pi-spawn-180.json"),
+			JSON.stringify({ pid: 2808779, socket: "/tmp/pi-session-bridge-1000/pi-2808779.sock", session_id: "019e46c0-1324-7db6-ab3c-13f975606a5e", directory: "/tmp/wt-180a" }),
+		);
+
+		const r = runShim(tsRepo, statePath, ["hydrate-pi", "180"], { FD_STATE_DIR: stateDir });
+		expect(r.status).toBe(0);
+		const payload = JSON.parse(r.stdout.trim()) as Record<string, unknown>;
+		expect(payload.ok).toBe(true);
+		expect(payload.pi_bridge_pid).toBe(2808779);
+		expect(payload.pi_session_id).toBe("019e46c0-1324-7db6-ab3c-13f975606a5e");
+
+		const entryAfter = JSON.parse(runShim(tsRepo, statePath, ["get", "180"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(entryAfter.adapter.pi_bridge_pid).toBe(2808779);
+		expect(entryAfter.adapter.pi_bridge_socket).toBe("/tmp/pi-session-bridge-1000/pi-2808779.sock");
+		expect(entryAfter.adapter.pi_session_id).toBe("019e46c0-1324-7db6-ab3c-13f975606a5e");
+	});
+
+	test("rejects entries that are not harness=pi", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, "pi-spawn-not-pi.json"), JSON.stringify({ pid: 1, socket: "/x", session_id: "s" }));
+		runShim(tsRepo, statePath, [
+			"init-entry", "not-pi",
+			"--title", "NotPi", "--kind", "adhoc",
+			"--cwd", "/tmp/np", "--window", "1", "--harness", "claude",
+		], { FD_STATE_DIR: stateDir });
+		const r = runShim(tsRepo, statePath, ["hydrate-pi", "not-pi"], { FD_STATE_DIR: stateDir });
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("requires harness=pi");
+	});
+
+	test("errors when spawn file is absent", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		runShim(tsRepo, statePath, [
+			"init-entry", "no-spawn",
+			"--title", "NoSpawn", "--kind", "adhoc",
+			"--cwd", "/tmp/ns", "--window", "1", "--harness", "pi",
+		], { FD_STATE_DIR: stateDir });
+		const r = runShim(tsRepo, statePath, ["hydrate-pi", "no-spawn"], { FD_STATE_DIR: stateDir });
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("no spawn file");
+	});
+
+	test("clears pi_bridge_* discovery_error when hydration succeeds", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, "pi-spawn-recover.json"), JSON.stringify({ pid: 4242, socket: "/tmp/pi-recover.sock", session_id: "recovered" }));
+		runShim(tsRepo, statePath, [
+			"init-entry", "recover",
+			"--title", "Recover", "--kind", "adhoc",
+			"--cwd", "/tmp/r", "--window", "1", "--harness", "pi",
+			"--discovery-error", "pi_bridge_discovery_timeout",
+		], { FD_STATE_DIR: stateDir });
+		const before = JSON.parse(runShim(tsRepo, statePath, ["get", "recover"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, unknown>;
+		expect(before.discovery_error).toBe("pi_bridge_discovery_timeout");
+		expect(runShim(tsRepo, statePath, ["hydrate-pi", "recover"], { FD_STATE_DIR: stateDir }).status).toBe(0);
+		const after = JSON.parse(runShim(tsRepo, statePath, ["get", "recover"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, unknown>;
+		expect(after.discovery_error).toBeNull();
+		expect((after.adapter as Record<string, unknown>).pi_bridge_pid).toBe(4242);
+	});
+});

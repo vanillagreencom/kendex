@@ -876,4 +876,114 @@ exit 1
 		runDaemon("stop");
 		await sleep(200);
 	});
+
+	// vstack#180: when the tracked entry lacks pi adapter metadata the
+	// daemon used to emit one [pi-subscriber-bind-skip] per pane per tick
+	// (default 5s), flooding the log to hundreds of lines per pane in 20
+	// minutes and burying any other diagnostic. The fix throttles those
+	// to one line per (pane,reason) per minute, emits a one-shot startup
+	// warning that names the missing fields, and emits a single
+	// [pi-subscriber-bind-stuck] warning after 12 consecutive skips so
+	// the supervisor has a real signal instead of silence.
+	test("pi bind-skip is throttled and surfaces missing fields without log flood", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-bind-skip-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-bindskip-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-bindskip.jsonl");
+		const fakeDir = join(stateDir, "fake-bindskip");
+		mkdirSync(fakeDir, { recursive: true });
+		const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
+
+		// Registry returns the harness=pi entry but with NULL pi adapter
+		// fields, reproducing the post-bug state.
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "issue", cwd: process.cwd(), pi_bridge_pid: null, pi_bridge_socket: null, pi_session_id: null }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "list" ]]; then
+  printf '%s\n' ${JSON.stringify(rows)}
+  exit 0
+fi
+if [[ "\${1:-}" == "find-by-pane" ]]; then
+  printf '{"id":"pi-bindskip","kind":"issue"}\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "pi-bridge-args" ]]; then
+  exit 0
+fi
+exit 1
+`);
+		chmodSync(registryBin, 0o755);
+
+		const savedStateDir = process.env.FD_STATE_DIR;
+		const savedStuck = process.env.FD_PI_BIND_SKIP_STUCK_THRESHOLD;
+		const savedInterval = process.env.FD_PI_BIND_SKIP_LOG_INTERVAL_SEC;
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.FD_PI_BIND_SKIP_STUCK_THRESHOLD = "2";
+		process.env.FD_PI_BIND_SKIP_LOG_INTERVAL_SEC = "600";
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "bind-skip-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "pi",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 600,
+			innerHarnesses: ["pi"],
+			innerTargets: [innerPaneId],
+			masterHarness: "pi",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			// Wait until the startup probe and at least one bind-skip line are
+			// in the daemon log. ~20 ticks at 100ms pollSec ≈ 2 seconds, well
+			// inside the 60s throttle window — so we should still see only ONE
+			// bind-skip line, plus the stuck warning after 12 consecutive
+			// skips.
+			const sawStartupWarn = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[startup-binder-missing-fields]"), 3000);
+			expect(sawStartupWarn).toBe(true);
+			const sawBindSkip = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[pi-subscriber-bind-skip]"), 3000);
+			expect(sawBindSkip).toBe(true);
+			const sawStuck = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[pi-subscriber-bind-stuck]"), 5000);
+			expect(sawStuck).toBe(true);
+
+			// Now run another ~2 seconds and verify the bind-skip line count
+			// stays at 1 (throttle holds for 60s) — proving the log isn't
+			// flooded.
+			await sleep(2000);
+			const logText = readFileSync(logFile, "utf8");
+			const skipLines = logText.split("\n").filter((l) => l.includes("[pi-subscriber-bind-skip]"));
+			expect(skipLines.length).toBe(1);
+			const stuckLines = logText.split("\n").filter((l) => l.includes("[pi-subscriber-bind-stuck]"));
+			expect(stuckLines.length).toBe(1);
+			expect(stuckLines[0]).toContain("missing=pi_bridge_pid,pi_bridge_socket,pi_session_id");
+			expect(stuckLines[0]).toContain("reason=pi-bridge-bind-missing");
+			const startupLines = logText.split("\n").filter((l) => l.includes("[startup-binder-missing-fields]"));
+			expect(startupLines.length).toBe(1);
+			expect(startupLines[0]).toContain("missing=pi_bridge_pid,pi_bridge_socket,pi_session_id");
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			if (savedStateDir === undefined) delete process.env.FD_STATE_DIR;
+			else process.env.FD_STATE_DIR = savedStateDir;
+			if (savedStuck === undefined) delete process.env.FD_PI_BIND_SKIP_STUCK_THRESHOLD;
+			else process.env.FD_PI_BIND_SKIP_STUCK_THRESHOLD = savedStuck;
+			if (savedInterval === undefined) delete process.env.FD_PI_BIND_SKIP_LOG_INTERVAL_SEC;
+			else process.env.FD_PI_BIND_SKIP_LOG_INTERVAL_SEC = savedInterval;
+		}
+	}, 15000);
 });

@@ -1127,6 +1127,39 @@ function cmdPiBridgeArgs(issue: string): void {
 	}
 }
 
+// Late-hydration writer for the Pi bridge adapter fields. open-terminal's
+// `spawn_pi_bridge_tmux` runs `pi-bridge list` discovery AFTER the pane is
+// already registered via `flightdeck-session start --cmd ...` (which routes
+// to `pane-registry init-entry`). At registration time `piSpawnFile(issue)`
+// doesn't exist yet, so `cmdInitEntry`'s `hydrateSpawnMetadata` populates
+// the adapter slots with empty strings. This command re-reads the spawn
+// file (now present) and writes `{pi_bridge_pid, pi_bridge_socket,
+// pi_session_id}` into `.entries[id].adapter.*` so the daemon's
+// pi-subscriber binder has the fields it requires.
+function cmdHydratePi(issue: string): void {
+	if (!issue) die("Usage: hydrate-pi <ISSUE>");
+	if (!registryHasEntry(issue)) die(`pane-registry: entry '${issue}' not found in .entries`);
+	const entry = entryByIdOrDie(issue);
+	if (entry.harness !== "pi") die(`pane-registry: hydrate-pi requires harness=pi (entry harness=${typeof entry.harness === "string" ? entry.harness : "<unknown>"})`);
+	const rec = readJsonIfExists<Record<string, unknown>>(piSpawnFile(issue));
+	if (!rec) die(`pane-registry: hydrate-pi found no spawn file at ${piSpawnFile(issue)}`);
+	const pid = rec.pid;
+	const socket = typeof rec.socket === "string" ? rec.socket : "";
+	const sessionId = typeof rec.session_id === "string" ? rec.session_id : "";
+	const pidNum = typeof pid === "number" ? pid : Number(pid);
+	if (!Number.isFinite(pidNum) || pidNum <= 0) die(`pane-registry: hydrate-pi spawn file ${piSpawnFile(issue)} missing numeric pid`);
+	if (!socket || !sessionId) die(`pane-registry: hydrate-pi spawn file ${piSpawnFile(issue)} missing socket or session_id`);
+	const idJson = JSON.stringify(issue);
+	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_bridge_pid`, JSON.stringify(pidNum)]);
+	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_bridge_socket`, JSON.stringify(socket)]);
+	fdStateOrDie(["set", `.entries[${idJson}].adapter.pi_session_id`, JSON.stringify(sessionId)]);
+	const existingError = typeof entry.discovery_error === "string" ? entry.discovery_error : "";
+	if (existingError && existingError.startsWith("pi_bridge_")) {
+		fdStateOrDie(["set", `.entries[${idJson}].discovery_error`, "null"]);
+	}
+	process.stdout.write(JSON.stringify({ ok: true, issue, pi_bridge_pid: pidNum, pi_bridge_socket: socket, pi_session_id: sessionId }) + "\n");
+}
+
 function cmdCxBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: cx-bridge-args <ISSUE>");
 	issue = lookupIdOrPane(issue, true);
@@ -1521,10 +1554,11 @@ switch (action) {
 	case "oc-attach-args":  cmdOcAttachArgs(argv[0] ?? ""); break;
 	case "cc-channel-args": cmdCcChannelArgs(argv[0] ?? ""); break;
 	case "pi-bridge-args":  cmdPiBridgeArgs(argv[0] ?? ""); break;
+	case "hydrate-pi":      cmdHydratePi(argv[0] ?? ""); break;
 	case "cx-bridge-args":  cmdCxBridgeArgs(argv[0] ?? ""); break;
 	case "find-by-pane":    cmdFindByPane(argv[0] ?? ""); break;
 	case "teardown-window":
 	case "teardown-entry":  cmdTeardownWindow(argv); break;
 	default:
-		die(`Unknown action: ${action}\nActions: init-entry | init | list | refresh-window-names | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | cx-bridge-args | find-by-pane`);
+		die(`Unknown action: ${action}\nActions: init-entry | init | list | refresh-window-names | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | hydrate-pi | cx-bridge-args | find-by-pane`);
 }

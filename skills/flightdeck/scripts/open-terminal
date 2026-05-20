@@ -1181,6 +1181,17 @@ spawn_pi_bridge_tmux() {
     '{pid:$pid, socket:$socket, session_id:$session_id, directory:$dir, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
+  # vstack#180: open_tmux ran flightdeck-session start --cmd, which routed to
+  # pane-registry init-entry. At that point the pi spawn file did not exist
+  # yet (we discover pi-bridge metadata AFTER pi starts), so the tracked
+  # entry's adapter.{pi_bridge_pid,pi_bridge_socket,pi_session_id} were left
+  # null. Re-hydrate them now from the spawn file we just wrote so the
+  # daemon's pi-subscriber binder has the fields it needs to bind on the
+  # next reconcile tick instead of looping pi-subscriber-bind-skip.
+  if ! "$SCRIPT_DIR/pane-registry" hydrate-pi "$issue" >/dev/null; then
+    echo "  pi-bridge: warning - hydrate-pi failed; daemon may loop pi-subscriber-bind-skip until next reconcile" >&2
+  fi
+
   echo "  pi-bridge: pid=$pid socket=$socket_path session=$session_id"
   return 0
 }
