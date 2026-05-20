@@ -151,3 +151,10 @@ Status legend per row: live pane, startable, stale, background. Dashboard rows: 
 ## Pane registry mechanics
 
 Pane registries and task records are stored in sidecar files and mirrored into session custom entries only when the snapshot changes AND the session file's on-disk leaf still matches the active in-memory leaf. This prevents duplicate / orphaned Pi processes from advancing an older branch and making `/resume` land before the latest visible turns.
+
+### Bounded session-state snapshots (vstack#177)
+
+`persistRuntimeSnapshot()` enforces two guards on the `vstack-subagents:runtime-state` JSONL entry:
+
+1. **Fingerprint dedup.** A stable hash of `{ panes, tasks }` (excluding `updatedAt`) per Pi session id; identical successive snapshots short-circuit before touching the session file.
+2. **Size cap.** Default 64 KiB (`BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`). Oversized payloads are replaced by a tiny manifest (`version: 2, fullSnapshot: false, reason: "payload-too-large", byteSize, fingerprint, counts, updatedAt`). The full registry stays on disk in `taskRegistryPath` and `paneRegistryPath`; restore continues to read those sidecars first and ignores manifest entries via `isPersistedSubagentRuntimeState`. Without this guard, a long-lived session with ~200 completed tasks accumulated ~1 GB of `vstack-subagents:runtime-state` JSONL entries and crashed `/resume` with a V8 OOM.

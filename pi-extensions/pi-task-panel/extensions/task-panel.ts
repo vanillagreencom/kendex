@@ -25,6 +25,36 @@ import {
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
 const STATE_TYPE = "vstack-task-panel:state";
+const TASK_PANEL_SNAPSHOT_MAX_BYTES = 64 * 1024;
+
+function stableValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stableValue);
+	if (!value || typeof value !== "object") return value;
+	const sorted: Record<string, unknown> = {};
+	for (const key of Object.keys(value as Record<string, unknown>).sort()) sorted[key] = stableValue((value as Record<string, unknown>)[key]);
+	return sorted;
+}
+
+function stableTaskPanelFingerprint(state: TaskPanelState): string {
+	const { updatedAt: _ignored, ...rest } = state as TaskPanelState & { updatedAt?: string };
+	return JSON.stringify(stableValue(rest));
+}
+
+interface TaskPanelBoundedManifest {
+	version: 2;
+	fullSnapshot: false;
+	reason: "payload-too-large";
+	byteSize: number;
+	fingerprint: string;
+	counts: { tasks: number; phases: number };
+	updatedAt: string;
+}
+
+function isTaskPanelBoundedManifest(value: unknown): value is TaskPanelBoundedManifest {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<TaskPanelBoundedManifest>;
+	return candidate.version === 2 && candidate.fullSnapshot === false;
+}
 const TASK_CONTEXT_TYPE = "vstack-task-panel:context";
 const TASK_COMPLETE_MESSAGE_TYPE = "vstack-task-panel:complete";
 const WIDGET_KEY = "vstack-task-panel";
@@ -782,17 +812,49 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		}
 	};
 
+	const lastFingerprintBySession = new Map<string, string>();
+
 	const persist = () => {
 		state.updatedAt = new Date().toISOString();
-		pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
 		writeSidecar(activeCtx);
+		if (!activeCtx) {
+			// No active session context — fall back to the unconditional append.
+			pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
+			return;
+		}
+		const sessionKey = sessionIdForContext(activeCtx);
+		// Fingerprint excludes updatedAt so cosmetic timestamp bumps don't burn a session entry (vstack#177).
+		const fingerprint = stableTaskPanelFingerprint(state);
+		if (lastFingerprintBySession.get(sessionKey) === fingerprint) return;
+		const snapshot = cloneState(state);
+		const serialized = JSON.stringify(snapshot);
+		const byteSize = Buffer.byteLength(serialized, "utf8");
+		if (byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+			pi.appendEntry<TaskPanelState>(STATE_TYPE, snapshot);
+		} else {
+			const manifest: TaskPanelBoundedManifest = {
+				version: 2,
+				fullSnapshot: false,
+				reason: "payload-too-large",
+				byteSize,
+				fingerprint,
+				counts: { tasks: state.tasks.length, phases: state.phases.length },
+				updatedAt: state.updatedAt,
+			};
+			pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
+		}
+		lastFingerprintBySession.set(sessionKey, fingerprint);
 	};
 
 	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
 		state = readSidecar(ctx) ?? emptyState(ctx.cwd);
 		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type === "custom" && entry.customType === STATE_TYPE) state = normalizeState(entry.data, ctx.cwd);
+			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
+				// Bounded manifests carry only counts; sidecar restore wins (vstack#177).
+				if (isTaskPanelBoundedManifest(entry.data)) continue;
+				state = normalizeState(entry.data, ctx.cwd);
+			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {
 				const restored = normalizeState(entry.message.details?.state, ctx.cwd);
 				if (restored.tasks.length > 0 || restored.phases.length > 0) state = restored;

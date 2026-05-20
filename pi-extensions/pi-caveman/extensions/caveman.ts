@@ -255,9 +255,22 @@ export default function caveman(pi: ExtensionAPI): void {
 	};
 	host[BRIDGE_SYMBOL] = bridge;
 
+	const lastFingerprintBySession = new Map<string, string>();
 	const persist = () => {
 		const snapshot: CavemanState = { ...state, updatedAt: new Date().toISOString() };
-		pi.appendEntry<CavemanState>(STATE_TYPE, snapshot);
+		if (activeCtx) {
+			const sessionKey = sessionIdForContext(activeCtx);
+			// Fingerprint excludes updatedAt so identical mode toggles don't append another full snapshot
+			// to the JSONL session log (vstack#177).
+			const { updatedAt: _ignored, ...rest } = snapshot;
+			const fingerprint = JSON.stringify(rest);
+			if (lastFingerprintBySession.get(sessionKey) !== fingerprint) {
+				pi.appendEntry<CavemanState>(STATE_TYPE, snapshot);
+				lastFingerprintBySession.set(sessionKey, fingerprint);
+			}
+		} else {
+			pi.appendEntry<CavemanState>(STATE_TYPE, snapshot);
+		}
 		if (!activeCtx) return;
 		try {
 			const file = sidecarStatePath(activeCtx);

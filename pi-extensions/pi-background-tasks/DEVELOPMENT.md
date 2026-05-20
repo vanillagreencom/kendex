@@ -43,6 +43,15 @@ Orphan-running tasks (Pi died while the detached child kept running) are detecte
 
 Orphans rehydrate as `running` rather than synthetically `stopped`, and a periodic liveness watcher (default 30s) polls until the (pid + startToken) tuple disappears or stops matching, then finalizes the task and fires the canonical exit wake. This protects against both the kill -9 / OOM scenario (Pi gone, orphan still alive) and PID reuse: if the kernel hands the same PID to an unrelated process after the original orphan exits, the start-time mismatch is treated as `pid-reused` and the canonical exit wake fires anyway.
 
+## Bounded session-state snapshots (vstack#177)
+
+`createPersistence().persistSnapshots()` is the only writer of the `vstack-background-tasks:state` JSONL entry. It enforces two guards before calling `pi.appendEntry`:
+
+1. **Fingerprint dedup.** A stable hash of `{ tasks }` (excluding the outer `updatedAt`) per Pi session id. Identical successive task lists short-circuit and never touch the session file, so a steady-state queue does not append one entry per lifecycle event.
+2. **Size cap.** Default 64 KiB (`BG_TASKS_SNAPSHOT_MAX_BYTES`, override per `createPersistence` call via `maxEntryBytes` in tests). Oversized payloads — e.g. dozens of completed tasks with multi-KB heredoc `command` strings — are downgraded to a `version: 2, fullSnapshot: false` manifest carrying only `byteSize`, `fingerprint`, `counts.tasks`, and `updatedAt`. The full task list still lands in the sidecar at `sidecarStatePath(ctx)`; restore reads the sidecar first and `restoreSnapshots()` skips manifest entries (does not call `tasks.clear()` for them) so dashboard state survives `/resume`.
+
+`persistSnapshots()` returns `{ appendEntry, sidecar, appendReason: "appended" | "unchanged" | "manifest" | "no-active-context" | "error" }` so callers/tests can distinguish a deliberate skip from a failure.
+
 ## Tests
 
 ```

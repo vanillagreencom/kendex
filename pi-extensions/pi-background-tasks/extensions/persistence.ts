@@ -25,9 +25,47 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { logBackgroundDiagnostic } from "./diagnostics.js";
 import type { BackgroundTaskSnapshot } from "./types.js";
 
+// Hard cap on the JSON byte size of a `vstack-background-tasks:state` custom
+// entry appended to a Pi session JSONL file. Sessions are append-only, so
+// repeatedly writing full task lists with multi-KB heredoc commands
+// accumulates 10s-100s of MB of session history that crashes `/resume`
+// (vstack#177). Sidecar state remains canonical at this size and is read
+// first on restore; oversized session payloads degrade to a tiny manifest.
+export const BG_TASKS_SNAPSHOT_MAX_BYTES = 64 * 1024;
+
+export interface BgTasksBoundedManifest {
+	version: 2;
+	fullSnapshot: false;
+	reason: "payload-too-large";
+	byteSize: number;
+	fingerprint: string;
+	counts: { tasks: number };
+	updatedAt: number;
+}
+
+export function isBgTasksBoundedManifest(value: unknown): value is BgTasksBoundedManifest {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<BgTasksBoundedManifest>;
+	return candidate.version === 2 && candidate.fullSnapshot === false;
+}
+
+function stableValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stableValue);
+	if (!value || typeof value !== "object") return value;
+	const sorted: Record<string, unknown> = {};
+	for (const key of Object.keys(value as Record<string, unknown>).sort()) sorted[key] = stableValue((value as Record<string, unknown>)[key]);
+	return sorted;
+}
+
+export function stableSnapshotFingerprint(value: unknown): string {
+	return JSON.stringify(stableValue(value));
+}
+
 export interface PersistResult {
 	appendEntry: boolean;
 	sidecar: boolean;
+	/** Why the session-entry write resolved the way it did. */
+	appendReason?: "appended" | "unchanged" | "manifest" | "no-active-context" | "error";
 }
 
 export interface PersistencePayload {
@@ -42,6 +80,8 @@ export interface PersistenceDeps {
 	getActiveCtx: () => ExtensionContext | null;
 	listSnapshots: () => BackgroundTaskSnapshot[];
 	notify?: (where: string, message: string) => void;
+	/** Override the per-entry byte cap (testing). Defaults to BG_TASKS_SNAPSHOT_MAX_BYTES. */
+	maxEntryBytes?: number;
 }
 
 export function piUserDir(): string {
@@ -112,6 +152,11 @@ export function createPersistence(deps: PersistenceDeps): {
 	payloadFor: (tasks: BackgroundTaskSnapshot[]) => PersistencePayload;
 } {
 	const notify = deps.notify;
+	const maxBytes = deps.maxEntryBytes ?? BG_TASKS_SNAPSHOT_MAX_BYTES;
+	// Last fingerprint observed per Pi session id. Identical successive task
+	// lists do not re-append to JSONL; a session that mostly stays steady
+	// emits one entry per change instead of one per lifecycle event.
+	const lastFingerprintBySession = new Map<string, string>();
 
 	function payloadFor(tasks: BackgroundTaskSnapshot[]): PersistencePayload {
 		return { version: 1, tasks, updatedAt: Date.now() };
@@ -121,13 +166,54 @@ export function createPersistence(deps: PersistenceDeps): {
 		const payload = payloadFor(deps.listSnapshots());
 		const ctx = deps.getActiveCtx();
 		let appendEntryOk = false;
+		let appendReason: PersistResult["appendReason"] = ctx ? undefined : "no-active-context";
 		let sidecarOk = ctx == null;
 
-		try {
-			deps.pi.appendEntry(deps.customType, payload);
-			appendEntryOk = true;
-		} catch (error) {
-			reportPersistFailure("appendEntry", error, notify);
+		if (ctx) {
+			const sessionKey = sessionIdForContext(ctx);
+			// Fingerprint excludes updatedAt — only structural changes warrant a new session entry.
+			const fingerprint = stableSnapshotFingerprint({ tasks: payload.tasks });
+			if (lastFingerprintBySession.get(sessionKey) === fingerprint) {
+				appendEntryOk = true;
+				appendReason = "unchanged";
+			} else {
+				const serialized = JSON.stringify(payload);
+				const byteSize = Buffer.byteLength(serialized, "utf8");
+				try {
+					if (byteSize <= maxBytes) {
+						deps.pi.appendEntry(deps.customType, payload);
+						appendReason = "appended";
+					} else {
+						const manifest: BgTasksBoundedManifest = {
+							version: 2,
+							fullSnapshot: false,
+							reason: "payload-too-large",
+							byteSize,
+							fingerprint,
+							counts: { tasks: payload.tasks.length },
+							updatedAt: payload.updatedAt,
+						};
+						deps.pi.appendEntry(deps.customType, manifest);
+						appendReason = "manifest";
+					}
+					lastFingerprintBySession.set(sessionKey, fingerprint);
+					appendEntryOk = true;
+				} catch (error) {
+					appendReason = "error";
+					reportPersistFailure("appendEntry", error, notify);
+				}
+			}
+		} else {
+			// No active context — fall back to the unconditional append so a one-shot/
+			// no-context call still records something. Bounded restore is irrelevant
+			// without a session.
+			try {
+				deps.pi.appendEntry(deps.customType, payload);
+				appendEntryOk = true;
+			} catch (error) {
+				appendReason = "error";
+				reportPersistFailure("appendEntry", error, notify);
+			}
 		}
 
 		if (ctx) {
@@ -139,7 +225,7 @@ export function createPersistence(deps: PersistenceDeps): {
 			}
 		}
 
-		return { appendEntry: appendEntryOk, sidecar: sidecarOk };
+		return { appendEntry: appendEntryOk, sidecar: sidecarOk, appendReason };
 	}
 
 	return { persistSnapshots, payloadFor };

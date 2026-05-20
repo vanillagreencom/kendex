@@ -134,6 +134,7 @@ import {
 } from "./renderers.js";
 import {
 	sessionFileTailMatchesLeaf,
+	appendBoundedSnapshot,
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
 import { subagentToolRenderers } from "./subagent-render.js";
@@ -565,12 +566,25 @@ export default function (pi: ExtensionAPI) {
 		if (childAgentName) return;
 		try {
 			const [panes, tasks] = await Promise.all([readPaneRegistry(runtimeRoot), readTaskRegistry(runtimeRoot)]);
-			const fingerprint = stableSessionSnapshotFingerprint({ panes, tasks });
 			const sessionKey = ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.() ?? runtimeRoot;
+			// Fingerprint over registry only (not updatedAt) so cosmetic bumps don't burn a session entry.
+			const fingerprintInput = { panes, tasks };
+			const fingerprint = stableSessionSnapshotFingerprint(fingerprintInput);
 			if (lastRuntimeSnapshotFingerprintBySession.get(sessionKey) === fingerprint) return;
 			if (!(await sessionFileTailMatchesLeaf(ctx))) return;
-			pi.appendEntry<PersistedSubagentRuntimeState>(SUBAGENT_STATE_TYPE, { version: 1, panes, tasks, updatedAt: new Date().toISOString() });
-			lastRuntimeSnapshotFingerprintBySession.set(sessionKey, fingerprint);
+			const payload: PersistedSubagentRuntimeState = { version: 1, panes, tasks, updatedAt: new Date().toISOString() };
+			// Bounded append: full payload only when within the size cap, otherwise a tiny manifest. The on-disk
+			// pane and task registries remain canonical, so a manifest-only session entry still restores fully
+			// on /resume (vstack#177).
+			appendBoundedSnapshot({
+				appender: pi,
+				customType: SUBAGENT_STATE_TYPE,
+				payload,
+				sessionKey,
+				fingerprintInput,
+				fingerprintCache: lastRuntimeSnapshotFingerprintBySession,
+				counts: () => ({ panes: Object.keys(panes).length, tasks: Object.keys(tasks).length }),
+			});
 		} catch {
 			// Session-backed persistence is best-effort; file registries remain canonical at runtime. A stale
 			// duplicate Pi process must not advance the session leaf from an older in-memory branch.

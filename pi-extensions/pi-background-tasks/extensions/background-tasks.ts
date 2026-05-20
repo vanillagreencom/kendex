@@ -187,7 +187,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === BG_STATE_TYPE) {
-				const data = entry.data as { tasks?: unknown } | undefined;
+				const data = entry.data as { tasks?: unknown; version?: unknown; fullSnapshot?: unknown } | undefined;
+				// Bounded manifests (vstack#177, version 2, fullSnapshot false) record only counts.
+				// Skip them so they don't wipe the sidecar-restored state that's already loaded.
+				if (data?.version === 2 && data.fullSnapshot === false) continue;
 				tasks.clear();
 				taskCounter = 0;
 				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);

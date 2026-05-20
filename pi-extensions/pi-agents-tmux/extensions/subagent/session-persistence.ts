@@ -2,6 +2,86 @@ import * as fs from "node:fs";
 
 const SESSION_TAIL_BYTES = 1024 * 1024;
 
+// Default cap on the JSON byte size of any extension state custom entry
+// appended to a Pi session JSONL file. Sessions are append-only, so
+// repeatedly writing 100s of KB of full-state snapshots accumulates into
+// GB of session history that crashes `/resume` (vstack#177). Sidecar
+// state on disk remains canonical at this size and is read first on
+// restore; oversized session payloads degrade to bounded manifests or
+// are skipped entirely.
+export const BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES = 64 * 1024;
+
+export interface BoundedSnapshotManifest {
+	version: 2;
+	fullSnapshot: false;
+	reason: "payload-too-large";
+	byteSize: number;
+	fingerprint: string;
+	counts: Record<string, number>;
+	updatedAt: string;
+}
+
+export type BoundedSnapshotOutcome =
+	| { appended: false; reason: "unchanged"; byteSize: number; fingerprint: string }
+	| { appended: true; reason: "appended"; byteSize: number; fingerprint: string }
+	| { appended: true; reason: "manifest"; byteSize: number; fingerprint: string; manifest: BoundedSnapshotManifest };
+
+export interface BoundedAppenderLike {
+	appendEntry: <T>(customType: string, data: T) => unknown;
+}
+
+export interface BoundedSnapshotOptions<T> {
+	appender: BoundedAppenderLike;
+	customType: string;
+	payload: T;
+	sessionKey: string;
+	fingerprintCache: Map<string, string>;
+	/** Optional fingerprint input override. Defaults to the payload itself. */
+	fingerprintInput?: unknown;
+	/** Override per-call. Default is `BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`. */
+	maxBytes?: number;
+	/** Counts surfaced in the manifest body (`{ tasks: 205, panes: 0 }` etc). */
+	counts?: () => Record<string, number>;
+	/** Set false to skip the manifest entry entirely when over cap. Defaults to true. */
+	manifestOnOverflow?: boolean;
+}
+
+export function appendBoundedSnapshot<T>(opts: BoundedSnapshotOptions<T>): BoundedSnapshotOutcome {
+	const maxBytes = opts.maxBytes ?? BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES;
+	const fingerprint = stableSessionSnapshotFingerprint(opts.fingerprintInput ?? opts.payload);
+	const cached = opts.fingerprintCache.get(opts.sessionKey);
+	if (cached === fingerprint) return { appended: false, reason: "unchanged", byteSize: 0, fingerprint };
+	const serialized = JSON.stringify(opts.payload) ?? "null";
+	const byteSize = Buffer.byteLength(serialized, "utf8");
+	if (byteSize <= maxBytes) {
+		opts.appender.appendEntry(opts.customType, opts.payload);
+		opts.fingerprintCache.set(opts.sessionKey, fingerprint);
+		return { appended: true, reason: "appended", byteSize, fingerprint };
+	}
+	if (opts.manifestOnOverflow === false) {
+		opts.fingerprintCache.set(opts.sessionKey, fingerprint);
+		return { appended: false, reason: "unchanged", byteSize, fingerprint };
+	}
+	const manifest: BoundedSnapshotManifest = {
+		version: 2,
+		fullSnapshot: false,
+		reason: "payload-too-large",
+		byteSize,
+		fingerprint,
+		counts: opts.counts?.() ?? {},
+		updatedAt: new Date().toISOString(),
+	};
+	opts.appender.appendEntry(opts.customType, manifest);
+	opts.fingerprintCache.set(opts.sessionKey, fingerprint);
+	return { appended: true, reason: "manifest", byteSize, fingerprint, manifest };
+}
+
+export function isBoundedSnapshotManifest(value: unknown): value is BoundedSnapshotManifest {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<BoundedSnapshotManifest>;
+	return candidate.version === 2 && candidate.fullSnapshot === false;
+}
+
 export interface SessionLeafContextLike {
 	sessionManager: {
 		getLeafId?: () => string | null | undefined;
