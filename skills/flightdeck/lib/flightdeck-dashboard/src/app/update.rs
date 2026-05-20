@@ -15,7 +15,7 @@ use super::hitmap::{ClickAction, ScrollSource};
 use super::keymap::{self, Action};
 use super::model::{ActionStatus, ConfirmDialog, ModalState, Model, ReadSourceState, Tab};
 use super::motion::{self, EffectKind, EffectTarget};
-use super::msg::{ActiveRunLoad, ActiveRunSnapshot, Msg};
+use super::msg::{ActiveRunLoad, ActiveRunSnapshot, Msg, NoActiveRunSnapshot};
 use super::theme::Theme;
 
 const PAGE_STEP: usize = 10;
@@ -151,9 +151,15 @@ fn handle_snapshot_updated(
     if !matches!(model.snapshot_source, SnapshotSource::Socket(_)) {
         snapshot.daemon = file_mode_daemon_status_for(&source_state);
     }
+    let had_error = model.error.is_some();
+    model.error = None;
     if model.snapshot.structural_eq(&snapshot) && model.read_source_state == source_state {
         model.snapshot_diff_drops = model.snapshot_diff_drops.saturating_add(1);
-        return pending_reload;
+        let mut commands = pending_reload;
+        if had_error {
+            commands.push(Cmd::Render);
+        }
+        return commands;
     }
     let pause_edge = model.snapshot.paused_for_user.is_none() && snapshot.paused_for_user.is_some();
     model.recent_events = snapshot.recent_events.clone();
@@ -227,13 +233,12 @@ fn handle_active_run_loaded(model: &mut Model, result: Result<ActiveRunLoad, Str
             set_status(model, "Returned to active run", true);
             vec![Cmd::ProbePanes, Cmd::Render]
         }
-        Ok(ActiveRunLoad::NoActive(message)) => {
-            model.history.loading = false;
+        Ok(ActiveRunLoad::NoActive(no_active)) => {
+            let message = no_active.message.clone();
+            apply_no_active_run_snapshot(model, *no_active);
             model.history.notice = Some(message.clone());
-            model.history.error = None;
-            model.error = None;
             set_status(model, message, false);
-            vec![Cmd::Render]
+            vec![Cmd::ProbePanes, Cmd::Render]
         }
         Err(error) => {
             model.history.loading = false;
@@ -298,6 +303,24 @@ fn apply_active_run_snapshot(model: &mut Model, mut loaded: ActiveRunSnapshot) {
     model.snapshot_source = loaded.source;
     model.snapshot = loaded.snapshot;
     model.read_source_state = loaded.source_state;
+    model.history.loading = false;
+    model.history.error = None;
+    model.error = None;
+    model.sync_activity_source();
+    model.poll_activity_source();
+    model.refresh_now();
+    model.refresh_tabs_enabled();
+    model.initialize_overview_selection();
+}
+
+fn apply_no_active_run_snapshot(model: &mut Model, mut loaded: NoActiveRunSnapshot) {
+    if !matches!(loaded.source, SnapshotSource::Socket(_)) {
+        loaded.snapshot.daemon = file_mode_daemon_status_for(&ReadSourceState::NoActiveRun);
+    }
+    model.recent_events = loaded.snapshot.recent_events.clone();
+    model.snapshot_source = loaded.source;
+    model.snapshot = loaded.snapshot;
+    model.read_source_state = ReadSourceState::NoActiveRun;
     model.history.loading = false;
     model.history.error = None;
     model.error = None;
@@ -1196,24 +1219,32 @@ fn load_active_live_snapshot(
     match run_history::load_active_run_metadata(&resolution.project_root, &resolution.session)
         .map_err(|error| error.to_string())?
     {
-        run_history::ActiveRunLookup::None => Ok(ActiveRunLoad::NoActive(String::from(
-            "No active Flightdeck run",
-        ))),
+        run_history::ActiveRunLookup::None => Ok(no_active_load(
+            resolution,
+            now,
+            "No active Flightdeck run".to_owned(),
+        )),
         run_history::ActiveRunLookup::Mismatched {
             run_id,
             expected_session,
             actual_session,
-        } => Ok(ActiveRunLoad::NoActive(format!(
-            "Active run {run_id} belongs to session {}; requested {expected_session}",
-            actual_session.unwrap_or_else(|| String::from("unknown"))
-        ))),
+        } => Ok(no_active_load(
+            resolution,
+            now,
+            format!(
+                "Active run {run_id} belongs to session {}; requested {expected_session}",
+                actual_session.unwrap_or_else(|| String::from("unknown"))
+            ),
+        )),
         run_history::ActiveRunLookup::Matched(metadata) => {
             let mut snapshot = match tracked_entries::read_session_snapshot(&resolution, now) {
                 Ok(snapshot) if !snapshot.terminated => snapshot,
                 Ok(_) | Err(SnapshotError::StateFileMissing { .. }) => {
-                    return Ok(ActiveRunLoad::NoActive(String::from(
-                        "No live active state; press H for History",
-                    )))
+                    return Ok(no_active_load(
+                        resolution,
+                        now,
+                        "No live active state; press H for History".to_owned(),
+                    ));
                 }
                 Err(error) => return Err(error.to_string()),
             };
@@ -1227,6 +1258,24 @@ fn load_active_live_snapshot(
             })))
         }
     }
+}
+
+fn no_active_load(
+    resolution: tracked_entries::SessionResolution,
+    now: chrono::DateTime<chrono::Utc>,
+    message: String,
+) -> ActiveRunLoad {
+    let mut snapshot = crate::state::snapshot::DashboardSnapshot::empty_for_session(
+        &resolution.session,
+        resolution.state_path.clone(),
+        now,
+    );
+    snapshot.project_root.clone_from(&resolution.project_root);
+    ActiveRunLoad::NoActive(Box::new(NoActiveRunSnapshot {
+        message,
+        snapshot,
+        source: SnapshotSource::Session(resolution),
+    }))
 }
 
 fn import_legacy_archives(model: &mut Model) -> Vec<Cmd> {

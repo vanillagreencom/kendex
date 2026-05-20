@@ -4,15 +4,17 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use flightdeck_dashboard::app::command::Cmd;
+use flightdeck_dashboard::app::command::{Cmd, SnapshotSource};
 use flightdeck_dashboard::app::hitmap::{ClickAction, ScrollSource};
 use flightdeck_dashboard::app::model::{ModalState, ReadSourceState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
-use flightdeck_dashboard::app::msg::Msg;
+use flightdeck_dashboard::app::msg::{ActiveRunLoad, Msg, NoActiveRunSnapshot};
 use flightdeck_dashboard::app::theme::Theme;
 use flightdeck_dashboard::app::update;
 use flightdeck_dashboard::settings_catalog::SettingsState;
 use flightdeck_dashboard::state::run_history::{HistoryRun, RunMetadata};
+use flightdeck_dashboard::state::snapshot::DashboardSnapshot;
+use flightdeck_dashboard::state::tracked_entries::SessionResolution;
 
 #[test]
 fn theme_picker_jk_cycles_selection_does_not_touch_base() {
@@ -300,6 +302,65 @@ fn read_only_archive_blocks_focus_and_prune() {
     update(&mut model, Msg::KeyPressed(key(KeyCode::Char('D'))));
     assert_eq!(model.modal, ModalState::None);
     assert!(model.confirm.is_none());
+}
+
+#[test]
+fn active_run_no_active_result_clears_archive_snapshot_and_activity() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.read_source_state = ReadSourceState::ArchivedRun {
+        run_id: "run-old".to_owned(),
+        archived_at: common::fixed_now(),
+    };
+    assert!(!model.snapshot.sessions.is_empty());
+    assert!(!model.activity.events.is_empty());
+
+    let state_path = temp.path().join("tmp/flightdeck-state-S.json");
+    std::fs::create_dir_all(state_path.parent().expect("state parent")).expect("state dir");
+    let mut snapshot =
+        DashboardSnapshot::empty_for_session("S", state_path.clone(), common::fixed_now());
+    snapshot.project_root = temp.path().to_path_buf();
+    let source = SnapshotSource::Session(SessionResolution {
+        project_root: temp.path().to_path_buf(),
+        state_dir: temp.path().join("tmp"),
+        session: String::from("S"),
+        state_path,
+    });
+
+    update(
+        &mut model,
+        Msg::ActiveRunLoaded(Ok(ActiveRunLoad::NoActive(Box::new(NoActiveRunSnapshot {
+            message: String::from("No active Flightdeck run"),
+            snapshot,
+            source,
+        })))),
+    );
+
+    assert_eq!(model.read_source_state, ReadSourceState::NoActiveRun);
+    assert!(model.snapshot.sessions.is_empty());
+    assert!(model.activity.events.is_empty());
+    assert!(model.error.is_none());
+}
+
+#[test]
+fn successful_structural_equal_snapshot_clears_stale_error() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    let snapshot = model.snapshot.clone();
+    let source_state = model.read_source_state.clone();
+    model.error = Some(String::from("socket read failed"));
+
+    let commands = update(
+        &mut model,
+        Msg::SnapshotUpdated {
+            snapshot: Box::new(snapshot),
+            source_state,
+        },
+    );
+
+    assert!(model.error.is_none());
+    assert!(commands
+        .iter()
+        .any(|command| matches!(command, Cmd::Render)));
 }
 
 #[test]

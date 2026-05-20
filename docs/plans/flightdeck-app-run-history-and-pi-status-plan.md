@@ -88,7 +88,7 @@ That behavior is useful for post-mortem inspection, but confusing during continu
 
 The dashboard should clearly distinguish active runs from archived runs and make historical snapshots browsable without pretending they are still active.
 
-The Pi extension is being trimmed into a Pi-native status surface: inline mini-dashboard, pause/user messages near chat, optional notifications/bell, and a `/flightdeck` command that focuses or opens the Rust app. The Rust app remains the canonical full UI for history, archives, daemon details, conversations, decisions, conflicts, and control affordances.
+PR #167's current branch head focuses on the Rust dashboard active/history/archive behavior. Pi status-shell and lifecycle command wording belongs to PR #165/#166 reconciliation; on this branch the Pi extension still provides inline status plus the existing `/flightdeck` popup.
 
 ## Goals
 
@@ -99,10 +99,8 @@ The Pi extension is being trimmed into a Pi-native status surface: inline mini-d
 - Store history in a durable location that survives worktree cleanup and project `tmp/` churn.
 - Keep backwards compatibility with existing `tmp/flightdeck-state-*.json` and `.archive` files.
 - Stop stale completed-session mini-dashboard banners from appearing in brand-new Pi sessions unless the user explicitly opens history.
-- Keep `@vanillagreen/pi-flightdeck`, but greatly simplify it so Pi keeps the nice inline status display without owning the full dashboard UI.
-- Make `/flightdeck` focus the Rust Flightdeck app if it is already running, or launch it in a tmux window if missing.
-- Give the Rust Flightdeck app a canonical tmux window name, preferably ` FD` (Nerd Font plane + `FD`) with a configurable `FD` fallback/override.
-- Launch the Rust Flightdeck app before Flightdeck starts child session windows so the app sits immediately after the master window in normal tmux ordering.
+- Keep `@vanillagreen/pi-flightdeck` compatible with the Rust dashboard history/no-active split without claiming status-shell behavior that is not in this branch.
+- Leave Pi status-shell focus/open behavior, default app-window naming, and app-window ordering to PR #165/#166 reconciliation.
 - Automate post-merge local-main sync so Flightdeck workflows do not leave the operator's main checkout stale after merging PRs.
 
 ## Non-goals
@@ -110,8 +108,8 @@ The Pi extension is being trimmed into a Pi-native status surface: inline mini-d
 - Do not change agent orchestration semantics for issue work in this plan.
 - Do not remove project-local state files immediately; keep compatibility wrappers/pointers.
 - Do not require GitHub/Linear/worktree dependencies for generic session history browsing.
-- Do not delete `@vanillagreen/pi-flightdeck`; remove only the duplicated popup/app logic.
-- Do not make Pi extension UI the source of truth for history, daemon controls, or full-session inspection. The Rust app owns those.
+- Do not delete `@vanillagreen/pi-flightdeck`.
+- Do not make Pi extension UI the source of truth for durable history. The Rust app History popup owns run/snapshot browsing on this branch.
 
 ## Proposed model
 
@@ -123,18 +121,19 @@ The Pi extension is being trimmed into a Pi-native status surface: inline mini-d
 - **Active pointer**: project-level pointer to the currently active run, if any.
 - **Archive view**: read-only dashboard mode for past runs/snapshots.
 - **Flightdeck app**: the Rust `flightdeck-dashboard tui` application. It owns full navigation, history, daemon details, conversations, decisions, conflicts, and archive inspection.
-- **Pi status extension**: the trimmed Pi extension. It owns only inline status/pause UI and a focus-or-launch command for the Flightdeck app.
+- **Pi extension**: on this branch, the existing `pi-flightdeck` inline status and `/flightdeck` popup integration. Status-shell/focus-open behavior is follow-up work outside PR #167.
 
 ### Current implementation notes
 
 These details were verified before expanding this plan and should be read with the follow-up PRs in mind:
 
-- PR #166 trims `@vanillagreen/pi-flightdeck` toward a status shell: `/flightdeck` focuses/opens the Rust app, `/flightdeck:toggle` cycles the mini-dashboard, and the extension keeps inline status/pause UI instead of owning full dashboard/history UI.
-- The Pi extension should render active status only. Terminated archives and history browsing belong to the Rust app; no Pi popup/prune/daemon-control language should be reintroduced in current docs.
+- PR #167 owns the Rust dashboard active/history/archive behavior on the current base.
+- The current `@vanillagreen/pi-flightdeck` package still provides inline status plus the Pi popup opened by `/flightdeck`; docs for this branch must not describe it as a completed status shell.
+- Terminated archives and durable history browsing belong to the Rust dashboard History popup. The Pi mini-dashboard should not render terminated archives as active state.
 - The extension has no tool-output renderer registration and no `tool_call` / `tool_result` rendering logic. If future Pi tool renderers are added, keep only those renderer registrations and tests.
 - `flightdeck-dashboard launch` no-ops outside tmux, starts the Rust app through `flightdeck-session start`, and records a `flightdeck-dashboard` tracked entry.
-- The current app tmux window default is `flightdeck`, configurable through `--window-name` or `FLIGHTDECK_DASHBOARD_WINDOW`; that env var is also exposed in the Rust dashboard Settings popup and `settings_catalog.rs`. If this plan changes the default to ` FD` or adds an icon fallback knob, update the CLI/env docs, settings catalog definitions, validation, and dashboard snapshots together.
-- PR #166 owns the app-window focus/open status-shell path; PR #167 owns the Rust dashboard active/history/archive behavior.
+- The current app tmux window default is `flightdeck`, configurable through `--window-name` or `FLIGHTDECK_DASHBOARD_WINDOW`; that env var is also exposed in the Rust dashboard Settings popup and `settings_catalog.rs`.
+- PR #165/#166 lifecycle/status-shell wording lands outside this branch and must be reconciled after those changes are present.
 
 ### Storage layout
 
@@ -296,7 +295,7 @@ Keep:
 - Mini-dashboard settings needed for refresh cadence, max rows, tree style, visibility, and toggle.
 - Cross-extension usage stats from `pi-agents-tmux` if the mini-dashboard still displays cost/tokens/turns.
 - `/flightdeck:toggle` and its shortcut for hidden/compact/expanded mini-dashboard cycling.
-- `/flightdeck` command and optional shortcut, repurposed to focus/open the Rust app.
+- `/flightdeck` popup command and optional shortcut on this branch; focus/open repurposing is PR #166 follow-up work.
 
 Remove or move to the Rust app:
 
@@ -313,9 +312,9 @@ Mini-dashboard parity:
 - Do not show terminated archive rows in fresh Pi sessions. History owns archives.
 - Prefer not to count the Rust app itself as a normal workflow session in the mini-dashboard. If the app remains registered as `flightdeck-dashboard`, render it as app/header status or mark it as a hidden/system entry so the widget does not self-report `WF flightdeck` as supervised work.
 
-### `/flightdeck` focus/open behavior
+### Deferred `/flightdeck` app focus/open behavior
 
-`/flightdeck` should no longer open a Pi custom popup.
+On this branch, `/flightdeck` still opens the Pi custom popup. Repurposing it to focus/open the Rust app belongs to PR #166 follow-up work.
 
 Behavior:
 
@@ -326,7 +325,7 @@ Behavior:
 
 Best implementation approach:
 
-- Add a canonical `flightdeck-dashboard focus-or-launch [--json]` helper in the Rust app or its script wrapper.
+- Add a future Rust dashboard focus/open helper in the Rust app or its script wrapper.
 - The helper owns tmux probing, launch, and focus. The Pi extension should shell to this helper instead of reimplementing tmux logic in TypeScript.
 - Focus by stable `pane_id` when available: resolve `#{window_id}` from the pane id, then `tmux select-window -t <window_id>`.
 - Fall back to the app's recorded window id/name only when stable pane id is missing and stale-target guards pass.
@@ -378,7 +377,7 @@ flightdeck-dashboard tui --session <tmux-session>          # active run or landi
 flightdeck-dashboard tui --run-id <run-id>                 # read-only selected run
 flightdeck-dashboard tui --archive <path>                  # read-only legacy archive
 flightdeck-dashboard launch [--window-name <name>]         # ensure app window exists
-flightdeck-dashboard focus-or-launch [--json]              # focus app, or launch+focus in tmux
+# future PR #166: Rust dashboard focus/open helper
 ```
 
 `flightdeck-session start`:
@@ -482,7 +481,7 @@ Implementation targets:
 - Add tests for new Pi startup after a terminated archive: no `Flightdeck 2 sessions · ✓ 2 · session complete` persistent banner; the Rust History popup can still load that archive.
 - Add tests for live active stale rows: `pane gone` chip and manual prune still appear only for active run state.
 
-### Phase 6.6 — Trim `@vanillagreen/pi-flightdeck` to a status shell
+### Deferred Phase 6.6 — Trim `@vanillagreen/pi-flightdeck` to a status shell
 
 Goal: keep the Pi extension as a lightweight inline status display while deleting the duplicated full-screen popup app.
 
@@ -491,9 +490,9 @@ Tasks:
 - Delete popup-only UI state, tab renderers, modal-lock usage, popup search/detail/key handling, and popup prune behavior from `pi-extensions/pi-flightdeck/extensions/flightdeck.ts`.
 - Keep/refactor the mini-dashboard renderer so it still shows the current inline information for active supervised entries.
 - Keep pause banner, notifications/bell, visibility policy, stacked-widget integration, settings reader, and `pi-agents-tmux` usage-stat bridge.
-- Replace `/flightdeck` handler with `flightdeck-dashboard focus-or-launch` delegation.
+- In PR #166 follow-up work, replace the `/flightdeck` popup handler with Rust app focus/open delegation.
 - Keep `/flightdeck:toggle` for mini-dashboard hidden/compact/expanded cycling.
-- Rename or remove settings/resources that mention popup behavior. If keeping `f6`, make it focus/open the app instead of opening a Pi popup.
+- In PR #166 follow-up work, rename or remove settings/resources that mention popup behavior. If keeping `f6`, make it focus/open the app instead of opening a Pi popup.
 - Verify no current daemon/session path still depends on `/flightdeck watch`; remove the legacy paste workaround if unused.
 - Update user-facing docs and metadata to remove `pi-flightdeck` deprecation wording:
   - root `README.md` Pi extension catalog
@@ -501,26 +500,24 @@ Tasks:
   - `pi-extensions/pi-flightdeck/README.md`
   - `pi-extensions/pi-flightdeck/package.json` extension-manager labels/resources
   - any active plan/docs files that act as current guidance (historical reports can keep historical wording if clearly archival)
-- New wording: `pi-flightdeck` is optional Pi UI support for Flightdeck. It provides inline mini-dashboard/status, pause/user messages, and `/flightdeck` focus/open integration for the Rust app. The Flightdeck skill and Rust app work without it.
+- Current PR #167 wording: `pi-flightdeck` is optional Pi UI support for Flightdeck. It provides inline mini-dashboard/status, pause/user messages, and the existing `/flightdeck` popup. The Flightdeck skill and Rust app work without it. PR #166 follow-up wording can describe Rust app focus/open integration after that behavior lands.
 
 Tests:
 
 - Mini-dashboard renders active session rows with same key information as before.
 - Fresh Pi session with only terminated history shows no stale completed-session banner.
-- `/flightdeck` outside tmux shows a clear error and performs no launch.
-- `/flightdeck` inside tmux focuses an existing app window.
-- `/flightdeck` inside tmux launches the app if missing and then focuses it.
+- `/flightdeck` still opens the existing Pi popup on this branch.
 - `/flightdeck:toggle` still cycles mini-dashboard state.
-- No popup command/shortcut path remains reachable.
+- PR #166 follow-up work owns outside-tmux focus/open checks and popup removal.
 - No current user-facing README/catalog says `pi-flightdeck` is deprecated or required.
 
-### Phase 6.7 — App focus/open helper, icon title, and launch order
+### Deferred Phase 6.7 — App focus/open helper, icon title, and launch order
 
 Goal: make the Rust app the canonical full dashboard and ensure it appears in a predictable tmux location.
 
 Tasks:
 
-- Add `flightdeck-dashboard focus-or-launch [--json]` as the canonical focus/open path.
+- Add a future Rust dashboard focus/open command as the canonical focus/open path.
 - Add stable focus logic: app pane id → window id → `tmux select-window -t <window-id>`.
 - Keep launch idempotent: if the app entry/pane is alive, do not spawn a duplicate.
 - Change default app window title from `flightdeck` to ` FD`.
@@ -535,8 +532,8 @@ Tests:
 
 - Default app window title is ` FD`; env/flag/Settings override can produce plain `FD`.
 - App launch outside tmux is a no-op/error, not a crash.
-- `focus-or-launch --json` returns `focused` for an existing live app pane.
-- `focus-or-launch --json` returns `launched` and focuses the new pane when missing.
+- Future focus/open helper returns `focused` for an existing live app pane.
+- Future focus/open helper returns `launched` and focuses the new pane when missing.
 - Stale dashboard entry does not block relaunch.
 - First child launch creates tmux window order: master, app, child.
 - Existing live app remains after master starts additional children; no duplicate app window appears.
@@ -792,7 +789,7 @@ Very low. Test-only clarity improvement. Not required for runtime correctness.
 
 #### Current state
 
-Current docs should describe `pi-flightdeck` as optional Pi UI support: inline status, pause/user messages, notifications/bell, and `/flightdeck` focus/open integration for the canonical Rust app. Any lingering deprecated/full-popup wording is stale and should be removed when touched.
+Current PR #167 docs should describe `pi-flightdeck` as optional Pi UI support with inline status, pause/user messages, notifications/bell, and the existing `/flightdeck` popup. PR #166 follow-up docs can switch this to Rust app focus/open integration after that behavior lands.
 
 #### Change
 
@@ -802,7 +799,7 @@ Keep policy:
 - `pi-flightdeck` is not a dependency of the Flightdeck skill.
 - `pi-flightdeck` is optional Pi UI support for Flightdeck.
 - The Rust app remains the canonical full Flightdeck UI.
-- `pi-flightdeck` should keep only Pi-native inline status features: mini-dashboard, pause/user messages near chat, notifications/bell, and `/flightdeck` focus/open integration.
+- On this branch, `pi-flightdeck` keeps Pi-native inline status features plus the existing popup. Focus/open integration is PR #166 follow-up work.
 - New full-dashboard feature work belongs in the Rust app / Flightdeck skill, not in a Pi popup.
 - Bug fixes and compatibility work are allowed when the Pi inline status integration needs them.
 
@@ -812,7 +809,7 @@ Update docs and metadata called out in Phase 6.6 so no current user-facing READM
 
 #### Tests
 
-No tests unless code changes. If the Pi extension is trimmed as Phase 6.6 describes, run the Pi extension tests and the `/flightdeck` focus/open checks.
+No tests unless code changes. If PR #166 follow-up trims the Pi extension as deferred Phase 6.6 describes, run the Pi extension tests and the focus/open checks there.
 
 ### Phase 12 — No-op confirmations for upstream-only fixes
 
@@ -953,16 +950,14 @@ If any Pi extension behavior changes:
 - Existing `tmp/flightdeck-state-*.json.archive` files remain viewable/importable.
 - Fresh Pi sessions with only terminated archives do not show stale `session complete` / `pane gone` persistent banners; those archives are accessible only through History or explicit archive mode.
 - Manual prune remains available for pane-gone entries in active live runs, but archived runs are never auto-pruned.
-- Pi extension no longer contains the duplicated `/flightdeck` popup; it keeps only inline mini-dashboard/status, pause/user messaging, notifications/bell, app focus/open command, and any real tool renderers if added later.
+- On PR #167, the Pi extension still contains the `/flightdeck` popup; it must not render terminated archives as active mini-dashboard state.
 - Current pi-flightdeck has no Flightdeck-specific tool output renderer, so no tool renderer code must be preserved in this cleanup.
-- `/flightdeck` outside tmux is a clear no-op error; inside tmux it focuses the Rust app or launches it in a new tmux window and focuses it.
-- Rust app window defaults to ` FD` with a documented plain `FD` fallback/override.
-- Automatic app launch happens before child session windows and places the app immediately after the master window.
+- Rust app focus/open command, app-window icon/default naming, and automatic app launch ordering are PR #166 follow-up items, not PR #167 behavior.
 - Pi 0.75.1 extension follow-ups are either implemented with focused tests or explicitly left as documented no-op decisions.
 - `pi-codex-minimal-tools` terminal provider errors preserve HTTP status codes for retry classification.
 - `pi-skills-manager` browse rows clamp to terminal height without breaking large-terminal configured row counts.
 - Optional Codex text-only fixture cleanup, if done, changes only test names/IDs and not runtime behavior.
-- Tests cover lifecycle, migration, dashboard rendering, Pi mini-dashboard banner behavior, Pi app focus/open behavior, tmux app placement, Settings popup/catalog interactions when dashboard env defaults change, and read-only/settings-write safety.
+- Tests cover lifecycle, migration, dashboard rendering, Pi mini-dashboard banner behavior, Settings popup/catalog interactions when dashboard env defaults change, and read-only/settings-write safety. Pi app focus/open and tmux app placement tests belong to the PR #166 follow-up that implements those behaviors.
 - After Flightdeck merges a PR, the primary local `main` checkout is either fast-forwarded to `origin/main` or Flightdeck clearly reports why sync was blocked and what operator choice is needed; never reset the kind of divergent local-main state observed after the cleanup session (`ahead 8, behind 9`).
 - After any implementation PR is merged, local `main` is fetched and fast-forwarded or a blocking sync reason is recorded before the work is called complete.
 - Closed daemon issue #151 stays treated as regression context: daemon/run-history work must capture fresh diagnostics and open/update a new issue if a similar daemon exit appears.

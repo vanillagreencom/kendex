@@ -20,9 +20,16 @@ pub struct ActiveRunSnapshot {
 }
 
 #[derive(Debug)]
+pub struct NoActiveRunSnapshot {
+    pub message: String,
+    pub snapshot: DashboardSnapshot,
+    pub source: SnapshotSource,
+}
+
+#[derive(Debug)]
 pub enum ActiveRunLoad {
     Loaded(Box<ActiveRunSnapshot>),
-    NoActive(String),
+    NoActive(Box<NoActiveRunSnapshot>),
 }
 
 #[derive(Debug)]

@@ -449,3 +449,83 @@ fn ensure_path_inside_expected_dir(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn poll_reads_at_most_max_bytes_per_poll() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = live_activity_path(dir.path(), "S");
+        let body = "x".repeat(700);
+        let mut contents = String::new();
+        let mut total_records = 0usize;
+        while contents.len() <= MAX_READ_BYTES_PER_POLL + 64 * 1024 {
+            contents.push_str(&event_line(total_records, Some(&body)));
+            total_records += 1;
+        }
+        fs::write(&path, contents).expect("activity fixture");
+        let total_bytes = fs::metadata(&path).expect("metadata").len();
+
+        let mut source = JsonlActivitySource::new(dir.path(), "S");
+        let first = source.poll();
+
+        assert_eq!(source.offset(), MAX_READ_BYTES_PER_POLL as u64);
+        assert!(!first.is_empty());
+        assert!(first.len() < total_records);
+
+        let second = source.poll();
+
+        assert_eq!(source.offset(), total_bytes);
+        assert_eq!(second.len(), total_records);
+        assert!(second.len() > first.len());
+    }
+
+    #[test]
+    fn event_retention_is_bounded_and_evicts_oldest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = live_activity_path(dir.path(), "S");
+        let total_records = MAX_EVENTS_IN_MEMORY + 25;
+        let contents = (0..total_records)
+            .map(|index| event_line(index, None))
+            .collect::<String>();
+        fs::write(path, contents).expect("activity fixture");
+
+        let mut source = JsonlActivitySource::new(dir.path(), "S");
+        let events = source.poll();
+
+        let expected_last = format!("evt-{}", total_records - 1);
+        assert_eq!(events.len(), MAX_EVENTS_IN_MEMORY);
+        assert_eq!(
+            events.first().map(|event| event.id.as_str()),
+            Some("evt-25")
+        );
+        assert_eq!(
+            events.last().map(|event| event.id.as_str()),
+            Some(expected_last.as_str())
+        );
+    }
+
+    fn event_line(index: usize, body: Option<&str>) -> String {
+        let mut value = json!({
+            "schema_version": 1,
+            "id": format!("evt-{index}"),
+            "ts": "2026-05-19T12:00:00Z",
+            "session_id": "S",
+            "source": "flightdeck",
+            "type": "session.started",
+            "severity": "info",
+            "importance": "normal",
+            "summary": format!("event {index}"),
+        });
+        if let Some(body) = body {
+            value["body"] = json!(body);
+        }
+        format!("{value}\n")
+    }
+}
