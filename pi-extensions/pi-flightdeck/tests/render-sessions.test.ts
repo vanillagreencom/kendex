@@ -1,6 +1,6 @@
 // Phase 5 sessions-first render coverage. Compact render assertions act as
 // snapshots without pinning ANSI/color noise: no sessions, ad-hoc, issue,
-// mixed mode, owner vs peer popup header, and stale daemon state.
+// mixed mode, owner visibility policy, and stale daemon state.
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -8,13 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
 
-import { dashboardVisibleInPane, renderObserverHeader } from "../extensions/dashboard-visibility.js";
+import { dashboardVisibleInPane } from "../extensions/dashboard-visibility.js";
 import {
-	makeInitialPopupState,
-	renderConflictsTab,
 	renderAwaitingWatchHintLine,
 	renderDashboardLines,
-	renderOverviewTab,
+	renderStateErrorBanner,
 	renderStaleHintLine,
 	type DashboardState,
 } from "../extensions/flightdeck.js";
@@ -164,6 +162,7 @@ function snapshot(entries: TrackedSession[], overrides: Partial<FlightdeckSnapsh
 			started_at: "2026-05-13T00:00:00Z",
 			terminated: false,
 		},
+		livePaneIds: new Set(entries.map((entry) => entry.pane_id).filter((paneId): paneId is string => typeof paneId === "string" && paneId.length > 0)),
 		pendingEvents: [],
 		stateDir: "/tmp/pi-flightdeck-daemon",
 		tmux: { paneId: "%1", sessionId: "$1", sessionKey: "s1", sessionName: "HT" },
@@ -175,12 +174,6 @@ function snapshot(entries: TrackedSession[], overrides: Partial<FlightdeckSnapsh
 function dashboardText(entries: TrackedSession[], state: DashboardState = "compact"): string {
 	return joinRendered(renderDashboardLines(snapshot(entries), plainTheme() as never, 140, state, ENV_CWD, new Map()));
 }
-
-test("no sessions overview uses sessions-first empty copy", () => {
-	const text = joinRendered(renderOverviewTab(snapshot([]), makeInitialPopupState(), 120, plainTheme() as never, 30, new Map()));
-	assert.match(text, /No sessions tracked yet/);
-	assert.doesNotMatch(text, /No issues tracked/);
-});
 
 test("compact dashboard with no sessions renders header plus empty state", () => {
 	const text = dashboardText([]);
@@ -214,7 +207,8 @@ test("compact dashboard renders 'pane gone' chip when entry pane is missing from
 	const snap = snapshot([entry], { livePaneIds: new Set(["%1", "%2"]) });
 	const text = joinRendered(renderDashboardLines(snap, plainTheme() as never, 140, "compact", ENV_CWD, new Map()));
 	assert.match(text, /pane gone/);
-	assert.match(text, /press.+p.*del.+to prune/);
+	assert.match(text, /\/flightdeck/);
+	assert.doesNotMatch(text, /prune/);
 });
 
 test("compact dashboard does NOT mark entry as gone when pane is alive", () => {
@@ -249,14 +243,17 @@ test("one workflow session renders WF kind badge", () => {
 	assert.doesNotMatch(text, /1 issue/);
 });
 
+test("dashboard app self-entry is hidden from mini-dashboard sessions", () => {
+	const text = dashboardText([workflow({ harness: "shell", id: "flightdeck-dashboard", issue: "flightdeck-dashboard", title: " FD" })]);
+	assert.match(text, /0 sessions/);
+	assert.doesNotMatch(text, / FD/);
+});
+
 test("domain.issue metadata promotes corrupted kind to issue mode", () => {
 	const corrupted = issue({ kind: "broken" });
 	const text = dashboardText([corrupted]);
 	assert.match(text, /1 issue/);
 	assert.match(text, /ISS\s+Fix bug/);
-	const conflicts = joinRendered(renderConflictsTab(snapshot([corrupted]), makeInitialPopupState(), 120, plainTheme() as never));
-	assert.match(conflicts, /Merge queue/);
-	assert.doesNotMatch(conflicts, /No issue-mode sessions are tracked/);
 });
 
 test("mixed ad-hoc plus issue sessions show session total plus issue count", () => {
@@ -266,23 +263,11 @@ test("mixed ad-hoc plus issue sessions show session total plus issue count", () 
 	assert.match(text, /AH\s+Explore docs/);
 	assert.match(text, /ISS\s+Fix bug/);
 	assert.match(text, /PR#88/);
-	const conflicts = joinRendered(renderConflictsTab(snapshot([adhoc(), issue()]), makeInitialPopupState(), 120, plainTheme() as never));
-	assert.match(conflicts, /Merge queue/);
-	assert.doesNotMatch(conflicts, /No issue-mode sessions are tracked/);
 });
 
-test("Conflicts tab is issue-mode-labeled when no issue sessions exist", () => {
-	const text = joinRendered(renderConflictsTab(snapshot([adhoc()]), makeInitialPopupState(), 120, plainTheme() as never));
-	assert.match(text, /Conflicts & merges \(issue mode\)/);
-	assert.match(text, /No issue-mode sessions are tracked/);
-});
-
-test("owner pane renders dashboard while peer pane gets observer popup header", () => {
-	const snap = snapshot([adhoc()], { tmux: { paneId: "%2", sessionId: "$1", sessionKey: "s1", sessionName: "HT" } });
+test("owner pane renders dashboard while peer pane is suppressed by owner visibility", () => {
 	assert.equal(dashboardVisibleInPane({ currentPaneId: "%1", ownerPaneId: "%1", visibility: "owner" }), true);
 	assert.equal(dashboardVisibleInPane({ currentPaneId: "%2", ownerPaneId: "%1", visibility: "owner" }), false);
-	const header = stripAnsi(renderObserverHeader(snap, plainTheme() as never, 120) ?? "");
-	assert.match(header, /Observer view \(owner: %1 · \/repo\)/);
 });
 
 test("stale daemon renders stale session-state copy", () => {
@@ -305,6 +290,19 @@ test("stale daemon renders stale session-state copy", () => {
 	assert.match(text, /session state from/);
 	assert.match(text, /daemon stopped/);
 	assert.doesNotMatch(text, /issue tree/);
+});
+
+test("live master-state parse errors render a state-error banner", () => {
+	const snap = snapshot([], {
+		master: undefined,
+		masterError: "Unexpected token n in JSON at position 1",
+		masterStatePath: "/repo/tmp/flightdeck-state-HT.json",
+	});
+	assert.equal(flightdeckSessionStatus(snap), "state-error");
+	const text = joinRendered(renderStateErrorBanner(snap, plainTheme() as never, 140));
+	assert.match(text, /FLIGHTDECK STATE ERROR/);
+	assert.match(text, /flightdeck-state-HT\.json/);
+	assert.match(text, /Unexpected token/);
 });
 
 test("never-started daemon classifies as awaiting-watch, not stale", () => {

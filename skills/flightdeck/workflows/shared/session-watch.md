@@ -58,7 +58,7 @@ Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `wa
      fi
    fi
    ```
-   `flightdeck-dashboard launch` verifies the tracked `flightdeck-dashboard` entry and pane, ignores stale same-name windows, and is guarded against recursive launches from the dashboard's own `flightdeck-session start`.
+   `flightdeck-dashboard launch` verifies the tracked `flightdeck-dashboard` entry and pane, refuses untracked same-name windows instead of spawning duplicates, and is guarded against recursive/active-run launches from the dashboard's own `flightdeck-session start`.
 5. Spawn or attach the daemon idempotently after checking daemon status for live work:
    ```bash
    MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
@@ -221,7 +221,7 @@ If `paused_for_user` is set, do not release/yield as a normal cycle; wait for th
 
 On re-entry, `flightdeck-state init` is idempotent. Reconcile entries, re-poll through `pane-registry list --format json`, treat persisted state as a hint, and resume at § 2.
 
-Compaction recovery MUST verify dashboard presence and daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `FLIGHTDECK_DASHBOARD != 0`, run `flightdeck-dashboard launch` before daemon respawn; stale same-name windows do not satisfy the invariant. If `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with `pane-registry list --format inner-panes-live` and the matching `inner-harnesses-live` list. Capture `flightdeck-daemon start` exit code + stderr using the § 1 contract: exit `4` → re-resolve master from `$TMUX_PANE` and retry once; exit `1` + `flightdeck-daemon status` running → log `daemon-respawn-raced` and proceed; any remaining failure → surface `daemon-respawn-failed` and do NOT yield/end the turn. On success, log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
+Compaction recovery MUST verify dashboard presence and daemon liveness before yielding again. If any non-terminal tracked entry has a live pane and `FLIGHTDECK_DASHBOARD != 0`, run `flightdeck-dashboard launch` before daemon respawn; stale same-name windows do not satisfy the invariant and should be removed/renamed rather than duplicated. If `flightdeck-daemon status --session <S>` says `no daemon`, respawn the daemon with `pane-registry list --format inner-panes-live` and the matching `inner-harnesses-live` list. Capture `flightdeck-daemon start` exit code + stderr using the § 1 contract: exit `4` → re-resolve master from `$TMUX_PANE` and retry once; exit `1` + `flightdeck-daemon status` running → log `daemon-respawn-raced` and proceed; any remaining failure → surface `daemon-respawn-failed` and do NOT yield/end the turn. On success, log `daemon-respawned` with the session id and inner panes before continuing. Do not assume a prior `--in-tmux-window` daemon survived compaction or user window cleanup.
 
 ---
 

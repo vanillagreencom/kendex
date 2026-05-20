@@ -12,10 +12,38 @@ source "$SCRIPT_DIR/lib/pane-env.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
 
+ACTIVE_RUN_ROLLBACK_ARMED=0
+ACTIVE_RUN_ROLLBACK_ID=""
+ACTIVE_RUN_ROLLBACK_SESSION=""
+
+active_run_arm_rollback() {
+  ACTIVE_RUN_ROLLBACK_ARMED=1
+  ACTIVE_RUN_ROLLBACK_ID="$1"
+  ACTIVE_RUN_ROLLBACK_SESSION="$2"
+}
+
+active_run_disarm_rollback() {
+  ACTIVE_RUN_ROLLBACK_ARMED=0
+  ACTIVE_RUN_ROLLBACK_ID=""
+  ACTIVE_RUN_ROLLBACK_SESSION=""
+}
+
+active_run_rollback_on_exit() {
+  local status=$?
+  if [[ "${ACTIVE_RUN_ROLLBACK_ARMED:-0}" == "1" && -n "${ACTIVE_RUN_ROLLBACK_ID:-}" ]]; then
+    ACTIVE_RUN_ROLLBACK_ARMED=0
+    if ! "$SCRIPT_DIR/flightdeck-state" run terminate "$ACTIVE_RUN_ROLLBACK_ID" --tmux-session "$ACTIVE_RUN_ROLLBACK_SESSION" >/dev/null 2>&1; then
+      printf 'Warning: failed to roll back newly created Flightdeck active run %s after pre-registration abort\n' "$ACTIVE_RUN_ROLLBACK_ID" >&2
+    fi
+  fi
+  return "$status"
+}
+trap active_run_rollback_on_exit EXIT
+
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--strict-discovery]
+  flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--after-window-id <@ID>] [--no-active-run] [--strict-discovery]
   flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--worktree <path>] [--model <id>] [--effort <level>|--thinking <level>]
 USAGE
   exit 2
@@ -265,7 +293,8 @@ prepare_launch_metadata() {
 }
 
 ensure_dashboard_launched() {
-  local entry_id="$1" dashboard_bin err rc
+  local entry_id="$1" after_window_id="${2:-}" dashboard_bin err rc args state_file window_id
+  DASHBOARD_WINDOW_ID=""
   [[ "$entry_id" != "flightdeck-dashboard" ]] || return 0
   [[ "${FLIGHTDECK_DASHBOARD:-1}" != "0" ]] || return 0
   [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" != "1" ]] || return 0
@@ -273,13 +302,33 @@ ensure_dashboard_launched() {
   [[ -x "$dashboard_bin" ]] || { printf 'Error: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 1; }
   err=$(mktemp -t flightdeck-dashboard-launch.XXXXXX)
   rc=0
-  FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" launch 2>"$err" || rc=$?
+  args=(launch)
+  [[ -n "$after_window_id" ]] && args+=(--after-window-id "$after_window_id")
+  FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" "${args[@]}" 2>"$err" || rc=$?
   if [[ -s "$err" ]]; then cat "$err" >&2; fi
   rm -f "$err"
   if (( rc != 0 )); then
-    printf 'Error: flightdeck dashboard launch failed after registering %s (rc=%s)\n' "$entry_id" "$rc" >&2
+    printf 'Error: flightdeck dashboard launch failed before launching %s (rc=%s)\n' "$entry_id" "$rc" >&2
     return "$rc"
   fi
+  state_file=$("$SCRIPT_DIR/flightdeck-state" path 2>/dev/null || true)
+  if [[ -n "$state_file" && -f "$state_file" ]]; then
+    window_id=$(jq -r '.entries["flightdeck-dashboard"].window_id // empty' "$state_file" 2>/dev/null || true)
+    if [[ -n "$window_id" && "$window_id" != "null" ]]; then
+      DASHBOARD_WINDOW_ID="$window_id"
+    fi
+  fi
+  return 0
+}
+
+should_skip_active_run_ensure() {
+  local entry_id="$1" explicit_skip="${2:-0}"
+  [[ "$entry_id" == "flightdeck-dashboard" ]] && return 0
+  [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" == "1" ]] && return 0
+  [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" ]] && return 0
+  [[ "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]] && return 0
+  [[ "$explicit_skip" == "1" ]] && return 0
+  return 1
 }
 
 capture_pane_meta() {
@@ -621,19 +670,33 @@ archive_stale_state_if_needed() {
 }
 
 ensure_active_run_for_session() {
-  local session_name
+  if [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" || "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]]; then
+    return 0
+  fi
+  local session_name ensure_json action run_id
   session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
   [[ -n "$session_name" ]] || { echo "Error: unable to resolve tmux session for Flightdeck run" >&2; exit 2; }
-  if ! "$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name" >/dev/null; then
+  if ! ensure_json=$("$SCRIPT_DIR/flightdeck-state" run ensure --tmux-session "$session_name"); then
     echo "Error: failed to create or reuse Flightdeck active run" >&2
     exit 2
   fi
+  action=$(jq -r '.action // empty' <<< "$ensure_json" 2>/dev/null || true)
+  run_id=$(jq -r '.active.run_id // .metadata.run_id // empty' <<< "$ensure_json" 2>/dev/null || true)
+  case "$action" in
+    created|created-after-terminated|created-after-stale)
+      if [[ -z "$run_id" ]]; then
+        echo "Error: flightdeck-state run ensure returned creation action without active run id" >&2
+        exit 2
+      fi
+      active_run_arm_rollback "$run_id" "$session_name"
+      ;;
+  esac
 }
 
 
 cmd_start() {
   require_tmux
-  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 model_override="" effort_override="" tracker="linear" github_url=""
+  local session_id="" title="" cwd="" harness="" cmd="" prompt="" kind="adhoc" worktree="" pr="" strict_discovery=0 skip_active_run=0 model_override="" effort_override="" tracker="linear" github_url="" after_window_id=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session-id) session_id="$2"; shift 2 ;;
@@ -658,11 +721,14 @@ cmd_start() {
       --tracker=*) tracker="${1#--tracker=}"; shift ;;
       --github-url|--github-issue-url) github_url="$2"; shift 2 ;;
       --github-url=*|--github-issue-url=*) github_url="${1#*=}"; shift ;;
+      --after-window-id) after_window_id="$2"; shift 2 ;;
+      --after-window-id=*) after_window_id="${1#--after-window-id=}"; shift ;;
       --worktree) worktree="$2"; shift 2 ;;
       --worktree=*) worktree="${1#--worktree=}"; shift ;;
       --pr) pr="$2"; shift 2 ;;
       --pr=*) pr="${1#--pr=}"; shift ;;
       --strict-discovery) strict_discovery=1; shift ;;
+      --no-active-run|--no-run) skip_active_run=1; shift ;;
       --help|-h) usage ;;
       *) echo "Unknown flag: $1" >&2; usage ;;
     esac
@@ -682,6 +748,13 @@ cmd_start() {
   PI_SNAPSHOT_ERROR=""
   PI_SNAPSHOT_PIDS="[]"
   abs_cwd=$(cd "$cwd" && pwd)
+  # Durable active-run wiring must not create a user run for the dashboard app's
+  # self-entry. The dashboard launcher passes --no-active-run and marker envs;
+  # real supervised sessions continue through run ensure below.
+  if should_skip_active_run_ensure "$session_id" "$skip_active_run"; then
+    export FLIGHTDECK_SKIP_ACTIVE_RUN=1
+    export FLIGHTDECK_NO_ACTIVE_RUN=1
+  fi
   archive_stale_state_if_needed
   ensure_active_run_for_session
   if [[ -n "$prompt" ]]; then
@@ -711,13 +784,48 @@ cmd_start() {
     launch_cmd="$(flightdeck_session_pane_env_str "$session_id") $cmd"
   fi
 
-  local pane_id
-  if ! pane_id=$(tmux new-window -d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd" 2>/dev/null); then
+  local insert_after_window_id="$after_window_id" dashboard_after_window_id="" current_window_id="" pane_id dashboard_rc
+  if [[ -z "$insert_after_window_id" ]]; then
+    current_window_id=$(tmux display-message -p '#{window_id}' 2>/dev/null || true)
+    dashboard_after_window_id="$current_window_id"
+  else
+    dashboard_after_window_id="$insert_after_window_id"
+  fi
+  set +e
+  ensure_dashboard_launched "$session_id" "$dashboard_after_window_id"
+  dashboard_rc=$?
+  set -e
+  if (( dashboard_rc != 0 )); then
     [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
-    echo "Error: tmux new-window failed" >&2
+    exit "$dashboard_rc"
+  fi
+  [[ -n "${DASHBOARD_WINDOW_ID:-}" ]] && insert_after_window_id="$DASHBOARD_WINDOW_ID"
+
+  local new_window_args=(-d -P -F '#{pane_id}' -n "$title" -c "$abs_cwd")
+  if [[ -n "$insert_after_window_id" ]]; then
+    new_window_args=(-a -t "$insert_after_window_id" "${new_window_args[@]}")
+  fi
+  local new_window_err new_window_rc new_window_stderr insert_desc
+  new_window_err=$(mktemp -t flightdeck-session-new-window.XXXXXX)
+  set +e
+  pane_id=$(tmux new-window "${new_window_args[@]}" 2>"$new_window_err")
+  new_window_rc=$?
+  set -e
+  new_window_stderr=$(cat "$new_window_err" 2>/dev/null || true)
+  rm -f "$new_window_err"
+  insert_desc="default"
+  [[ -n "$insert_after_window_id" ]] && insert_desc="after-window-id=$insert_after_window_id"
+  if (( new_window_rc != 0 )); then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    printf 'Error: tmux new-window failed (rc=%s, %s, title=%s)\n' "$new_window_rc" "$insert_desc" "$title" >&2
+    [[ -n "$new_window_stderr" ]] && printf '%s\n' "$new_window_stderr" >&2
     exit 2
   fi
-  [[ -n "$pane_id" ]] || { [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"; echo "Error: tmux new-window failed" >&2; exit 2; }
+  if [[ -z "$pane_id" ]]; then
+    [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
+    printf 'Error: tmux new-window returned empty pane id (%s, title=%s)\n' "$insert_desc" "$title" >&2
+    exit 2
+  fi
   disable_auto_rename_if_requested "$pane_id"
   if ! tmux send-keys -t "$pane_id" "clear" Enter; then
     [[ -n "$prompt_tmpfile" ]] && rm -f "$prompt_tmpfile"
@@ -752,7 +860,7 @@ cmd_start() {
   # parent shell's cwd before `exec pi`), but all activity/PR/worktree
   # attribution should bind to the caller-selected working directory.
   register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch" "$tracker" "$github_url"
-  ensure_dashboard_launched "$session_id"
+  active_run_disarm_rollback
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
@@ -814,6 +922,7 @@ cmd_attach() {
   [[ -n "$CAPTURE_PANE_CWD" ]] && branch=$(capture_git_branch "$CAPTURE_PANE_CWD")
   [[ -z "$worktree" && "$kind" == "issue" ]] && worktree="$CAPTURE_PANE_CWD"
   register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "$worktree" "" "$branch" "$tracker" "$github_url"
+  active_run_disarm_rollback
   ensure_dashboard_launched "$session_id"
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }

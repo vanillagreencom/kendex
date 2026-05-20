@@ -120,6 +120,7 @@ function snapshot(currentPaneId: string, ownerPaneId: string): FlightdeckSnapsho
 			started_at: "2026-05-13T00:00:00Z",
 			terminated: false,
 		},
+		livePaneIds: new Set(["%33"]),
 		pendingEvents: [],
 		stateDir: "/tmp/pi-flightdeck-daemon",
 		tmux: { paneId: currentPaneId, sessionId: "$1", sessionKey: "s1", sessionName: "HT" },

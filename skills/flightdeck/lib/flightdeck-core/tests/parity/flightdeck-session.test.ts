@@ -27,6 +27,8 @@ interface ShimState {
 	session: string;
 	panes: Record<string, ShimPane>;
 	windows: Record<string, { name: string; index: number; automatic_rename?: string }>;
+	current_pane_id?: string;
+	current_window_id?: string;
 }
 
 function makeRepo(): string {
@@ -84,6 +86,43 @@ function makeDashboardShim(repo: string, captureFile: string): string {
 	const bin = join(repo, "flightdeck-dashboard-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
 printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
+function makeFailingDashboardShim(repo: string): string {
+	const bin = join(repo, "flightdeck-dashboard-fail-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+echo dashboard boom >&2
+exit 17
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
+function makeDashboardStateShim(repo: string, captureFile: string, dashboardWindowId = "@2"): string {
+	const bin = join(repo, "flightdeck-dashboard-state-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
+mkdir -p tmp
+cat > tmp/flightdeck-state-test-session.json <<'JSON'
+{
+  "session_id": "test-session",
+  "entries": {
+    "flightdeck-dashboard": {
+      "id": "flightdeck-dashboard",
+      "title": "flightdeck",
+      "kind": "workflow",
+      "state": "waiting",
+      "harness": "shell",
+      "pane_id": "%2",
+      "window_id": "${dashboardWindowId}"
+    }
+  }
+}
+JSON
 `);
 	chmodSync(bin, 0o755);
 	return bin;
@@ -355,6 +394,27 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			const firstRun = JSON.parse(runState(repo, shim, ["run", "show", firstRunId]).stdout);
 			expect(firstRun.metadata.terminated).toBe(true);
 			expect(firstRun.state.entries["first-entry"].id).toBe("first-entry");
+		});
+
+		test(`dashboard self start skips durable active run creation`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+
+			const started = run(repo, shim, [
+				"start",
+				"--session-id", "flightdeck-dashboard",
+				"--title", "flightdeck",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--kind", "workflow",
+				"--cmd", "echo dashboard",
+				"--no-active-run",
+			]);
+			expect(started.status).toBe(0);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
+			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
+			expect(liveState.entries["flightdeck-dashboard"].id).toBe("flightdeck-dashboard");
 		});
 
 		test(`start archives stale compatibility state when recorded panes are gone`, () => {
@@ -825,6 +885,61 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(readFileSync(capture, "utf8").trim()).toBe("launch");
 		});
 
+		test(`start orders dashboard after current window and child after dashboard`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const dashboardCapture = join(repo, "dashboard-order-calls.txt");
+			const tmuxLog = join(repo, "tmux-order.log");
+			const dashboard = makeDashboardStateShim(repo, dashboardCapture, "@2");
+			const shim = writeShimState(repo, {
+				current_pane_id: "%1",
+				current_window_id: "@1",
+				panes: { "%1": { pane_index: 0, path: repo, window_id: "@1", window_index: 1, window_name: "master" } },
+				session: "test-session",
+				windows: { "@1": { index: 1, name: "master" } },
+			});
+
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "ordered-child",
+				"--title", "Ordered child",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "printf ok",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard, TMUX_SHIM_CALL_LOG: tmuxLog });
+
+			expect(r.status).toBe(0);
+			expect(readFileSync(dashboardCapture, "utf8")).toContain("--after-window-id\n@1");
+			expect(readFileSync(tmuxLog, "utf8")).toContain("new-window\t-a -t @2");
+		});
+
+		test(`start honors explicit --after-window-id before dashboard then child after dashboard`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const dashboardCapture = join(repo, "dashboard-explicit-order-calls.txt");
+			const tmuxLog = join(repo, "tmux-explicit-order.log");
+			const dashboard = makeDashboardStateShim(repo, dashboardCapture, "@8");
+			const shim = writeShimState(repo, {
+				panes: { "%7": { pane_index: 0, path: repo, window_id: "@7", window_index: 7, window_name: "anchor" } },
+				session: "test-session",
+				windows: { "@7": { index: 7, name: "anchor" } },
+			});
+
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "ordered-explicit-child",
+				"--title", "Ordered explicit child",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--after-window-id", "@7",
+				"--cmd", "printf ok",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard, TMUX_SHIM_CALL_LOG: tmuxLog });
+
+			expect(r.status).toBe(0);
+			expect(readFileSync(dashboardCapture, "utf8")).toContain("--after-window-id\n@7");
+			expect(readFileSync(tmuxLog, "utf8")).toContain("new-window\t-a -t @8");
+		});
+
 		test(`attach launches dashboard hook`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
@@ -860,9 +975,41 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--cmd", "printf ok",
 			], { TMUX_SHIM_FAIL_NEW_WINDOW: "1" });
 			expect(r.status).not.toBe(0);
-			expect(r.stderr).toContain("tmux new-window failed");
+			expect(r.stderr).toContain("tmux new-window failed (rc=1");
+			expect(r.stderr).toContain("title=Fail");
+			expect(r.stderr).toContain("shim: new-window refused");
 			expect(existsSync(stateFile(repo))).toBe(false);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start failure preserves intentionally reused active run`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const first = run(repo, shim, [
+				"start",
+				"--session-id", "first-reused-run-entry",
+				"--title", "First reused run entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo first",
+			]);
+			expect(first.status).toBe(0);
+			const activeBefore = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+
+			const second = run(repo, shim, [
+				"start",
+				"--session-id", "failed-reused-run-entry",
+				"--title", "Failed reused run entry",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "echo second",
+			], { TMUX_SHIM_FAIL_NEW_WINDOW: "1" });
+			expect(second.status).not.toBe(0);
+			const activeAfter = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+			expect(activeAfter.active.run_id).toBe(activeBefore.active.run_id);
+			expect(activeAfter.metadata.terminated).toBe(false);
 		});
 
 		test(`start --prompt cleans tempfile when tmux new-window fails`, () => {
@@ -879,9 +1026,40 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--prompt", "cleanup me",
 			], { PI_BIN: makePiBinShim(repo), PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo), XDG_RUNTIME_DIR: runtimeDir, TMUX_SHIM_FAIL_NEW_WINDOW: "1" });
 			expect(r.status).not.toBe(0);
-			expect(r.stderr).toContain("tmux new-window failed");
+			expect(r.stderr).toContain("tmux new-window failed (rc=1");
+			expect(r.stderr).toContain("title=Fail prompt");
+			expect(r.stderr).toContain("shim: new-window refused");
 			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+		});
+
+		test(`start --prompt cleans tempfile when dashboard launch fails`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const runtimeDir = join(repo, "runtime-dashboard-cleanup");
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "fail-dashboard-prompt",
+				"--title", "Fail dashboard prompt",
+				"--cwd", repo,
+				"--harness", "pi",
+				"--prompt", "cleanup dashboard failure",
+			], {
+				FLIGHTDECK_DASHBOARD: "1",
+				FLIGHTDECK_DASHBOARD_BIN: makeFailingDashboardShim(repo),
+				PI_BIN: makePiBinShim(repo),
+				PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo),
+				XDG_RUNTIME_DIR: runtimeDir,
+			});
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toContain("dashboard boom");
+			expect(r.stderr).toContain("dashboard launch failed before launching fail-dashboard-prompt");
+			expect(promptFiles(runtimeDir)).toEqual([]);
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
+			expect(existsSync(stateFile(repo))).toBe(false);
 		});
 
 		test(`start --prompt surfaces mkdir failure before tmux mutation`, () => {

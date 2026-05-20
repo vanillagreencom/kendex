@@ -72,7 +72,7 @@ Generic tmux-window session tracking. These commands do not require a fake issue
 
 | Command | Arguments | Workflow / Script | Notes |
 |---------|-----------|-------------------|-------|
-| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session start` | Creates/reuses the active durable run, creates a new tmux window (never a split), launches command/harness, records a generic `.entries[ID]` row, records launch model/effort metadata, exports Flightdeck child env, and launches/verifies the Rust dashboard unless `FLIGHTDECK_DASHBOARD=0`. Prompt launches pass harness-aware model/effort argv. |
+| `session start` | `--session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> \| --prompt <text>) [--kind adhoc\|workflow] [--model <id>] [--effort <level>\|--thinking <level>] [--after-window-id <@ID>] [--no-active-run]` | `scripts/flightdeck-session start` | Creates/reuses the active durable run for real sessions, creates a new tmux window (never a split), launches command/harness, records a generic `.entries[ID]` row, records launch model/effort metadata, exports Flightdeck child env, and launches/verifies the Rust dashboard before the child window unless `FLIGHTDECK_DASHBOARD=0`. Dashboard self-launch uses `--no-active-run`; prompt launches pass harness-aware model/effort argv. |
 | `session attach` | `--pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc] [--model <id>] [--effort <level>\|--thinking <level>]` | `scripts/flightdeck-session attach` | Creates/reuses the active durable run, attaches an existing pane by stable pane id, records supplied or unsupported launch metadata, and launches/verifies the dashboard unless disabled. Pi attach probes `pi-bridge` when available. |
 | `session watch` | `[ENTRY_ID...]` | `workflows/shared/session-watch.md` | Generic daemon/poll/handler loop. Verifies dashboard presence on re-entry before daemon yield. Routes only generic handlers and guards issue-only tags as `domain-mismatch`; no GitHub/Linear/worktree dependency. |
 | `session prompt routing` | nested from `session watch` | `workflows/shared/session-handle-prompt.md` | Generic prompt handlers for structured questions, bash permission prompts, safe bounded choices, terminal completion, `pi-bg-task-exit`, and `domain-mismatch`. |
@@ -127,7 +127,7 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 ### Run storage helpers
 
-Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`.
+Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`. If a start/attach path creates a fresh active run and aborts before registration, `flightdeck-session` terminates that new run while preserving reused active runs.
 
 | Command | Arguments | Script | Notes |
 |---------|-----------|--------|-------|

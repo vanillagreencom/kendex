@@ -11,7 +11,6 @@ type ThemeColor = Parameters<Theme["fg"]>[0];
 
 import type { TrackedState } from "./state.js";
 
-export const ANSI_GREEN_FG = "\x1b[32m";
 export const ANSI_YELLOW_FG = "\x1b[33m";
 export const ANSI_RED_FG = "\x1b[31m";
 export const ANSI_CYAN_FG = "\x1b[36m";
@@ -19,14 +18,12 @@ export const ANSI_MAGENTA_FG = "\x1b[35m";
 export const ANSI_FG_RESET = "\x1b[39m";
 export const ANSI_BELL = "\x07";
 
-export const POPUP_PADDING_X = 2;
-export const POPUP_PADDING_Y = 1;
+export const FRAME_PADDING_X = 2;
 export const PANEL_CARD_PADDING_X = 1;
 export const PANEL_BAR_COLOR = "borderAccent" as const;
 export const PANEL_TITLE_COLOR = "customMessageLabel" as const;
 export const PANEL_RULE_COLOR = "muted" as const;
 
-export function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiRed(text: string): string { return `${ANSI_RED_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiCyan(text: string): string { return `${ANSI_CYAN_FG}${text}${ANSI_FG_RESET}`; }
@@ -52,39 +49,11 @@ export function divider(width: number, theme: Theme): string {
 }
 
 export function frameContentWidth(width: number): number {
-	return Math.max(1, width - 2 - POPUP_PADDING_X * 2);
+	return Math.max(1, width - 2 - FRAME_PADDING_X * 2);
 }
 
 export function panelFrameContentWidth(width: number): number {
 	return Math.max(1, width - 2 - PANEL_CARD_PADDING_X * 2);
-}
-
-/**
- * Popup frame — heavy border, green title in top border, padded body.
- * Matches pi-extension-manager / pi-task-panel popup style.
- */
-export function framePopup(lines: string[], width: number, theme: Theme, title = "", fixedInnerRows?: number): string[] {
-	const inner = Math.max(1, width - 2);
-	const contentWidth = frameContentWidth(width);
-	const border = (s: string) => theme.fg("borderAccent", s);
-	let body = lines;
-	if (fixedInnerRows !== undefined && body.length > fixedInnerRows) {
-		const hidden = body.length - fixedInnerRows + 1;
-		body = [...body.slice(0, Math.max(0, fixedInnerRows - 1)), theme.fg("dim", `↓ ${hidden} more line(s)`)].slice(0, fixedInnerRows);
-	}
-	const blank = `${border("┃")}${" ".repeat(inner)}${border("┃")}`;
-	const top = (): string => {
-		if (!title) return `${border("┏")}${border("━".repeat(inner))}${border("┓")}`;
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, inner - 2), "…")} `;
-		const fill = Math.max(1, inner - visibleWidth(titlePlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${border("┓")}`;
-	};
-	const out = [top()];
-	for (let i = 0; i < POPUP_PADDING_Y; i += 1) out.push(blank);
-	for (const line of body) out.push(`${border("┃")}${" ".repeat(POPUP_PADDING_X)}${pad(line, contentWidth)}${" ".repeat(POPUP_PADDING_X)}${border("┃")}`);
-	for (let i = 0; i < POPUP_PADDING_Y; i += 1) out.push(blank);
-	out.push(`${border("┗")}${border("━".repeat(inner))}${border("┛")}`);
-	return out.map((line) => truncateToWidth(line, width, ""));
 }
 
 /**
@@ -264,15 +233,3 @@ function formatAgeShort(sec: number): string {
 export function muted(theme: Theme, text: string): string { return theme.fg("dim", text); }
 export function label(theme: Theme, text: string): string { return theme.fg("muted", text); }
 export function accent(theme: Theme, text: string): string { return theme.fg("accent", text); }
-
-/**
- * Standard popup search row + filter row — same pattern as
- * pi-extension-manager.
- */
-export function searchRow(theme: Theme, search: string, width: number): string {
-	return theme.bg("toolPendingBg", pad(` > ${search}${theme.inverse(" ")}`, width));
-}
-
-export function selectedRow(theme: Theme, line: string, width: number): string {
-	return theme.bg("selectedBg", pad(line, width));
-}

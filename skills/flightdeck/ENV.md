@@ -60,12 +60,13 @@ Rust dashboard env vars:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `FLIGHTDECK_DASHBOARD` | `1` | When `0`, `flightdeck-dashboard launch` exits `0` silently. |
-| `FLIGHTDECK_DASHBOARD_WINDOW` | `flightdeck` | Tmux window name used by the dashboard launch hook. |
+| `FLIGHTDECK_DASHBOARD` | `1` | When `0`, `flightdeck-dashboard launch` exits `0` silently and `focus-or-launch` reports blocked. |
+| `FLIGHTDECK_DASHBOARD_WINDOW` | ` FD` | Tmux window name used by dashboard launch/focus hooks. CLI `--window-name` overrides it. |
+| `FLIGHTDECK_DASHBOARD_WINDOW_ICON` | `1` | When `0` and no explicit window name is set, use plain `FD` instead of the icon title. |
 | `FLIGHTDECK_DASHBOARD_MOTION` | `full` | Animation intensity: `full`, `reduced`, or `off`. `NO_MOTION` / `NO_COLOR` force `off` regardless of this setting. CLI `--motion` overrides it. |
 | `FLIGHTDECK_DASHBOARD_THEME` | `moon` | Color theme: `moon`, `dawn`, `pantera`, or `system`. CLI `--theme` overrides it; the theme picker popup changes the live theme for the current run. |
 | `FLIGHTDECK_DAEMON_RUST` | `0` | Opt-in to the Rust daemon wake side / subscriber absorption. Default off keeps the canonical TypeScript daemon in charge of wake delivery. |
-| `FLIGHTDECK_DASHBOARD_BELL` | `1` | Set to `0` to suppress the terminal bell on a new pause-for-user edge. The dashboard never auto-focuses tmux windows. |
+| `FLIGHTDECK_DASHBOARD_BELL` | `1` | Set to `0` to suppress the terminal bell on a new pause-for-user edge. The launch hook never auto-focuses tmux windows; explicit `focus-or-launch` does. |
 | `FLIGHTDECK_DASHBOARD_COST_POLL_SECS` | `5` | Cost-source poll interval in seconds. |
 | `FLIGHTDECK_DASHBOARD_PI_HISTORY_EVENTS` | `25` | Number of Pi bridge history events sampled per Pi entry for dashboard cost totals. |
 | `FLIGHTDECK_DASHBOARD_PI_HISTORY_TIMEOUT_MS` | `1000` | Per-entry timeout for dashboard Pi cost polling so a slow bridge cannot freeze rendering. |

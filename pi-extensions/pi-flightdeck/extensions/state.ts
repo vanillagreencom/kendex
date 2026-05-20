@@ -273,6 +273,11 @@ function nonEmpty(value: unknown): string | undefined {
 let TMUX_CONTEXT_CACHE: TmuxContext | undefined;
 let TMUX_CONTEXT_RESOLVED = false;
 
+export function resetTmuxContextCacheForTests(): void {
+	TMUX_CONTEXT_CACHE = undefined;
+	TMUX_CONTEXT_RESOLVED = false;
+}
+
 export function resolveTmuxContext(): TmuxContext | undefined {
 	if (TMUX_CONTEXT_RESOLVED) return TMUX_CONTEXT_CACHE;
 	if (!process.env.TMUX) {
@@ -802,8 +807,8 @@ function readLivePaneIds(): Set<string> {
 }
 
 // True when the tracked entry has a `pane_id` but tmux no longer lists
-// it as alive. Used by the dashboard to render a `pane gone` chip and
-// to offer one-key prune. Returns false when `livePaneIds` is empty
+// it as alive. Used by the dashboard to render a `pane gone` chip.
+// Returns false when `livePaneIds` is empty
 // (unknown / not inside tmux) so the chip never fires on cold startup.
 export function isPaneGone(session: TrackedSession | undefined, snapshot: FlightdeckSnapshot | undefined): boolean {
 	if (!session || !snapshot) return false;
@@ -917,11 +922,12 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 	return false;
 }
 
-// `terminated`: master flagged the session complete via `terminate.md § 5`
-// and tracked entries are still populated. The dashboard keeps rendering the
-// completed session history until the user dismisses the widget. Without this
-// third arm, terminated sessions fell into `inactive` and the post-completion
-// summary was hidden from the user (issue #17).
+// Terminated archive snapshots are preserved for explicit readers, but the
+// Pi mini-dashboard is active-run-only. Completed history belongs in the Rust
+// app/history surface, not in the default inline status widget.
+// `state-error`: the live master-state file exists but failed to read or
+// parse. Renders an error banner with the path/diagnostic instead of clearing
+// the widget as inactive.
 // `archive-error`: a terminated archive was selected but every candidate
 // failed to parse. Renders an error banner with the diagnostic so the
 // user sees "state was lost" instead of a blank "no session" view
@@ -931,7 +937,7 @@ export function isFlightdeckActive(snapshot: FlightdeckSnapshot | undefined): bo
 // Normal state between `session start` and `session watch`. Distinct
 // from `stale` so the dashboard can show a friendly hint instead of a
 // red "daemon dead" + "restart" framing that implies something broke.
-export type FlightdeckSessionStatus = "live" | "awaiting-watch" | "stale" | "inactive" | "terminated" | "archive-error";
+export type FlightdeckSessionStatus = "live" | "awaiting-watch" | "stale" | "inactive" | "state-error" | "archive-error";
 
 // True when the daemon has ever been started for this tmux session
 // (pid file exists OR heartbeat file exists). Used by the daemon-health
@@ -947,6 +953,7 @@ export function daemonEverStarted(snapshot: FlightdeckSnapshot | undefined): boo
 }
 
 const TERMINAL_TRACKED_STATES = new Set<TrackedState>(["merged", "aborted", "dead", "complete", "cancelled"]);
+const DASHBOARD_ENTRY_ID = "flightdeck-dashboard";
 
 // Most recent `last_polled_at` (ms epoch) across non-terminal sessions. Used
 // by both the stale-state predicate and the stale-hint renderer.
@@ -978,13 +985,10 @@ export function flightdeckSessionStatus(
 	// diagnostic banner instead of falling through to `inactive` — the
 	// user otherwise can't tell a corrupted archive from a missing one.
 	if (snapshot.masterArchiveError) return "archive-error";
+	if (snapshot.masterError) return "state-error";
 	const master = snapshot.master;
 	const hasAnySessions = readTrackedEntries(master).length > 0;
-	// terminated + sessions preserved → read-only completion view. Issue #17
-	// was the regression where `pane-registry remove-merged` ran inside
-	// `terminate.md § 5` and left `.entries == {}` on a terminated file, so
-	// this branch was unreachable and the dashboard collapsed.
-	if (master?.terminated && hasAnySessions) return "terminated";
+	if (master?.terminated && hasAnySessions) return "inactive";
 	const hasLiveSessions = !!master && !master.terminated && hasAnySessions;
 	const daemonAlive = snapshot.daemon.pidAlive;
 	if (!hasLiveSessions && !daemonAlive) return "inactive";
@@ -1021,12 +1025,15 @@ export function mergedIssueHistory(state: MasterState | undefined): TrackedSessi
 export function sortedTrackedEntries(state: MasterState | undefined): TrackedSession[] {
 	if (!state) return [];
 	const entries = normalizeSessionMap(state.entries);
-	return Object.values(entries).sort((a, b) => {
-		const aTs = a.spawned_at ?? "";
-		const bTs = b.spawned_at ?? "";
-		if (aTs && bTs && aTs !== bTs) return aTs.localeCompare(bTs);
-		return sessionSortLabel(a).localeCompare(sessionSortLabel(b));
-	});
+	return Object.entries(entries)
+		.filter(([key, entry]) => key !== DASHBOARD_ENTRY_ID && entry.id !== DASHBOARD_ENTRY_ID)
+		.map(([, entry]) => entry)
+		.sort((a, b) => {
+			const aTs = a.spawned_at ?? "";
+			const bTs = b.spawned_at ?? "";
+			if (aTs && bTs && aTs !== bTs) return aTs.localeCompare(bTs);
+			return sessionSortLabel(a).localeCompare(sessionSortLabel(b));
+		});
 }
 
 
@@ -1064,109 +1071,4 @@ export function formatAge(seconds: number | undefined): string {
 	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
 	if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
 	return `${Math.floor(seconds / 86_400)}d`;
-}
-
-export interface ConversationTurn {
-	ts: string;
-	pane_id: string;
-	harness?: string;
-	tag?: string;
-	hash?: string;
-	excerpt: string;
-}
-
-function normalizeConversationExcerpt(text: string): string {
-	return text
-		.replace(/\s+/g, " ")
-		.replace(/[\s`'"“”‘’.,;:!?…]+$/g, "")
-		.trim();
-}
-
-function turnTimeMs(turn: ConversationTurn): number {
-	const parsed = Date.parse(turn.ts);
-	return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function turnTimeDiffMs(a: ConversationTurn, b: ConversationTurn): number {
-	return Math.abs(turnTimeMs(a) - turnTimeMs(b));
-}
-
-function nearDuplicateWindow(a: ConversationTurn, b: ConversationTurn): boolean {
-	return turnTimeDiffMs(a, b) <= 5 * 60 * 1000;
-}
-
-function nearStreamingWindow(a: ConversationTurn, b: ConversationTurn): boolean {
-	const diff = Math.abs(turnTimeMs(a) - turnTimeMs(b));
-	return diff <= 30 * 1000;
-}
-
-function shouldMergeConversationTurn(previous: ConversationTurn, next: ConversationTurn): "replace" | "keep" | "append" {
-	if (previous.hash && next.hash && previous.hash === next.hash) return "keep";
-	if (!nearDuplicateWindow(previous, next)) return "append";
-
-	const before = normalizeConversationExcerpt(previous.excerpt);
-	const after = normalizeConversationExcerpt(next.excerpt);
-	if (!before || !after) return "append";
-
-	if (before === after) return next.excerpt.length > previous.excerpt.length ? "replace" : "keep";
-	// Pi bridge streams message_update events before message_end. Those partials
-	// share the same pane and near-identical timestamp but have different hashes
-	// as the assistant text grows. Collapse prefix/suffix variants so
-	// Conversations show one finalized turn instead of a stack of partials. Keep
-	// the streaming window tight so two separate turns that happen to start with
-	// similar boilerplate do not merge minutes apart.
-	if (nearStreamingWindow(previous, next) && after.startsWith(before) && before.length >= 12) return "replace";
-	if (nearStreamingWindow(previous, next) && before.startsWith(after) && after.length >= 12) return "keep";
-	return "append";
-}
-
-function pushConversationTurn(list: ConversationTurn[], turn: ConversationTurn, maxPerPane: number): void {
-	const last = list[list.length - 1];
-	if (last) {
-		const action = shouldMergeConversationTurn(last, turn);
-		if (action === "keep") return;
-		if (action === "replace") {
-			list[list.length - 1] = turn;
-			return;
-		}
-	}
-	list.push(turn);
-	while (list.length > maxPerPane) list.shift();
-}
-
-/**
- * Fold the latest wake events into a per-pane conversation history.
- * Best-effort — events get drained by the master ack, so this represents
- * whatever has appeared since the last drain, plus what the buffer carried
- * over.
- */
-export function foldWakeEventsIntoConversations(
-	previous: Map<string, ConversationTurn[]>,
-	events: WakeEvent[],
-	maxPerPane: number,
-	maxChars: number,
-): Map<string, ConversationTurn[]> {
-	const next = new Map<string, ConversationTurn[]>();
-	for (const [k, v] of previous) {
-		const compacted: ConversationTurn[] = [];
-		for (const turn of v) pushConversationTurn(compacted, turn, maxPerPane);
-		next.set(k, compacted);
-	}
-	for (const ev of events) {
-		const pane = ev.pane_id;
-		if (!pane) continue;
-		const text = typeof ev.last_assistant_text === "string" ? ev.last_assistant_text.trim() : "";
-		if (!text) continue;
-		const list = next.get(pane) ?? [];
-		pushConversationTurn(list, {
-			excerpt: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text,
-			harness: ev.harness,
-			hash: ev.hash,
-			pane_id: pane,
-			tag: ev.classifier_tag,
-			ts: ev.ts ?? new Date().toISOString(),
-		}, maxPerPane);
-		next.set(pane, list);
-	}
-	return next;
 }
