@@ -292,24 +292,45 @@ prepare_launch_metadata() {
   fi
 }
 
+dashboard_after_window_id_unsupported() {
+  local stderr_text="$1"
+  [[ "$stderr_text" == *"unexpected argument '--after-window-id'"* ]] && return 0
+  [[ "$stderr_text" == *'unexpected argument "--after-window-id"'* ]] && return 0
+  [[ "$stderr_text" == *"unrecognized option '--after-window-id'"* ]] && return 0
+  [[ "$stderr_text" == *"unknown option --after-window-id"* ]] && return 0
+  return 1
+}
+
 ensure_dashboard_launched() {
-  local entry_id="$1" after_window_id="${2:-}" dashboard_bin err rc args state_file window_id
+  local entry_id="$1" after_window_id="${2:-}" dashboard_bin err rc args state_file window_id stderr_text unsupported_stderr=""
   DASHBOARD_WINDOW_ID=""
   [[ "$entry_id" != "flightdeck-dashboard" ]] || return 0
   [[ "${FLIGHTDECK_DASHBOARD:-1}" != "0" ]] || return 0
   [[ "${FLIGHTDECK_DASHBOARD_LAUNCHING:-0}" != "1" ]] || return 0
   dashboard_bin="${FLIGHTDECK_DASHBOARD_BIN:-$SCRIPT_DIR/flightdeck-dashboard}"
-  [[ -x "$dashboard_bin" ]] || { printf 'Error: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 1; }
+  [[ -x "$dashboard_bin" ]] || { printf 'Warning: flightdeck dashboard launch skipped; executable not found: %s\n' "$dashboard_bin" >&2; return 0; }
   err=$(mktemp -t flightdeck-dashboard-launch.XXXXXX)
   rc=0
   args=(launch)
   [[ -n "$after_window_id" ]] && args+=(--after-window-id "$after_window_id")
   FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" "${args[@]}" 2>"$err" || rc=$?
-  if [[ -s "$err" ]]; then cat "$err" >&2; fi
+  stderr_text=$(cat "$err" 2>/dev/null || true)
+  if (( rc != 0 )) && [[ -n "$after_window_id" ]] && dashboard_after_window_id_unsupported "$stderr_text"; then
+    unsupported_stderr="$stderr_text"
+    printf 'Warning: flightdeck dashboard launch does not support --after-window-id; retrying without window positioning\n' >&2
+    : >"$err"
+    rc=0
+    FLIGHTDECK_DASHBOARD_LAUNCHING=1 "$dashboard_bin" launch 2>"$err" || rc=$?
+    stderr_text=$(cat "$err" 2>/dev/null || true)
+  fi
+  if (( rc != 0 )) && [[ -n "$unsupported_stderr" ]]; then
+    printf '%s\n' "$unsupported_stderr" >&2
+  fi
+  [[ -n "$stderr_text" ]] && printf '%s\n' "$stderr_text" >&2
   rm -f "$err"
   if (( rc != 0 )); then
-    printf 'Error: flightdeck dashboard launch failed before launching %s (rc=%s)\n' "$entry_id" "$rc" >&2
-    return "$rc"
+    printf 'Warning: flightdeck dashboard launch failed before launching %s (rc=%s); continuing without dashboard\n' "$entry_id" "$rc" >&2
+    return 0
   fi
   state_file=$("$SCRIPT_DIR/flightdeck-state" path 2>/dev/null || true)
   if [[ -n "$state_file" && -f "$state_file" ]]; then

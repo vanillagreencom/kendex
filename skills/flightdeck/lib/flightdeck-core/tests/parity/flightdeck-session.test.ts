@@ -235,6 +235,39 @@ esac
 	return bin;
 }
 
+function makeAfterWindowRejectingDashboardStateShim(repo: string, captureFile: string, dashboardWindowId = "@2"): string {
+	const bin = join(repo, "flightdeck-dashboard-after-window-reject-shim");
+	writeFileSync(bin, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
+for arg in "$@"; do
+  if [[ "$arg" == "--after-window-id" ]]; then
+    echo "error: unexpected argument '--after-window-id' found" >&2
+    exit 2
+  fi
+done
+mkdir -p tmp
+cat > tmp/flightdeck-state-test-session.json <<'JSON'
+{
+  "session_id": "test-session",
+  "entries": {
+    "flightdeck-dashboard": {
+      "id": "flightdeck-dashboard",
+      "title": "flightdeck",
+      "kind": "workflow",
+      "state": "waiting",
+      "harness": "shell",
+      "pane_id": "%2",
+      "window_id": "${dashboardWindowId}"
+    }
+  }
+}
+JSON
+`);
+	chmodSync(bin, 0o755);
+	return bin;
+}
+
 function makePiBinShim(repo: string): string {
 	const bin = join(repo, "pi-shim");
 	writeFileSync(bin, `#!/usr/bin/env bash
@@ -913,6 +946,37 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(readFileSync(tmuxLog, "utf8")).toContain("new-window\t-a -t @2");
 		});
 
+		test(`start retries dashboard launch without after-window-id when dashboard CLI rejects it`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const dashboardCapture = join(repo, "dashboard-after-window-retry-calls.txt");
+			const tmuxLog = join(repo, "tmux-after-window-retry.log");
+			const dashboard = makeAfterWindowRejectingDashboardStateShim(repo, dashboardCapture, "@2");
+			const shim = writeShimState(repo, {
+				current_pane_id: "%1",
+				current_window_id: "@1",
+				panes: { "%1": { pane_index: 0, path: repo, window_id: "@1", window_index: 1, window_name: "master" } },
+				session: "test-session",
+				windows: { "@1": { index: 1, name: "master" } },
+			});
+
+			const r = run(repo, shim, [
+				"start",
+				"--session-id", "old-dashboard-child",
+				"--title", "Old dashboard child",
+				"--cwd", repo,
+				"--harness", "shell",
+				"--cmd", "printf ok",
+			], { FLIGHTDECK_DASHBOARD: "1", FLIGHTDECK_DASHBOARD_BIN: dashboard, TMUX_SHIM_CALL_LOG: tmuxLog });
+
+			expect(r.status).toBe(0);
+			expect(r.stderr).toContain("does not support --after-window-id; retrying without window positioning");
+			const calls = readFileSync(dashboardCapture, "utf8");
+			expect(calls).toContain("--after-window-id\n@1");
+			expect(calls.trim().split("\n").filter((line) => line === "launch")).toHaveLength(2);
+			expect(readFileSync(tmuxLog, "utf8")).toContain("new-window\t-a -t @2");
+		});
+
 		test(`start honors explicit --after-window-id before dashboard then child after dashboard`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
@@ -1034,32 +1098,27 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		});
 
-		test(`start --prompt cleans tempfile when dashboard launch fails`, () => {
+		test(`start warns and continues when dashboard launch fails`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
-			const runtimeDir = join(repo, "runtime-dashboard-cleanup");
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
 			const r = run(repo, shim, [
 				"start",
-				"--session-id", "fail-dashboard-prompt",
-				"--title", "Fail dashboard prompt",
+				"--session-id", "warn-dashboard-child",
+				"--title", "Warn dashboard child",
 				"--cwd", repo,
-				"--harness", "pi",
-				"--prompt", "cleanup dashboard failure",
+				"--harness", "shell",
+				"--cmd", "printf ok",
 			], {
 				FLIGHTDECK_DASHBOARD: "1",
 				FLIGHTDECK_DASHBOARD_BIN: makeFailingDashboardShim(repo),
-				PI_BIN: makePiBinShim(repo),
-				PI_BRIDGE_BIN: makeFailingPiBridgeShim(repo),
-				XDG_RUNTIME_DIR: runtimeDir,
 			});
-			expect(r.status).not.toBe(0);
+			expect(r.status).toBe(0);
 			expect(r.stderr).toContain("dashboard boom");
-			expect(r.stderr).toContain("dashboard launch failed before launching fail-dashboard-prompt");
-			expect(promptFiles(runtimeDir)).toEqual([]);
-			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
-			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-			expect(existsSync(stateFile(repo))).toBe(false);
+			expect(r.stderr).toContain("dashboard launch failed before launching warn-dashboard-child (rc=17); continuing without dashboard");
+			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).not.toBeNull();
+			expect(Object.keys(readShimState(shim).panes)).toHaveLength(1);
+			expect(existsSync(stateFile(repo))).toBe(true);
 		});
 
 		test(`start --prompt surfaces mkdir failure before tmux mutation`, () => {

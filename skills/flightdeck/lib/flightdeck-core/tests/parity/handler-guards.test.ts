@@ -558,7 +558,7 @@ describe("handler domain guards", () => {
 		expect(parsed.mode).toBe("phase-style");
 		expect(parsed.reason).toBeUndefined();
 		expect(parsed.items.map((item) => item.title)).toContain("Phase 1 — Design and compatibility layer");
-		expect(parsed.items.map((item) => item.title)).toContain("Phase 6.7 — App focus/open helper, icon title, and launch order");
+		expect(parsed.items.some((item) => item.title.startsWith("Phase 6.7 — App focus/open helper, icon title, and launch order"))).toBe(true);
 		expect(parsed.items.map((item) => item.title)).toContain("Phase 12 — No-op confirmations for upstream-only fixes");
 		for (const requiredSafeH2 of ["pi-extension-scope-after-the-rus", "cli-script-changes", "data-model-additions"]) {
 			expect(parsed.allH2Ids).toContain(requiredSafeH2);
