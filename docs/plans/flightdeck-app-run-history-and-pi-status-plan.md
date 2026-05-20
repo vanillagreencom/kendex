@@ -47,7 +47,7 @@ Additional post-handoff fixes now merged or landing before this plan executes:
 
 Relevant merged deltas for this plan:
 
-- **#140 is partly handled, not fully obsolete.** PR #143 makes `pi-flightdeck` awaiting-watch/standby hints ignore tracked entries whose pane ids are proven stale. PR #167 handles the Rust dashboard no-active/history split; Pi mini-dashboard terminated-archive suppression remains follow-up work.
+- **#140 is partly handled, not fully obsolete.** PR #143 makes `pi-flightdeck` awaiting-watch/standby hints ignore tracked entries whose pane ids are proven stale. PR #167 handles the Rust dashboard no-active/history split, and PR #166 makes `pi-flightdeck` a status shell with `/flightdeck` Rust app focus/open. Pi-native archive browsing remains out of scope; any legacy terminated-archive fallback in Pi must stay inactive/status-only, not active supervised work.
 - **#133 is done.** PR #148 added `entry.window_name_current`, `pane-poll`/daemon refresh, dashboard current-title rendering, and `FLIGHTDECK_DISABLE_AUTO_RENAME`. Do not reimplement pane/window-name sync; build on these fields.
 - **#149 is load-bearing.** Pi subscriber binding now validates cwd + recorded `adapter.pi_session_id`, malformed `pi-bridge state` preflight fails open to stream attach, mismatched subscribers are quarantined/reaped by process group, positive-PID signal fallback was removed, and mismatch respawn preserves the registry harness. Do not regress these daemon/subscriber safety properties when changing run lifecycle.
 - **#150 added dashboard settings.** Rust dashboard has a Settings popup on `S` / `Alt+S`, with `skills/flightdeck/lib/flightdeck-dashboard/src/settings_catalog.rs` as catalog source, writes dashboard-scoped overrides to `<project-root>/tmp/flightdeck-settings.toml`, applies those overrides at dashboard command startup before logging/runtime thread creation, does not mutate the parent shell or live process env from popup actions, rejects NUL/invalid values, and uses path/symlink checks. Future dashboard env/default changes must update `settings_catalog.rs`, snapshots/tests, and `ENV.md`/README docs.
@@ -72,23 +72,23 @@ Relevant merged deltas for this plan:
 **Order-of-execution recommendation:**
 
 - The cleanup/dashboard handoff is already complete. Start this plan from `origin/main` after the #150 merge commit (`6bd4bd6b21297339d921f5bc8b7929cb8020e6be`) or later.
-- The state-mode and run-identity scaffolding (Phases 1-4) are the load-bearing additions now in scope. History popup/UI work from Phase 5 is explicitly future work; current code should remain compatible with it without documenting it as shipped. Phase 6.5 should be scoped to the remaining archive/history behavior because #143 already handled the stale awaiting-watch hint subset.
+- The state-mode and run-identity scaffolding (Phases 1-4) are the load-bearing additions now in scope. PR #167 ships the Rust dashboard History popup/run-history UI from Phase 5; remaining Pi-native archive browsing stays out of scope. Phase 6.5 should be scoped to the remaining archive/history behavior because #143 already handled the stale awaiting-watch hint subset.
 - Phase 7 (post-merge main sync) is independent and could land any time, but use the real current example as a regression case: after the cleanup session the primary `main` checkout was clean but `ahead 8, behind 9`; the helper must report that as blocked/diverged and must not reset, stash, or discard local commits.
 
 ## Problem
 
-Flightdeck currently treats the tmux session name as the primary live state key. When a Flightdeck session is terminated, the live state file (`tmp/flightdeck-state-<tmux-session>.json`) is archived. If the dashboard starts later and no live state file exists, it falls back to the newest archive and renders that completed snapshot.
+Before PR #167, Flightdeck treated the tmux session name as the primary live state key. When a Flightdeck session was terminated, the live state file (`tmp/flightdeck-state-<tmux-session>.json`) was archived. If the dashboard started later and no live state file existed, it fell back to the newest archive and rendered that completed snapshot.
 
-That behavior is useful for post-mortem inspection, but confusing during continued work in the same Pi/tmux chat: the dashboard appears to show a complete session even though the user is still working. The root issue is that Flightdeck conflates several concepts:
+That behavior was useful for post-mortem inspection, but confusing during continued work in the same Pi/tmux chat: the dashboard appeared to show a complete session even though the user was still working. The root issue was that Flightdeck conflated several concepts:
 
 - The chat/harness session.
 - The tmux session.
 - A Flightdeck supervision run.
 - An archived snapshot of a completed run.
 
-The dashboard should clearly distinguish active runs from archived runs and make historical snapshots browsable without pretending they are still active.
+The dashboard now clearly distinguishes active runs from archived runs and makes historical snapshots browsable without pretending they are still active.
 
-PR #167's current branch head includes the PR #165 lifecycle helpers and focuses its UI changes on Rust dashboard active/history/archive behavior. Pi status-shell/focus-open behavior belongs to PR #166 follow-up work; on this branch the Pi extension still provides inline status plus the existing `/flightdeck` popup.
+PR #167's current branch head includes the PR #165 lifecycle helpers, the merged PR #166 status-shell/focus-open behavior, and the Rust dashboard active/history/archive behavior. On this branch, `/flightdeck` delegates to Rust app focus/open, the old Pi popup/prune UI is gone, and the Rust dashboard is the canonical full UI.
 
 ## Goals
 
@@ -98,9 +98,9 @@ PR #167's current branch head includes the PR #165 lifecycle helpers and focuses
 - Allow browsing previous runs and snapshots from the dashboard.
 - Store history in a durable location that survives worktree cleanup and project `tmp/` churn.
 - Keep backwards compatibility with existing `tmp/flightdeck-state-*.json` and `.archive` files.
-- Stop stale completed-session mini-dashboard banners from appearing in brand-new Pi sessions unless the user explicitly opens history.
-- Keep `@vanillagreen/pi-flightdeck` compatible with the Rust dashboard history/no-active split without claiming Pi-native no-active or status-shell behavior that is not in this branch.
-- Leave Pi status-shell focus/open behavior, default app-window naming, and app-window ordering to PR #166 follow-up work.
+- Stop stale completed-session mini-dashboard banners from appearing as active supervised work in brand-new Pi sessions; any retained Pi legacy archive fallback must be inactive/status-only.
+- Keep `@vanillagreen/pi-flightdeck` compatible with the Rust dashboard history/no-active split without claiming Pi-native History/run browsing.
+- Preserve the merged PR #166 status-shell behavior: `/flightdeck` focuses or launches the Rust app, `/flightdeck:toggle` cycles the mini-dashboard, and the old Pi popup/prune UI stays removed.
 - Automate post-merge local-main sync so Flightdeck workflows do not leave the operator's main checkout stale after merging PRs.
 
 ## Non-goals
@@ -125,12 +125,12 @@ PR #167's current branch head includes the PR #165 lifecycle helpers and focuses
 
 ### Current implementation notes
 
-These details were verified before expanding this plan and should be read with the follow-up PRs in mind:
+These details were verified after merging PR #166 into this branch and should be treated as current behavior:
 
 - PR #167 owns the Rust dashboard active/history/archive behavior on the current base.
 - PR #166 status-shell/focus-open work is merged: `@vanillagreen/pi-flightdeck` registers `/flightdeck` for Rust app focus/open, keeps `/flightdeck:toggle` plus the `alt+m` mini-dashboard toggle, and no longer owns the old full popup UI.
 - Rust dashboard no-active/history mode does not render terminated archives as active state; explicit History/`--archive`/`--run-id` views are read-only.
-- The Pi mini-dashboard renders active status only and does not use terminated archive fallback as active state.
+- The Pi mini-dashboard/status snapshot may still read legacy terminated archives for inactive fallback/diagnostics, but must not render them as active supervised work; Rust History owns archive browsing.
 - The extension has no tool-output renderer registration and no `tool_call` / `tool_result` rendering logic. If future Pi tool renderers are added, keep only those renderer registrations and tests.
 - `flightdeck-dashboard launch` no-ops outside tmux, starts the Rust app through `flightdeck-session start`, and records a `flightdeck-dashboard` tracked entry.
 - `flightdeck-dashboard focus-or-launch` is the Pi `/flightdeck` integration target and reports path/command/stderr diagnostics on stale probe, focus, or launch failures.
@@ -201,16 +201,16 @@ Dashboard load behavior should become:
 1. If active run exists: load active run state as live.
 2. If no active run exists: show the normal dashboard shell with a clear no-active-run empty state and a key hint to open history.
 3. Rust dashboard only loads archives when the user explicitly chooses a run/snapshot from the History popup, or when launched with `--archive`/`--run-id`.
-4. Persistent Pi mini-dashboard banners stay hidden or show a compact no-active hint; they must not render the newest archived run as an active/completed session on fresh Pi startup.
+4. Persistent Pi mini-dashboard banners stay hidden, show a compact no-active hint, or show inactive legacy fallback text; they must not render the newest archived run as an active/completed supervised session on fresh Pi startup.
 5. Archive mode is always read-only and visually distinct.
 
 ## Dashboard UX
 
-### History popup, not a tab (future work)
+### History popup, not a tab (shipped in PR #167)
 
-Add a `History` popup to the Rust dashboard in a later PR. Do **not** add a permanent tab. The main tab model should stay focused on the active/current run; history is an overlay opened on demand.
+PR #167 adds the `History` popup to the Rust dashboard. It is not a permanent tab. The main tab model stays focused on the active/current run; history is an overlay opened on demand for durable run/snapshot browsing, legacy archive import, and returning to the active run.
 
-Keybind proposal:
+Keybinds:
 
 - `H`: open/close History popup.
 - `j`/`k` or arrows: move through runs/snapshots.
@@ -241,12 +241,7 @@ Rows:
 - Snapshot count.
 - Summary path/status.
 
-Selecting a run with multiple snapshots should either:
-
-1. Expand that run inline and let the user choose a specific snapshot, or
-2. Load the latest/final snapshot by default and offer a secondary snapshot list in the popup.
-
-Prefer inline expansion first; it keeps history browsing as one overlay and avoids adding another tab/state mode.
+Selecting a run with multiple snapshots expands that run inline so the user can choose a specific snapshot without adding another tab/state mode.
 
 ### Active vs archived banners
 
@@ -277,15 +272,15 @@ Mutating actions must be disabled in archived view:
 
 ### Current dashboard view changes
 
-- Header should include run status (`live`, `archived`, `no active run`).
-- Header/help overlay should show the History popup keybind.
+- Header includes run status (`live`, `archived`, `no active run`).
+- Header/help overlay shows the History popup keybind.
 - Daemon tab should say whether data comes from active run state, imported archive, or legacy project-local archive.
-- Existing fallback-to-newest-archive should become explicit, not automatic active view.
-- Loading an archived snapshot from History should replace the current displayed snapshot until the user returns to active run or picks another snapshot.
+- Existing fallback-to-newest-archive is explicit, not automatic active view.
+- Loading an archived snapshot from History replaces the current displayed snapshot until the user returns to active run or picks another snapshot.
 
 ## Pi extension scope after the Rust app
 
-Keep `@vanillagreen/pi-flightdeck`, but turn it into a thin Pi status integration rather than a second dashboard application.
+Keep `@vanillagreen/pi-flightdeck` as the thin Pi status integration delivered by PR #166 rather than a second dashboard application.
 
 Keep:
 
@@ -296,26 +291,26 @@ Keep:
 - Mini-dashboard settings needed for refresh cadence, max rows, tree style, visibility, and toggle.
 - Cross-extension usage stats from `pi-agents-tmux` if the mini-dashboard still displays cost/tokens/turns.
 - `/flightdeck:toggle` and its shortcut for hidden/compact/expanded mini-dashboard cycling.
-- `/flightdeck` popup command and optional shortcut on this branch; focus/open repurposing is PR #166 follow-up work.
+- `/flightdeck` Rust app focus/open delegation and diagnostics.
 
-Remove or move to the Rust app:
+Removed or moved to the Rust app by PR #166:
 
 - Pi custom popup framework and modal-lock usage for Flightdeck.
 - Popup tab definitions and renderers for Overview, Live feed, Conversations, Conflicts & merges, Decisions, and Daemon.
 - Popup search/scroll/detail/keymap state.
-- Popup-only prune action (`p`/`del`). Live stale-entry pruning should be handled in the Rust app, where read-only archive guards already belong.
-- Popup-only settings: `popupShortcut`, `autoOpenOnPause` if it only opens the popup, `liveFeedLines`, `conversationExcerptChars`, `conversationsHistory`. Replace with app-focus equivalents only if still useful.
-- Legacy `/flightdeck watch` paste-to-editor workaround after verifying no current daemon path still emits bare `/flightdeck watch` instead of `/skill:flightdeck watch`.
+- Popup-only prune action (`p`/`del`). Live stale-entry pruning belongs in the Rust app, where read-only archive guards already live.
+- Popup-only settings: `popupShortcut`, `autoOpenOnPause` if it only opens the popup, `liveFeedLines`, `conversationExcerptChars`, `conversationsHistory`.
+- Legacy `/flightdeck watch` paste-to-editor workaround when no current daemon path depends on bare `/flightdeck watch`.
 
 Mini-dashboard parity:
 
-- Preserve the same information density the inline widget shows today for supervised entries: session count, state summary, merge queue, daemon/app health chip, row kind/title/state/harness, pane gone chip, PR/worktree/branch/model/effort/cost where already shown.
-- Follow-up status-shell work should stop showing terminated archive rows in fresh Pi sessions. Rust dashboard History owns archives on this branch.
-- Prefer not to count the Rust app itself as a normal workflow session in the mini-dashboard. If the app remains registered as `flightdeck-dashboard`, render it as app/header status or mark it as a hidden/system entry so the widget does not self-report `WF flightdeck` as supervised work.
+- Preserve the same information density the inline widget shows for active supervised entries: session count, state summary, merge queue, daemon/app health chip, row kind/title/state/harness, pane gone chip, PR/worktree/branch/model/effort/cost where already shown.
+- Do not show terminated archive rows as active supervised work in fresh Pi sessions. Rust dashboard History owns archives on this branch; Pi may retain inactive legacy archive fallback text only as a status-shell limitation.
+- Do not count the Rust app itself as a normal workflow session in the mini-dashboard. The app entry should be hidden/system or represented as app/header status so the widget does not self-report `WF flightdeck` as supervised work.
 
-### Deferred `/flightdeck` app focus/open behavior
+### `/flightdeck` app focus/open behavior (shipped in PR #166)
 
-On this branch, `/flightdeck` still opens the Pi custom popup. Repurposing it to focus/open the Rust app belongs to PR #166 follow-up work.
+On this branch, `/flightdeck` focuses an existing Rust dashboard app window or launches it first. The old Pi custom popup is removed.
 
 Behavior:
 
@@ -324,10 +319,10 @@ Behavior:
 3. If the Rust app is not running, launch it in a new tmux window, then focus it.
 4. If launch/focus fails, surface stderr in a Pi notification/message.
 
-Best implementation approach:
+Implementation shape:
 
-- Add a future Rust dashboard focus/open helper in the Rust app or its script wrapper.
-- The helper owns tmux probing, launch, and focus. The Pi extension should shell to this helper instead of reimplementing tmux logic in TypeScript.
+- Use the Rust dashboard `focus-or-launch` helper as the canonical integration target.
+- The helper owns tmux probing, launch, and focus. The Pi extension shells to this helper instead of reimplementing tmux logic in TypeScript.
 - Focus by stable `pane_id` when available: resolve `#{window_id}` from the pane id, then `tmux select-window -t <window_id>`.
 - Fall back to the app's recorded window id/name only when stable pane id is missing and stale-target guards pass.
 - Return structured JSON for the Pi extension: `status: focused|launched|blocked|failed`, `reason`, `pane_id`, `window_id`, `window_name`, `stderr`.
@@ -375,11 +370,11 @@ flightdeck-state run import-legacy [--project-root <path>] [--state-dir tmp]
 
 ```bash
 flightdeck-dashboard tui --session <tmux-session>          # active/named live-state read
-# future work, not shipped in PR #166:
 flightdeck-dashboard tui --run-id <run-id>                 # read-only selected run
 flightdeck-dashboard tui --archive <path>                  # read-only legacy archive
+flightdeck-dashboard tui --run-id <run-id> --snapshot <timestamp>  # read-only selected snapshot
 flightdeck-dashboard launch [--window-name <name>]         # ensure app window exists
-# future PR #166: Rust dashboard focus/open helper
+flightdeck-dashboard focus-or-launch [--window-name <name>] # focus existing app or launch it
 ```
 
 `flightdeck-session start`:
@@ -447,13 +442,13 @@ Keep existing fields for compatibility.
 - Add read-only archive guard for mutating actions.
 - Add snapshot tests for active, no-active, archived, and imported views.
 
-### Phase 5 — History popup UI (future work, not shipped in PR #166)
+### Phase 5 — History popup UI (shipped in PR #167)
 
-- Add a History popup/modal opened by keybind (for example `H`), not a top-level tab.
+- Add a History popup/modal opened by keybind (`H`), not a top-level tab.
 - Implement scrollable run/snapshot list, filter input, inline snapshot expansion, open active, and open archived snapshot controls.
-- Avoid global key conflicts with the new Settings popup: `S` / `Alt+S` is already a dashboard-wide Settings key from #150. Any History action using `S` (for example summary-path copy/open) must be modal-local only, clearly documented in the History footer, and covered by key-handling tests.
+- Avoid global key conflicts with the Settings popup: `S` / `Alt+S` is already a dashboard-wide Settings key from #150. Any History action using `S` (for example summary-path copy/open) is modal-local only, documented in the History footer, and covered by key-handling tests.
 - Add help text and keybind docs.
-- Add tests/snapshots for popup closed/open, filtered history, empty history, selected archived run, expanded snapshot list, and active run return.
+- Add tests/snapshots for popup closed/open, filtered history, empty history, selected archived run, expanded snapshot list, import flow, and active run return.
 
 ### Phase 6 — Migration and cleanup
 
@@ -463,22 +458,22 @@ Keep existing fields for compatibility.
 
 ### Phase 6.5 — Startup stale-banner and prune policy
 
-Current pi-flightdeck behavior intentionally keeps completed sessions visible from the newest terminated archive and offers manual `p`/`del` prune for pane-gone live entries. That was useful for post-completion visibility, but wrong for the new run model because it makes a fresh Pi session look like Flightdeck is still supervising old pane-gone work. PR #143 already added a narrow stale-pane guard for never-started/awaiting-watch hints: if tmux proves every tracked pane id is dead, the extension no longer renders a misleading "start supervising" hint. This phase still owns the broader policy for terminated archives, active-run-only mini-dashboard rows, and explicit History/archive browsing.
+Legacy pi-flightdeck behavior intentionally kept completed sessions visible from the newest terminated archive and offered manual `p`/`del` prune for pane-gone live entries. That was useful for post-completion visibility, but wrong for the new run model because it makes a fresh Pi session look like Flightdeck is still supervising old pane-gone work. PR #143 already added a narrow stale-pane guard for never-started/awaiting-watch hints: if tmux proves every tracked pane id is dead, the extension no longer renders a misleading "start supervising" hint. PR #166 removes the old Pi popup/prune UI; PR #167 makes Rust History/archive browsing explicit.
 
 Rust dashboard policy on this branch:
 
 - Terminated runs move to Rust-app history/no-active mode instead of rendering as live state.
-- The persistent Pi mini-dashboard renders only active runs by default.
-- If there is no active run, show nothing or a compact no-active hint; do not show old archived rows with `pane gone` prune guidance.
+- The persistent Pi mini-dashboard renders active runs by default and may retain only inactive legacy archive fallback text for diagnostics/status, not active supervised rows.
+- If there is no active run, show nothing, a compact no-active hint, or inactive fallback text; do not show old archived rows with `pane gone` prune guidance.
 - `pane-registry remove` remains a manual action for stale entries in a live active run.
 - Do not auto-prune entries inside archived/terminated runs; archives are historical records.
-- On new Flightdeck run start, create/reuse a fresh active run and leave previous terminated runs browseable through `flightdeck-state run list/show` until direct History UI ships.
+- On new Flightdeck run start, create/reuse a fresh active run and leave previous terminated runs browseable through `flightdeck-state run list/show` and the Rust History popup.
 - If a live active run has zero live panes and is not marked terminated, archive/finalize it as stale before starting a new run rather than pruning rows one-by-one.
 
-Follow-up Pi policy:
+Pi limitation to keep explicit:
 
-- Stop rendering terminated archive fallback in the persistent Pi mini-dashboard.
-- Render only active runs by default; if there is no active run, show nothing or a compact no-active hint.
+- Pi does not own a native History UI.
+- Any legacy terminated archive fallback in Pi is inactive/status-only and must not replace the Rust History popup.
 - Avoid old archived rows with `pane gone` prune guidance.
 
 Implementation targets:
@@ -486,15 +481,15 @@ Implementation targets:
 - Update pi-flightdeck state loading so terminated archive fallback does not feed the persistent active banner; Rust History/explicit archive views consume archives separately.
 - Update Rust dashboard startup similarly: no automatic newest-archive-as-active rendering for active views.
 - Keep direct archive/run launch (`tui --archive`, `tui --run-id`) read-only.
-- Add tests for Pi startup after a terminated archive: no `Flightdeck 2 sessions · ✓ 2 · session complete` persistent banner; durable history remains available through `flightdeck-state run list/show` and the Rust app.
+- Add tests for Pi startup after a terminated archive: no `Flightdeck 2 sessions · ✓ 2 · session complete` active persistent banner; durable history remains available through `flightdeck-state run list/show` and the Rust History popup.
 - Add Rust dashboard tests for no-active startup after terminated state/history, read-only archive mutation guards, and explicit snapshot activity containment.
 - Add tests for live active stale rows: `pane gone` chip and manual prune still appear only for active run state.
 
-### Phase 6.6 — Trim `@vanillagreen/pi-flightdeck` to a status shell
+### Phase 6.6 — Trim `@vanillagreen/pi-flightdeck` to a status shell (shipped in PR #166)
 
 Goal: keep the Pi extension as a lightweight inline status display while deleting the duplicated full-screen popup app.
 
-Tasks:
+Tasks completed by PR #166:
 
 - Delete popup-only UI state, tab renderers, modal-lock usage, popup search/detail/key handling, and popup prune behavior from `pi-extensions/pi-flightdeck/extensions/flightdeck.ts`.
 - Keep/refactor the mini-dashboard renderer so it still shows the current inline information for active supervised entries.
@@ -519,11 +514,11 @@ Tests:
 - `/flightdeck:toggle` still cycles mini-dashboard state.
 - No current user-facing README/catalog says `pi-flightdeck` is deprecated or required.
 
-### Phase 6.7 — App focus/open helper, icon title, and launch order
+### Phase 6.7 — App focus/open helper, icon title, and launch order (shipped in PR #166)
 
 Goal: make the Rust app the canonical full dashboard and ensure it appears in a predictable tmux location.
 
-Tasks:
+Tasks completed by PR #166:
 
 - Add the Rust dashboard `focus-or-launch` command as the canonical focus/open path.
 - Add stable focus logic: app pane id → window id → `tmux select-window -t <window-id>`.
@@ -955,19 +950,19 @@ If any Pi extension behavior changes:
 - Terminating a Flightdeck run clears active state and dashboard shows no active run/history view.
 - Continuing the same Pi/tmux chat after termination does not show an archived run as if it were active.
 - Starting a new tracked delegation in the same tmux session creates a fresh run.
-- Future History UI can browse previous runs and snapshots from a keybind-opened popup; until then, `flightdeck-state run list/show` provides durable history inspection.
+- Rust dashboard History UI can browse previous runs and snapshots from a keybind-opened popup; `flightdeck-state run list/show` remains durable CLI inspection.
 - Archived views are clearly read-only and cannot perform live mutations.
 - Existing `tmp/flightdeck-state-*.json.archive` files remain viewable/importable.
-- Rust dashboard sessions with only terminated archives show no-active/history instead of active archived rows. Current Pi mini-dashboard can still render legacy terminated archive fallback until follow-up status-shell/archive-suppression work changes it.
+- Rust dashboard sessions with only terminated archives show no-active/history instead of active archived rows. Current Pi mini-dashboard/status shell may still render legacy terminated archive fallback as inactive/status-only data; it must not present those archives as active supervised work or Pi-native History UI.
 - Manual prune remains available for pane-gone entries in active live runs, but archived runs are never auto-pruned.
-- On PR #167, the Pi extension still contains the `/flightdeck` popup; docs must not describe a Pi-native no-active landing or status-shell behavior until that integration exists.
+- On PR #167 after the PR #166 merge, the Pi extension no longer contains the old `/flightdeck` popup/prune UI; `/flightdeck` delegates to Rust app focus/open and `/flightdeck:toggle` still cycles the mini-dashboard.
 - Current pi-flightdeck has no Flightdeck-specific tool output renderer, so no tool renderer code must be preserved in this cleanup.
-- Rust app focus/open command, app-window icon/default naming, and automatic app launch ordering are PR #166 follow-up items, not PR #167 behavior.
+- Rust app focus/open command, app-window icon/default naming, and automatic app launch ordering are merged PR #166 behavior on this branch, not pending PR #167 work.
 - Pi 0.75.1 extension follow-ups are either implemented with focused tests or explicitly left as documented no-op decisions.
 - `pi-codex-minimal-tools` terminal provider errors preserve HTTP status codes for retry classification.
 - `pi-skills-manager` browse rows clamp to terminal height without breaking large-terminal configured row counts.
 - Optional Codex text-only fixture cleanup, if done, changes only test names/IDs and not runtime behavior.
-- Tests cover lifecycle, migration, Rust dashboard rendering, Settings popup/catalog interactions when dashboard env defaults change, and read-only/settings-write safety. Pi mini-dashboard archive suppression, Pi app focus/open, and tmux app placement tests belong to follow-up work that implements those behaviors.
+- Tests cover lifecycle, migration, Rust dashboard rendering, History popup/import/active-return flows, Settings popup/catalog interactions when dashboard env defaults change, Pi status-shell focus/open behavior, tmux app placement, and read-only/settings-write safety. Pi-native History/archive browsing remains out of scope unless a later Pi feature implements it.
 - After Flightdeck merges a PR, the primary local `main` checkout is either fast-forwarded to `origin/main` or Flightdeck clearly reports why sync was blocked and what operator choice is needed; never reset the kind of divergent local-main state observed after the cleanup session (`ahead 8, behind 9`).
 - After any implementation PR is merged, local `main` is fetched and fast-forwarded or a blocking sync reason is recorded before the work is called complete.
 - Closed daemon issue #151 stays treated as regression context: daemon/run-history work must capture fresh diagnostics and open/update a new issue if a similar daemon exit appears.
