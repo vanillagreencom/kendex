@@ -437,6 +437,20 @@ describe("Flightdeck durable run store", () => {
 		expect((JSON.parse(readFileSync(first.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
 	});
 
+	test("corrupt metadata cannot forge run store paths", () => {
+		for (const [index, field] of (["project_root", "state_path", "activity_path", "snapshots_path"] as const).entries()) {
+			const created = createRun(repo, `FORGED${index}`);
+			const stateBefore = readFileSync(created.paths.state_json, "utf8");
+			const forgedPath = join(sandbox, "outside", field);
+			writeFileSync(created.paths.metadata_json, JSON.stringify({ ...created.metadata, [field]: forgedPath }), "utf8");
+
+			expect(() => showRun(repo, created.metadata.run_id)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(() => readActiveRun(repo)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(readFileSync(created.paths.state_json, "utf8")).toBe(stateBefore);
+		}
+	});
+
 	test("forged project index cannot bless matching run metadata", () => {
 		const created = createRun(repo, SESSION);
 		const projectPaths = resolveProjectRunPaths(created.project);

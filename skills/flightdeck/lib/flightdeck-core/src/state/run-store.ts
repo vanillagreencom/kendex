@@ -281,7 +281,7 @@ export function ensureActiveRun(projectRoot: string, tmuxSession: string, stateD
 		}
 		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
-		const metadata = readRunMetadataForRun(activePaths.metadata_json, ctx.identity.project_id, active.run_id);
+		const metadata = readRunMetadataForRun(activePaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		if (metadata === JSON_MISSING) {
 			throw new Error(activeRunMissingMetadataMessage(loaded.paths.active_run_json, active, activePaths.metadata_json, loaded.project.root_path));
 		}
@@ -313,7 +313,7 @@ export function readActiveRun(projectRoot: string): { project: ProjectIndex; act
 		if (active === JSON_MISSING) return null;
 		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 		const runPaths = resolveRunPaths(loaded.paths, active.run_id);
-		const metadata = readRunMetadataForRun(runPaths.metadata_json, ctx.identity.project_id, active.run_id);
+		const metadata = readRunMetadataForRun(runPaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		return { active, metadata: metadata === JSON_MISSING ? null : metadata, project: loaded.project };
 	});
 }
@@ -325,7 +325,7 @@ export function listRuns(projectRoot: string): { project: ProjectIndex; runs: Ru
 		if (existsSync(loaded.paths.runs_dir)) {
 			for (const entry of readdirSync(loaded.paths.runs_dir)) {
 				if (!isSafeBasename(entry)) continue;
-				const metadata = readRunMetadataForRun(join(loaded.paths.runs_dir, entry, "metadata.json"), ctx.identity.project_id, entry);
+				const metadata = readRunMetadataForRun(resolveRunPaths(loaded.paths, entry), ctx.identity.project_id, entry, loaded.project.root_path);
 				if (metadata !== JSON_MISSING) runs.push(metadata);
 			}
 		}
@@ -340,7 +340,7 @@ export function showRun(projectRoot: string, runId: string, snapshot?: string): 
 		if (!loaded) throw new Error("project has no Flightdeck run store");
 		const requestedRunId = safeRunId(runId);
 		const paths = resolveRunPaths(loaded.paths, requestedRunId);
-		const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
+		const metadata = readRunMetadataForRun(paths, ctx.identity.project_id, requestedRunId, loaded.project.root_path);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 		const snapshotName = snapshot ? safeSnapshotName(snapshot) : null;
 		const statePath = snapshotName ? safeSnapshotPath(paths.snapshots_dir, snapshotName) : paths.state_json;
@@ -348,7 +348,7 @@ export function showRun(projectRoot: string, runId: string, snapshot?: string): 
 		const state = readStateObject(statePath, "run state");
 		if (state === JSON_MISSING) throw new Error(snapshotName ? `snapshot not found: ${snapshot}` : `state not found for run: ${runId}`);
 		return {
-			activity_path: metadata.activity_path,
+			activity_path: paths.activity_jsonl,
 			metadata,
 			snapshot: snapshotName,
 			snapshots: listSnapshotFiles(paths.snapshots_dir),
@@ -374,7 +374,7 @@ export function terminateActiveRun(projectRoot: string, tmuxSession: string, opt
 		if (active === JSON_MISSING) return { active: null, project: loaded.project, reason: "no-active-run", terminated: null };
 		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
 		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
-		const metadata = readRunMetadataForRun(activePaths.metadata_json, ctx.identity.project_id, active.run_id);
+		const metadata = readRunMetadataForRun(activePaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${active.run_id}`);
 		if (active.tmux_session !== session) {
 			return { active, diagnostic: `active pointer tmux_session=${active.tmux_session} requested_tmux_session=${session}`, project: loaded.project, reason: "session-mismatch", terminated: null };
@@ -415,7 +415,7 @@ export function importLegacyArchives(projectRoot: string, stateDir?: string): Le
 			const startedAt = typeof state.started_at === "string" && state.started_at ? state.started_at : fileMtimeIso(archivePath);
 			const runId = importedRunId(project.project_id, session, terminatedAt.iso, entry);
 			const paths = resolveRunPaths(projectPaths, runId);
-			const existing = readRunMetadataForRun(paths.metadata_json, project.project_id, runId);
+			const existing = readRunMetadataForRun(paths, project.project_id, runId, project.root_path);
 			if (existing !== JSON_MISSING) {
 				skipped.push(existing);
 				continue;
@@ -540,7 +540,7 @@ function createRunLocked(ctx: ProjectLockContext, session: string, stateDir?: st
 function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectIndex; paths: ProjectRunPaths }, runId: string, options: RunTerminateOptions = {}): RunTerminateResult {
 	const requestedRunId = safeRunId(runId);
 	const paths = resolveRunPaths(loaded.paths, requestedRunId);
-	const metadata = readRunMetadataForRun(paths.metadata_json, ctx.identity.project_id, requestedRunId);
+	const metadata = readRunMetadataForRun(paths, ctx.identity.project_id, requestedRunId, loaded.project.root_path);
 	if (metadata === JSON_MISSING) throw new Error(`run not found: ${runId}`);
 	const requestedTmuxSession = options.tmuxSession !== undefined
 		? safeLegacySessionName(requireNonEmpty(options.tmuxSession, "tmux session"))
@@ -1018,11 +1018,12 @@ function readRunMetadata(path: string): RunMetadata | JsonMissing {
 	};
 }
 
-function readRunMetadataForRun(path: string, expectedProjectId: string, expectedRunId: string): RunMetadata | JsonMissing {
-	const metadata = readRunMetadata(path);
+function readRunMetadataForRun(paths: RunPaths, expectedProjectId: string, expectedRunId: string, expectedProjectRoot: string): RunMetadata | JsonMissing {
+	const metadata = readRunMetadata(paths.metadata_json);
 	if (metadata === JSON_MISSING) return JSON_MISSING;
-	validateRunMetadataIdentity(metadata, path, expectedProjectId, expectedRunId);
-	return metadata;
+	validateRunMetadataIdentity(metadata, paths.metadata_json, expectedProjectId, expectedRunId);
+	validateRunMetadataPaths(metadata, paths.metadata_json, expectedProjectRoot, paths);
+	return canonicalRunMetadata(metadata, expectedProjectRoot, paths);
 }
 
 function validateRunMetadataIdentity(metadata: RunMetadata, path: string, expectedProjectId: string, expectedRunId: string): void {
@@ -1032,6 +1033,29 @@ function validateRunMetadataIdentity(metadata: RunMetadata, path: string, expect
 	if (metadata.run_id !== expectedRunId) {
 		throw new Error(`invalid run metadata JSON ${path}: run_id ${metadata.run_id} does not match requested run ${expectedRunId}`);
 	}
+}
+
+function validateRunMetadataPaths(metadata: RunMetadata, path: string, expectedProjectRoot: string, paths: RunPaths): void {
+	assertMetadataPath(path, "project_root", metadata.project_root, expectedProjectRoot);
+	assertMetadataPath(path, "state_path", metadata.state_path, paths.state_json);
+	assertMetadataPath(path, "activity_path", metadata.activity_path, paths.activity_jsonl);
+	assertMetadataPath(path, "snapshots_path", metadata.snapshots_path, paths.snapshots_dir);
+}
+
+function assertMetadataPath(metadataPath: string, field: string, actual: string, expected: string): void {
+	if (resolve(actual) !== resolve(expected)) {
+		throw new Error(`invalid run metadata JSON ${metadataPath}: ${field} ${actual} does not match canonical path ${expected}`);
+	}
+}
+
+function canonicalRunMetadata(metadata: RunMetadata, expectedProjectRoot: string, paths: RunPaths): RunMetadata {
+	return {
+		...metadata,
+		activity_path: paths.activity_jsonl,
+		project_root: expectedProjectRoot,
+		snapshots_path: paths.snapshots_dir,
+		state_path: paths.state_json,
+	};
 }
 
 function validateProjectIndexIdentity(project: ProjectIndex, identity: ProjectIdentity, path: string): void {

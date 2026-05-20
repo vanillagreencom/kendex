@@ -18,9 +18,9 @@ The Flightdeck skill and Rust dashboard work without this extension.
 
 The Flightdeck skill owns workflow state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck renders active status from on-disk state. Its only write affordance is the existing popup stale-row prune action, which shells to the canonical `pane-registry remove <entry_id>` helper after an explicit keypress.
 
-The Rust dashboard is the durable run History/no-active UI. This Pi package continues to render inline status from the current on-disk state and keeps the existing popup; it does not provide a durable History browser, no-active landing screen, or status-shell/focus-open delegation.
+The Rust dashboard is the durable run History/no-active UI. This Pi package continues to render inline status from the current on-disk state and keeps the existing popup; it does not provide a durable History browser, no-active landing screen, archive suppression, or status-shell/focus-open delegation.
 
-Dependency note: Flightdeck lifecycle helpers may archive and clear stale project-local state before Pi reads it. Rust-app focus/open delegation remains future PR #166 follow-up work, not PR #167 behavior.
+Current limitation: this package can still render legacy terminated archive fallback as a persistent widget if only archived project-local state is present. Rust-app focus/open and Pi archive suppression remain follow-up work, not PR #167 behavior.
 
 ## Install
 
