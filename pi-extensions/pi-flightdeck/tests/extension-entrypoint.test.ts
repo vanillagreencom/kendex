@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
@@ -67,9 +67,26 @@ function makeProject(binBody: string): string {
 	const binDir = join(project, ".agents", "skills", "flightdeck", "scripts");
 	mkdirSync(binDir, { recursive: true });
 	const bin = join(binDir, "flightdeck-dashboard");
-	writeFileSync(bin, `#!/usr/bin/env bash\n${binBody}\n`);
+	const argvFile = join(project, "dashboard-argv.txt");
+	const cwdFile = join(project, "dashboard-cwd.txt");
+	writeFileSync(bin, `#!/usr/bin/env bash
+printf '%s\n' "$PWD" > ${JSON.stringify(cwdFile)}
+: > ${JSON.stringify(argvFile)}
+for arg in "$@"; do printf '%s\n' "$arg" >> ${JSON.stringify(argvFile)}; done
+${binBody}
+`);
 	chmodSync(bin, 0o755);
 	return project;
+}
+
+function dashboardArgv(project: string): string[] {
+	const text = readFileSync(join(project, "dashboard-argv.txt"), "utf8");
+	return text.trim().length > 0 ? text.trimEnd().split("\n") : [];
+}
+
+function assertDashboardInvocation(project: string, expectedArgs: string[]): void {
+	assert.deepEqual(dashboardArgv(project), expectedArgs);
+	assert.equal(readFileSync(join(project, "dashboard-cwd.txt"), "utf8").trim(), project);
 }
 
 function makePi() {
@@ -137,6 +154,7 @@ test("/flightdeck reports focus-or-launch success", async () => {
 
 		await commands.get("flightdeck")?.handler("", ctx);
 
+		assertDashboardInvocation(project, ["focus-or-launch", "--json"]);
 		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app focused (window @9 · pane %9)", level: "info" }]);
 	} finally {
 		rmSync(project, { force: true, recursive: true });
@@ -152,6 +170,7 @@ test("/flightdeck reports focus-or-launch blocked", async () => {
 
 		await commands.get("flightdeck")?.handler("", ctx);
 
+		assertDashboardInvocation(project, ["focus-or-launch", "--json"]);
 		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app blocked: not in tmux", level: "warning" }]);
 	} finally {
 		rmSync(project, { force: true, recursive: true });
@@ -167,10 +186,43 @@ test("/flightdeck reports malformed focus-or-launch JSON as an error", async () 
 
 		await commands.get("flightdeck")?.handler("", ctx);
 
+		assertDashboardInvocation(project, ["focus-or-launch", "--json"]);
 		assert.equal(ctx.notifications.length, 1);
 		assert.equal(ctx.notifications[0]?.level, "error");
 		assert.match(ctx.notifications[0]?.message ?? "", /malformed JSON/);
 		assert.match(ctx.notifications[0]?.message ?? "", /not-json/);
+	} finally {
+		rmSync(project, { force: true, recursive: true });
+	}
+});
+
+test("/flightdeck filters duplicate user --json", async () => {
+	const project = makeProject("printf '{\"status\":\"launched\",\"reason\":\"new dashboard\"}\n'");
+	try {
+		const { commands, pi } = makePi();
+		flightdeck(pi as never);
+		const ctx = makeContext(project);
+
+		await commands.get("flightdeck")?.handler("--json", ctx);
+
+		assertDashboardInvocation(project, ["focus-or-launch", "--json"]);
+		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app launched", level: "info" }]);
+	} finally {
+		rmSync(project, { force: true, recursive: true });
+	}
+});
+
+test("/flightdeck forwards extra user args after status-shell entrypoint", async () => {
+	const project = makeProject("printf '{\"status\":\"focused\",\"reason\":\"with args\"}\n'");
+	try {
+		const { commands, pi } = makePi();
+		flightdeck(pi as never);
+		const ctx = makeContext(project);
+
+		await commands.get("flightdeck")?.handler("--session test-fd --no-daemon --json --window-name FD", ctx);
+
+		assertDashboardInvocation(project, ["focus-or-launch", "--json", "--session", "test-fd", "--no-daemon", "--window-name", "FD"]);
+		assert.deepEqual(ctx.notifications, [{ message: "Flightdeck app focused", level: "info" }]);
 	} finally {
 		rmSync(project, { force: true, recursive: true });
 	}
