@@ -19,6 +19,7 @@ Run shell commands in the background without blocking the conversation.
 - Inline mini-dashboard participates in vstack's stable stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Persistent log files keep full output even when tool output is truncated.
 - Per-session sidecar state keeps `/bg` task history resumable for both tool-spawned and slash-command-spawned tasks.
+- Large task fleets keep `bg_task list` / `bg_status list` tool-result history compact; details store only counts and id samples while sidecar state remains canonical for resume.
 - The `/bg` dashboard wraps multi-line commands and strips terminal control sequences from preview rows so task details stay inside the popup frame; the popup documents its own keys in the footer.
 
 ## Install

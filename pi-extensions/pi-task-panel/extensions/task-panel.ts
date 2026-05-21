@@ -22,6 +22,10 @@ import {
 	type PanelState,
 	type VisiblePanelState,
 } from "./visibility.js";
+import {
+	isTaskPanelToolResultBoundedState,
+	taskPanelToolResultState,
+} from "./tool-result-details.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
@@ -877,7 +881,12 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				state = normalizeState(entry.data, ctx.cwd);
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {
-				const restored = normalizeState(entry.message.details?.state, ctx.cwd);
+				const detailsState = entry.message.details?.state;
+				if (isTaskPanelToolResultBoundedState(detailsState)) {
+					if (sidecarState) state = sidecarState;
+					continue;
+				}
+				const restored = normalizeState(detailsState, ctx.cwd);
 				if (restored.tasks.length > 0 || restored.phases.length > 0) state = restored;
 			}
 		}
@@ -1166,7 +1175,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			const summary = toolResultSummary(params.action, message, state);
 			const deferAllCompleteDisplay = state.tasks.length > 0 && remainingCount(state) === 0 && !summary.startsWith("No task");
 			pendingCompletionMessage = deferAllCompleteDisplay ? { action: params.action, summary } : undefined;
-			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: cloneState(state) } };
+			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: taskPanelToolResultState(state) } };
 		},
 		renderCall(_args, theme) {
 			return compactToolOutput ? singleLine("") : singleLine(theme.fg("toolTitle", "tasks_write"));

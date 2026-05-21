@@ -19,6 +19,7 @@ import { BG_COMMAND } from "./constants.js";
 import { openDashboard, type DashboardDeps } from "./dashboard.js";
 import { formatRelativeTime, formatTaskLog, summarizeTaskStatus, taskLogTruncation } from "./format.js";
 import { makeToolResult, renderBgToolResult, renderEmpty } from "./render.js";
+import { bgToolResultTasks } from "./tool-result-details.js";
 import type { BackgroundTaskSnapshot, ManagedTask, SpawnTaskOptions } from "./types.js";
 import { NOTIFY_MODES } from "./wake-events.js";
 
@@ -55,7 +56,8 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 		}),
 		async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
 			if (params.action === "list") {
-				return makeToolResult(deps.formatTaskListText(), { action: "list", tasks: deps.sortedTasks().map(deps.rememberSnapshot) });
+				const tasks = deps.sortedTasks().map(deps.rememberSnapshot);
+				return makeToolResult(deps.formatTaskListText(), { action: "list", tasks: bgToolResultTasks(tasks) });
 			}
 			const task = deps.resolveTask(undefined, params.pid);
 			if (!task) throw new Error("No background task matched that pid.");
@@ -112,7 +114,8 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 		}),
 		async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
 			if (params.action === "list") {
-				return makeToolResult(deps.formatTaskListText(), { action: "list", tasks: deps.sortedTasks().map(deps.rememberSnapshot) });
+				const tasks = deps.sortedTasks().map(deps.rememberSnapshot);
+				return makeToolResult(deps.formatTaskListText(), { action: "list", tasks: bgToolResultTasks(tasks) });
 			}
 			if (params.action === "clear") {
 				const removed = deps.clearFinishedTasks();

@@ -15,6 +15,7 @@ Persistent task panel above the Pi status line. Tasks are managed by the agent t
 - Workflow reminders nudge the agent to keep the panel in sync.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Per-session sidecar state keeps slash-command edits and pending tasks resumable before the next model turn writes tool-result history.
+- Large task panels keep tool-result history compact; oversized `tasks_write` details store only counts and id samples while sidecar state remains canonical for resume.
 
 ## Install
 

@@ -52,6 +52,10 @@ Orphans rehydrate as `running` rather than synthetically `stopped`, and a period
 
 `persistSnapshots()` returns `{ appendEntry, sidecar, appendReason: "appended" | "unchanged" | "manifest" | "no-active-context" | "error" }` so callers/tests can distinguish a deliberate skip from a failure.
 
+## Bounded tool-result details (vstack#187)
+
+`bg_task list` and `bg_status list` also write their `details.tasks` into Pi's tool-result JSONL path, separate from custom session entries. `bgToolResultTasks()` keeps small lists as full snapshots for legacy restore fallback, but once the list exceeds the task-count threshold or 64 KiB serialized size it emits a `version: 2, fullSnapshot: false` manifest with counts and a small id sample. `restoreSnapshots()` treats that manifest as a sidecar barrier, re-applying sidecar state if it was loaded so an older full tool-result snapshot earlier in the branch cannot regress resumed state.
+
 ## Tests
 
 ```
