@@ -91,6 +91,24 @@ function bridgeEvent(event: string, data: Record<string, unknown> = {}): Record<
 	return { type: "event", event, data };
 }
 
+type StreamShape = "nested-event" | "bridge-event" | "top-level";
+
+function shapedStreamEvent(shape: StreamShape, event: string, data: Record<string, unknown> = {}): Record<string, unknown> {
+	if (shape === "nested-event") return { event: { type: event, ...data } };
+	if (shape === "bridge-event") return { type: "event", event, data };
+	return { type: event, ...data };
+}
+
+function findAgentStartTranscriptPayload(records: any[]): any {
+	for (const record of records) {
+		const event = record.event;
+		if (event?.event && typeof event.event === "object" && event.event.type === "agent_start") return event.event;
+		if (event?.type === "event" && event.event === "agent_start") return event.data;
+		if (event?.type === "agent_start") return event;
+	}
+	return undefined;
+}
+
 function mockPiEvents(events: Array<{ name: string; payload: any }>) {
 	return {
 		getActiveTools: () => [],
@@ -147,54 +165,92 @@ test("oneshot default mints unique lane per call in clean and polluted env", () 
 	});
 });
 
-test("oneshot transcript drops streaming message_update snapshots and enriches agent_start", async () => {
+test("oneshot transcript filters message_update and enriches agent_start for supported stream shapes", async () => {
 	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
-	delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
-	const stdout = bridgeStdout([
-		{ event: { type: "agent_start" } },
-		{ event: { type: "message_start" } },
-		{ event: { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } } },
-		{ event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "final" }], usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 }, model: "openai-codex/gpt-5.5:xhigh" } } },
-	]);
-	installMockSpawn([{ code: 0, stdout }]);
-	try {
-		const agent = { ...testAgent(), model: "openai-codex/gpt-5.5:xhigh" };
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[agent],
-			agent.name,
-			"review task",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents([]),
-			undefined,
-			undefined,
-			makeDetails,
-		);
+	const shapes: StreamShape[] = ["nested-event", "bridge-event", "top-level"];
+	for (const shape of shapes) {
+		delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+		installMockSpawn([{ code: 0, stdout: bridgeStdout([
+			shapedStreamEvent(shape, "agent_start"),
+			shapedStreamEvent(shape, "message_start"),
+			shapedStreamEvent(shape, "message_update", { message: { role: "assistant", content: [{ type: "text", text: `partial ${shape}` }] } }),
+			shapedStreamEvent(shape, "message_end", { message: { role: "assistant", content: [{ type: "text", text: `final ${shape}` }], usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 }, model: "openai-codex/gpt-5.5:xhigh" } }),
+		]) }]);
+		try {
+			const agent = { ...testAgent(), model: "openai-codex/gpt-5.5:xhigh" };
+			const result = await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[agent],
+				agent.name,
+				`review task ${shape}`,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents([]),
+				undefined,
+				undefined,
+				makeDetails,
+			);
 
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.messages.at(-1)?.role, "assistant");
-		const content = readFileSync(result.transcriptPath!, "utf8");
-		assert.equal(content.includes("message_update"), false);
-		assert.match(content, /message_start/);
-		assert.match(content, /message_end/);
-		const records = content.trim().split(/\r?\n/).map((line) => JSON.parse(line));
-		const agentStart = records
-			.map((record) => record.event?.event)
-			.find((event) => event?.type === "agent_start");
-		assert.equal(agentStart.agent, "reviewer-test");
-		assert.equal(agentStart.model, "openai-codex/gpt-5.5:xhigh");
-		assert.ok(Array.isArray(agentStart.args));
-		assert.ok(agentStart.args.includes("--model"));
-		assert.ok(agentStart.args.includes("openai-codex/gpt-5.5:xhigh"));
-	} finally {
-		setSingleAgentSpawnForTests();
-		if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
-		else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+			assert.equal(result.exitCode, 0, shape);
+			assert.equal(result.messages.at(-1)?.role, "assistant", shape);
+			const content = readFileSync(result.transcriptPath!, "utf8");
+			assert.equal(content.includes("message_update"), false, shape);
+			assert.match(content, /message_start/, shape);
+			assert.match(content, /message_end/, shape);
+			const records = content.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+			const agentStart = findAgentStartTranscriptPayload(records);
+			assert.equal(agentStart.agent, "reviewer-test", shape);
+			assert.equal(agentStart.model, "openai-codex/gpt-5.5:xhigh", shape);
+			assert.ok(Array.isArray(agentStart.args), shape);
+			assert.ok(agentStart.args.includes("--model"), shape);
+			assert.ok(agentStart.args.includes("openai-codex/gpt-5.5:xhigh"), shape);
+			assert.equal(agentStart.args.some((arg: string) => arg.startsWith("Task: ")), false, shape);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
 	}
+	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+});
+
+test("failed oneshot transcript flushes latest filtered message_update when no message_end was recorded", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	const shapes: StreamShape[] = ["nested-event", "bridge-event", "top-level"];
+	for (const shape of shapes) {
+		delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+		installMockSpawn([{ code: 1, stdout: bridgeStdout([
+			shapedStreamEvent(shape, "message_update", { message: { role: "assistant", content: [{ type: "text", text: `partial failure ${shape}` }] } }),
+		]) }]);
+		try {
+			const result = await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				`review task ${shape}`,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents([]),
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			const content = readFileSync(result.transcriptPath!, "utf8");
+			assert.equal(result.exitCode, 1, shape);
+			assert.match(content, /message_update/, shape);
+			assert.match(content, new RegExp(`partial failure ${shape}`), shape);
+			assert.match(content, /"buffered":true/, shape);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	}
+	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
 });
 
 test("oneshot transcript keeps message_update snapshots when full stream env is enabled", async () => {

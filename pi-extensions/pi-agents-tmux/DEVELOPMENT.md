@@ -72,7 +72,7 @@ Calls above the internal batch size (default 8) are split transparently.
 
 Bg one-shot agents run Pi in JSON stream mode and write a sidecar transcript under `transcripts/<agent>/<taskId>.jsonl`. The writer records `start`, `exit`, `message_start`, `message_end`, tool execution events, stderr, parse errors, and diagnostics. It drops `message_update` by default because those events are full message-so-far snapshots and duplicate the final `message_end` content. Set `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` in the parent environment before launching Pi to keep the full stream for debugging.
 
-The writer also normalizes Pi event shapes used by current and older bridge streams (`{type:"event", event, data}`, `{event:{type}}`, and top-level `{type}`) before processing. `agent_start` transcript entries are enriched with the static agent name, selected model, and spawned Pi args so transcript-only telemetry can attribute cost and model selection without reading the synthetic `start` row.
+The writer also normalizes Pi event shapes used by current and older bridge streams (`{type:"event", event, data}`, `{event:{type}}`, and top-level `{type}`) before processing. `agent_start` transcript entries are enriched with the static agent name, selected model, and spawned Pi args (omitting the final task prompt arg) so transcript-only telemetry can attribute cost and model selection without reading the synthetic `start` row.
 
 ## Result retrieval and steering
 

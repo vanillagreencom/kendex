@@ -168,8 +168,8 @@ function transcriptFullStreamEnabled(): boolean {
 	return /^(1|true|yes|on)$/i.test(process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL?.trim() ?? "");
 }
 
-function shouldAppendTranscriptEvent(eventName: string | undefined): boolean {
-	return transcriptFullStreamEnabled() || eventName !== "message_update";
+function shouldAppendTranscriptEvent(eventName: string | undefined, fullStream = transcriptFullStreamEnabled()): boolean {
+	return fullStream || eventName !== "message_update";
 }
 
 interface AgentStartTranscriptMetadata {
@@ -178,12 +178,18 @@ interface AgentStartTranscriptMetadata {
 	args: string[];
 }
 
+function transcriptMetadataArgs(args: string[]): string[] {
+	const sanitized = [...args];
+	if (sanitized.at(-1)?.startsWith("Task: ")) sanitized.pop();
+	return sanitized;
+}
+
 function withAgentStartTranscriptMetadata(event: any, metadata: AgentStartTranscriptMetadata): any {
 	if (!event || typeof event !== "object" || Array.isArray(event)) return event;
 	const enriched = {
 		agent: metadata.agent,
 		model: metadata.model ?? null,
-		args: [...metadata.args],
+		args: transcriptMetadataArgs(metadata.args),
 	};
 	if (event.event && typeof event.event === "object" && !Array.isArray(event.event) && event.event.type === "agent_start") {
 		return { ...event, event: { ...event.event, ...enriched } };
@@ -659,10 +665,25 @@ async function runSingleAgentAttempt(
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
+			const keepFullTranscript = transcriptFullStreamEnabled();
 			let buffer = "";
 			let sawSessionCompact = false;
 			let compactThenEmptyAgentEnd = false;
 			let postCompactAssistantHasText = false;
+			let sawMessageEnd = false;
+			let latestFilteredMessageUpdate: any;
+
+			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error") => {
+				if (keepFullTranscript || sawMessageEnd || !latestFilteredMessageUpdate) return;
+				appendTranscript({
+					stream: "stdout",
+					raw: JSON.stringify(latestFilteredMessageUpdate),
+					event: latestFilteredMessageUpdate,
+					buffered: true,
+					reason,
+				});
+				latestFilteredMessageUpdate = undefined;
+			};
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -674,7 +695,8 @@ async function runSingleAgentAttempt(
 					return;
 				}
 				const eventName = streamEventName(event);
-				if (shouldAppendTranscriptEvent(eventName)) {
+				if (eventName === "message_update" && !keepFullTranscript) latestFilteredMessageUpdate = event;
+				if (shouldAppendTranscriptEvent(eventName, keepFullTranscript)) {
 					const transcriptEvent = eventName === "agent_start"
 						? withAgentStartTranscriptMetadata(event, { agent: agent.name, model: selectedModel, args })
 						: event;
@@ -694,6 +716,7 @@ async function runSingleAgentAttempt(
 					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
 				}
 
+				if (eventName === "message_end") sawMessageEnd = true;
 				if (eventName === "message_end" && payload.message) {
 					const msg = payload.message as Message;
 					currentResult.messages.push(msg);
@@ -748,12 +771,14 @@ async function runSingleAgentAttempt(
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
 				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
+				if ((code ?? (wasAborted ? 1 : 0)) !== 0) flushFilteredMessageUpdate("nonzero_exit");
 				appendTranscript({ type: "exit", code: code ?? 0, attempt });
 				Promise.allSettled(transcriptWrites).finally(() => resolve(code ?? 0));
 			});
 
 			proc.on("error", (error) => {
 				currentResult.errorMessage = stringifyError(error);
+				flushFilteredMessageUpdate("process_error");
 				appendTranscript({ type: "process_error", error: stringifyError(error), attempt });
 				Promise.allSettled(transcriptWrites).finally(() => resolve(1));
 			});
