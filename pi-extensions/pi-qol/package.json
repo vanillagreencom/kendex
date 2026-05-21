@@ -16,6 +16,9 @@
     ],
     "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-qol/assets/settings-panel.png"
   },
+  "scripts": {
+    "test": "bun test ./tests"
+  },
   "vstack": {
     "extensionManager": {
       "displayName": "QOL",
@@ -793,6 +796,60 @@
           "type": "number",
           "default": -1,
           "category": "Compaction Threshold",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.budgetGuardEnabled",
+          "label": "Long-session budget guard",
+          "description": "Trigger compaction on agent_end (no idle wait) when context usage crosses budgetPercent or budgetTokens. Designed for autonomous/Flightdeck runs so transcript growth cannot silently hit provider/buffer limits. Fires once per threshold crossing, not in a loop.",
+          "type": "boolean",
+          "default": true,
+          "category": "Compaction Budget Guard",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.budgetPercent",
+          "label": "Budget guard percent",
+          "description": "Context-window percentage that fires the budget guard at agent_end. Set -1 to disable percent-based firing and rely on absolute tokens instead.",
+          "type": "number",
+          "default": 85,
+          "category": "Compaction Budget Guard",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.budgetTokens",
+          "label": "Budget guard token limit",
+          "description": "Absolute token count above which the budget guard fires at agent_end. Set -1 to use only budgetPercent.",
+          "type": "number",
+          "default": -1,
+          "category": "Compaction Budget Guard",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.maxInputChars",
+          "label": "Chunked compaction input cap",
+          "description": "Maximum serialized characters sent to the summarizer in a single request. Inputs larger than this are split into chunks, summarized chunk-by-chunk, then merged via a summary-of-summaries pass so the compaction request payload itself cannot blow past provider buffer limits. Set 0 to disable chunking.",
+          "type": "number",
+          "default": 240000,
+          "category": "Compaction Budget Guard",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.handoffArtifactEnabled",
+          "label": "Write pre-compaction handoff artifact",
+          "description": "Before compaction, write a JSON handoff artifact under ~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/ containing the previous summary, last task state, and recently-referenced file/artifact paths. Always writes a stamped file and a latest.json pointer.",
+          "type": "boolean",
+          "default": true,
+          "category": "Compaction Budget Guard",
+          "apply": "live"
+        },
+        {
+          "key": "compaction.transcriptRiskWarnChars",
+          "label": "Transcript-risk warn budget (chars)",
+          "description": "Show a transcript-risk warning in /context when the serialized payload of the messages-to-send exceeds this many characters, even if the token count is still below the model context window. Set 0 to disable the warning.",
+          "type": "number",
+          "default": 600000,
+          "category": "Compaction Budget Guard",
           "apply": "live"
         },
         {

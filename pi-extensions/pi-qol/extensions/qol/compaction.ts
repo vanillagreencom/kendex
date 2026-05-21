@@ -1,12 +1,28 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { complete, type Message } from "@earendil-works/pi-ai";
 import { convertToLlm, serializeConversation, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+	DEFAULT_BUDGET_GUARD_PERCENT,
+	DEFAULT_BUDGET_GUARD_TOKENS,
+	DEFAULT_BUDGET_MAX_INPUT_CHARS,
 	DEFAULT_COMPACTION_MAX_TOKENS,
 	DEFAULT_COMPACTION_MODEL,
 	DEFAULT_IDLE_COMPACTION_THRESHOLD_TOKENS,
+	DEFAULT_TRANSCRIPT_RISK_WARN_CHARS,
+	QOL_BUDGET_HANDOFF_FOLDER,
+	QOL_BUDGET_HANDOFF_LATEST,
 	QOL_COMPACTION_SYSTEM_PROMPT,
 } from "./constants.js";
+import {
+	chunkConversationText as chunkConversationTextRaw,
+	computeBudgetTrigger,
+	evaluateTranscriptRisk,
+	type BudgetTrigger,
+	type TranscriptRiskResult,
+} from "./budget-guard.js";
 import { settingBoolean, settingNumber, settingString } from "./settings.js";
 import { stringifyError } from "./util.js";
 
@@ -111,6 +127,14 @@ export function modelLabel(model: any): string {
 	return model ? `${model.provider}/${model.id}` : "unknown model";
 }
 
+function budgetMaxInputChars(ctx: ExtensionContext): number {
+	const raw = Math.floor(settingNumber("compaction.maxInputChars", DEFAULT_BUDGET_MAX_INPUT_CHARS, ctx.cwd));
+	// 0 or negative disables chunking. Anything above the hard floor is honored.
+	return raw <= 0 ? 0 : Math.max(20_000, raw);
+}
+
+export const chunkConversationText = chunkConversationTextRaw;
+
 export async function generateQolSummary(ctx: ExtensionContext, options: {
 	conversationText: string;
 	customInstructions?: string;
@@ -119,8 +143,14 @@ export async function generateQolSummary(ctx: ExtensionContext, options: {
 	model?: string;
 	purpose: QolSummaryPurpose;
 	signal?: AbortSignal;
-}): Promise<{ model: string; summary: string; via: "model" | "remote" }> {
+	/** Internal: set true on recursive summary-of-summaries pass to skip rechunking. */
+	skipChunking?: boolean;
+}): Promise<{ model: string; summary: string; via: "model" | "remote"; chunkCount?: number }> {
 	const maxTokens = Math.max(256, Math.floor(options.maxTokens ?? settingNumber("compaction.maxTokens", DEFAULT_COMPACTION_MAX_TOKENS, ctx.cwd)));
+	const maxInputChars = budgetMaxInputChars(ctx);
+	if (!options.skipChunking && maxInputChars > 0 && options.conversationText.length > maxInputChars) {
+		return summarizeChunked(ctx, { ...options, maxTokens });
+	}
 	const promptText = buildSummaryPrompt({
 		conversationText: options.conversationText,
 		customInstructions: options.customInstructions,
@@ -164,12 +194,185 @@ export async function generateQolSummary(ctx: ExtensionContext, options: {
 	return { model: modelLabel(model), summary, via: "model" };
 }
 
+async function summarizeChunked(ctx: ExtensionContext, options: {
+	conversationText: string;
+	customInstructions?: string;
+	previousSummary?: string;
+	maxTokens: number;
+	model?: string;
+	purpose: QolSummaryPurpose;
+	signal?: AbortSignal;
+}): Promise<{ model: string; summary: string; via: "model" | "remote"; chunkCount?: number }> {
+	const maxInputChars = budgetMaxInputChars(ctx);
+	const chunks = chunkConversationText(options.conversationText, maxInputChars);
+	if (chunks.length <= 1) {
+		return generateQolSummary(ctx, { ...options, skipChunking: true });
+	}
+	compactionNotify(ctx, `QOL chunked compaction: summarizing ${chunks.length} chunks (input ${options.conversationText.length.toLocaleString()} chars > cap ${maxInputChars.toLocaleString()}).`, "info");
+	const partials: string[] = [];
+	let lastVia: "model" | "remote" = "model";
+	let lastModel = "";
+	let previousSummary = options.previousSummary;
+	for (let i = 0; i < chunks.length; i += 1) {
+		if (options.signal?.aborted) throw new Error("Compaction aborted");
+		const chunkText = chunks[i] ?? "";
+		const customInstructions = `${options.customInstructions ? `${options.customInstructions}\n\n` : ""}This is chunk ${i + 1} of ${chunks.length} from a long conversation. Preserve all concrete files, commands, decisions, blockers, and current tasks visible in this chunk so a follow-up summary-of-summaries pass can stitch the timeline together.`;
+		const partial = await generateQolSummary(ctx, {
+			conversationText: chunkText,
+			customInstructions,
+			previousSummary,
+			maxTokens: options.maxTokens,
+			model: options.model,
+			purpose: options.purpose,
+			signal: options.signal,
+			skipChunking: true,
+		});
+		if (!partial.summary.trim()) throw new Error(`Chunk ${i + 1}/${chunks.length} summary was empty`);
+		partials.push(`### Chunk ${i + 1}/${chunks.length}\n${partial.summary.trim()}`);
+		previousSummary = partial.summary;
+		lastVia = partial.via;
+		lastModel = partial.model;
+	}
+	const reduceText = partials.join("\n\n");
+	const reduceInstructions = `${options.customInstructions ? `${options.customInstructions}\n\n` : ""}Merge the following chunk summaries (oldest first) into a single continuation summary. De-duplicate facts, keep exact files/commands/paths, preserve decisions, blockers, current tasks, and any artifact paths. If chunks contradict, prefer the most recent.`;
+	const final = await generateQolSummary(ctx, {
+		conversationText: reduceText,
+		customInstructions: reduceInstructions,
+		previousSummary: options.previousSummary,
+		maxTokens: options.maxTokens,
+		model: options.model,
+		purpose: options.purpose,
+		signal: options.signal,
+		skipChunking: true,
+	});
+	return { chunkCount: chunks.length, model: final.model || lastModel, summary: final.summary, via: final.via || lastVia };
+}
+
+function expandHome(input: string): string {
+	if (input === "~") return homedir();
+	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
+	return input;
+}
+
+function piUserDir(): string {
+	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+}
+
+function safeFileName(value: string): string {
+	return value.replace(/[^\w.-]+/g, "_");
+}
+
+function sessionIdForHandoff(ctx: ExtensionContext): string {
+	const sm = ctx.sessionManager as any;
+	const id = typeof sm.getSessionId === "function" ? sm.getSessionId() : undefined;
+	if (typeof id === "string" && id.trim()) return id;
+	const file = typeof sm.getSessionFile === "function" ? sm.getSessionFile() : undefined;
+	if (typeof file === "string" && file.trim()) return basename(file, ".jsonl");
+	return `ephemeral-${process.pid}`;
+}
+
+export interface QolBudgetHandoff {
+	reason: string;
+	timestamp: number;
+	sessionId: string;
+	tokensBefore?: number;
+	messageCount: number;
+	previousSummary?: string;
+	taskState?: unknown;
+	artifactRefs: string[];
+	model?: string;
+}
+
+export function writeBudgetHandoffArtifact(ctx: ExtensionContext, handoff: QolBudgetHandoff): string | undefined {
+	if (!settingBoolean("compaction.handoffArtifactEnabled", true, ctx.cwd)) return undefined;
+	try {
+		const baseDir = join(piUserDir(), "vstack", "sessions", safeFileName(handoff.sessionId), QOL_BUDGET_HANDOFF_FOLDER);
+		mkdirSync(baseDir, { recursive: true, mode: 0o700 });
+		const stamped = join(baseDir, `${new Date(handoff.timestamp).toISOString().replace(/[:.]/g, "-")}.json`);
+		const latest = join(dirname(baseDir), basename(baseDir), QOL_BUDGET_HANDOFF_LATEST);
+		const payload = JSON.stringify(handoff, null, 2);
+		writeFileSync(stamped, payload, { mode: 0o600 });
+		writeFileSync(latest, payload, { mode: 0o600 });
+		return stamped;
+	} catch {
+		return undefined;
+	}
+}
+
+function lastTaskStateFromBranch(ctx: ExtensionContext): unknown {
+	try {
+		const branch = ctx.sessionManager.getBranch?.() ?? [];
+		for (let i = branch.length - 1; i >= 0; i -= 1) {
+			const entry = branch[i] as any;
+			if (entry?.type !== "message" || entry.message?.role !== "toolResult") continue;
+			const content = entry.message.content;
+			const parts = Array.isArray(content) ? content : [];
+			for (const part of parts) {
+				if (part?.type !== "toolResult") continue;
+				const details = part?.details;
+				if (details && typeof details === "object" && "state" in (details as Record<string, unknown>)) {
+					return (details as Record<string, unknown>).state;
+				}
+			}
+		}
+	} catch {
+		// Best-effort. Missing task state just means a smaller handoff payload.
+	}
+	return undefined;
+}
+
+function collectArtifactRefs(ctx: ExtensionContext, maxRefs = 20): string[] {
+	try {
+		const branch = ctx.sessionManager.getBranch?.() ?? [];
+		const refs = new Set<string>();
+		const pattern = /(?:^|\s|["'`(\[<])((?:\.{1,2}\/|\/|~\/)?[\w.\-+@/]+\.(?:md|json|jsonl|txt|log|ts|tsx|js|jsx|rs|toml|yml|yaml|html|sh|fish|bash|py|go|java|cs|cpp|h|hpp|sql|csv|env|lock|patch|diff))/g;
+		for (let i = branch.length - 1; i >= 0 && refs.size < maxRefs; i -= 1) {
+			const entry = branch[i] as any;
+			if (entry?.type !== "message") continue;
+			const content = entry.message?.content;
+			const parts = Array.isArray(content) ? content : [];
+			for (const part of parts) {
+				const text = typeof part?.text === "string" ? part.text : typeof part?.thinking === "string" ? part.thinking : "";
+				if (!text) continue;
+				pattern.lastIndex = 0;
+				let match: RegExpExecArray | null;
+				while ((match = pattern.exec(text)) !== null && refs.size < maxRefs) {
+					if (match[1]) refs.add(match[1]);
+				}
+			}
+		}
+		return Array.from(refs);
+	} catch {
+		return [];
+	}
+}
+
+export function buildBudgetHandoff(ctx: ExtensionContext, options: {
+	reason: string;
+	preparation?: { messagesToSummarize?: AgentMessage[]; turnPrefixMessages?: AgentMessage[]; previousSummary?: string; tokensBefore?: number };
+}): QolBudgetHandoff {
+	const preparation = options.preparation ?? {};
+	const messageCount = (preparation.messagesToSummarize?.length ?? 0) + (preparation.turnPrefixMessages?.length ?? 0);
+	return {
+		artifactRefs: collectArtifactRefs(ctx),
+		messageCount,
+		previousSummary: preparation.previousSummary,
+		reason: options.reason,
+		sessionId: sessionIdForHandoff(ctx),
+		taskState: lastTaskStateFromBranch(ctx),
+		timestamp: Date.now(),
+		tokensBefore: typeof preparation.tokensBefore === "number" ? preparation.tokensBefore : undefined,
+	};
+}
+
 export async function handleQolCompaction(event: any, ctx: ExtensionContext): Promise<any> {
 	if (!settingBoolean("compaction.customEnabled", false, ctx.cwd)) return undefined;
 	const preparation = event.preparation ?? {};
 	const messages = [...(preparation.messagesToSummarize ?? []), ...(preparation.turnPrefixMessages ?? [])];
 	if (messages.length === 0) return undefined;
 	const tokensBefore = typeof preparation.tokensBefore === "number" ? preparation.tokensBefore : 0;
+	const handoff = buildBudgetHandoff(ctx, { preparation, reason: event.customInstructions ?? "session_before_compact" });
+	const handoffPath = writeBudgetHandoffArtifact(ctx, handoff);
 	compactionNotify(ctx, `QOL compaction: summarizing ${messages.length} message(s), ${tokensBefore.toLocaleString()} token(s).`, "info");
 	try {
 		const conversationText = serializeMessagesForSummary(messages);
@@ -181,10 +384,13 @@ export async function handleQolCompaction(event: any, ctx: ExtensionContext): Pr
 			signal: event.signal,
 		});
 		if (!result.summary.trim()) throw new Error("Compaction summary was empty");
-		compactionNotify(ctx, `QOL compaction complete via ${result.via}: ${result.model}`, "info");
+		const chunkSuffix = result.chunkCount && result.chunkCount > 1 ? ` (${result.chunkCount} chunks)` : "";
+		compactionNotify(ctx, `QOL compaction complete via ${result.via}: ${result.model}${chunkSuffix}`, "info");
 		return {
 			compaction: {
 				details: {
+					chunkCount: result.chunkCount,
+					handoffArtifact: handoffPath,
 					messageCount: messages.length,
 					model: result.model,
 					profile: compactionProfile(ctx.cwd),
@@ -261,4 +467,46 @@ export function compactionTriggerReason(ctx: ExtensionContext): string | undefin
 	const idleLimit = settingNumber("compaction.idleThresholdTokens", DEFAULT_IDLE_COMPACTION_THRESHOLD_TOKENS, ctx.cwd);
 	if (usage.tokens >= idleLimit) return `${usage.tokens.toLocaleString()} tokens >= ${Math.floor(idleLimit).toLocaleString()} idle threshold`;
 	return undefined;
+}
+
+export type BudgetGuardTrigger = BudgetTrigger;
+export type TranscriptRiskState = TranscriptRiskResult;
+
+/**
+ * Budget guard fires on agent_end (no idle wait) when context usage crosses a
+ * percent of the model window or an absolute token limit. Returns a stable key
+ * per crossing so the caller can suppress repeated triggers while usage stays
+ * above the threshold.
+ */
+export function budgetGuardTrigger(ctx: ExtensionContext): BudgetGuardTrigger | undefined {
+	if (!settingBoolean("compaction.budgetGuardEnabled", true, ctx.cwd)) return undefined;
+	const usage = contextUsage(ctx);
+	if (!usage) return undefined;
+	return computeBudgetTrigger({
+		contextWindow: usage.contextWindow,
+		enabled: true,
+		percentLimit: settingNumber("compaction.budgetPercent", DEFAULT_BUDGET_GUARD_PERCENT, ctx.cwd),
+		tokenLimit: settingNumber("compaction.budgetTokens", DEFAULT_BUDGET_GUARD_TOKENS, ctx.cwd),
+		tokens: usage.tokens,
+	});
+}
+
+/**
+ * Transcript-risk: serialized request payload may be very large even if token
+ * count alone has not reached the model window. Compared against the
+ * compaction.transcriptRiskWarnChars setting.
+ */
+export function transcriptRiskState(ctx: ExtensionContext, messages: AgentMessage[]): TranscriptRiskState {
+	const threshold = Math.floor(settingNumber("compaction.transcriptRiskWarnChars", DEFAULT_TRANSCRIPT_RISK_WARN_CHARS, ctx.cwd));
+	if (!Array.isArray(messages) || messages.length === 0 || threshold <= 0) {
+		return { chars: 0, exceeded: false, messageCount: 0, threshold };
+	}
+	let chars = 0;
+	try {
+		const text = serializeMessagesForSummary(messages);
+		chars = text.length;
+	} catch {
+		chars = 0;
+	}
+	return evaluateTranscriptRisk({ chars, messageCount: messages.length, threshold });
 }

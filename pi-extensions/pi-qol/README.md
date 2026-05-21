@@ -109,6 +109,8 @@ Advanced: input cap, title length, output tokens, timeout, custom prompt templat
 | --- | --- |
 | Enable /context command | Register `/context`. |
 
+`/context` also estimates the serialized payload size of the messages that would be sent on the next request. When that payload crosses **Transcript-risk warn budget (chars)** a `Transcript risk` block appears below the compact buffer section even if token count is still under the context window — useful for catching large blob-shaped tool outputs that inflate the request long before token count alone would page anyone.
+
 ### Session search
 
 | Setting | What it does |
@@ -166,6 +168,25 @@ Off by default. When enabled, non-interactive matches are blocked.
 | Idle compaction trigger | Auto-compact after the session sits idle above a token threshold. |
 
 Idle thresholds (token threshold, idle delay, fixed token limit, percent limit) tune when idle compaction fires.
+
+### Long-session budget guard
+
+For autonomous/Flightdeck-style runs the agent never goes idle, so idle compaction may never fire and the transcript can grow until provider/buffer limits hit. The budget guard runs on `agent_end` (not idle) and starts a compaction immediately when context usage crosses a percent of the model window or an absolute token limit. It fires once per threshold crossing — repeated `agent_end` events above the same threshold do not retrigger it.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Long-session budget guard | Master toggle for the agent_end budget guard. | on |
+| Budget guard percent | Context-window percentage that fires the guard. `-1` disables percent-based firing. | `85` |
+| Budget guard token limit | Absolute tokens that fire the guard. `-1` uses percent only. | `-1` |
+| Chunked compaction input cap | Max serialized characters per summarization request. Long transcripts are split, summarized chunk-by-chunk, then merged via a summary-of-summaries pass so the compaction call itself cannot exceed provider buffer limits. `0` disables chunking. | `240000` |
+| Write pre-compaction handoff artifact | Before compaction, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. | on |
+| Transcript-risk warn budget (chars) | `/context` shows a warning when the serialized payload of messages-to-send exceeds this many characters, even if tokens are still below the context window. `0` disables. | `600000` |
+
+Recommended values for autonomous/Flightdeck runs:
+
+- Keep **Long-session budget guard** on. Lower **Budget guard percent** to `75` if your provider buffers are tight.
+- Set **Custom compaction summaries** on so the guard uses QOL's chunked summarizer rather than Pi's default single-shot summary.
+- Lower **Chunked compaction input cap** to ~`120000` when the summarizer model has a small context window.
 
 ### Thinking
 

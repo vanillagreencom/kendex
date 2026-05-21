@@ -38,6 +38,28 @@ export const DEFAULT_COMPACTION_MAX_TOKENS = 8192;
 export const DEFAULT_IDLE_COMPACTION_THRESHOLD_TOKENS = 200000;
 export const DEFAULT_IDLE_COMPACTION_SECONDS = 300;
 
+// Budget guard: catches long autonomous sessions before they hit provider/buffer
+// limits. Fires on agent_end (no idle wait) when usage crosses a percent or
+// absolute token threshold. One notification + one compaction trigger per
+// threshold crossing so it does not loop.
+export const DEFAULT_BUDGET_GUARD_PERCENT = 85;
+export const DEFAULT_BUDGET_GUARD_TOKENS = -1;
+
+// Chunked summary input caps. Long transcripts are split on paragraph
+// boundaries (which align with serializeConversation message separators) into
+// chunks of at most this many characters, summarized chunk-by-chunk in the
+// original order, then a summary-of-summaries reduce pass merges them with
+// "prefer the most recent" semantics so recency is preserved.
+export const DEFAULT_BUDGET_MAX_INPUT_CHARS = 240_000;
+
+// Transcript-risk warning: shown in /context when the serialized payload of
+// messages-to-send is larger than this character budget, even if token count is
+// still below the model window.
+export const DEFAULT_TRANSCRIPT_RISK_WARN_CHARS = 600_000;
+
+export const QOL_BUDGET_HANDOFF_FOLDER = "pi-qol/handoff";
+export const QOL_BUDGET_HANDOFF_LATEST = "latest.json";
+
 export const DEFAULT_PERMISSION_GATE_COMMANDS = "rm -Rf";
 export const DEFAULT_PERMISSION_GATE_PREVIEW_LINES = 12;
 export const DEFAULT_PERMISSION_GATE_PREVIEW_CHARS = 1200;
