@@ -61,14 +61,14 @@ function sampleIds(items: Array<{ id: string }>, limit: number): string[] {
 
 export function taskPanelToolResultState<T extends TaskPanelToolResultStateLike>(
 	state: T,
-	options: { maxBytes?: number; maxTasks?: number; sampleLimit?: number } = {},
+	options: { forceFullSnapshot?: boolean; maxBytes?: number; maxTasks?: number; sampleLimit?: number } = {},
 ): T | TaskPanelToolResultBoundedState {
 	const maxBytes = options.maxBytes ?? TASK_PANEL_TOOL_RESULT_MAX_STATE_BYTES;
 	const maxTasks = options.maxTasks ?? TASK_PANEL_TOOL_RESULT_MAX_TASKS;
 	const sampleLimit = options.sampleLimit ?? TASK_PANEL_TOOL_RESULT_SAMPLE_LIMIT;
 	const serialized = JSON.stringify(state);
 	const byteSize = Buffer.byteLength(serialized, "utf8");
-	if (state.tasks.length <= maxTasks && byteSize <= maxBytes) return JSON.parse(serialized) as T;
+	if (options.forceFullSnapshot || (state.tasks.length <= maxTasks && byteSize <= maxBytes)) return JSON.parse(serialized) as T;
 	const taskIds = sampleIds(state.tasks, sampleLimit);
 	const phaseIds = sampleIds(state.phases, Math.min(sampleLimit, 10));
 	return {
@@ -84,4 +84,18 @@ export function taskPanelToolResultState<T extends TaskPanelToolResultStateLike>
 		thresholds: { maxBytes, maxTasks },
 		updatedAt: state.updatedAt,
 	};
+}
+
+export interface ApplyTaskPanelToolResultRestoreArgs<T> {
+	currentState: T;
+	detailsState: unknown;
+	hasStateContent: (state: T) => boolean;
+	normalizeState: (value: unknown) => T;
+	sidecarState: T | undefined;
+}
+
+export function applyTaskPanelToolResultRestore<T>(args: ApplyTaskPanelToolResultRestoreArgs<T>): T {
+	if (isTaskPanelToolResultBoundedState(args.detailsState)) return args.sidecarState ?? args.currentState;
+	const restored = args.normalizeState(args.detailsState);
+	return args.hasStateContent(restored) ? restored : args.currentState;
 }

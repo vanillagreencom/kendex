@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+	applyBgToolResultTasksWithBarrier,
 	bgToolResultTasks,
 	isBgToolResultBoundedTasks,
 } from "../extensions/tool-result-details.js";
@@ -61,5 +62,31 @@ describe("background task tool-result details", () => {
 		expect((detailsTasks as any).counts.tasks).toBe(1);
 		expect(Buffer.byteLength(JSON.stringify(detailsTasks), "utf8")).toBeLessThanOrEqual(4 * 1024);
 		expect(Buffer.byteLength(JSON.stringify({ action: "list", tasks: detailsTasks }), "utf8")).toBeLessThanOrEqual(4 * 1024);
+	});
+
+	test("tool-result restore barrier re-applies sidecar tasks after older full list", () => {
+		const sidecarTasks = [fakeSnapshot({ id: "bg-sidecar", updatedAt: 2_000 })];
+		const olderTasks = [fakeSnapshot({ id: "bg-old", updatedAt: 1_000 })];
+		let current: BackgroundTaskSnapshot[] = [...sidecarTasks];
+		const clear = () => { current = []; };
+		const apply = (snapshot: BackgroundTaskSnapshot) => { current.push(snapshot); };
+
+		applyBgToolResultTasksWithBarrier({
+			apply,
+			clear,
+			detailsTasks: olderTasks,
+			sidecarLoaded: true,
+			sidecarTasks,
+		});
+		expect(current.map((task) => task.id)).toEqual(["bg-sidecar", "bg-old"]);
+
+		applyBgToolResultTasksWithBarrier({
+			apply,
+			clear,
+			detailsTasks: bgToolResultTasks(Array.from({ length: 100 }, (_value, index) => fakeSnapshot({ id: `bg-${index}` }))),
+			sidecarLoaded: true,
+			sidecarTasks,
+		});
+		expect(current.map((task) => task.id)).toEqual(["bg-sidecar"]);
 	});
 });

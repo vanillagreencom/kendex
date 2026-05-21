@@ -52,3 +52,22 @@ export function bgToolResultTasks(
 		updatedAt: tasks.reduce((latest, task) => Math.max(latest, task.updatedAt), 0),
 	};
 }
+
+export interface ApplyBgToolResultTasksArgs<T> {
+	apply: (snapshot: T) => void;
+	clear: () => void;
+	detailsTasks: unknown;
+	sidecarLoaded: boolean;
+	sidecarTasks: T[] | undefined;
+}
+
+export function applyBgToolResultTasksWithBarrier<T>(args: ApplyBgToolResultTasksArgs<T>): void {
+	if (isBgToolResultBoundedTasks(args.detailsTasks)) {
+		if (args.sidecarLoaded && args.sidecarTasks) {
+			args.clear();
+			for (const snapshot of args.sidecarTasks) args.apply(snapshot);
+		}
+		return;
+	}
+	if (Array.isArray(args.detailsTasks)) for (const snapshot of args.detailsTasks) args.apply(snapshot as T);
+}

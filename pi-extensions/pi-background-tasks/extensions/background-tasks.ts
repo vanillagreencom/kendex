@@ -64,7 +64,7 @@ import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks 
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
-import { isBgToolResultBoundedTasks } from "./tool-result-details.js";
+import { applyBgToolResultTasksWithBarrier } from "./tool-result-details.js";
 import {
 	defaultReadProcessIdentity,
 	forgetSnapshot,
@@ -192,12 +192,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			logBackgroundDiagnostic("persistence failed (sidecar-read)", { error: msg });
 			// Fall back to session entries below.
 		}
-		const restoreSidecarTasks = () => {
-			if (!sidecarTasks) return;
-			tasks.clear();
-			taskCounter = 0;
-			for (const snapshot of sidecarTasks) rememberRestoredSnapshot(snapshot);
-		};
+		const clearRestoredTasks = () => { tasks.clear(); taskCounter = 0; };
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === BG_STATE_TYPE) {
 				applyCustomEntryWithBarrier({
@@ -211,11 +206,13 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			if (entry.type === "message" && entry.message.role === "toolResult" && (entry.message.toolName === "bg_task" || entry.message.toolName === "bg_status")) {
 				const details = entry.message.details as { task?: unknown; tasks?: unknown } | undefined;
 				if (details?.task) rememberRestoredSnapshot(details.task as BackgroundTaskSnapshot);
-				if (isBgToolResultBoundedTasks(details?.tasks)) {
-					if (sidecarLoaded) restoreSidecarTasks();
-				} else if (Array.isArray(details?.tasks)) {
-					for (const snapshot of details.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
-				}
+				applyBgToolResultTasksWithBarrier({
+					apply: (snapshot) => rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot),
+					clear: clearRestoredTasks,
+					detailsTasks: details?.tasks,
+					sidecarLoaded,
+					sidecarTasks,
+				});
 			}
 		}
 		if (tasks.size > 0) persistSnapshots();
