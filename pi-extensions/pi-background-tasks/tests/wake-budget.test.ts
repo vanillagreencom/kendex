@@ -12,8 +12,12 @@ import { tailText } from "../extensions/format.js";
 import { taskSnapshot } from "../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, ManagedTask, WakeDiagnostic } from "../extensions/types.js";
 import {
+	WAKE_CONTENT_COMMAND_MAX_CHARS,
+	WAKE_MANIFEST_FIELD_MAX_CHARS,
+	compactBackgroundTaskSnapshot,
 	defaultNotifyMode,
 	emptyOutputWakeBudget,
+	normalizeOutputWakeBudget,
 	resolveNotifyMode,
 	scheduleTaskWake,
 	sendOutputWakeBudgetExhaustedNotice,
@@ -154,6 +158,139 @@ describe("wake payload byte budget (vstack#210)", () => {
 		const details = messages[0]?.message.details as Record<string, unknown>;
 		expect(details.outputTail).toBe(output);
 		expect(details.outputTailTruncated).toBe(false);
+	});
+
+	test("oversized command/title/cwd/notifyPattern/dedupeKey are bounded in wake details and content", () => {
+		const heredoc = "Z".repeat(100_000);
+		const title = "T".repeat(2_000);
+		const cwd = "/path/" + "C".repeat(2_000);
+		const notifyPattern = "P".repeat(2_000);
+		const dedupeKey = "D".repeat(2_000);
+		const logFile = "/tmp/" + "L".repeat(2_000);
+		const task = fakeTask({
+			command: heredoc,
+			cwd,
+			dedupeKey,
+			lastOutputAt: 1_111,
+			logFile,
+			notifyPattern,
+			status: "running",
+			title,
+		});
+		const newOutputTail = tailText("y".repeat(1_000_000), DEFAULT_OUTPUT_ALERT_MAX_CHARS);
+		const { deps, messages } = sendDeps("y".repeat(1_000_000));
+		const pending = scheduleTaskWake(task, "output", 1_111);
+
+		expect(sendTaskWake(deps, "output", task, {
+			eventAt: pending.eventAt,
+			newOutputTail,
+			sequence: pending.sequence,
+		})).toBe(true);
+
+		const record = messages[0]!;
+		expect(messageBytes(record)).toBeLessThan(4_096);
+		const content = String(record.message.content);
+		// Content carries a bounded command preview only.
+		expect(content.length).toBeLessThan(WAKE_CONTENT_COMMAND_MAX_CHARS + 128);
+		expect(content).not.toContain("Z".repeat(WAKE_CONTENT_COMMAND_MAX_CHARS + 1));
+
+		const detailsTask = (record.message.details as Record<string, unknown>).task as Record<string, unknown>;
+		// Long text fields clipped to the manifest cap.
+		expect((detailsTask.command as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.title as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.cwd as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.notifyPattern as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.dedupeKey as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.logFile as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		// Internal arrays / sensitive state are dropped from the wake manifest.
+		expect("wakeEvents" in detailsTask).toBe(false);
+		expect("pendingWakes" in detailsTask).toBe(false);
+		expect("voidedWakeSequences" in detailsTask).toBe(false);
+		expect("lastOutputDedupeByKey" in detailsTask).toBe(false);
+		expect("procIdent" in detailsTask).toBe(false);
+	});
+
+	test("budget-exhausted notice stays under 4 KB and uses bounded log path", () => {
+		const longLogFile = "/tmp/" + "B".repeat(5_000);
+		const task = fakeTask({ command: "Q".repeat(200_000), logFile: longLogFile, title: "T".repeat(5_000) });
+		task.outputWakeBudget = emptyOutputWakeBudget();
+		task.outputWakeBudget.wakes = 20;
+		const { deps, messages } = sendDeps("ready\n");
+
+		expect(sendOutputWakeBudgetExhaustedNotice(deps, task, { maxWakes: 20, maxBytes: 20_000 })).toBe(true);
+		const record = messages[0]!;
+		expect(messageBytes(record)).toBeLessThan(4_096);
+		const details = record.message.details as Record<string, unknown>;
+		expect((details.logFile as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		const detailsTask = details.task as Record<string, unknown>;
+		expect((detailsTask.command as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect((detailsTask.title as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+	});
+});
+
+describe("compactBackgroundTaskSnapshot", () => {
+	test("truncates text fields and drops internal arrays", () => {
+		const full = taskSnapshot(fakeTask({
+			command: "X".repeat(5_000),
+			title: "Y".repeat(5_000),
+			cwd: "Z".repeat(5_000),
+			notifyPattern: "P".repeat(5_000),
+			dedupeKey: "D".repeat(5_000),
+			logFile: "L".repeat(5_000),
+		}));
+		full.wakeEvents = [{ deliveredAt: 1, eventAt: 1, eventType: "output", sequence: 1, taskStatusAtEmit: "running" }];
+		full.voidedWakeSequences = [1, 2, 3];
+		full.pendingWakes = [{ eventAt: 1, eventType: "output", sequence: 9 }];
+		full.lastOutputDedupeByKey = { key: "hash" };
+
+		const compact = compactBackgroundTaskSnapshot(full);
+		expect(compact.command.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(compact.title.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(compact.cwd.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(compact.notifyPattern?.length ?? 0).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(compact.dedupeKey?.length ?? 0).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(compact.logFile.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect("wakeEvents" in compact).toBe(false);
+		expect("pendingWakes" in compact).toBe(false);
+		expect("voidedWakeSequences" in compact).toBe(false);
+		expect("lastOutputDedupeByKey" in compact).toBe(false);
+	});
+
+	test("preserves short text and lifecycle fields verbatim", () => {
+		const full = taskSnapshot(fakeTask({ command: "echo ok", title: "Hi", cwd: "/repo", notifyPattern: "READY" }));
+		const compact = compactBackgroundTaskSnapshot(full);
+		expect(compact.command).toBe("echo ok");
+		expect(compact.title).toBe("Hi");
+		expect(compact.cwd).toBe("/repo");
+		expect(compact.notifyPattern).toBe("READY");
+		expect(compact.id).toBe(full.id);
+		expect(compact.pid).toBe(full.pid);
+		expect(compact.status).toBe(full.status);
+		expect(compact.exitCode).toBe(full.exitCode);
+		expect(compact.outputBytes).toBe(full.outputBytes);
+		expect(compact.logFile).toBe(full.logFile);
+		expect(compact.startedAt).toBe(full.startedAt);
+		expect(compact.updatedAt).toBe(full.updatedAt);
+	});
+});
+
+describe("normalizeOutputWakeBudget", () => {
+	test("coerces missing / invalid values to a fresh budget", () => {
+		expect(normalizeOutputWakeBudget(undefined)).toEqual({ wakes: 0, bytes: 0, exhausted: false, announcedAt: null });
+		expect(normalizeOutputWakeBudget(null)).toEqual({ wakes: 0, bytes: 0, exhausted: false, announcedAt: null });
+		expect(normalizeOutputWakeBudget({ wakes: "garbage", bytes: -5, exhausted: "yes", announcedAt: "later" })).toEqual({
+			wakes: 0,
+			bytes: 0,
+			exhausted: false,
+			announcedAt: null,
+		});
+	});
+
+	test("returns an independent object so callers cannot accidentally share state", () => {
+		const source = { wakes: 3, bytes: 100, exhausted: true, announcedAt: 999 };
+		const normalized = normalizeOutputWakeBudget(source);
+		normalized.wakes = 7;
+		expect(source.wakes).toBe(3);
 	});
 });
 

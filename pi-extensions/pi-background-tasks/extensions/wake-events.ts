@@ -20,16 +20,25 @@ export function emptyOutputWakeBudget(): OutputWakeBudgetState {
 	return { wakes: 0, bytes: 0, exhausted: false, announcedAt: null };
 }
 
+/**
+ * Pure normalization for an `OutputWakeBudgetState` shape pulled from
+ * persistence, a snapshot field, or live state. Returns a fresh object so
+ * snapshot serialization and the live-task helpers cannot share mutable
+ * structure or drift apart on field additions.
+ */
+export function normalizeOutputWakeBudget(value: unknown): OutputWakeBudgetState {
+	const source = value && typeof value === "object" ? value as Partial<OutputWakeBudgetState> : undefined;
+	return {
+		announcedAt: typeof source?.announcedAt === "number" ? source.announcedAt : null,
+		bytes: Number.isFinite(source?.bytes) ? Math.max(0, Math.floor((source?.bytes as number) ?? 0)) : 0,
+		exhausted: source?.exhausted === true,
+		wakes: Number.isFinite(source?.wakes) ? Math.max(0, Math.floor((source?.wakes as number) ?? 0)) : 0,
+	};
+}
+
 export function ensureOutputWakeBudget(task: Pick<ManagedTask, "outputWakeBudget">): OutputWakeBudgetState {
-	if (!task.outputWakeBudget || typeof task.outputWakeBudget !== "object") {
-		task.outputWakeBudget = emptyOutputWakeBudget();
-	}
-	const budget = task.outputWakeBudget;
-	budget.wakes = Number.isFinite(budget.wakes) ? Math.max(0, Math.floor(budget.wakes)) : 0;
-	budget.bytes = Number.isFinite(budget.bytes) ? Math.max(0, Math.floor(budget.bytes)) : 0;
-	budget.exhausted = budget.exhausted === true;
-	budget.announcedAt = typeof budget.announcedAt === "number" ? budget.announcedAt : null;
-	return budget;
+	task.outputWakeBudget = normalizeOutputWakeBudget(task.outputWakeBudget);
+	return task.outputWakeBudget;
 }
 
 export interface OutputWakeBudgetLimits {
@@ -358,6 +367,67 @@ function pickOutputTail(deps: SendTaskWakeDeps, task: ManagedTask, options: Send
 	return { tail, truncated: tail.startsWith("[...truncated]") };
 }
 
+// Maximum per-field characters retained in a wake / log-action tool-result
+// manifest (vstack#210). The reviewer-security concern: an agent could spawn
+// a task with a 100KB heredoc command and grow the transcript through every
+// subsequent wake or log inspection because each one carried the full
+// snapshot. Bounding text fields means a malicious / verbose command is
+// truncated in custom messages and tool-result entries; the live in-memory
+// snapshot still holds the full text for the active dashboard / renderer.
+// Sized so that with the default ~2KB inline output tail plus a content
+// headline the worst-case wake payload (every long field at max) still fits
+// comfortably under the 4 KB target.
+export const WAKE_MANIFEST_FIELD_MAX_CHARS = 192;
+// Headline command preview included in wake `content` (the textual surface
+// the agent reads directly). Smaller than the manifest cap so the leading
+// summary line stays terse.
+export const WAKE_CONTENT_COMMAND_MAX_CHARS = 160;
+
+function truncateField(value: string | undefined, maxChars: number): string | undefined {
+	if (value === undefined) return undefined;
+	if (value.length <= maxChars) return value;
+	return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+/**
+ * Compact transcript-safe view of a `BackgroundTaskSnapshot` for inclusion in
+ * wake messages and log/spawn/stop tool-result details. Keeps the lifecycle-
+ * critical fields (id, pid, status, exitCode, logFile, outputBytes,
+ * startedAt, updatedAt, notifyOn*, notifyMode, dedupeKey, expiresAt) but
+ * truncates text fields and drops internal-only state arrays (wakeEvents,
+ * pendingWakes, voidedWakeSequences, lastOutputDedupeByKey, etc.) that bloat
+ * the transcript without helping the agent.
+ *
+ * Restore paths only need `id` + `command` to keep the task addressable; the
+ * truncated command is acceptable as a sidecar-less fallback because sidecar
+ * state is the canonical source and is loaded first by `restoreSnapshots`.
+ */
+export function compactBackgroundTaskSnapshot(snapshot: BackgroundTaskSnapshot): BackgroundTaskSnapshot {
+	return {
+		command: truncateField(snapshot.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "",
+		cwd: truncateField(snapshot.cwd, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "",
+		dedupeKey: truncateField(snapshot.dedupeKey, WAKE_MANIFEST_FIELD_MAX_CHARS),
+		exitCode: snapshot.exitCode,
+		exitNotified: snapshot.exitNotified,
+		expiresAt: snapshot.expiresAt,
+		id: snapshot.id,
+		lastOutputAt: snapshot.lastOutputAt,
+		logFile: truncateField(snapshot.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "",
+		notifyMode: snapshot.notifyMode,
+		notifyOnExit: snapshot.notifyOnExit,
+		notifyOnOutput: snapshot.notifyOnOutput,
+		notifyPattern: truncateField(snapshot.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS),
+		outputBytes: snapshot.outputBytes,
+		pid: snapshot.pid,
+		sessionId: snapshot.sessionId,
+		startedAt: snapshot.startedAt,
+		status: snapshot.status,
+		terminationReason: snapshot.terminationReason,
+		title: truncateField(snapshot.title, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "",
+		updatedAt: snapshot.updatedAt,
+	};
+}
+
 export function sendTaskWake(
 	deps: SendTaskWakeDeps,
 	eventType: TaskEventType,
@@ -411,6 +481,7 @@ export function sendTaskWake(
 		budget.wakes += 1;
 		budget.bytes += byteLength(tail);
 	}
+	const compactTask = compactBackgroundTaskSnapshot(deps.rememberSnapshot(task));
 	const details: BackgroundTaskEventDetails = {
 		deliveredAt,
 		eventAt: pending.eventAt,
@@ -419,16 +490,17 @@ export function sendTaskWake(
 		outputTail: tail,
 		outputTailTruncated: truncated,
 		sequence: pending.sequence,
-		task: deps.rememberSnapshot(task),
+		task: compactTask,
 		taskStatusAtEmit: task.status,
 	};
 	const headline = eventType === "exit"
 		? `Background task ${task.id} finished.`
 		: `Background task ${task.id} emitted new output.`;
+	const commandPreview = truncateField(task.command, WAKE_CONTENT_COMMAND_MAX_CHARS) ?? "";
 
 	deps.sendMessage(
 		{
-			content: `${headline}\nCommand: ${task.command}`,
+			content: `${headline}\nCommand: ${commandPreview}`,
 			customType: deps.messageType,
 			details,
 			display: true,
@@ -462,11 +534,13 @@ export function sendOutputWakeBudgetExhaustedNotice(
 	const timestamp = now();
 	budget.exhausted = true;
 	budget.announcedAt = timestamp;
+	const boundedLogFile = truncateField(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
 	const content = [
 		`Background task ${task.id} output wake budget exhausted; further output wakes suppressed.`,
-		`Inspect the full log with bg_task log id: ${task.id} (or pid: ${task.pid}); on disk at ${task.logFile}.`,
+		`Inspect the full log with bg_task log id: ${task.id} (or pid: ${task.pid}); on disk at ${boundedLogFile}.`,
 		`Budget caps: ${Math.max(0, Math.floor(limits.maxWakes))} wakes / ${Math.max(0, Math.floor(limits.maxBytes))} inline bytes.`,
 	].join("\n");
+	const compactTask = compactBackgroundTaskSnapshot(deps.rememberSnapshot(task));
 	deps.sendMessage(
 		{
 			content,
@@ -474,9 +548,9 @@ export function sendOutputWakeBudgetExhaustedNotice(
 			details: {
 				deliveredAt: timestamp,
 				eventType: "output-budget-exhausted",
-				logFile: task.logFile,
+				logFile: boundedLogFile,
 				outputBytes: task.outputBytes,
-				task: deps.rememberSnapshot(task),
+				task: compactTask,
 				wakeBudget: {
 					announcedAt: budget.announcedAt,
 					bytes: budget.bytes,

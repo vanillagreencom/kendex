@@ -106,8 +106,6 @@ import {
 	type OutputWakeBudgetLimits,
 } from "./wake-events.js";
 
-// TODO(structure): split scheduleOutputReaction and scheduled-drop handling into a focused module when next touched.
-
 /**
  * Clamp the rendered line count of an aboveEditor widget so it can never push
  * the chat / status / editor above the terminal viewport top, which is what

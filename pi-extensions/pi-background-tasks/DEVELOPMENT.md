@@ -16,7 +16,7 @@ Spawn options:
 - `notifyOnExit` (default `true`)
 - `notifyOnOutput` (default `false`)
 - `notifyPattern` — substring or `/regex/flags`
-- `notifyMode` — `always` (default), `transition`, `first-match-only`
+- `notifyMode` — `always`, `transition`, `first-match-only`. When omitted, `resolveNotifyMode()` picks `first-match-only` if `notifyPattern` is set, `transition` otherwise (vstack#210). Pass `"always"` explicitly to opt into every-output wakes.
 - `dedupeKey` — coalesce matching wakes into one transition hash bucket
 - `timeoutSeconds` — `0` disables
 - `title`
@@ -31,11 +31,12 @@ Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`,
 
 ### Transcript-budget-safe wake payload (vstack#210)
 
-Wake messages reach the transcript through `pi.sendMessage(..., { deliverAs: "steer" })` and skip `pi-output-policy`'s truncation, so payload size is governed entirely here.
+Wake messages reach the transcript through `pi.sendMessage(...)` and skip `pi-output-policy`'s truncation, so payload size is governed entirely here. Output wakes and budget notices ship as `{ deliverAs: "steer", triggerTurn: true }`; exit wakes ship as `{ deliverAs: "followUp", triggerTurn: true }` so the agent's next turn sees the terminal status in the same delivery slot as a tool result.
 
-- `details` carries a single bounded `outputTail` (default cap `outputAlertMaxChars = 2000`) plus the canonical task snapshot (which already carries `logFile` and `outputBytes` for recovery). The legacy `newOutputTail` field was removed in vstack#210; for output wakes the wake-time `outputTail` IS the new unseen excerpt, and for exit wakes it is the trailing portion of full output.
+- `details` carries a single bounded `outputTail` (default cap `outputAlertMaxChars = 2000`) plus a compact task manifest (`compactBackgroundTaskSnapshot`) which truncates `command`, `title`, `cwd`, `notifyPattern`, `dedupeKey`, and `logFile` to `WAKE_MANIFEST_FIELD_MAX_CHARS` (192) and drops internal-only arrays (`wakeEvents`, `pendingWakes`, `voidedWakeSequences`, `lastOutputDedupeByKey`, `procIdent`). The wake's `content` headline carries a similarly bounded command preview (`WAKE_CONTENT_COMMAND_MAX_CHARS`, 160) so a 100KB heredoc command cannot leak into the transcript via the wake summary. Worst-case wake payload (every long field at max) stays under 4 KB. The same compact manifest is also used by `bg_task` / `bg_status` `spawn`, `log`, and `stop` tool-result details, so a chatty `bg_task log` cycle cannot grow the transcript through `details.task`.
+- The legacy `newOutputTail` field was removed in vstack#210; for output wakes the wake-time `outputTail` IS the new unseen excerpt, and for exit wakes it is the trailing portion of full output.
 - A `details.outputTailTruncated` boolean tells the renderer whether the inline tail was clipped so it can point at `task.logFile`.
-- A per-task budget guard (`outputWakeBudgetMaxWakes`, default 20; `outputWakeBudgetMaxBytes`, default 20000) caps cumulative output-wake noise. When the guard trips, `shouldEmitOutputWake` returns the `wake-budget-exhausted` drop reason, `sendOutputWakeBudgetExhaustedNotice` emits one concise notice keyed by `customType` = `BG_MESSAGE_TYPE` with `details.eventType = "output-budget-exhausted"`, and further output wakes are suppressed for the lifetime of the task. The budget persists across session restart via the snapshot's `outputWakeBudget` field. Exit wakes ignore the budget.
+- A per-task budget guard (`outputWakeBudgetMaxWakes`, default 20; `outputWakeBudgetMaxBytes`, default 20000) caps cumulative output-wake noise. When the guard trips, `shouldEmitOutputWake` returns the `wake-budget-exhausted` drop reason, `sendOutputWakeBudgetExhaustedNotice` emits one concise notice keyed by `customType` = `BG_MESSAGE_TYPE` with `details.eventType = "output-budget-exhausted"`, and further output wakes are suppressed for the lifetime of the task. The budget persists across session restart via the snapshot's `outputWakeBudget` field (sanitized through the shared `normalizeOutputWakeBudget()` helper so snapshot / restore / live-state paths stay in sync). Exit wakes ignore the budget.
 - Unset `notifyMode` resolves to `first-match-only` when `notifyPattern` is set, otherwise `transition`. Pass `notifyMode: "always"` to opt back into every-output wakes.
 
 ## Activity broker publication

@@ -21,7 +21,7 @@ import { formatRelativeTime, formatTaskLog, summarizeTaskStatus, taskLogTruncati
 import { makeToolResult, renderBgToolResult, renderEmpty } from "./render.js";
 import { bgToolResultTasks } from "./tool-result-details.js";
 import type { BackgroundTaskSnapshot, ManagedTask, SpawnTaskOptions } from "./types.js";
-import { NOTIFY_MODES } from "./wake-events.js";
+import { compactBackgroundTaskSnapshot, NOTIFY_MODES } from "./wake-events.js";
 
 export interface RegistrationDeps {
 	getActiveCtx: () => ExtensionContext | null;
@@ -67,13 +67,13 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 				const truncation = taskLogTruncation(output, task.logFile, cwd);
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
 					action: "log",
-					task: deps.rememberSnapshot(task),
+					task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)),
 					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
 				});
 			}
 			const stopped = deps.requestStop(task, "user");
 			if (!stopped.ok) throw new Error(stopped.message);
-			return makeToolResult(stopped.message, { action: "stop", task: deps.rememberSnapshot(task) });
+			return makeToolResult(stopped.message, { action: "stop", task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)) });
 		},
 		renderCall() { return renderEmpty(); },
 		renderResult(result: any, options: any, theme: Theme, context: any) {
@@ -139,7 +139,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 					}\nWakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${
 						task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"
 					}, mode=${task.notifyMode ?? "always"}${task.dedupeKey ? `, dedupeKey=${task.dedupeKey}` : ""}`,
-					{ action: "spawn", task: deps.rememberSnapshot(task) },
+					{ action: "spawn", task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)) },
 				);
 			}
 			const task = deps.resolveTask(params.id, params.pid);
@@ -150,13 +150,13 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 				const truncation = taskLogTruncation(output, task.logFile, cwd);
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
 					action: "log",
-					task: deps.rememberSnapshot(task),
+					task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)),
 					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
 				});
 			}
 			const stopped = deps.requestStop(task, "user");
 			if (!stopped.ok) throw new Error(stopped.message);
-			return makeToolResult(stopped.message, { action: "stop", task: deps.rememberSnapshot(task) });
+			return makeToolResult(stopped.message, { action: "stop", task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)) });
 		},
 		renderCall() { return renderEmpty(); },
 		renderResult(result: any, options: any, theme: Theme, context: any) {
