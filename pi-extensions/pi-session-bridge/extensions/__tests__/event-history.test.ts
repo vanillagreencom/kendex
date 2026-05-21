@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -99,6 +99,22 @@ describe("BridgeHistory.push", () => {
 		expect(history.rawSpillBytes).toBeLessThanOrEqual(limits.maxRawSpillBytes);
 	});
 
+	test("sidecar file size never exceeds maxRawSpillBytes across count evictions", () => {
+		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 1, maxRawSpillBytes: 500 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+		const big = { delta: "z".repeat(120) };
+		for (let i = 0; i < 12; i++) {
+			history.push({ ...makeEnvelope("message_update", 8), truncated: true, originalBytes: 200 }, big);
+			if (existsSync(spillPath)) {
+				expect(statSync(spillPath).size).toBeLessThanOrEqual(limits.maxRawSpillBytes);
+			}
+		}
+		if (existsSync(spillPath)) {
+			expect(statSync(spillPath).size).toBeLessThanOrEqual(limits.maxRawSpillBytes);
+		}
+		expect(history.count).toBe(1);
+	});
+
 	test("after eviction the raw spill accounting drops so a later spill fits", () => {
 		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 1, maxHistoryBytes: 4 * 1024 * 1024, maxRawSpillBytes: 400 };
 		const history = new BridgeHistory(spillPath, () => limits, () => undefined);
@@ -157,14 +173,21 @@ describe("BridgeHistory.buildResponse", () => {
 		expect(response.responseTruncated).toBe(true);
 	});
 
-	test("raw rehydration stops once the response cap is reached", () => {
+	test("raw rehydration keeps compact form when rehydrated payload would exceed cap", () => {
 		const limits: HistoryLimits = { ...defaultLimits, maxRawSpillBytes: 10 * 1024 * 1024 };
 		const history = new BridgeHistory(spillPath, () => limits, () => undefined);
-		pushSeries(history, 6);
-		const response = history.buildResponse({ limit: 50, maxBytes: 1500, raw: true });
+		pushSeries(history, 4);
+
+		const snapshot = history.snapshot();
+		const compactTotal = snapshot.reduce((sum, env) => sum + Buffer.byteLength(JSON.stringify(env), "utf8"), 0);
+		// All 4 compact envelopes fit; leave headroom for ~2 rehydrations but not 4.
+		const budget = compactTotal + 600;
+
+		const response = history.buildResponse({ limit: 50, maxBytes: budget, raw: true });
+		expect(response.events).toHaveLength(4);
 		const hydrated = response.events.filter((e) => e.rawRestored === true);
 		expect(hydrated.length).toBeGreaterThan(0);
-		expect(hydrated.length).toBeLessThan(6);
+		expect(hydrated.length).toBeLessThan(4);
 		expect(response.responseTruncated).toBe(true);
 		const compactStill = response.events.filter((e) => e.rawRestored !== true);
 		for (const event of compactStill) {
@@ -182,6 +205,22 @@ describe("BridgeHistory.buildResponse", () => {
 		expect(response.events[0]?.rawRestored).not.toBe(true);
 		expect(typeof response.events[0]?.rawError).toBe("string");
 		expect(response.rawErrors?.length).toBeGreaterThan(0);
+	});
+
+	test("rawErrors only includes events that survived the compact budget cut", () => {
+		const history = new BridgeHistory(spillPath, () => defaultLimits, () => undefined);
+		// Push two truncated events; corrupt the sidecar so any rehydration attempt fails.
+		history.push({ ...makeEnvelope("message_update"), truncated: true, originalBytes: 200 }, { delta: "y".repeat(200) });
+		history.push({ ...makeEnvelope("message_update"), truncated: true, originalBytes: 200 }, { delta: "y".repeat(200) });
+		writeFileSync(spillPath, "not-json\n", { mode: 0o600 });
+
+		// maxBytes=1 forces only the newest entry into the response. The older
+		// event must NOT trigger a sidecar read or contribute to rawErrors.
+		const response = history.buildResponse({ limit: 50, maxBytes: 1, raw: true });
+		expect(response.events).toHaveLength(1);
+		expect(response.responseTruncated).toBe(true);
+		expect(response.events[0]?.event).toBe("message_update");
+		expect(response.rawErrors?.length ?? 0).toBeLessThanOrEqual(1);
 	});
 });
 

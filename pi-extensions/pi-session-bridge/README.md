@@ -68,7 +68,7 @@ If exactly one active bridge exists, target flags are optional. Filters: `--pid`
 - `tool_execution_*` → `{ toolName, toolUseId, status, isError, *Bytes, *Preview, artifactPath, logPath, detailPath }`.
 - `agent_end` → `{ status, stopReason, usage, messagesCount, finalTextBytes, finalTextLength, finalTextPreview }`.
 
-When a payload had to be shrunk the envelope adds sibling metadata: `truncated: true`, `originalBytes`, `rawEventPath` (per-session JSONL under `<bridgeDir>/raw/<pid>.jsonl`), `rawEventRef` (line ref). The raw JSONL is bounded by `maxRawSpillBytes`, rewritten in-place when entries evict, cleaned up on `session_shutdown` and process exit, and stale files belonging to dead pids are removed on bridge start. When a spill is disabled or refused the envelope carries a `rawError` string instead of `rawEventPath`/`rawEventRef`.
+When a payload had to be shrunk the envelope adds sibling metadata: `truncated: true`, `originalBytes`, `rawEventPath` (per-session JSONL under `<bridgeDir>/raw/<pid>.jsonl`), `rawEventRef` (line ref). The sidecar's on-disk size is bounded by `maxRawSpillBytes`: each spill compares against `statSync` of the file, runs a lazy compaction that rewrites the JSONL with only the slots whose envelopes are still in history, and refuses the spill if the file would still overflow. Sidecars are cleaned up on `session_shutdown` and process exit, and stale files belonging to dead pids are removed on bridge start. When a spill is disabled or refused the envelope carries a `rawError` string instead of `rawEventPath`/`rawEventRef`.
 
 Pass `--raw` (or `--verbose`) to `pi-bridge history` to rehydrate compact envelopes from the sidecar:
 
@@ -143,7 +143,7 @@ Open `/extensions:settings`; settings appear under the **Session Bridge** tab.
 | Max history response bytes | Maximum bytes returned in a single `history` response; older envelopes drop first. |
 | Event preview bytes | Bytes of `delta`/`result`/`output` retained as `*Preview` strings inside compact events. |
 | Spill raw events | When `true`, oversized payloads spill to the per-session JSONL so `history --raw` can rehydrate them. |
-| Max raw spill bytes | Cap on the per-session raw JSONL. New spills compact older orphans first, then surface `rawError` if still over the cap. |
+| Max raw spill bytes | Cap on the on-disk size of the per-session raw JSONL. New spills check `statSync` of the file; if appending would exceed the cap, the sidecar is rewritten with only live slots, and the spill is refused (with `rawError`) when even the compacted file plus the new line would not fit. |
 | Max request line bytes | Maximum JSONL request size accepted. |
 | Registry heartbeat | Ms between registry file updates. |
 | Notify on start | In-TUI notification when the bridge starts. |

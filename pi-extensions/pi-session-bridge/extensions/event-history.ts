@@ -140,7 +140,21 @@ export class BridgeHistory {
 		// Sidecar reclamation happens lazily on the next spill that needs space.
 	}
 
-	/** Build a `history` response: filter, then walk newest-first, optionally rehydrating raw, until the byte budget is reached. */
+	/**
+	 * Build a `history` response.
+	 *
+	 * Two passes so raw I/O happens only for in-budget envelopes:
+	 *   1. Filter, then walk newest-first using compact envelope sizes to
+	 *      pick the set that fits inside `maxBytes`. Older envelopes that
+	 *      do not fit are excluded; nothing is read from the sidecar for
+	 *      them.
+	 *   2. For the selected set, optionally rehydrate from the sidecar
+	 *      newest-first. If a rehydrated envelope would push the running
+	 *      total past `maxBytes` the compact form is kept (and the
+	 *      response is marked `responseTruncated`); raw read failures
+	 *      surface as `rawError` on that envelope and aggregate into the
+	 *      `rawErrors` array.
+	 */
 	buildResponse(filters: HistoryFilters): HistoryResponse {
 		const maxBytes = Math.max(0, Math.floor(filters.maxBytes));
 		let candidates = this.entries.slice();
@@ -148,30 +162,44 @@ export class BridgeHistory {
 		if (filters.since) candidates = candidates.filter((entry) => typeof entry.envelope.timestamp === "string" && entry.envelope.timestamp >= (filters.since as string));
 		candidates = candidates.slice(-Math.max(1, Math.floor(filters.limit)));
 
-		const events: HistoryEnvelope[] = [];
-		const rawErrors: string[] = [];
-		let bytes = 0;
+		const selected: HistoryEntry[] = [];
 		let responseTruncated = false;
-
+		let bytes = 0;
 		for (let i = candidates.length - 1; i >= 0; i--) {
 			const entry = candidates[i]!;
-			let envelope = clone(entry.envelope);
-			if (filters.raw && entry.rawSlot && envelope.truncated === true) {
-				const read = this.readRaw(entry.rawSlot);
-				if (read.ok) {
-					envelope = { ...envelope, data: read.data, rawRestored: true };
-				} else {
-					envelope.rawError = read.error;
-					rawErrors.push(`${envelope.event}#${entry.rawSlot.ref}: ${read.error}`);
-				}
-			}
-			const size = Buffer.byteLength(JSON.stringify(envelope), "utf8");
-			if (events.length > 0 && maxBytes > 0 && bytes + size > maxBytes) {
+			if (selected.length > 0 && maxBytes > 0 && bytes + entry.bytes > maxBytes) {
 				responseTruncated = true;
 				break;
 			}
-			events.unshift(envelope);
-			bytes += size;
+			selected.unshift(entry);
+			bytes += entry.bytes;
+		}
+
+		const events: HistoryEnvelope[] = selected.map((entry) => clone(entry.envelope));
+		const rawErrors: string[] = [];
+
+		if (filters.raw && events.length > 0) {
+			let running = bytes;
+			for (let i = selected.length - 1; i >= 0; i--) {
+				const entry = selected[i]!;
+				const target = events[i]!;
+				if (!entry.rawSlot || target.truncated !== true) continue;
+				const compactSize = Buffer.byteLength(JSON.stringify(target), "utf8");
+				const read = this.readRaw(entry.rawSlot);
+				if (!read.ok) {
+					target.rawError = read.error;
+					rawErrors.push(`${target.event}#${entry.rawSlot.ref}: ${read.error}`);
+					continue;
+				}
+				const candidate: HistoryEnvelope = { ...target, data: read.data, rawRestored: true };
+				const candidateSize = Buffer.byteLength(JSON.stringify(candidate), "utf8");
+				if (events.length > 1 && maxBytes > 0 && running + (candidateSize - compactSize) > maxBytes) {
+					responseTruncated = true;
+					continue;
+				}
+				events[i] = candidate;
+				running += candidateSize - compactSize;
+			}
 		}
 
 		return {
@@ -204,22 +232,19 @@ export class BridgeHistory {
 			const line = `${JSON.stringify({ ref, event, timestamp, data: raw })}\n`;
 			const length = Buffer.byteLength(line, "utf8");
 
-			if (limits.maxRawSpillBytes > 0 && this.rawBytes + length > limits.maxRawSpillBytes) {
+			// Compare against actual file size so orphaned lines from evicted
+			// envelopes count against the cap; compactSidecar() rewrites the
+			// file to drop them when the next spill would overflow.
+			if (limits.maxRawSpillBytes > 0 && this.currentFileSize() + length > limits.maxRawSpillBytes) {
 				this.compactSidecar();
-				if (this.rawBytes + length > limits.maxRawSpillBytes) {
+				if (this.currentFileSize() + length > limits.maxRawSpillBytes) {
 					this.lastSpillError = `raw spill exceeds maxRawSpillBytes (${limits.maxRawSpillBytes})`;
 					this.warn("spill.budget", new Error(this.lastSpillError));
 					return undefined;
 				}
 			}
 
-			let offset = 0;
-			try {
-				offset = fs.statSync(this.rawSpillPath).size;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-				offset = 0;
-			}
+			const offset = this.currentFileSize();
 			fs.appendFileSync(this.rawSpillPath, line, { mode: 0o600 });
 			const slot: RawSlot = { ref, offset, length };
 			this.rawIndex.set(ref, slot);
@@ -229,6 +254,15 @@ export class BridgeHistory {
 			this.lastSpillError = stringifyError(error);
 			this.warn("spill", error);
 			return undefined;
+		}
+	}
+
+	private currentFileSize(): number {
+		try {
+			return fs.statSync(this.rawSpillPath).size;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+			throw error;
 		}
 	}
 
