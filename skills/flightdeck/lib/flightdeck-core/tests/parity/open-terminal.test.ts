@@ -2,15 +2,17 @@
 // Uses the tmux shim; no real windows or LLM processes are created.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/open-terminal");
 const STATE_SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
+const PANE_REGISTRY_SCRIPT = resolve(HERE, "../../../../scripts/pane-registry");
+const CHANNEL_SERVER_DIR = resolve(HERE, "../../../claude-channel-server");
 const SHIM_DIR = resolve(HERE, "./tmux-shim");
 
 interface ShimPane {
@@ -129,6 +131,39 @@ function runOpenTerminal(repo: string, shimState: string, args: string[], extraE
 	env.FLIGHTDECK_DASHBOARD = "0";
 	env.FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS = "1";
 	Object.assign(env, extraEnv);
+	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
+	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+// vstack#216 (pre-PR round-2): open-terminal driver with adapters ON.
+// The default `runOpenTerminal` sets FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS=1
+// to short-circuit per-harness native adapter spawn paths so the test
+// only exercises argv/state plumbing. The cc-channels acceptance test
+// needs the real `spawn_cc_channel_tmux` to run — so we leave that
+// kill-switch unset, prepend a fake-claude-bin directory to PATH,
+// pin a sandboxed HOME so cc_transcript_path lands inside the repo,
+// and route FD_STATE_DIR to a per-test dir so the daemon's
+// spawn-metadata files don't leak across runs.
+function runOpenTerminalChannelsOn(repo: string, shimState: string, fakeBin: string, fakeHome: string, fdStateDir: string, args: string[]) {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.TMUX = "/tmp/tmux-test";
+	env.TMUX_SHIM_STATE = shimState;
+	env.TMUX_PARITY_SESSION = "test-session";
+	env.PATH = `${fakeBin}:${repo}:${SHIM_DIR}:${env.PATH ?? ""}`;
+	env.HOME = fakeHome;
+	env.WORKTREE_CLI = makeWorktreeShim(repo);
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_DASHBOARD = "0";
+	env.FD_STATE_DIR = fdStateDir;
+	// vstack#216: pin the claude bin to our fake so resolve_claude_bin
+	// doesn't pick up /usr/bin/claude (which would talk to real auth in
+	// the sandboxed HOME and fail). Production users leave this unset.
+	env.FLIGHTDECK_CLAUDE_BIN = join(fakeBin, "claude");
+	// channels opt-in is implicit via `--tracker github --harness claude`
+	// per the open-terminal default added in this branch, but pass it
+	// explicitly here too so the test stays honest if that default ever
+	// changes.
+	env.FLIGHTDECK_CLAUDE_CHANNELS = "1";
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
@@ -305,6 +340,163 @@ describe("open-terminal smoke", () => {
 			});
 		});
 	}
+
+	// vstack#216 (pre-PR round-2): end-to-end acceptance for the
+	// github-tracker Claude path. The lower-level pane-registry
+	// hydrate-claude tests prove the hydration *function* works; this
+	// test proves the open-terminal *flow* actually invokes it (the bug
+	// caused by #216 was that the spawn-file write order kept cc_* null
+	// even though hydrate-claude existed as a library function). Drives
+	// the actual spawn path with adapters ENABLED, fakes the `claude`
+	// binary so resolve_claude_bin/version/auth all succeed, ensures
+	// the channel-server bootstrap is a no-op via a pre-existing
+	// node_modules dir, and asserts (a) entry.adapter.cc_url /
+	// cc_session_uuid / cc_transcript / cc_channel_token become non-null
+	// on the registered entry and (b) `pane-registry cc-channel-args`
+	// returns `--url ... --transcript ...` (with a live transcript file
+	// + fake /healthz on the allocated port so the freshness gate
+	// passes — what the daemon's binder requires).
+	test("github tracker claude end-to-end populates cc_* adapter fields and cc-channel-args returns --url --transcript", async () => {
+		const repo = makeRepo();
+		repos.push(repo);
+
+		// Stage a fake `claude` binary that satisfies cc_verify_claude_version
+		// (>= 2.1.80) and cc_verify_claude_auth (output mentions claude.ai).
+		// Path is prepended in runOpenTerminal so it overrides the real
+		// `claude` on the host without us touching /usr/bin.
+		const fakeBin = join(repo, "bin");
+		mkdirSync(fakeBin, { recursive: true });
+		const fakeClaude = join(fakeBin, "claude");
+		writeFileSync(fakeClaude, `#!/usr/bin/env bash
+case "\${1:-}" in
+  --version) echo "2.1.999 (Claude Code)"; exit 0 ;;
+  auth) echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0 ;;
+esac
+# Mimic a short-lived claude invocation; open_tmux only writes the
+# command into the tmux shim's sent_keys array and never waits.
+exit 0
+`);
+		chmodSync(fakeClaude, 0o755);
+
+		makeGhShim(repo);
+		const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+
+		// The channel-server bootstrap exits 0 when node_modules/ is
+		// already present; otherwise it runs `bun install` which would
+		// mutate the real lib/ dir. Ensure the dir exists so we never
+		// trigger that path. Path is gitignored.
+		const nodeModules = join(CHANNEL_SERVER_DIR, "node_modules");
+		const createdNodeModules = !existsSync(nodeModules);
+		if (createdNodeModules) mkdirSync(nodeModules, { recursive: true });
+
+		// Sandbox the home dir so cc_transcript_path lands inside the
+		// test repo. open-terminal's spawn_cc_channel_tmux computes the
+		// transcript path as `$HOME/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+		// — we want that under the test repo so the test cleans up
+		// after itself, but we still need the real auth flow to be
+		// bypassed by our fake claude binary above (which it is, since
+		// we prepend `bin/` to PATH).
+		const fakeHome = join(repo, "home");
+		mkdirSync(join(fakeHome, ".claude", "projects"), { recursive: true });
+
+		const fdStateDir = join(repo, "tmp", "fd-state");
+		mkdirSync(fdStateDir, { recursive: true });
+
+		try {
+			const r = runOpenTerminalChannelsOn(repo, shim, fakeBin, fakeHome, fdStateDir, [
+				"--tracker", "github", "--repo", "owner/repo", "216", "--tmux", "--harness", "claude",
+			]);
+			expect(r.status).toBe(0);
+			// The cc-channel spawn path always logs `cc-channel: port=...`
+			// on success. If the path fell through to legacy spawn we'd
+			// see `cc-channel-unavailable:` on stderr instead.
+			expect(r.stdout + r.stderr).toContain("cc-channel: port=");
+
+			// State file lives at <repo>/tmp/flightdeck-state-test-session.json.
+			const stateFilePath = stateFile(repo);
+			expect(existsSync(stateFilePath)).toBe(true);
+			const state = JSON.parse(readFileSync(stateFilePath, "utf8"));
+			const entry = state.entries["216"];
+			expect(entry).toBeTruthy();
+			expect(entry.harness).toBe("claude");
+			expect(entry.adapter).toBeTruthy();
+			expect(typeof entry.adapter.cc_url).toBe("string");
+			expect(entry.adapter.cc_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+			expect(typeof entry.adapter.cc_session_uuid).toBe("string");
+			expect(entry.adapter.cc_session_uuid).toMatch(/^[0-9a-f-]{36}$/);
+			expect(typeof entry.adapter.cc_transcript).toBe("string");
+			expect(entry.adapter.cc_transcript.length).toBeGreaterThan(0);
+			expect(typeof entry.adapter.cc_port).toBe("number");
+			expect(entry.adapter.cc_port).toBeGreaterThan(0);
+			expect(typeof entry.adapter.cc_channel_token).toBe("string");
+			expect(entry.adapter.cc_channel_token.length).toBeGreaterThanOrEqual(32);
+
+			// Spawn file mirrors the entry; required for the daemon's
+			// rebuild-from-disk path and for late hydrate-claude calls.
+			const spawnFile = join(fdStateDir, "cc-spawn-216.json");
+			expect(existsSync(spawnFile)).toBe(true);
+			const spawnRec = JSON.parse(readFileSync(spawnFile, "utf8"));
+			expect(spawnRec.url).toBe(entry.adapter.cc_url);
+			expect(spawnRec.transcript).toBe(entry.adapter.cc_transcript);
+			expect(spawnRec.channel_token).toBe(entry.adapter.cc_channel_token);
+			expect(Number(spawnRec.port)).toBe(entry.adapter.cc_port);
+			// Defense in depth: spawn file holding the bearer token is
+			// readable only by the owner.
+			expect(statSync(spawnFile).mode & 0o077).toBe(0);
+
+			// Acceptance criterion #1 final check: `pane-registry cc-channel-args
+			// <N>` returns the flags the daemon's binder requires. The
+			// freshness gate inside the command requires (a) the
+			// transcript file to be a regular file, (b) the recorded URL
+			// to respond to `/healthz` with `ok health`. We satisfy both
+			// here by writing the transcript file and running a tiny
+			// python http server on the allocated port. python3 is
+			// already a flightdeck dep.
+			mkdirSync(dirname(entry.adapter.cc_transcript), { recursive: true });
+			writeFileSync(entry.adapter.cc_transcript, "");
+			const pyScript = `import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Type","text/plain"); self.end_headers(); self.wfile.write(b"ok health\\n")
+    def log_message(self, *a, **k): pass
+srv = http.server.HTTPServer(("127.0.0.1", ${entry.adapter.cc_port}), H)
+sys.stdout.write("ready\\n"); sys.stdout.flush()
+try: srv.serve_forever()
+except KeyboardInterrupt: pass`;
+			const healthChild = spawn("python3", ["-c", pyScript], { stdio: ["ignore", "pipe", "pipe"] });
+			try {
+				await new Promise<void>((resolveReady, rejectReady) => {
+					const t = setTimeout(() => rejectReady(new Error("python /healthz server didn't start in time")), 5000);
+					healthChild.stdout!.on("data", (b: Buffer) => {
+						if (b.toString().includes("ready")) { clearTimeout(t); resolveReady(); }
+					});
+					healthChild.on("error", (e) => { clearTimeout(t); rejectReady(e); });
+				});
+
+				const argsEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+				argsEnv.FD_STATE_DIR = fdStateDir;
+				argsEnv.FLIGHTDECK_STATE_DIR = "tmp";
+				argsEnv.FD_ADAPTER_FRESHNESS_TTL = "0";
+				argsEnv.TMUX_PARITY_SESSION = "test-session";
+				argsEnv.TMUX_SHIM_STATE = shim;
+				argsEnv.PATH = `${fakeBin}:${SHIM_DIR}:${argsEnv.PATH ?? ""}`;
+				const args = spawnSync(PANE_REGISTRY_SCRIPT, ["cc-channel-args", "216"], { cwd: repo, encoding: "utf8", env: argsEnv });
+				expect(args.status).toBe(0);
+				const out = (args.stdout ?? "").trim();
+				expect(out).toContain(`--url ${entry.adapter.cc_url}`);
+				expect(out).toContain(`--transcript ${entry.adapter.cc_transcript}`);
+				expect(out).toContain(`--channel-token ${entry.adapter.cc_channel_token}`);
+			} finally {
+				healthChild.kill("SIGTERM");
+			}
+		} finally {
+			// Clean up node_modules only when we created it (don't
+			// disturb an existing dev environment that already had it).
+			if (createdNodeModules) {
+				rmSync(nodeModules, { force: true, recursive: true });
+			}
+		}
+	}, 30000);
 
 	test("github tracker materializes control bytes into brief file, not tmux launch line", () => {
 		const repo = makeRepo();

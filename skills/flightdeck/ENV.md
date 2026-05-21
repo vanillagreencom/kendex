@@ -62,6 +62,7 @@ Daemon hygiene env vars (operator-facing; details in `DEVELOPMENT.md`):
 | `FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Per-(pane,reason) throttle interval for `[{claude,opencode,codex}-subscriber-bind-skip]` daemon log lines (vstack#216). Same shape and semantics as the pi-specific knob above. |
 | `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive bind-skip ticks before the daemon emits a one-shot `[{claude,opencode,codex}-subscriber-bind-stuck]` warning (vstack#216). |
 | `FLIGHTDECK_CLAUDE_CHANNELS` | unset (`0`) for linear tracker, defaulted to `1` for `--tracker github --harness claude` (vstack#216) | Opt-in/opt-out for Claude Channels MCP webhook send-path. Explicit `--use-channels` / `--no-channels` flags on `open-terminal` always win. |
+| `FLIGHTDECK_CLAUDE_BIN` | unset | Path to a specific `claude` executable to use for channels version/auth probes. When unset, `open-terminal` prefers `/usr/bin/claude` (bypassing shell aliases/wrappers that intercept `claude --version`) then falls back to `type -P claude`. Set this to point at a parallel install, a custom wrapper, or a test fixture; production users normally leave it unset. |
 
 
 Rust dashboard env vars:

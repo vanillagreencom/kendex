@@ -980,6 +980,14 @@ spawn_oc_attach_tmux() {
 # Inbound (in pane-respond): POST to http://127.0.0.1:<port>/.
 
 resolve_claude_bin() {
+  # vstack#216: honor FLIGHTDECK_CLAUDE_BIN as an explicit override
+  # (test fixtures, parallel installs, custom wrappers). When unset,
+  # prefer /usr/bin/claude so a shell function or alias doesn't
+  # intercept the version/auth probes, then fall through to PATH.
+  if [[ -n "${FLIGHTDECK_CLAUDE_BIN:-}" && -x "${FLIGHTDECK_CLAUDE_BIN}" ]]; then
+    echo "${FLIGHTDECK_CLAUDE_BIN}"
+    return 0
+  fi
   if [[ -x /usr/bin/claude ]]; then
     echo "/usr/bin/claude"
     return 0
