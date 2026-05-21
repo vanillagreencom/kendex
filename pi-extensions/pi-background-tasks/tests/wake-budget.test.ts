@@ -210,6 +210,26 @@ describe("wake payload byte budget (vstack#210)", () => {
 		expect("procIdent" in detailsTask).toBe(false);
 	});
 
+	test("details.matchedPattern is bounded by the manifest cap (vstack#210 round 2)", () => {
+		const hugePattern = "P".repeat(100_000);
+		const task = fakeTask({ status: "running", lastOutputAt: 1_111, notifyPattern: hugePattern });
+		const newOutputTail = tailText("y".repeat(1_000), DEFAULT_OUTPUT_ALERT_MAX_CHARS);
+		const { deps, messages } = sendDeps("y".repeat(1_000));
+		const pending = scheduleTaskWake(task, "output", 1_111);
+
+		expect(sendTaskWake(deps, "output", task, {
+			eventAt: pending.eventAt,
+			matchedPattern: hugePattern,
+			newOutputTail,
+			sequence: pending.sequence,
+		})).toBe(true);
+
+		const record = messages[0]!;
+		const details = record.message.details as Record<string, unknown>;
+		expect((details.matchedPattern as string).length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		expect(messageBytes(record)).toBeLessThan(4_096);
+	});
+
 	test("budget-exhausted notice stays under 4 KB and uses bounded log path", () => {
 		const longLogFile = "/tmp/" + "B".repeat(5_000);
 		const task = fakeTask({ command: "Q".repeat(200_000), logFile: longLogFile, title: "T".repeat(5_000) });

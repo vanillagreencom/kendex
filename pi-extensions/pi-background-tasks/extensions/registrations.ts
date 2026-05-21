@@ -21,7 +21,7 @@ import { formatRelativeTime, formatTaskLog, summarizeTaskStatus, taskLogTruncati
 import { makeToolResult, renderBgToolResult, renderEmpty } from "./render.js";
 import { bgToolResultTasks } from "./tool-result-details.js";
 import type { BackgroundTaskSnapshot, ManagedTask, SpawnTaskOptions } from "./types.js";
-import { compactBackgroundTaskSnapshot, NOTIFY_MODES } from "./wake-events.js";
+import { compactBackgroundTaskSnapshot, NOTIFY_MODES, WAKE_MANIFEST_FIELD_MAX_CHARS, truncateForTranscript } from "./wake-events.js";
 
 export interface RegistrationDeps {
 	getActiveCtx: () => ExtensionContext | null;
@@ -68,7 +68,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
 					action: "log",
 					task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)),
-					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
+					...(truncation ? { fullOutputPath: truncateForTranscript(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "", truncation } : {}),
 				});
 			}
 			const stopped = deps.requestStop(task, "user");
@@ -133,12 +133,17 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 					timeoutSeconds: params.timeoutSeconds,
 					title: params.title,
 				});
+				const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+				const safeCwd = truncateForTranscript(task.cwd, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+				const safeLog = truncateForTranscript(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+				const safePattern = truncateForTranscript(task.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS);
+				const safeDedupe = truncateForTranscript(task.dedupeKey, WAKE_MANIFEST_FIELD_MAX_CHARS);
 				return makeToolResult(
-					`Started ${task.id} (pid ${task.pid}) in the background.\nCommand: ${task.command}\nCwd: ${task.cwd}\nLog: ${task.logFile}\nExpiry: ${
+					`Started ${task.id} (pid ${task.pid}) in the background.\nCommand: ${safeCommand}\nCwd: ${safeCwd}\nLog: ${safeLog}\nExpiry: ${
 						task.expiresAt != null ? formatRelativeTime(task.expiresAt) : "none"
 					}\nWakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${
-						task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"
-					}, mode=${task.notifyMode ?? "always"}${task.dedupeKey ? `, dedupeKey=${task.dedupeKey}` : ""}`,
+						task.notifyOnOutput ? (safePattern ?? "yes") : "no"
+					}, mode=${task.notifyMode ?? "always"}${safeDedupe ? `, dedupeKey=${safeDedupe}` : ""}`,
 					{ action: "spawn", task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)) },
 				);
 			}
@@ -151,7 +156,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
 					action: "log",
 					task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)),
-					...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
+					...(truncation ? { fullOutputPath: truncateForTranscript(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "", truncation } : {}),
 				});
 			}
 			const stopped = deps.requestStop(task, "user");

@@ -8,10 +8,17 @@
 
 import { describe, expect, test } from "bun:test";
 
+import { bashBackgroundAckText } from "../extensions/auto-background.js";
 import { DEFAULT_LOG_TAIL_MAX_CHARS } from "../extensions/constants.js";
-import { formatTaskLog, taskLogTruncation } from "../extensions/format.js";
+import {
+	TASK_DISPLAY_NAME_MAX_CHARS,
+	buildTaskSummaryLine,
+	formatTaskLog,
+	taskDisplayNameForTranscript,
+	taskLogTruncation,
+} from "../extensions/format.js";
 import { taskSnapshot } from "../extensions/snapshot.js";
-import type { ManagedTask } from "../extensions/types.js";
+import type { BashBackgroundDecision, ManagedTask } from "../extensions/types.js";
 import { WAKE_MANIFEST_FIELD_MAX_CHARS, compactBackgroundTaskSnapshot, emptyOutputWakeBudget } from "../extensions/wake-events.js";
 
 function logTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
@@ -90,6 +97,67 @@ describe("formatTaskLog (vstack#210)", () => {
 
 	test("(empty) sentinel for falsy output", () => {
 		expect(formatTaskLog("", "/tmp/log")).toBe("(empty)");
+	});
+});
+
+describe("transcript-facing content strings (vstack#210 round 2)", () => {
+	test("buildTaskSummaryLine clamps title/command to the display cap", () => {
+		const task = taskSnapshot(logTask({ command: "Q".repeat(50_000), title: "T".repeat(50_000) }));
+		const line = buildTaskSummaryLine(task);
+		// The summary line carries one bounded display name + short prefix
+		// columns; keep the whole line under a few hundred chars so a
+		// bg_task list rendered into chat content cannot bloat.
+		expect(line.length).toBeLessThan(TASK_DISPLAY_NAME_MAX_CHARS + 128);
+	});
+
+	test("taskDisplayNameForTranscript falls back to command when title is empty", () => {
+		const long = "Q".repeat(5_000);
+		expect(taskDisplayNameForTranscript({ title: "", command: long }).length).toBeLessThanOrEqual(TASK_DISPLAY_NAME_MAX_CHARS);
+	});
+
+	test("bashBackgroundAckText bounds command/cwd/logFile/notifyPattern", () => {
+		const snapshot = taskSnapshot(logTask({
+			command: "C".repeat(200_000),
+			cwd: "/path/" + "P".repeat(5_000),
+			logFile: "/tmp/" + "L".repeat(5_000),
+			notifyOnOutput: true,
+			notifyPattern: "R".repeat(5_000),
+			dedupeKey: "D".repeat(5_000),
+		}));
+		const decision: BashBackgroundDecision = {
+			forced: false,
+			notifyOnExit: true,
+			notifyOnOutput: true,
+			reason: "test",
+			title: "test",
+		};
+		const text = bashBackgroundAckText(snapshot, decision);
+		// One-line bounded fields plus envelope text; total well under 4 KB.
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThan(4_096);
+		// No verbatim 4097-char bombs survived.
+		expect(text).not.toContain("C".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		expect(text).not.toContain("P".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		expect(text).not.toContain("L".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		expect(text).not.toContain("R".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		expect(text).not.toContain("D".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+	});
+
+	test("formatTaskLog truncation banner uses a bounded log path", () => {
+		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
+		const longPath = "/tmp/" + "L".repeat(10_000);
+		const formatted = formatTaskLog(huge, longPath);
+		// The on-disk log path is bounded inside the truncation banner so a
+		// pathologically long taskDir cannot bloat the inline log payload.
+		expect(formatted).not.toContain("L".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		expect(formatted.length).toBeLessThan(DEFAULT_LOG_TAIL_MAX_CHARS + WAKE_MANIFEST_FIELD_MAX_CHARS + 256);
+	});
+
+	test("taskLogTruncation descriptor uses a bounded fullOutputPath", () => {
+		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
+		const longPath = "/tmp/" + "L".repeat(10_000);
+		const truncation = taskLogTruncation(huge, longPath);
+		expect(truncation).toBeDefined();
+		expect(truncation!.fullOutputPath.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
 	});
 });
 

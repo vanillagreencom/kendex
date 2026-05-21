@@ -25,7 +25,7 @@ Spawn options:
 
 ## Wake-event schema
 
-Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`, and a per-task monotonic `sequence` in the task snapshot. Output wakes scheduled before `stop` or `clear` are marked voided; if a queued callback still runs, the extension suppresses the send and writes a structured `voided-wake-fired` diagnostic to stderr so stale Pi-core delivery can be distinguished from an extension bug.
+Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`, and a per-task monotonic `sequence` in the task snapshot. Output wakes scheduled before `stop` or `clear` are marked voided; if a queued callback still runs, the extension suppresses the send and writes a structured `voided-wake-fired` diagnostic via `logBackgroundDiagnostic()` so stale Pi-core delivery can be distinguished from an extension bug. Diagnostics are env-gated (`PI_BG_TASK_DEBUG`, `PI_BG_TASK_DIAGNOSTICS`, or `PI_BG_TASK_DIAGNOSTIC_LOG=/path`) and write to a log file (default `$TMPDIR/vstack-pi-bg/diagnostics.log`); they never go to stdout/stderr or the active TUI.
 
 `clearTaskTimers` records a `cleared-on-task-exit` diagnostic for any pending output wakes it cancels.
 

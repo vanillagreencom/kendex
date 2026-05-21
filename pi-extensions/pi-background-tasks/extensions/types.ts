@@ -141,7 +141,8 @@ export interface BackgroundTaskSnapshot {
 	/**
 	 * Per-task budget accounting for output wakes (vstack#210). Persists so a
 	 * session restart preserves the cap. Absent on snapshots persisted by
-	 * versions <=1.4.0 — treated as a fresh budget on restore.
+	 * versions <1.4.0 (this is the version that introduces the field) —
+	 * treated as a fresh budget on restore.
 	 */
 	outputWakeBudget?: OutputWakeBudgetState;
 	// True after sendTaskEvent('exit') has fired for this task. Persisted so

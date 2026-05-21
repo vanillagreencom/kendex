@@ -5,6 +5,14 @@ import {
 } from "./constants.js";
 import { settingNumber } from "./settings.js";
 import type { BackgroundLogTruncation, BackgroundTaskSnapshot, BackgroundTaskStatus } from "./types.js";
+import { WAKE_MANIFEST_FIELD_MAX_CHARS, truncateForTranscript } from "./wake-events.js";
+
+// Transcript-facing summary-line cap (vstack#210 round 2). bg_task list /
+// /bg list / dashboard summaries render task title/command directly into
+// transcript content; an agent-controlled 100KB title would otherwise leak
+// past pi-output-policy. Keep summaries terse (one-line use) so this is
+// tighter than the full manifest cap.
+export const TASK_DISPLAY_NAME_MAX_CHARS = 96;
 
 export function tailText(text: string, maxChars: number = settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS)): string {
 	if (text.length <= maxChars) return text;
@@ -14,14 +22,20 @@ export function tailText(text: string, maxChars: number = settingNumber("outputA
 export function taskLogTruncation(output: string, logFile: string, cwd?: string): BackgroundLogTruncation | undefined {
 	const maxChars = Math.max(1, Math.floor(settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS, cwd)));
 	if (output.length <= maxChars) return undefined;
-	return { direction: "tail", fullOutputPath: logFile, shownChars: maxChars, totalChars: output.length, truncated: true };
+	// Transcript-bounded path. The on-disk log is canonical; the truncation
+	// descriptor lives in tool-result details where an agent-controlled
+	// `cwd`/`taskDir` setting could otherwise pump a multi-KB string per
+	// inspection (vstack#210 round 2).
+	const safeLogFile = truncateForTranscript(logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	return { direction: "tail", fullOutputPath: safeLogFile, shownChars: maxChars, totalChars: output.length, truncated: true };
 }
 
 export function formatTaskLog(output: string, logFile: string, cwd?: string): string {
 	if (!output) return "(empty)";
 	const truncation = taskLogTruncation(output, logFile, cwd);
 	if (!truncation) return output;
-	return `[...truncated]\n${output.slice(-truncation.shownChars)}\n\n[Background log truncated. Showing last ${truncation.shownChars} of ${truncation.totalChars} character(s). Full log: ${logFile}]`;
+	const safeLogFile = truncateForTranscript(logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	return `[...truncated]\n${output.slice(-truncation.shownChars)}\n\n[Background log truncated. Showing last ${truncation.shownChars} of ${truncation.totalChars} character(s). Full log: ${safeLogFile}]`;
 }
 
 export function trimOutputBuffer(output: string, lastAnnouncedLength: number): { output: string; lastAnnouncedLength: number } {
@@ -112,9 +126,23 @@ export function taskDisplayName(task: Pick<BackgroundTaskSnapshot, "title" | "co
 	return task.title.trim() || task.command.trim();
 }
 
+/**
+ * Transcript-safe display name (vstack#210 round 2). Caller used to embed
+ * the unbounded title/command into list / dashboard / spawn content strings
+ * without truncation; a 100KB title would have leaked past pi-output-policy.
+ * Use this whenever the result ends up directly in a transcript-facing
+ * `content` string.
+ */
+export function taskDisplayNameForTranscript(
+	task: Pick<BackgroundTaskSnapshot, "title" | "command">,
+	maxChars: number = TASK_DISPLAY_NAME_MAX_CHARS,
+): string {
+	return compactText(taskDisplayName(task), maxChars);
+}
+
 export function buildTaskSummaryLine(task: BackgroundTaskSnapshot, now: number = Date.now()): string {
 	const activityAt = task.lastOutputAt ?? task.updatedAt;
-	return `${task.id} · ${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · pid ${task.pid} · ${taskDisplayName(
+	return `${task.id} · ${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · pid ${task.pid} · ${taskDisplayNameForTranscript(
 		task,
 	)} · ${formatRelativeTime(activityAt, now)}`;
 }

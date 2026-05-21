@@ -383,10 +383,22 @@ export const WAKE_MANIFEST_FIELD_MAX_CHARS = 192;
 // summary line stays terse.
 export const WAKE_CONTENT_COMMAND_MAX_CHARS = 160;
 
-function truncateField(value: string | undefined, maxChars: number): string | undefined {
+/**
+ * Shared transcript-bounded text helper (vstack#210). Returns `value` when it
+ * is `undefined` or already within `maxChars`, otherwise the head sliced and
+ * suffixed with an ellipsis. Used by the compact wake manifest and by every
+ * transcript-facing content string (spawn/log/stop tool results, auto-
+ * background ack text, task summary lines) so a pathological
+ * agent-controlled field cannot leak past pi-output-policy.
+ */
+export function truncateForTranscript(value: string | undefined, maxChars: number): string | undefined {
 	if (value === undefined) return undefined;
 	if (value.length <= maxChars) return value;
 	return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function truncateField(value: string | undefined, maxChars: number): string | undefined {
+	return truncateForTranscript(value, maxChars);
 }
 
 /**
@@ -486,7 +498,10 @@ export function sendTaskWake(
 		deliveredAt,
 		eventAt: pending.eventAt,
 		eventType,
-		matchedPattern: options.matchedPattern,
+		// matchedPattern flows from task.notifyPattern and could be a multi-KB
+		// regex bomb (vstack#210 review round 2). Bound it with the same
+		// manifest cap as the compact task fields.
+		matchedPattern: truncateForTranscript(options.matchedPattern, WAKE_MANIFEST_FIELD_MAX_CHARS),
 		outputTail: tail,
 		outputTailTruncated: truncated,
 		sequence: pending.sequence,

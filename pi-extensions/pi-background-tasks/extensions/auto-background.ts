@@ -1,6 +1,7 @@
 import { compactText, normalizedCommand, shellQuote } from "./format.js";
 import { settingBoolean, settingString } from "./settings.js";
 import type { BackgroundTaskSnapshot, BashBackgroundDecision } from "./types.js";
+import { WAKE_MANIFEST_FIELD_MAX_CHARS, truncateForTranscript } from "./wake-events.js";
 
 function parsePatternList(raw: string): RegExp[] {
 	const patterns: RegExp[] = [];
@@ -126,13 +127,18 @@ export function forcedBackgroundDecision(command: string, cwd?: string): BashBac
 }
 
 export function bashBackgroundAckText(task: BackgroundTaskSnapshot, decision: BashBackgroundDecision): string {
+	const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	const safeCwd = truncateForTranscript(task.cwd, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	const safeLog = truncateForTranscript(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	const safePattern = truncateForTranscript(task.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS);
+	const safeDedupe = truncateForTranscript(task.dedupeKey, WAKE_MANIFEST_FIELD_MAX_CHARS);
 	return [
 		`Started ${task.id} (pid ${task.pid}) in the background.`,
 		`Reason: ${decision.reason}.`,
-		`Command: ${task.command}`,
-		`Cwd: ${task.cwd}`,
-		`Log: ${task.logFile}`,
-		`Wakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"}, mode=${task.notifyMode ?? "always"}${task.dedupeKey ? `, dedupeKey=${task.dedupeKey}` : ""}`,
+		`Command: ${safeCommand}`,
+		`Cwd: ${safeCwd}`,
+		`Log: ${safeLog}`,
+		`Wakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${task.notifyOnOutput ? (safePattern ?? "yes") : "no"}, mode=${task.notifyMode ?? "always"}${safeDedupe ? `, dedupeKey=${safeDedupe}` : ""}`,
 		"Continue the turn without waiting. Use bg_task list/log/stop to inspect or terminate this task.",
 	].join("\n");
 }
