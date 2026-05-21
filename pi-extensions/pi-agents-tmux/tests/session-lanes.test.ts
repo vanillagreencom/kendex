@@ -1091,6 +1091,60 @@ test("mapWithConcurrencyLimit keeps workers saturated across an uneven workload"
 	assert.ok(unsaturatedSamples <= 1, `flat pool dropped below concurrency mid-run (${unsaturatedSamples} unsaturated samples, ${saturatedSamples} saturated)`);
 });
 
+test("mapWithConcurrencyLimit rejects when the mapper throws (callers must catch)", async () => {
+	const items = [0, 1, 2, 3];
+	const invoked: number[] = [];
+	await assert.rejects(
+		mapWithConcurrencyLimit(items, 2, async (item) => {
+			invoked.push(item);
+			if (item === 1) throw new Error("boom");
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			return item;
+		}),
+		/boom/,
+	);
+	// Helper does not swallow thrown mappers — this is why runParallelDispatch
+	// wraps its per-task body in try/catch before handing it to the pool.
+	assert.ok(invoked.includes(1), "mapper should have run for the throwing item before rejection");
+});
+
+test("dispatch-style try/catch wrapper drains the pool and keeps indexed order on throw", async () => {
+	// Mirrors the wrapper pattern in runParallelDispatch: each task body is
+	// wrapped in try/catch so a single thrown mapper becomes a failed entry
+	// at its index instead of aborting the whole pool.
+	const items = Array.from({ length: 8 }, (_, index) => index);
+	let active = 0;
+	let maxActive = 0;
+	let completedAfterThrow = 0;
+	const throwingIndex = 2;
+	const wrap = async (index: number) => {
+		active += 1;
+		maxActive = Math.max(maxActive, active);
+		try {
+			if (index === throwingIndex) throw new Error(`task ${index} exploded`);
+			await new Promise((resolve) => setTimeout(resolve, 2));
+			if (index > throwingIndex) completedAfterThrow += 1;
+			return { kind: "ok" as const, index };
+		} catch (error) {
+			return { kind: "failed" as const, index, errorMessage: (error as Error).message };
+		} finally {
+			active -= 1;
+		}
+	};
+	const results = await mapWithConcurrencyLimit(items, 3, (item) => wrap(item));
+	assert.deepEqual(results.map((r) => r.index), items, "result order must match submission order");
+	assert.equal(maxActive, 3);
+	for (const result of results) {
+		if (result.index === throwingIndex) {
+			assert.equal(result.kind, "failed");
+			assert.equal((result as { kind: "failed"; errorMessage: string }).errorMessage, `task ${throwingIndex} exploded`);
+		} else {
+			assert.equal(result.kind, "ok");
+		}
+	}
+	assert.ok(completedAfterThrow >= items.length - throwingIndex - 1, `every task after index ${throwingIndex} must still complete after a peer throws; saw ${completedAfterThrow}`);
+});
+
 test("wait_for_subagent_idle helper resolves on idle transition", async () => {
 	const states = [{ isIdle: false }, { isIdle: false }, { isIdle: true }];
 	const result = await waitForIdleTransition(async () => states.shift(), 1_000, 1);

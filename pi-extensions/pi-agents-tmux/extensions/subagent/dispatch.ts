@@ -385,49 +385,70 @@ export async function runParallelDispatch(
 			});
 		};
 		const taskAgent = flow.agents.find((agent) => agent.name === t.agent);
-		const result = taskAgent?.pane
-			? await runPersistentPaneAgent(
-					flow.cwd,
-					flow.runtimeRoot,
-					flow.parentSessionId,
-					flow.agents,
-					t.agent,
-					t.task,
-					t.cwd,
-					flow.parentModel,
-					flow.parentThinkingLevel,
-					undefined,
-					flow.pi,
-					flow.forceSpawn ?? false,
-					flow.resumeSession,
-					flow.removeDashboardAgent,
-				)
-			: await runSingleAgent(
-					flow.cwd,
-					flow.runtimeRoot,
-					flow.agents,
-					t.agent,
-					t.task,
-					t.cwd,
-					flow.parentModel,
-					flow.parentThinkingLevel,
-					undefined,
-					flow.pi,
-					flow.signal,
-					(partial) => {
-						if (partial.details?.results[0]) {
-							allResults[index] = partial.details.results[0];
-							void updateOneshotDashboard(partial.details.results[0]);
-							emitParallelUpdate();
-						}
-					},
-					flow.makeDetails("parallel"),
-					t.sessionKey,
-				);
-		allResults[index] = result;
-		if (!taskAgent?.pane) await updateOneshotDashboard(result, true);
-		emitParallelUpdate();
-		return result;
+		try {
+			const result = taskAgent?.pane
+				? await runPersistentPaneAgent(
+						flow.cwd,
+						flow.runtimeRoot,
+						flow.parentSessionId,
+						flow.agents,
+						t.agent,
+						t.task,
+						t.cwd,
+						flow.parentModel,
+						flow.parentThinkingLevel,
+						undefined,
+						flow.pi,
+						flow.forceSpawn ?? false,
+						flow.resumeSession,
+						flow.removeDashboardAgent,
+					)
+				: await runSingleAgent(
+						flow.cwd,
+						flow.runtimeRoot,
+						flow.agents,
+						t.agent,
+						t.task,
+						t.cwd,
+						flow.parentModel,
+						flow.parentThinkingLevel,
+						undefined,
+						flow.pi,
+						flow.signal,
+						(partial) => {
+							if (partial.details?.results[0]) {
+								allResults[index] = partial.details.results[0];
+								void updateOneshotDashboard(partial.details.results[0]);
+								emitParallelUpdate();
+							}
+						},
+						flow.makeDetails("parallel"),
+						t.sessionKey,
+					);
+			allResults[index] = result;
+			if (!taskAgent?.pane) await updateOneshotDashboard(result, true);
+			emitParallelUpdate();
+			return result;
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const failed: SingleResult = {
+				...allResults[index],
+				exitCode: 1,
+				stderr: errorMessage,
+				stopReason: "error",
+				errorMessage,
+			};
+			allResults[index] = failed;
+			if (!taskAgent?.pane) {
+				try {
+					await updateOneshotDashboard(failed, false);
+				} catch {
+					// Dashboard update failure must not abort the pool.
+				}
+			}
+			emitParallelUpdate();
+			return failed;
+		}
 	});
 
 	const successCount = results.filter((r) => singleResultStatus(r) === "completed").length;
