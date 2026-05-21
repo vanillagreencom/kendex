@@ -32,6 +32,17 @@ function tempGitRepo(): string {
 	return cwd;
 }
 
+function indexDebugEntry(filePath: string, index = 1, size = 1): string {
+	return [
+		`${filePath}\0`,
+		"  ctime: 1:0\n",
+		"  mtime: 1:0\n",
+		`  dev: 1\tino: ${index}\n`,
+		"  uid: 1\tgid: 1\n",
+		`  size: ${size}\tflags: 0\n`,
+	].join("");
+}
+
 function installFsmonitorTrap(cwd: string): string {
 	const sentinel = join(cwd, "fsmonitor-invoked.log");
 	const script = join(cwd, "fsmonitor.sh");
@@ -456,6 +467,220 @@ describe("needs_completion cwd snapshots", () => {
 			setGitExecFileForTests();
 			rmSync(cwd, { force: true, recursive: true });
 			rmSync(externalDir, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan skips nested tracked paths under symlinked parents before final lstat", async () => {
+		if (process.platform === "win32") return;
+		const cwd = tempDir("needs-completion-cwd-");
+		const externalDir = tempDir("needs-completion-external-");
+		const originalLstat = fs.promises.lstat;
+		const lstatPaths: string[] = [];
+		setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+			void command;
+			const cb = typeof options === "function" ? options : callback;
+			const joined = args.join(" ");
+			const stdout = joined.includes("rev-parse --is-inside-work-tree")
+				? "true"
+				: joined.includes("rev-parse HEAD")
+					? "a".repeat(40)
+					: joined.includes("log -1")
+						? "initial commit"
+						: joined.includes("ls-files --debug")
+							? indexDebugEntry("dir/linkdir/target.txt")
+							: "";
+			queueMicrotask(() => cb(null, stdout, ""));
+			return new EventEmitter() as any;
+		}) as any);
+		(fs.promises as any).lstat = async (targetPath: fs.PathLike, options?: any) => {
+			lstatPaths.push(String(targetPath));
+			return originalLstat.call(fs.promises, targetPath, options);
+		};
+		try {
+			mkdirSync(join(cwd, "dir"), { recursive: true });
+			writeFileSync(join(externalDir, "target.txt"), "outside changed and longer\n", "utf8");
+			fs.symlinkSync(externalDir, join(cwd, "dir", "linkdir"));
+
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toBe("a".repeat(40));
+			expect(snapshot?.dirty).toBe(false);
+			expect(snapshot?.status).not.toContain("dir/linkdir/target.txt");
+			expect(diagnostics.join("\n")).toContain("tracked path dir/linkdir/target.txt is under symlinked parent dir/linkdir; skipping lstat probe");
+			expect(lstatPaths).toContain(join(cwd, "dir"));
+			expect(lstatPaths).toContain(join(cwd, "dir", "linkdir"));
+			expect(lstatPaths).not.toContain(join(cwd, "dir", "linkdir", "target.txt"));
+		} finally {
+			(fs.promises as any).lstat = originalLstat;
+			setGitExecFileForTests();
+			rmSync(cwd, { force: true, recursive: true });
+			rmSync(externalDir, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan skips real repo directory replacements under symlinked parents before final lstat", async () => {
+		if (process.platform === "win32") return;
+		const cwd = tempDir("needs-completion-cwd-");
+		const externalDir = tempDir("needs-completion-external-");
+		const originalLstat = fs.promises.lstat;
+		const lstatPaths: string[] = [];
+		try {
+			execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+			mkdirSync(join(cwd, "dir", "linkdir"), { recursive: true });
+			writeFileSync(join(cwd, "dir", "linkdir", "target.txt"), "initial\n", "utf8");
+			execFileSync("git", ["add", "dir/linkdir/target.txt"], { cwd, stdio: "ignore" });
+			execFileSync("git", ["-c", "user.name=Pi Test", "-c", "user.email=pi-test@example.invalid", "commit", "--no-gpg-sign", "-m", "initial commit"], { cwd, stdio: "ignore" });
+			rmSync(join(cwd, "dir", "linkdir"), { force: true, recursive: true });
+			writeFileSync(join(externalDir, "target.txt"), "outside changed and longer\n", "utf8");
+			fs.symlinkSync(externalDir, join(cwd, "dir", "linkdir"));
+			(fs.promises as any).lstat = async (targetPath: fs.PathLike, options?: any) => {
+				lstatPaths.push(String(targetPath));
+				return originalLstat.call(fs.promises, targetPath, options);
+			};
+
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toMatch(/^[0-9a-f]{40}$/);
+			expect(snapshot?.status).not.toContain(" M dir/linkdir/target.txt");
+			expect(diagnostics.join("\n")).toContain("tracked path dir/linkdir/target.txt is under symlinked parent dir/linkdir; skipping lstat probe");
+			expect(lstatPaths).toContain(join(cwd, "dir"));
+			expect(lstatPaths).toContain(join(cwd, "dir", "linkdir"));
+			expect(lstatPaths).not.toContain(join(cwd, "dir", "linkdir", "target.txt"));
+		} finally {
+			(fs.promises as any).lstat = originalLstat;
+			rmSync(cwd, { force: true, recursive: true });
+			rmSync(externalDir, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan rejects unsafe tracked paths before lstat probes", async () => {
+		const cwd = tempDir("needs-completion-cwd-");
+		const originalLstat = fs.promises.lstat;
+		const lstatPaths: string[] = [];
+		const unsafePaths = ["/outside.txt", "C:\\outside\\target.txt", "../outside.txt", "dir//target.txt", "dir\\target.txt"];
+		const debugEntries = unsafePaths.map((filePath, index) => indexDebugEntry(filePath, index)).join("");
+		setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+			void command;
+			const cb = typeof options === "function" ? options : callback;
+			const joined = args.join(" ");
+			const stdout = joined.includes("rev-parse --is-inside-work-tree")
+				? "true"
+				: joined.includes("rev-parse HEAD")
+					? "a".repeat(40)
+					: joined.includes("log -1")
+						? "initial commit"
+						: joined.includes("ls-files --debug")
+							? debugEntries
+							: "";
+			queueMicrotask(() => cb(null, stdout, ""));
+			return new EventEmitter() as any;
+		}) as any);
+		(fs.promises as any).lstat = async (targetPath: fs.PathLike) => {
+			lstatPaths.push(String(targetPath));
+			throw new Error(`unexpected lstat ${String(targetPath)}`);
+		};
+		try {
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toBe("a".repeat(40));
+			expect(snapshot?.dirty).toBe(false);
+			expect(lstatPaths).toEqual([]);
+			for (const unsafePath of unsafePaths) {
+				expect(diagnostics.join("\n")).toContain(`unsafe tracked path ${unsafePath}; skipping lstat probe`);
+			}
+		} finally {
+			(fs.promises as any).lstat = originalLstat;
+			setGitExecFileForTests();
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan stops parent lstat walk when tracked-file deadline expires", async () => {
+		const cwd = tempDir("needs-completion-cwd-");
+		const originalLstat = fs.promises.lstat;
+		const originalNow = Date.now;
+		const lstatPaths: string[] = [];
+		const nowValues = [0, 0, 0, 751];
+		Date.now = (() => nowValues.shift() ?? 751) as typeof Date.now;
+		setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+			void command;
+			const cb = typeof options === "function" ? options : callback;
+			const joined = args.join(" ");
+			const stdout = joined.includes("rev-parse --is-inside-work-tree")
+				? "true"
+				: joined.includes("rev-parse HEAD")
+					? "a".repeat(40)
+					: joined.includes("log -1")
+						? "initial commit"
+						: joined.includes("ls-files --debug")
+							? indexDebugEntry("a/b/c/target.txt")
+							: "";
+			queueMicrotask(() => cb(null, stdout, ""));
+			return new EventEmitter() as any;
+		}) as any);
+		(fs.promises as any).lstat = async (targetPath: fs.PathLike) => {
+			lstatPaths.push(String(targetPath));
+			return { ctimeNs: 1_000_000_000n, isSymbolicLink: () => false, mtimeNs: 1_000_000_000n, size: 1n };
+		};
+		try {
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toBe("a".repeat(40));
+			expect(snapshot?.dirty).toBe(false);
+			expect(lstatPaths).toEqual([join(cwd, "a")]);
+			expect(diagnostics.join("\n")).toContain("dirty scan incomplete: checked 1 tracked paths before 750ms deadline");
+		} finally {
+			Date.now = originalNow;
+			(fs.promises as any).lstat = originalLstat;
+			setGitExecFileForTests();
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan stops final lstat when tracked-file deadline expires", async () => {
+		const cwd = tempDir("needs-completion-cwd-");
+		const originalLstat = fs.promises.lstat;
+		const originalNow = Date.now;
+		const lstatPaths: string[] = [];
+		const nowValues = [0, 0, 751];
+		Date.now = (() => nowValues.shift() ?? 751) as typeof Date.now;
+		setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+			void command;
+			const cb = typeof options === "function" ? options : callback;
+			const joined = args.join(" ");
+			const stdout = joined.includes("rev-parse --is-inside-work-tree")
+				? "true"
+				: joined.includes("rev-parse HEAD")
+					? "a".repeat(40)
+					: joined.includes("log -1")
+						? "initial commit"
+						: joined.includes("ls-files --debug")
+							? indexDebugEntry("target.txt")
+							: "";
+			queueMicrotask(() => cb(null, stdout, ""));
+			return new EventEmitter() as any;
+		}) as any);
+		(fs.promises as any).lstat = async (targetPath: fs.PathLike) => {
+			lstatPaths.push(String(targetPath));
+			throw new Error(`unexpected lstat ${String(targetPath)}`);
+		};
+		try {
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toBe("a".repeat(40));
+			expect(snapshot?.dirty).toBe(false);
+			expect(lstatPaths).toEqual([]);
+			expect(diagnostics.join("\n")).toContain("dirty scan incomplete: checked 1 tracked paths before 750ms deadline");
+		} finally {
+			Date.now = originalNow;
+			(fs.promises as any).lstat = originalLstat;
+			setGitExecFileForTests();
+			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
 

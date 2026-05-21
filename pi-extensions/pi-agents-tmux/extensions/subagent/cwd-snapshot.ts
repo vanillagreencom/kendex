@@ -157,6 +157,11 @@ interface IndexDebugEntry {
 	size: number;
 }
 
+interface LstatDiffResult {
+	deadlineExpired: boolean;
+	differs: boolean;
+}
+
 function parseIndexDebug(raw: string | undefined, addDiagnostic: (diagnostic: string) => void): IndexDebugEntry[] {
 	if (!raw) return [];
 	const entries: IndexDebugEntry[] = [];
@@ -188,58 +193,74 @@ function parseIndexDebug(raw: string | undefined, addDiagnostic: (diagnostic: st
 	return entries;
 }
 
-async function lstatDiffersFromIndex(cwd: string, entry: IndexDebugEntry, addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
+async function lstatDiffersFromIndex(
+	cwd: string,
+	entry: IndexDebugEntry,
+	addDiagnostic: (diagnostic: string) => void,
+	deadlineExpired: () => boolean,
+): Promise<LstatDiffResult> {
 	const components = trackedPathComponents(entry.path);
 	if (!components) {
 		const safePath = safeStatusPath(entry.path) || "(empty path)";
 		addDiagnostic(`cwdSnapshot dirty scan incomplete: unsafe tracked path ${safePath}; skipping lstat probe`);
-		return false;
+		return { deadlineExpired: false, differs: false };
 	}
-	if (!(await trackedPathParentsSafe(cwd, entry.path, components, addDiagnostic))) return false;
+	const parentState = await trackedPathParentsSafe(cwd, entry.path, components, addDiagnostic, deadlineExpired);
+	if (parentState === "deadline") return { deadlineExpired: true, differs: false };
+	if (parentState === "unsafe") return { deadlineExpired: false, differs: false };
+	if (deadlineExpired()) return { deadlineExpired: true, differs: false };
 	try {
 		const lstat = await fs.promises.lstat(path.join(cwd, ...components), { bigint: true });
 		const mtimeSec = Number(lstat.mtimeNs / 1_000_000_000n);
 		const mtimeNsec = Number(lstat.mtimeNs % 1_000_000_000n);
 		const ctimeSec = Number(lstat.ctimeNs / 1_000_000_000n);
 		const ctimeNsec = Number(lstat.ctimeNs % 1_000_000_000n);
-		return Number(lstat.size) !== entry.size
+		const differs = Number(lstat.size) !== entry.size
 			|| mtimeSec !== entry.mtimeSec
 			|| mtimeNsec !== entry.mtimeNsec
 			|| ctimeSec !== entry.ctimeSec
 			|| ctimeNsec !== entry.ctimeNsec;
+		return { deadlineExpired: false, differs };
 	} catch (error) {
 		const safePath = safeStatusPath(entry.path) || "(empty path)";
 		addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat tracked path ${safePath}: ${stringifyError(error)}`);
-		return false;
+		return { deadlineExpired: false, differs: false };
 	}
 }
 
 function trackedPathComponents(filePath: string): string[] | undefined {
 	if (!filePath || filePath.includes("\0") || path.posix.isAbsolute(filePath)) return undefined;
-	if (process.platform === "win32" && (path.win32.isAbsolute(filePath) || filePath.includes("\\"))) return undefined;
+	if (path.win32.isAbsolute(filePath) || filePath.includes("\\")) return undefined;
 	const components = filePath.split("/");
 	if (components.some((component) => component === "" || component === "." || component === "..")) return undefined;
 	return components;
 }
 
-async function trackedPathParentsSafe(cwd: string, filePath: string, components: string[], addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
+async function trackedPathParentsSafe(
+	cwd: string,
+	filePath: string,
+	components: string[],
+	addDiagnostic: (diagnostic: string) => void,
+	deadlineExpired: () => boolean,
+): Promise<"safe" | "unsafe" | "deadline"> {
 	let current = cwd;
 	for (let index = 0; index < components.length - 1; index += 1) {
 		current = path.join(current, components[index]!);
 		const safePath = safeStatusPath(filePath) || "(empty path)";
 		const safeParent = safeStatusPath(components.slice(0, index + 1).join("/")) || "(cwd)";
+		if (deadlineExpired()) return "deadline";
 		try {
 			const parentLstat = await fs.promises.lstat(current, { bigint: true });
 			if (parentLstat.isSymbolicLink()) {
 				addDiagnostic(`cwdSnapshot dirty scan incomplete: tracked path ${safePath} is under symlinked parent ${safeParent}; skipping lstat probe`);
-				return false;
+				return "unsafe";
 			}
 		} catch (error) {
 			addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat parent ${safeParent} for tracked path ${safePath}: ${stringifyError(error)}`);
-			return false;
+			return "unsafe";
 		}
 	}
-	return true;
+	return "safe";
 }
 
 async function unstagedModifiedStatusLines(cwd: string, rawDebug: string | undefined, deleted: Set<string>, addDiagnostic: (diagnostic: string) => void): Promise<string[]> {
@@ -248,22 +269,30 @@ async function unstagedModifiedStatusLines(cwd: string, rawDebug: string | undef
 	const deadline = Date.now() + DIRTY_SCAN_DEADLINE_MS;
 	let checked = 0;
 	let lstatDiagnostics = 0;
+	let deadlineDiagnosticEmitted = false;
 	const addLstatDiagnostic = (diagnostic: string) => {
 		lstatDiagnostics += 1;
 		if (lstatDiagnostics <= DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS) addDiagnostic(diagnostic);
+	};
+	const deadlineExpired = (): boolean => {
+		if (Date.now() < deadline) return false;
+		if (!deadlineDiagnosticEmitted) {
+			deadlineDiagnosticEmitted = true;
+			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths before ${DIRTY_SCAN_DEADLINE_MS}ms deadline`);
+		}
+		return true;
 	};
 	for (const entry of entries) {
 		if (checked >= DIRTY_SCAN_MAX_ENTRIES) {
 			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths; ${entries.length - checked} skipped by file cap`);
 			break;
 		}
-		if (Date.now() >= deadline) {
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths before ${DIRTY_SCAN_DEADLINE_MS}ms deadline`);
-			break;
-		}
+		if (deadlineExpired()) break;
 		checked += 1;
 		if (deleted.has(entry.path)) continue;
-		if (!(await lstatDiffersFromIndex(cwd, entry, addLstatDiagnostic))) continue;
+		const diff = await lstatDiffersFromIndex(cwd, entry, addLstatDiagnostic, deadlineExpired);
+		if (diff.deadlineExpired) break;
+		if (!diff.differs) continue;
 		const line = formatStatusLine(" M", entry.path);
 		if (line) lines.push(line);
 	}
