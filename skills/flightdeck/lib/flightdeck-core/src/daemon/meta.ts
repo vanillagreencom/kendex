@@ -26,6 +26,10 @@ export interface DaemonMeta {
 	inner_targets: string[];
 	inner_harnesses: string[];
 	subscribed_pane_ids: string[];
+	// vstack#213 round-1: parallel to subscribed_pane_ids so health and
+	// ensure_daemon can detect harness drift (a daemon watching the
+	// right pane with the wrong harness binder still misroutes wakes).
+	subscribed_pane_harnesses: string[];
 	state_file_path: string;
 	state_file_inode: string | null;
 	active_run_id: string | null;
@@ -35,14 +39,19 @@ export interface DaemonMeta {
 export type DaemonStaleness =
 	| "fresh"
 	| "stale-state"     // state file replaced (inode/path changed)
-	| "stale-inner"     // subscribed set drifted from live tracked entries
+	| "stale-inner"     // subscribed (pane,harness) set drifted from live tracked entries
 	| "pre-active-run"; // recorded run id no longer matches active run
+
+export interface LiveInnerEntry {
+	paneId: string;
+	harness: string;
+}
 
 export interface DaemonStalenessInput {
 	stateFilePath: string;
 	stateFileInode: string | null;
 	activeRunId: string | null;
-	livePaneIds: readonly string[];
+	liveInnerEntries: readonly LiveInnerEntry[];
 }
 
 export function classifyStaleness(meta: DaemonMeta, input: DaemonStalenessInput): DaemonStaleness {
@@ -51,9 +60,37 @@ export function classifyStaleness(meta: DaemonMeta, input: DaemonStalenessInput)
 		&& meta.state_file_inode !== input.stateFileInode) return "stale-state";
 	if (meta.active_run_id !== null && input.activeRunId !== null
 		&& meta.active_run_id !== input.activeRunId) return "pre-active-run";
-	const subscribed = new Set(meta.subscribed_pane_ids);
-	for (const pid of input.livePaneIds) {
-		if (!subscribed.has(pid)) return "stale-inner";
+	// vstack#213 round-1: exact-set comparison both directions, plus
+	// harness check per pane. A superset (daemon subscribed to extra
+	// dead panes) is just as stale as a subset (daemon missing live
+	// panes) — both signal an argv frozen across sessions.
+	const subscribedSet = new Set(meta.subscribed_pane_ids);
+	const liveSet = new Set<string>();
+	const liveHarness = new Map<string, string>();
+	for (const entry of input.liveInnerEntries) {
+		if (!entry.paneId) continue;
+		liveSet.add(entry.paneId);
+		liveHarness.set(entry.paneId, entry.harness ?? "");
+	}
+	if (subscribedSet.size !== liveSet.size) return "stale-inner";
+	for (const pid of liveSet) {
+		if (!subscribedSet.has(pid)) return "stale-inner";
+	}
+	for (const pid of subscribedSet) {
+		if (!liveSet.has(pid)) return "stale-inner";
+	}
+	// Harness drift: index meta's harness by pane id (parallel arrays).
+	const subscribedHarness = new Map<string, string>();
+	for (let i = 0; i < meta.subscribed_pane_ids.length; i += 1) {
+		const pid = meta.subscribed_pane_ids[i] ?? "";
+		const harness = meta.subscribed_pane_harnesses[i] ?? "";
+		if (pid) subscribedHarness.set(pid, harness);
+	}
+	for (const [pid, harness] of liveHarness) {
+		const recorded = subscribedHarness.get(pid) ?? "";
+		// Treat missing recorded harness as drift only when the live
+		// harness is non-empty (the daemon's binder needs a harness).
+		if (harness !== recorded) return "stale-inner";
 	}
 	return "fresh";
 }
@@ -95,6 +132,7 @@ export function readDaemonMeta(path: string): DaemonMeta | null {
 		started_at: stringField("started_at"),
 		state_file_inode: nullableString("state_file_inode"),
 		state_file_path: stringField("state_file_path"),
+		subscribed_pane_harnesses: stringArr("subscribed_pane_harnesses"),
 		subscribed_pane_ids: stringArr("subscribed_pane_ids"),
 		updated_at: stringField("updated_at"),
 	};

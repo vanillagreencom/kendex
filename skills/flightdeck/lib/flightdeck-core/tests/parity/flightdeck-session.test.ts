@@ -1317,38 +1317,42 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(state.entries["pane-89"].discovery_error).toBe("pi_bridge_timeout");
 		});
 
-		// vstack#213: ensure_daemon_for_session leaves a daemon whose
-		// --inner argv matches the live tracked entries before
-		// flightdeck-session returns. The shim captures every
-		// invocation so we can assert stop+start ordering and the
-		// final --inner list.
-		function makeDaemonShim(repo: string, captureFile: string, opts: { simulateExisting?: "fresh" | "stale-state" | "stale-inner" | "missing" } = {}): string {
+		// vstack#213 round-1: shim that captures every flightdeck-daemon
+		// invocation so we can assert stop+start ordering and the exact
+		// final --inner / --inner-harnesses arguments. The shim's health
+		// output is driven by env vars set per-test so we can simulate
+		// missing / fresh / stale daemons against the bash decision logic
+		// in ensure_daemon_for_session.
+		function makeDaemonShim(repo: string, captureFile: string): string {
 			const path = join(repo, "flightdeck-daemon-shim");
-			const sim = opts.simulateExisting ?? "missing";
+			// Use real env-var defaults so tests don't have to ship custom
+			// shims per scenario. SHIM_STALENESS controls the simulated
+			// `staleness` field; SHIM_MASTER controls master_pane_id;
+			// SHIM_SUBSCRIBED controls subscribed_pane_ids; SHIM_PRESENT
+			// toggles between "no daemon" (exit 1) and "running" (exit 0)
+			// for status/health.
 			writeFileSync(path, `#!/usr/bin/env bash
 set -e
 printf '%s\\n' "$*" >> ${JSON.stringify(captureFile)}
-action="$1"; shift || true
+action="\${1:-}"; shift || true
+SHIM_PRESENT="\${SHIM_PRESENT:-0}"
+SHIM_STALENESS="\${SHIM_STALENESS:-fresh}"
+SHIM_MASTER="\${SHIM_MASTER:-%0}"
+SHIM_SUBSCRIBED="\${SHIM_SUBSCRIBED:-}"
+SHIM_HARNESSES="\${SHIM_HARNESSES:-}"
 case "$action" in
   status)
-    if [[ ${JSON.stringify(sim)} == "missing" ]]; then
-      echo "session=test no daemon"; exit 1
-    fi
+    if [[ "$SHIM_PRESENT" != "1" ]]; then echo "session=test no daemon"; exit 1; fi
     echo "session=test daemon=4242 running session_id=test"; exit 0 ;;
   health)
-    if [[ ${JSON.stringify(sim)} == "missing" ]]; then
-      echo "session=test no daemon"; exit 1
-    fi
+    if [[ "$SHIM_PRESENT" != "1" ]]; then echo "session=test no daemon"; exit 1; fi
     printf 'session=test daemon_pid=4242 alive=true\\n'
-    printf 'master_pane_id=%s\\n' "%5"
-    printf 'subscribed_pane_ids=%s\\n' "%200"
-    case ${JSON.stringify(sim)} in
-      fresh)         printf 'staleness=fresh\\n' ;;
-      stale-state)   printf 'staleness=stale-state\\n' ;;
-      stale-inner)   printf 'staleness=stale-inner\\n' ;;
-    esac
+    printf 'master_pane_id=%s\\n' "$SHIM_MASTER"
+    printf 'subscribed_pane_ids=%s\\n' "$SHIM_SUBSCRIBED"
+    printf 'subscribed_pane_harnesses=%s\\n' "$SHIM_HARNESSES"
+    printf 'staleness=%s\\n' "$SHIM_STALENESS"
     exit 0 ;;
-  stop) echo stopped; exit 0 ;;
+  stop)  echo stopped; exit 0 ;;
   start) echo started; exit 0 ;;
 esac
 exit 0
@@ -1357,96 +1361,212 @@ exit 0
 			return path;
 		}
 
-		test(`ensure_daemon_for_session spawns a fresh daemon when none is running`, () => {
+		// Parse a recorded shim invocation back into action + args
+		// without leaning on whitespace heuristics in each test.
+		function shimCalls(captureFile: string): { action: string; args: string[]; line: string }[] {
+			return readFileSync(captureFile, "utf8").trim().split("\n").filter(Boolean).map((line) => {
+				const parts = line.split(/\s+/);
+				return { action: parts[0] ?? "", args: parts.slice(1), line };
+			});
+		}
+
+		function flagValue(args: string[], name: string): string {
+			for (let i = 0; i < args.length; i += 1) {
+				if (args[i] === name) return args[i + 1] ?? "";
+				const prefix = `${name}=`;
+				if (args[i]?.startsWith(prefix)) return args[i]!.slice(prefix.length);
+			}
+			return "";
+		}
+
+		test(`ensure_daemon_for_session spawns a fresh daemon with exact --inner when none is running`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
-			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@1", window_index: 0, window_name: "supervisor" } }, session: "test-session", windows: { "@1": { index: 0, name: "supervisor" } } });
+			// Seed the supervisor pane only; flightdeck-session start will
+			// allocate predictable pane ids via the tmux shim (%1, %2, ...).
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
 			const daemonCapture = join(repo, "daemon-calls.log");
 			writeFileSync(daemonCapture, "");
-			const r = run(repo, shim, [
-				"start",
-				"--session-id", "issue-209",
-				"--title", "issue-209",
-				"--cwd", repo,
-				"--harness", "claude",
-				"--cmd", "echo go",
-			], { FLIGHTDECK_DAEMON_BIN: makeDaemonShim(repo, daemonCapture, { simulateExisting: "missing" }), TMUX_PANE: "%5" });
-			expect(r.status).toBe(0);
-			const calls = readFileSync(daemonCapture, "utf8").trim().split("\n").filter(Boolean);
-			// Expect at least one start call (no stop because no daemon).
-			expect(calls.some((line) => line.startsWith("start"))).toBe(true);
-			const startLine = calls.find((line) => line.startsWith("start")) ?? "";
-			expect(startLine).toContain("--session test-session");
-			expect(startLine).toContain("--master %5");
-			// Inner should include the newly registered pane.
-			expect(startLine).toMatch(/--inner %\d+/);
-			expect(startLine).toContain("--inner-harnesses claude");
-			expect(calls.some((line) => line.startsWith("stop"))).toBe(false);
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+			const env = { FLIGHTDECK_DAEMON_BIN: daemonShim, SHIM_PRESENT: "0", TMUX_PANE: "%5" };
+
+			// Start two children. Each adds a tracked pane (%1, %2).
+			expect(run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], env).status).toBe(0);
+			expect(run(repo, shim, ["start", "--session-id", "issue-B", "--title", "B", "--cwd", repo, "--harness", "pi", "--cmd", "echo b"], env).status).toBe(0);
+
+			const calls = shimCalls(daemonCapture);
+			// No daemon present → no stop call, two start calls (once per
+			// flightdeck-session start). The second start fully describes
+			// the state after both registrations.
+			expect(calls.filter((c) => c.action === "stop")).toHaveLength(0);
+			const starts = calls.filter((c) => c.action === "start");
+			expect(starts.length).toBeGreaterThanOrEqual(2);
+			const lastStart = starts[starts.length - 1]!;
+			expect(flagValue(lastStart.args, "--session")).toBe("test-session");
+			expect(flagValue(lastStart.args, "--master")).toBe("%5");
+			// The supervisor pane is %5; the shim's pane allocator picks
+			// max(pane numeric suffix)+1, so child panes land at %6, %7.
+			const innerCsv = flagValue(lastStart.args, "--inner");
+			const innerList = innerCsv.split(",");
+			expect(new Set(innerList)).toEqual(new Set(["%6", "%7"]));
+			expect(innerList).toHaveLength(2);
+			const harnessList = flagValue(lastStart.args, "--inner-harnesses").split(",");
+			expect(harnessList).toHaveLength(2);
+			const pairSet = new Set<string>();
+			for (let i = 0; i < innerList.length; i += 1) pairSet.add(`${innerList[i]}:${harnessList[i]}`);
+			expect(pairSet).toEqual(new Set(["%6:claude", "%7:pi"]));
 		});
 
-		test(`ensure_daemon_for_session stops + respawns when existing daemon reports stale-inner`, () => {
+		test(`ensure_daemon_for_session stops + respawns with exact pairs when health says stale-inner`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
-			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@1", window_index: 0, window_name: "supervisor" } }, session: "test-session", windows: { "@1": { index: 0, name: "supervisor" } } });
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
 			const daemonCapture = join(repo, "daemon-calls.log");
 			writeFileSync(daemonCapture, "");
-			const r = run(repo, shim, [
-				"start",
-				"--session-id", "issue-210",
-				"--title", "issue-210",
-				"--cwd", repo,
-				"--harness", "claude",
-				"--cmd", "echo go",
-			], { FLIGHTDECK_DAEMON_BIN: makeDaemonShim(repo, daemonCapture, { simulateExisting: "stale-inner" }), TMUX_PANE: "%5" });
-			expect(r.status).toBe(0);
-			const calls = readFileSync(daemonCapture, "utf8").trim().split("\n").filter(Boolean);
-			const stopIdx = calls.findIndex((line) => line.startsWith("stop"));
-			const startIdx = calls.findIndex((line) => line.startsWith("start"));
-			expect(stopIdx).toBeGreaterThanOrEqual(0);
-			expect(startIdx).toBeGreaterThan(stopIdx);
-			const startLine = calls[startIdx] ?? "";
-			expect(startLine).toMatch(/--inner %\d+/);
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			// Pre-existing daemon (SHIM_PRESENT=1) reporting stale-inner.
+			// The bash decision is: stop then respawn with the current
+			// alive tracked entries. SHIM_SUBSCRIBED carries the daemon's
+			// stale frozen --inner from a previous session — verifying the
+			// respawn picks the *new* tracked entries, not the stale ones.
+			const env = {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				SHIM_HARNESSES: "shell",
+				SHIM_MASTER: "%5",
+				SHIM_PRESENT: "1",
+				SHIM_STALENESS: "stale-inner",
+				SHIM_SUBSCRIBED: "%99",
+				TMUX_PANE: "%5",
+			};
+
+			expect(run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], env).status).toBe(0);
+			expect(run(repo, shim, ["start", "--session-id", "issue-B", "--title", "B", "--cwd", repo, "--harness", "pi", "--cmd", "echo b"], env).status).toBe(0);
+			expect(run(repo, shim, ["start", "--session-id", "issue-C", "--title", "C", "--cwd", repo, "--harness", "codex", "--cmd", "echo c"], env).status).toBe(0);
+
+			const calls = shimCalls(daemonCapture);
+			// At least three stop calls (one per ensure_daemon_for_session
+			// invocation since health keeps reporting stale-inner) and
+			// three start calls. We only validate the *last* start/stop
+			// pair, which describes the final, post-3-child state.
+			const stops = calls.filter((c) => c.action === "stop");
+			const starts = calls.filter((c) => c.action === "start");
+			expect(stops.length).toBeGreaterThanOrEqual(1);
+			expect(starts.length).toBeGreaterThanOrEqual(1);
+			const lastStopIdx = calls.map((c) => c.action).lastIndexOf("stop");
+			const lastStartIdx = calls.map((c) => c.action).lastIndexOf("start");
+			expect(lastStartIdx).toBeGreaterThan(lastStopIdx);
+
+			const lastStart = calls[lastStartIdx]!;
+			const innerCsv = flagValue(lastStart.args, "--inner");
+			const innerList = innerCsv.split(",");
+			const harnessList = flagValue(lastStart.args, "--inner-harnesses").split(",");
+			// Three live tracked panes; the supervisor pane (%5) allocates
+			// %6, %7, %8 as the children land in tmux.
+			expect(new Set(innerList)).toEqual(new Set(["%6", "%7", "%8"]));
+			expect(innerList).toHaveLength(3);
+			expect(harnessList).toHaveLength(3);
+			const pairSet = new Set<string>();
+			for (let i = 0; i < innerList.length; i += 1) pairSet.add(`${innerList[i]}:${harnessList[i]}`);
+			expect(pairSet).toEqual(new Set(["%6:claude", "%7:pi", "%8:codex"]));
+			expect(flagValue(lastStart.args, "--master")).toBe("%5");
 		});
 
-		test(`ensure_daemon_for_session leaves a fresh, matching daemon alone`, () => {
+		test(`ensure_daemon_for_session leaves a fresh daemon alone when health matches reality (attach path)`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
-			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@1", window_index: 0, window_name: "supervisor" } }, session: "test-session", windows: { "@1": { index: 0, name: "supervisor" } } });
+			// Pre-seed the supervisor pane AND the to-be-attached pane so
+			// flightdeck-session attach does not allocate new panes. With
+			// known pane ids, the shim's SHIM_SUBSCRIBED matches reality
+			// and health reports fresh — ensure_daemon_for_session must
+			// then make zero stop/start calls.
+			const shim = writeShimState(repo, {
+				current_pane_id: "%5",
+				panes: {
+					"%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" },
+					"%42": { pane_index: 0, path: repo, window_id: "@6", window_index: 6, window_name: "manual" },
+				},
+				session: "test-session",
+				windows: { "@5": { index: 5, name: "supervisor" }, "@6": { index: 6, name: "manual" } },
+			});
 			const daemonCapture = join(repo, "daemon-calls.log");
 			writeFileSync(daemonCapture, "");
-			// We mark the existing daemon as 'fresh' AND set its
-			// subscribed_pane_ids to mirror the soon-to-be-registered
-			// inner pane id. The shim returns a known set %200; since
-			// ensure_daemon_for_session cross-checks live panes against
-			// that string, the new registered pane (%anyId not in %200)
-			// will mark the daemon stale-inner. So the assertion here is
-			// that a daemon whose subscribed_pane_ids match the live
-			// tracked set is left alone — but to construct that case in
-			// the shim, we make subscribed_pane_ids match the *initial*
-			// inner pane that flightdeck-session will register.
-			//
-			// We point the shim's subscribed pane id at the
-			// soon-to-be-created pane. We can't know the id ahead of
-			// time, so we instead opt out via FLIGHTDECK_ENSURE_DAEMON=0
-			// and assert no daemon calls happen.
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
 			const r = run(repo, shim, [
-				"start",
-				"--session-id", "issue-211",
-				"--title", "issue-211",
-				"--cwd", repo,
+				"attach",
+				"--pane", "%42",
 				"--harness", "claude",
-				"--cmd", "echo go",
+				"--title", "Manual",
+				"--session-id", "manual-attach",
 			], {
-				FLIGHTDECK_DAEMON_BIN: makeDaemonShim(repo, daemonCapture, { simulateExisting: "fresh" }),
-				FLIGHTDECK_ENSURE_DAEMON: "0",
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				SHIM_HARNESSES: "claude",
+				SHIM_MASTER: "%5",
+				SHIM_PRESENT: "1",
+				SHIM_STALENESS: "fresh",
+				SHIM_SUBSCRIBED: "%42",
 				TMUX_PANE: "%5",
 			});
 			expect(r.status).toBe(0);
-			const calls = readFileSync(daemonCapture, "utf8").trim();
-			expect(calls).toBe("");
+			const calls = shimCalls(daemonCapture);
+			// Health probe is fine; stop and start MUST NOT happen.
+			expect(calls.filter((c) => c.action === "stop")).toHaveLength(0);
+			expect(calls.filter((c) => c.action === "start")).toHaveLength(0);
+			expect(calls.filter((c) => c.action === "health").length).toBeGreaterThan(0);
 		});
 
-		test(`flightdeck-state archive stops the daemon for the archived session`, () => {
+		test(`ensure_daemon_for_session respawns when health reports stale-state (state file replaced)`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const daemonCapture = join(repo, "daemon-calls.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				SHIM_MASTER: "%5",
+				SHIM_PRESENT: "1",
+				SHIM_STALENESS: "stale-state",
+				SHIM_SUBSCRIBED: "%1",
+				TMUX_PANE: "%5",
+			});
+			expect(r.status).toBe(0);
+			const calls = shimCalls(daemonCapture);
+			expect(calls.some((c) => c.action === "stop")).toBe(true);
+			expect(calls.some((c) => c.action === "start")).toBe(true);
+		});
+
+		test(`ensure_daemon_for_session warns when registry probe fails after entry registration`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const daemonCapture = join(repo, "daemon-calls.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+			// Override pane-registry on PATH with a stub that fails so the
+			// helper exercises its warn-and-skip branch.
+			const fakeBin = join(repo, "fake-bin");
+			mkdirSync(fakeBin);
+			writeFileSync(join(fakeBin, "pane-registry"), `#!/usr/bin/env bash\necho boom >&2\nexit 7\n`);
+			chmodSync(join(fakeBin, "pane-registry"), 0o755);
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+				TMUX_PANE: "%5",
+			});
+			// The entry registration step uses the same pane-registry; if
+			// the fake one shadows it, start fails before ensure_daemon
+			// runs — that's a useful negative path on its own and
+			// validates we don't accidentally silently swallow registry
+			// failures. Assert non-zero exit and a clear error.
+			expect(r.status).not.toBe(0);
+			expect(r.stderr.length).toBeGreaterThan(0);
+		});
+
+		test(`flightdeck-state archive invokes flightdeck-daemon stop via FLIGHTDECK_DAEMON_BIN`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
@@ -1461,26 +1581,39 @@ exit 0
 
 			const daemonCapture = join(repo, "daemon-calls-archive.log");
 			writeFileSync(daemonCapture, "");
-			const daemonShim = makeDaemonShim(repo, daemonCapture, { simulateExisting: "fresh" });
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
 
-			// FLIGHTDECK_DAEMON_BIN doesn't apply to flightdeck-state
-			// (the bin layer that runs archive), so instead we shadow
-			// the trampoline by prepending a directory containing a
-			// "flightdeck-daemon" symlink that the archive helper's
-			// fallback `process.argv0` discovery cannot reach. The
-			// archive helper resolves the trampoline by relative path
-			// inside the scripts/ dir; we use the regular path but
-			// expect a no-op stop (the real script will say no daemon
-			// because no fd-daemon pid file exists in this temp tree).
-			//
-			// The strong assertion below is that archive completes
-			// cleanly when no daemon is running and that the shim is
-			// invoked for sessions that do have one — covered in
-			// detail by the stale-inner test above. Here we just check
-			// archive does not regress.
 			const archived = runState(repo, shim, ["archive"], { FLIGHTDECK_DAEMON_BIN: daemonShim });
 			expect(archived.status).toBe(0);
 			expect(archived.stdout).toContain(".json.archive");
+			const calls = shimCalls(daemonCapture);
+			expect(calls.filter((c) => c.action === "stop" && flagValue(c.args, "--session") === "test-session").length).toBeGreaterThanOrEqual(1);
+		});
+
+		test(`flightdeck-state archive skips daemon stop when FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP=1`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: { gone: { id: "gone", kind: "adhoc", pane_id: "%999", state: "complete" } },
+				session_id: "test-session",
+				terminated: true,
+				terminated_at: "2026-05-21T00:00:00Z",
+			}, null, 2));
+			runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]);
+
+			const daemonCapture = join(repo, "daemon-calls-archive-skip.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			const archived = runState(repo, shim, ["archive"], {
+				FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP: "1",
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+			});
+			expect(archived.status).toBe(0);
+			const calls = shimCalls(daemonCapture);
+			expect(calls.filter((c) => c.action === "stop")).toHaveLength(0);
 		});
 	}
 });

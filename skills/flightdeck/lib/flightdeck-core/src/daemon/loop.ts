@@ -526,6 +526,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			if (!existing) return;
 			writeDaemonMeta(metaFile, {
 				...existing,
+				subscribed_pane_harnesses: innerIds.map((id) => paneHarness.get(id) ?? ""),
 				subscribed_pane_ids: innerIds.slice(),
 				updated_at: new Date().toISOString(),
 			});

@@ -25,10 +25,15 @@ function meta(overrides: Partial<DaemonMeta> = {}): DaemonMeta {
 		started_at: "2026-05-21T18:33:36Z",
 		state_file_inode: "12345",
 		state_file_path: "/tmp/flightdeck-state-vstack.json",
+		subscribed_pane_harnesses: ["claude", "pi"],
 		subscribed_pane_ids: ["%10", "%11"],
 		updated_at: "2026-05-21T18:33:36Z",
 		...overrides,
 	};
+}
+
+function live(...pairs: [string, string][]): { paneId: string; harness: string }[] {
+	return pairs.map(([paneId, harness]) => ({ harness, paneId }));
 }
 
 describe("writeDaemonMeta + readDaemonMeta", () => {
@@ -61,7 +66,7 @@ describe("classifyStaleness", () => {
 		const m = meta();
 		expect(classifyStaleness(m, {
 			activeRunId: "run-1",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "12345",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("fresh");
@@ -71,7 +76,7 @@ describe("classifyStaleness", () => {
 		const m = meta();
 		expect(classifyStaleness(m, {
 			activeRunId: "run-1",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "12345",
 			stateFilePath: "/tmp/flightdeck-state-other.json",
 		})).toBe("stale-state");
@@ -81,7 +86,7 @@ describe("classifyStaleness", () => {
 		const m = meta();
 		expect(classifyStaleness(m, {
 			activeRunId: "run-1",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "99999",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("stale-state");
@@ -91,27 +96,69 @@ describe("classifyStaleness", () => {
 		const m = meta();
 		expect(classifyStaleness(m, {
 			activeRunId: "run-2",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "12345",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("pre-active-run");
 	});
 
-	test("stale-inner when live pane missing from subscriber set", () => {
+	test("stale-inner when live pane missing from subscriber set (subset)", () => {
 		const m = meta();
 		expect(classifyStaleness(m, {
 			activeRunId: "run-1",
-			livePaneIds: ["%10", "%11", "%12"], // %12 is new
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"], ["%12", "shell"]),
 			stateFileInode: "12345",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("stale-inner");
+	});
+
+	test("stale-inner when daemon subscribes to extra dead panes (superset)", () => {
+		// vstack#213 round-1 regression: a daemon whose --inner argv
+		// includes dead panes from a previous session is just as stale
+		// as one missing live panes. Both signal frozen argv across
+		// sessions. The bug we're guarding against: silently treating
+		// such a daemon as fresh so it never gets respawned with the
+		// right --inner.
+		const m = meta({
+			subscribed_pane_harnesses: ["claude", "pi", "shell"],
+			subscribed_pane_ids: ["%10", "%11", "%99"],
+		});
+		expect(classifyStaleness(m, {
+			activeRunId: "run-1",
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
+			stateFileInode: "12345",
+			stateFilePath: "/tmp/flightdeck-state-vstack.json",
+		})).toBe("stale-inner");
+	});
+
+	test("stale-inner when harness for a tracked pane changed", () => {
+		// vstack#213 round-1: pane id sets matching is not enough.
+		// A daemon with the right pane but the wrong subscriber-type
+		// (e.g. claude binder on what is now a pi pane) misroutes wakes.
+		const m = meta();
+		expect(classifyStaleness(m, {
+			activeRunId: "run-1",
+			liveInnerEntries: live(["%10", "opencode"], ["%11", "pi"]), // %10 changed claude→opencode
+			stateFileInode: "12345",
+			stateFilePath: "/tmp/flightdeck-state-vstack.json",
+		})).toBe("stale-inner");
+	});
+
+	test("fresh when harnesses match even with reordered entries", () => {
+		const m = meta();
+		expect(classifyStaleness(m, {
+			activeRunId: "run-1",
+			liveInnerEntries: live(["%11", "pi"], ["%10", "claude"]),
+			stateFileInode: "12345",
+			stateFilePath: "/tmp/flightdeck-state-vstack.json",
+		})).toBe("fresh");
 	});
 
 	test("ignores inode mismatch when either side is null (best effort)", () => {
 		const m = meta({ state_file_inode: null });
 		expect(classifyStaleness(m, {
 			activeRunId: "run-1",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "99999",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("fresh");
@@ -121,10 +168,23 @@ describe("classifyStaleness", () => {
 		const m = meta({ active_run_id: null });
 		expect(classifyStaleness(m, {
 			activeRunId: "anything",
-			livePaneIds: ["%10", "%11"],
+			liveInnerEntries: live(["%10", "claude"], ["%11", "pi"]),
 			stateFileInode: "12345",
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("fresh");
+	});
+
+	test("empty live entries reads as stale-inner when daemon has subscribers", () => {
+		// If the registry probe returns no entries (all dead) but the
+		// daemon's subscribed_pane_ids is non-empty, that's stale —
+		// the daemon is watching ghosts.
+		const m = meta();
+		expect(classifyStaleness(m, {
+			activeRunId: "run-1",
+			liveInnerEntries: [],
+			stateFileInode: "12345",
+			stateFilePath: "/tmp/flightdeck-state-vstack.json",
+		})).toBe("stale-inner");
 	});
 });
 

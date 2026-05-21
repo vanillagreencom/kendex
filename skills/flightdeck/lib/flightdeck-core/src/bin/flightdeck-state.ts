@@ -500,33 +500,49 @@ function validateDomainIssueIdOrDie(entry: TrackedEntry): string | undefined {
 // Failure to stop the daemon is non-fatal: we already wrote a fresh
 // state file with the new inode, and ensure_daemon_for_session will
 // observe the inode mismatch on the next start and respawn anyway.
-// Quiet when no daemon is running (the common case for sessions
-// terminated through `flightdeck-state terminate` without an active
-// daemon).
+// Exit-code contract (round-1 fix):
+//   0 → daemon stopped (or stale pid file cleaned)
+//   1 → no daemon (quiet)
+//   3 → safety refusal: PID lock missing / flock unavailable /
+//       ambiguous state. Warn loudly with stderr+session so an
+//       operator can investigate; the daemon may still be running
+//       with stale --inner wiring.
+//   other → unexpected; warn the same way as 3.
 function stopDaemonForSessionBestEffort(tmuxSession: string): void {
 	if (!tmuxSession) return;
 	if (process.env.FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP === "1") return;
-	const candidate = join(
-		dirname(fileURLToPath(import.meta.url)),
-		"flightdeck-daemon.ts",
-	);
-	const trampoline = join(
-		dirname(fileURLToPath(import.meta.url)),
-		"..", "..", "..", "scripts", "flightdeck-daemon",
-	);
-	const useTrampoline = existsSync(trampoline);
-	const cmd = useTrampoline ? trampoline : process.argv0;
-	const args = useTrampoline ? ["stop", "--session", tmuxSession] : [candidate, "stop", "--session", tmuxSession];
-	const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	const cmd = resolveDaemonBin();
+	const r = spawnSync(cmd.bin, [...cmd.args, "stop", "--session", tmuxSession], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	if (r.error) {
+		process.stderr.write(`Warning: flightdeck-daemon stop spawn failed during archive of ${tmuxSession}: ${r.error.message}\n`);
+		return;
+	}
 	if (r.status === 0) {
 		const out = (r.stdout ?? "").trim();
 		if (out) process.stderr.write(`flightdeck-state archive: ${out}\n`);
 		return;
 	}
-	// Exit 1 from flightdeck-daemon stop means "no daemon" — quiet.
-	if (r.status === 1) return;
-	process.stderr.write(`Warning: flightdeck-daemon stop exited ${r.status ?? "unknown"} during archive of ${tmuxSession}\n`);
+	if (r.status === 1) return; // no daemon for this session — common case
+	const tag = r.status === 3 ? "safety-refusal" : "unexpected";
+	process.stderr.write(`Warning: flightdeck-daemon stop exit ${r.status ?? "unknown"} (${tag}) during archive of session=${tmuxSession}; daemon may still be running with stale --inner wiring\n`);
 	if (r.stderr) process.stderr.write(r.stderr);
+}
+
+// Resolve the flightdeck-daemon binary, honoring the
+// FLIGHTDECK_DAEMON_BIN escape hatch so tests can swap in a shim.
+// Falls back to the trampoline next to scripts/flightdeck-state, and
+// finally to invoking the TS source through `bun` if neither is
+// available (only relevant when invoked from `bun run`).
+function resolveDaemonBin(): { bin: string; args: string[] } {
+	const override = (process.env.FLIGHTDECK_DAEMON_BIN ?? "").trim();
+	if (override) return { args: [], bin: override };
+	const trampoline = join(
+		dirname(fileURLToPath(import.meta.url)),
+		"..", "..", "..", "scripts", "flightdeck-daemon",
+	);
+	if (existsSync(trampoline)) return { args: [], bin: trampoline };
+	const tsEntry = join(dirname(fileURLToPath(import.meta.url)), "flightdeck-daemon.ts");
+	return { args: [tsEntry], bin: process.argv0 || "bun" };
 }
 
 function terminateActiveRunForArchive(): void {

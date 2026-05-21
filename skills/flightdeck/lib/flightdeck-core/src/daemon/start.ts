@@ -310,6 +310,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 			started_at: new Date().toISOString(),
 			state_file_inode: statInode(liveStatePath),
 			state_file_path: liveStatePath,
+			subscribed_pane_harnesses: opts.innerHarnesses.slice(),
 			subscribed_pane_ids: opts.innerTargets.slice(),
 			updated_at: new Date().toISOString(),
 		};

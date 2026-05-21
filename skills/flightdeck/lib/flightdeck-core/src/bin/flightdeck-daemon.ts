@@ -83,6 +83,7 @@ onShutdown(() => { /* placeholder — daemon-start will register its own cleanup
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = resolve(HERE, "../../../../scripts/flightdeck-daemon");
+const PANE_REGISTRY_BIN = resolve(HERE, "../../../../scripts/pane-registry");
 
 function die(msg: string, code = 2): never {
 	process.stderr.write(`${msg}\n`);
@@ -104,6 +105,11 @@ start exit codes:
   1 lock/spawn/runtime failure
   2 usage, missing dependency/session, or inner-pane validation failure
   4 stale --master pane (re-resolve from $TMUX_PANE and retry once)
+
+stop exit codes (vstack#213):
+  0 daemon stopped (or stale PID file cleaned up)
+  1 no daemon for session
+  3 safety refusal (PID lock missing / flock unavailable / ambiguous state)
 `);
 	process.exit(2);
 }
@@ -374,28 +380,42 @@ function cmdHealth(): void {
 	lines.push(`events_queued=${eventsCount}`);
 	for (const line of subscriberLines) lines.push(line);
 	// vstack#213: surface daemon staleness so external tooling can decide
-	// whether to leave the daemon alone or arm a respawn.
+	// whether to leave the daemon alone or arm a respawn. Round-1 fix:
+	// compute staleness against the *live* tracked-entry set (pane-registry
+	// list --format inner-live-json) so health can detect both missing and
+	// extra subscribers (superset drift) plus per-pane harness mismatch.
 	const meta = metaFile ? readDaemonMeta(metaFile) : null;
 	if (meta) {
 		lines.push(`started_at=${meta.started_at || "(unknown)"}`);
 		lines.push(`master_pane_id=${meta.master_pane_id || "(unknown)"}`);
 		lines.push(`master_harness=${meta.master_harness || "(unknown)"}`);
 		lines.push(`subscribed_pane_ids=${meta.subscribed_pane_ids.join(",") || "(none)"}`);
+		lines.push(`subscribed_pane_harnesses=${meta.subscribed_pane_harnesses.join(",") || "(none)"}`);
 		lines.push(`state_file_path=${meta.state_file_path || "(unknown)"}`);
 		lines.push(`state_file_inode=${meta.state_file_inode ?? "(missing)"}`);
 		lines.push(`active_run_id=${meta.active_run_id ?? "(none)"}`);
-		// Compute staleness against current state file + active run.
 		let currentInode: string | null = null;
 		let currentRunId: string | null = null;
-		try { currentInode = statInode(meta.state_file_path); } catch { /* */ }
+		let activeRunProbeError = "";
+		try { currentInode = statInode(meta.state_file_path); } catch (err) {
+			lines.push(`state_inode_probe_error=${(err as Error)?.message ?? err}`);
+		}
 		try {
 			const project = resolveProjectRoot();
 			const active = readActiveRun(project);
 			currentRunId = active?.active.run_id ?? null;
-		} catch { /* */ }
+		} catch (err) {
+			activeRunProbeError = (err as Error)?.message ?? String(err);
+			lines.push(`active_run_probe_error=${activeRunProbeError}`);
+		}
+		// Probe live tracked entries via pane-registry list. If the probe
+		// fails, emit a diagnostic and pass the recorded subscribers as
+		// the live set so the staleness call still produces a deterministic
+		// result (fresh in the absence of contrary evidence).
+		const liveInnerEntries = probeLiveInnerEntries(meta.session_name || meta.session_id, lines);
 		const staleness = classifyStaleness(meta, {
 			activeRunId: currentRunId,
-			livePaneIds: meta.subscribed_pane_ids, // health is a snapshot — don't drag tracked-entry scan into it
+			liveInnerEntries,
 			stateFileInode: currentInode,
 			stateFilePath: meta.state_file_path,
 		});
@@ -462,6 +482,50 @@ function readSubscriberStatusLines(): string[] {
 				: "";
 		out.push(`  pane=${paneId} harness=${harness} status=${status}${trailer}`);
 	}
+	return out;
+}
+
+// Spawn pane-registry list --format inner-live-json to recover the
+// live (pane_id, harness) pairs for cmdHealth. On failure we emit a
+// diagnostic line and fall back to the recorded subscribers so the
+// classify call still produces a deterministic result (operators can
+// see the probe failed and act on it instead of getting a silent
+// false-fresh).
+function probeLiveInnerEntries(sessionLabel: string, diagLines: string[]): { paneId: string; harness: string }[] {
+	const env = { ...process.env };
+	const r = spawnSync(PANE_REGISTRY_BIN, ["list", "--format", "inner-live-json"], { encoding: "utf8", env });
+	if (r.error) {
+		diagLines.push(`live_inner_probe_error=spawn_failed:${r.error.message}`);
+		return [];
+	}
+	if (r.status !== 0) {
+		const stderr = (r.stderr ?? "").trim().slice(0, 200);
+		diagLines.push(`live_inner_probe_error=exit_${r.status ?? "unknown"}:${stderr || "(no stderr)"}`);
+		return [];
+	}
+	let parsed: unknown;
+	try { parsed = JSON.parse((r.stdout ?? "").trim() || "[]"); }
+	catch (err) {
+		diagLines.push(`live_inner_probe_error=malformed_json:${(err as Error)?.message ?? err}`);
+		return [];
+	}
+	if (!Array.isArray(parsed)) {
+		diagLines.push("live_inner_probe_error=not_array");
+		return [];
+	}
+	const out: { paneId: string; harness: string }[] = [];
+	for (const row of parsed) {
+		if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+		const entry = row as Record<string, unknown>;
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+		const harness = typeof entry.harness === "string" ? entry.harness : "";
+		// Exclude the dashboard self-entry — it's not a watch target.
+		const id = typeof entry.id === "string" ? entry.id : "";
+		if (id === "flightdeck-dashboard") continue;
+		if (!paneId) continue;
+		out.push({ harness, paneId });
+	}
+	void sessionLabel;
 	return out;
 }
 
@@ -534,8 +598,12 @@ function cmdStop(): void {
 		process.exit(0);
 	}
 	if (!existsSync(pidLock)) {
+		// vstack#213 round-1: distinct exit (3) for safety refusal — the
+		// daemon may still be running with stale --inner argv. Callers
+		// like flightdeck-state archive's daemon-stop must NOT confuse
+		// this with the no-daemon path (exit 1) and silently move on.
 		process.stderr.write(`PID lock missing for session=${sessionName}; refusing to kill (ambiguous state)\n`);
-		process.exit(1);
+		process.exit(3);
 	}
 	// flock -n test. Fail-closed: only treat status === 0 as definitively
 	// stale. Any other result (including spawn-error / missing flock) is
@@ -543,7 +611,7 @@ function cmdStop(): void {
 	const flockTest = spawnSync("flock", ["-n", pidLock, "true"]);
 	if (flockTest.error) {
 		process.stderr.write(`flock unavailable for session=${sessionName}; refusing to kill\n`);
-		process.exit(1);
+		process.exit(3);
 	}
 	if (flockTest.status === 0) {
 		process.stderr.write(`stale PID file for session=${sessionName} (lock free); removing without kill\n`);
