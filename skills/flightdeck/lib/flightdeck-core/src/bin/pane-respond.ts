@@ -218,6 +218,16 @@ type PaneIdResolution =
 	| { kind: "missing_pane_target" };
 
 function resolvePaneTargetFromPaneId(paneId: string): PaneIdResolution {
+	// vstack#214: %PANE_ID is allocated once by tmux and stable for the life
+	// of the pane; pane_target is a (re-numberable) cached view in the
+	// registry. Ask tmux directly first so a renumber-staled pane_target
+	// can't misroute the paste into whichever pane currently occupies the
+	// original slot. Fall back to the registry only when tmux can't
+	// resolve the id — that path preserves the historical not-registered /
+	// missing-pane-target diagnostics.
+	const liveTarget = tmuxLiveTargetForPaneId(paneId);
+	if (liveTarget) return { kind: "ok", target: liveTarget };
+
 	const r = spawnSync(PANE_REGISTRY, ["find-by-pane", paneId], { encoding: "utf8" });
 	const status = typeof r.status === "number" ? r.status : 0;
 	if (status >= 2) return { kind: "registry_read", rc: status };
@@ -239,6 +249,13 @@ function resolvePaneTargetFromPaneId(paneId: string): PaneIdResolution {
 	const target = (sr.stdout ?? "").trim().replace(/^"|"$/g, "");
 	if (!target || target === "null") return { kind: "missing_pane_target" };
 	return { kind: "ok", target };
+}
+
+function tmuxLiveTargetForPaneId(paneId: string): string {
+	const r = spawnSync("tmux", ["display-message", "-p", "-t", paneId, "#{session_name}:#{window_index}.#{pane_index}"], { encoding: "utf8" });
+	if (r.status !== 0) return "";
+	const out = (r.stdout ?? "").trim();
+	return /^[^:]+:\d+\.\d+$/.test(out) ? out : "";
 }
 
 function extractFlag(s: string, flag: string): string {

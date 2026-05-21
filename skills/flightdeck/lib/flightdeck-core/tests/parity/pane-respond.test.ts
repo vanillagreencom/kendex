@@ -6,11 +6,15 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/pane-respond");
+const PANE_REGISTRY_SCRIPT = resolve(HERE, "../../../../scripts/pane-registry");
+const SHIM_DIR = resolve(HERE, "./tmux-shim");
 
 if (!process.env.TMUX) {
 	test.skip("pane-respond parity requires tmux", () => undefined);
@@ -133,53 +137,206 @@ describe("pane-respond parity (validation)", () => {
 		expect(b.stderr).not.toContain("target must include explicit pane index");
 	});
 
-	test("%pane_id entry found but pane_target null → registry-drift error", () => {
-		// Drive the missing_pane_target branch: init-entry sets
-		// pane_target from the live pane, so we explicitly null it via
-		// `pane-registry set` to simulate registry drift. Both bash and
-		// TS implementations must surface the same drift recovery hint
-		// (pane-registry reconcile) rather than 'not registered'.
-		const tmuxPane = process.env.TMUX_PANE;
-		if (!tmuxPane) {
-			// Skip transparently when TMUX_PANE is unset (already gated by
-			// the file-level TMUX guard above; defensive fallback for
-			// nested tmux invocations that scrub the env).
-			return;
-		}
+	test("%pane_id registered with dead pane and null pane_target → not-registered error (post vstack#214)", () => {
+		// Pre-vstack#214 this exercised the missing_pane_target branch by
+		// nulling pane_target on a *live* TMUX_PANE entry. Post-fix, live
+		// tmux is the source of truth and is consulted first: any %PANE_ID
+		// tmux can resolve silently recovers regardless of registry drift.
+		// The only way to surface a registry-side error now is a paneId
+		// that tmux can't resolve (dead pane). find-by-pane filters that
+		// out as stale → resolvePaneTargetFromPaneId returns "not_registered".
+		// The missing_pane_target code path remains as defensive cover for
+		// the exotic case where tmux display-message rejects a pane that
+		// find-by-pane still considers live, but isn't reachable here.
 		const fs = require("node:fs") as typeof import("node:fs");
 		const os = require("node:os") as typeof import("node:os");
 		const path = require("node:path") as typeof import("node:path");
 		const PANE_REGISTRY = resolve(HERE, "../../../../scripts/pane-registry");
 		const FLIGHTDECK_STATE = resolve(HERE, "../../../../scripts/flightdeck-state");
-		for (const useTs of [true]) {
-			const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fd-pr-drift-"));
-			try {
-				const envBase: Record<string, string> = { ...(process.env as Record<string, string>), FLIGHTDECK_STATE_DIR: stateDir };
-				spawnSync(FLIGHTDECK_STATE, ["init"], { encoding: "utf8", env: envBase });
-				spawnSync(PANE_REGISTRY, ["init-entry", "DRIFT-PT", "--title", "T", "--kind", "adhoc", "--cwd", "/tmp", "--window", "1", "--harness", "pi", "--pane-id", tmuxPane], { encoding: "utf8", env: envBase });
-				// init-entry auto-derives pane_target from the live pane;
-				// stomp it to null to simulate registry drift.
-				spawnSync(PANE_REGISTRY, ["set", "DRIFT-PT", "pane_target", "null"], { encoding: "utf8", env: envBase });
-				const env: Record<string, string> = { ...envBase };
-													const r = spawnSync(SCRIPT, [tmuxPane, "hi"], { encoding: "utf8", env });
-				expect(r.status).toBe(2);
-				const expected = `pane-respond: registry entry for '${tmuxPane}' is missing pane_target (registry drift); recover via pane-registry reconcile`;
-				expect((r.stderr ?? "")).toContain(expected);
-				// Generic 'explicit pane index' fallback must NOT fire.
-				expect((r.stderr ?? "")).not.toContain("target must include explicit pane index");
-			} finally {
-				fs.rmSync(stateDir, { recursive: true, force: true });
-			}
+		const fakePaneId = "%999998";
+		const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fd-pr-drift-"));
+		try {
+			const envBase: Record<string, string> = { ...(process.env as Record<string, string>), FLIGHTDECK_STATE_DIR: stateDir };
+			spawnSync(FLIGHTDECK_STATE, ["init"], { encoding: "utf8", env: envBase });
+			spawnSync(PANE_REGISTRY, ["init-entry", "DRIFT-PT", "--title", "T", "--kind", "adhoc", "--cwd", "/tmp", "--window", "1", "--harness", "pi", "--pane-id", fakePaneId], { encoding: "utf8", env: envBase });
+			spawnSync(PANE_REGISTRY, ["set", "DRIFT-PT", "pane_target", "null"], { encoding: "utf8", env: envBase });
+			const r = spawnSync(SCRIPT, [fakePaneId, "hi"], { encoding: "utf8", env: envBase });
+			expect(r.status).toBe(2);
+			const expected = `pane-respond: pane '${fakePaneId}' is not registered as a flightdeck-tracked pane; pass the explicit pane target (e.g. <session>:<window>.<idx>) or register the pane first`;
+			expect((r.stderr ?? "")).toContain(expected);
+			expect((r.stderr ?? "")).not.toContain("target must include explicit pane index");
+		} finally {
+			fs.rmSync(stateDir, { recursive: true, force: true });
 		}
 	});
 
 	// Note on the registry_read (find-by-pane exit >= 2) branch: it is
-	// defensively wired in resolvePaneTargetFromPaneId / the bash helper
-	// but currently unreachable in normal operation — find-by-pane wraps
-	// state reads in `2>/dev/null` and downgrades any flightdeck-state
-	// failure to exit 1 (handled by the not_registered branch above), and
-	// the bun runtime exits 1 for uncaught state-dir errors. The error
-	// message and code path remain so a future find-by-pane that
-	// escalates state-read failures hits the registry_read branch in
-	// both bash and TS without further changes.
+	// defensively wired in resolvePaneTargetFromPaneId but currently
+	// unreachable in normal operation — find-by-pane wraps state reads in
+	// `2>/dev/null` and downgrades any flightdeck-state failure to exit 1
+	// (handled by the not_registered branch above), and the bun runtime
+	// exits 1 for uncaught state-dir errors. The error message and code
+	// path remain so a future find-by-pane that escalates state-read
+	// failures hits the registry_read branch without further changes.
+});
+
+// --- vstack#214 renumber e2e (shim-driven) --------------------------------
+
+describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
+	function makeRepo(): string {
+		const dir = mkdtempSync(join(tmpdir(), "fd-pr-renumber-"));
+		mkdirSync(join(dir, "tmp"), { recursive: true });
+		spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+		spawnSync("git", ["-C", dir, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
+			env: {
+				...process.env,
+				GIT_AUTHOR_NAME: "t",
+				GIT_AUTHOR_EMAIL: "t@t",
+				GIT_COMMITTER_NAME: "t",
+				GIT_COMMITTER_EMAIL: "t@t",
+			},
+		});
+		return dir;
+	}
+
+	function shimEnv(repo: string, statePath: string): Record<string, string> {
+		const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+		env.FLIGHTDECK_STATE_DIR = "tmp";
+		env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
+		env.TMUX_SHIM_STATE = statePath;
+		env.TMUX_PARITY_SESSION = JSON.parse(readFileSync(statePath, "utf8")).session;
+		// pane-respond requires TMUX env to be set — inherit whatever the
+		// outer tmux session has; pane-respond doesn't actually look up
+		// TMUX, it just gates on its presence.
+		return env;
+	}
+
+	function runScript(repo: string, env: Record<string, string>, script: string, args: string[], input?: string): { stdout: string; stderr: string; status: number | null } {
+		const r = spawnSync(script, args, { cwd: repo, encoding: "utf8", env, input });
+		return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+	}
+
+	test("registry pane_target stale → live tmux target wins, paste lands in the correct pane", () => {
+		// Replicates the issue's failure: four entries spawned sequentially
+		// at "launch slot 4" all recorded pane_target = "test-session:4.0".
+		// Each new spawn pushed the prior windows up an index, so by the
+		// time the operator calls pane-respond %PANE_ID for entry A, A is
+		// actually at index 8 — and the slot at index 4 is now a sibling
+		// (issue E in the live shim). Pre-vstack#214, the paste landed on
+		// the sibling. Post-fix, the live tmux lookup in
+		// resolvePaneTargetFromPaneId returns A's current coords and the
+		// paste lands in A's actual pane.
+		const repo = makeRepo();
+		try {
+			const statePath = join(repo, "shim-state.json");
+			writeFileSync(statePath, JSON.stringify({
+				session: "test-session",
+				panes: {
+					"%200": { pane_index: 0, path: "/tmp/A", window_id: "@200", window_index: 8, window_name: "A", sent_keys: [] },
+					"%201": { pane_index: 0, path: "/tmp/B", window_id: "@201", window_index: 7, window_name: "B", sent_keys: [] },
+					"%202": { pane_index: 0, path: "/tmp/C", window_id: "@202", window_index: 6, window_name: "C", sent_keys: [] },
+					"%203": { pane_index: 0, path: "/tmp/D", window_id: "@203", window_index: 5, window_name: "D", sent_keys: [] },
+					"%204": { pane_index: 0, path: "/tmp/E", window_id: "@204", window_index: 4, window_name: "E", sent_keys: [] },
+				},
+				windows: {
+					"@200": { index: 8, name: "A" },
+					"@201": { index: 7, name: "B" },
+					"@202": { index: 6, name: "C" },
+					"@203": { index: 5, name: "D" },
+					"@204": { index: 4, name: "E" },
+				},
+				buffers: {},
+			}, null, 2));
+			const env = shimEnv(repo, statePath);
+
+			// Register A, B, C, D with the stale pane_target each saw at
+			// spawn time (when its launch slot was window 4).
+			for (const [id, paneId] of [["A", "%200"], ["B", "%201"], ["C", "%202"], ["D", "%203"]] as const) {
+				const r = runScript(repo, env, PANE_REGISTRY_SCRIPT, [
+					"init-entry", id,
+					"--title", `issue-${id}`,
+					"--kind", "adhoc",
+					"--cwd", `/tmp/${id}`,
+					"--window", "4",
+					"--harness", "pi",
+					"--pane-id", paneId,
+					"--pane-target", "test-session:4.0",
+					"--window-index", "4",
+				]);
+				expect(r.status).toBe(0);
+			}
+
+			// Sanity: the registry's cached pane_target is stale.
+			const beforeRegistry = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			expect(beforeRegistry.entries.A.pane_target).toBe("test-session:4.0");
+
+			// Call pane-respond %200 (entry A). With the vstack#214 fix,
+			// resolvePaneTargetFromPaneId asks tmux first and gets
+			// "test-session:8.0" — A's current coords — so the paste
+			// lands in pane %200, NOT pane %204 (which now occupies the
+			// stale registry slot at "test-session:4.0").
+			// --harness pi forces the tmux-fallback path (no live pi bridge
+			// in the shim setup), exercising the paste-buffer flow we
+			// instrumented in the shim.
+			const respond = runScript(repo, env, SCRIPT, ["%200", "msg-for-A", "--harness", "pi"]);
+			expect(respond.status).toBe(0);
+
+			// Verify the shim recorded the paste in pane %200, not %204.
+			const after = JSON.parse(readFileSync(statePath, "utf8"));
+			expect(after.panes["%200"].sent_keys).toContain("msg-for-A");
+			expect(after.panes["%204"].sent_keys ?? []).not.toContain("msg-for-A");
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+		}
+	});
+
+	test("after refresh-window-names, cached registry coords match live tmux", () => {
+		// Companion assertion: refresh-window-names updates pane_target,
+		// window, and window_index for every entry whose pane_id is still
+		// alive at a new tmux slot. The bug: pre-fix, this only updated
+		// window_name_current.
+		const repo = makeRepo();
+		try {
+			const statePath = join(repo, "shim-state.json");
+			writeFileSync(statePath, JSON.stringify({
+				session: "test-session",
+				panes: {
+					"%200": { pane_index: 0, path: "/tmp/A", window_id: "@200", window_index: 8, window_name: "A", sent_keys: [] },
+					"%201": { pane_index: 0, path: "/tmp/B", window_id: "@201", window_index: 7, window_name: "B", sent_keys: [] },
+				},
+				windows: {
+					"@200": { index: 8, name: "A" },
+					"@201": { index: 7, name: "B" },
+				},
+				buffers: {},
+			}, null, 2));
+			const env = shimEnv(repo, statePath);
+			for (const [id, paneId] of [["A", "%200"], ["B", "%201"]] as const) {
+				expect(runScript(repo, env, PANE_REGISTRY_SCRIPT, [
+					"init-entry", id,
+					"--title", `issue-${id}`,
+					"--kind", "adhoc",
+					"--cwd", `/tmp/${id}`,
+					"--window", "4",
+					"--harness", "pi",
+					"--pane-id", paneId,
+					"--pane-target", "test-session:4.0",
+					"--window-index", "4",
+				]).status).toBe(0);
+			}
+			const refresh = runScript(repo, env, PANE_REGISTRY_SCRIPT, ["refresh-window-names"]);
+			expect(refresh.status).toBe(0);
+			const parsed = JSON.parse(refresh.stdout) as { updated: string[] };
+			expect(parsed.updated.sort()).toEqual(["A", "B"]);
+			const reg = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			expect(reg.entries.A.pane_target).toBe("test-session:8.0");
+			expect(reg.entries.A.window_index).toBe(8);
+			expect(reg.entries.A.window).toBe("8");
+			expect(reg.entries.B.pane_target).toBe("test-session:7.0");
+			expect(reg.entries.B.window_index).toBe(7);
+			expect(reg.entries.B.window).toBe("7");
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+		}
+	});
 });

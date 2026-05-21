@@ -793,6 +793,106 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		expect(entries["name-verified-missing"].window_name_current).toBeNull();
 	});
 
+	test("refresh-window-names updates pane_target/window/window_index when tmux renumbers (vstack#214)", () => {
+		// Spawn 3 entries in windows W, W+1, W+2. Simulate a tmux window
+		// reshuffle by killing the W window in the shim and shifting the
+		// surviving entries' window_index down by 1. After refresh, the
+		// remaining entries' pane_target / window / window_index must match
+		// their new live coords. The bug pre-fix: refresh-window-names only
+		// updated window_name_current and left pane_target stale, so
+		// downstream pane-respond calls misrouted into the wrong pane.
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: {
+				"%500": { pane_index: 0, path: "/tmp/r-a", window_id: "@50", window_index: 5, window_name: "issue-A" },
+				"%501": { pane_index: 0, path: "/tmp/r-b", window_id: "@51", window_index: 6, window_name: "issue-B" },
+				"%502": { pane_index: 0, path: "/tmp/r-c", window_id: "@52", window_index: 7, window_name: "issue-C" },
+			},
+			windows: {
+				"@50": { index: 5, name: "issue-A" },
+				"@51": { index: 6, name: "issue-B" },
+				"@52": { index: 7, name: "issue-C" },
+			},
+		}));
+		for (const [id, paneId, win] of [["A", "%500", "5"], ["B", "%501", "6"], ["C", "%502", "7"]] as const) {
+			expect(runShim(tsRepo, statePath, [
+				"init-entry", id,
+				"--title", `issue-${id}`,
+				"--kind", "adhoc",
+				"--cwd", `/tmp/r-${id.toLowerCase()}`,
+				"--window", win,
+				"--harness", "pi",
+				"--pane-id", paneId,
+				"--pane-target", `test-session:${win}.0`,
+				"--window-index", win,
+			]).status).toBe(0);
+		}
+
+		// Simulate `tmux kill-window` for window @50: drop the pane and
+		// shift the surviving windows' indices down by 1. tmux assigns
+		// indices contiguously after a kill — entries B and C land at
+		// indices 5 and 6.
+		const before = readShimState(statePath);
+		delete before.panes["%500"];
+		delete before.windows["@50"];
+		before.panes["%501"]!.window_index = 5;
+		before.panes["%502"]!.window_index = 6;
+		before.windows["@51"]!.index = 5;
+		before.windows["@52"]!.index = 6;
+		writeFileSync(statePath, JSON.stringify(before, null, 2));
+
+		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"]);
+		expect(refresh.status).toBe(0);
+		const parsed = JSON.parse(refresh.stdout) as { updated: string[]; cleared: string[]; warnings: unknown[] };
+		expect(parsed.updated.sort()).toEqual(["B", "C"]);
+
+		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
+		expect(entries.B.pane_target).toBe("test-session:5.0");
+		expect(entries.B.window_index).toBe(5);
+		expect(entries.B.window).toBe("5");
+		expect(entries.C.pane_target).toBe("test-session:6.0");
+		expect(entries.C.window_index).toBe(6);
+		expect(entries.C.window).toBe("6");
+		// The killed entry's coords stay untouched — it'll get dropped by
+		// the next `pane-registry reconcile` tick when its pane_id no
+		// longer resolves.
+		expect(entries.A.pane_target).toBe("test-session:5.0");
+	});
+
+	test("refresh-window-names preserves non-numeric `window` strings on renumber", () => {
+		// Defensive: an entry registered with --window <name> (legacy path)
+		// keeps its window-name string even after a renumber, because the
+		// name doesn't change on reshuffle. Only numeric `window` values
+		// — what flightdeck-session writes today — get refreshed.
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: {
+				"%600": { pane_index: 0, path: "/tmp/named", window_id: "@60", window_index: 9, window_name: "named-window" },
+			},
+			windows: { "@60": { index: 9, name: "named-window" } },
+		}));
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "NAMED",
+			"--title", "Named",
+			"--kind", "adhoc",
+			"--cwd", "/tmp/named",
+			"--window", "named-window",
+			"--harness", "pi",
+			"--pane-id", "%600",
+			"--pane-target", "test-session:9.0",
+		]).status).toBe(0);
+
+		// Renumber: index 9 → 4 (window names don't change with renumber).
+		const shim = readShimState(statePath);
+		shim.panes["%600"]!.window_index = 4;
+		shim.windows["@60"]!.index = 4;
+		writeFileSync(statePath, JSON.stringify(shim, null, 2));
+
+		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"]);
+		expect(refresh.status).toBe(0);
+		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
+		expect(entries.NAMED.pane_target).toBe("test-session:4.0");
+		expect(entries.NAMED.window).toBe("named-window");
+	});
+
 	test("refresh-window-names does not recreate an entry removed after snapshot read", () => {
 		const statePath = makeShimState(tsRepo, baseShim("test-session"));
 		const fakeState = join(tsRepo, "fake-flightdeck-state.sh");

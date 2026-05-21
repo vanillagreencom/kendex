@@ -167,7 +167,16 @@ case "$subcmd" in
                                ' "$STATE_FILE" ;;
       "#{pane_current_path}") jq -r '.path // empty' <<< "$pane" ;;
       "#S")                   jq -r '.session' "$STATE_FILE" ;;
-      *) echo "shim: unsupported display-message format: $format" >&2; exit 2 ;;
+      *)
+        # Compound format strings — expand the same tokens format_pane
+        # understands. Reuse format_pane by resolving the pane_id first.
+        pane_id=$(resolve_pane_id "$target")
+        if [[ -z "$pane_id" ]]; then
+          echo "shim: unsupported display-message format: $format" >&2
+          exit 2
+        fi
+        format_pane "$format" "$pane_id" "$pane"
+        ;;
     esac
     ;;
   list-panes)
@@ -364,6 +373,75 @@ case "$subcmd" in
       exit 1
     fi
     write_state ".panes |= with_entries(select(.key != \"$target\"))"
+    ;;
+  load-buffer)
+    # Args: -b <name> -  (reads buffer payload from stdin)
+    buf_name=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -b) buf_name="$2"; shift 2 ;;
+        -) shift ;;
+        *) shift ;;
+      esac
+    done
+    payload=$(cat)
+    tmp=$(mktemp -t fd-shim-load-buffer.XXXXXX)
+    jq --arg name "$buf_name" --arg payload "$payload" '.buffers[$name] = $payload' "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
+    ;;
+  paste-buffer)
+    # Args: -b <name> -t <target> [-p]
+    buf_name=""
+    target=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -b) buf_name="$2"; shift 2 ;;
+        -t) target="$2"; shift 2 ;;
+        -p) shift ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$target" ]] || exit 2
+    pane_id=$(resolve_pane_id "$target")
+    [[ -n "$pane_id" ]] || { echo "shim: paste-buffer: pane not found: $target" >&2; exit 1; }
+    payload=$(jq -r --arg name "$buf_name" '.buffers[$name] // ""' "$STATE_FILE")
+    tmp=$(mktemp -t fd-shim-paste-buffer.XXXXXX)
+    jq --arg pane_id "$pane_id" --arg payload "$payload" \
+       '.panes[$pane_id].sent_keys += [$payload]' \
+       "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
+    ;;
+  delete-buffer)
+    buf_name=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -b) buf_name="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -n "$buf_name" ]]; then
+      tmp=$(mktemp -t fd-shim-delete-buffer.XXXXXX)
+      jq --arg name "$buf_name" 'if .buffers? then .buffers |= del(.[$name]) else . end' "$STATE_FILE" > "$tmp"
+      mv "$tmp" "$STATE_FILE"
+    fi
+    ;;
+  capture-pane)
+    # Best-effort: return the pane's stored `capture` field, or empty.
+    target=""
+    print=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        -p) print=1; shift ;;
+        -S|-E) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    pane_id=$(resolve_pane_id "$target")
+    [[ -n "$pane_id" ]] || { echo "shim: capture-pane: pane not found: $target" >&2; exit 1; }
+    if (( print == 1 )); then
+      jq -r --arg pane_id "$pane_id" '(.panes[$pane_id].capture // "")' "$STATE_FILE"
+    fi
     ;;
   set-window-option)
     target=""

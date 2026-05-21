@@ -610,6 +610,15 @@ register_entry() {
   [[ -n "${PI_SESSION_ID:-}" ]] && args+=(--pi-session-id "$PI_SESSION_ID")
   [[ -n "${PI_DISCOVERY_ERROR:-}" ]] && args+=(--discovery-error "$PI_DISCOVERY_ERROR")
   "$PANE_REGISTRY" "${args[@]}"
+  # vstack#214: refresh pane coords / window names for every tracked entry
+  # after a fresh registration. tmux may have renumbered prior windows as
+  # a side effect of spawning this one, and `init-entry` only refreshes
+  # the new row's snapshot. Re-running the refresh here heals stale
+  # pane_target / window / window_index for sibling entries within one
+  # spawn instead of waiting for the daemon's reconcile tick (default
+  # FD_RECONCILE_INTERVAL_SEC=5). Errors are tolerated — the daemon tick
+  # remains the durable repair path.
+  "$PANE_REGISTRY" refresh-window-names >/dev/null 2>&1 || true
 }
 
 # vstack#101: capture git branch at spawn time. Silent when not a git
