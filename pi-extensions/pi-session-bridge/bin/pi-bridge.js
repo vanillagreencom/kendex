@@ -21,7 +21,7 @@ function usage(exitCode = 0) {
   pi-bridge steer [target] MESSAGE...
   pi-bridge follow-up [target] MESSAGE...
   pi-bridge stream [target]
-  pi-bridge history [target] [LIMIT]
+  pi-bridge history [target] [LIMIT] [--raw|--verbose] [--event NAME] [--since TS] [--max-bytes N]
   pi-bridge questions [target]
   pi-bridge answer [target] --request-id que_... --answers '[["Label"]]'
   pi-bridge reject [target] --request-id que_...
@@ -35,6 +35,12 @@ Target options:
   --name TEXT      Substring match session name
   --cwd TEXT       Substring match cwd
   --bridge-dir DIR Override PI_BRIDGE_DIR/default discovery dir
+
+History options:
+  --raw / --verbose  Rehydrate compact events from the per-session sidecar JSONL.
+  --event NAME       Filter to one event name (e.g. message_update, tool_execution_end).
+  --since TS         Return only events with timestamp >= TS (ISO 8601).
+  --max-bytes N      Cap response payload size in bytes (default ~1 MiB).
 
 Environment:
   PI_BRIDGE_DIR    Default: /tmp/pi-session-bridge-$UID
@@ -65,6 +71,13 @@ function parse(argv) {
 			case "--all":
 				opts.all = true;
 				break;
+			case "--raw":
+				opts.raw = true;
+				break;
+			case "-v":
+			case "--verbose":
+				opts.verbose = true;
+				break;
 			case "--auto":
 				opts.deliverAs = "auto";
 				break;
@@ -85,7 +98,10 @@ function parse(argv) {
 			case "--cwd":
 			case "--request-id":
 			case "--answers":
-			case "--bridge-dir": {
+			case "--bridge-dir":
+			case "--event":
+			case "--since":
+			case "--max-bytes": {
 				const value = argv[++i];
 				if (!value) die(`Missing value for ${arg}`);
 				opts[arg.slice(2).replace(/-([a-z])/g, (_, ch) => ch.toUpperCase())] = value;
@@ -264,7 +280,16 @@ async function main() {
 
 	if (command === "history") {
 		const limit = rest[0] ? Number.parseInt(rest[0], 10) : undefined;
-		process.exitCode = await request(target, { id, type: "history", limit });
+		const cmd = { id, type: "history" };
+		if (limit !== undefined && Number.isFinite(limit)) cmd.limit = limit;
+		if (opts.raw || opts.verbose) cmd.raw = true;
+		if (opts.event) cmd.event = opts.event;
+		if (opts.since) cmd.since = opts.since;
+		if (opts.maxBytes) {
+			const parsed = Number.parseInt(opts.maxBytes, 10);
+			if (Number.isFinite(parsed) && parsed > 0) cmd.maxBytes = parsed;
+		}
+		process.exitCode = await request(target, cmd);
 		return;
 	}
 

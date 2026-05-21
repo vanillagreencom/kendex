@@ -73,6 +73,51 @@
           "requiresReload": true
         },
         {
+          "key": "maxEventBytes",
+          "label": "Max bytes per event",
+          "description": "Cap on each compact event envelope. Payloads larger than this collapse to a small descriptor and (when enabled) spill to the per-session raw JSONL.",
+          "type": "number",
+          "default": 8192,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
+          "key": "maxHistoryBytes",
+          "label": "Max history bytes",
+          "description": "Total bytes retained across the in-memory history. Older envelopes drop once this is exceeded.",
+          "type": "number",
+          "default": 4194304,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
+          "key": "maxHistoryResponseBytes",
+          "label": "Max history response bytes",
+          "description": "Maximum bytes returned by a single history request before older envelopes are trimmed.",
+          "type": "number",
+          "default": 1048576,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
+          "key": "eventPreviewBytes",
+          "label": "Event preview bytes",
+          "description": "Bytes of delta/result/output retained as *Preview strings inside compact events.",
+          "type": "number",
+          "default": 256,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
+          "key": "spillRawEvents",
+          "label": "Spill raw events",
+          "description": "Write oversized event payloads to a per-session JSONL sidecar so history --raw can rehydrate them.",
+          "type": "boolean",
+          "default": true,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
           "key": "maxLineBytes",
           "label": "Max request line bytes",
           "description": "Maximum JSONL request size accepted from a bridge client.",

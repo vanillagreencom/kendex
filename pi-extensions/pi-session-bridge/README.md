@@ -47,6 +47,8 @@ pi-bridge state --pid <pid>
 pi-bridge commands --pid <pid>
 pi-bridge stream --pid <pid>
 pi-bridge history --pid <pid> 20
+pi-bridge history --pid <pid> 20 --event message_update --since 2026-05-21T00:00:00Z
+pi-bridge history --pid <pid> 20 --raw
 pi-bridge send --pid <pid> "message for the agent"
 pi-bridge steer --pid <pid> "steer current work"
 pi-bridge follow-up --pid <pid> "after you finish, do this"
@@ -57,6 +59,24 @@ pi-bridge emit --pid <pid> "hello"
 ```
 
 If exactly one active bridge exists, target flags are optional. Filters: `--pid`, `--socket`, `--session`, `--name`, `--cwd`.
+
+### Compact vs raw history
+
+`pi-bridge history` and the `stream` channel both default to compact event envelopes:
+
+- `message_update` → `{ role, type, contentIndex, deltaLength, deltaBytes, deltaPreview }`.
+- `tool_execution_*` → `{ toolName, toolUseId, status, isError, *Bytes, *Preview, artifactPath, logPath, detailPath }`.
+- `agent_end` → `{ status, stopReason, usage, messagesCount, finalTextBytes, finalTextLength, finalTextPreview }`.
+
+When a payload had to be shrunk the envelope adds sibling metadata: `truncated: true`, `originalBytes`, `rawEventPath` (per-session JSONL under `<bridgeDir>/raw/<pid>.jsonl`), and `rawEventRef` (line ref). The raw JSONL is cleaned up on `session_shutdown` and process exit.
+
+Pass `--raw` (or `--verbose`) to `pi-bridge history` to rehydrate compact envelopes from the sidecar:
+
+- `--event NAME` — only return events with that name (e.g. `tool_execution_end`).
+- `--since TS` — only return events with `timestamp >= TS` (ISO 8601, ms precision).
+- `--max-bytes N` — cap response payload (default ~1 MiB; older events trimmed first, the most recent envelope is always included).
+
+The `history` response also includes `totalEvents`, `responseTruncated`, and `rawSpillPath` so callers can decide whether to page further or read the JSONL directly.
 
 ## Raw protocol
 
@@ -76,11 +96,13 @@ Example response and event:
 
 ```json
 {"type":"response","id":"1","command":"get_state","success":true,"data":{}}
-{"type":"event","event":"message_update","timestamp":"...","data":{}}
+{"type":"event","event":"message_update","timestamp":"...","data":{"role":"assistant","contentIndex":0,"deltaLength":50000,"deltaBytes":50000,"deltaPreview":"Hello..."},"truncated":true,"originalBytes":50012,"rawEventPath":"/tmp/pi-session-bridge-1000/raw/12345.jsonl","rawEventRef":"7"}
 {"type":"event","event":"vstack_activity","timestamp":"...","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent done"}}
 ```
 
 Clients receive events by default. Send `{"type":"subscribe","enabled":false}` to mute them. `vstack_activity` rows are bridge events, not `sendMessage()` chat entries, so they do not render in the conversation.
+
+Compact event envelopes always include enough fields to reason about the original payload (preview, byte count, truncation flag). To replay raw deltas/results call `history` with `{"raw":true}` or read the per-session JSONL referenced by `rawEventPath` directly.
 
 ## Activity broker
 
@@ -116,6 +138,11 @@ Open `/extensions:settings`; settings appear under the **Session Bridge** tab.
 | Enable session bridge | Master toggle for bridge socket registration, CLI access, and status reporting. |
 | Bridge directory | Override the sockets/registry directory. `PI_BRIDGE_DIR` env var still wins. |
 | Event history limit | Events retained for history clients. |
+| Max bytes per event | Maximum bytes per compact event envelope before payload is collapsed to a descriptor. |
+| Max history bytes | Total bytes retained across the in-memory event history before older envelopes are evicted. |
+| Max history response bytes | Maximum bytes returned in a single `history` response; older envelopes drop first. |
+| Event preview bytes | Bytes of `delta`/`result`/`output` retained as `*Preview` strings inside compact events. |
+| Spill raw events | When `true`, oversized payloads spill to the per-session JSONL so `history --raw` can rehydrate them. |
 | Max request line bytes | Maximum JSONL request size accepted. |
 | Registry heartbeat | Ms between registry file updates. |
 | Notify on start | In-TUI notification when the bridge starts. |
