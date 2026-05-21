@@ -264,6 +264,7 @@ export interface PaneCompletion {
 	agent?: string;
 	taskId?: string;
 	status?: PaneTaskStatus;
+	reason?: string;
 	summary?: string;
 	filesChanged?: string[];
 	validation?: string[];
@@ -327,6 +328,7 @@ export interface PaneTaskRecord {
 	filesChanged?: string[];
 	validation?: string[];
 	notes?: string;
+	cwdSnapshot?: CwdSnapshot;
 	diagnostics?: string[];
 	createdAt: string;
 	updatedAt?: string;
@@ -415,6 +417,7 @@ export interface GetSubagentResultDetails {
 	status?: PaneTaskStatus;
 	taskId?: string;
 	notes?: string;
+	cwdSnapshot?: CwdSnapshot;
 	diagnostics?: string[];
 	completionMessageEmitted?: boolean;
 	waitFor?: "completion" | "idle";

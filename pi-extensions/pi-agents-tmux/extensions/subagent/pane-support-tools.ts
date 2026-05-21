@@ -7,6 +7,7 @@ import {
 	completionBodyWithoutPromptEcho,
 	wrappedText,
 } from "./format.js";
+import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import {
 	GetSubagentResultParams,
 	SteerSubagentParams,
@@ -129,7 +130,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
 				content: [{ type: "text", text: `${formatTaskRecordResult(finalRecord, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
+				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, cwdSnapshot: sanitizeCwdSnapshot(finalRecord.cwdSnapshot), diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
 			};
 		},
 		renderCall(_args, _theme, _context) {

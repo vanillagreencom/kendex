@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { publishSubagentActivity } from "./activity.js";
+import { sanitizeCwdSnapshot, sanitizeCwdSnapshotText, snapshotCwdGitState } from "./cwd-snapshot.js";
 import { atomicWriteFile, withCrossProcessFileLock } from "./file-lock.js";
 import { readLastAssistantTextFromTranscript, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
@@ -17,6 +18,7 @@ import {
 import { randomHex } from "./random.js";
 import {
 	type DashboardKind,
+	type CwdSnapshot,
 	MALFORMED_COMPLETION_GRACE_MS,
 	PACKAGE_ID,
 	type PaneCompletion,
@@ -176,11 +178,144 @@ export function normalizeUsageStats(value: unknown): UsageStats | undefined {
 }
 
 export function appendUniqueDiagnostic(existing: string[] | undefined, diagnostic: string): string[] {
-	const compact = diagnostic.replace(/\s+/g, " ").trim();
+	const compact = sanitizeCwdSnapshotText(diagnostic, { multiline: true }).replace(/\s+/g, " ").trim();
 	if (!compact) return existing ?? [];
 	const diagnostics = [...(existing ?? [])];
 	if (!diagnostics.includes(compact)) diagnostics.push(compact);
 	return diagnostics.slice(-8);
+}
+
+function appendUniqueDiagnostics(existing: string[] | undefined, diagnostics: string[]): string[] | undefined {
+	let next = existing;
+	for (const diagnostic of diagnostics) next = appendUniqueDiagnostic(next, diagnostic);
+	return next;
+}
+
+function mergeNeedsCompletionCwdState(record: PaneTaskRecord, cwdState: { cwdSnapshot?: CwdSnapshot; diagnostics: string[] }): Pick<PaneTaskRecord, "cwdSnapshot" | "diagnostics"> {
+	return {
+		cwdSnapshot: cwdState.cwdSnapshot ?? sanitizeCwdSnapshot(record.cwdSnapshot),
+		diagnostics: appendUniqueDiagnostics(record.diagnostics, cwdState.diagnostics),
+	};
+}
+
+async function snapshotNeedsCompletionCwd(
+	runtimeRoot: string,
+	agentName: string,
+	cwd: string | undefined,
+): Promise<{ cwdSnapshot?: CwdSnapshot; diagnostics: string[] }> {
+	let snapshotCwd = typeof cwd === "string" ? cwd : undefined;
+	if (!snapshotCwd) {
+		try {
+			const registry = await readPaneRegistry(runtimeRoot);
+			const registryCwd = registry[agentName]?.cwd;
+			if (typeof registryCwd === "string") snapshotCwd = registryCwd;
+		} catch {
+			// Missing/invalid pane registry just means there is no cwd signal to attach.
+		}
+	}
+	const diagnostics: string[] = [];
+	try {
+		const cwdSnapshot = await snapshotCwdGitState(snapshotCwd, (diagnostic) => diagnostics.push(sanitizeCwdSnapshotText(diagnostic)));
+		return { cwdSnapshot, diagnostics };
+	} catch (error) {
+		diagnostics.push(sanitizeCwdSnapshotText(`cwdSnapshot failed for ${agentName}: ${stringifyError(error)}`));
+		return { diagnostics };
+	}
+}
+
+async function patchNeedsCompletionCwdSnapshot(
+	runtimeRoot: string,
+	agentName: string,
+	taskId: string,
+	cwd?: string,
+): Promise<PaneTaskRecord | undefined> {
+	try {
+		const cwdState = await snapshotNeedsCompletionCwd(runtimeRoot, agentName, cwd);
+		let updated: PaneTaskRecord | undefined;
+		if (!cwdState.cwdSnapshot && cwdState.diagnostics.length === 0) {
+			const records = await readTaskRegistry(runtimeRoot);
+			return records[taskId];
+		}
+		await updateTaskRegistry(runtimeRoot, (records) => {
+			const existing = records[taskId];
+			if (!existing || existing.status !== "needs_completion") {
+				updated = existing;
+				return;
+			}
+			const cwdPatch = mergeNeedsCompletionCwdState(existing, cwdState);
+			updated = {
+				...existing,
+				...cwdPatch,
+				updatedAt: new Date().toISOString(),
+			};
+			records[taskId] = updated;
+		});
+		return updated;
+	} catch (error) {
+		return await appendNeedsCompletionCwdPatchFailure(runtimeRoot, taskId, agentName, error);
+	}
+}
+
+async function appendNeedsCompletionCwdPatchFailure(
+	runtimeRoot: string,
+	taskId: string,
+	agentName: string,
+	patchError: unknown,
+): Promise<PaneTaskRecord | undefined> {
+	let updated: PaneTaskRecord | undefined;
+	try {
+		await updateTaskRegistry(runtimeRoot, (records) => {
+			const existing = records[taskId];
+			if (!existing || existing.status !== "needs_completion") {
+				updated = existing;
+				return;
+			}
+			updated = {
+				...existing,
+				diagnostics: appendUniqueDiagnostic(existing.diagnostics, `cwdSnapshot patch failed for ${agentName}: ${stringifyError(patchError)}`),
+				cwdSnapshot: sanitizeCwdSnapshot(existing.cwdSnapshot),
+				updatedAt: new Date().toISOString(),
+			};
+			records[taskId] = updated;
+		});
+	} catch (fallbackWriteError) {
+		await recordCwdPatchFallbackWriteFailure(runtimeRoot, agentName, taskId, patchError, fallbackWriteError);
+		return undefined;
+	}
+	return updated;
+}
+
+async function recordCwdPatchFallbackWriteFailure(
+	runtimeRoot: string,
+	agentName: string,
+	taskId: string,
+	patchError: unknown,
+	fallbackWriteError: unknown,
+): Promise<void> {
+	const message = `cwdSnapshot patch failure diagnostic could not be persisted for agent=${agentName} taskId=${taskId} runtimeRoot=${runtimeRoot}: fallback write failed: ${stringifyError(fallbackWriteError)}; original patch error: ${stringifyError(patchError)}`;
+	console.warn(message);
+	const logFile = path.join(runtimeRoot, "subagent-diagnostics.jsonl");
+	const entry = {
+		ts: new Date().toISOString(),
+		source: "subagent.tasks.cwdSnapshot",
+		runtimeRoot,
+		agentName,
+		taskId,
+		message,
+		patchError: stringifyError(patchError),
+		fallbackWriteError: stringifyError(fallbackWriteError),
+	};
+	try {
+		await fs.promises.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
+	} catch {
+		// Console warning above is the last-resort diagnostic if the runtime log cannot be written.
+	}
+}
+
+function scheduleNeedsCompletionCwdSnapshotPatch(runtimeRoot: string, agentName: string, taskId: string, cwd?: string): void {
+	void patchNeedsCompletionCwdSnapshot(runtimeRoot, agentName, taskId, cwd).catch(async (error) => {
+		await appendNeedsCompletionCwdPatchFailure(runtimeRoot, taskId, agentName, error);
+	});
 }
 
 export function taskNeedsSummaryBackfill(record: PaneTaskRecord): boolean {
@@ -278,6 +413,7 @@ export async function markTaskNeedsCompletion(
 	agentName: string,
 	taskId: string,
 	options: {
+		cwd?: string;
 		diagnostic: string;
 		doneFile?: string;
 		outboxFile?: string;
@@ -309,9 +445,12 @@ export async function markTaskNeedsCompletion(
 			createdAt: existing?.createdAt ?? now,
 			updatedAt: now,
 			diagnostics: appendUniqueDiagnostic(existing?.diagnostics, options.diagnostic),
+			cwdSnapshot: sanitizeCwdSnapshot(existing?.cwdSnapshot),
 		};
 		records[taskId] = updated;
 	});
+	if (!updated || isTerminalTaskStatus(updated.status)) return updated;
+	scheduleNeedsCompletionCwdSnapshotPatch(runtimeRoot, updated.agent, taskId, options.cwd);
 	return updated;
 }
 
@@ -330,10 +469,12 @@ export async function recordTaskDispatchFailure(
 	}
 
 	let status: PaneTaskStatus | undefined;
+	let agentForSnapshot: string | undefined;
 	await updateTaskRegistry(runtimeRoot, (records) => {
 		const existing = records[taskId];
 		if (!existing || isTerminalTaskStatus(existing.status)) return;
 		status = restoredToInbox ? "queued" : "needs_completion";
+		agentForSnapshot = existing.agent;
 		records[taskId] = {
 			...existing,
 			status,
@@ -341,8 +482,10 @@ export async function recordTaskDispatchFailure(
 			processingFile: restoredToInbox ? undefined : paths.processing,
 			updatedAt: new Date().toISOString(),
 			diagnostics: appendUniqueDiagnostic(existing.diagnostics, diagnostic),
+			cwdSnapshot: sanitizeCwdSnapshot(existing.cwdSnapshot),
 		};
 	});
+	if (status === "needs_completion" && agentForSnapshot) await patchNeedsCompletionCwdSnapshot(runtimeRoot, agentForSnapshot, taskId);
 
 	return { restoredToInbox, status };
 }
@@ -417,15 +560,21 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 		doneFile: record.doneFile ?? (doneExists ? paths.doneFile : undefined),
 		outboxFile: record.outboxFile ?? paths.outboxFile,
 	};
+	let cwdSnapshot = sanitizeCwdSnapshot(record.cwdSnapshot);
+	const shouldPatchCwdSnapshot = nextStatus === "needs_completion" && (!cwdSnapshot || nextStatus !== record.status);
 	const changed =
 		nextStatus !== record.status ||
 		diagnostics.join("\n") !== (record.diagnostics ?? []).join("\n") ||
+		JSON.stringify(cwdSnapshot) !== JSON.stringify(record.cwdSnapshot) ||
 		pathPatch.inboxFile !== record.inboxFile ||
 		pathPatch.processingFile !== record.processingFile ||
 		pathPatch.doneFile !== record.doneFile ||
 		pathPatch.outboxFile !== record.outboxFile;
 
-	if (!changed) return { record, diagnostics: [...diagnostics, ...artifactDiagnostics] };
+	if (!changed) {
+		const patched = shouldPatchCwdSnapshot ? await patchNeedsCompletionCwdSnapshot(runtimeRoot, record.agent, record.taskId) : undefined;
+		return { record: patched ?? record, diagnostics: [...(patched?.diagnostics ?? diagnostics), ...artifactDiagnostics] };
+	}
 
 	let updated = record;
 	await updateTaskRegistry(runtimeRoot, (records) => {
@@ -435,11 +584,13 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 			...pathPatch,
 			status: nextStatus,
 			diagnostics,
+			cwdSnapshot,
 			updatedAt: new Date().toISOString(),
 		};
 		records[record.taskId] = updated;
 	});
-	return { record: updated, diagnostics: [...diagnostics, ...artifactDiagnostics] };
+	if (shouldPatchCwdSnapshot) updated = await patchNeedsCompletionCwdSnapshot(runtimeRoot, updated.agent, updated.taskId) ?? updated;
+	return { record: updated, diagnostics: [...(updated.diagnostics ?? diagnostics), ...artifactDiagnostics] };
 }
 
 export function latestTaskRecord(records: PaneTaskRegistry, agent?: string): PaneTaskRecord | undefined {
@@ -618,21 +769,51 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						filesChanged: detail.filesChanged,
 						validation: detail.validation,
 						notes: detail.notes,
+						cwdSnapshot: sanitizeCwdSnapshot(existing?.cwdSnapshot),
+						diagnostics: existing?.diagnostics,
 						updatedAt: detail.completedAt,
 						completedAt: detail.completedAt,
 					};
 				});
-				emitSubagentEvent(pi, detail.status === "completed" ? "subagents:completed" : "subagents:failed", {
+				const updatedRecord = tasks[detail.taskId];
+				const completionEvent = detail.status === "completed"
+					? "subagents:completed"
+					: detail.status === "needs_completion"
+						? "subagents:needs_completion"
+						: "subagents:failed";
+				emitSubagentEvent(pi, completionEvent, {
 					mode: "pane",
 					agent: detail.agent,
 					paneId: detail.paneId,
 					taskId: detail.taskId,
 					status: detail.status,
+					reason: completion.reason,
 					summary: detail.summary,
 					runtimeRoot,
 					transcriptPath: detail.transcriptPath,
 					completionPath: detail.archivePath ?? detail.sourcePath,
+					...(updatedRecord?.cwdSnapshot ? { cwdSnapshot: updatedRecord.cwdSnapshot } : {}),
 				});
+				if (detail.status === "needs_completion") {
+					const patchedRecord = await patchNeedsCompletionCwdSnapshot(runtimeRoot, detail.agent, detail.taskId);
+					if (patchedRecord) tasks = { ...tasks, [detail.taskId]: patchedRecord };
+					if (patchedRecord?.cwdSnapshot || patchedRecord?.diagnostics?.length) {
+						emitSubagentEvent(pi, "subagents:needs_completion", {
+							mode: "pane",
+							agent: detail.agent,
+							paneId: detail.paneId,
+							taskId: detail.taskId,
+							status: detail.status,
+							reason: completion.reason,
+							summary: detail.summary,
+							runtimeRoot,
+							transcriptPath: detail.transcriptPath,
+							completionPath: detail.archivePath ?? detail.sourcePath,
+							diagnostics: patchedRecord.diagnostics,
+							...(patchedRecord.cwdSnapshot ? { cwdSnapshot: patchedRecord.cwdSnapshot } : {}),
+						});
+					}
+				}
 			} catch (error) {
 				const code = typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined;
 				if (!parseFailure && code === "ENOENT") continue;
@@ -665,6 +846,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						runtimeRoot,
 						transcriptPath: updated.transcriptPath,
 						completionPath: filePath,
+						...(updated.cwdSnapshot ? { cwdSnapshot: updated.cwdSnapshot } : {}),
 					});
 				}
 			}

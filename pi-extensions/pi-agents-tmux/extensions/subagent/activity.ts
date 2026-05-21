@@ -1,3 +1,4 @@
+import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import type { CwdSnapshot } from "./types.js";
 
 export type PiActivitySeverity = "debug" | "info" | "success" | "warning" | "error";
@@ -146,22 +147,20 @@ function detailsFor(type: string, eventName: string, payload: Record<string, unk
 	for (const key of ["runtimeRoot", "transcriptPath", "completionPath", "sessionFile", "sessionKey", "sessionMode", "model", "effort", "error", "cwdPid", "expectedCwd", "actualCwd", "actualCwdRaw", "cwdReason"] as const) {
 		if (payload[key] !== undefined) details[key] = payload[key];
 	}
-	if (type === "agent.empty_after_compact") {
-		const cwdSnapshot = cwdSnapshotDetails(payload.cwdSnapshot);
-		if (cwdSnapshot) details.cwdSnapshot = cwdSnapshot;
-	}
+	const cwdSnapshot = cwdSnapshotDetails(payload.cwdSnapshot);
+	if (cwdSnapshot) details.cwdSnapshot = cwdSnapshot;
 	return details;
 }
 
 function cwdSnapshotDetails(value: unknown): Pick<CwdSnapshot, "cwd" | "head" | "dirty" | "status" | "lastCommit"> | undefined {
-	if (!value || typeof value !== "object") return undefined;
-	const record = value as Partial<CwdSnapshot>;
+	const record = sanitizeCwdSnapshot(value);
+	if (!record) return undefined;
 	return {
-		cwd: typeof record.cwd === "string" ? record.cwd : "",
-		dirty: record.dirty === true,
-		head: typeof record.head === "string" ? record.head : "",
-		lastCommit: { subject: typeof record.lastCommit?.subject === "string" ? record.lastCommit.subject : "" },
-		status: typeof record.status === "string" ? record.status : "",
+		cwd: record.cwd,
+		dirty: record.dirty,
+		head: record.head,
+		lastCommit: { subject: record.lastCommit.subject },
+		status: record.status,
 	};
 }
 

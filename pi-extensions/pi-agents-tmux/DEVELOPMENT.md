@@ -94,10 +94,15 @@ stop_subagent { "agent": "iced" }
 
 `wait_for_subagent_idle` reports `idle-after-busy` only after observing the pane leave idle first; if it never becomes busy it returns `never-busy`.
 
+## Needs-completion cwd snapshots
+
+All `needs_completion` records try to include a `cwdSnapshot` when the worker cwd is known. Pane-mode marks use the pane registry cwd; bg compact-then-empty detection uses the bg worker cwd. Snapshot fields are `head` (validated 40-hex), `dirty` (from a filter-safe index/stat snapshot), and `lastCommit.subject`.
+Pane `markTaskNeedsCompletion` persists and returns the `needs_completion` record before kicking off cwd snapshot patching, so best-effort git timeouts cannot delay caller notification of the original failure.
+`cwdSnapshot` reads are bounded and read-only: each git call has a 5s timeout, uses `GIT_OPTIONAL_LOCKS=0`, `--no-optional-locks`, `-c core.fsmonitor=false`, `-c core.untrackedCache=false`, `-c log.showSignature=false`, and a minimal Git env so snapshotting does not invoke repository fsmonitor/signature/filter helpers or write to the worker repo. Dirty-state collection avoids `git status` and uses index-vs-HEAD metadata, index stat metadata, deleted-file listing, and untracked-file listing instead; the index-debug read has a larger bounded buffer than other git probes so the tracked-file scan can apply its file cap before Node maxBuffer handling. Tracked-file stat scanning has a file cap and sub-second deadline and appends an incomplete-scan diagnostic when truncated, malformed, or blocked by stat errors.
+
 ## Compact-then-empty needs-completion detector
 
-For vstack#38, bg subagent runs detect `session_compact → agent_end{content:[]}` or content with no `type:"text"` parts on the post-compact bridge-stream slice only. This emits `subagents:needs_completion` with `reason: "compact-then-empty"` and `cwdSnapshot` fields: `head` (validated 40-hex), `dirty` (from `git status --porcelain=v1`), and `lastCommit.subject`.
-`cwdSnapshot` reads are bounded and read-only: each git call has a 5s timeout, uses `GIT_OPTIONAL_LOCKS=0` and `--no-optional-locks`, and must not write to the worker repo.
+For vstack#38, bg subagent runs detect `session_compact → agent_end{content:[]}` or content with no `type:"text"` parts on the post-compact bridge-stream slice only. This emits `subagents:needs_completion` with `reason: "compact-then-empty"`.
 The detector is mutually exclusive with the `context_length_exceeded` throw-path retry from PR #35: retry logic handles thrown overflows first, and compact-then-empty only classifies attempts that did not trigger that retry path. Retry detection only trusts error envelopes/stderr; normal tool output or assistant text that mentions `context_length_exceeded` must not trigger a retry.
 
 ## Agent-end watchdog (vstack#66)
@@ -139,7 +144,7 @@ Completed task records store the durable result summary in `PaneTaskRecord.summa
 
 ## Activity broker publication
 
-When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, subagent lifecycle notifications publish best-effort `agent.*` broker events. Internal `subagents:created`, `queued`, `started`, `steered`, `needs_completion`, `completed`, and `failed` signals map to `agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, and `agent.pane_cwd_stale`. Refs carry `task_id` and `agent`; details include session mode/key, pane id, transcript/completion paths, model/effort, reason/status, pane-cwd-stale cwd fields, and the compact-then-empty `cwdSnapshot` when present.
+When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, subagent lifecycle notifications publish best-effort `agent.*` broker events. Internal `subagents:created`, `queued`, `started`, `steered`, `needs_completion`, `completed`, and `failed` signals map to `agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, and `agent.pane_cwd_stale`. Refs carry `task_id` and `agent`; details include session mode/key, pane id, transcript/completion paths, model/effort, reason/status, pane-cwd-stale cwd fields, and `cwdSnapshot` when present.
 
 Broker publication is isolated in `extensions/subagent/activity.ts` and must stay fail-open: activity publisher errors do not affect task dispatch, completion, steering, or result retrieval.
 

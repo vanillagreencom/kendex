@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { formatSize, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer } from "@earendil-works/pi-tui";
+import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import { dashboardTraceRef } from "./dashboard.js";
 import {
 	addArtifactPathSection,
@@ -162,6 +163,7 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 	const files = record.filesChanged?.length ? record.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported";
 	const validation = record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported";
 	const diagnostics = record.diagnostics?.length ? record.diagnostics.map((item) => `- ${item}`).join("\n") : "";
+	const cwdSnapshot = record.cwdSnapshot ? formatCwdSnapshot(record.cwdSnapshot) : "";
 	const terminal = record.status === "completed" || record.status === "failed" || record.status === "blocked";
 	const summary = record.summary?.trim()
 		? completionBodyWithoutPromptEcho(record.summary, record.task)
@@ -190,6 +192,7 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 		"### Validation",
 		validation,
 		record.notes ? `\n### Notes\n${record.notes}` : "",
+		cwdSnapshot ? `\n### CWD Snapshot\n${cwdSnapshot}` : "",
 		diagnostics ? `\n### Diagnostics\n${diagnostics}` : "",
 	];
 	if (verbose) {
@@ -211,6 +214,19 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 		if (artifactLines.length > 0) lines.push("", ...artifactLines);
 	}
 	return lines.filter(Boolean).join("\n");
+}
+
+function formatCwdSnapshot(snapshot: PaneTaskRecord["cwdSnapshot"]): string {
+	snapshot = sanitizeCwdSnapshot(snapshot);
+	if (!snapshot) return "";
+	const dirty = snapshot.dirty ? "dirty" : "clean";
+	const lines = [
+		`CWD: ${snapshot.cwd}`,
+		`HEAD: ${snapshot.head.slice(0, 12)} (${dirty})`,
+		`Last commit: ${snapshot.lastCommit.subject}`,
+	];
+	if (snapshot.status.trim()) lines.push("Status:", "```", snapshot.status, "```");
+	return lines.join("\n");
 }
 
 export function recordTraceRef(record: PaneTaskRecord): string {

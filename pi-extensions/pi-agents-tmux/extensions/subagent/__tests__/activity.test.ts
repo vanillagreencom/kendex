@@ -79,6 +79,58 @@ describe("subagent activity", () => {
 		});
 	});
 
+	test("generic needs_completion includes cwdSnapshot details", () => {
+		const events = installBroker();
+		publishSubagentActivity("subagents:needs_completion", {
+			agent: "rust",
+			cwdSnapshot: {
+				cwd: "/repo",
+				dirty: false,
+				head: "def456",
+				lastCommit: { subject: "finished work" },
+				status: "",
+			},
+			reason: "turn-ended-without-complete-subagent",
+			status: "needs_completion",
+			summary: "missing completion",
+			taskId: "task-needs",
+		});
+
+		expect(events[0]).toMatchObject({ importance: "important", severity: "warning", type: "agent.needs_completion" });
+		expect(events[0]?.details?.cwdSnapshot).toEqual({
+			cwd: "/repo",
+			dirty: false,
+			head: "def456",
+			lastCommit: { subject: "finished work" },
+			status: "",
+		});
+	});
+
+	test("cwdSnapshot details strip controls and escape fences", () => {
+		const events = installBroker();
+		publishSubagentActivity("subagents:needs_completion", {
+			agent: "rust",
+			cwdSnapshot: {
+				cwd: "/repo\u001b[31m/evil```path",
+				dirty: true,
+				head: "abc123",
+				lastCommit: { subject: "fix \u001b[32m```subject" },
+				status: " M file.ts\n```\u001b[0m",
+			},
+			status: "needs_completion",
+			summary: "missing completion",
+			taskId: "task-sanitize",
+		});
+
+		const snapshot = events[0]?.details?.cwdSnapshot as { cwd: string; lastCommit: { subject: string }; status: string };
+		expect(snapshot.cwd).not.toContain("\u001b");
+		expect(snapshot.cwd).not.toContain("```");
+		expect(snapshot.lastCommit.subject).not.toContain("\u001b");
+		expect(snapshot.lastCommit.subject).not.toContain("```");
+		expect(snapshot.status).not.toContain("\u001b");
+		expect(snapshot.status).not.toContain("```");
+	});
+
 	test("builder returns null for unrelated subagent bus events", () => {
 		expect(buildSubagentActivity("subagents:ready", { mode: "extension" })).toBeNull();
 	});

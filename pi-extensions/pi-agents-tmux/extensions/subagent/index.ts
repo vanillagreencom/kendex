@@ -28,6 +28,7 @@ import {
 	renderDashboardWidgetLines,
 	sortDashboardItems,
 } from "./dashboard.js";
+import { sanitizeCwdSnapshot, sanitizeCwdSnapshotText } from "./cwd-snapshot.js";
 import {
 	autoShowAgentDashboardOnce,
 	cycleAgentDashboard,
@@ -614,6 +615,16 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	const diagnosticsFromEvent = (event: Record<string, unknown>, existing: string[] | undefined): string[] | undefined => {
+		let diagnostics = existing;
+		const values = Array.isArray(event.diagnostics) ? event.diagnostics : [];
+		for (const value of values) {
+			if (typeof value !== "string") continue;
+			diagnostics = appendUniqueDiagnostic(diagnostics, sanitizeCwdSnapshotText(value, { multiline: true }));
+		}
+		return diagnostics;
+	};
+
 	const persistTaskEvent = (event: Record<string, unknown>, status: PaneTaskStatus) => {
 		const runtimeRoot = typeof event.runtimeRoot === "string" ? event.runtimeRoot : undefined;
 		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
@@ -629,6 +640,8 @@ export default function (pi: ExtensionAPI) {
 			const summary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined) ?? existing?.summary;
 			const sessionMode = normalizeEventSessionMode(event.sessionMode) ?? existing?.sessionMode;
 			const sessionKey = normalizeEventSessionKey(event.sessionKey) ?? existing?.sessionKey;
+			const cwdSnapshot = sanitizeCwdSnapshot(event.cwdSnapshot) ?? sanitizeCwdSnapshot(existing?.cwdSnapshot);
+			const diagnostics = diagnosticsFromEvent(event, existing?.diagnostics);
 			records[taskId] = {
 				...existing,
 				taskId,
@@ -650,6 +663,8 @@ export default function (pi: ExtensionAPI) {
 				model,
 				effort,
 				summary,
+				cwdSnapshot,
+				diagnostics,
 				createdAt: existing?.createdAt ?? (typeof event.timestamp === "string" ? event.timestamp : now),
 				updatedAt: now,
 				...(isTerminalTaskStatus(status) ? { completedAt: now } : {}),
@@ -794,7 +809,13 @@ export default function (pi: ExtensionAPI) {
 	const taskRecordDashboardMessage = (record: PaneTaskRecord): string | undefined => {
 		const summary = normalizeSummaryText(record.summary);
 		if (summary) return summary;
-		if (record.status === "needs_completion") return record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
+		if (record.status === "needs_completion") {
+			const base = record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
+			const snapshot = sanitizeCwdSnapshot(record.cwdSnapshot);
+			if (!snapshot) return base;
+			const dirty = snapshot.dirty ? "dirty" : "clean";
+			return `${base} · HEAD ${snapshot.head.slice(0, 12)} (${dirty}) ${snapshot.lastCommit.subject}`;
+		}
 		if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
 		return record.diagnostics?.at(-1) ?? record.task;
 	};
@@ -1359,7 +1380,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (!pendingMatches && !manualCompletionOk) {
-				await markTaskNeedsCompletion(runtimeRoot, childAgentName, taskId, {
+				const updatedNeedsCompletion = await markTaskNeedsCompletion(runtimeRoot, childAgentName, taskId, {
 					diagnostic: missingDiagnostic,
 					outboxFile,
 					processingFile: activeTaskFile,
@@ -1369,7 +1390,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendMessage({
 					customType: "subagent-missing-completion",
 					content: missingDiagnostic,
-					details: { agent: childAgentName, taskId, outboxFile, processingFile: activeTaskFile },
+					details: { agent: childAgentName, taskId, outboxFile, processingFile: activeTaskFile, cwdSnapshot: updatedNeedsCompletion?.cwdSnapshot },
 					display: true,
 				});
 				// Intentionally do NOT clear childCurrentTaskFile: the inbox poll guard

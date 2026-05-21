@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -12,6 +12,7 @@ import {
 	type TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
+import { sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFileForTests, snapshotCwdGitState } from "./cwd-snapshot.js";
 import { getFinalOutput, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
 import {
@@ -52,108 +53,33 @@ import {
 export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 type SpawnProcess = typeof spawn;
-type ExecFileProcess = typeof execFile;
 let spawnProcess: SpawnProcess = spawn;
-let execFileProcess: ExecFileProcess = execFile;
-const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
-const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 const MAX_RESULT_DIAGNOSTICS = 12;
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
 	spawnProcess = spawner ?? spawn;
 }
 
-export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
-	execFileProcess = execFileOverride ?? execFile;
+export function setGitExecFileForTests(execFileOverride?: Parameters<typeof setSnapshotGitExecFileForTests>[0]): void {
+	setSnapshotGitExecFileForTests(execFileOverride);
 }
 
 function appendResultDiagnostic(result: Pick<SingleResult, "diagnostics">, diagnostic: string): void {
-	const compact = diagnostic.replace(/\s+/g, " ").trim();
+	const compact = sanitizeCwdSnapshotText(diagnostic, { multiline: true }).replace(/\s+/g, " ").trim();
 	if (!compact) return;
 	const diagnostics = [...(result.diagnostics ?? [])];
 	if (!diagnostics.includes(compact)) diagnostics.push(compact);
 	result.diagnostics = diagnostics.slice(-MAX_RESULT_DIAGNOSTICS);
 }
 
-interface GitCommandResult {
-	error?: unknown;
-	stderr: string;
-	stdout: string;
-}
-
-function execGit(cwd: string, args: string[]): Promise<GitCommandResult> {
-	return new Promise((resolve, reject) => {
-		try {
-			execFileProcess(
-				"git",
-				["--no-optional-locks", "-C", cwd, ...args],
-				{
-					encoding: "utf8",
-					env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-					maxBuffer: GIT_SNAPSHOT_MAX_BUFFER,
-					timeout: GIT_SNAPSHOT_TIMEOUT_MS,
-				},
-				(error, stdout, stderr) => {
-					resolve({ error: error ?? undefined, stderr: String(stderr ?? "").trimEnd(), stdout: String(stdout ?? "").trimEnd() });
-				},
-			);
-		} catch (error) {
-			reject(error);
-		}
-	});
-}
-
-function gitFailureDiagnostic(cwd: string, args: string[], result: GitCommandResult | { error: unknown; stderr?: string }): string {
-	const stderr = result.stderr?.trim();
-	const detail = stderr || stringifyError(result.error);
-	return `cwdSnapshot git failed in ${cwd}: git --no-optional-locks ${args.join(" ")} (${detail})`;
-}
-
-async function readGit(cwd: string, args: string[], addDiagnostic: (diagnostic: string) => void): Promise<string | undefined> {
-	try {
-		const result = await execGit(cwd, args);
-		if (result.error) {
-			addDiagnostic(gitFailureDiagnostic(cwd, args, result));
-			return undefined;
-		}
-		return result.stdout;
-	} catch (error) {
-		addDiagnostic(gitFailureDiagnostic(cwd, args, { error }));
-		return undefined;
-	}
-}
-
-async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic: (diagnostic: string) => void): Promise<CwdSnapshot | undefined> {
-	if (!cwd) return undefined;
-	const resolvedCwd = path.resolve(cwd);
-	const insideWorkTree = (await readGit(resolvedCwd, ["rev-parse", "--is-inside-work-tree"], addDiagnostic))?.trim();
-	if (insideWorkTree !== "true") return undefined;
-	// Snapshot commands are read-only and run with --no-optional-locks plus GIT_OPTIONAL_LOCKS=0
-	// so agent triage never creates .git/index.lock or blocks concurrent worker git operations.
-	const [rawHead, dirtyStatus, lastCommitSubject] = await Promise.all([
-		readGit(resolvedCwd, ["rev-parse", "HEAD"], addDiagnostic),
-		readGit(resolvedCwd, ["status", "--porcelain=v1"], addDiagnostic),
-		readGit(resolvedCwd, ["log", "-1", "--pretty=%s"], addDiagnostic),
-	]);
-	if (rawHead == null || dirtyStatus == null || lastCommitSubject == null) return undefined;
-	const head = rawHead.trim();
-	if (!/^[0-9a-f]{40}$/.test(head)) {
-		addDiagnostic(`cwdSnapshot git returned malformed HEAD for ${resolvedCwd}: ${JSON.stringify(rawHead)}`);
-		return undefined;
-	}
-	return {
-		cwd: resolvedCwd,
-		dirty: dirtyStatus.length > 0,
-		dirtyStatus,
-		head,
-		lastCommit: { subject: lastCommitSubject },
-		lastCommitSubject,
-		status: dirtyStatus,
-	};
-}
-
 function transcriptFullStreamEnabled(): boolean {
 	return /^(1|true|yes|on)$/i.test(process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL?.trim() ?? "");
+}
+
+function streamEventName(event: any): string | undefined {
+	if (typeof event?.event === "string") return event.event;
+	if (typeof event?.type === "string") return event.type;
+	return undefined;
 }
 
 function shouldAppendTranscriptEvent(eventName: string | undefined, fullStream = transcriptFullStreamEnabled()): boolean {
