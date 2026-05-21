@@ -2,7 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { transcriptRiskState, type TranscriptRiskState } from "./compaction.js";
+import type { TranscriptRiskResult } from "./budget-guard.js";
+import { DEFAULT_TRANSCRIPT_RISK_WARN_CHARS } from "./constants.js";
+import { settingNumber } from "./settings.js";
+import { transcriptRiskState } from "./transcript-risk.js";
+
+type TranscriptRiskState = TranscriptRiskResult;
 
 type QolContextColor = "accent" | "success" | "warning" | "error" | "muted" | "dim" | "borderMuted" | "text";
 
@@ -365,7 +370,8 @@ export function buildQolContextUsageDetails(pi: ExtensionAPI, ctx: ExtensionComm
 	const modelId = typeof model.id === "string" ? model.id : typeof model.model === "string" ? model.model : "unknown";
 	const modelName = typeof model.name === "string" ? model.name : modelId;
 	const thinking = typeof (pi as any).getThinkingLevel === "function" ? (pi as any).getThinkingLevel() : undefined;
-	const transcriptRisk = transcriptRiskState(ctx, qcuMessagesForRisk(ctx));
+	const transcriptThreshold = Math.floor(settingNumber("compaction.transcriptRiskWarnChars", DEFAULT_TRANSCRIPT_RISK_WARN_CHARS, ctx.cwd));
+	const transcriptRisk = transcriptRiskState(qcuMessagesForRisk(ctx), transcriptThreshold);
 	return {
 		builtinTools,
 		categories,
@@ -376,7 +382,7 @@ export function buildQolContextUsageDetails(pi: ExtensionAPI, ctx: ExtensionComm
 		freeTokens: safeContextWindow ? Math.max(0, safeContextWindow - tokens) : undefined,
 		mcpTools,
 		messageStats: stats,
-		transcriptRisk: transcriptRisk.chars > 0 ? transcriptRisk : undefined,
+		transcriptRisk: transcriptRisk.chars > 0 || transcriptRisk.error ? transcriptRisk : undefined,
 		model: {
 			contextWindow: safeContextWindow,
 			id: modelId,
@@ -498,7 +504,13 @@ export function renderQolContextUsageMessage(message: any, _options: any, theme:
 			qcuRenderDetailSection(lines, "Context / memory files", details.contextFiles, theme, { limit: 12, showDescriptions: false });
 			qcuRenderDetailSection(lines, "Skills · /skills", details.skills, theme, { empty: "No skill commands discovered.", limit: 14, showDescriptions: false });
 			qcuRenderDetailSection(lines, "Compact buffer", details.compactSummaries, theme, { limit: 6, showDescriptions: false });
-			if (details.transcriptRisk && details.transcriptRisk.exceeded) {
+			if (details.transcriptRisk?.error) {
+				const r = details.transcriptRisk;
+				const safe = r.error.replace(/[\x00-\x1f]+/g, " ").slice(0, 200);
+				lines.push("");
+				lines.push(`${theme.fg("warning", theme.bold("Transcript risk"))}`);
+				lines.push(`${qcuBranch(theme, "└")}${theme.fg("warning", `risk calculation failed: ${safe}`)}`);
+			} else if (details.transcriptRisk?.exceeded) {
 				const r = details.transcriptRisk;
 				lines.push("");
 				lines.push(`${theme.fg("warning", theme.bold("Transcript risk"))}`);

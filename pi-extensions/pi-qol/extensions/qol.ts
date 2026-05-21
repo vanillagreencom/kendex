@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import type { TUI } from "@earendil-works/pi-tui";
 import { criticalInfo, lastAssistantTextFromAgentEnd, needsDirection, taskStats } from "./qol/agent-end.js";
 import { getQuestionService, readCavemanBridge, type QuestionOpenedEventLike } from "./qol/bridges.js";
+import { BudgetGuardDriver } from "./qol/budget-guard-runtime.js";
 import {
 	budgetGuardTrigger,
 	compactionTriggerReason,
@@ -258,16 +259,13 @@ export default function qol(pi: ExtensionAPI): void {
 		idleCompactionTimer = undefined;
 	};
 
-	let lastBudgetGuardKey: string | undefined;
-	let budgetGuardInFlight = false;
+	const budgetGuardDriver = new BudgetGuardDriver();
 
 	const resetBudgetGuard = () => {
-		lastBudgetGuardKey = undefined;
-		budgetGuardInFlight = false;
+		budgetGuardDriver.reset();
 	};
 
 	const maybeFireBudgetGuard = (ctx: ExtensionContext) => {
-		if (budgetGuardInFlight) return;
 		let trigger;
 		try {
 			trigger = budgetGuardTrigger(ctx);
@@ -275,13 +273,7 @@ export default function qol(pi: ExtensionAPI): void {
 			if (isStaleCtxError(error)) return;
 			throw error;
 		}
-		if (!trigger) {
-			lastBudgetGuardKey = undefined;
-			return;
-		}
-		if (trigger.key === lastBudgetGuardKey) return;
-		lastBudgetGuardKey = trigger.key;
-		const notifySafely = (message: string, level: "info" | "error") => {
+		const notifySafely = (message: string, level: "info" | "warning" | "error") => {
 			try {
 				if (ctx.hasUI && settingBoolean("compaction.notify", true, ctx.cwd)) ctx.ui.notify(message, level);
 			} catch (error) {
@@ -289,25 +281,11 @@ export default function qol(pi: ExtensionAPI): void {
 				throw error;
 			}
 		};
-		notifySafely(`QOL budget guard starting compaction: ${trigger.reason}`, "info");
-		budgetGuardInFlight = true;
-		try {
-			ctx.compact?.({
-				customInstructions: `QOL budget guard triggered at agent_end because ${trigger.reason}. Bound the summary input, preserve current task state, decisions, files, blockers, and next steps.`,
-				onComplete: () => {
-					budgetGuardInFlight = false;
-					notifySafely("QOL budget guard compaction completed.", "info");
-				},
-				onError: (error: Error) => {
-					budgetGuardInFlight = false;
-					notifySafely(`QOL budget guard compaction failed: ${stringifyError(error)}`, "error");
-				},
-			});
-		} catch (error) {
-			budgetGuardInFlight = false;
-			if (isStaleCtxError(error)) return;
-			throw error;
-		}
+		budgetGuardDriver.dispatch({
+			compact: typeof ctx.compact === "function" ? ctx.compact.bind(ctx) : undefined,
+			notify: notifySafely,
+			trigger,
+		});
 	};
 
 	const scheduleIdleCompaction = (ctx: ExtensionContext) => {
@@ -718,8 +696,7 @@ export default function qol(pi: ExtensionAPI): void {
 	pi.on("session_compact", (_event, ctx) => {
 		// After a successful compaction usage drops below the budget, so reset the
 		// crossing key so the next threshold crossing re-fires the guard.
-		lastBudgetGuardKey = undefined;
-		budgetGuardInFlight = false;
+		budgetGuardDriver.noteSessionCompacted();
 		if (!ctx.hasUI) return;
 		void refreshStatusline(ctx);
 		requestRender();

@@ -837,7 +837,7 @@
         {
           "key": "compaction.handoffArtifactEnabled",
           "label": "Write pre-compaction handoff artifact",
-          "description": "Before compaction, write a JSON handoff artifact under ~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/ containing the previous summary, last task state, and recently-referenced file/artifact paths. Always writes a stamped file and a latest.json pointer.",
+          "description": "Before compaction, write a JSON handoff artifact under ~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/ containing the previous summary, last task state, and recently-referenced file/artifact paths. Always writes a stamped file and a latest.json pointer. Runs whenever the QOL bounded compaction handler runs — that is, on every budget-guard-triggered compaction (regardless of compaction.customEnabled), and on manual/idle compactions only when compaction.customEnabled is on. Write failures surface a QOL warning and a handoffArtifactError field in the compaction details.",
           "type": "boolean",
           "default": true,
           "category": "Compaction Budget Guard",
