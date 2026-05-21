@@ -128,10 +128,42 @@ describe("balanced policy caps inline text", () => {
 		});
 	});
 
+	test("payload between maxTextBlockKb and spillThresholdKb still truncates in balanced", () => {
+		// balanced: spill 48 KB, maxTextBlockKb 24 KB. A ~32 KB payload sits in the
+		// gap and must trigger truncation via the maxTextBlock cap.
+		withConfig({}, (cwd) => {
+			const ctx = fakeCtx(cwd);
+			const text = "x".repeat(32 * 1024);
+			expect(text.length).toBeGreaterThan(24 * 1024);
+			expect(text.length).toBeLessThan(48 * 1024);
+			const result = processText({ toolName: "grep", toolCallId: "gap1", input: {} }, ctx, text);
+			expect(result.meta?.truncated).toBe(true);
+			expect(result.meta?.reason).toBe("max-text-block");
+			expect(result.meta?.artifactPath).toBeTruthy();
+			expect(result.meta?.shownBytes).toBeLessThanOrEqual(24 * 1024);
+		});
+	});
+
+	test("payload between maxTextBlockKb and spillThresholdKb still truncates in compact", () => {
+		// compact: spill 16 KB, maxTextBlockKb 8 KB. A ~12 KB payload sits in
+		// the gap.
+		withConfig({ policyMode: "compact" }, (cwd) => {
+			const ctx = fakeCtx(cwd);
+			const text = "y".repeat(12 * 1024);
+			expect(text.length).toBeGreaterThan(8 * 1024);
+			expect(text.length).toBeLessThan(16 * 1024);
+			const result = processText({ toolName: "grep", toolCallId: "gap2", input: {} }, ctx, text);
+			expect(result.meta?.truncated).toBe(true);
+			expect(result.meta?.reason).toBe("max-text-block");
+			expect(result.meta?.artifactPath).toBeTruthy();
+			expect(result.meta?.shownBytes).toBeLessThanOrEqual(8 * 1024);
+		});
+	});
+
 	test("explicit knob overrides mode default", () => {
-		// compact spill threshold is 16 KB; explicitly lifting it to 80 plus lifting
-		// the line/width caps should let a ~26 KB text pass through untruncated.
-		withConfig({ policyMode: "compact", spillThresholdKb: 80, maxLineCount: 2000, maxLineWidth: 4000 }, (cwd) => {
+		// compact caps: spill 16 KB / maxTextBlockKb 8 KB. Lift every triggering
+		// cap explicitly and verify a ~26 KB text passes through untruncated.
+		withConfig({ policyMode: "compact", spillThresholdKb: 80, maxTextBlockKb: 80, maxLineCount: 2000, maxLineWidth: 4000 }, (cwd) => {
 			const ctx = fakeCtx(cwd);
 			const text = Array.from({ length: 600 }, (_, i) => `line ${i} ${"y".repeat(30)}`).join("\n");
 			const result = processText({ toolName: "grep", toolCallId: "ov1", input: {} }, ctx, text);

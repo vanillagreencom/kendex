@@ -138,4 +138,4 @@ Pi's built-in tools may truncate before reaching this extension. Custom tools th
 
 For truncated file reads, continue reading the original file with `offset`/`limit`. For truncated command output, the inline notice points at the artifact file on disk and reports per-turn and per-session bytes saved so users can see the transcript impact at a glance.
 
-Extension-produced custom messages (`pi.sendMessage`) are not currently policed by this extension — Pi's event hooks for custom-message content land in a separate planned follow-up. Add per-package caps in extensions that emit large custom messages.
+Extension-produced custom messages (`pi.sendMessage`) are not policed by this extension; add per-package caps in extensions that emit large custom messages.

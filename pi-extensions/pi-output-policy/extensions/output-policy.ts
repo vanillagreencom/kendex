@@ -445,7 +445,12 @@ export function processText(event: any, ctx: ExtensionContext, text: string): { 
 	}
 
 	const lines = working.split(/\r?\n/);
-	const tooLarge = byteLength(working) > spillThresholdBytes || lines.length > maxLineCount || lines.some((line) => line.length > maxLineWidth);
+	const workingBytes = byteLength(working);
+	const overSpill = workingBytes > spillThresholdBytes;
+	const overTextBlock = workingBytes > maxTextBytes;
+	const overLineCount = lines.length > maxLineCount;
+	const overLineWidth = lines.some((line) => line.length > maxLineWidth);
+	const tooLarge = overSpill || overTextBlock || overLineCount || overLineWidth;
 	if (!tooLarge) {
 		const widthSafe = lines.map((line) => truncateLine(line, maxLineWidth)).join("\n");
 		return minimized ? { text: `${widthSafe}\n\n[Output minimized: removed ${minimizedDroppedLines} repetitive/noisy line(s).]` } : { text: widthSafe };
@@ -460,6 +465,7 @@ export function processText(event: any, ctx: ExtensionContext, text: string): { 
 	const session = counters(sessionIdForContext(ctx));
 	session.turnSavedBytes += savedBytes;
 	session.sessionSavedBytes += savedBytes;
+	const reason = overSpill ? "spill-threshold" : overTextBlock ? "max-text-block" : "ui-safety";
 	const meta: TruncationMeta = {
 		...truncated.meta,
 		artifactError: artifact.error,
@@ -468,7 +474,7 @@ export function processText(event: any, ctx: ExtensionContext, text: string): { 
 		minimized,
 		minimizedDroppedLines,
 		policyMode: mode,
-		reason: byteLength(working) > spillThresholdBytes ? "spill-threshold" : "ui-safety",
+		reason,
 		savedBytes,
 		sessionSavedBytes: session.sessionSavedBytes,
 		truncated: true,
