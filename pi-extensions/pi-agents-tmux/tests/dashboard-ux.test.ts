@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -22,7 +22,7 @@ import {
 	traceViewerItems,
 } from "../extensions/subagent/browser.js";
 import { latestDashboardActivity, renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
-import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, highlightInlinePreview, oneLinePreview } from "../extensions/subagent/format.js";
+import { COMPLETION_SUMMARY_UNAVAILABLE, extractLastAssistantTextFromTranscriptContent, highlightInlinePreview, oneLinePreview, parseTranscriptUsage } from "../extensions/subagent/format.js";
 import { oneShotTranscriptPath } from "../extensions/subagent/paths.js";
 import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
 import { animateSpinnersEnabled } from "../extensions/subagent/settings.js";
@@ -357,6 +357,25 @@ test("Monitor session detail owns agent session model and effort metadata", asyn
 	assert.match(sessionDetail, /^Effort:\s+xhigh$/m);
 	assert.match(sessionDetail, /^Session:\s+resumed · lane: feature-x$/m);
 	assert.doesNotMatch(taskItems[0]!.text, /^(Agent|Session #|Model|Effort|Session)\s+/m);
+});
+
+test("transcript readers normalize bridge/nested event shapes", async () => {
+	const runtimeRoot = tempRuntime();
+	const transcriptPath = join(runtimeRoot, "mixed-shapes.jsonl");
+	writeFileSync(transcriptPath, [
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "event", event: "message_end", data: { message: { role: "assistant", content: [{ type: "text", text: "Bridge summary" }], usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 9 }, model: "bridge-model" } } } }),
+		JSON.stringify({ ts: "2026-05-14T05:01:00.000Z", event: { event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Nested summary" }], usage: { input: 7, output: 11, cacheRead: 13, cacheWrite: 17, totalTokens: 31 }, model: "nested-model" } } } }),
+	].join("\n"));
+
+	assert.equal(extractLastAssistantTextFromTranscriptContent(readFileSync(transcriptPath, "utf8")), "Nested summary");
+	assert.equal(latestDashboardActivity(dashboardItem({ status: "running", transcriptPath })), "said: Nested summary");
+	const usage = await parseTranscriptUsage(transcriptPath);
+	assert.equal(usage?.model, "bridge-model");
+	assert.equal(usage?.usage.input, 9);
+	assert.equal(usage?.usage.output, 14);
+	assert.equal(usage?.usage.cacheRead, 17);
+	assert.equal(usage?.usage.cacheWrite, 22);
+	assert.equal(usage?.usage.turns, 2);
 });
 
 test("completed one-shot record backfills summary from transcript final assistant text", async () => {

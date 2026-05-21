@@ -1194,6 +1194,9 @@ fn pi_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
     if !agent.name.eq_ignore_ascii_case("planner") {
         tools.push("question".into());
     }
+    if matches!(agent.role, crate::agent::AgentRole::Reviewer) {
+        tools.push("tasks_write".into());
+    }
     tools
 }
 
@@ -2669,6 +2672,47 @@ planner = { background = true }
             planner_line.contains("background = true"),
             "planner background should stay true: {planner_line}"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_agent_frontmatter_defaults_pi_reviewer_denies_tasks_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_pi_reviewer_deny_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(&path, "[agent-frontmatter.pi]\n").unwrap();
+
+        let reviewer = crate::agent::Agent {
+            name: "reviewer-test".into(),
+            description: "Reviewer agent".into(),
+            model: "sonnet".into(),
+            role: crate::agent::AgentRole::Reviewer,
+            color: None,
+            effort: Some("xhigh".into()),
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let mut harnesses = HashMap::new();
+        harnesses.insert("reviewer-test".into(), vec![crate::harness::Harness::Pi]);
+
+        write_agent_frontmatter_defaults(
+            &dir,
+            &[reviewer],
+            &harnesses,
+            &crate::mapping::MappingConfig::default(),
+        );
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        let deny_line = updated
+            .lines()
+            .find(|line| line.starts_with("reviewer-test =") && line.contains("deny-tools"))
+            .expect("reviewer pi frontmatter line");
+        assert!(deny_line.contains("tasks_write"), "{deny_line}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

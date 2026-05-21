@@ -33,6 +33,7 @@ import {
 	type UsageStats,
 } from "./types.js";
 import { glyphs, glyphStyle } from "./glyphs.js";
+import { normalizeTranscriptRecordEvent } from "./transcripts.js";
 
 export function dashboardKindLabel(kind: DashboardKind): string {
 	return kind === "oneshot" ? "bg" : kind;
@@ -160,8 +161,7 @@ function activityFromParsedEvent(parsed: any): string | undefined {
 	if (!parsed || typeof parsed !== "object") return undefined;
 	if (typeof parsed.text === "string" && parsed.stream === "stderr") return `stderr: ${compactActivityText(parsed.text)}`;
 	if (parsed.type === "exit" && typeof parsed.code !== "undefined") return `exit ${parsed.code}`;
-	const event = parsed.event && typeof parsed.event === "object" ? parsed.event : parsed;
-	const inner = event?.event && typeof event.event === "object" ? event.event : event;
+	const inner = normalizeTranscriptRecordEvent(parsed).event;
 	const type = typeof inner?.type === "string" ? inner.type : undefined;
 	const toolName = typeof inner?.toolName === "string" ? inner.toolName : toolNameFromPart(inner?.toolCall) ?? toolNameFromPart(inner?.tool_call);
 	if (type === "tool_execution_start" && toolName) return `tool: ${toolName}`;

@@ -7,6 +7,7 @@ import { Container, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, typ
 import { discoverAgents, type AgentConfig } from "./agents.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 import { subagentTreeStyle } from "./settings.js";
+import { normalizeTranscriptRecordEvent } from "./transcripts.js";
 import {
 	AGENT_ASCII_COLOR_SEQUENCE,
 	type AgentAsciiColor,
@@ -259,10 +260,7 @@ export async function parseTranscriptUsage(transcriptPath: string | undefined): 
 		} catch {
 			continue;
 		}
-		// Oneshot transcripts wrap pi events in {ts, stream, raw, event}; pane
-		// transcripts write the raw pi event directly. Unwrap one level so the
-		// rest of the parser sees the inner shape uniformly.
-		const inner = event?.event && typeof event.event === "object" ? event.event : event;
+		const inner = normalizeTranscriptRecordEvent(event).event;
 		if (!model && typeof inner?.modelId === "string") model = inner.modelId;
 		if (!model && typeof inner?.message?.model === "string") model = inner.message.model;
 		const usage = inner?.usage ?? inner?.message?.usage;
@@ -382,8 +380,7 @@ export function textFromMessageContent(content: unknown): string {
 
 function assistantTextFromTranscriptRecord(record: unknown): string | undefined {
 	if (!record || typeof record !== "object") return undefined;
-	const raw = record as Record<string, unknown>;
-	const event = raw.event && typeof raw.event === "object" ? raw.event as Record<string, unknown> : raw;
+	const event = normalizeTranscriptRecordEvent(record).event as Record<string, unknown>;
 	const message = event.message && typeof event.message === "object"
 		? event.message as Record<string, unknown>
 		: event.role === "assistant"

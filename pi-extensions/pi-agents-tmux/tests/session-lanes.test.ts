@@ -466,7 +466,9 @@ test("context_length_exceeded text in normal tool output does not trigger retry"
 
 test("aborted oneshot emits failed event with summary", async () => {
 	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([{ code: 0 }]);
+	const calls = installMockSpawn([{ code: 0, stdout: bridgeStdout([
+		shapedStreamEvent("top-level", "message_update", { message: { role: "assistant", content: [{ type: "text", text: "aborted partial" }] } }),
+	]) }]);
 	const controller = new AbortController();
 	controller.abort();
 	try {
@@ -493,6 +495,12 @@ test("aborted oneshot emits failed event with summary", async () => {
 		assert.ok(failed);
 		assert.equal(failed.payload.summary, "Agent was aborted before completion.");
 		assert.equal(failed.payload.error, "Agent was aborted");
+		const content = readFileSync(failed.payload.transcriptPath, "utf8");
+		assert.match(content, /message_update/);
+		assert.match(content, /aborted partial/);
+		assert.match(content, /"buffered":true/);
+		const updateRecords = content.trim().split(/\r?\n/).map((line) => JSON.parse(line)).filter((record) => record.event && transcriptEventName(record.event) === "message_update");
+		assert.equal(updateRecords.length, 1);
 	} finally {
 		setSingleAgentSpawnForTests();
 	}
