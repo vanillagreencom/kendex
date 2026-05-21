@@ -48,6 +48,11 @@ export const fdWakePending = (stateDir: string, sessionKey: string) => join(stat
 export const fdEventsFile = (stateDir: string, sessionKey: string) => join(stateDir, `fd-daemon-events-${sessionKey}.jsonl`);
 export const fdHeartbeatFile = (stateDir: string, sessionKey: string) => join(stateDir, `fd-daemon-${sessionKey}.heartbeat`);
 export const fdWakeEventsLog = (stateDir: string, sessionKey: string) => join(stateDir, `fd-wake-events-${sessionKey}.log`);
+// vstack#216: per-session snapshot of per-pane subscriber binding state,
+// refreshed by the run loop each heartbeat. `flightdeck-daemon health`
+// reads it to surface which panes are bound vs. silently unbound — the
+// only way the operator can detect a bind-skip without tailing the log.
+export const fdSubscriberStatusFile = (stateDir: string, sessionKey: string) => join(stateDir, `fd-daemon-${sessionKey}.subscribers.json`);
 
 export const fdAdapterFreshnessCacheFile = () => join(fdResolveStateDir(), "fd-adapter-freshness-cache.json");
 export const fdAdapterFreshnessCacheLock = () => join(fdResolveStateDir(), "fd-adapter-freshness-cache.lock");

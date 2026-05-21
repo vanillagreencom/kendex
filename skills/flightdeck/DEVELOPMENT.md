@@ -157,6 +157,23 @@ The background daemon (`flightdeck-daemon`) is configurable but defaults are fin
 | `FD_SPAWN_MODE` | `detach` | `detach` (setsid+nohup) or `tmux-window` (visible daemon window). Use `tmux-window` for codex/opencode/pi masters where backgrounding is unreliable. |
 | `FD_MAX_LIFETIME` | `14400` | Seconds before daemon restarts itself for a fresh process (`0` disables). |
 | `FD_STATE_DIR` | `$XDG_RUNTIME_DIR/flightdeck` (or `/tmp/flightdeck-$UID`) | Daemon-private state directory. Must be user-owned, mode `0700`. |
+| `FD_PI_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Throttle window for `pi-subscriber-bind-skip` log rows. Tests tune this down. |
+| `FD_PI_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive missed binds before the one-shot `pi-subscriber-bind-stuck` warning fires. |
+| `FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Throttle window for `{claude,opencode,codex}-subscriber-bind-skip` log rows (vstack#216). |
+| `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive missed binds before `{claude,opencode,codex}-subscriber-bind-stuck` fires (vstack#216). |
+
+### Subscriber binding observability (vstack#216)
+
+`flightdeck-daemon health --session <S>` now reports per-pane `subscriber_status`. Values:
+
+| Status | Meaning |
+| --- | --- |
+| `bound` | Subscriber process alive; events flowing. |
+| `skipped` | Tracked entry registered but adapter metadata is missing (e.g. `cc_transcript` null) and the daemon hasn't yet hit the stuck threshold. |
+| `stuck` | Same as `skipped` past `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` consecutive ticks — one-shot warning has fired. |
+| `dead` | Subscriber pid was tracked but is no longer alive; reconcile will respawn next tick. |
+
+The daemon refreshes `<state_dir>/fd-daemon-<sessionKey>.subscribers.json` each heartbeat (and on startup) so health output is never older than `FD_HEARTBEAT_TICKS × FD_POLL_SEC` seconds. Health falls back to a `(missing — daemon hasn't written snapshot yet)` line if the file isn't yet present.
 
 ## Top-level scripts
 

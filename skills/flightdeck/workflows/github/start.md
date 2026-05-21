@@ -102,6 +102,7 @@ Read tmp/brief.md and execute. Follow its supervisor-handshake instructions. Pri
    - Claude: positional plain-text prompt, e.g. `claude -n <N> ... "<child prompt>"`.
    - OpenCode: `--prompt "<child prompt>"`.
 4. Forbidden child invocations: do not pass any master-side flightdeck workflow command. The child implements the issue directly.
+5. Claude harness on `--tracker github` defaults to Claude Channels (vstack#216) so the daemon's claude subscriber can bind on `cc_transcript` and surface `PRE-PR-REVIEW-READY:` / question tags. Pass `--no-channels` (or set `FLIGHTDECK_CLAUDE_CHANNELS=0`) only when intentionally running on the tmux-fallback path; the daemon will then log `[claude-subscriber-bind-skip]` until adapter metadata is hydrated.
 
 ---
 

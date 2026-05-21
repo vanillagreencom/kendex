@@ -42,6 +42,7 @@ import {
 	fdResolveStateDir,
 	fdSessionKeyFromId,
 	fdSessionLock,
+	fdSubscriberStatusFile,
 	fdWakeEventsLog,
 	fdWakePending,
 } from "../paths/daemon.ts";
@@ -236,6 +237,7 @@ const wakePending = sessionKey ? fdWakePending(stateDir, sessionKey) : "";
 const busyFile = sessionKey ? fdBusyFile(stateDir, sessionKey) : "";
 const heartbeatFile = sessionKey ? fdHeartbeatFile(stateDir, sessionKey) : "";
 const wakeEventsLog = sessionKey ? fdWakeEventsLog(stateDir, sessionKey) : "";
+const subscriberStatusFile = sessionKey ? fdSubscriberStatusFile(stateDir, sessionKey) : "";
 
 function pidAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
@@ -354,6 +356,7 @@ function cmdHealth(): void {
 			heartbeatAge = `${Math.floor(Date.now() / 1000 - m / 1000)}s`;
 		} catch { /* */ }
 	}
+	const subscriberLines = readSubscriberStatusLines();
 	const lines: string[] = [];
 	lines.push(`session=${sessionName} session_id=${sessionId} daemon_pid=${pid} alive=true`);
 	lines.push(`state_dir=${stateDir}`);
@@ -363,7 +366,67 @@ function cmdHealth(): void {
 	lines.push(`wake_pending=${wpState}${wpInFlight ? ` in_flight=${wpInFlight}` : ""}`);
 	lines.push(`busy_lock=${bfState}${bfPid ? ` master_pid=${bfPid}` : ""}`);
 	lines.push(`events_queued=${eventsCount}`);
+	for (const line of subscriberLines) lines.push(line);
 	process.stdout.write(lines.join("\n") + "\n");
+}
+
+// vstack#216: render per-pane subscriber state from the daemon's
+// snapshot. Returns rendered lines (header + one row per pane) so the
+// caller can splice them into the existing health output without
+// reordering existing fields. Missing/stale snapshot is reported instead
+// of silently omitted — operators need to know health was unable to
+// answer.
+function readSubscriberStatusLines(): string[] {
+	if (!subscriberStatusFile) return [];
+	if (!existsSync(subscriberStatusFile)) {
+		return [`subscriber_status=(missing — daemon hasn't written snapshot yet)`];
+	}
+	let snap: {
+		updated_at_epoch?: number;
+		panes?: Array<{
+			pane_id?: string;
+			harness?: string | null;
+			status?: string;
+			subscriber_pid?: number | null;
+			consecutive_bind_skips?: number;
+			last_bind_skip_reason?: string | null;
+		}>;
+	};
+	try {
+		snap = JSON.parse(readFileSync(subscriberStatusFile, "utf8"));
+	} catch (err) {
+		return [`subscriber_status=(unreadable: ${(err as Error)?.message ?? err})`];
+	}
+	const updated = typeof snap.updated_at_epoch === "number" ? snap.updated_at_epoch : null;
+	const ageStr = updated !== null ? `${Math.floor(Date.now() / 1000) - updated}s` : "(unknown)";
+	const panes = Array.isArray(snap.panes) ? snap.panes : [];
+	if (panes.length === 0) {
+		return [`subscriber_status=(no inner panes registered) snapshot_age=${ageStr}`];
+	}
+	const out: string[] = [];
+	const counts = { bound: 0, skipped: 0, stuck: 0, dead: 0 };
+	for (const p of panes) {
+		const status = String(p.status ?? "unknown");
+		if (status === "bound" || status === "skipped" || status === "stuck" || status === "dead") counts[status] += 1;
+	}
+	out.push(
+		`subscriber_status snapshot_age=${ageStr} bound=${counts.bound} skipped=${counts.skipped} stuck=${counts.stuck} dead=${counts.dead}`,
+	);
+	for (const p of panes) {
+		const paneId = String(p.pane_id ?? "?");
+		const harness = String(p.harness ?? "?");
+		const status = String(p.status ?? "?");
+		const pid = p.subscriber_pid ?? "";
+		const skips = typeof p.consecutive_bind_skips === "number" ? p.consecutive_bind_skips : 0;
+		const reason = p.last_bind_skip_reason ?? "";
+		const trailer = status === "skipped" || status === "stuck"
+			? ` consecutive_bind_skips=${skips}${reason ? ` reason=${reason}` : ""}`
+			: pid !== ""
+				? ` subscriber_pid=${pid}`
+				: "";
+		out.push(`  pane=${paneId} harness=${harness} status=${status}${trailer}`);
+	}
+	return out;
 }
 
 function collectDescendants(rootPid: number): number[] {
@@ -414,6 +477,7 @@ function lockedStateCleanup(opts: { nonblock?: boolean } = {}): void {
 		wakePending,
 		eventsFile,
 		wakeEventsLog,
+		subscriberStatusFile,
 		nonblock: opts.nonblock === true,
 	});
 }

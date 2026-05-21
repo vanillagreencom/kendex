@@ -23,7 +23,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { inprocFlockAvailable, tryAcquireLockFd } from "../shared/inproc-flock.ts";
 
-import { fdBusyFile, fdEventsFile, fdHeartbeatFile, fdLogFile, fdPidFile, fdPidLock, fdSessionLock, fdWakeEventsLog, fdWakePending } from "../paths/daemon.ts";
+import { fdBusyFile, fdEventsFile, fdHeartbeatFile, fdLogFile, fdPidFile, fdPidLock, fdSessionLock, fdSubscriberStatusFile, fdWakeEventsLog, fdWakePending } from "../paths/daemon.ts";
 import { daemonLog, daemonWarn } from "./log.ts";
 import { gcOrphanState } from "./gc.ts";
 import { installShutdownHandlers, killAllSubscribers } from "./lifecycle.ts";
@@ -241,11 +241,13 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 			const ef = fdEventsFile(opts.stateDir, key);
 			const wel = fdWakeEventsLog(opts.stateDir, key);
 			const hb = fdHeartbeatFile(opts.stateDir, key);
+			const ss = fdSubscriberStatusFile(opts.stateDir, key);
 			lockedCleanupState(sessLock, {
 				wakePending: wp,
 				eventsFile: ef,
 				wakeEventsLog: wel,
 				heartbeatFile: hb,
+				subscriberStatusFile: ss,
 				nonblock: true,
 			});
 		},

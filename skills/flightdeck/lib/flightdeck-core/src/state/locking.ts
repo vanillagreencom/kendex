@@ -340,16 +340,18 @@ export function lockedCleanupState(
 		eventsFile?: string;
 		heartbeatFile?: string;
 		wakeEventsLog?: string;
+		subscriberStatusFile?: string;
 		nonblock?: boolean;
 	},
 ): SpawnResult {
 	const script = `
 		set -e
-		wp="$1"; ef="$2"; hb="$3"; wel="$4"
+		wp="$1"; ef="$2"; hb="$3"; wel="$4"; ss="$5"
 		[[ -n "$wp" ]] && rm -f "$wp"
 		[[ -n "$hb" ]] && rm -f "$hb"
 		[[ -n "$ef" ]] && rm -f "$ef"
 		[[ -n "$wel" ]] && rm -f "$wel"
+		[[ -n "$ss" ]] && rm -f "$ss" "$ss.tmp"
 		shopt -s nullglob
 		if [[ -n "$ef" ]]; then
 			for f in "$ef".draining.*; do rm -f "$f"; done
@@ -367,5 +369,6 @@ export function lockedCleanupState(
 		opts.eventsFile ?? "",
 		opts.heartbeatFile ?? "",
 		opts.wakeEventsLog ?? "",
+		opts.subscriberStatusFile ?? "",
 	]);
 }

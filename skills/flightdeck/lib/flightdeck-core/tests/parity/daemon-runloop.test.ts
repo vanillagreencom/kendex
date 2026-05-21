@@ -986,4 +986,135 @@ exit 1
 			else process.env.FD_PI_BIND_SKIP_LOG_INTERVAL_SEC = savedInterval;
 		}
 	}, 15000);
+
+	// vstack#216: parity coverage for claude / opencode / codex bind-skip.
+	// Before #216 these three cases silently `return false` on missing
+	// adapter metadata (no log row, no activity event), so a github-tracker
+	// Claude spawn whose `cc_*` fields stayed null was invisible to the
+	// operator. The fix mirrors the pi pattern: structured
+	// `<harness>-subscriber-bind-skip` row throttled by
+	// FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC, plus a one-shot
+	// `<harness>-subscriber-bind-stuck` warning after
+	// FD_SUB_BIND_SKIP_STUCK_THRESHOLD consecutive skips, plus a startup
+	// probe that names the missing fields.
+	function makeStubRegistry(fakeDir: string, rows: object[]): string {
+		const bin = join(fakeDir, "pane-registry");
+		const json = JSON.stringify(rows);
+		writeFileSync(bin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "list" ]]; then
+  printf '%s\n' ${JSON.stringify(json)}
+  exit 0
+fi
+if [[ "\${1:-}" == "find-by-pane" ]]; then
+  printf '{"id":"bindskip","kind":"issue"}\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "cc-channel-args" || "\${1:-}" == "oc-attach-args" || "\${1:-}" == "cx-bridge-args" || "\${1:-}" == "pi-bridge-args" ]]; then
+  exit 0
+fi
+exit 1
+`);
+		chmodSync(bin, 0o755);
+		return bin;
+	}
+
+	async function runBindSkipScenario(opts: { harness: "claude" | "opencode" | "codex"; missingFields: string }): Promise<void> {
+		const masterPane = tmuxNewWindow(SESSION, `fd-${opts.harness}-bindskip-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-${opts.harness}bindskip-${Date.now()}`;
+		const activityPath = join(stateDir, `activity-${opts.harness}-bindskip.jsonl`);
+		const fakeDir = join(stateDir, `fake-${opts.harness}-bindskip`);
+		mkdirSync(fakeDir, { recursive: true });
+		const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
+		const registryBin = makeStubRegistry(fakeDir, [{ pane_id: innerPaneId, pane_target: innerPaneId, harness: opts.harness, kind: "issue", cwd: process.cwd() }]);
+
+		const savedStateDir = process.env.FD_STATE_DIR;
+		const savedStuck = process.env.FD_SUB_BIND_SKIP_STUCK_THRESHOLD;
+		const savedInterval = process.env.FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC;
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.FD_SUB_BIND_SKIP_STUCK_THRESHOLD = "2";
+		process.env.FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC = "600";
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: `${opts.harness}-bind-skip-test` },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: opts.harness,
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 600,
+			innerHarnesses: [opts.harness],
+			innerTargets: [innerPaneId],
+			masterHarness: opts.harness,
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const sawStartupWarn = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[startup-binder-missing-fields]"), 3000);
+			expect(sawStartupWarn).toBe(true);
+			const sawBindSkip = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes(`[${opts.harness}-subscriber-bind-skip]`), 3000);
+			expect(sawBindSkip).toBe(true);
+			const sawStuck = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes(`[${opts.harness}-subscriber-bind-stuck]`), 5000);
+			expect(sawStuck).toBe(true);
+
+			// Throttle holds for the configured window — proving the log isn't
+			// flooded after the first miss.
+			await sleep(2000);
+			const logText = readFileSync(logFile, "utf8");
+			const skipLines = logText.split("\n").filter((l) => l.includes(`[${opts.harness}-subscriber-bind-skip]`));
+			expect(skipLines.length).toBe(1);
+			const stuckLines = logText.split("\n").filter((l) => l.includes(`[${opts.harness}-subscriber-bind-stuck]`));
+			expect(stuckLines.length).toBe(1);
+			expect(stuckLines[0]).toContain(`missing=${opts.missingFields}`);
+			const startupLines = logText.split("\n").filter((l) => l.includes("[startup-binder-missing-fields]"));
+			expect(startupLines.length).toBe(1);
+			expect(startupLines[0]).toContain(`harness=${opts.harness}`);
+			expect(startupLines[0]).toContain(`missing=${opts.missingFields}`);
+
+			// Subscriber-status snapshot exists and reports the pane as skipped/stuck.
+			const snap = JSON.parse(readFileSync(join(stateDir, `fd-daemon-${testSessionKey}.subscribers.json`), "utf8"));
+			expect(Array.isArray(snap.panes)).toBe(true);
+			expect(snap.panes).toHaveLength(1);
+			const pane = snap.panes[0];
+			expect(pane.pane_id).toBe(innerPaneId);
+			expect(pane.harness).toBe(opts.harness);
+			expect(["skipped", "stuck"]).toContain(pane.status);
+			expect(typeof pane.consecutive_bind_skips).toBe("number");
+			expect(pane.consecutive_bind_skips).toBeGreaterThan(0);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			if (savedStateDir === undefined) delete process.env.FD_STATE_DIR;
+			else process.env.FD_STATE_DIR = savedStateDir;
+			if (savedStuck === undefined) delete process.env.FD_SUB_BIND_SKIP_STUCK_THRESHOLD;
+			else process.env.FD_SUB_BIND_SKIP_STUCK_THRESHOLD = savedStuck;
+			if (savedInterval === undefined) delete process.env.FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC;
+			else process.env.FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC = savedInterval;
+		}
+	}
+
+	test("claude bind-skip is throttled, surfaces cc_transcript miss, and writes status snapshot", async () => {
+		await runBindSkipScenario({ harness: "claude", missingFields: "cc_transcript" });
+	}, 15000);
+
+	test("opencode bind-skip is throttled and surfaces oc_url+oc_session_id misses", async () => {
+		await runBindSkipScenario({ harness: "opencode", missingFields: "oc_url,oc_session_id" });
+	}, 15000);
+
+	test("codex bind-skip is throttled and surfaces cx_url+cx_thread_id misses", async () => {
+		await runBindSkipScenario({ harness: "codex", missingFields: "cx_url,cx_thread_id" });
+	}, 15000);
 });

@@ -69,6 +69,11 @@ TERMINAL_MODE=""
 HARNESS=""
 ISSUES=()
 USE_CHANNELS="${FLIGHTDECK_CLAUDE_CHANNELS:-0}"
+# vstack#216: track whether the operator (or env) made an explicit
+# channels choice. Used below to default channels ON for github-tracker
+# Claude spawns without overriding an explicit --no-channels.
+USE_CHANNELS_EXPLICIT=0
+if [[ -n "${FLIGHTDECK_CLAUDE_CHANNELS+x}" ]]; then USE_CHANNELS_EXPLICIT=1; fi
 GROUP_ID=""
 CMD_TEMPLATE=""
 MODEL_OVERRIDE=""
@@ -95,8 +100,8 @@ while [[ $# -gt 0 ]]; do
     --repo) GITHUB_REPO="$2"; shift 2 ;;
     --repo=*) GITHUB_REPO="${1#--repo=}"; shift ;;
     --cmd) CMD_TEMPLATE="$2"; shift 2 ;;
-    --use-channels) USE_CHANNELS=1; shift ;;
-    --no-channels)  USE_CHANNELS=0; shift ;;
+    --use-channels) USE_CHANNELS=1; USE_CHANNELS_EXPLICIT=1; shift ;;
+    --no-channels)  USE_CHANNELS=0; USE_CHANNELS_EXPLICIT=1; shift ;;
     --help|-h)
       echo "Usage: open-terminal ISSUE-1 [ISSUE-2 ...] [options]"
       echo ""
@@ -161,6 +166,21 @@ fi
 if [[ "$TRACKER" == "github" && -n "$CMD_TEMPLATE" ]]; then
   echo "Error: --tracker github uses a self-contained child prompt; --cmd is not supported" >&2
   exit 1
+fi
+
+# vstack#216: default Claude Channels ON for `--tracker github --harness
+# claude` when the operator made no explicit choice. Background: the
+# github tracker doesn't ship with a Pi-orchestrator pane that the daemon
+# can bind a subscriber to (the way linear-orch does), so without channel
+# metadata on the spawned Claude pane the daemon silently bind-skips for
+# the entire run and `PRE-PR-REVIEW-READY:` is never delivered. Defaulting
+# channels on populates cc_url/cc_session_uuid/cc_transcript on the
+# tracked entry; if the channel deps fail (no bun, old claude, no
+# claude.ai auth) `spawn_cc_channel_tmux` falls through to the legacy
+# spawn so the pane still launches. Honors an explicit --no-channels or
+# FLIGHTDECK_CLAUDE_CHANNELS=0 from the operator.
+if [[ "$TRACKER" == "github" && "$HARNESS" == "claude" && "$USE_CHANNELS_EXPLICIT" != "1" ]]; then
+  USE_CHANNELS=1
 fi
 
 # Auto-detect terminal mode

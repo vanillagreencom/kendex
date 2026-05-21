@@ -158,7 +158,7 @@ Per-harness adapters live in `pane-respond` (sending), `pane-poll` (reading), an
 
 | Harness | Adapter | Tmux fallback |
 |---------|---------|---------------|
-| Claude Code | Channels MCP webhook POST (opt-in via `--use-channels` / `FLIGHTDECK_CLAUDE_CHANNELS=1`) | `tmux load-buffer + paste-buffer + Enter`, plus arrow-nav for `--option N` (Numbers are NOT shortcuts; they're buffered as text). |
+| Claude Code | Channels MCP webhook POST (opt-in via `--use-channels` / `FLIGHTDECK_CLAUDE_CHANNELS=1`; default-on for `--tracker github --harness claude` per vstack#216) | `tmux load-buffer + paste-buffer + Enter`, plus arrow-nav for `--option N` (Numbers are NOT shortcuts; they're buffered as text). |
 | opencode | `opencode run --attach --format json` to the per-pane HTTP server. `--option N` sends bare digit as message text; `--question` posts to `POST /question/<id>/{reply,reject}`. | Tmux paste-buffer for free text. `--option` not supported (no digit-key tmux mechanic for opencode). |
 | pi | `pi-bridge send --pid <PID> --auto <msg>` via the Unix-socket session bridge. Slash dispatch supports client-side `/skill:<name>` and prompt-template expansion plus own-pane tmux paste for extension/TUI commands. `--question` uses `pi-bridge answer|reject`; `--answer-text` maps to the `pi-questions` custom/free-type answer when `allowCustom=true`. | Tmux send-keys fallback for daemon pi-master wakes; for true modal key-driving use `--keys-allow-tmux` and the inline UI keys. |
 | codex | `codex-bridge send --url <ws> --thread <TID>` via the JSON-RPC client to `codex app-server` | Tmux paste-buffer fallback |

@@ -1,6 +1,6 @@
 # Claude Code Channels — flightdeck integration pattern
 
-Phase 2 of the unified-comms migration. Replaces tmux send-keys + capture-pane for claude panes with a structured MCP-channel inbound + JSONL transcript outbound. **Opt-in** via `FLIGHTDECK_CLAUDE_CHANNELS=1` (env) or `--use-channels` (open-terminal flag). Default claude spawn is unchanged; tmux primitives remain as the fallback path.
+Phase 2 of the unified-comms migration. Replaces tmux send-keys + capture-pane for claude panes with a structured MCP-channel inbound + JSONL transcript outbound. **Opt-in** via `FLIGHTDECK_CLAUDE_CHANNELS=1` (env) or `--use-channels` (open-terminal flag). Default claude spawn is unchanged for `--tracker linear`; tmux primitives remain as the fallback path. `--tracker github --harness claude` defaults channels **on** (vstack#216) because the github tracker doesn't ship a Pi-orchestrator pane the daemon can bind a subscriber to — without channel metadata the daemon would silently bind-skip and `PRE-PR-REVIEW-READY:` would never be delivered. The github default still respects an explicit `--no-channels` / `FLIGHTDECK_CLAUDE_CHANNELS=0` from the operator, and falls back to tmux if any channel dep is unavailable.
 
 ## Mechanism
 
@@ -86,6 +86,17 @@ The flightdeck mechanism (port allocator, MCP webhook, JSONL tail, daemon subscr
 | Daemon wake source | JSONL tail filtered for `stop_reason` arrival | bell flag + hash-stability |
 
 Falls back when bridge metadata absent or stale (legacy session, port exhausted, claude < 2.1.80, wrong auth, no bun, transcript missing, `/healthz` fails) — logged as `cc-channel-unavailable: <reason>`. Never silent.
+
+## Daemon bind-skip diagnostics (vstack#216)
+
+When the tracked entry registers as `harness=claude` but the channel adapter never wrote `cc_transcript` (legacy entry, fallback spawn, or an older bug shape), the daemon's claude subscriber would previously `return false` silently every reconcile tick. As of vstack#216:
+
+- Startup probe emits `[startup-binder-missing-fields]` once per affected pane with `harness=claude missing=cc_transcript`.
+- Per-tick miss emits `[claude-subscriber-bind-skip]` (throttled to one row per `(pane, reason)` per `FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC` (default 60s)).
+- After `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` consecutive misses (default 12) the daemon emits a one-shot `[claude-subscriber-bind-stuck]` warning naming the missing fields.
+- `flightdeck-daemon health` reads the per-session subscriber-status snapshot and reports per-pane `status=bound|skipped|stuck|dead` plus `consecutive_bind_skips` / `last_bind_skip_reason`.
+
+The same diagnostic shape applies to the opencode (`oc_url`/`oc_session_id`) and codex (`cx_url`/`cx_thread_id`) cases, which previously silently bind-skipped on the same code path.
 
 ## Versioning
 

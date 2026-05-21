@@ -21,7 +21,7 @@
 //        clear_bell_for_window on success
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -30,6 +30,7 @@ import {
 	fdHeartbeatFile,
 	fdLogFile,
 	fdSessionLock,
+	fdSubscriberStatusFile,
 	fdWakePending,
 	fdWakeEventsLog,
 } from "../paths/daemon.ts";
@@ -155,6 +156,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const heartbeatFile = fdHeartbeatFile(opts.stateDir, opts.sessionKey);
 	const wakeEventsLog = fdWakeEventsLog(opts.stateDir, opts.sessionKey);
 	const logFile = fdLogFile(opts.stateDir, opts.sessionKey);
+	const subscriberStatusFile = fdSubscriberStatusFile(opts.stateDir, opts.sessionKey);
 
 	const log = (tag: string, msg: string): void => daemonLog(logFile, tag, msg);
 	const warn = (tag: string, msg: string): void => daemonWarn(logFile, tag, msg);
@@ -190,6 +192,53 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const piBindSkipStuckWarned = new Set<string>();
 	const PI_BIND_SKIP_LOG_INTERVAL_SEC = positiveEnvInt("FD_PI_BIND_SKIP_LOG_INTERVAL_SEC", 60);
 	const PI_BIND_SKIP_STUCK_THRESHOLD = positiveEnvInt("FD_PI_BIND_SKIP_STUCK_THRESHOLD", 12);
+	// vstack#216: same shape for claude/opencode/codex. The pi case has
+	// had structured bind-skip rows since #180; the other three were
+	// silently `return false` on missing adapter metadata, which is what
+	// allowed github-tracker Claude spawns to leave cc_* fields null with
+	// zero daemon-side signal. Keys are `${paneId}|${harness}` so a pane
+	// changing harness mid-session re-enters the throttle cleanly.
+	const subBindSkipLastLog = new Map<string, number>();
+	const subBindSkipConsecutive = new Map<string, number>();
+	const subBindSkipStuckWarned = new Set<string>();
+	const subBindSkipReason = new Map<string, string>();
+	const SUB_BIND_SKIP_LOG_INTERVAL_SEC = positiveEnvInt("FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC", 60);
+	const SUB_BIND_SKIP_STUCK_THRESHOLD = positiveEnvInt("FD_SUB_BIND_SKIP_STUCK_THRESHOLD", 12);
+
+	function recordSubscriberBindSkip(paneId: string, harness: string, reason: string, missing: string[]): void {
+		const nowSec = Math.floor(Date.now() / 1000);
+		const throttleKey = `${paneId}|${harness}|${reason}`;
+		const counterKey = `${paneId}|${harness}`;
+		const skipCount = (subBindSkipConsecutive.get(counterKey) ?? 0) + 1;
+		subBindSkipConsecutive.set(counterKey, skipCount);
+		subBindSkipReason.set(counterKey, reason);
+		const lastEmit = subBindSkipLastLog.get(throttleKey) ?? 0;
+		if (nowSec - lastEmit >= SUB_BIND_SKIP_LOG_INTERVAL_SEC) {
+			subBindSkipLastLog.set(throttleKey, nowSec);
+			log(
+				`${harness}-subscriber-bind-skip`,
+				`pane=${paneId} reason=${reason} missing=${missing.join(",") || "-"} consecutive=${skipCount}`,
+			);
+		}
+		if (skipCount >= SUB_BIND_SKIP_STUCK_THRESHOLD && !subBindSkipStuckWarned.has(counterKey)) {
+			subBindSkipStuckWarned.add(counterKey);
+			warn(
+				`${harness}-subscriber-bind-stuck`,
+				`pane=${paneId} reason=${reason} consecutive=${skipCount} threshold=${SUB_BIND_SKIP_STUCK_THRESHOLD} missing=${missing.join(",") || "-"}; supervisor may need to inspect entry adapter metadata`,
+			);
+		}
+	}
+
+	function clearSubscriberBindSkip(paneId: string, harness: string): void {
+		const counterKey = `${paneId}|${harness}`;
+		subBindSkipConsecutive.delete(counterKey);
+		subBindSkipStuckWarned.delete(counterKey);
+		subBindSkipReason.delete(counterKey);
+		const prefix = `${counterKey}|`;
+		for (const key of subBindSkipLastLog.keys()) {
+			if (key.startsWith(prefix)) subBindSkipLastLog.delete(key);
+		}
+	}
 	// Round-4 #11: track per-pane activity flag to skip capture-pane
 	// when nothing changed since the last tick. A low-frequency sweep
 	// (every 30 ticks) still captures so we catch missed signals.
@@ -252,7 +301,14 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				const meta = resolveMeta(opts.paneRegistryBin, "oc-attach-args", target);
 				const url = extractFlag(meta, "--url");
 				const sid = extractFlag(meta, "--session");
-				if (!url || !sid) return false;
+				if (!url || !sid) {
+					const missing: string[] = [];
+					if (!url) missing.push("oc_url");
+					if (!sid) missing.push("oc_session_id");
+					recordSubscriberBindSkip(paneId, "opencode", "missing-oc-attach-meta", missing);
+					return false;
+				}
+				clearSubscriberBindSkip(paneId, "opencode");
 				const { pid, reattached } = spawnOcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, ocUrl: url, sessionId: sid, ocLastAssistantJq: OC_LAST_ASSISTANT_JQ, log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
@@ -262,7 +318,11 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			case "claude": {
 				const meta = resolveMeta(opts.paneRegistryBin, "cc-channel-args", target);
 				const transcript = extractFlag(meta, "--transcript");
-				if (!transcript) return false;
+				if (!transcript) {
+					recordSubscriberBindSkip(paneId, "claude", "missing-cc-transcript", ["cc_transcript"]);
+					return false;
+				}
+				clearSubscriberBindSkip(paneId, "claude");
 				const { pid, reattached } = spawnCcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, transcript, ccLastAssistantJq: CC_LAST_ASSISTANT_JQ, log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
@@ -323,7 +383,14 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				const meta = resolveMeta(opts.paneRegistryBin, "cx-bridge-args", target);
 				const cxUrl = extractFlag(meta, "--url");
 				const threadId = extractFlag(meta, "--thread");
-				if (!cxUrl || !threadId) return false;
+				if (!cxUrl || !threadId) {
+					const missing: string[] = [];
+					if (!cxUrl) missing.push("cx_url");
+					if (!threadId) missing.push("cx_thread_id");
+					recordSubscriberBindSkip(paneId, "codex", "missing-cx-bridge-meta", missing);
+					return false;
+				}
+				clearSubscriberBindSkip(paneId, "codex");
 				const { pid, reattached } = spawnCxSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, cxUrl, threadId, cxLastAssistantJq: CX_LAST_ASSISTANT_JQ, log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
@@ -341,18 +408,22 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		if (h) trySpawnSubscriberForPane(id, target, h);
 	}
 
-	// vstack#180: startup probe. After the initial subscriber-spawn pass,
-	// surface any pane the daemon would silently bind-skip in steady state
-	// because the tracked entry is missing required pi adapter fields. Emit
-	// one structured warning per affected pane at start; without this, the
-	// only signal is the throttled bind-skip line ~60s later.
+	// vstack#180 + vstack#216: startup probe. After the initial
+	// subscriber-spawn pass, surface any pane the daemon would silently
+	// bind-skip in steady state because the tracked entry is missing
+	// required adapter fields. Emit one structured warning per affected
+	// pane at start; without this, the only signal is the throttled
+	// bind-skip line ~60s later. Originally pi-only (#180) — extended to
+	// claude/opencode/codex in #216 so github-tracker Claude spawns with
+	// null cc_* metadata raise the same up-front signal.
 	for (const id of innerIds) {
-		if ((paneHarness.get(id) ?? "") !== "pi") continue;
+		const h = paneHarness.get(id) ?? "";
+		if (!h) continue;
 		if (ocSubscribed.has(id)) continue;
 		const entry = trackedEntryForPane(id);
-		const missing = piBindMissingFields(entry);
+		const missing = subscriberBindMissingFields(h, entry);
 		if (missing.length > 0) {
-			warn("startup-binder-missing-fields", `pane=${id} harness=pi entry_present=${entry ? "yes" : "no"} missing=${missing.join(",")} cwd=${entry?.cwd ?? ""}; daemon will retry on each reconcile tick`);
+			warn("startup-binder-missing-fields", `pane=${id} harness=${h} entry_present=${entry ? "yes" : "no"} missing=${missing.join(",")} cwd=${entry?.cwd ?? ""}; daemon will retry on each reconcile tick`);
 		}
 	}
 
@@ -367,6 +438,10 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	}
 
 	log("start", `pid=${process.pid} session_id=${opts.sessionId} name=${opts.sessionName} master_id=${masterId} master_harness=${masterHarness || "unknown"} inner_ids=${innerIds.join(" ")} oc_subscribed=${ocSubscribed.size}`);
+
+	// Seed the subscriber-status snapshot immediately so `flightdeck-daemon
+	// health` doesn't report (missing) for a freshly-started daemon.
+	writeSubscriberStatusSnapshot();
 
 	let heartbeatCounter = 0;
 	const startEpoch = Math.floor(Date.now() / 1000);
@@ -471,6 +546,11 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		notifiedHash.delete(paneId);
 		lastBellHash.delete(paneId);
 		firstSeen.delete(paneId);
+		// Drop bind-skip state for any harness this pane has been observed
+		// under so a reused pane id starts the throttle fresh.
+		for (const harness of ["claude", "opencode", "codex", "pi"] as const) {
+			clearSubscriberBindSkip(paneId, harness);
+		}
 	}
 
 	function subscriberPidFor(harness: string, paneId: string): string {
@@ -480,6 +560,55 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			case "pi":       return piSubscriberPidFile(paneId, opts.sessionKey);
 			case "codex":    return cxSubscriberPidFile(paneId, opts.sessionKey);
 			default: return "";
+		}
+	}
+
+	// vstack#216: snapshot per-pane subscriber binding state so
+	// `flightdeck-daemon health` can surface bound vs. silently-unbound
+	// panes. The snapshot is replaced atomically (write to .tmp + rename)
+	// so a concurrent health read never sees a partial file.
+	function writeSubscriberStatusSnapshot(): void {
+		const panes: Array<Record<string, unknown>> = [];
+		for (const id of innerIds) {
+			const harness = paneHarness.get(id) ?? "";
+			const counterKey = `${id}|${harness}`;
+			const consecutive = subBindSkipConsecutive.get(counterKey) ?? 0;
+			const stuck = subBindSkipStuckWarned.has(counterKey);
+			let status: "bound" | "dead" | "skipped" | "stuck";
+			let pid: number | null = null;
+			if (ocSubscribed.has(id)) {
+				const pidFile = subscriberPidFor(harness, id);
+				const alive = subscriberAlive(id, pidFile);
+				pid = subscriberPid.get(id) ?? null;
+				status = alive ? "bound" : "dead";
+			} else {
+				status = stuck ? "stuck" : "skipped";
+			}
+			panes.push({
+				pane_id: id,
+				harness: harness || null,
+				status,
+				subscriber_pid: pid,
+				consecutive_bind_skips: consecutive,
+				last_bind_skip_reason: subBindSkipReason.get(counterKey) ?? null,
+			});
+		}
+		const snap = {
+			session_id: opts.sessionId,
+			session_key: opts.sessionKey,
+			daemon_pid: process.pid,
+			updated_at_epoch: Math.floor(Date.now() / 1000),
+			panes,
+		};
+		try {
+			const tmp = `${subscriberStatusFile}.tmp`;
+			writeFileSync(tmp, JSON.stringify(snap, null, 2));
+			renameSync(tmp, subscriberStatusFile);
+		} catch (err) {
+			// Snapshot is best-effort observability; never fail the loop on
+			// disk errors. Log once per error so a chronically broken state
+			// dir still surfaces.
+			warn("subscriber-status-write-error", `path=${subscriberStatusFile} error=${(err as Error)?.message ?? err}`);
 		}
 	}
 
@@ -546,7 +675,10 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		// touch on every tick wasted a syscall when no other change
 		// occurred. Operators reading mtime get the same cadence as the
 		// log lines.
-		if (heartbeatCounter % opts.heartbeatTicks === 0) touchHeartbeat(heartbeatFile);
+		if (heartbeatCounter % opts.heartbeatTicks === 0) {
+			touchHeartbeat(heartbeatFile);
+			writeSubscriberStatusSnapshot();
+		}
 
 		if (opts.maxLifetime > 0) {
 			const elapsed = Math.floor(Date.now() / 1000) - startEpoch;
@@ -950,6 +1082,40 @@ function piBindMissingFields(entry: ReconcileEntry | undefined): string[] {
 	if (!meta.piSocket) missing.push("pi_bridge_socket");
 	if (!meta.piSessionId) missing.push("pi_session_id");
 	return missing;
+}
+
+// vstack#216: same shape for the other three harnesses. Each entry kind
+// has its own required-field set; the daemon's startup probe and per-pane
+// stuck warning name them so operators see what's missing on the tracked
+// entry instead of guessing why the subscriber never bound.
+export function subscriberBindMissingFields(harness: string, entry: ReconcileEntry | undefined): string[] {
+	switch (harness) {
+		case "pi":
+			return piBindMissingFields(entry);
+		case "claude": {
+			if (!entry) return ["entry", "cc_transcript"];
+			const meta = entry.adapterMeta ?? {};
+			return meta.ccTranscript ? [] : ["cc_transcript"];
+		}
+		case "opencode": {
+			if (!entry) return ["entry", "oc_url", "oc_session_id"];
+			const meta = entry.adapterMeta ?? {};
+			const missing: string[] = [];
+			if (!meta.ocUrl) missing.push("oc_url");
+			if (!meta.ocSessionId) missing.push("oc_session_id");
+			return missing;
+		}
+		case "codex": {
+			if (!entry) return ["entry", "cx_url", "cx_thread_id"];
+			const meta = entry.adapterMeta ?? {};
+			const missing: string[] = [];
+			if (!meta.cxUrl) missing.push("cx_url");
+			if (!meta.cxThreadId) missing.push("cx_thread_id");
+			return missing;
+		}
+		default:
+			return [];
+	}
 }
 
 // Read a positive integer from the environment, falling back to a
