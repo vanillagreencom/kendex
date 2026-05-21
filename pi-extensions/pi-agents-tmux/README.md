@@ -21,7 +21,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Stop kills the tmux process but preserves the session — next launch resumes it.
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
-- Large parallel calls are auto-batched. Pane idle waits use `wait_for_subagent_idle`.
+- Large parallel calls run through a flat worker pool capped at `maxConcurrency`; callers do not need to split requests. Pane idle waits use `wait_for_subagent_idle`.
 - Periodic pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
 
 ## Install
@@ -105,11 +105,13 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 
 ### Execution
 
+There is one knob — `maxConcurrency` — and it caps the number of bg agent processes running simultaneously. Earlier versions exposed `maxParallelTasks` as a batch size; that knob is now a no-op kept for setting-file compatibility (parallel dispatch uses a flat worker pool across the whole queue).
+
 | Setting | What it does |
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
-| Max parallel tasks | Internal batch size for parallel calls; larger calls are auto-batched. |
-| Max concurrency | Cap on bg agent processes running simultaneously. |
+| Max concurrency | Cap on bg agent processes running simultaneously; the single knob that governs parallel dispatch. |
+| Max parallel tasks (deprecated) | No-op kept for setting-file compatibility; parallel dispatch uses a flat worker pool capped at `maxConcurrency`. Safe to delete. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 | Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |

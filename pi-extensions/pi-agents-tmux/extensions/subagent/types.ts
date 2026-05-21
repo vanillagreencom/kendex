@@ -9,7 +9,6 @@ export const INSTALL_SYMBOL = Symbol.for("vstack.pi-agents-tmux.installed");
 export const STATUSLINE_SYMBOL = Symbol.for("vstack.pi-agents-tmux.statusline");
 export const STATS_BRIDGE_SYMBOL = Symbol.for("vstack.pi.agents");
 export const SUBAGENT_STATE_TYPE = "vstack-subagents:runtime-state";
-export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
 export const COLLAPSED_ITEM_COUNT = 10;
 export const PANE_LAUNCHER_VERSION = 9;

@@ -65,8 +65,8 @@
         },
         {
           "key": "maxParallelTasks",
-          "label": "Max parallel tasks",
-          "description": "Internal batch size for parallel agent calls. Larger calls are automatically split into batches.",
+          "label": "Max parallel tasks (deprecated)",
+          "description": "Deprecated no-op. Earlier versions used this as a batch size; parallel dispatch now uses a flat worker pool capped at maxConcurrency. Safe to delete.",
           "type": "number",
           "default": 8,
           "category": "Execution",
@@ -75,7 +75,7 @@
         {
           "key": "maxConcurrency",
           "label": "Max concurrency",
-          "description": "Maximum number of bg agent processes to run at the same time.",
+          "description": "Maximum number of bg agent processes to run at the same time. The single knob governing parallel dispatch.",
           "type": "number",
           "default": 4,
           "category": "Execution",
@@ -299,7 +299,7 @@
         {
           "kind": "tool",
           "name": "subagent",
-          "description": "Delegate tasks to isolated Pi agents. Bg calls use fresh one-shot sessions unless sessionKey is explicit; unknown agent names are rejected with available inventory; parallel calls above the internal cap are auto-batched."
+          "description": "Delegate tasks to isolated Pi agents. Bg calls use fresh one-shot sessions unless sessionKey is explicit; unknown agent names are rejected with available inventory; parallel calls run through a flat worker pool capped at maxConcurrency."
         },
         {
           "kind": "tool",

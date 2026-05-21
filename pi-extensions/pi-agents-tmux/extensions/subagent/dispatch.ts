@@ -17,7 +17,6 @@ import {
 	DEFAULT_RESULT_MAX_BYTES,
 	DEFAULT_RESULT_MAX_LINES,
 	MAX_CONCURRENCY,
-	MAX_PARALLEL_TASKS,
 	type SingleResult,
 	type SubagentDashboardItem,
 	type SubagentDetails,
@@ -80,30 +79,23 @@ export function assignEphemeralSessionKeys<T extends DispatchItem>(items: readon
 	});
 }
 
-export async function mapInBatchesWithConcurrencyLimit<TIn, TOut>(
+export async function mapWithConcurrencyLimit<TIn, TOut>(
 	items: readonly TIn[],
-	batchSize: number,
 	concurrency: number,
 	fn: (item: TIn, index: number) => Promise<TOut>,
 ): Promise<TOut[]> {
 	if (items.length === 0) return [];
-	const normalizedBatchSize = Math.max(1, Math.floor(batchSize));
-	const normalizedConcurrency = Math.max(1, Math.floor(concurrency));
+	const limit = Math.max(1, Math.min(Math.floor(concurrency), items.length));
 	const results: TOut[] = new Array(items.length);
-	for (let start = 0; start < items.length; start += normalizedBatchSize) {
-		const batch = items.slice(start, start + normalizedBatchSize);
-		let nextIndex = 0;
-		const workerCount = Math.min(normalizedConcurrency, batch.length);
-		const workers = new Array(workerCount).fill(null).map(async () => {
-			while (true) {
-				const batchIndex = nextIndex++;
-				if (batchIndex >= batch.length) return;
-				const absoluteIndex = start + batchIndex;
-				results[absoluteIndex] = await fn(batch[batchIndex], absoluteIndex);
-			}
-		});
-		await Promise.all(workers);
-	}
+	let nextIndex = 0;
+	const workers = new Array(limit).fill(null).map(async () => {
+		while (true) {
+			const i = nextIndex++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i], i);
+		}
+	});
+	await Promise.all(workers);
 	return results;
 }
 
@@ -335,7 +327,6 @@ export async function runParallelDispatch(
 	flow: DispatchFlowContext & { tasks: DispatchTask[] },
 ): Promise<ToolTextResult> {
 	const parallelTasks = assignEphemeralSessionKeys(flow.tasks);
-	const parallelBatchSize = Math.max(1, Math.floor(settingNumber("maxParallelTasks", MAX_PARALLEL_TASKS, flow.cwd)));
 
 	const allResults: SingleResult[] = new Array(flow.tasks.length);
 	for (let i = 0; i < flow.tasks.length; i++) {
@@ -373,7 +364,7 @@ export async function runParallelDispatch(
 	};
 
 	const maxConcurrency = Math.max(1, Math.floor(settingNumber("maxConcurrency", MAX_CONCURRENCY, flow.cwd)));
-	const results = await mapInBatchesWithConcurrencyLimit(parallelTasks, parallelBatchSize, maxConcurrency, async (t, index) => {
+	const results = await mapWithConcurrencyLimit(parallelTasks, maxConcurrency, async (t, index) => {
 		const updateOneshotDashboard = async (item: SingleResult, usePersistedSummary = false) => {
 			const persistedSummary = usePersistedSummary ? await persistedSummaryForOneShotResult(flow.runtimeRoot, item) : undefined;
 			flow.updateDashboard({

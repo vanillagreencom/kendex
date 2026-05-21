@@ -9,7 +9,7 @@ import type { AgentConfig } from "../extensions/subagent/agents.js";
 import {
 	assignEphemeralSessionKeys,
 	formatInventoryValidationError,
-	mapInBatchesWithConcurrencyLimit,
+	mapWithConcurrencyLimit,
 	validateAgentInventory,
 } from "../extensions/subagent/dispatch.js";
 import {
@@ -987,19 +987,108 @@ test("inventory guard rejects unknown agent with structured available lists", ()
 	assert.match(formatInventoryValidationError(validation!), /User agents: personal/);
 });
 
-test("parallel cap of 10 tasks dispatches with auto-batching", async () => {
-	const items = Array.from({ length: 10 }, (_, index) => index);
+test("mapWithConcurrencyLimit returns empty array for empty input without invoking fn", async () => {
+	let invoked = 0;
+	const results = await mapWithConcurrencyLimit<number, number>([], 4, async () => {
+		invoked += 1;
+		return 0;
+	});
+	assert.deepEqual(results, []);
+	assert.equal(invoked, 0);
+});
+
+test("mapWithConcurrencyLimit handles a single item with concurrency > items", async () => {
 	let active = 0;
 	let maxActive = 0;
-	const results = await mapInBatchesWithConcurrencyLimit(items, 8, 8, async (item) => {
+	const results = await mapWithConcurrencyLimit([42], 8, async (item) => {
+		active += 1;
+		maxActive = Math.max(maxActive, active);
+		await new Promise((resolve) => setTimeout(resolve, 1));
+		active -= 1;
+		return item * 2;
+	});
+	assert.deepEqual(results, [84]);
+	assert.equal(maxActive, 1);
+});
+
+test("mapWithConcurrencyLimit caps active workers at items.length when items < concurrency", async () => {
+	const items = [1, 2, 3];
+	let active = 0;
+	let maxActive = 0;
+	const results = await mapWithConcurrencyLimit(items, 8, async (item) => {
 		active += 1;
 		maxActive = Math.max(maxActive, active);
 		await new Promise((resolve) => setTimeout(resolve, 5));
 		active -= 1;
 		return item * 2;
 	});
+	assert.deepEqual(results, [2, 4, 6]);
+	assert.equal(maxActive, 3);
+});
+
+test("mapWithConcurrencyLimit preserves submission order with items >> concurrency", async () => {
+	const items = Array.from({ length: 24 }, (_, index) => index);
+	let active = 0;
+	let maxActive = 0;
+	const results = await mapWithConcurrencyLimit(items, 4, async (item) => {
+		active += 1;
+		maxActive = Math.max(maxActive, active);
+		await new Promise((resolve) => setTimeout(resolve, 1 + (item % 3)));
+		active -= 1;
+		return item * 2;
+	});
 	assert.deepEqual(results, items.map((item) => item * 2));
-	assert.equal(maxActive, 8);
+	assert.equal(maxActive, 4);
+});
+
+test("mapWithConcurrencyLimit keeps workers saturated across an uneven workload", async () => {
+	// Every 4th task takes 5x as long as the others. The old batched
+	// dispatch would idle 3 workers for the slow task's tail before the
+	// next batch started; the flat pool should keep min(K, remaining)
+	// workers active until all tasks complete.
+	const items = Array.from({ length: 16 }, (_, index) => index);
+	const fastMs = 5;
+	const slowMs = 25;
+	const concurrency = 4;
+	let active = 0;
+	let maxActive = 0;
+	let started = 0;
+	let finished = 0;
+	let saturatedSamples = 0;
+	let unsaturatedSamples = 0;
+	const sampler = setInterval(() => {
+		const remaining = items.length - finished;
+		const expectedActive = Math.min(concurrency, remaining);
+		if (remaining <= concurrency) return; // tail decrescendo is expected
+		if (started < items.length && active < expectedActive) unsaturatedSamples += 1;
+		else saturatedSamples += 1;
+	}, 2);
+	const start = Date.now();
+	const results = await mapWithConcurrencyLimit(items, concurrency, async (item) => {
+		started += 1;
+		active += 1;
+		maxActive = Math.max(maxActive, active);
+		await new Promise((resolve) => setTimeout(resolve, item % 4 === 0 ? slowMs : fastMs));
+		active -= 1;
+		finished += 1;
+		return item;
+	});
+	clearInterval(sampler);
+	const elapsed = Date.now() - start;
+	assert.deepEqual(results, items);
+	assert.equal(maxActive, concurrency);
+	// Flat-pool wall-clock is ~max(slowest_task, totalWork/K). The batched
+	// baseline with batchSize=8 idled workers for slow-task tails between
+	// batches; the flat pool removes that dead time. Generous bounds keep
+	// the assertion stable on slow CI runners.
+	const totalWork = items.reduce((sum, item) => sum + (item % 4 === 0 ? slowMs : fastMs), 0);
+	const flatLowerBound = totalWork / concurrency;
+	assert.ok(elapsed >= flatLowerBound * 0.5, `elapsed ${elapsed}ms below realistic flat-pool floor ${flatLowerBound}ms`);
+	assert.ok(saturatedSamples > 0, "expected at least one saturated sample mid-run");
+	// While remaining items > concurrency, the pool must stay saturated.
+	// Allow a tiny number of races (sampler firing between a task's
+	// completion-increment and the worker's next pickup).
+	assert.ok(unsaturatedSamples <= 1, `flat pool dropped below concurrency mid-run (${unsaturatedSamples} unsaturated samples, ${saturatedSamples} saturated)`);
 });
 
 test("wait_for_subagent_idle helper resolves on idle transition", async () => {
