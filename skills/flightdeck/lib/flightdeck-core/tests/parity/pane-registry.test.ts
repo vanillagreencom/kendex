@@ -788,7 +788,13 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 		expect(refresh.status).toBe(0);
 		const parsed = JSON.parse(refresh.stdout);
 		expect(parsed.cleared).toContain("name-verified-missing");
-		expect(parsed.warnings).toEqual([]);
+		// vstack#214: a `pane_id` set on the entry but absent from the
+		// live tmux snapshot is a registry-drift signal — refresh emits
+		// a `pane-id-not-live` warning so the daemon log and operator
+		// see it. The clear of `window_name_current` still proceeds.
+		expect(parsed.warnings).toEqual([
+			{ id: "name-verified-missing", reason: "pane-id-not-live", message: expect.stringContaining("%999 did not resolve") },
+		]);
 		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
 		expect(entries["name-verified-missing"].window_name_current).toBeNull();
 	});
@@ -842,8 +848,17 @@ describe("pane-registry teardown-window (#16, shim-driven)", () => {
 
 		const refresh = runShim(tsRepo, statePath, ["refresh-window-names"]);
 		expect(refresh.status).toBe(0);
-		const parsed = JSON.parse(refresh.stdout) as { updated: string[]; cleared: string[]; warnings: unknown[] };
+		const parsed = JSON.parse(refresh.stdout) as {
+			updated: string[];
+			cleared: string[];
+			warnings: Array<{ id?: string; reason: string; message: string }>;
+		};
 		expect(parsed.updated.sort()).toEqual(["B", "C"]);
+		// A's pane_id is now dead — refresh emits a `pane-id-not-live`
+		// warning so the operator sees the registry drift even before
+		// reconcile drops the row.
+		expect(parsed.warnings.map((w) => w.id ?? "")).toContain("A");
+		expect(parsed.warnings.find((w) => w.id === "A")?.reason).toBe("pane-id-not-live");
 
 		const entries = JSON.parse(readFileSync(stateFilePath(tsRepo, "test-session"), "utf8")).entries;
 		expect(entries.B.pane_target).toBe("test-session:5.0");

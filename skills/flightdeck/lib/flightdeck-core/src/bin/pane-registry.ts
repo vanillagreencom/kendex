@@ -1001,7 +1001,7 @@ function performRefreshWindowNames(): RefreshWindowNamesResult {
 		// window_index are cached views that go stale when tmux renumbers
 		// windows (close, swap, move). Refresh them whenever the entry's
 		// pane_id still resolves to a live pane at different coords.
-		refreshPaneCoordsForEntry(id, entry, windowSnapshot.byPaneId, updated);
+		refreshPaneCoordsForEntry(id, entry, windowSnapshot.byPaneId, updated, warnings);
 
 		const current = tmuxCurrentWindowNameForEntry(entry, windowSnapshot);
 		const previous = entry.window_name_current;
@@ -1037,13 +1037,49 @@ function refreshPaneCoordsForEntry(
 	entry: EntryRecord,
 	byPaneId: Map<string, LivePaneCoords>,
 	updated: Set<string>,
+	warnings: Array<{ id?: string; reason: string; message: string }>,
 ): void {
 	const paneId = entryString(entry, "pane_id");
-	if (!paneId) return;
-	const live = byPaneId.get(paneId);
-	if (!live || !live.windowIndex || !live.paneIndex) return;
-
 	const storedTarget = entryString(entry, "pane_target") ?? "";
+	const state = entryString(entry, "state") ?? "";
+
+	if (!paneId) {
+		// Entries with no pane_id can be intentional pre-spawn rows (e.g.
+		// kind=workflow placeholders, plan-item rows waiting on a
+		// dependency, or fresh `state=waiting` rows registered before
+		// their pane was created). Those have neither pane_target nor a
+		// post-waiting state, so we skip them silently — there's nothing
+		// to heal yet.
+		//
+		// Anything else (a pane_target was recorded, or the entry has
+		// already left `waiting`) implies the row *should* have a
+		// pane_id but doesn't. That's a registry-drift signal worth
+		// logging so daemon refresh + operator log capture it.
+		if (storedTarget || (state && state !== "waiting")) {
+			warnings.push({
+				id,
+				reason: "missing-pane-id",
+				message: `entry ${id} has no pane_id but pane_target='${storedTarget || "<none>"}' state='${state || "<none>"}'; refresh cannot heal pane_target without a canonical %pane_id (run pane-registry reconcile to backfill)`,
+			});
+		}
+		return;
+	}
+
+	const live = byPaneId.get(paneId);
+	if (!live || !live.windowIndex || !live.paneIndex) {
+		// pane_id is set but tmux's live snapshot doesn't have it.
+		// Either the pane died since the snapshot was taken, or
+		// `list-panes -a` returned partial data. Reconcile is the
+		// durable handler for dead panes; surface a warning so the
+		// daemon refresh log + operator can correlate the gap.
+		warnings.push({
+			id,
+			reason: "pane-id-not-live",
+			message: `entry ${id} pane_id=${paneId} did not resolve in the live tmux snapshot; pane may be gone (run pane-registry reconcile) or list-panes returned partial data`,
+		});
+		return;
+	}
+
 	const storedWindow = entryString(entry, "window") ?? "";
 	const storedIndexRaw = entry.window_index;
 	const storedIndex = typeof storedIndexRaw === "number"

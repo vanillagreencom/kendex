@@ -616,9 +616,38 @@ register_entry() {
   # the new row's snapshot. Re-running the refresh here heals stale
   # pane_target / window / window_index for sibling entries within one
   # spawn instead of waiting for the daemon's reconcile tick (default
-  # FD_RECONCILE_INTERVAL_SEC=5). Errors are tolerated — the daemon tick
-  # remains the durable repair path.
-  "$PANE_REGISTRY" refresh-window-names >/dev/null 2>&1 || true
+  # FD_RECONCILE_INTERVAL_SEC=5). The daemon tick remains the durable
+  # repair path, so a failed refresh here is non-fatal — but it MUST be
+  # visible to operator/daemon logs (no silent swallow) so a partial
+  # repair isn't mistaken for a clean spawn.
+  local fd_refresh_err_file
+  fd_refresh_err_file=$(mktemp -t fd-refresh-err.XXXXXX 2>/dev/null) || fd_refresh_err_file=""
+  local fd_refresh_stdout fd_refresh_rc=0
+  if [[ -n "$fd_refresh_err_file" ]]; then
+    fd_refresh_stdout=$("$PANE_REGISTRY" refresh-window-names 2>"$fd_refresh_err_file") || fd_refresh_rc=$?
+  else
+    fd_refresh_stdout=$("$PANE_REGISTRY" refresh-window-names 2>&1) || fd_refresh_rc=$?
+  fi
+  if (( fd_refresh_rc != 0 )); then
+    printf 'flightdeck-session: post-register refresh-window-names failed (rc=%d, entry_id=%s)\n' "$fd_refresh_rc" "$entry_id" >&2
+    [[ -n "$fd_refresh_stdout" ]] && printf '%s\n' "$fd_refresh_stdout" >&2
+    if [[ -n "$fd_refresh_err_file" && -s "$fd_refresh_err_file" ]]; then
+      cat "$fd_refresh_err_file" >&2
+    fi
+  else
+    if [[ -n "$fd_refresh_err_file" && -s "$fd_refresh_err_file" ]]; then
+      cat "$fd_refresh_err_file" >&2
+    fi
+    if [[ -n "$fd_refresh_stdout" ]] && command -v jq >/dev/null 2>&1; then
+      local fd_refresh_warning_count
+      fd_refresh_warning_count=$(printf '%s' "$fd_refresh_stdout" | jq -r '(.warnings // []) | length' 2>/dev/null || printf '0')
+      if [[ "$fd_refresh_warning_count" =~ ^[0-9]+$ ]] && (( fd_refresh_warning_count > 0 )); then
+        printf 'flightdeck-session: post-register refresh-window-names returned %d warning(s) (entry_id=%s):\n' "$fd_refresh_warning_count" "$entry_id" >&2
+        printf '%s\n' "$fd_refresh_stdout" | jq -r '.warnings[] | "  - id=\(.id // "-") reason=\(.reason) message=\(.message)"' >&2 || printf '%s\n' "$fd_refresh_stdout" >&2
+      fi
+    fi
+  fi
+  [[ -n "$fd_refresh_err_file" ]] && rm -f "$fd_refresh_err_file"
 }
 
 # vstack#101: capture git branch at spawn time. Silent when not a git

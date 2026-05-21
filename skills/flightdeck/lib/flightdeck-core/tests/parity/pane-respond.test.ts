@@ -290,6 +290,104 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 		}
 	});
 
+	test("kill W → reconcile → surviving entries' pane_target updates AND pane-respond %PANE_ID lands in the correct pane (vstack#214 acceptance)", () => {
+		// Full acceptance sequence: spawn 3 entries in windows W/W+1/W+2;
+		// kill window W (tmux shifts the survivors down by one slot);
+		// run `pane-registry reconcile` (the manual recovery path);
+		// assert B's and C's cached pane_target / window / window_index
+		// match their new live coords; then call pane-respond %PANE_B
+		// and pane-respond %PANE_C and verify each paste landed in the
+		// correct surviving pane via the shim's sent_keys log. This
+		// mirrors the issue's reproducer: a sibling pane silently
+		// receiving the supervisor's message after a renumber.
+		const repo = makeRepo();
+		try {
+			const statePath = join(repo, "shim-state.json");
+			writeFileSync(statePath, JSON.stringify({
+				session: "test-session",
+				panes: {
+					"%500": { pane_index: 0, path: "/tmp/A", window_id: "@50", window_index: 5, window_name: "A", sent_keys: [] },
+					"%501": { pane_index: 0, path: "/tmp/B", window_id: "@51", window_index: 6, window_name: "B", sent_keys: [] },
+					"%502": { pane_index: 0, path: "/tmp/C", window_id: "@52", window_index: 7, window_name: "C", sent_keys: [] },
+				},
+				windows: {
+					"@50": { index: 5, name: "A" },
+					"@51": { index: 6, name: "B" },
+					"@52": { index: 7, name: "C" },
+				},
+				buffers: {},
+			}, null, 2));
+			const env = shimEnv(repo, statePath);
+
+			// Register each entry with its initial coords (this is the
+			// normal flightdeck-session start path — pane_target matches
+			// live tmux at spawn time).
+			for (const [id, paneId, win] of [["A", "%500", "5"], ["B", "%501", "6"], ["C", "%502", "7"]] as const) {
+				expect(runScript(repo, env, PANE_REGISTRY_SCRIPT, [
+					"init-entry", id,
+					"--title", `issue-${id}`,
+					"--kind", "adhoc",
+					"--cwd", `/tmp/${id}`,
+					"--window", win,
+					"--harness", "pi",
+					"--pane-id", paneId,
+					"--pane-target", `test-session:${win}.0`,
+					"--window-index", win,
+				]).status).toBe(0);
+			}
+
+			// Simulate `tmux kill-window` for window @50: drop %500's
+			// pane + window, shift B and C down by one index.
+			const shim = JSON.parse(readFileSync(statePath, "utf8")) as {
+				panes: Record<string, { window_index: number; [k: string]: unknown }>;
+				windows: Record<string, { index: number; [k: string]: unknown }>;
+				[k: string]: unknown;
+			};
+			delete shim.panes["%500"];
+			delete shim.windows["@50"];
+			shim.panes["%501"]!.window_index = 5;
+			shim.panes["%502"]!.window_index = 6;
+			shim.windows["@51"]!.index = 5;
+			shim.windows["@52"]!.index = 6;
+			writeFileSync(statePath, JSON.stringify(shim, null, 2));
+
+			// Manual reconcile — the recovery action a user runs after a
+			// reshuffle. Pre-vstack#214 this only handled liveness; now
+			// it also calls the refresh helper that recomputes pane_target.
+			const reconcile = runScript(repo, env, PANE_REGISTRY_SCRIPT, ["reconcile"]);
+			expect(reconcile.status).toBe(0);
+			// Reconcile reports the refresh that updated B/C and then
+			// drops A whose pane_id is gone.
+			expect(reconcile.stdout).toMatch(/refreshed pane coords\/names for 2 entries/);
+
+			// Registry-side assertion: B/C now point at their new live
+			// coords; A's row was dropped because its pane is gone.
+			const reg = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			expect(reg.entries.A).toBeUndefined();
+			expect(reg.entries.B.pane_target).toBe("test-session:5.0");
+			expect(reg.entries.B.window_index).toBe(5);
+			expect(reg.entries.B.window).toBe("5");
+			expect(reg.entries.C.pane_target).toBe("test-session:6.0");
+			expect(reg.entries.C.window_index).toBe(6);
+			expect(reg.entries.C.window).toBe("6");
+
+			// Routing assertion: pane-respond to each surviving %PANE_ID
+			// must land in that pane's sent_keys, not in the other
+			// surviving pane (or any historical slot).
+			expect(runScript(repo, env, SCRIPT, ["%501", "msg-for-B", "--harness", "pi"]).status).toBe(0);
+			expect(runScript(repo, env, SCRIPT, ["%502", "msg-for-C", "--harness", "pi"]).status).toBe(0);
+			const after = JSON.parse(readFileSync(statePath, "utf8")) as {
+				panes: Record<string, { sent_keys?: string[] }>;
+			};
+			expect(after.panes["%501"].sent_keys).toContain("msg-for-B");
+			expect(after.panes["%501"].sent_keys ?? []).not.toContain("msg-for-C");
+			expect(after.panes["%502"].sent_keys).toContain("msg-for-C");
+			expect(after.panes["%502"].sent_keys ?? []).not.toContain("msg-for-B");
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+		}
+	});
+
 	test("after refresh-window-names, cached registry coords match live tmux", () => {
 		// Companion assertion: refresh-window-names updates pane_target,
 		// window, and window_index for every entry whose pane_id is still
