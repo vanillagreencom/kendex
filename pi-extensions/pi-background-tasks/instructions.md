@@ -9,7 +9,7 @@ Use `bg_task action: "spawn"` for long-running processes that should outlive the
 Spawn parameters worth knowing:
 - `notifyOnExit` (default true) wakes you when the task exits.
 - `notifyOnOutput` + `notifyPattern` wake on substring or `/regex/flags` matches in new output.
-- `notifyMode` controls output wake frequency: `always` (default) wakes on each output update, `transition` wakes only when the new output tail hash changes, and `first-match-only` wakes once for `notifyPattern` then suppresses later output wakes.
+- `notifyMode` controls output wake frequency: `always` wakes on each output update, `transition` wakes only when the new output tail hash changes, and `first-match-only` wakes once for `notifyPattern` then suppresses later output wakes. Default: `first-match-only` when `notifyPattern` is set, `transition` otherwise. Pass `notifyMode: "always"` explicitly to opt into every-output wakes.
 - `dedupeKey` lets multiple matching output wakes share one transition hash bucket, useful for pollers that print the same state line repeatedly.
 - `timeoutSeconds` defaults to 0 (disabled); set only when you actually want a timeout.
 
@@ -17,6 +17,7 @@ Rules:
 - Never spawn a task and then wait on its output in foreground — that defeats the point.
 - Stop tasks you started for a turn-scoped purpose before finishing the turn.
 - Prefer `notifyMode: "transition"` over hand-rolled `prev=...; if changed; echo ...` poller guards when you only need wakes for state changes.
+- Output wakes are transcript-budget-safe by default: each wake carries one inline tail capped at `outputAlertMaxChars` (default 2 KB), and a per-task wake budget (default 20 wakes / 20 KB cumulative) suppresses further wakes once exhausted. When the budget trips you'll receive a single "wake budget exhausted; inspect log" notice with the log file path — fetch the full log with `bg_task action: "log"` instead of expecting more inline updates.
 
 Durability (vstack#15):
 - `notifyOnExit` is durable. If a task hits a terminal state without emitting its exit wake (Pi session restart, mid-session reload that coerced `running → stopped`, or kill -9 / OOM with a dead child), the next `session_start` replays the missed `exit` event so the agent never silently stalls on a finished task.

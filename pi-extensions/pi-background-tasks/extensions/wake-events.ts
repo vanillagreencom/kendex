@@ -5,6 +5,7 @@ import type {
 	BackgroundTaskSnapshot,
 	ManagedTask,
 	NotifyMode,
+	OutputWakeBudgetState,
 	TaskEventType,
 	WakeDiagnostic,
 	WakeDropReason,
@@ -15,8 +16,65 @@ import type {
 export const NOTIFY_MODES = ["always", "transition", "first-match-only"] as const;
 const MAX_WAKE_EVENTS = 50;
 
+export function emptyOutputWakeBudget(): OutputWakeBudgetState {
+	return { wakes: 0, bytes: 0, exhausted: false, announcedAt: null };
+}
+
+export function ensureOutputWakeBudget(task: Pick<ManagedTask, "outputWakeBudget">): OutputWakeBudgetState {
+	if (!task.outputWakeBudget || typeof task.outputWakeBudget !== "object") {
+		task.outputWakeBudget = emptyOutputWakeBudget();
+	}
+	const budget = task.outputWakeBudget;
+	budget.wakes = Number.isFinite(budget.wakes) ? Math.max(0, Math.floor(budget.wakes)) : 0;
+	budget.bytes = Number.isFinite(budget.bytes) ? Math.max(0, Math.floor(budget.bytes)) : 0;
+	budget.exhausted = budget.exhausted === true;
+	budget.announcedAt = typeof budget.announcedAt === "number" ? budget.announcedAt : null;
+	return budget;
+}
+
+export interface OutputWakeBudgetLimits {
+	maxWakes: number;
+	maxBytes: number;
+}
+
+/**
+ * Returns true iff delivering one more output wake of `nextWakeBytes` would
+ * exceed either arm of the budget. Caller treats `true` as "suppress this
+ * wake and mark exhausted". A limit of 0 disables that arm.
+ */
+export function wouldExhaustOutputWakeBudget(
+	budget: OutputWakeBudgetState,
+	limits: OutputWakeBudgetLimits,
+	nextWakeBytes: number,
+): boolean {
+	if (budget.exhausted) return true;
+	const wakeCap = Math.max(0, Math.floor(limits.maxWakes));
+	const byteCap = Math.max(0, Math.floor(limits.maxBytes));
+	if (wakeCap > 0 && budget.wakes + 1 > wakeCap) return true;
+	if (byteCap > 0 && budget.bytes + Math.max(0, nextWakeBytes) > byteCap) return true;
+	return false;
+}
+
 export function normalizeNotifyMode(value: unknown): NotifyMode {
-	return value === "transition" || value === "first-match-only" ? value : "always";
+	if (value === "transition" || value === "first-match-only" || value === "always") return value;
+	return "always";
+}
+
+/**
+ * Pick a default `notifyMode` for tasks where the caller didn't set one
+ * (vstack#210). When a pattern is supplied, default to "first-match-only" so
+ * a single pattern hit wakes the agent and subsequent matches stay quiet.
+ * Otherwise default to "transition" so chatty pollers that print the same
+ * state line repeatedly only wake the agent on state changes. Callers that
+ * really want every-output wakes should pass `"always"` explicitly.
+ */
+export function defaultNotifyMode(notifyPattern: string | undefined): NotifyMode {
+	return notifyPattern?.trim() ? "first-match-only" : "transition";
+}
+
+export function resolveNotifyMode(value: unknown, notifyPattern: string | undefined): NotifyMode {
+	if (value === "always" || value === "transition" || value === "first-match-only") return value;
+	return defaultNotifyMode(notifyPattern);
 }
 
 export function ensureWakeState(task: ManagedTask): void {
@@ -30,6 +88,7 @@ export function ensureWakeState(task: ManagedTask): void {
 	for (const sequence of task.voidedWakeSequences) task.voidedWakes.add(sequence);
 	task.voidedWakeSequences = [...task.voidedWakes].sort((a, b) => a - b);
 	task.outputPatternMatched = task.outputPatternMatched === true;
+	ensureOutputWakeBudget(task);
 }
 
 export function canEmitOutputWake(task: Pick<ManagedTask, "status" | "stopReason">): boolean {
@@ -167,6 +226,13 @@ function sha256(value: string): string {
 }
 
 export interface OutputWakeDecisionInput {
+	/**
+	 * Optional caps for the per-task output-wake budget. Omit on the historical
+	 * code paths (tests, internal helpers) — budget is enforced only when
+	 * `wakeBudgetLimits` is set, so old callers preserve their existing
+	 * behavior. Either arm may be 0 to disable that arm.
+	 */
+	wakeBudgetLimits?: OutputWakeBudgetLimits;
 	dedupeHashes?: Map<string, string>;
 	eventAt: number;
 	logDiagnostic?: (diagnostic: WakeDiagnostic) => void;
@@ -230,6 +296,15 @@ export function shouldEmitOutputWake(task: ManagedTask, input: OutputWakeDecisio
 		}
 	}
 
+	if (input.wakeBudgetLimits) {
+		const budget = ensureOutputWakeBudget(task);
+		const nextBytes = byteLength(input.newOutputTail);
+		if (wouldExhaustOutputWakeBudget(budget, input.wakeBudgetLimits, nextBytes)) {
+			log?.({ ...baseDiagnostic, reason: "wake-budget-exhausted" });
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -245,6 +320,10 @@ export interface SendTaskWakeDeps {
 	logDiagnostic: (diagnostic: WakeDiagnostic) => void;
 	messageType: string;
 	now?: () => number;
+	/**
+	 * Bounded full-output tail used as the fallback `outputTail` payload.
+	 * Callers must clamp this to `outputAlertMaxChars` before returning it.
+	 */
 	outputTail: (task: ManagedTask) => string;
 	rememberSnapshot: (task: ManagedTask) => BackgroundTaskSnapshot;
 	sendMessage: (message: Record<string, unknown>, options: Record<string, unknown>) => void;
@@ -253,8 +332,30 @@ export interface SendTaskWakeDeps {
 export interface SendTaskWakeOptions {
 	eventAt?: number;
 	matchedPattern?: string;
+	/**
+	 * Newly observed (already-bounded) output tail. For output wakes this is
+	 * preferred over the full-output tail: it carries just the unseen excerpt
+	 * the agent needs to react. The interface intentionally exposes one inline
+	 * tail in `details` (vstack#210), so providing this displaces the
+	 * full-output tail in the emitted payload.
+	 */
 	newOutputTail?: string;
 	sequence?: number;
+}
+
+function byteLength(value: string): number {
+	return Buffer.byteLength(value, "utf8");
+}
+
+function pickOutputTail(deps: SendTaskWakeDeps, task: ManagedTask, options: SendTaskWakeOptions): {
+	tail: string;
+	truncated: boolean;
+} {
+	if (typeof options.newOutputTail === "string" && options.newOutputTail.length > 0) {
+		return { tail: options.newOutputTail, truncated: options.newOutputTail.startsWith("[...truncated]") };
+	}
+	const tail = deps.outputTail(task);
+	return { tail, truncated: tail.startsWith("[...truncated]") };
 }
 
 export function sendTaskWake(
@@ -304,13 +405,19 @@ export function sendTaskWake(
 	recordWakeEvent(task, record);
 	forgetPendingWake(task, pending.sequence);
 
+	const { tail, truncated } = pickOutputTail(deps, task, options);
+	if (eventType === "output") {
+		const budget = ensureOutputWakeBudget(task);
+		budget.wakes += 1;
+		budget.bytes += byteLength(tail);
+	}
 	const details: BackgroundTaskEventDetails = {
 		deliveredAt,
 		eventAt: pending.eventAt,
 		eventType,
 		matchedPattern: options.matchedPattern,
-		newOutputTail: options.newOutputTail,
-		outputTail: deps.outputTail(task),
+		outputTail: tail,
+		outputTailTruncated: truncated,
 		sequence: pending.sequence,
 		task: deps.rememberSnapshot(task),
 		taskStatusAtEmit: task.status,
@@ -328,5 +435,66 @@ export function sendTaskWake(
 		},
 		eventType === "exit" ? { deliverAs: "followUp", triggerTurn: true } : { deliverAs: "steer", triggerTurn: true },
 	);
+	return true;
+}
+
+/**
+ * Build the concise "wake budget exhausted" notice (vstack#210). Emitted once
+ * per task when the budget guard trips, instead of further inline-tail wakes.
+ * The notice points at the on-disk log so callers can recover full output.
+ */
+export interface SendBudgetExhaustedNoticeDeps {
+	logDiagnostic: (diagnostic: WakeDiagnostic) => void;
+	messageType: string;
+	now?: () => number;
+	rememberSnapshot: (task: ManagedTask) => BackgroundTaskSnapshot;
+	sendMessage: (message: Record<string, unknown>, options: Record<string, unknown>) => void;
+}
+
+export function sendOutputWakeBudgetExhaustedNotice(
+	deps: SendBudgetExhaustedNoticeDeps,
+	task: ManagedTask,
+	limits: OutputWakeBudgetLimits,
+): boolean {
+	const budget = ensureOutputWakeBudget(task);
+	if (budget.announcedAt != null) return false;
+	const now = deps.now ?? Date.now;
+	const timestamp = now();
+	budget.exhausted = true;
+	budget.announcedAt = timestamp;
+	const content = [
+		`Background task ${task.id} output wake budget exhausted; further output wakes suppressed.`,
+		`Inspect the full log with bg_task log id: ${task.id} (or pid: ${task.pid}); on disk at ${task.logFile}.`,
+		`Budget caps: ${Math.max(0, Math.floor(limits.maxWakes))} wakes / ${Math.max(0, Math.floor(limits.maxBytes))} inline bytes.`,
+	].join("\n");
+	deps.sendMessage(
+		{
+			content,
+			customType: deps.messageType,
+			details: {
+				deliveredAt: timestamp,
+				eventType: "output-budget-exhausted",
+				logFile: task.logFile,
+				outputBytes: task.outputBytes,
+				task: deps.rememberSnapshot(task),
+				wakeBudget: {
+					announcedAt: budget.announcedAt,
+					bytes: budget.bytes,
+					maxBytes: Math.max(0, Math.floor(limits.maxBytes)),
+					maxWakes: Math.max(0, Math.floor(limits.maxWakes)),
+					wakes: budget.wakes,
+				},
+			},
+			display: true,
+		},
+		{ deliverAs: "steer", triggerTurn: true },
+	);
+	deps.logDiagnostic({
+		eventType: "output",
+		reason: "wake-budget-exhausted",
+		taskId: task.id,
+		taskStatus: task.status,
+		timestamp,
+	});
 	return true;
 }

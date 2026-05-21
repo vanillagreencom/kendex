@@ -91,8 +91,10 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Setting | What it does |
 | --- | --- |
 | In-memory output buffer | Per-task in-memory cap. Logs always keep full output. |
-| Wakeup output tail | Characters included in output/exit wakeup messages. |
-| Dashboard/log tail | Characters shown in dashboard and log actions. |
+| Wakeup output tail | Characters included in output/exit wakeup messages. Default 2000; wakes are steer messages that bypass `pi-output-policy`, so this is the per-wake transcript budget. Raise only for monitors whose verbose inline tail is genuinely useful. |
+| Dashboard/log tail | Characters shown in dashboard and log actions. Default 10000; truncated tool output points at the full log file. |
+| Output wake budget (count) | Maximum output wakes per task before further output wakes are suppressed and a single "wake budget exhausted; inspect log" notice is emitted. Set 0 to disable. Exit wakes are unaffected. |
+| Output wake budget (bytes) | Cumulative inline output-tail bytes per task before output wakes are suppressed. Set 0 to disable. |
 
 ### UI
 
@@ -124,6 +126,8 @@ Routine wake/persistence diagnostics are written only when `PI_BG_TASK_DEBUG=1`,
 Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory.
 
 Exit wakeups are durable across session restarts and PID reuse — if a task ends while Pi is gone, the next session replays the missed wake. Output wakes scheduled before `stop` / `clear` are voided.
+
+Output wakeups are transcript-budget-safe by default: each wake carries one ~2 KB tail (`outputAlertMaxChars`), a chatty task is capped to 20 output wakes / 20 KB cumulative inline bytes before further wakes are suppressed (`outputWakeBudgetMaxWakes` / `outputWakeBudgetMaxBytes`), and unset `notifyMode` defaults to `transition` (or `first-match-only` when `notifyPattern` is set) so identical poller output does not wake the agent repeatedly. Set `notifyMode: "always"` and/or raise the wake budget when you really do want every-update wakes.
 
 Activity broker publication is best-effort and requires `pi-session-bridge` in the same Pi runtime. Broker events are side-channel `vstack_activity` stream rows, not chat messages; Flightdeck consumes them into its activity JSONL sidecar when enabled.
 

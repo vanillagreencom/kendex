@@ -280,7 +280,7 @@ export function renderTaskEventMessage(
 	];
 	if (details.matchedPattern) lines.push(`${bgTree(theme, "└")}${theme.fg("muted", "Pattern")}: ${details.matchedPattern}`);
 
-	const preview = details.eventType === "output" ? details.newOutputTail || details.outputTail : details.outputTail;
+	const preview = details.outputTail;
 	const lineLimit = outputLineLimit();
 	const output = takeTailLines(preview, lineLimit);
 	lines.push("", theme.fg("accent", theme.bold("Recent output")));

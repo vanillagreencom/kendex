@@ -45,7 +45,18 @@ export type WakeDropReason =
 	| "output-transition-dedupe"
 	| "output-wake-rescheduled"
 	| "shutting-down"
-	| "voided";
+	| "voided"
+	| "wake-budget-exhausted";
+
+// Cumulative per-task accounting for the output-wake budget guard (vstack#210).
+// Persisted so a session restart preserves the cap and a chatty task cannot
+// reset its inline-wake budget by triggering a Pi reload.
+export interface OutputWakeBudgetState {
+	wakes: number;
+	bytes: number;
+	exhausted: boolean;
+	announcedAt: number | null;
+}
 
 export interface WakeEventRecord {
 	deliveredAt: number | null;
@@ -127,6 +138,12 @@ export interface BackgroundTaskSnapshot {
 	lastOutputDedupeHash?: string;
 	lastOutputDedupeByKey?: Record<string, string>;
 	outputPatternMatched?: boolean;
+	/**
+	 * Per-task budget accounting for output wakes (vstack#210). Persists so a
+	 * session restart preserves the cap. Absent on snapshots persisted by
+	 * versions <=1.4.0 — treated as a fresh budget on restore.
+	 */
+	outputWakeBudget?: OutputWakeBudgetState;
 	// True after sendTaskEvent('exit') has fired for this task. Persisted so
 	// a session restart can replay missed exit wakeups for tasks that hit
 	// terminal state (notably the running->stopped coercion in
@@ -169,13 +186,25 @@ export type ManagedTask = BackgroundTaskSnapshot & {
 	restored?: boolean;
 };
 
+/**
+ * Wake-event payload attached to the pi.sendMessage `details` field. Output
+ * wakes carry the most recent unseen tail; exit wakes carry the trailing
+ * portion of full output. Both inline tails are bounded by
+ * `outputAlertMaxChars` (default 2KB) and `details.task.logFile` always
+ * points to the full on-disk log for recovery. Total `details` payload is
+ * targeted to stay under 4KB to keep transcript growth bounded (vstack#210).
+ */
 export interface BackgroundTaskEventDetails {
 	deliveredAt: number;
 	eventAt: number;
 	eventType: TaskEventType;
 	matchedPattern?: string;
-	newOutputTail?: string;
 	outputTail: string;
+	/**
+	 * True iff `outputTail` had to be truncated to fit the cap. The caller can
+	 * surface the full log via `task.logFile`.
+	 */
+	outputTailTruncated: boolean;
 	sequence: number;
 	task: BackgroundTaskSnapshot;
 	taskStatusAtEmit: BackgroundTaskStatus;

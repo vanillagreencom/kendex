@@ -138,9 +138,9 @@
         {
           "key": "outputAlertMaxChars",
           "label": "Wakeup output tail",
-          "description": "Characters included in output/exit wakeup messages.",
+          "description": "Characters included in output/exit wakeup messages. Wakes are custom steer messages that bypass pi-output-policy, so this is the per-wake transcript budget. Default 2000 keeps a single wake comfortably under 4KB; raise only for monitors whose verbose inline tail is genuinely useful.",
           "type": "number",
-          "default": 10000,
+          "default": 2000,
           "category": "Output",
           "apply": "live"
         },
@@ -149,7 +149,25 @@
           "label": "Dashboard/log tail",
           "description": "Characters shown by dashboard and log actions. Log tool output includes the full log path when truncated.",
           "type": "number",
-          "default": 50000,
+          "default": 10000,
+          "category": "Output",
+          "apply": "live"
+        },
+        {
+          "key": "outputWakeBudgetMaxWakes",
+          "label": "Output wake budget (count)",
+          "description": "Maximum output wakes per task before further output wakes are suppressed and a single 'wake budget exhausted; inspect log' notice is emitted. Exit wakes are unaffected. Set 0 to disable the count cap.",
+          "type": "number",
+          "default": 20,
+          "category": "Output",
+          "apply": "live"
+        },
+        {
+          "key": "outputWakeBudgetMaxBytes",
+          "label": "Output wake budget (bytes)",
+          "description": "Cumulative inline output-tail bytes per task before further output wakes are suppressed. Set 0 to disable the byte cap.",
+          "type": "number",
+          "default": 20000,
           "category": "Output",
           "apply": "live"
         },

@@ -29,6 +29,15 @@ Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`,
 
 `clearTaskTimers` records a `cleared-on-task-exit` diagnostic for any pending output wakes it cancels.
 
+### Transcript-budget-safe wake payload (vstack#210)
+
+Wake messages reach the transcript through `pi.sendMessage(..., { deliverAs: "steer" })` and skip `pi-output-policy`'s truncation, so payload size is governed entirely here.
+
+- `details` carries a single bounded `outputTail` (default cap `outputAlertMaxChars = 2000`) plus the canonical task snapshot (which already carries `logFile` and `outputBytes` for recovery). The legacy `newOutputTail` field was removed in vstack#210; for output wakes the wake-time `outputTail` IS the new unseen excerpt, and for exit wakes it is the trailing portion of full output.
+- A `details.outputTailTruncated` boolean tells the renderer whether the inline tail was clipped so it can point at `task.logFile`.
+- A per-task budget guard (`outputWakeBudgetMaxWakes`, default 20; `outputWakeBudgetMaxBytes`, default 20000) caps cumulative output-wake noise. When the guard trips, `shouldEmitOutputWake` returns the `wake-budget-exhausted` drop reason, `sendOutputWakeBudgetExhaustedNotice` emits one concise notice keyed by `customType` = `BG_MESSAGE_TYPE` with `details.eventType = "output-budget-exhausted"`, and further output wakes are suppressed for the lifetime of the task. The budget persists across session restart via the snapshot's `outputWakeBudget` field. Exit wakes ignore the budget.
+- Unset `notifyMode` resolves to `first-match-only` when `notifyPattern` is set, otherwise `transition`. Pass `notifyMode: "always"` to opt back into every-output wakes.
+
 ## Activity broker publication
 
 When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, task lifecycle code publishes best-effort broker events in addition to existing wake messages. `start` maps to `bg_task.started`; output match wake points map to `bg_task.output_matched`; terminal statuses map to `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, or `bg_task.stopped`. Payload refs use `bg_task_id`; details include truncated command, output byte count, exit code, matched pattern/output tail when present, status, and wake `sequence`.

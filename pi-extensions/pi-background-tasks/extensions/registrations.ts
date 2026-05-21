@@ -105,7 +105,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			notifyOnOutput: Type.Optional(Type.Boolean({ description: "Wake the agent when new output arrives. Defaults to false." })),
 			notifyPattern: Type.Optional(Type.String({ description: "Substring or /regex/flags gate for output wakeups." })),
 			notifyMode: Type.Optional(StringEnum(NOTIFY_MODES, {
-				description: "Output wake mode: always=every output update, transition=only changed output tail hash, first-match-only=one notifyPattern match then suppress output wakes.",
+				description: "Output wake mode: always=every output update, transition=only changed output tail hash, first-match-only=one notifyPattern match then suppress output wakes. Default: first-match-only when notifyPattern is set, transition otherwise (set 'always' explicitly to opt into every-output wakes).",
 			})),
 			dedupeKey: Type.Optional(Type.String({ description: "Optional key used by notifyMode=transition to coalesce matching output wakes across tasks." })),
 			pid: Type.Optional(Type.Number({ description: "PID for action=log or action=stop" })),

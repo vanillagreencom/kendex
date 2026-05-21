@@ -34,6 +34,8 @@ import {
 	DEFAULT_FORCED_BACKGROUND_WINDOW_MS,
 	DEFAULT_OUTPUT_ALERT_MAX_CHARS,
 	DEFAULT_OUTPUT_SETTLE_MS,
+	DEFAULT_OUTPUT_WAKE_BUDGET_MAX_BYTES,
+	DEFAULT_OUTPUT_WAKE_BUDGET_MAX_WAKES,
 	DEFAULT_TIMEOUT_MS,
 	DEFAULT_WIDGET_FINISHED_RETENTION_MS,
 	DEFAULT_WIDGET_TOGGLE_SHORTCUT,
@@ -91,13 +93,17 @@ import type {
 } from "./types.js";
 import {
 	canEmitOutputWake,
+	emptyOutputWakeBudget,
+	ensureOutputWakeBudget,
 	ensureWakeState,
-	normalizeNotifyMode,
+	resolveNotifyMode,
 	recordScheduledOutputDrop,
 	scheduleTaskWake,
+	sendOutputWakeBudgetExhaustedNotice,
 	sendTaskWake,
 	shouldEmitOutputWake,
 	voidPendingTaskWakes,
+	type OutputWakeBudgetLimits,
 } from "./wake-events.js";
 
 // TODO(structure): split scheduleOutputReaction and scheduled-drop handling into a focused module when next touched.
@@ -352,6 +358,26 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		persistSnapshots();
 	};
 
+	const wakeBudgetLimits = (cwd?: string): OutputWakeBudgetLimits => ({
+		maxBytes: Math.max(0, Math.floor(settingNumber("outputWakeBudgetMaxBytes", DEFAULT_OUTPUT_WAKE_BUDGET_MAX_BYTES, cwd))),
+		maxWakes: Math.max(0, Math.floor(settingNumber("outputWakeBudgetMaxWakes", DEFAULT_OUTPUT_WAKE_BUDGET_MAX_WAKES, cwd))),
+	});
+
+	const announceWakeBudgetExhausted = (task: ManagedTask) => {
+		const limits = wakeBudgetLimits(activeCtx?.cwd);
+		const announced = sendOutputWakeBudgetExhaustedNotice({
+			logDiagnostic: logWakeDiagnostic,
+			messageType: BG_MESSAGE_TYPE,
+			rememberSnapshot,
+			sendMessage: (message, messageOptions) => pi.sendMessage(message as any, messageOptions as any),
+		}, task, limits);
+		if (announced) {
+			rememberSnapshot(task);
+			persistSnapshots();
+		}
+		return announced;
+	};
+
 	const sendTaskEvent = (
 		eventType: TaskEventType,
 		task: ManagedTask,
@@ -419,6 +445,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			}
 			const newOutputTail = tailText(unseenOutput, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd));
 			const decisionDiagnostics: WakeDiagnostic[] = [];
+			const limits = wakeBudgetLimits(activeCtx?.cwd);
 			const shouldEmit = shouldEmitOutputWake(task, {
 				dedupeHashes: outputDedupeHashes,
 				eventAt: pending.eventAt,
@@ -427,12 +454,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 				newOutputTail,
 				patternMatched,
 				sequence: pending.sequence,
+				wakeBudgetLimits: limits,
 			});
 			if (!shouldEmit) {
 				const diagnostic = decisionDiagnostics[decisionDiagnostics.length - 1];
 				const reason = (diagnostic?.reason ?? "output-after-stop-suppressed") as WakeDropReason;
 				task.lastAnnouncedLength = output.length;
 				persistScheduledOutputDrop(task, pending, reason, diagnostic ?? {});
+				if (reason === "wake-budget-exhausted") announceWakeBudgetExhausted(task);
 				refreshUi();
 				return;
 			}
@@ -644,7 +673,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			notifyOnExit: options.notifyOnExit ?? true,
 			notifyOnOutput: options.notifyOnOutput ?? false,
 			notifyPattern: options.notifyPattern?.trim() || undefined,
-			notifyMode: normalizeNotifyMode(options.notifyMode),
+			notifyMode: resolveNotifyMode(options.notifyMode, options.notifyPattern),
 			dedupeKey: options.dedupeKey?.trim() || undefined,
 			output: "",
 			outputBytes: 0,
@@ -656,6 +685,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			lastOutputDedupeHash: undefined,
 			lastOutputDedupeByKey: {},
 			outputPatternMatched: false,
+			outputWakeBudget: emptyOutputWakeBudget(),
 			outputTimer: null,
 			pid: spawnedPid,
 			startedAt: now,

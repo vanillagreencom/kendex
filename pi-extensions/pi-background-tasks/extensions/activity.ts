@@ -28,6 +28,10 @@ export interface BackgroundTaskActivityOptions {
 
 const ACTIVITY_BROKER_SYMBOL = Symbol.for("vstack.pi.activity");
 const COMMAND_DETAIL_MAX_CHARS = 200;
+// Activity broker payloads are sidecar (not transcript), but a 10-20KB tail
+// per match still bloats the JSONL stream and Flightdeck's activity sidecar
+// (vstack#210). Keep the broker preview compact; full output stays on disk.
+const ACTIVITY_OUTPUT_TAIL_MAX_CHARS = 512;
 
 export function publishBackgroundTaskStarted(task: ManagedTask): void {
 	publishBackgroundTaskActivity("start", task, { eventAt: task.startedAt, sequence: task.wakeSequence ?? 0 });
@@ -52,7 +56,7 @@ export function buildBackgroundTaskActivity(eventType: TaskEventType | "start", 
 			event_type: eventType,
 			exit_code: typeof task.exitCode === "number" ? task.exitCode : null,
 			matched_pattern: options.matchedPattern,
-			new_output_tail: options.newOutputTail,
+			new_output_tail: truncateActivityTail(options.newOutputTail),
 			output_bytes: task.outputBytes,
 			sequence,
 			status: task.status,
@@ -113,4 +117,10 @@ function backgroundTaskSummaryVerb(type: string): string {
 
 function truncateCommand(command: string): string {
 	return command.length > COMMAND_DETAIL_MAX_CHARS ? command.slice(0, COMMAND_DETAIL_MAX_CHARS) : command;
+}
+
+function truncateActivityTail(tail: string | undefined): string | undefined {
+	if (typeof tail !== "string") return undefined;
+	if (tail.length <= ACTIVITY_OUTPUT_TAIL_MAX_CHARS) return tail;
+	return `${tail.slice(-ACTIVITY_OUTPUT_TAIL_MAX_CHARS)}`;
 }
