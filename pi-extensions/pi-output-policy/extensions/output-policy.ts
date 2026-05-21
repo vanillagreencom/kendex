@@ -477,6 +477,9 @@ export function processText(event: any, ctx: ExtensionContext, text: string): { 
 	return { meta, text: `${truncated.content}\n\n${notice(meta)}` };
 }
 
+const SANITIZE_ARRAY_CAP = 50;
+const SANITIZE_OBJECT_CAP = 80;
+
 export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; changed: boolean } {
 	if (depth > 4) return { changed: true, value: "[Max detail depth reached]" };
 	if (value == null || typeof value === "number" || typeof value === "boolean") return { changed: false, value };
@@ -485,26 +488,39 @@ export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; ch
 		return value.length > max ? { changed: true, value: `${value.slice(0, max)}… [detail string truncated]` } : { changed: false, value };
 	}
 	if (Array.isArray(value)) {
-		let changed = value.length > 50;
-		const sanitized = value.slice(0, 50).map((item) => {
-			const nested = sanitizeDetails(item, depth + 1);
+		const overflow = value.length > SANITIZE_ARRAY_CAP;
+		const limit = overflow ? SANITIZE_ARRAY_CAP - 1 : value.length;
+		const sanitized: unknown[] = [];
+		let changed = overflow;
+		for (let i = 0; i < limit; i += 1) {
+			const nested = sanitizeDetails(value[i], depth + 1);
 			changed ||= nested.changed;
-			return nested.value;
-		});
+			sanitized.push(nested.value);
+		}
+		if (overflow) {
+			sanitized.push(`[output-policy: array truncated, dropped ${value.length - limit} item(s)]`);
+		}
 		return { changed, value: sanitized };
 	}
 	if (typeof value === "object") {
+		// Iterate own keys with an early break instead of materializing the full
+		// Object.entries(...) array, so a wide untrusted `details` object cannot
+		// exhaust memory or CPU before the cap engages.
 		let changed = false;
 		const out: Record<string, unknown> = {};
-		for (const [index, [key, nested]] of Object.entries(value as Record<string, unknown>).entries()) {
-			if (index >= 80) {
-				out["[truncated]"] = "detail object field cap reached";
+		const source = value as Record<string, unknown>;
+		let kept = 0;
+		for (const key in source) {
+			if (!Object.hasOwn(source, key)) continue;
+			if (kept >= SANITIZE_OBJECT_CAP) {
+				out["[output-policy:truncated]"] = `object truncated past cap of ${SANITIZE_OBJECT_CAP} field(s)`;
 				changed = true;
 				break;
 			}
-			const sanitized = sanitizeDetails(nested, depth + 1);
+			const sanitized = sanitizeDetails(source[key], depth + 1);
 			changed ||= sanitized.changed;
 			out[key] = sanitized.value;
+			kept += 1;
 		}
 		return { changed, value: out };
 	}
@@ -551,12 +567,19 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 		const exemptByTool = isSanitizeExceptTool(toolName, ctx.cwd);
 		const sanitizedDetails = sanitizeOn && !exemptByTool ? sanitizeDetails(event.details) : { changed: false, value: event.details };
 		let details = sanitizedDetails.value;
-		if (metas.length > 0) {
+		if (metas.length > 0 || sanitizedDetails.changed) {
 			details = details && typeof details === "object" && !Array.isArray(details) ? { ...(details as Record<string, unknown>) } : {};
-			(details as Record<string, unknown>).vstackOutputPolicy = metas;
 			changed = true;
 		}
-		if (sanitizedDetails.changed) changed = true;
+		if (metas.length > 0) {
+			(details as Record<string, unknown>).vstackOutputPolicy = metas;
+		}
+		if (sanitizedDetails.changed) {
+			(details as Record<string, unknown>).vstackOutputPolicySanitized = {
+				policyMode: resolvePolicyMode(ctx.cwd),
+				reason: "details payload exceeded inline budget; capped per policyMode (set policyMode=compat or sanitizeDetails=false to disable)",
+			};
+		}
 		return changed ? { content, details } : undefined;
 	});
 }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
+import outputPolicy, {
 	__resetSessionCountersForTests,
 	isSanitizeExceptTool,
 	minimizeShellOutput,
@@ -244,6 +244,254 @@ describe("saved-bytes counter", () => {
 			expect(second.meta?.savedBytes).toBeGreaterThan(0);
 			expect(second.meta!.turnSavedBytes!).toBeGreaterThan(first.meta!.turnSavedBytes!);
 			expect(second.meta!.sessionSavedBytes!).toBe(second.meta!.turnSavedBytes!);
+		});
+	});
+});
+
+interface FakePi {
+	pi: any;
+	fire: (event: string, payload: any, ctx: any) => Promise<any>;
+}
+
+function createFakePi(): FakePi {
+	const handlers = new Map<string, (event: any, ctx: any) => any>();
+	const pi = {
+		on(event: string, handler: any) {
+			handlers.set(event, handler);
+		},
+	};
+	return {
+		pi,
+		fire: async (event, payload, ctx) => {
+			const handler = handlers.get(event);
+			if (!handler) return undefined;
+			return await handler(payload, ctx);
+		},
+	};
+}
+
+describe("tool_result handler (default-on sanitization & metadata)", () => {
+	test("oversized non-allowlisted details are sanitized and carry a marker", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const ctx = fakeCtx(cwd);
+				const details: Record<string, unknown> = { big: "x".repeat(20_000) };
+				for (let i = 0; i < 200; i += 1) details[`field_${i}`] = i;
+				fake.fire("tool_result", {
+					toolName: "grep",
+					toolCallId: "h1",
+					input: {},
+					content: [{ type: "text", text: "hello" }],
+					details,
+					isError: false,
+				}, ctx).then((result: any) => {
+					expect(result).toBeTruthy();
+					expect(Object.keys(result.details).length).toBeLessThanOrEqual(81 + 1);
+					expect(result.details["[output-policy:truncated]"]).toMatch(/object truncated/);
+					expect(result.details.vstackOutputPolicySanitized).toBeTruthy();
+					expect(result.details.vstackOutputPolicySanitized.policyMode).toBe("balanced");
+					expect(typeof result.details.big).toBe("string");
+					expect(result.details.big.length).toBeLessThanOrEqual(8 * 1024 + 64);
+					expect(result.details.big).toContain("[detail string truncated]");
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("tasks_write details pass through untouched (state-bearing allowlist)", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const ctx = fakeCtx(cwd);
+				const details: Record<string, unknown> = {};
+				for (let i = 0; i < 200; i += 1) details[`task_${i}`] = { id: i, title: "x".repeat(20_000) };
+				fake.fire("tool_result", {
+					toolName: "tasks_write",
+					toolCallId: "h2",
+					input: {},
+					content: [{ type: "text", text: "ok" }],
+					details,
+					isError: false,
+				}, ctx).then((result: any) => {
+					// `tasks_write` text isn't oversized and details are exempt → handler returns undefined (no changes).
+					expect(result).toBeUndefined();
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("vstackOutputPolicy meta is attached when text is truncated", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const ctx = fakeCtx(cwd);
+				const huge = Array.from({ length: 4000 }, (_, i) => `match ${i} ${"q".repeat(40)}`).join("\n");
+				fake.fire("tool_result", {
+					toolName: "grep",
+					toolCallId: "h3",
+					input: {},
+					content: [{ type: "text", text: huge }],
+					details: { ok: true },
+					isError: false,
+				}, ctx).then((result: any) => {
+					expect(result.details.vstackOutputPolicy).toBeInstanceOf(Array);
+					expect(result.details.vstackOutputPolicy[0].truncated).toBe(true);
+					expect(result.details.vstackOutputPolicy[0].artifactPath).toBeTruthy();
+					expect(result.content[0].text).toContain("[Output truncated");
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("compat mode skips default sanitization", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({ policyMode: "compat" }, (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const ctx = fakeCtx(cwd);
+				const details: Record<string, unknown> = {};
+				for (let i = 0; i < 200; i += 1) details[`field_${i}`] = i;
+				fake.fire("tool_result", {
+					toolName: "grep",
+					toolCallId: "h4",
+					input: {},
+					content: [{ type: "text", text: "ok" }],
+					details,
+					isError: false,
+				}, ctx).then((result: any) => {
+					// compat: no sanitization, no text truncation → no change.
+					expect(result).toBeUndefined();
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("array details get a sentinel when capped", () => {
+		const huge = Array.from({ length: 300 }, (_, i) => ({ i }));
+		const result = sanitizeDetails(huge);
+		expect(result.changed).toBe(true);
+		const arr = result.value as unknown[];
+		expect(arr.length).toBe(50);
+		expect(typeof arr[arr.length - 1]).toBe("string");
+		expect(arr[arr.length - 1]).toMatch(/array truncated, dropped/);
+	});
+});
+
+describe("handler-level counter lifecycle", () => {
+	async function runWithHandlers(
+		cwd: string,
+		fn: (fake: FakePi, ctx: any, oversized: string) => Promise<void>,
+	): Promise<void> {
+		const fake = createFakePi();
+		outputPolicy(fake.pi);
+		const ctx = fakeCtx(cwd);
+		const oversized = Array.from({ length: 4000 }, (_, i) => `line ${i} ${"w".repeat(40)}`).join("\n");
+		await fn(fake, ctx, oversized);
+	}
+
+	test("turn_start resets turnSavedBytes, sessionSavedBytes persists", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				runWithHandlers(cwd, async (fake, ctx, oversized) => {
+					const r1: any = await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "t1",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					const meta1 = r1.details.vstackOutputPolicy[0];
+					expect(meta1.turnSavedBytes).toBeGreaterThan(0);
+					expect(meta1.sessionSavedBytes).toBe(meta1.turnSavedBytes);
+
+					await fake.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, ctx);
+
+					const r2: any = await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "t2",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					const meta2 = r2.details.vstackOutputPolicy[0];
+					// Turn counter restarted from 0, then this call added saved bytes.
+					expect(meta2.turnSavedBytes).toBe(meta2.savedBytes);
+					expect(meta2.turnSavedBytes).toBeLessThan(meta1.sessionSavedBytes + meta2.savedBytes);
+					expect(meta2.sessionSavedBytes).toBe(meta1.sessionSavedBytes + meta2.savedBytes);
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("session_start clears all counters", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				runWithHandlers(cwd, async (fake, ctx, oversized) => {
+					await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "s1",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					await fake.fire("session_start", { type: "session_start" }, ctx);
+					const r2: any = await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "s2",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					const meta2 = r2.details.vstackOutputPolicy[0];
+					// Session reset means sessionSavedBytes equals what this single call added.
+					expect(meta2.sessionSavedBytes).toBe(meta2.savedBytes);
+					expect(meta2.turnSavedBytes).toBe(meta2.savedBytes);
+					resolveTest();
+				});
+			});
+		});
+	});
+
+	test("session_shutdown clears counters", async () => {
+		await new Promise<void>((resolveTest) => {
+			withConfig({}, (cwd) => {
+				runWithHandlers(cwd, async (fake, ctx, oversized) => {
+					await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "sh1",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					await fake.fire("session_shutdown", { type: "session_shutdown" }, ctx);
+					const r2: any = await fake.fire("tool_result", {
+						toolName: "grep",
+						toolCallId: "sh2",
+						input: {},
+						content: [{ type: "text", text: oversized }],
+						details: {},
+						isError: false,
+					}, ctx);
+					const meta2 = r2.details.vstackOutputPolicy[0];
+					expect(meta2.sessionSavedBytes).toBe(meta2.savedBytes);
+					expect(meta2.turnSavedBytes).toBe(meta2.savedBytes);
+					resolveTest();
+				});
+			});
 		});
 	});
 });

@@ -11,7 +11,7 @@ Output policy enforces two related but distinct budgets:
 - **Compact renderer UI** — how big a tool block can be without breaking Pi's TUI. Caps line width, hard line count, and absolute block size.
 - **Model transcript / session JSONL** — how much each tool result adds to the request body that gets resent on every turn. Long runs with many "fine" 50–200 KB results have crashed with `HTTP 507: exceeded request buffer limit while retrying upstream` even when no individual block was UI-pathological.
 
-Before 1.1 only the first budget had teeth. The default `balanced` policy mode now also constrains the second, while leaving the full text on disk via per-session artifacts.
+Earlier defaults only had teeth on the first budget. The default `balanced` policy mode now also constrains the second, while leaving the full text on disk via per-session artifacts.
 
 ## Policy modes
 
@@ -23,7 +23,7 @@ Pick the trade-off via `Policy mode` (or `policyMode` in JSON):
 | `compact` | 16 | 6 / 200 | 8 | 200 | 2 000 | on (with allowlist) |
 | `compat` | 200 | 100 / 2 000 | 200 | 8 000 | 20 000 | off |
 
-`balanced` keeps any single non-read/non-mutation tool result under ~24 KB inline while preserving the full output to disk. `compact` is for very long autonomous runs that need to stretch the request buffer further. `compat` restores pre-1.1 behavior — UI safety only, no transcript-size protection. Switch to `compat` when you need every byte inline and can fit the full transcript yourself.
+`balanced` keeps any single non-read/non-mutation tool result under ~24 KB inline while preserving the full output to disk. `compact` is for very long autonomous runs that need to stretch the request buffer further. `compat` is the legacy UI-safety-only profile — no transcript-size protection, but it still applies the old caps (200 KB block / 8 000 lines / 20 000-char lines). For truly untruncated inline output, set `enabled: false` instead.
 
 Any per-knob value you set in `vstack.extensionManager.config["@vanillagreen/pi-output-policy"]` overrides the mode default; unset knobs follow the mode.
 
@@ -32,8 +32,9 @@ Any per-knob value you set in `vstack.extensionManager.config["@vanillagreen/pi-
 - Preserves oversized tool output to disk and includes the artifact path in results.
 - Head truncation for search/listing tools; tail truncation for command/log tools.
 - Explicit truncation notices show size, line count, direction, artifact path, per-turn/session bytes saved, and continuation guidance.
-- File reads, edit/write results, and detail payloads pass through unmodified by default — opt in per category.
-- State-bearing tool details (`tasks_write`, `bg_task`, `subagent`, …) bypass sanitization so sidecar restore semantics stay safe.
+- File reads and edit/write results pass through unmodified by default — opt in per category.
+- Tool-result `details` are sanitized by default in `balanced`/`compact` (off in `compat`); state-bearing tools (`tasks_write`, `bg_task`, `subagent`, …) bypass sanitization so sidecar restore semantics stay safe.
+- When `details` are sanitized, the result carries a `vstackOutputPolicySanitized` marker (and capped arrays/objects include a sentinel string) so consumers can detect the truncation.
 - Shell output minimizer compresses noisy git/npm/cargo/test output before truncation while preserving warnings, errors, and summaries.
 
 ## Install
@@ -101,7 +102,7 @@ Open `/extensions:settings`; settings appear under the **Output Policy** tab.
 
 ## Switching back to verbatim behavior
 
-Need the full inline output for a specific run? Set:
+`compat` mode restores the legacy generous UI-safety caps (200 KB block, 8 000 lines, 20 000-char lines) and turns off `sanitizeDetails`, but it is **not** "fully untruncated" — anything above those caps still spills. Pick it when those caps are wide enough for your workflow:
 
 ```json
 {
@@ -117,7 +118,19 @@ Need the full inline output for a specific run? Set:
 }
 ```
 
-(or pick `compat` from the Policy mode dropdown). Disabling truncation entirely is `"enabled": false`, which also skips the minimizer.
+For truly untruncated inline output (no spill, no minimizer, no sanitization), disable the policy entirely:
+
+```json
+{
+  "vstack": {
+    "extensionManager": {
+      "config": {
+        "@vanillagreen/pi-output-policy": { "enabled": false }
+      }
+    }
+  }
+}
+```
 
 ## Notes
 
