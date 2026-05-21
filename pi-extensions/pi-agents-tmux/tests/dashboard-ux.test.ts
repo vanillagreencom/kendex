@@ -378,6 +378,23 @@ test("transcript readers normalize bridge/nested event shapes", async () => {
 	assert.equal(usage?.usage.turns, 2);
 });
 
+test("transcript usage captures enriched agent_start model when usage events omit model", async () => {
+	const runtimeRoot = tempRuntime();
+	const transcriptPath = join(runtimeRoot, "agent-start-model.jsonl");
+	writeFileSync(transcriptPath, [
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "agent_start", agent: "reviewer-test", model: "openai-codex/gpt-5.5:xhigh" } }),
+		JSON.stringify({ ts: "2026-05-14T05:01:00.000Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Done" }], usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 14 } } } }),
+	].join("\n"));
+
+	const usage = await parseTranscriptUsage(transcriptPath);
+	assert.equal(usage?.model, "openai-codex/gpt-5.5:xhigh");
+	assert.equal(usage?.usage.input, 2);
+	assert.equal(usage?.usage.output, 3);
+	assert.equal(usage?.usage.cacheRead, 4);
+	assert.equal(usage?.usage.cacheWrite, 5);
+	assert.equal(usage?.usage.turns, 1);
+});
+
 test("completed one-shot record backfills summary from transcript final assistant text", async () => {
 	const runtimeRoot = tempRuntime();
 	const taskId = "reviewer-arch-1700000000-77abfc41";

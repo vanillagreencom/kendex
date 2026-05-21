@@ -262,6 +262,7 @@ export async function parseTranscriptUsage(transcriptPath: string | undefined): 
 		}
 		const inner = normalizeTranscriptRecordEvent(event).event;
 		if (!model && typeof inner?.modelId === "string") model = inner.modelId;
+		if (!model && typeof inner?.model === "string") model = inner.model;
 		if (!model && typeof inner?.message?.model === "string") model = inner.message.model;
 		const usage = inner?.usage ?? inner?.message?.usage;
 		if (!usage || typeof usage !== "object") continue;
