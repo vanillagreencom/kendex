@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
 import {
 	ansiGreen,
 	ansiMagenta,
@@ -306,16 +305,11 @@ function dashboardLabelsForItems(items: SubagentDashboardItem[], persistentTaskN
 	return labels;
 }
 
-export function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme, cwd: string, width: number, runtimeRoot?: string): string[] {
+export function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme, cwd: string, width: number, persistentTaskNumbers?: Map<string, number>): string[] {
 	const items = sortDashboardItems(Object.values(state.items));
 	const animateSpinners = animateSpinnersEnabled(cwd);
-	// Cheap sync read of the persisted task registry once per widget render
-	// gives the mini widget the same `<agent> #N` numbers as the popup, so
-	// a task reads identically across surfaces. Skipped when runtimeRoot is
-	// missing (legacy call sites); labels fall back to local counter.
-	const persistentTaskNumbers = runtimeRoot
-		? taskNumberById(Object.values(loadTaskRegistrySync(runtimeRoot)))
-		: undefined;
+	// Caller owns registry reads. Render can run on a 120ms spinner cadence, so
+	// never synchronously read/parse tasks.json here.
 	const displayLabels = dashboardLabelsForItems(items, persistentTaskNumbers);
 	if (!dashboardEnabled(cwd) || !state.visible || items.length === 0) return [];
 	const working = items.filter((item) => isDashboardWorkingStatus(item.status)).length;

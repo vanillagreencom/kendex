@@ -138,6 +138,7 @@ import {
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
 import { subagentToolRenderers } from "./subagent-render.js";
+import { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
 import {
 	prepareSingleResultForReturn,
 	runSingleAgent,
@@ -671,6 +672,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		const widgetRuntimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
+		const widgetTaskNumbers = taskNumberById(Object.values(loadTaskRegistrySync(widgetRuntimeRoot)));
 		setMiniDashboardWidget(ctx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, (tui, theme) => {
 			const animationTimer = (() => {
 				if (!Object.values(dashboardState.items).some((item) => isDashboardAnimatingStatus(item.status))) return undefined;
@@ -686,7 +688,7 @@ export default function (pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					return clampAboveEditorWidget(renderDashboardWidgetLines(dashboardState, theme, ctx.cwd, width, widgetRuntimeRoot), tui.terminal.rows, theme);
+					return clampAboveEditorWidget(renderDashboardWidgetLines(dashboardState, theme, ctx.cwd, width, widgetTaskNumbers), tui.terminal.rows, theme);
 				},
 			};
 		}, { placement: "aboveEditor" });

@@ -228,7 +228,7 @@ test("dashboard label uses occurrence number even when persisted task numbers ar
 			a: dashboardItem({ taskId: recordA.taskId, startedAt: recordA.createdAt, status: "completed" }),
 			b: dashboardItem({ taskId: recordB.taskId, startedAt: recordB.createdAt, status: "running" }),
 		},
-	}, theme as any, cwd, 220, cwd).join("\n");
+	}, theme as any, cwd, 220, numbers).join("\n");
 	const plain = stripAnsi(rendered);
 	assert.match(plain, /reviewer-arch #2 +· working/);
 	assert.doesNotMatch(plain, /reviewer-arch #1\b/);
@@ -365,17 +365,18 @@ test("transcript readers normalize bridge/nested event shapes", async () => {
 	writeFileSync(transcriptPath, [
 		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "event", event: "message_end", data: { message: { role: "assistant", content: [{ type: "text", text: "Bridge summary" }], usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 9 }, model: "bridge-model" } } } }),
 		JSON.stringify({ ts: "2026-05-14T05:01:00.000Z", event: { event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Nested summary" }], usage: { input: 7, output: 11, cacheRead: 13, cacheWrite: 17, totalTokens: 31 }, model: "nested-model" } } } }),
+		JSON.stringify({ ts: "2026-05-14T05:02:00.000Z", type: "event", event: "message_end", data: { message: { role: "assistant", content: [{ type: "text", text: "Raw bridge summary" }], usage: { input: 19, output: 23, cacheRead: 29, cacheWrite: 31, totalTokens: 102 }, model: "raw-bridge-model" } } }),
 	].join("\n"));
 
-	assert.equal(extractLastAssistantTextFromTranscriptContent(readFileSync(transcriptPath, "utf8")), "Nested summary");
-	assert.equal(latestDashboardActivity(dashboardItem({ status: "running", transcriptPath })), "said: Nested summary");
+	assert.equal(extractLastAssistantTextFromTranscriptContent(readFileSync(transcriptPath, "utf8")), "Raw bridge summary");
+	assert.equal(latestDashboardActivity(dashboardItem({ status: "running", transcriptPath })), "said: Raw bridge summary");
 	const usage = await parseTranscriptUsage(transcriptPath);
 	assert.equal(usage?.model, "bridge-model");
-	assert.equal(usage?.usage.input, 9);
-	assert.equal(usage?.usage.output, 14);
-	assert.equal(usage?.usage.cacheRead, 17);
-	assert.equal(usage?.usage.cacheWrite, 22);
-	assert.equal(usage?.usage.turns, 2);
+	assert.equal(usage?.usage.input, 28);
+	assert.equal(usage?.usage.output, 37);
+	assert.equal(usage?.usage.cacheRead, 46);
+	assert.equal(usage?.usage.cacheWrite, 53);
+	assert.equal(usage?.usage.turns, 3);
 });
 
 test("transcript usage captures enriched agent_start model when usage events omit model", async () => {
