@@ -212,7 +212,7 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 | [`pi-extension-manager`](pi-extensions/pi-extension-manager/README.md) | Pi-styled package manager and inline settings editor. |
 | [`pi-flightdeck`](pi-extensions/pi-flightdeck/README.md) | Optional Pi UI support for Flightdeck: inline mini-dashboard, pause banner, notifications, and `/flightdeck` focus/open integration for the Rust app. |
 | [`pi-hooks`](pi-extensions/pi-hooks/README.md) | First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint. |
-| [`pi-output-policy`](pi-extensions/pi-output-policy/README.md) | Large-output policy with truncation and spill-file preservation. |
+| [`pi-output-policy`](pi-extensions/pi-output-policy/README.md) | Large-output policy with transcript-budget-aware truncation, spill-file preservation, and balanced/compact/compat modes. |
 | [`pi-prompt-stash`](pi-extensions/pi-prompt-stash/README.md) | Per-session prompt stash history with stash/pop editor. |
 | [`pi-qol`](pi-extensions/pi-qol/README.md) | Compact statusline, multiline input, image chips, session naming and search. |
 | [`pi-questions`](pi-extensions/pi-questions/README.md) | Structured multi-tab popup questions with bridge-driven replies. |

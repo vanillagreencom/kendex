@@ -6,14 +6,72 @@ import { basename, dirname, join, resolve } from "node:path";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-output-policy.installed");
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
-const DEFAULT_SPILL_THRESHOLD_KB = 200;
-const DEFAULT_INLINE_TAIL_KB = 100;
-const DEFAULT_INLINE_TAIL_LINES = 2_000;
-const DEFAULT_MAX_TEXT_BLOCK_KB = 200;
-const DEFAULT_MAX_LINE_COUNT = 8_000;
-const DEFAULT_MAX_LINE_WIDTH = 20_000;
 const DEFAULT_MINIMIZER_MAX_CAPTURE_BYTES = 1024 * 1024;
 const DEFAULT_SHELL_MINIMIZER_ENABLED = true;
+
+// Tools whose `details` carry state-bearing data (task lists, background-task
+// snapshots, subagent run records). Sanitization would corrupt restore
+// semantics, so balanced/compact modes skip these by default. Sidecars/state
+// files are the canonical store; the inline details just point at them.
+const DEFAULT_SANITIZE_EXCEPT_TOOLS = [
+	"tasks_write",
+	"tasks_read",
+	"bg_task",
+	"bg_status",
+	"subagent",
+	"subagent_run",
+	"stop_subagent",
+	"steer_subagent",
+	"get_subagent_result",
+];
+
+export type PolicyMode = "compat" | "balanced" | "compact";
+
+interface ModeDefaults {
+	spillThresholdKb: number;
+	inlineTailKb: number;
+	inlineTailLines: number;
+	maxTextBlockKb: number;
+	maxLineCount: number;
+	maxLineWidth: number;
+	sanitizeDetails: boolean;
+}
+
+// `compat` is the pre-1.1 behavior — UI-safety sized only. `balanced` (default)
+// is sized so a single non-read/non-mutation tool result cannot push more than
+// ~24 KB into the model transcript / session JSONL. `compact` is for very long
+// runs that need to stretch the request buffer further.
+const MODE_DEFAULTS: Record<PolicyMode, ModeDefaults> = {
+	compat: {
+		spillThresholdKb: 200,
+		inlineTailKb: 100,
+		inlineTailLines: 2_000,
+		maxTextBlockKb: 200,
+		maxLineCount: 8_000,
+		maxLineWidth: 20_000,
+		sanitizeDetails: false,
+	},
+	balanced: {
+		spillThresholdKb: 48,
+		inlineTailKb: 16,
+		inlineTailLines: 400,
+		maxTextBlockKb: 24,
+		maxLineCount: 400,
+		maxLineWidth: 3_000,
+		sanitizeDetails: true,
+	},
+	compact: {
+		spillThresholdKb: 16,
+		inlineTailKb: 6,
+		inlineTailLines: 200,
+		maxTextBlockKb: 8,
+		maxLineCount: 200,
+		maxLineWidth: 2_000,
+		sanitizeDetails: true,
+	},
+};
+
+const DEFAULT_POLICY_MODE: PolicyMode = "balanced";
 
 type VstackConfig = Record<string, unknown>;
 type Direction = "head" | "tail";
@@ -31,6 +89,26 @@ interface TruncationMeta {
 	artifactError?: string;
 	minimized?: boolean;
 	minimizedDroppedLines?: number;
+	policyMode?: PolicyMode;
+	savedBytes?: number;
+	turnSavedBytes?: number;
+	sessionSavedBytes?: number;
+}
+
+interface SessionCounters {
+	turnSavedBytes: number;
+	sessionSavedBytes: number;
+}
+
+const SESSION_COUNTERS = new Map<string, SessionCounters>();
+
+function counters(sessionId: string): SessionCounters {
+	let entry = SESSION_COUNTERS.get(sessionId);
+	if (!entry) {
+		entry = { sessionSavedBytes: 0, turnSavedBytes: 0 };
+		SESSION_COUNTERS.set(sessionId, entry);
+	}
+	return entry;
 }
 
 function expandHome(input: string): string {
@@ -159,6 +237,31 @@ function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
 function settingString(key: string, fallback: string, cwd?: string): string {
 	const value = readVstackConfig(cwd)[key];
 	return typeof value === "string" ? value : fallback;
+}
+
+export function resolvePolicyMode(cwd?: string): PolicyMode {
+	const raw = settingString("policyMode", DEFAULT_POLICY_MODE, cwd).toLowerCase().trim();
+	if (raw === "compat" || raw === "balanced" || raw === "compact") return raw;
+	return DEFAULT_POLICY_MODE;
+}
+
+function modeDefault<K extends keyof ModeDefaults>(key: K, cwd?: string): ModeDefaults[K] {
+	return MODE_DEFAULTS[resolvePolicyMode(cwd)][key];
+}
+
+function sanitizeExceptTools(cwd?: string): string[] {
+	const configured = listSetting("sanitizeDetails.exceptTools", cwd);
+	return configured.length > 0 ? configured : DEFAULT_SANITIZE_EXCEPT_TOOLS;
+}
+
+export function isSanitizeExceptTool(toolName: string, cwd?: string): boolean {
+	const name = toolName.toLowerCase();
+	const allowlist = sanitizeExceptTools(cwd);
+	return allowlist.includes(name) || allowlist.some((entry) => entry && name.endsWith(`.${entry}`));
+}
+
+export function __resetSessionCountersForTests(): void {
+	SESSION_COUNTERS.clear();
 }
 
 function byteLength(text: string): number {
@@ -312,20 +415,23 @@ function notice(meta: TruncationMeta): string {
 	const target = meta.direction === "tail" ? `Showing last ${meta.shownLines} lines / ${formatSize(meta.shownBytes)}` : `Showing ${meta.shownRange} of ${meta.totalLines} / ${formatSize(meta.shownBytes)}`;
 	const artifact = meta.artifactPath ? ` Full output: ${meta.artifactPath}` : meta.artifactError ? ` Full output preservation unavailable: ${meta.artifactError}` : "";
 	const minimized = meta.minimized ? ` Minimized ${meta.minimizedDroppedLines} noisy line(s) before truncation.` : "";
-	return `[Output truncated (${meta.direction}). ${target}. Total: ${meta.totalLines} lines / ${formatSize(meta.totalBytes)}.${minimized}${artifact}]`;
+	const saved = typeof meta.savedBytes === "number" && meta.savedBytes > 0 ? ` Saved ${formatSize(meta.savedBytes)} from transcript (turn total: ${formatSize(meta.turnSavedBytes ?? 0)}, session: ${formatSize(meta.sessionSavedBytes ?? 0)}).` : "";
+	const continuation = meta.direction === "head" && meta.totalLines > meta.shownLines ? ` Continue with the same tool using an offset past line ${meta.shownLines} to read more.` : "";
+	return `[Output truncated (${meta.direction}). ${target}. Total: ${meta.totalLines} lines / ${formatSize(meta.totalBytes)}.${minimized}${saved}${artifact}${continuation}]`;
 }
 
-function processText(event: any, ctx: ExtensionContext, text: string): { text: string; meta?: TruncationMeta } {
+export function processText(event: any, ctx: ExtensionContext, text: string): { text: string; meta?: TruncationMeta } {
 	const cwd = ctx.cwd;
 	const toolName = String(event.toolName ?? "tool");
 	if (shouldBypassTool(toolName, cwd)) return { text };
+	const mode = resolvePolicyMode(cwd);
 	const direction = directionForTool(toolName);
-	const maxLineWidth = Math.max(80, Math.floor(settingNumber("maxLineWidth", DEFAULT_MAX_LINE_WIDTH, cwd)));
-	const maxLineCount = Math.max(1, Math.floor(settingNumber("maxLineCount", DEFAULT_MAX_LINE_COUNT, cwd)));
-	const spillThresholdBytes = Math.max(1, Math.floor(settingNumber("spillThresholdKb", DEFAULT_SPILL_THRESHOLD_KB, cwd) * 1024));
-	const maxTextBytes = Math.max(1, Math.floor(settingNumber("maxTextBlockKb", DEFAULT_MAX_TEXT_BLOCK_KB, cwd) * 1024));
-	const inlineTailBytes = Math.max(1, Math.floor(settingNumber("inlineTailKb", DEFAULT_INLINE_TAIL_KB, cwd) * 1024));
-	const inlineTailLines = Math.max(1, Math.floor(settingNumber("inlineTailLines", DEFAULT_INLINE_TAIL_LINES, cwd)));
+	const maxLineWidth = Math.max(80, Math.floor(settingNumber("maxLineWidth", modeDefault("maxLineWidth", cwd), cwd)));
+	const maxLineCount = Math.max(1, Math.floor(settingNumber("maxLineCount", modeDefault("maxLineCount", cwd), cwd)));
+	const spillThresholdBytes = Math.max(1, Math.floor(settingNumber("spillThresholdKb", modeDefault("spillThresholdKb", cwd), cwd) * 1024));
+	const maxTextBytes = Math.max(1, Math.floor(settingNumber("maxTextBlockKb", modeDefault("maxTextBlockKb", cwd), cwd) * 1024));
+	const inlineTailBytes = Math.max(1, Math.floor(settingNumber("inlineTailKb", modeDefault("inlineTailKb", cwd), cwd) * 1024));
+	const inlineTailLines = Math.max(1, Math.floor(settingNumber("inlineTailLines", modeDefault("inlineTailLines", cwd), cwd)));
 
 	const original = text;
 	let working = text;
@@ -349,6 +455,11 @@ function processText(event: any, ctx: ExtensionContext, text: string): { text: s
 	const bytes = direction === "tail" ? inlineTailBytes : maxTextBytes;
 	const lineLimit = direction === "tail" ? inlineTailLines : maxLineCount;
 	const truncated = truncateText(working, direction, bytes, lineLimit, maxLineWidth);
+	const originalBytes = byteLength(original);
+	const savedBytes = Math.max(0, originalBytes - truncated.meta.shownBytes);
+	const session = counters(sessionIdForContext(ctx));
+	session.turnSavedBytes += savedBytes;
+	session.sessionSavedBytes += savedBytes;
 	const meta: TruncationMeta = {
 		...truncated.meta,
 		artifactError: artifact.error,
@@ -356,13 +467,17 @@ function processText(event: any, ctx: ExtensionContext, text: string): { text: s
 		direction,
 		minimized,
 		minimizedDroppedLines,
+		policyMode: mode,
 		reason: byteLength(working) > spillThresholdBytes ? "spill-threshold" : "ui-safety",
+		savedBytes,
+		sessionSavedBytes: session.sessionSavedBytes,
 		truncated: true,
+		turnSavedBytes: session.turnSavedBytes,
 	};
 	return { meta, text: `${truncated.content}\n\n${notice(meta)}` };
 }
 
-function sanitizeDetails(value: unknown, depth = 0): { value: unknown; changed: boolean } {
+export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; changed: boolean } {
 	if (depth > 4) return { changed: true, value: "[Max detail depth reached]" };
 	if (value == null || typeof value === "number" || typeof value === "boolean") return { changed: false, value };
 	if (typeof value === "string") {
@@ -407,7 +522,16 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
 		if (settingBoolean("enabled", true, ctx.cwd)) migrateLegacyProjectArtifacts(ctx);
+	});
+
+	pi.on("turn_start", async (_event, ctx: ExtensionContext) => {
+		counters(sessionIdForContext(ctx)).turnSavedBytes = 0;
+	});
+
+	pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
 	});
 
 	pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
@@ -423,8 +547,9 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 			if (processed.meta) metas.push(processed.meta);
 			return { ...part, text: processed.text };
 		});
-		const shouldSanitizeDetails = settingBoolean("sanitizeDetails", false, ctx.cwd);
-		const sanitizedDetails = shouldSanitizeDetails ? sanitizeDetails(event.details) : { changed: false, value: event.details };
+		const sanitizeOn = settingBoolean("sanitizeDetails", modeDefault("sanitizeDetails", ctx.cwd), ctx.cwd);
+		const exemptByTool = isSanitizeExceptTool(toolName, ctx.cwd);
+		const sanitizedDetails = sanitizeOn && !exemptByTool ? sanitizeDetails(event.details) : { changed: false, value: event.details };
 		let details = sanitizedDetails.value;
 		if (metas.length > 0) {
 			details = details && typeof details === "object" && !Array.isArray(details) ? { ...(details as Record<string, unknown>) } : {};

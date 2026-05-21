@@ -30,6 +30,20 @@
           "apply": "live"
         },
         {
+          "key": "policyMode",
+          "label": "Policy mode",
+          "description": "Budget profile for inline truncation. balanced (default) caps non-read/non-mutation tool results at ~24 KB inline so long sessions stay under provider request buffers. compact halves those caps for very long runs. compat restores pre-1.1 UI-safety-only defaults (200 KB inline) when you need full output and aren't worried about transcript size. Explicit per-knob values override the mode default.",
+          "type": "enum",
+          "default": "balanced",
+          "enumValues": [
+            "balanced",
+            "compact",
+            "compat"
+          ],
+          "category": "General",
+          "apply": "live"
+        },
+        {
           "key": "truncateReadOutputs",
           "label": "Truncate file reads",
           "description": "Apply output-policy spill/truncation to read tool file contents. Disabled by default so file reads are returned unmodified.",
@@ -50,54 +64,48 @@
         {
           "key": "spillThresholdKb",
           "label": "Output spill threshold (KB)",
-          "description": "Preserve full output externally when text exceeds this size.",
+          "description": "Preserve full output externally when text exceeds this size. When unset, policyMode picks: balanced 48, compact 16, compat 200.",
           "type": "number",
-          "default": 200,
           "category": "Truncation",
           "apply": "live"
         },
         {
           "key": "inlineTailKb",
           "label": "Inline tail size (KB)",
-          "description": "Bytes retained inline for tail-truncated command/log output after spill.",
+          "description": "Bytes retained inline for tail-truncated command/log output after spill. When unset, policyMode picks: balanced 16, compact 6, compat 100.",
           "type": "number",
-          "default": 100,
           "category": "Truncation",
           "apply": "live"
         },
         {
           "key": "inlineTailLines",
           "label": "Inline tail lines",
-          "description": "Lines retained inline for tail-truncated command/log output after spill.",
+          "description": "Lines retained inline for tail-truncated command/log output after spill. When unset, policyMode picks: balanced 400, compact 200, compat 2000.",
           "type": "number",
-          "default": 2000,
           "category": "Truncation",
           "apply": "live"
         },
         {
           "key": "maxTextBlockKb",
           "label": "Max UI-safe text block (KB)",
-          "description": "Hard cap for text blocks even when spill is disabled or fails.",
+          "description": "Hard cap for text blocks even when spill is disabled or fails. When unset, policyMode picks: balanced 24, compact 8, compat 200.",
           "type": "number",
-          "default": 200,
           "category": "UI Safety",
           "apply": "live"
         },
         {
           "key": "maxLineCount",
           "label": "Max UI-safe line count",
-          "description": "Hard line cap for rendered/result text.",
+          "description": "Hard line cap for rendered/result text. When unset, policyMode picks: balanced 400, compact 200, compat 8000.",
           "type": "number",
-          "default": 8000,
           "category": "UI Safety",
           "apply": "live"
         },
         {
           "key": "maxLineWidth",
           "label": "Max UI-safe line width",
-          "description": "Truncate individual pathological lines to this character width.",
+          "description": "Truncate individual pathological lines to this character width. When unset, policyMode picks: balanced 3000, compact 2000, compat 20000.",
           "type": "number",
-          "default": 20000,
           "category": "UI Safety",
           "apply": "live"
         },
@@ -113,9 +121,17 @@
         {
           "key": "sanitizeDetails",
           "label": "Sanitize details payloads",
-          "description": "Cap nested tool-result details for UI safety. Disabled by default so extension state, subagent details, and diffs are preserved.",
+          "description": "Cap nested tool-result details. When unset, policyMode picks: balanced/compact on, compat off. State-bearing tools listed in 'Sanitize details allowlist' bypass this and pass through untouched.",
           "type": "boolean",
-          "default": false,
+          "category": "UI Safety",
+          "apply": "live"
+        },
+        {
+          "key": "sanitizeDetails.exceptTools",
+          "label": "Sanitize details allowlist",
+          "description": "Comma-separated tool names whose details bypass sanitization (their inline details point at sidecars/state files that must not be capped). Empty means the built-in list: tasks_write, tasks_read, bg_task, bg_status, subagent, subagent_run, stop_subagent, steer_subagent, get_subagent_result.",
+          "type": "string",
+          "default": "",
           "category": "UI Safety",
           "apply": "live"
         },
