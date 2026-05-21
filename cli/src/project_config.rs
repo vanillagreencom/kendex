@@ -1597,6 +1597,16 @@ fn normalize_attached_section_headers(content: &str) -> String {
 
     let mut out = Vec::new();
     for line in content.lines() {
+        // vstack: a line that is entirely a comment (starts with `#` after
+        // optional leading whitespace) can mention any section header as
+        // prose. Splitting it on the header substring would slice the
+        // comment in two and emit the header as TOML, then leave the
+        // remainder as an orphaned line at column 1 — invalid TOML at the
+        // next parse. Keep comment lines verbatim.
+        if line.trim_start().starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
         let mut pending = line.to_string();
         loop {
             let found = HEADERS
@@ -2499,6 +2509,70 @@ fn strip_skills_reference(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // vstack: regression. `normalize_attached_section_headers` used to
+    // split any line containing a known section header substring, including
+    // pure-comment lines that merely mentioned a header as prose. When the
+    // bootstrap encountered a comment like:
+    //
+    //   # writes those changes into `[agent-frontmatter.pi]` automatically.
+    //
+    // it sliced the line at the header, emitted the header as a TOML table
+    // header on its own line, and left the suffix `\` automatically.` as an
+    // orphaned line starting at column 1 — invalid TOML. Subsequent
+    // `MappingConfig::load` then silently fell back to default, every
+    // `[agent-skills]` entry disappeared, and generated agents lost all
+    // `skills:` frontmatter. Comment lines must be preserved verbatim.
+    #[test]
+    fn normalize_attached_section_headers_leaves_comment_lines_alone() {
+        let input = "# writes those changes into `[agent-frontmatter.pi]` automatically.\n";
+        let out = normalize_attached_section_headers(input);
+        assert_eq!(out, input);
+        assert!(!out.contains("\n[agent-frontmatter.pi]\n"));
+        assert!(!out.contains("\n` automatically."));
+    }
+
+    #[test]
+    fn normalize_attached_section_headers_still_splits_non_comment_attached_headers() {
+        // Non-comment line with a header attached after content: real bootstrap
+        // case where two TOML tables ended up on the same line. Must still split.
+        let input = "foo = 1[agent-frontmatter.pi]\nbar = \"x\"\n";
+        let out = normalize_attached_section_headers(input);
+        assert!(out.contains("foo = 1\n[agent-frontmatter.pi]\n"));
+    }
+
+    #[test]
+    fn project_config_load_survives_comment_with_inline_header_after_bootstrap_repair() {
+        // End-to-end shape: a vstack.toml whose comment block mentions a
+        // header inline; after `repair_project_config_structure` runs (which
+        // calls `normalize_attached_section_headers`), the file must still
+        // parse as valid TOML and `[agent-skills]` entries must survive.
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_norm_comment_header_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        let content = concat!(
+            "# Pi `/agents` writes changes into `[agent-frontmatter.pi]` automatically.\n",
+            "\n",
+            "[agent-skills]\n",
+            "reviewer-error = [\"reviewer\"]\n",
+            "\n",
+            "[agent-frontmatter.pi]\n",
+            "reviewer-error = { model = \"openai-codex/gpt-5.5:xhigh\" }\n",
+        );
+        std::fs::write(&path, content).unwrap();
+        repair_project_config_structure(&path);
+        let read_back = std::fs::read_to_string(&path).unwrap();
+        let parsed: ProjectConfig =
+            toml::from_str(&read_back).expect("vstack.toml must remain valid TOML after repair");
+        assert_eq!(
+            parsed.agent_skills_for("reviewer-error"),
+            Some(&vec!["reviewer".to_string()])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn project_config_parses_all_sections() {
