@@ -153,12 +153,46 @@ async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic: (diag
 
 function streamEventName(event: any): string | undefined {
 	if (typeof event?.event === "string") return event.event;
+	if (event?.event && typeof event.event === "object" && typeof event.event.type === "string") return event.event.type;
 	if (typeof event?.type === "string") return event.type;
 	return undefined;
 }
 
 function streamEventPayload(event: any): any {
 	if (event?.type === "event" && event?.data && typeof event.data === "object") return event.data;
+	if (event?.event && typeof event.event === "object") return event.event;
+	return event;
+}
+
+function transcriptFullStreamEnabled(): boolean {
+	return /^(1|true|yes|on)$/i.test(process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL?.trim() ?? "");
+}
+
+function shouldAppendTranscriptEvent(eventName: string | undefined): boolean {
+	return transcriptFullStreamEnabled() || eventName !== "message_update";
+}
+
+interface AgentStartTranscriptMetadata {
+	agent: string;
+	model?: string;
+	args: string[];
+}
+
+function withAgentStartTranscriptMetadata(event: any, metadata: AgentStartTranscriptMetadata): any {
+	if (!event || typeof event !== "object" || Array.isArray(event)) return event;
+	const enriched = {
+		agent: metadata.agent,
+		model: metadata.model ?? null,
+		args: [...metadata.args],
+	};
+	if (event.event && typeof event.event === "object" && !Array.isArray(event.event) && event.event.type === "agent_start") {
+		return { ...event, event: { ...event.event, ...enriched } };
+	}
+	if (event.type === "event" && event.event === "agent_start") {
+		const data = event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data : {};
+		return { ...event, data: { ...data, ...enriched } };
+	}
+	if (event.type === "agent_start") return { ...event, ...enriched };
 	return event;
 }
 
@@ -635,12 +669,17 @@ async function runSingleAgentAttempt(
 				let event: any;
 				try {
 					event = JSON.parse(line);
-					appendTranscript({ stream: "stdout", raw: line, event });
 				} catch {
 					appendTranscript({ stream: "stdout", raw: line, parseError: true });
 					return;
 				}
 				const eventName = streamEventName(event);
+				if (shouldAppendTranscriptEvent(eventName)) {
+					const transcriptEvent = eventName === "agent_start"
+						? withAgentStartTranscriptMetadata(event, { agent: agent.name, model: selectedModel, args })
+						: event;
+					appendTranscript({ stream: "stdout", raw: JSON.stringify(transcriptEvent), event: transcriptEvent });
+				}
 				const payload = streamEventPayload(event);
 
 				if (eventName === "session_compact") {

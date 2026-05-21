@@ -139,6 +139,9 @@ fn pi_default_deny_tools_for(agent: &Agent) -> Vec<String> {
     if !agent.name.eq_ignore_ascii_case("planner") {
         tools.push("question".into());
     }
+    if matches!(agent.role, AgentRole::Reviewer) {
+        tools.push("tasks_write".into());
+    }
     tools
 }
 
@@ -348,7 +351,7 @@ mod tests {
         assert!(content.contains("model: openai-codex/gpt-5.5:high"));
         assert!(!content.lines().any(|line| line.starts_with("tools:")));
         assert!(content.contains(
-            "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question"
+            "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question, tasks_write"
         ));
         assert!(!content.contains("pane: true"));
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -145,6 +145,90 @@ test("oneshot default mints unique lane per call in clean and polluted env", () 
 		assert.notEqual(pollutedFirst.key, pollutedSecond.key);
 		assert.match(pollutedFirst.key, new RegExp(`^${ONESHOT_SESSION_PREFIX}`));
 	});
+});
+
+test("oneshot transcript drops streaming message_update snapshots and enriches agent_start", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	const stdout = bridgeStdout([
+		{ event: { type: "agent_start" } },
+		{ event: { type: "message_start" } },
+		{ event: { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } } },
+		{ event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "final" }], usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 }, model: "openai-codex/gpt-5.5:xhigh" } } },
+	]);
+	installMockSpawn([{ code: 0, stdout }]);
+	try {
+		const agent = { ...testAgent(), model: "openai-codex/gpt-5.5:xhigh" };
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[agent],
+			agent.name,
+			"review task",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.messages.at(-1)?.role, "assistant");
+		const content = readFileSync(result.transcriptPath!, "utf8");
+		assert.equal(content.includes("message_update"), false);
+		assert.match(content, /message_start/);
+		assert.match(content, /message_end/);
+		const records = content.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+		const agentStart = records
+			.map((record) => record.event?.event)
+			.find((event) => event?.type === "agent_start");
+		assert.equal(agentStart.agent, "reviewer-test");
+		assert.equal(agentStart.model, "openai-codex/gpt-5.5:xhigh");
+		assert.ok(Array.isArray(agentStart.args));
+		assert.ok(agentStart.args.includes("--model"));
+		assert.ok(agentStart.args.includes("openai-codex/gpt-5.5:xhigh"));
+	} finally {
+		setSingleAgentSpawnForTests();
+		if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+		else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+	}
+});
+
+test("oneshot transcript keeps message_update snapshots when full stream env is enabled", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = "1";
+	installMockSpawn([
+		{ code: 0, stdout: bridgeStdout([
+			{ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } },
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "final" }], usage: { input: 1, output: 1, totalTokens: 2 } } },
+		]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review task",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		const content = readFileSync(result.transcriptPath!, "utf8");
+		assert.match(content, /message_update/);
+	} finally {
+		setSingleAgentSpawnForTests();
+		if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+		else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+	}
 });
 
 test("parallel tasks for same agent get distinct ephemeral lanes", () => {
