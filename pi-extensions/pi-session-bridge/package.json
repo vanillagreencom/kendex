@@ -118,6 +118,15 @@
           "apply": "live"
         },
         {
+          "key": "maxRawSpillBytes",
+          "label": "Max raw spill bytes",
+          "description": "Cap on the per-session raw sidecar JSONL. Older entries are rewritten out and new spills are refused with rawError when the cap is reached.",
+          "type": "number",
+          "default": 16777216,
+          "category": "Protocol",
+          "apply": "live"
+        },
+        {
           "key": "maxLineBytes",
           "label": "Max request line bytes",
           "description": "Maximum JSONL request size accepted from a bridge client.",

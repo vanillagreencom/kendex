@@ -215,6 +215,69 @@ describe("history byte budgets", () => {
 		await shutdownBridge(handlers, dir);
 	});
 
+	test("history response cap evicts oldest envelopes and reports responseTruncated", async () => {
+		writeBridgeSettings(dir, { maxEventBytes: 65_536, eventPreviewBytes: 16 });
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		sessionBridge(pi);
+		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+
+		const update = handlers.get("message_update");
+		for (let i = 0; i < 12; i++) {
+			await update?.({ role: "assistant", contentIndex: i, delta: `delta-${i}` }, fakeCtx(dir));
+		}
+
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		const tight = await sendCommand(socketPath, { id: "rt1", type: "history", limit: 50, maxBytes: 600 });
+		expect(tight.success).toBe(true);
+		expect(tight.data.responseTruncated).toBe(true);
+		expect(typeof tight.data.totalEvents).toBe("number");
+		const tightEvents = tight.data.events as Array<{ event: string; data: Record<string, unknown> }>;
+		expect(tightEvents.length).toBeLessThan(tight.data.totalEvents);
+		expect(tightEvents.length).toBeGreaterThan(0);
+		const newestCompact = tightEvents.filter((entry) => entry.event === "message_update").at(-1);
+		expect(newestCompact?.data.contentIndex).toBe(11);
+
+		const generous = await sendCommand(socketPath, { id: "rt2", type: "history", limit: 50, maxBytes: 1024 * 1024 });
+		expect(generous.success).toBe(true);
+		expect(generous.data.responseTruncated).toBe(false);
+
+		const rawTight = await sendCommand(socketPath, { id: "rt3", type: "history", limit: 50, raw: true, maxBytes: 800 });
+		expect(rawTight.success).toBe(true);
+		const restored = (rawTight.data.events as Array<Record<string, unknown>>).filter((entry) => entry.rawRestored === true);
+		expect(restored.length).toBeGreaterThan(0);
+		expect(rawTight.data.responseTruncated).toBe(true);
+		const rawNewest = (rawTight.data.events as Array<{ event: string; data: Record<string, unknown> }>)
+			.filter((entry) => entry.event === "message_update").at(-1);
+		expect(rawNewest?.data.contentIndex).toBe(11);
+
+		await shutdownBridge(handlers, dir);
+	});
+
+	test("rehydration surfaces rawError when sidecar entry is corrupted", async () => {
+		writeBridgeSettings(dir);
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		sessionBridge(pi);
+		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+
+		await handlers.get("message_update")?.({ role: "assistant", contentIndex: 0, delta: "z".repeat(5_000) }, fakeCtx(dir));
+
+		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
+		expect(existsSync(rawSpill)).toBe(true);
+		writeFileSync(rawSpill, "not-json\n", { mode: 0o600 });
+
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		const resp = await sendCommand(socketPath, { id: "rr1", type: "history", limit: 5, raw: true });
+		expect(resp.success).toBe(true);
+		const updateEvent = (resp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_update");
+		expect(updateEvent?.rawRestored).not.toBe(true);
+		expect(typeof updateEvent?.rawError).toBe("string");
+		expect(Array.isArray(resp.data.rawErrors)).toBe(true);
+
+		await shutdownBridge(handlers, dir);
+	});
+
 	test("session_shutdown cleans up the raw spill sidecar", async () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);

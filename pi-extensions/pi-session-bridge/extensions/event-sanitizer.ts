@@ -112,25 +112,25 @@ function compactMessageUpdate(payload: unknown, previewBytes: number): CompactRe
 	const source = asRecord(payload);
 	if (!source) return { compact: payload, truncated: false };
 
-	const role = pickString(source, "role");
-	const type = pickString(source, "type");
-	const contentIndex = pickNumber(source, "contentIndex") ?? pickNumber(source, "content_index");
-	const delta = source.delta;
-	const messageId = pickString(source, "messageId") ?? pickString(source, "message_id");
+	const inner = pickInnerMessage(source);
+	const role = pickString(source, "role") ?? (inner ? pickString(inner, "role") : undefined);
+	const type = pickString(source, "type") ?? (inner ? pickString(inner, "type") : undefined);
+	const contentIndex = pickNumber(source, "contentIndex")
+		?? pickNumber(source, "content_index")
+		?? (inner ? pickNumber(inner, "contentIndex") ?? pickNumber(inner, "content_index") : undefined);
+	const messageId = pickString(source, "messageId")
+		?? pickString(source, "message_id")
+		?? (inner ? pickString(inner, "id") ?? pickString(inner, "messageId") ?? pickString(inner, "message_id") : undefined);
+
+	const candidate = pickDeltaCandidate(source) ?? (inner ? pickDeltaCandidate(inner) : undefined);
 
 	let deltaLength: number | undefined;
 	let deltaBytes: number | undefined;
 	let deltaPreview: string | undefined;
 	let deltaTruncated = false;
 
-	if (typeof delta === "string") {
-		deltaLength = delta.length;
-		deltaBytes = Buffer.byteLength(delta, "utf8");
-		const previewed = previewString(delta, previewBytes);
-		deltaPreview = previewed.preview;
-		deltaTruncated = previewed.truncated;
-	} else if (delta != null) {
-		const serialized = safeStringify(delta);
+	if (candidate !== undefined) {
+		const serialized = typeof candidate === "string" ? candidate : safeStringify(candidate);
 		deltaLength = serialized.length;
 		deltaBytes = Buffer.byteLength(serialized, "utf8");
 		const previewed = previewString(serialized, previewBytes);
@@ -148,21 +148,53 @@ function compactMessageUpdate(payload: unknown, previewBytes: number): CompactRe
 			...(deltaBytes !== undefined ? { deltaBytes } : {}),
 			...(deltaPreview !== undefined ? { deltaPreview } : {}),
 		},
-		truncated: deltaTruncated || deltaBytes !== undefined,
+		truncated: deltaTruncated || candidate !== undefined,
 	};
+}
+
+function pickInnerMessage(source: Record<string, unknown>): Record<string, unknown> | undefined {
+	const nestedEvent = asRecord(source.assistantMessageEvent);
+	if (nestedEvent) {
+		const nestedMessage = asRecord(nestedEvent.message);
+		if (nestedMessage) return nestedMessage;
+		return nestedEvent;
+	}
+	const message = asRecord(source.message);
+	if (message) return message;
+	return undefined;
+}
+
+function pickDeltaCandidate(source: Record<string, unknown>): unknown {
+	if (source.delta !== undefined && source.delta !== null) return source.delta;
+	if (source.text !== undefined && source.text !== null) return source.text;
+	if (source.content !== undefined && source.content !== null) return source.content;
+	return undefined;
 }
 
 function compactToolExecution(eventName: string, payload: unknown, previewBytes: number): CompactResult {
 	const source = asRecord(payload);
 	if (!source) return { compact: payload, truncated: false };
 
-	const toolName = pickString(source, "toolName") ?? pickString(source, "tool_name") ?? pickString(source, "name");
-	const toolUseId = pickString(source, "toolUseId") ?? pickString(source, "tool_use_id") ?? pickString(source, "id");
-	const status = pickString(source, "status");
-	const isError = typeof source.isError === "boolean" ? (source.isError as boolean) : typeof source.is_error === "boolean" ? (source.is_error as boolean) : undefined;
-	const artifactPath = pickString(source, "artifactPath") ?? pickString(source, "artifact_path");
-	const logPath = pickString(source, "logPath") ?? pickString(source, "log_path");
-	const detailPath = pickString(source, "detailPath") ?? pickString(source, "detail_path");
+	const inner = asRecord(source.toolUse) ?? asRecord(source.toolCall) ?? asRecord(source.tool_call) ?? asRecord(source.toolExecution);
+	const lookup = (key: string): unknown => source[key] ?? (inner ? inner[key] : undefined);
+	const lookupString = (key: string): string | undefined => {
+		const direct = pickString(source, key);
+		if (direct !== undefined) return direct;
+		if (!inner) return undefined;
+		return pickString(inner, key);
+	};
+
+	const toolName = lookupString("toolName") ?? lookupString("tool_name") ?? lookupString("name");
+	const toolUseId = lookupString("toolUseId")
+		?? lookupString("tool_use_id")
+		?? lookupString("toolCallId")
+		?? lookupString("tool_call_id")
+		?? lookupString("id");
+	const status = lookupString("status");
+	const isError = readBoolean(source.isError) ?? readBoolean(source.is_error) ?? (inner ? readBoolean(inner.isError) ?? readBoolean(inner.is_error) : undefined);
+	const artifactPath = lookupString("artifactPath") ?? lookupString("artifact_path");
+	const logPath = lookupString("logPath") ?? lookupString("log_path");
+	const detailPath = lookupString("detailPath") ?? lookupString("detail_path");
 
 	const compact: Record<string, unknown> = {};
 	if (toolName !== undefined) compact.toolName = toolName;
@@ -180,10 +212,11 @@ function compactToolExecution(eventName: string, payload: unknown, previewBytes:
 		["args", "argsPreview"],
 		["result", "resultPreview"],
 		["output", "outputPreview"],
+		["content", "contentPreview"],
 		["error", "errorPreview"],
 		["delta", "deltaPreview"],
 	] as const) {
-		const value = source[key];
+		const value = lookup(key);
 		if (value === undefined || value === null) continue;
 		const measurement = measurePayload(value, previewBytes);
 		compact[`${key}Bytes`] = measurement.bytes;
@@ -197,6 +230,10 @@ function compactToolExecution(eventName: string, payload: unknown, previewBytes:
 	return { compact, truncated };
 }
 
+function readBoolean(value: unknown): boolean | undefined {
+	return typeof value === "boolean" ? value : undefined;
+}
+
 function compactAgentEnd(payload: unknown, previewBytes: number): CompactResult {
 	const source = asRecord(payload);
 	if (!source) return { compact: payload, truncated: false };
@@ -204,26 +241,56 @@ function compactAgentEnd(payload: unknown, previewBytes: number): CompactResult 
 	const status = pickString(source, "status");
 	const stopReason = pickString(source, "stopReason") ?? pickString(source, "stop_reason");
 	const usage = source.usage && typeof source.usage === "object" ? source.usage : undefined;
-	const messages = source.messages;
 
 	const compact: Record<string, unknown> = {};
 	if (status !== undefined) compact.status = status;
 	if (stopReason !== undefined) compact.stopReason = stopReason;
 	if (usage !== undefined) compact.usage = usage;
 
-	if (Array.isArray(messages)) {
-		compact.messagesCount = messages.length;
-		const finalText = extractFinalText(messages);
-		if (finalText !== undefined) {
-			const previewed = previewString(finalText, previewBytes);
-			compact.finalTextBytes = Buffer.byteLength(finalText, "utf8");
-			compact.finalTextLength = finalText.length;
-			compact.finalTextPreview = previewed.preview;
-			if (previewed.truncated) compact.finalTextTruncated = true;
-		}
+	const finalText = pickAgentEndFinalText(source);
+	const messagesCount = pickAgentEndMessageCount(source);
+	if (messagesCount !== undefined) compact.messagesCount = messagesCount;
+	if (finalText !== undefined) {
+		const previewed = previewString(finalText, previewBytes);
+		compact.finalTextBytes = Buffer.byteLength(finalText, "utf8");
+		compact.finalTextLength = finalText.length;
+		compact.finalTextPreview = previewed.preview;
+		if (previewed.truncated) compact.finalTextTruncated = true;
 	}
 
 	return { compact, truncated: true };
+}
+
+function pickAgentEndFinalText(source: Record<string, unknown>): string | undefined {
+	const messages = source.messages;
+	if (Array.isArray(messages)) {
+		const direct = extractFinalText(messages);
+		if (direct !== undefined) return direct;
+	}
+	const single = asRecord(source.message);
+	if (single) {
+		const text = extractFinalText([single]);
+		if (text !== undefined) return text;
+	}
+	const content = source.content;
+	if (typeof content === "string" && content.trim().length > 0) return content;
+	if (Array.isArray(content)) {
+		const text = extractFinalTextFromBlocks(content);
+		if (text !== undefined) return text;
+	}
+	const text = source.text;
+	if (typeof text === "string" && text.trim().length > 0) return text;
+	const finalText = source.finalText ?? source.final_text;
+	if (typeof finalText === "string" && finalText.trim().length > 0) return finalText;
+	return undefined;
+}
+
+function pickAgentEndMessageCount(source: Record<string, unknown>): number | undefined {
+	if (Array.isArray(source.messages)) return source.messages.length;
+	if (typeof source.messagesCount === "number" && Number.isFinite(source.messagesCount)) return source.messagesCount;
+	if (typeof source.messages_count === "number" && Number.isFinite(source.messages_count)) return source.messages_count;
+	if (asRecord(source.message)) return 1;
+	return undefined;
 }
 
 function compactSessionTree(payload: unknown, previewBytes: number): CompactResult {
@@ -242,16 +309,25 @@ function extractFinalText(messages: unknown[]): string | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
 		if (!message || typeof message !== "object") continue;
-		const content = (message as Record<string, unknown>).content;
+		const record = message as Record<string, unknown>;
+		const directText = record.text;
+		if (typeof directText === "string" && directText.trim().length > 0) return directText;
+		const content = record.content;
 		if (typeof content === "string" && content.trim().length > 0) return content;
 		if (Array.isArray(content)) {
-			for (let j = content.length - 1; j >= 0; j--) {
-				const block = content[j];
-				if (!block || typeof block !== "object") continue;
-				const text = (block as Record<string, unknown>).text;
-				if (typeof text === "string" && text.trim().length > 0) return text;
-			}
+			const text = extractFinalTextFromBlocks(content);
+			if (text !== undefined) return text;
 		}
+	}
+	return undefined;
+}
+
+function extractFinalTextFromBlocks(blocks: unknown[]): string | undefined {
+	for (let j = blocks.length - 1; j >= 0; j--) {
+		const block = blocks[j];
+		if (!block || typeof block !== "object") continue;
+		const text = (block as Record<string, unknown>).text;
+		if (typeof text === "string" && text.trim().length > 0) return text;
 	}
 	return undefined;
 }
@@ -300,26 +376,6 @@ function safeStringify(value: unknown): string {
 
 function byteLengthOf(value: unknown): number {
 	return Buffer.byteLength(safeStringify(value), "utf8");
-}
-
-/**
- * Cap an array of envelopes to a byte budget, dropping older items first.
- * Always returns at least one envelope when input has any (the most recent),
- * even if that single envelope exceeds the budget — operators still see the
- * latest event rather than an empty response.
- */
-export function trimEnvelopesByBytes<T>(envelopes: T[], maxBytes: number): { events: T[]; truncated: boolean } {
-	if (envelopes.length === 0) return { events: [], truncated: false };
-	const cap = Math.max(0, Math.floor(maxBytes));
-	let bytes = 0;
-	const out: T[] = [];
-	for (let i = envelopes.length - 1; i >= 0; i--) {
-		const piece = byteLengthOf(envelopes[i]);
-		if (out.length > 0 && bytes + piece > cap) return { events: out, truncated: true };
-		out.unshift(envelopes[i] as T);
-		bytes += piece;
-	}
-	return { events: out, truncated: false };
 }
 
 /** Visible for tests. */

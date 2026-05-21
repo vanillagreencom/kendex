@@ -5,7 +5,6 @@ import {
 	DEFAULT_MAX_EVENT_BYTES,
 	DEFAULT_PREVIEW_BYTES,
 	sanitizeBridgeEvent,
-	trimEnvelopesByBytes,
 } from "../event-sanitizer.js";
 
 const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAULT_PREVIEW_BYTES };
@@ -104,6 +103,92 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.raw).toEqual(payload);
 	});
 
+	test("message_update reads role/contentIndex/delta from assistantMessageEvent envelope", () => {
+		const payload = {
+			assistantMessageEvent: {
+				message: {
+					id: "msg_42",
+					role: "assistant",
+					contentIndex: 2,
+					type: "text",
+					text: "z".repeat(800),
+				},
+			},
+		};
+		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
+		const data = result.data as Record<string, unknown>;
+		expect(data.role).toBe("assistant");
+		expect(data.contentIndex).toBe(2);
+		expect(data.messageId).toBe("msg_42");
+		expect(data.type).toBe("text");
+		expect(data.deltaLength).toBe(800);
+		expect(typeof data.deltaPreview).toBe("string");
+		expect(result.truncated).toBe(true);
+	});
+
+	test("message_update falls back to message.content array text", () => {
+		const payload = {
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "intro" },
+					{ type: "text", text: "final body " + "y".repeat(400) },
+				],
+			},
+		};
+		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
+		const data = result.data as Record<string, unknown>;
+		expect(data.role).toBe("assistant");
+		expect(typeof data.deltaPreview).toBe("string");
+		expect((data.deltaPreview as string).length).toBeGreaterThan(0);
+		expect(result.truncated).toBe(true);
+	});
+
+	test("tool_execution_* accepts toolCallId / tool_call_id / nested toolCall", () => {
+		const camel = sanitizeBridgeEvent("tool_execution_start", { toolName: "Read", toolCallId: "tcl_1", input: { path: "/x" } }, baseConfig);
+		expect((camel.data as Record<string, unknown>).toolUseId).toBe("tcl_1");
+
+		const snake = sanitizeBridgeEvent("tool_execution_update", { tool_name: "Bash", tool_call_id: "tcl_2", output: "ok" }, baseConfig);
+		expect((snake.data as Record<string, unknown>).toolUseId).toBe("tcl_2");
+
+		const nested = sanitizeBridgeEvent("tool_execution_end", { toolCall: { name: "Edit", id: "tcl_3", status: "error", isError: true }, error: "boom" }, baseConfig);
+		const nestedData = nested.data as Record<string, unknown>;
+		expect(nestedData.toolName).toBe("Edit");
+		expect(nestedData.toolUseId).toBe("tcl_3");
+		expect(nestedData.status).toBe("error");
+		expect(nestedData.isError).toBe(true);
+		expect(typeof nestedData.errorBytes).toBe("number");
+	});
+
+	test("agent_end accepts content array or single message variants", () => {
+		const stringContent = sanitizeBridgeEvent("agent_end", {
+			status: "ended",
+			usage: { inputTokens: 1 },
+			content: "final body " + "x".repeat(500),
+		}, baseConfig);
+		const stringData = stringContent.data as Record<string, unknown>;
+		expect(stringData.status).toBe("ended");
+		expect(typeof stringData.finalTextPreview).toBe("string");
+		expect((stringData.finalTextPreview as string).length).toBeGreaterThan(0);
+
+		const arrayContent = sanitizeBridgeEvent("agent_end", {
+			status: "ended",
+			content: [
+				{ type: "text", text: "alpha" },
+				{ type: "text", text: "omega" },
+			],
+		}, baseConfig);
+		expect((arrayContent.data as Record<string, unknown>).finalTextPreview).toBe("omega");
+
+		const singleMessage = sanitizeBridgeEvent("agent_end", {
+			status: "ended",
+			message: { role: "assistant", content: [{ type: "text", text: "from .message" }] },
+		}, baseConfig);
+		const singleData = singleMessage.data as Record<string, unknown>;
+		expect(singleData.messagesCount).toBe(1);
+		expect(singleData.finalTextPreview).toBe("from .message");
+	});
+
 	test("originalBytes reflects raw JSON length", () => {
 		const payload = { role: "assistant", contentIndex: 1, delta: "abc" };
 		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
@@ -111,48 +196,3 @@ describe("sanitizeBridgeEvent", () => {
 	});
 });
 
-describe("trimEnvelopesByBytes", () => {
-	test("returns all when under cap", () => {
-		const envelopes = [
-			{ type: "event", event: "a", timestamp: "t1", data: { v: 1 } },
-			{ type: "event", event: "b", timestamp: "t2", data: { v: 2 } },
-		];
-		const result = trimEnvelopesByBytes(envelopes, 1024);
-		expect(result.events).toEqual(envelopes);
-		expect(result.truncated).toBe(false);
-	});
-
-	test("drops older entries until under cap", () => {
-		const big = (i: number) => ({ type: "event", event: `e${i}`, timestamp: `t${i}`, data: { text: "x".repeat(400) } });
-		const envelopes = [big(1), big(2), big(3), big(4)];
-		const oneSize = Buffer.byteLength(JSON.stringify(big(1)), "utf8");
-		const result = trimEnvelopesByBytes(envelopes, oneSize * 2 + 4);
-		expect(result.truncated).toBe(true);
-		expect(result.events.length).toBeLessThanOrEqual(2);
-		expect((result.events.at(-1) as { event: string }).event).toBe("e4");
-	});
-
-	test("always returns at least the most recent envelope when oversized", () => {
-		const envelopes = [
-			{ type: "event", event: "small", timestamp: "t1", data: {} },
-			{ type: "event", event: "huge", timestamp: "t2", data: { text: "y".repeat(50_000) } },
-		];
-		const result = trimEnvelopesByBytes(envelopes, 100);
-		expect(result.events).toHaveLength(1);
-		expect((result.events[0] as { event: string }).event).toBe("huge");
-		expect(result.truncated).toBe(true);
-	});
-
-	test("returns the single oversized envelope without marking truncated when only one exists", () => {
-		const envelopes = [
-			{ type: "event", event: "huge", timestamp: "t1", data: { text: "y".repeat(50_000) } },
-		];
-		const result = trimEnvelopesByBytes(envelopes, 100);
-		expect(result.events).toHaveLength(1);
-		expect(result.truncated).toBe(false);
-	});
-
-	test("empty input returns empty result", () => {
-		expect(trimEnvelopesByBytes([], 1024)).toEqual({ events: [], truncated: false });
-	});
-});
