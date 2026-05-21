@@ -188,21 +188,21 @@ function parseIndexDebug(raw: string | undefined, addDiagnostic: (diagnostic: st
 	return entries;
 }
 
-async function statDiffersFromIndex(cwd: string, entry: IndexDebugEntry, addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
+async function lstatDiffersFromIndex(cwd: string, entry: IndexDebugEntry, addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
 	try {
-		const stat = await fs.promises.stat(path.join(cwd, entry.path), { bigint: true });
-		const mtimeSec = Number(stat.mtimeNs / 1_000_000_000n);
-		const mtimeNsec = Number(stat.mtimeNs % 1_000_000_000n);
-		const ctimeSec = Number(stat.ctimeNs / 1_000_000_000n);
-		const ctimeNsec = Number(stat.ctimeNs % 1_000_000_000n);
-		return Number(stat.size) !== entry.size
+		const lstat = await fs.promises.lstat(path.join(cwd, entry.path), { bigint: true });
+		const mtimeSec = Number(lstat.mtimeNs / 1_000_000_000n);
+		const mtimeNsec = Number(lstat.mtimeNs % 1_000_000_000n);
+		const ctimeSec = Number(lstat.ctimeNs / 1_000_000_000n);
+		const ctimeNsec = Number(lstat.ctimeNs % 1_000_000_000n);
+		return Number(lstat.size) !== entry.size
 			|| mtimeSec !== entry.mtimeSec
 			|| mtimeNsec !== entry.mtimeNsec
 			|| ctimeSec !== entry.ctimeSec
 			|| ctimeNsec !== entry.ctimeNsec;
 	} catch (error) {
 		const safePath = safeStatusPath(entry.path) || "(empty path)";
-		addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to stat tracked path ${safePath}: ${stringifyError(error)}`);
+		addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat tracked path ${safePath}: ${stringifyError(error)}`);
 		return false;
 	}
 }
@@ -228,7 +228,7 @@ async function unstagedModifiedStatusLines(cwd: string, rawDebug: string | undef
 		}
 		checked += 1;
 		if (deleted.has(entry.path)) continue;
-		if (!(await statDiffersFromIndex(cwd, entry, addStatFailureDiagnostic))) continue;
+		if (!(await lstatDiffersFromIndex(cwd, entry, addStatFailureDiagnostic))) continue;
 		const line = formatStatusLine(" M", entry.path);
 		if (line) lines.push(line);
 	}

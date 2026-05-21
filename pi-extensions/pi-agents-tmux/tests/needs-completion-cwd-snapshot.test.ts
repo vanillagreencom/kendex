@@ -235,8 +235,8 @@ describe("needs_completion cwd snapshots", () => {
 	test("snapshot dirty scan reports incomplete when tracked-file cap is hit", async () => {
 		const cwd = tempDir("needs-completion-cwd-");
 		const originalNow = Date.now;
-		const originalStat = fs.promises.stat;
-		let statCalls = 0;
+		const originalLstat = fs.promises.lstat;
+		let lstatCalls = 0;
 		const longName = "x".repeat(160);
 		const debugEntries = Array.from({ length: 2_005 }, (_, index) => [
 			`file-${longName}-${index}.txt\0`,
@@ -265,8 +265,8 @@ describe("needs_completion cwd snapshots", () => {
 			return new EventEmitter() as any;
 		}) as any);
 		Date.now = (() => 0) as typeof Date.now;
-		(fs.promises as any).stat = async () => {
-			statCalls += 1;
+		(fs.promises as any).lstat = async () => {
+			lstatCalls += 1;
 			return { ctimeNs: 1_000_000_000n, mtimeNs: 1_000_000_000n, size: 1n };
 		};
 		try {
@@ -275,12 +275,12 @@ describe("needs_completion cwd snapshots", () => {
 
 			expect(Buffer.byteLength(debugEntries)).toBeGreaterThan(256 * 1024);
 			expect(snapshot?.head).toBe("a".repeat(40));
-			expect(statCalls).toBe(2_000);
+			expect(lstatCalls).toBe(2_000);
 			expect(diagnostics).toContain("cwdSnapshot dirty scan incomplete: checked 2000 tracked paths; 5 skipped by file cap");
-			expect(diagnostics.join("\n")).not.toContain("unable to stat tracked path");
+			expect(diagnostics.join("\n")).not.toContain("unable to lstat tracked path");
 		} finally {
 			Date.now = originalNow;
-			(fs.promises as any).stat = originalStat;
+			(fs.promises as any).lstat = originalLstat;
 			setGitExecFileForTests();
 			rmSync(cwd, { force: true, recursive: true });
 		}
@@ -316,7 +316,7 @@ describe("needs_completion cwd snapshots", () => {
 		}
 	});
 
-	test("snapshot dirty scan reports tracked path stat failures", async () => {
+	test("snapshot dirty scan reports tracked path lstat failures", async () => {
 		const cwd = tempDir("needs-completion-cwd-");
 		const debugEntries = [
 			"missing.txt\0",
@@ -347,10 +347,35 @@ describe("needs_completion cwd snapshots", () => {
 			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
 
 			expect(snapshot?.head).toBe("a".repeat(40));
-			expect(diagnostics.join("\n")).toContain("unable to stat tracked path missing.txt");
+			expect(diagnostics.join("\n")).toContain("unable to lstat tracked path missing.txt");
 		} finally {
 			setGitExecFileForTests();
 			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan lstat checks tracked symlinks without following missing targets", async () => {
+		if (process.platform === "win32") return;
+		const cwd = tempDir("needs-completion-cwd-");
+		const externalDir = tempDir("needs-completion-external-");
+		const target = join(externalDir, "target.txt");
+		try {
+			execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+			writeFileSync(target, "outside\n", "utf8");
+			fs.symlinkSync(target, join(cwd, "tracked-link"));
+			execFileSync("git", ["add", "tracked-link"], { cwd, stdio: "ignore" });
+			execFileSync("git", ["-c", "user.name=Pi Test", "-c", "user.email=pi-test@example.invalid", "commit", "--no-gpg-sign", "-m", "add symlink"], { cwd, stdio: "ignore" });
+			rmSync(target, { force: true });
+
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(diagnostics).toEqual([]);
+			expect(snapshot?.dirty).toBe(false);
+			expect(snapshot?.status).not.toContain("tracked-link");
+		} finally {
+			rmSync(cwd, { force: true, recursive: true });
+			rmSync(externalDir, { force: true, recursive: true });
 		}
 	});
 
