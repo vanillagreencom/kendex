@@ -191,7 +191,8 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | [`deep-research`](skills/deep-research/) | Exa-powered deep research and portable findings report generation. |
 | [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
 | [`github`](skills/github/)* | GitHub PR, thread, review, CI, and merge workflows. |
-| [`issue-lifecycle`](skills/issue-lifecycle/)* | Delegated implementation, review, and QA issue workflows. |
+| [`issue-lifecycle`](skills/issue-lifecycle/)* | Delegated implementation and review-fix issue workflows for dev agents. |
+| [`reviewer`](skills/reviewer/)* | Code-review and QA-review workflows + the canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
 | [`linear`](skills/linear/)* | Linear issue, cycle, milestone, and project workflows. |
 | [`flightdeck`](skills/flightdeck/)* | Master session lifecycle for multi-issue parallel dev work; tmux-only, with structured activity JSONL for dashboard/live inspection. |
 | [`orchestration`](skills/orchestration/)* | Per-issue lifecycle inside a worktree: dev → review → submit → merge. |

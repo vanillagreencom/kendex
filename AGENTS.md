@@ -106,7 +106,7 @@ iced = ["iced-rs", "iced-shadcn", ...]
 [role-skills]
 analyst = ["linear", "github"]
 engineer = ["issue-lifecycle", "github", "worktree", "decider", "linear"]
-reviewer = ["issue-lifecycle", "linear"]
+reviewer = ["reviewer"]
 
 [hook-events]
 "PreToolUse:Bash" = "all"
