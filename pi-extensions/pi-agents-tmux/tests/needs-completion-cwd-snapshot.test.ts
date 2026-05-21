@@ -379,6 +379,86 @@ describe("needs_completion cwd snapshots", () => {
 		}
 	});
 
+	test("snapshot dirty scan lstat checks tracked symlinks without following existing targets", async () => {
+		if (process.platform === "win32") return;
+		const cwd = tempDir("needs-completion-cwd-");
+		const externalDir = tempDir("needs-completion-external-");
+		const target = join(externalDir, "target.txt");
+		try {
+			execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+			writeFileSync(target, "outside\n", "utf8");
+			fs.symlinkSync(target, join(cwd, "tracked-link"));
+			execFileSync("git", ["add", "tracked-link"], { cwd, stdio: "ignore" });
+			execFileSync("git", ["-c", "user.name=Pi Test", "-c", "user.email=pi-test@example.invalid", "commit", "--no-gpg-sign", "-m", "add symlink"], { cwd, stdio: "ignore" });
+			writeFileSync(target, "outside changed and longer\n", "utf8");
+
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(diagnostics).toEqual([]);
+			expect(snapshot?.dirty).toBe(false);
+			expect(snapshot?.status).not.toContain("tracked-link");
+		} finally {
+			rmSync(cwd, { force: true, recursive: true });
+			rmSync(externalDir, { force: true, recursive: true });
+		}
+	});
+
+	test("snapshot dirty scan skips tracked paths under symlinked parents before final lstat", async () => {
+		if (process.platform === "win32") return;
+		const cwd = tempDir("needs-completion-cwd-");
+		const externalDir = tempDir("needs-completion-external-");
+		const originalLstat = fs.promises.lstat;
+		const lstatPaths: string[] = [];
+		const debugEntries = [
+			"linkdir/target.txt\0",
+			"  ctime: 1:0\n",
+			"  mtime: 1:0\n",
+			"  dev: 1\tino: 1\n",
+			"  uid: 1\tgid: 1\n",
+			"  size: 1\tflags: 0\n",
+		].join("");
+		setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+			void command;
+			const cb = typeof options === "function" ? options : callback;
+			const joined = args.join(" ");
+			const stdout = joined.includes("rev-parse --is-inside-work-tree")
+				? "true"
+				: joined.includes("rev-parse HEAD")
+					? "a".repeat(40)
+					: joined.includes("log -1")
+						? "initial commit"
+						: joined.includes("ls-files --debug")
+							? debugEntries
+							: "";
+			queueMicrotask(() => cb(null, stdout, ""));
+			return new EventEmitter() as any;
+		}) as any);
+		(fs.promises as any).lstat = async (targetPath: fs.PathLike, options?: any) => {
+			lstatPaths.push(String(targetPath));
+			return originalLstat.call(fs.promises, targetPath, options);
+		};
+		try {
+			writeFileSync(join(externalDir, "target.txt"), "outside changed and longer\n", "utf8");
+			fs.symlinkSync(externalDir, join(cwd, "linkdir"));
+
+			const diagnostics: string[] = [];
+			const snapshot = await snapshotCwdGitState(cwd, (diagnostic) => diagnostics.push(diagnostic));
+
+			expect(snapshot?.head).toBe("a".repeat(40));
+			expect(snapshot?.dirty).toBe(false);
+			expect(snapshot?.status).not.toContain("linkdir/target.txt");
+			expect(diagnostics.join("\n")).toContain("tracked path linkdir/target.txt is under symlinked parent linkdir; skipping lstat probe");
+			expect(lstatPaths).toContain(join(cwd, "linkdir"));
+			expect(lstatPaths).not.toContain(join(cwd, "linkdir", "target.txt"));
+		} finally {
+			(fs.promises as any).lstat = originalLstat;
+			setGitExecFileForTests();
+			rmSync(cwd, { force: true, recursive: true });
+			rmSync(externalDir, { force: true, recursive: true });
+		}
+	});
+
 	test("snapshot dirty scan reports incomplete when tracked-file deadline is hit", async () => {
 		const cwd = tempDir("needs-completion-cwd-");
 		writeFileSync(join(cwd, "file-0.txt"), "tracked\n", "utf8");

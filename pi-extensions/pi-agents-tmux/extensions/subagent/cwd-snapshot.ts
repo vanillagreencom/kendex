@@ -10,9 +10,9 @@ let execFileProcess: ExecFileProcess = execFile;
 const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 const GIT_INDEX_DEBUG_MAX_BUFFER = 8 * 1024 * 1024;
-const DIRTY_STAT_DEADLINE_MS = 750;
-const DIRTY_STAT_MAX_ENTRIES = 2_000;
-const DIRTY_STAT_MAX_FAILURE_DIAGNOSTICS = 5;
+const DIRTY_SCAN_DEADLINE_MS = 750;
+const DIRTY_SCAN_MAX_ENTRIES = 2_000;
+const DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS = 5;
 const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
@@ -189,8 +189,15 @@ function parseIndexDebug(raw: string | undefined, addDiagnostic: (diagnostic: st
 }
 
 async function lstatDiffersFromIndex(cwd: string, entry: IndexDebugEntry, addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
+	const components = trackedPathComponents(entry.path);
+	if (!components) {
+		const safePath = safeStatusPath(entry.path) || "(empty path)";
+		addDiagnostic(`cwdSnapshot dirty scan incomplete: unsafe tracked path ${safePath}; skipping lstat probe`);
+		return false;
+	}
+	if (!(await trackedPathParentsSafe(cwd, entry.path, components, addDiagnostic))) return false;
 	try {
-		const lstat = await fs.promises.lstat(path.join(cwd, entry.path), { bigint: true });
+		const lstat = await fs.promises.lstat(path.join(cwd, ...components), { bigint: true });
 		const mtimeSec = Number(lstat.mtimeNs / 1_000_000_000n);
 		const mtimeNsec = Number(lstat.mtimeNs % 1_000_000_000n);
 		const ctimeSec = Number(lstat.ctimeNs / 1_000_000_000n);
@@ -207,40 +214,68 @@ async function lstatDiffersFromIndex(cwd: string, entry: IndexDebugEntry, addDia
 	}
 }
 
+function trackedPathComponents(filePath: string): string[] | undefined {
+	if (!filePath || filePath.includes("\0") || path.posix.isAbsolute(filePath)) return undefined;
+	if (process.platform === "win32" && (path.win32.isAbsolute(filePath) || filePath.includes("\\"))) return undefined;
+	const components = filePath.split("/");
+	if (components.some((component) => component === "" || component === "." || component === "..")) return undefined;
+	return components;
+}
+
+async function trackedPathParentsSafe(cwd: string, filePath: string, components: string[], addDiagnostic: (diagnostic: string) => void): Promise<boolean> {
+	let current = cwd;
+	for (let index = 0; index < components.length - 1; index += 1) {
+		current = path.join(current, components[index]!);
+		const safePath = safeStatusPath(filePath) || "(empty path)";
+		const safeParent = safeStatusPath(components.slice(0, index + 1).join("/")) || "(cwd)";
+		try {
+			const parentLstat = await fs.promises.lstat(current, { bigint: true });
+			if (parentLstat.isSymbolicLink()) {
+				addDiagnostic(`cwdSnapshot dirty scan incomplete: tracked path ${safePath} is under symlinked parent ${safeParent}; skipping lstat probe`);
+				return false;
+			}
+		} catch (error) {
+			addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat parent ${safeParent} for tracked path ${safePath}: ${stringifyError(error)}`);
+			return false;
+		}
+	}
+	return true;
+}
+
 async function unstagedModifiedStatusLines(cwd: string, rawDebug: string | undefined, deleted: Set<string>, addDiagnostic: (diagnostic: string) => void): Promise<string[]> {
 	const entries = parseIndexDebug(rawDebug, addDiagnostic);
 	const lines: string[] = [];
-	const deadline = Date.now() + DIRTY_STAT_DEADLINE_MS;
+	const deadline = Date.now() + DIRTY_SCAN_DEADLINE_MS;
 	let checked = 0;
-	let statFailures = 0;
-	const addStatFailureDiagnostic = (diagnostic: string) => {
-		statFailures += 1;
-		if (statFailures <= DIRTY_STAT_MAX_FAILURE_DIAGNOSTICS) addDiagnostic(diagnostic);
+	let lstatDiagnostics = 0;
+	const addLstatDiagnostic = (diagnostic: string) => {
+		lstatDiagnostics += 1;
+		if (lstatDiagnostics <= DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS) addDiagnostic(diagnostic);
 	};
 	for (const entry of entries) {
-		if (checked >= DIRTY_STAT_MAX_ENTRIES) {
+		if (checked >= DIRTY_SCAN_MAX_ENTRIES) {
 			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths; ${entries.length - checked} skipped by file cap`);
 			break;
 		}
 		if (Date.now() >= deadline) {
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths before ${DIRTY_STAT_DEADLINE_MS}ms deadline`);
+			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths before ${DIRTY_SCAN_DEADLINE_MS}ms deadline`);
 			break;
 		}
 		checked += 1;
 		if (deleted.has(entry.path)) continue;
-		if (!(await lstatDiffersFromIndex(cwd, entry, addStatFailureDiagnostic))) continue;
+		if (!(await lstatDiffersFromIndex(cwd, entry, addLstatDiagnostic))) continue;
 		const line = formatStatusLine(" M", entry.path);
 		if (line) lines.push(line);
 	}
-	if (statFailures > DIRTY_STAT_MAX_FAILURE_DIAGNOSTICS) {
-		addDiagnostic(`cwdSnapshot dirty scan incomplete: ${statFailures - DIRTY_STAT_MAX_FAILURE_DIAGNOSTICS} additional tracked path stat failures omitted`);
+	if (lstatDiagnostics > DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS) {
+		addDiagnostic(`cwdSnapshot dirty scan incomplete: ${lstatDiagnostics - DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS} additional tracked path lstat diagnostics omitted`);
 	}
 	return lines;
 }
 
 async function readDirtyStatus(cwd: string, addDiagnostic: (diagnostic: string) => void): Promise<string | undefined> {
 	// Avoid `git status` / worktree content hashing here: clean/process filters from
-	// local .gitattributes can execute arbitrary commands. This stat-based view is
+	// local .gitattributes can execute arbitrary commands. This lstat-based view is
 	// intentionally conservative and uses only index metadata, directory listing,
 	// and index-vs-HEAD diff metadata.
 	const [stagedRaw, debugRaw, deletedRaw, untrackedRaw] = await Promise.all([
