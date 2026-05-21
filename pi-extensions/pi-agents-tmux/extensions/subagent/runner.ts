@@ -670,11 +670,10 @@ async function runSingleAgentAttempt(
 			let sawSessionCompact = false;
 			let compactThenEmptyAgentEnd = false;
 			let postCompactAssistantHasText = false;
-			let sawMessageEnd = false;
 			let latestFilteredMessageUpdate: any;
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error") => {
-				if (keepFullTranscript || sawMessageEnd || !latestFilteredMessageUpdate) return;
+				if (keepFullTranscript || !latestFilteredMessageUpdate) return;
 				appendTranscript({
 					stream: "stdout",
 					raw: JSON.stringify(latestFilteredMessageUpdate),
@@ -716,7 +715,7 @@ async function runSingleAgentAttempt(
 					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
 				}
 
-				if (eventName === "message_end") sawMessageEnd = true;
+				if (eventName === "message_end") latestFilteredMessageUpdate = undefined;
 				if (eventName === "message_end" && payload.message) {
 					const msg = payload.message as Message;
 					currentResult.messages.push(msg);
