@@ -2,7 +2,7 @@
 // Runs inside the active tmux session (TMUX env must be set).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -1244,5 +1244,222 @@ describe("pane-registry hydrate-pi (vstack#180)", () => {
 		expect(after.title).toBe("186");
 		expect(after.pane_id).toBe("%9001");
 		expect(after.cwd).toBe("/tmp/wt-186");
+	});
+});
+
+// vstack#216: claude analog of hydrate-pi. The github-tracker regression
+// reported in #216 was that spawn_cc_channel_tmux wrote cc-spawn-<issue>.json
+// AFTER open_tmux had already routed through `pane-registry init-entry`,
+// so adapter.cc_url / cc_session_uuid / cc_transcript stayed null and the
+// daemon's claude-subscriber binder silently looped forever.
+describe("pane-registry hydrate-claude (vstack#216)", () => {
+	test("init-entry hydrates cc_* from a pre-existing spawn file (production sequence: spawn file FIRST, init-entry SECOND)", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: { "%2160": { pane_index: 0, path: "/tmp/wt-2160", window_id: "@2160", window_index: 1, window_name: "2160" } },
+			windows: { "@2160": { index: 1, name: "2160" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+
+		// The fix shipped in this PR: cc-spawn-<issue>.json is written
+		// BEFORE init-entry runs, so hydrateSpawnMetadata sees populated
+		// fields at registration time. Github tracker requires a numeric
+		// entry id, matching the production github-tracker path.
+		writeFileSync(
+			join(stateDir, "cc-spawn-2160.json"),
+			JSON.stringify({
+				url: "http://127.0.0.1:8788",
+				session_uuid: "11111111-2222-3333-4444-555555555555",
+				directory: "/tmp/wt-2160",
+				transcript: "/home/u/.claude/projects/-tmp-wt-2160/11111111-2222-3333-4444-555555555555.jsonl",
+				mcp_config: "/tmp/cc/2160/.mcp.json",
+				port: 8788,
+				channel_token: "deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234",
+				allocated_at: "2026-05-21T00:00:00Z",
+			}),
+		);
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "2160",
+			"--title", "2160", "--kind", "issue", "--tracker", "github", "--github-url", "https://github.com/owner/repo/issues/2160",
+			"--cwd", "/tmp/wt-2160", "--worktree", "/tmp/wt-2160",
+			"--window", "1", "--harness", "claude",
+			"--pane-id", "%2160", "--pane-target", "test-session:1.0",
+		], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		const entry = JSON.parse(runShim(tsRepo, statePath, ["get", "2160"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(entry.adapter.cc_url).toBe("http://127.0.0.1:8788");
+		expect(entry.adapter.cc_session_uuid).toBe("11111111-2222-3333-4444-555555555555");
+		expect(entry.adapter.cc_transcript).toBe("/home/u/.claude/projects/-tmp-wt-2160/11111111-2222-3333-4444-555555555555.jsonl");
+		expect(entry.adapter.cc_port).toBe(8788);
+		expect(entry.adapter.cc_channel_token).toBe("deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234");
+	});
+
+	test("cc-channel-args emits --channel-token when adapter is fresh (live transcript + /healthz)", async () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: { "%2163": { pane_index: 0, path: "/tmp/wt-2163", window_id: "@2163", window_index: 1, window_name: "2163" } },
+			windows: { "@2163": { index: 1, name: "2163" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+
+		// `ccAdapterIsFresh` synchronously spawns `curl` to probe the
+		// /healthz endpoint, which blocks the event loop and starves a
+		// same-process in-bun http listener — so we run the test
+		// /healthz server as a python child process via `spawn` (async)
+		// and tear it down in `finally`. python3 is a flightdeck dep
+		// already (pi-bridge helpers, etc.).
+		const transcript = join(stateDir, "fake-transcript-2163.jsonl");
+		writeFileSync(transcript, "");
+
+		const pyScript = `import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Type","text/plain"); self.end_headers(); self.wfile.write(b"ok health\\n")
+    def log_message(self, *a, **k): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+sys.stdout.write(f"{srv.server_address[1]}\\n"); sys.stdout.flush()
+try: srv.serve_forever()
+except KeyboardInterrupt: pass`;
+		const child = spawn("python3", ["-c", pyScript], { stdio: ["ignore", "pipe", "pipe"] });
+		const port = await new Promise<number>((resolveServer, rejectServer) => {
+			const t = setTimeout(() => rejectServer(new Error("python health server didn't print port in time")), 5000);
+			child.stdout!.on("data", (b: Buffer) => {
+				const line = b.toString().split("\n", 1)[0]!.trim();
+				const p = Number(line);
+				if (Number.isFinite(p) && p > 0) { clearTimeout(t); resolveServer(p); }
+			});
+			child.on("error", (e) => { clearTimeout(t); rejectServer(e); });
+		});
+
+		try {
+			writeFileSync(
+				join(stateDir, "cc-spawn-2163.json"),
+				JSON.stringify({
+					url: `http://127.0.0.1:${port}`,
+					session_uuid: "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb",
+					transcript,
+					port,
+					channel_token: "tok2163-bearer-secret",
+				}),
+			);
+			expect(runShim(tsRepo, statePath, [
+				"init-entry", "2163",
+				"--title", "2163", "--kind", "issue", "--tracker", "github", "--github-url", "https://github.com/owner/repo/issues/2163",
+				"--cwd", "/tmp/wt-2163", "--worktree", "/tmp/wt-2163",
+				"--window", "1", "--harness", "claude",
+				"--pane-id", "%2163", "--pane-target", "test-session:1.0",
+			], { FD_STATE_DIR: stateDir, FD_ADAPTER_FRESHNESS_TTL: "0" }).status).toBe(0);
+
+			const args = runShim(tsRepo, statePath, ["cc-channel-args", "2163"], { FD_STATE_DIR: stateDir, FD_ADAPTER_FRESHNESS_TTL: "0" }).stdout.trim();
+			expect(args).toContain(`--url http://127.0.0.1:${port}`);
+			expect(args).toContain(`--transcript ${transcript}`);
+			expect(args).toContain("--channel-token tok2163-bearer-secret");
+		} finally {
+			child.kill("SIGTERM");
+		}
+	});
+
+	test("hydrate-claude recovers when entry was registered BEFORE the spawn file existed (belt-and-suspenders path)", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: { "%2161": { pane_index: 0, path: "/tmp/wt-2161", window_id: "@2161", window_index: 1, window_name: "2161" } },
+			windows: { "@2161": { index: 1, name: "2161" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+
+		// Spawn file does NOT exist yet when init-entry runs (the pre-fix
+		// regression shape — reproduce it to prove the recovery path works).
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "2161",
+			"--title", "2161", "--kind", "issue", "--tracker", "github", "--github-url", "https://github.com/owner/repo/issues/2161",
+			"--cwd", "/tmp/wt-2161", "--worktree", "/tmp/wt-2161",
+			"--window", "1", "--harness", "claude",
+			"--pane-id", "%2161", "--pane-target", "test-session:1.0",
+		], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		const before = JSON.parse(runShim(tsRepo, statePath, ["get", "2161"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(before.adapter.cc_url).toBeNull();
+		expect(before.adapter.cc_transcript).toBeNull();
+
+		writeFileSync(
+			join(stateDir, "cc-spawn-2161.json"),
+			JSON.stringify({
+				url: "http://127.0.0.1:8789",
+				session_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				transcript: "/home/u/.claude/projects/-tmp-wt-2161/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+				port: 8789,
+				channel_token: "tok2161",
+			}),
+		);
+		const r = runShim(tsRepo, statePath, ["hydrate-claude", "2161"], { FD_STATE_DIR: stateDir });
+		expect(r.status).toBe(0);
+		const payload = JSON.parse(r.stdout.trim()) as Record<string, unknown>;
+		expect(payload.ok).toBe(true);
+		expect(payload.cc_url).toBe("http://127.0.0.1:8789");
+		expect(payload.cc_channel_token).toBe("tok2161");
+
+		const after = JSON.parse(runShim(tsRepo, statePath, ["get", "2161"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(after.adapter.cc_url).toBe("http://127.0.0.1:8789");
+		expect(after.adapter.cc_session_uuid).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+		expect(after.adapter.cc_transcript).toBe("/home/u/.claude/projects/-tmp-wt-2161/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+		expect(after.adapter.cc_port).toBe(8789);
+		expect(after.adapter.cc_channel_token).toBe("tok2161");
+	});
+
+	test("hydrate-claude rejects entries that are not harness=claude", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(join(stateDir, "cc-spawn-mismatch.json"), JSON.stringify({ url: "http://x", session_uuid: "u", transcript: "/t", port: 1 }));
+		runShim(tsRepo, statePath, [
+			"init-entry", "mismatch",
+			"--title", "Mismatch", "--kind", "adhoc",
+			"--cwd", "/tmp/m", "--window", "1", "--harness", "pi",
+		], { FD_STATE_DIR: stateDir });
+		const r = runShim(tsRepo, statePath, ["hydrate-claude", "mismatch"], { FD_STATE_DIR: stateDir });
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("requires harness=claude");
+	});
+
+	test("hydrate-claude errors when spawn file is missing", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session"));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		runShim(tsRepo, statePath, [
+			"init-entry", "no-spawn-cc",
+			"--title", "NoSpawnCC", "--kind", "adhoc",
+			"--cwd", "/tmp/ns", "--window", "1", "--harness", "claude",
+		], { FD_STATE_DIR: stateDir });
+		const r = runShim(tsRepo, statePath, ["hydrate-claude", "no-spawn-cc"], { FD_STATE_DIR: stateDir });
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("no spawn file");
+	});
+
+	test("hydrate-claude preserves sibling adapter fields (e.g. pi_*) it must not clobber", () => {
+		const statePath = makeShimState(tsRepo, baseShim("test-session", {
+			panes: { "%2162": { pane_index: 0, path: "/tmp/wt-2162", window_id: "@2162", window_index: 1, window_name: "2162" } },
+			windows: { "@2162": { index: 1, name: "2162" } },
+		}));
+		const stateDir = join(tsRepo, "tmp", "fd-state");
+		mkdirSync(stateDir, { recursive: true });
+		expect(runShim(tsRepo, statePath, [
+			"init-entry", "2162",
+			"--title", "2162", "--kind", "issue",
+			"--cwd", "/tmp/wt-2162", "--worktree", "/tmp/wt-2162",
+			"--window", "1", "--harness", "claude",
+			"--pane-id", "%2162", "--pane-target", "test-session:1.0",
+		], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		runShim(tsRepo, statePath, ["set", "2162", "adapter.pi_session_id", JSON.stringify("sentinel-pi-id")], { FD_STATE_DIR: stateDir });
+
+		writeFileSync(
+			join(stateDir, "cc-spawn-2162.json"),
+			JSON.stringify({ url: "http://127.0.0.1:8790", session_uuid: "ssss-uuid", transcript: "/t/2162.jsonl", port: 8790 }),
+		);
+		expect(runShim(tsRepo, statePath, ["hydrate-claude", "2162"], { FD_STATE_DIR: stateDir }).status).toBe(0);
+
+		const after = JSON.parse(runShim(tsRepo, statePath, ["get", "2162"], { FD_STATE_DIR: stateDir }).stdout) as Record<string, any>;
+		expect(after.adapter.cc_url).toBe("http://127.0.0.1:8790");
+		expect(after.adapter.pi_session_id).toBe("sentinel-pi-id");
 	});
 });

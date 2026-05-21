@@ -95,6 +95,7 @@ Most sessions work with defaults. These are the knobs users most often change.
 | `FLIGHTDECK_AUTO_MERGE` | `1` | Set `0` to require human approval before merge or force-merge actions. |
 | `FLIGHTDECK_AUTO_REBASE` | `0` | Set `1` in GitHub or plan mode to allow safe auto-rebase/update-branch prompts. |
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | Change how long Flightdeck waits before considering force-merge for approved, green PRs stuck in GitHub `UNKNOWN` merge state. |
+| `FLIGHTDECK_CLAUDE_CHANNELS` | unset → `0` for linear tracker; defaulted to `1` for `--tracker github --harness claude` (vstack#216) | Set `1`/`0` to force Claude Channels on/off for a launch. Explicit `--use-channels`/`--no-channels` on `open-terminal` always wins. With channels on the daemon binds Claude's structured event stream and `flightdeck-daemon health` reports `subscriber_status=bound`; with channels off the daemon falls back to tmux scrollback polling and reports `skipped`/`stuck` until adapter metadata is supplied. |
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default model for panes launched from `open-terminal` or `flightdeck-session --prompt`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default effort/thinking level for launched panes. |
 | `FLIGHTDECK_DISABLE_AUTO_RENAME` | `0` | Set `1` when tmux window titles spawned by `flightdeck-session start` should stay fixed instead of letting harnesses rename them. |

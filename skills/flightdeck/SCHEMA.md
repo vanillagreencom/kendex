@@ -135,8 +135,10 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
       },
       "adapter": {
         "pi_bridge_pid": 0, "pi_bridge_socket": "<path-or-null>", "pi_session_id": "<id-or-null>",
-        "oc_url": "<server-url-or-null>", "oc_session_id": "<id-or-null>",
+        "oc_url": "<server-url-or-null>", "oc_session_id": "<id-or-null>", "oc_port": 0,
         "cc_url": "<server-url-or-null>", "cc_transcript": "<path-or-null>",
+        "cc_session_uuid": "<uuid-or-null>", "cc_port": 0,
+        "cc_channel_token": "<bearer-token-or-null>",
         "cx_ws": "<ws-url-or-null>", "cx_thread_id": "<id-or-null>"
       },
       "domain": {
@@ -206,5 +208,50 @@ The `flightdeck-daemon` pi-subscriber binder reads adapter metadata from `pane-r
 New launch paths (Codex JSON-RPC adapter for Pi, future per-pane Pi attach commands, etc.) MUST land their adapter fields through one of these routes, not assume the daemon will re-discover from `pi-bridge list` independently.
 
 `entry.adapter` writes that affect more than one field (e.g. `pane-registry hydrate-pi` writing `pi_bridge_pid` + `pi_bridge_socket` + `pi_session_id` together) MUST go through `flightdeck-state write-entry` so the daemon's reconcile read never observes a half-hydrated entry; chaining multiple `flightdeck-state set` calls is not atomic across the registry lock.
+
+### Claude / OpenCode / Codex subscriber binder required fields (vstack#216)
+
+The daemon's per-harness subscriber binders read the same flattened adapter view used by the pi binder above. Each harness has a hard-required field set; missing any of them causes the binder to emit `[<harness>-subscriber-bind-skip]` (throttled by `FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC`, default 60s) and, after `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` consecutive misses (default 12), a one-shot `[<harness>-subscriber-bind-stuck]` warning naming the missing fields.
+
+| Harness | Required adapter fields | Optional |
+| --- | --- | --- |
+| `claude` | `cc_url`, `cc_transcript`, `cc_session_uuid`, `cc_port` | `cc_channel_token` (bearer auth on webhook POSTs; absence keeps webhook in legacy-accept mode) |
+| `opencode` | `oc_url`, `oc_session_id` | `oc_port` |
+| `codex` | `cx_ws`, `cx_thread_id` | — |
+| `pi` | see "Pi-subscriber binder required fields" above | — |
+
+`scripts/open-terminal`'s `spawn_cc_channel_tmux` writes `cc-spawn-<issue>.json` **before** calling `open_tmux` (so the synchronous `pane-registry init-entry` triggered by `flightdeck-session start` hydrates the entry directly), and additionally calls `pane-registry hydrate-claude <issue>` afterwards as a belt-and-suspenders second-chance writer (mirrors the pi hydrate path).
+
+### Subscriber-status snapshot (vstack#216)
+
+`<state_dir>/fd-daemon-<sessionKey>.subscribers.json` is rewritten by the daemon every heartbeat and at startup. `flightdeck-daemon health` reads it to surface per-pane binding state. Shape:
+
+```json
+{
+  "session_id": "$0",
+  "session_key": "s0",
+  "daemon_pid": 12345,
+  "updated_at_epoch": 1700000000,
+  "panes": [
+    {
+      "pane_id": "%101",
+      "harness": "claude",
+      "status": "bound|skipped|stuck|dead",
+      "subscriber_pid": 99001,
+      "consecutive_bind_skips": 0,
+      "last_bind_skip_reason": null
+    }
+  ]
+}
+```
+
+`status` semantics:
+
+- `bound` — subscriber process is alive and events flow.
+- `skipped` — tracked entry registered but adapter metadata missing; daemon will retry every reconcile tick.
+- `stuck` — same as `skipped` past the stuck threshold; one-shot warning has fired.
+- `dead` — pid was recorded but is no longer alive; reconcile respawns next tick.
+
+The file is cleaned up alongside other per-session state on daemon stop and gc sweeps. Missing snapshot is reported by `health` as `subscriber_status=(missing — daemon hasn't written snapshot yet)` rather than silently omitted.
 
 Tracked entry state enum: `state ∈ {waiting, prompting, submitting, ready, complete, cancelled, dead}`. Issue and plan workflows additionally use `{merge-ready, merged, aborted}` for PR lifecycle states; these map onto the generic enum via `domain.issue.phase` / `domain.issue.outcome` for Linear, `domain.github_issue.phase` / `domain.github_issue.outcome` for GitHub, or `domain.plan_item.phase` / `domain.plan_item.outcome` for plan items (e.g. `merged → complete + outcome="merged"`). `entryIdForIssue(issueId)` returns the issue id unchanged after validation (empty/invalid ids return null); `issueIdForEntry(entry)` reads `entry.domain.issue.id` or, for `kind: "issue"`, `entry.id`. GitHub entries use numeric `domain.github_issue.number` for lane-specific routing. Plan entries use `domain.plan_item.item_id` and normally keep `kind="workflow"` because their child panes receive self-contained item briefs. `owner` is metadata written by `flightdeck-state init`; `owner.pid` is the owner harness PID supplied by `FLIGHTDECK_OWNER_PID` (falling back to parent PID), and `owner.discovery_error` records Pi bridge metadata lookup failures when the owner harness is Pi. Dashboard renderers use `owner.pane_id` to keep the persistent dashboard owner-scoped by default. `paused_for_user` carries `{entry_id|issue_id, reason, prompt_text}` when a guard or issue/plan-mode pause fires.

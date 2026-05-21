@@ -10,12 +10,43 @@
 // flightdeck issue id, baked into the tag's session= attribute so master
 // can scope events.
 //
-// Localhost-only and ungated — assumes single-user dev workstation.
+// Auth (vstack#216): when CC_CHANNEL_TOKEN is set, the server requires a
+// matching `Authorization: Bearer <token>` (or `X-Channel-Token: <token>`)
+// header on every non-/healthz request. The token is generated once per
+// spawn by `open-terminal` and persisted to `cc-spawn-<issue>.json` so
+// `pane-respond` can read it from the same file the daemon does.
+// `/healthz` remains unauthenticated so the daemon's freshness probe
+// (`pane-poll`) and tooling can keep working without secret material.
+// When CC_CHANNEL_TOKEN is unset (legacy spawns), auth is disabled with a
+// stderr warning so old worktrees still function during the rollout.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 const PORT = Number(process.env.CC_CHANNEL_PORT ?? 8788)
 const SESSION = process.env.CC_CHANNEL_SESSION ?? 'unnamed'
+const TOKEN = (process.env.CC_CHANNEL_TOKEN ?? '').trim()
+
+if (!TOKEN) {
+  process.stderr.write(
+    `claude-channel-server[${SESSION}]: CC_CHANNEL_TOKEN not set; accepting unauthenticated POSTs (legacy mode)\n`,
+  )
+}
+
+function unauthorized(): Response {
+  return new Response('unauthorized\n', { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="cc-channel"' } })
+}
+
+function tokenMatches(req: Request): boolean {
+  if (!TOKEN) return true
+  const auth = req.headers.get('authorization') ?? ''
+  if (auth.startsWith('Bearer ')) {
+    const presented = auth.slice('Bearer '.length).trim()
+    if (presented && presented === TOKEN) return true
+  }
+  const headerToken = (req.headers.get('x-channel-token') ?? '').trim()
+  if (headerToken && headerToken === TOKEN) return true
+  return false
+}
 
 const mcp = new Server(
   { name: 'webhook', version: '0.0.1' },
@@ -35,6 +66,7 @@ Bun.serve({
     if (url.pathname === '/healthz') {
       return new Response(`ok health session=${SESSION} port=${PORT}\n`)
     }
+    if (!tokenMatches(req)) return unauthorized()
     const body = await req.text()
     await mcp.notification({
       method: 'notifications/claude/channel',

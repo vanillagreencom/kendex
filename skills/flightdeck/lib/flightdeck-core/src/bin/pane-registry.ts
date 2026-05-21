@@ -222,6 +222,7 @@ function lookupIdOrPane(raw: string, requireLivePane = false): string {
 
 interface InitFields {
 	branch: string;
+	cc_channel_token: string;
 	cc_port: string;
 	cc_session_uuid: string;
 	cc_transcript: string;
@@ -266,6 +267,7 @@ interface InitFields {
 function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 	return {
 		branch: "",
+		cc_channel_token: "",
 		cc_port: "", cc_session_uuid: "", cc_transcript: "", cc_url: "",
 		cwd: "",
 		cx_thread_id: "", cx_ws: "",
@@ -290,6 +292,7 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 
 const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--branch": "branch",
+	"--cc-channel-token": "cc_channel_token",
 	"--cc-port": "cc_port",
 	"--cc-session-uuid": "cc_session_uuid",
 	"--cc-transcript": "cc_transcript",
@@ -384,6 +387,10 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.cc_session_uuid = String(rec.session_uuid ?? "");
 			fields.cc_port = String(rec.port ?? "");
 			fields.cc_transcript = String(rec.transcript ?? "");
+			// vstack#216: pick up the channel bearer token (optional —
+			// only set when /dev/urandom or fallback random source was
+			// available at spawn time).
+			fields.cc_channel_token = typeof rec.channel_token === "string" ? rec.channel_token : "";
 			const launch = rec.launch as Record<string, unknown> | undefined;
 			hydrateLaunchFields(fields, launch);
 		}
@@ -458,6 +465,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		}
 		: null;
 	const adapter = {
+		cc_channel_token: strOrNull(fields.cc_channel_token),
 		cc_port: numOrNull(fields.cc_port),
 		cc_session_uuid: strOrNull(fields.cc_session_uuid),
 		cc_transcript: strOrNull(fields.cc_transcript),
@@ -887,6 +895,7 @@ function entryRows(): Record<string, unknown>[] {
 		const planItemId = typeof planItem.item_id === "string" && planItem.item_id ? planItem.item_id : null;
 		return {
 			...entry,
+			cc_channel_token: adapter.cc_channel_token ?? null,
 			cc_port: adapter.cc_port ?? null,
 			cc_session_uuid: adapter.cc_session_uuid ?? null,
 			cc_transcript: adapter.cc_transcript ?? null,
@@ -1113,7 +1122,16 @@ function cmdCcChannelArgs(issue: string): void {
 	const url = readField(issue, "cc_url");
 	const transcript = readField(issue, "cc_transcript");
 	if (url && transcript && url !== "null" && transcript !== "null") {
-		if (ccAdapterIsFresh(issue)) process.stdout.write(`--url ${url} --transcript ${transcript}\n`);
+		if (ccAdapterIsFresh(issue)) {
+			// vstack#216: expose the per-pane channel token so pane-respond
+			// can attach `Authorization: Bearer <token>` to its webhook POSTs.
+			// Token field is optional (legacy entries / spawns without
+			// /dev/urandom won't have one); omit the flag when absent so
+			// the webhook stays in legacy-accept mode.
+			const token = readField(issue, "cc_channel_token");
+			const tokenFlag = token && token !== "null" ? ` --channel-token ${token}` : "";
+			process.stdout.write(`--url ${url} --transcript ${transcript}${tokenFlag}\n`);
+		}
 	}
 }
 
@@ -1166,6 +1184,48 @@ function cmdHydratePi(issue: string): void {
 	}
 	fdStateOrDie(["write-entry", issue, JSON.stringify(updated)]);
 	process.stdout.write(JSON.stringify({ ok: true, issue, pi_bridge_pid: pidNum, pi_bridge_socket: socket, pi_session_id: sessionId }) + "\n");
+}
+
+// vstack#216: late-hydration writer for the Claude Channels adapter
+// fields. open-terminal's `spawn_cc_channel_tmux` writes `cc-spawn-<issue>.json`
+// AFTER `open_tmux` already routes through `pane-registry init-entry`
+// (via `flightdeck-session start --cmd ...`). At that point
+// `ccSpawnFile(issue)` doesn't exist yet, so `hydrateSpawnMetadata`
+// leaves the cc_* slots empty. This command re-reads the spawn file
+// (now present) and writes `{cc_url, cc_session_uuid, cc_port,
+// cc_transcript}` into `.entries[id].adapter.*` so the daemon's
+// claude-subscriber binder can pick up `cc_transcript` on the next
+// reconcile tick. Mirrors `cmdHydratePi` exactly except for the field
+// set — single write-entry to avoid daemon observing a half-hydrated
+// entry mid-mutation.
+function cmdHydrateClaude(issue: string): void {
+	if (!issue) die("Usage: hydrate-claude <ISSUE>");
+	if (!registryHasEntry(issue)) die(`pane-registry: entry '${issue}' not found in .entries`);
+	const entry = entryByIdOrDie(issue);
+	if (entry.harness !== "claude") die(`pane-registry: hydrate-claude requires harness=claude (entry harness=${typeof entry.harness === "string" ? entry.harness : "<unknown>"})`);
+	const rec = readJsonIfExists<Record<string, unknown>>(ccSpawnFile(issue));
+	if (!rec) die(`pane-registry: hydrate-claude found no spawn file at ${ccSpawnFile(issue)}`);
+	const url = typeof rec.url === "string" ? rec.url : "";
+	const sessionUuid = typeof rec.session_uuid === "string" ? rec.session_uuid : "";
+	const transcript = typeof rec.transcript === "string" ? rec.transcript : "";
+	const portRaw = rec.port;
+	const portNum = typeof portRaw === "number" ? portRaw : Number(portRaw);
+	if (!url || !sessionUuid || !transcript) die(`pane-registry: hydrate-claude spawn file ${ccSpawnFile(issue)} missing url, session_uuid, or transcript`);
+	if (!Number.isFinite(portNum) || portNum <= 0) die(`pane-registry: hydrate-claude spawn file ${ccSpawnFile(issue)} missing numeric port`);
+	const adapter = isRecord(entry.adapter) ? { ...entry.adapter } : {};
+	adapter.cc_url = url;
+	adapter.cc_session_uuid = sessionUuid;
+	adapter.cc_port = portNum;
+	adapter.cc_transcript = transcript;
+	const channelToken = typeof rec.channel_token === "string" ? rec.channel_token : "";
+	if (channelToken) adapter.cc_channel_token = channelToken;
+	const updated: EntryRecord = { ...entry, adapter };
+	const existingError = typeof entry.discovery_error === "string" ? entry.discovery_error : "";
+	if (existingError && existingError.startsWith("cc_")) {
+		updated.discovery_error = null;
+	}
+	fdStateOrDie(["write-entry", issue, JSON.stringify(updated)]);
+	process.stdout.write(JSON.stringify({ ok: true, issue, cc_url: url, cc_session_uuid: sessionUuid, cc_port: portNum, cc_transcript: transcript, cc_channel_token: channelToken || null }) + "\n");
 }
 
 function cmdCxBridgeArgs(issue: string): void {
@@ -1563,10 +1623,11 @@ switch (action) {
 	case "cc-channel-args": cmdCcChannelArgs(argv[0] ?? ""); break;
 	case "pi-bridge-args":  cmdPiBridgeArgs(argv[0] ?? ""); break;
 	case "hydrate-pi":      cmdHydratePi(argv[0] ?? ""); break;
+	case "hydrate-claude":  cmdHydrateClaude(argv[0] ?? ""); break;
 	case "cx-bridge-args":  cmdCxBridgeArgs(argv[0] ?? ""); break;
 	case "find-by-pane":    cmdFindByPane(argv[0] ?? ""); break;
 	case "teardown-window":
 	case "teardown-entry":  cmdTeardownWindow(argv); break;
 	default:
-		die(`Unknown action: ${action}\nActions: init-entry | init | list | refresh-window-names | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | hydrate-pi | cx-bridge-args | find-by-pane`);
+		die(`Unknown action: ${action}\nActions: init-entry | init | list | refresh-window-names | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | teardown-window | teardown-entry | oc-attach-args | cc-channel-args | pi-bridge-args | hydrate-pi | hydrate-claude | cx-bridge-args | find-by-pane`);
 }

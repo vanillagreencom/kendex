@@ -486,7 +486,13 @@ if (args.harness === "claude" && !ocAdapterUsed) {
 					const rec = JSON.parse(readFileSync(spawn, "utf8")) as Record<string, unknown>;
 					const url = String(rec.url ?? "");
 					const tr = String(rec.transcript ?? "");
-					if (url && tr) ccArgs = `--url ${url} --transcript ${tr}`;
+					// vstack#216: pick up the channel token from the
+					// spawn file when the registry metadata is unavailable
+					// (e.g. legacy entries or post-stop recovery). The
+					// webhook server requires it whenever
+					// CC_CHANNEL_TOKEN was set at spawn time.
+					const tok = typeof rec.channel_token === "string" ? rec.channel_token : "";
+					if (url && tr) ccArgs = `--url ${url} --transcript ${tr}${tok ? ` --channel-token ${tok}` : ""}`;
 				} catch { /* */ }
 			}
 		}
@@ -498,10 +504,22 @@ if (args.harness === "claude" && !ocAdapterUsed) {
 		}
 		if (args.mode !== "keys") {
 			const url = extractFlag(ccArgs, "--url");
+			const token = extractFlag(ccArgs, "--channel-token");
 			const msg = args.mode === "payload" ? args.payload
 				: args.mode === "option" ? args.optionN
 				: args.optionMultiCsv.replace(/,/g, ", ");
-			const r = spawnSync("curl", ["-s", "-m", "10", "-X", "POST", "-d", msg, `${url}/`], { encoding: "utf8" });
+			// vstack#216: attach `Authorization: Bearer <token>` when
+			// the per-pane channel token is available. The webhook
+			// server rejects unauthenticated POSTs with 401 when
+			// CC_CHANNEL_TOKEN is configured; legacy spawns without a
+			// token continue to work because the webhook keeps a
+			// backward-compat unauthenticated path.
+			const curlArgs = ["-s", "-m", "10", "-X", "POST"];
+			if (token) {
+				curlArgs.push("-H", `Authorization: Bearer ${token}`);
+			}
+			curlArgs.push("-d", msg, `${url}/`);
+			const r = spawnSync("curl", curlArgs, { encoding: "utf8" });
 			if (r.status !== 0) die(`Error: claude channel POST failed (rc=${r.status}): ${r.stdout || r.stderr}`, 5);
 			if (!/^ok /m.test(r.stdout ?? "")) die(`Error: claude channel POST returned unexpected body: ${r.stdout}`, 5);
 			ccAdapterUsed = true;

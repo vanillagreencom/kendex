@@ -1018,26 +1018,57 @@ cc_verify_claude_auth() {
 }
 
 cc_write_mcp_config() {
-  local issue="$1" port="$2"
+  local issue="$1" port="$2" token="${3:-}"
   local mcp_dir; mcp_dir=$(cc_mcp_dir "$issue")
   mkdir -p "$mcp_dir"
+  # vstack#216: tighten file perms — the MCP config now embeds the
+  # per-pane channel token; cc_mcp_dir is per-issue but already lives
+  # under FD_STATE_DIR (mode 0700) so this is defense in depth.
+  chmod 0700 "$mcp_dir" 2>/dev/null || true
   local webhook="$SCRIPT_DIR/../lib/claude-channel-server/webhook.ts"
   webhook=$(cd "$(dirname "$webhook")" && pwd)/$(basename "$webhook")
+  local config_path; config_path=$(cc_mcp_config "$issue")
   jq -n \
     --arg cmd "bun" \
     --arg path "$webhook" \
     --arg port "$port" \
     --arg session "$issue" \
+    --arg token "$token" \
     '{
       mcpServers: {
         webhook: {
           command: $cmd,
           args: [$path],
-          env: { CC_CHANNEL_PORT: $port, CC_CHANNEL_SESSION: $session }
+          env: ({ CC_CHANNEL_PORT: $port, CC_CHANNEL_SESSION: $session }
+                + (if $token == "" then {} else { CC_CHANNEL_TOKEN: $token } end))
         }
       }
-    }' > "$(cc_mcp_config "$issue")"
-  cc_mcp_config "$issue"
+    }' > "$config_path"
+  chmod 0600 "$config_path" 2>/dev/null || true
+  printf '%s\n' "$config_path"
+}
+
+# vstack#216: per-pane random channel token (32 bytes hex from
+# /dev/urandom). The webhook server requires `Authorization: Bearer
+# <token>` (or X-Channel-Token) on every non-/healthz request when set,
+# closing the predictable-port unauthenticated-POST hole that defaulting
+# channels on for github-tracker Claude spawns would otherwise widen.
+# Falls back to bun-derived randomness if /dev/urandom + xxd aren't
+# both available.
+cc_generate_channel_token() {
+  if [[ -r /dev/urandom ]] && command -v xxd >/dev/null 2>&1; then
+    xxd -l 32 -p /dev/urandom | tr -d '\n'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return 0
+  fi
+  if command -v bun >/dev/null 2>&1; then
+    bun -e 'process.stdout.write(crypto.getRandomValues(new Uint8Array(32)).reduce((s,b)=>s+b.toString(16).padStart(2,"0"),""))'
+    return 0
+  fi
+  return 1
 }
 
 # Build claude spawn cmd for tmux. The `--` separator BEFORE the
@@ -1069,7 +1100,7 @@ build_claude_channel_cmd() {
 # non-zero — caller falls through to legacy spawn.
 spawn_cc_channel_tmux() {
   local issue="$1" wt_path="$2"
-  local bin port uuid mcp_path
+  local bin port uuid mcp_path token
 
   if ! bin=$(resolve_claude_bin); then
     echo "  cc-channel-unavailable: claude binary not found (PATH or /usr/bin)" >&2
@@ -1100,13 +1131,68 @@ spawn_cc_channel_tmux() {
   # new launch tries to bind the same uuid. Random per-spawn matches
   # how oc and cx allocate identities.
   uuid=$(cat /proc/sys/kernel/random/uuid)
-  mcp_path=$(cc_write_mcp_config "$issue" "$port")
+
+  # vstack#216: generate a per-pane bearer token BEFORE writing either
+  # the MCP config or the spawn file. Without a token the webhook
+  # server keeps backwards-compat (legacy unauthenticated mode); with
+  # one it requires `Authorization: Bearer <token>` on every non-
+  # /healthz request. Token-generation failure is non-fatal — fall
+  # back to legacy mode with a warning so a missing xxd/openssl on
+  # the host doesn't break channels entirely.
+  if ! token=$(cc_generate_channel_token); then
+    echo "  cc-channel-warning: no random source for channel token (xxd/openssl/bun); webhook will accept unauthenticated POSTs" >&2
+    token=""
+  fi
+
+  mcp_path=$(cc_write_mcp_config "$issue" "$port" "$token")
+
+  # vstack#216 / pre-PR round-1: write the spawn file BEFORE open_tmux
+  # so the synchronous `pane-registry init-entry` invoked inside
+  # `open_tmux` -> `flightdeck-session start` sees populated cc_*
+  # adapter fields at registration time. Previously the file was
+  # written AFTER open_tmux, which meant `hydrateSpawnMetadata` saw
+  # nothing and the registered entry kept null cc_url / cc_session_uuid /
+  # cc_transcript forever — the original github-tracker symptom in
+  # issue #216. A late `hydrate-claude` call below acts as the
+  # second-chance writer mirroring the pi pattern in case the entry
+  # was registered before this branch ran.
+  local spawn_file abs_wt transcript launch_meta
+  spawn_file=$(cc_spawn_file "$issue")
+  abs_wt=$(cd "$wt_path" && pwd)
+  transcript=$(cc_transcript_path "$wt_path" "$uuid")
+  launch_meta=$(launch_metadata_json_args claude)
+  jq -nc \
+    --arg url "http://127.0.0.1:$port" \
+    --arg uuid "$uuid" \
+    --arg dir "$abs_wt" \
+    --arg transcript "$transcript" \
+    --arg mcp "$mcp_path" \
+    --arg token "$token" \
+    --argjson launch "$launch_meta" \
+    --argjson port "$port" \
+    --arg ts "$(date -Iseconds)" \
+    '{url:$url, session_uuid:$uuid, directory:$dir, transcript:$transcript, mcp_config:$mcp, port:$port, channel_token:(if $token == "" then null else $token end), launch:$launch, allocated_at:$ts}' \
+    > "$spawn_file"
+  chmod 0600 "$spawn_file" 2>/dev/null || true
 
   local bypass; bypass="$(bypass_flag_for_harness claude)"
   local cmd; cmd=$(build_claude_channel_cmd "$bin" "$mcp_path" "$uuid" "$issue" "$bypass")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     cc_release_port "$port"
+    # Best-effort: keep the spawn file around if the operator wants to
+    # debug, but make the failure observable to callers.
     return 1
+  fi
+
+  # vstack#216: belt-and-suspenders late hydration. If `open_tmux`
+  # registered the entry before the spawn file existed (race window
+  # is small now, but the synchronous order is implementation-defined
+  # across flightdeck-session changes), `hydrate-claude` re-reads the
+  # spawn file and writes adapter.cc_* in one write-entry call so the
+  # daemon's next reconcile tick can bind. Mirrors the pi-bridge
+  # hydrate-pi call.
+  if ! "$SCRIPT_DIR/pane-registry" hydrate-claude "$issue" >/dev/null; then
+    echo "  cc-channel: warning - hydrate-claude failed; daemon may loop claude-subscriber-bind-skip until next reconcile" >&2
   fi
 
   # Pre-warm the trust prompt for --dangerously-load-development-channels.
@@ -1122,24 +1208,7 @@ spawn_cc_channel_tmux() {
   ) &
   disown 2>/dev/null || true
 
-  local spawn_file abs_wt transcript launch_meta
-  spawn_file=$(cc_spawn_file "$issue")
-  abs_wt=$(cd "$wt_path" && pwd)
-  transcript=$(cc_transcript_path "$wt_path" "$uuid")
-  launch_meta=$(launch_metadata_json_args claude)
-  jq -nc \
-    --arg url "http://127.0.0.1:$port" \
-    --arg uuid "$uuid" \
-    --arg dir "$abs_wt" \
-    --arg transcript "$transcript" \
-    --arg mcp "$mcp_path" \
-    --argjson launch "$launch_meta" \
-    --argjson port "$port" \
-    --arg ts "$(date -Iseconds)" \
-    '{url:$url, session_uuid:$uuid, directory:$dir, transcript:$transcript, mcp_config:$mcp, port:$port, launch:$launch, allocated_at:$ts}' \
-    > "$spawn_file"
-
-  echo "  cc-channel: port=$port uuid=$uuid transcript=$transcript"
+  echo "  cc-channel: port=$port uuid=$uuid transcript=$transcript auth=$([[ -n $token ]] && echo bearer || echo none)"
   return 0
 }
 

@@ -59,6 +59,9 @@ Daemon hygiene env vars (operator-facing; details in `DEVELOPMENT.md`):
 | `FD_HEARTBEAT_OWNER_CGROUP` | `1` | Set to `0` to skip the optional `MemoryCurrent` / `MemoryPeak` cgroup probe attached to heartbeat events. |
 | `FD_PI_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Per-(pane,reason) throttle interval for `[pi-subscriber-bind-skip]` daemon log lines. Lower for more verbose bind-attempt logging during diagnosis; raise to quiet a chronically-unbindable pane. |
 | `FD_PI_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive `[pi-subscriber-bind-skip]` ticks for the same pane before the daemon emits a one-shot `[pi-subscriber-bind-stuck]` warning naming the missing adapter fields. Reset when the binder succeeds or the pane is reaped. |
+| `FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Per-(pane,reason) throttle interval for `[{claude,opencode,codex}-subscriber-bind-skip]` daemon log lines (vstack#216). Same shape and semantics as the pi-specific knob above. |
+| `FD_SUB_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive bind-skip ticks before the daemon emits a one-shot `[{claude,opencode,codex}-subscriber-bind-stuck]` warning (vstack#216). |
+| `FLIGHTDECK_CLAUDE_CHANNELS` | unset (`0`) for linear tracker, defaulted to `1` for `--tracker github --harness claude` (vstack#216) | Opt-in/opt-out for Claude Channels MCP webhook send-path. Explicit `--use-channels` / `--no-channels` flags on `open-terminal` always win. |
 
 
 Rust dashboard env vars:

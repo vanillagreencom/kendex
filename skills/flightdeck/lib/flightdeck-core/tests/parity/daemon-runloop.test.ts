@@ -1110,6 +1110,97 @@ exit 1
 		await runBindSkipScenario({ harness: "claude", missingFields: "cc_transcript" });
 	}, 15000);
 
+	// vstack#216 (pre-PR round-1 follow-up): positive bind path. Seed a
+	// tracked entry that exposes a valid `--transcript` via the registry
+	// stub, run one reconcile tick, and assert the daemon emits
+	// `cc-subscriber-spawn` + a subscriber.lifecycle activity row, and
+	// that the subscriber-status snapshot reports the pane as `bound`.
+	test("claude subscriber binds on valid cc_transcript within one reconcile tick (positive path)", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-claude-bound-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-claude-bound-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-claude-bound.jsonl");
+		const fakeDir = join(stateDir, "fake-claude-bound");
+		mkdirSync(fakeDir, { recursive: true });
+		const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
+		const transcript = join(stateDir, "fake-claude-transcript.jsonl");
+		writeFileSync(transcript, "");
+
+		// Registry stub returns the tracked entry AND a valid
+		// cc-channel-args response (so the bind path picks up the
+		// transcript) when asked. find-by-pane returns a record so the
+		// daemon's pane→entry lookup succeeds.
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "claude", kind: "issue", cwd: process.cwd(), cc_url: "http://127.0.0.1:1", cc_transcript: transcript, cc_channel_token: null }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "list" ]]; then printf '%s\n' ${JSON.stringify(rows)}; exit 0; fi
+if [[ "\${1:-}" == "find-by-pane" ]]; then printf '{"id":"claude-bound","kind":"issue"}\n'; exit 0; fi
+if [[ "\${1:-}" == "cc-channel-args" ]]; then printf -- '--url http://127.0.0.1:1 --transcript ${transcript}\n'; exit 0; fi
+exit 1
+`);
+		chmodSync(registryBin, 0o755);
+
+		const savedStateDir = process.env.FD_STATE_DIR;
+		process.env.FD_STATE_DIR = stateDir;
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "claude-bound-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "claude",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 600,
+			innerHarnesses: ["claude"],
+			innerTargets: [innerPaneId],
+			masterHarness: "claude",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const sawSpawnLog = await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("[cc-subscriber-spawn]"), 5000);
+			expect(sawSpawnLog).toBe(true);
+			const sawNoSkip = !readFileSync(logFile, "utf8").includes("[claude-subscriber-bind-skip]");
+			expect(sawNoSkip).toBe(true);
+
+			// Subscriber-status snapshot reports `bound`.
+			const sawSnapshot = await waitFor(() => existsSync(join(stateDir, `fd-daemon-${testSessionKey}.subscribers.json`)), 5000);
+			expect(sawSnapshot).toBe(true);
+			const snap = JSON.parse(readFileSync(join(stateDir, `fd-daemon-${testSessionKey}.subscribers.json`), "utf8"));
+			expect(Array.isArray(snap.panes)).toBe(true);
+			expect(snap.panes).toHaveLength(1);
+			expect(snap.panes[0].pane_id).toBe(innerPaneId);
+			expect(snap.panes[0].harness).toBe("claude");
+			expect(snap.panes[0].status).toBe("bound");
+			expect(snap.panes[0].subscriber_pid).toBeGreaterThan(0);
+
+			// Activity row reports the subscriber lifecycle event.
+			const sawLifecycle = await waitFor(
+				() => existsSync(activityPath) && readFileSync(activityPath, "utf8").includes('"type":"subscriber.started"'),
+				5000,
+			);
+			expect(sawLifecycle).toBe(true);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			if (savedStateDir === undefined) delete process.env.FD_STATE_DIR;
+			else process.env.FD_STATE_DIR = savedStateDir;
+		}
+	}, 20000);
+
 	test("opencode bind-skip is throttled and surfaces oc_url+oc_session_id misses", async () => {
 		await runBindSkipScenario({ harness: "opencode", missingFields: "oc_url,oc_session_id" });
 	}, 15000);
