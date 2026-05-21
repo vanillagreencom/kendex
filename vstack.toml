@@ -42,32 +42,15 @@ rust = [
 
 iced = ["iced-rs"]
 
-reviewer-arch = [
-    "rust-arch",
-    "decider",
-    "linear",
-]
+reviewer-arch = ["reviewer"]
 
-reviewer-perf = [
-    "perf-profiling",
-    "perf-latency",
-    "linear",
-]
+reviewer-perf = ["reviewer"]
 
-reviewer-safety = [
-    "rust-safety",
-    "linear",
-]
+reviewer-safety = ["reviewer"]
 
-reviewer-structure = [
-    "rust-arch",
-    "linear",
-]
+reviewer-structure = ["reviewer"]
 
-reviewer-test = [
-    "rust-conventions",
-    "linear",
-]
+reviewer-test = ["reviewer"]
 
 generalist = [
     "decider",
@@ -87,21 +70,11 @@ scout = [
     "linear",
 ]
 
-reviewer-doc = [
-    "issue-lifecycle",
-    "linear",
-    "decider",
-]
+reviewer-doc = ["reviewer"]
 
-reviewer-error = [
-    "issue-lifecycle",
-    "linear",
-]
+reviewer-error = ["reviewer"]
 
-reviewer-security = [
-    "issue-lifecycle",
-    "linear",
-]
+reviewer-security = ["reviewer"]
 
 tpm = [
     "decider",
@@ -155,7 +128,7 @@ reviewer-perf = [
 analyst = ["linear", "github"]
 engineer = ["issue-lifecycle", "github", "worktree", "decider", "linear"]
 manager = ["issue-lifecycle", "github", "worktree", "project-management", "linear", "decider"]
-reviewer = ["issue-lifecycle", "linear"]
+reviewer = ["reviewer"]
 
 # Hook assignment by event:matcher → roles
 # "all" assigns to every role. Otherwise list specific roles.

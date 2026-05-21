@@ -24,7 +24,7 @@ Validate performance, detect regressions, run benchmarks.
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: regression thresholds (per-percentile, per-component), hot-path vs cold-path definitions, benchmark tooling expectations, performance budget targets. Project-specific thresholds override generic defaults.
+Read architecture docs relevant to your role: regression thresholds (per-percentile, per-component), hot-path vs cold-path definitions, benchmark tooling expectations, performance budget targets. Project-specific thresholds override generic defaults.
 
 ## Guidelines
 

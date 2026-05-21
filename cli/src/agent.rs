@@ -466,40 +466,26 @@ pub fn custom_hooks_section(hooks: &[CustomHookEntry]) -> String {
     section
 }
 
-/// Generate a "Required Skills" markdown section listing required and optional skills
-/// in a single table.
+/// Emit a one-line skill-loading preamble. The per-agent "## Required Skills"
+/// table this used to render was duplicative: every harness (pi, codex,
+/// opencode, claude) already auto-injects skill name+description into the
+/// agent's context via its native discovery surface (`<available_skills>` for
+/// pi/codex, the `skill` tool description for opencode, the Skill tool for
+/// claude). Repeating the same list in the agent body wasted context. The
+/// preamble is preserved as a single load-skills directive so agents still
+/// have the explicit reminder; the actual skill catalog comes from the
+/// harness.
+///
+/// `skills` and `optional_skills` are kept in the signature so callers don't
+/// need to change; their content is not currently rendered in the body.
 pub fn load_skills_section(
-    skills: &[(String, String)],
-    optional_skills: &[(String, String)],
+    _skills: &[(String, String)],
+    _optional_skills: &[(String, String)],
 ) -> String {
-    if skills.is_empty() && optional_skills.is_empty() {
-        return String::new();
-    }
-    let mut section = String::from(
-        "## Required Skills\n\n\
-         You MUST load the relevant skill before attempting ANY operation in its domain.\n\
-         Do not guess commands or improvise — load the skill first.\n\n\
-         | Skill | Always load when working on: |\n\
-         |-------|-----------------------------|\n",
-    );
-    for (name, desc) in skills {
-        // Use the topic portion before ": " or ". " as the domain label
-        let domain = if let Some(pos) = desc.find(": ") {
-            &desc[..pos]
-        } else if let Some(pos) = desc.find(". ") {
-            &desc[..pos]
-        } else {
-            desc.as_str()
-        };
-        // Escape pipe chars that would break the markdown table
-        let domain = domain.replace('|', "\\|");
-        section.push_str(&format!("| `{}` | {} |\n", name, domain));
-    }
-    for (name, when) in optional_skills {
-        let when = when.replace('|', "\\|");
-        section.push_str(&format!("| `{}` | {} |\n", name, when));
-    }
-    section
+    String::from(
+        "## Skills\n\n\
+         Load any skill whose name or description matches the task before acting on that domain. Skill descriptions are listed by the harness; do not guess commands or improvise — load the skill first.\n\n",
+    )
 }
 
 /// Insert a section after the first heading block in markdown body.
@@ -657,7 +643,12 @@ Does testing things.
 
     #[test]
     fn load_skills_section_empty() {
-        assert_eq!(load_skills_section(&[], &[]), String::new());
+        // vstack: preamble is emitted unconditionally because the harness
+        // injects available skill name+description regardless of agent
+        // mapping; the agent still needs the one-line load directive.
+        let section = load_skills_section(&[], &[]);
+        assert!(section.contains("## Skills"));
+        assert!(section.contains("Load any skill whose name or description matches"));
     }
 
     #[test]
@@ -674,13 +665,16 @@ Does testing things.
             "UI layout design, typography, color".into(),
         )];
         let section = load_skills_section(&skills, &optional);
-        assert!(section.contains("## Required Skills"));
-        assert!(section.contains("Do not guess commands"));
-        // Table rows: skill name first, then domain
-        assert!(section.contains("| `rust-arch` | Architecture patterns for Rust |"));
-        assert!(section.contains("| `github` | GitHub CLI integration |"));
-        // Optional skills appended to same table
-        assert!(section.contains("| `trading-design` | UI layout design, typography, color |"));
+        // vstack: body table cut. Section is now a single one-line preamble
+        // because the harness already injects skill name+description into
+        // the agent's context (pi `<available_skills>`, codex initial list,
+        // opencode `skill` tool description, claude Skill tool description).
+        assert!(section.contains("## Skills"));
+        assert!(section.contains("Load any skill whose name or description matches"));
+        assert!(section.contains("Skill descriptions are listed by the harness"));
+        // Per-skill table rows are intentionally absent.
+        assert!(!section.contains("| `rust-arch` |"));
+        assert!(!section.contains("| `trading-design` |"));
     }
 
     #[test]

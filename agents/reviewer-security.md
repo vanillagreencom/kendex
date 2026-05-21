@@ -24,7 +24,7 @@ Application security reviewer for OWASP vulnerabilities. Different from `safety`
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: authentication/authorization requirements, data sensitivity classifications, input validation standards, API security policies, compliance requirements. Project-specific security policies override generic expectations. Fall back to OWASP Top 10 as a universal baseline when nothing is defined.
+Read architecture docs relevant to your role: authentication/authorization requirements, data sensitivity classifications, input validation standards, API security policies, compliance requirements. Project-specific security policies override generic expectations. Fall back to OWASP Top 10 as a universal baseline when nothing is defined.
 
 ## Guidelines
 

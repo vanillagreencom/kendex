@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// Pi has no built-in subagents; agent files only act as agent definitions when
 /// a Pi package that loads `agents/*.md` is also installed. Even then, the
 /// markdown body is the canonical place for vstack-managed prose, so we emit
-/// the same "Required Skills" / hook prose / additional instructions sections
+/// the same skill preamble / hook prose / additional instructions sections
 /// that other harnesses use.
 ///
 /// Frontmatter format:
@@ -226,8 +226,9 @@ mod tests {
         assert!(content.contains("pane: true"));
         assert!(content.contains("## Launch Instructions"));
         assert!(content.contains("Read open issues and start."));
-        assert!(content.contains("## Required Skills"));
-        assert!(content.contains("rust-arch"));
+        // vstack: body skill table cut; replaced by a one-line preamble.
+        assert!(content.contains("## Skills"));
+        assert!(content.contains("Load any skill whose name or description matches"));
         assert!(content.contains("## Additional Instructions"));
         assert!(content.contains("Never edit this file directly"));
 

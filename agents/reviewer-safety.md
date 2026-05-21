@@ -25,7 +25,7 @@ Audit safety, run verification tools, report violations with locations and remed
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: required safety comment conventions, verification tools and when to run them, safety audit scope (which code paths require formal verification vs review-only), language-specific safety rules. Project-specific safety policies override generic expectations.
+Read architecture docs relevant to your role: required safety comment conventions, verification tools and when to run them, safety audit scope (which code paths require formal verification vs review-only), language-specific safety rules. Project-specific safety policies override generic expectations.
 
 ## Guidelines
 

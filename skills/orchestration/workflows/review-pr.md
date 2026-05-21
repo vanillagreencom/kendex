@@ -145,7 +145,7 @@ Delegate to each active review agent in `[AGENTS]` in parallel with the prompt b
 **Delegation prompt:** Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
 
 <delegation_format>
-Follow workflow: .agents/skills/issue-lifecycle/workflows/review.md
+Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WORKTREE_PATH]
 Branch: [BRANCH]
@@ -355,7 +355,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 3. **Delegate to QA agent** (`[QA_AGENT]`) with the prompt below:
 
    <delegation_format>
-   Follow workflow: .agents/skills/issue-lifecycle/workflows/qa-review.md
+   Follow workflow: .agents/skills/reviewer/workflows/qa-review.md
 
    Issue: [ISSUE_ID]
    Branch: [BRANCH]

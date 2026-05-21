@@ -25,7 +25,7 @@ Review designs, score compliance, flag anti-patterns.
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: layer hierarchy and dependency rules, module boundary definitions, allowed cross-cutting patterns, abstraction guidelines, tech debt priorities. Project-defined architecture overrides generic design heuristics.
+Read architecture docs relevant to your role: layer hierarchy and dependency rules, module boundary definitions, allowed cross-cutting patterns, abstraction guidelines, tech debt priorities. Project-defined architecture overrides generic design heuristics.
 
 ## Guidelines
 

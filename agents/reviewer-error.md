@@ -26,7 +26,7 @@ Audits error handling for silent failures and inadequate error management.
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: logging requirements (which code paths need logging, at what severity), error propagation policies, catch block rules, fallback justification requirements, user feedback standards. Project-specific policies override generic expectations and may differ per layer or component.
+Read architecture docs relevant to your role: logging requirements (which code paths need logging, at what severity), error propagation policies, catch block rules, fallback justification requirements, user feedback standards. Project-specific policies override generic expectations and may differ per layer or component.
 
 ## Guidelines
 

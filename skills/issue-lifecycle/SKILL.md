@@ -20,14 +20,15 @@ Agent workflows for specialist agents receiving delegations from an orchestrator
 |----------|------------|---------|
 | `workflows/dev-implement.md` | Dev agents | Full implementation lifecycle: activate → plan → implement → validate → commit → QA labels → summary → finalize (§ 1-11) |
 | `workflows/dev-fix.md` | Dev agents | Process review fix items: evaluate → apply/skip → validate → commit → return |
-| `workflows/review.md` | Review agents | Code review: diff → classify findings → JSON report → verdict |
-| `workflows/qa-review.md` | QA agents | QA label-triggered review: context → agent review → benchmark recording → JSON report → verdict |
+
+Review and QA-review workflows live in the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md) and [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md).
 
 ## References
 
 | Topic | Source |
 |-------|--------|
-| Review finding schema | Orchestration skill (`schemas/review-finding.md`) |
+| Review finding schema | Reviewer skill (`schemas/review-finding.md`) |
+| Review / QA-review workflows | Reviewer skill (`workflows/review.md`, `workflows/qa-review.md`) |
 | Recommendation bias | Orchestration skill (`workflows/recommendation-bias.md`) |
 | Label application | Project label application guide |
 | Benchmark baselines | Project benchmarking skill if installed |

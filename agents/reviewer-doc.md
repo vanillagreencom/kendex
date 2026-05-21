@@ -25,7 +25,7 @@ Technical documentation reviewer ensuring docs accurately reflect implementation
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: which code requires docstrings, documentation structure conventions, required doc files, API documentation standards, architecture doc locations. Project-specific documentation policies override generic expectations.
+Read architecture docs relevant to your role: which code requires docstrings, documentation structure conventions, required doc files, API documentation standards, architecture doc locations. Project-specific documentation policies override generic expectations.
 
 ## Guidelines
 

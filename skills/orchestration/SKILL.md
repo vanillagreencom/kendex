@@ -191,12 +191,13 @@ Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-s
 | Schema | Purpose |
 |--------|---------|
 | `schemas/workflow-state.md` | Persistent state file schema (survives compaction) |
-| `schemas/review-finding.md` | Review/QA agent JSON output format |
+
+Review/QA finding JSON output format lives in the reviewer skill: [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md).
 
 Key fields per schema:
 
 - **Workflow State**: `issue_id`, `sub_issues`, `agent`, `worktree`, `branch`, `team_name`, `child_sessions`, `review_agents`, `cycles`, `json_paths`, `fixed_items`, `escalated_items`, `audit_issues_created`
-- **Review Finding**: `blockers[]` (block merge), `suggestions[]` (fix or issue), `questions[]` (PR triage). Each item: id, title, location, description, recommendation, priority, estimate
+- **Review Finding** (see reviewer skill): `blockers[]` (block merge), `suggestions[]` (fix or issue), `questions[]` (PR triage). Each item: id, title, location, description, recommendation, priority, estimate
 
 The `audit-issues-input` and `roadmap-plan-input` schemas live in `project-management/schemas/`. Per-issue review workflows that build audit input read from there via cross-skill path.
 

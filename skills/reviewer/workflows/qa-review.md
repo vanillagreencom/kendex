@@ -74,7 +74,7 @@ changes.
 
 ### 2.6 Return JSON Report
 
-1. **Build JSON** per the orchestration skill's review-finding schema, filename `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+1. **Build JSON** per [`../schemas/review-finding.md`](../schemas/review-finding.md), filename `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
    - Standard fields: `agent`, `timestamp`, `verdict`, `summary`, `blockers[]`, `suggestions[]`
    - If performance QA agent: include `benchmark_commit` from § 2.5
    - `qa_metadata.[agent_type]` populated per your agent (project-configurable):

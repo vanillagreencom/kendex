@@ -10,10 +10,10 @@ skills/issue-lifecycle/
 ├── README.md             # This file — human-facing docs
 └── workflows/
     ├── dev-implement.md   # Main implementation lifecycle (§ 1-11)
-    ├── dev-fix.md         # Review fix delegation workflow (§ 1-6)
-    ├── review.md          # Code review workflow (§ 1 + Constraints)
-    └── qa-review.md       # QA label-triggered review workflow (§ 1-3 + Constraints)
+    └── dev-fix.md         # Review fix delegation workflow (§ 1-6)
 ```
+
+Code-review and QA-review workflows moved to the reviewer skill: `skills/reviewer/workflows/review.md` and `skills/reviewer/workflows/qa-review.md`.
 
 This skill is workflow-based. All behavior is defined in the workflow files.
 
@@ -27,20 +27,13 @@ The main workflow for dev agents receiving `Issue: [ISSUE_ID]` delegations. Supp
 
 The workflow for dev agents receiving review fix delegations. Each review item is evaluated independently against project decisions and conventions, then applied or skipped with reasoning. Includes validation, visual QA for UI fixes, and structured return with per-item decisions.
 
-### review.md
-
-The workflow for review agents (project-configured review specialists, e.g., security-review, test-review, doc-review). Agents review the diff, classify findings using the orchestration skill's recommendation-bias patterns, and return a structured JSON report with a pass/action_required verdict. Supports both full-branch diffs (pre-submission) and scoped diffs (on-demand review of specific commits) via an optional `Diff-range` delegation parameter.
-
-### qa-review.md
-
-The workflow for QA agents (project-configured QA specialists) triggered via `needs-*` labels. Includes decision context checking, agent-specific review execution, benchmark regression classification and recording (performance QA agent), and structured JSON report output.
-
 ## Skill Dependencies
 
 | Dependency | Purpose | Variable |
 |------------|---------|----------|
 | Issue tracker CLI (e.g., `linear` skill) | Issue CRUD, cache, comments, labels | `.agents/skills/linear/scripts/linear.sh` |
-| Orchestration skill | Review-finding schema, recommendation-bias patterns | Referenced by name |
+| Reviewer skill | Code-review + QA-review workflows and finding schema | Referenced by name |
+| Orchestration skill | Recommendation-bias patterns | Referenced by name |
 | Decider skill | Decision templates, search CLI, creation workflows | `.agents/skills/decider/scripts/decisions` |
 | Benchmarking | Run benchmarks if a benchmarking skill is installed | Optional |
 

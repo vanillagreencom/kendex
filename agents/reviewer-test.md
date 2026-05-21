@@ -25,7 +25,7 @@ QA specialist for test coverage gaps. Domain agents write tests; this agent audi
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: coverage targets (per-path or per-module), required test types (property, benchmark, integration), naming conventions, test location patterns. Project-specific targets override generic expectations.
+Read architecture docs relevant to your role: coverage targets (per-path or per-module), required test types (property, benchmark, integration), naming conventions, test location patterns. Project-specific targets override generic expectations.
 
 ## Guidelines
 

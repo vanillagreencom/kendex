@@ -71,7 +71,7 @@ TEAM=$(.agents/skills/orchestration/scripts/workflow-state get $ISSUE_ID '.team_
 Delegate to each review agent in parallel:
 
 <delegation_format>
-Follow workflow: .agents/skills/issue-lifecycle/workflows/review.md
+Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WT_PATH]
 Branch: [BRANCH]

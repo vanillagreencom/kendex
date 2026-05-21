@@ -189,7 +189,7 @@ URL: [URL]
 ---
 
 1. Read `workflows/recommendation-bias.md`. Apply its verification prerequisite and decision flow to ALL findings — read the actual source files before classifying any comment.
-2. Classify into arrays per `schemas/review-finding.md` schema:
+2. Classify into arrays per `../../reviewer/schemas/review-finding.md` schema:
    - `blockers[]`: Passed checks + blocking=true or P1/P2 priority
    - `suggestions[]`: Passed checks + blocking=false
    - `questions[]`: QUESTION type — include draft response
@@ -237,7 +237,7 @@ URL: [URL]
    **Do NOT** modify or overrule domain agent findings. Add your own only.
 
    1. Read `workflows/recommendation-bias.md`. Apply its decision flow.
-   2. Build JSON per `schemas/review-finding.md` with YOUR cross-cutting findings only.
+   2. Build JSON per `../../reviewer/schemas/review-finding.md` with YOUR cross-cutting findings only.
    3. Save to `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json` and return:
 
    <output_format>

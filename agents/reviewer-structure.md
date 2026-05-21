@@ -25,7 +25,7 @@ Structural lint for code organization.
 
 ## Before Reviewing
 
-Read architecture/guidance docs relevant to your role: file size thresholds (generic and per-file-role), module organization rules, test location patterns, TODO conventions, code quality standards. Role-based targets override generic thresholds; only fall back to generic thresholds for files with no role-based target.
+Read architecture docs relevant to your role: file size thresholds (generic and per-file-role), module organization rules, test location patterns, TODO conventions, code quality standards. Role-based targets override generic thresholds; only fall back to generic thresholds for files with no role-based target.
 
 ## Guidelines
 

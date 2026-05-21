@@ -49,7 +49,7 @@ Items listed as fixed or escalated are already resolved — do NOT re-report the
 
 ### 1.5 Return JSON Report
 
-Build JSON per the orchestration skill's review-finding schema. Save to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Save to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
 
 **Verdict rules:**
 - `action_required`: 1+ items in `blockers[]`
