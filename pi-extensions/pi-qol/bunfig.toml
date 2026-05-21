@@ -1,0 +1,5 @@
+[test]
+# Mock pi-* peer dependencies so `bun test ./tests` works from a fresh
+# checkout without `bun install` pulling in the real packages. Integration
+# tests can override these per-suite via mock.module().
+preload = ["./tests/preload.ts"]
