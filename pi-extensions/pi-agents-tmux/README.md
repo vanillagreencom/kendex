@@ -13,7 +13,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Chat completion rows show actual results, never a repeat of the original request.
 - Task detail shows Summary and Completion tabs; Summary contains task metadata, artifacts, and task text, while Completion contains result summary, files changed, and validation.
 - Bg one-shot transcripts keep start/end/tool audit events but omit successful streaming `message_update` snapshots by default to avoid large duplicate JSONL files. Failed runs preserve the latest unfinalized update as `buffered: true`; set `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` before launching Pi to retain every stream snapshot for debugging.
-- `needs_completion` diagnostics include worker `cwdSnapshot` git state when the cwd is known, so `get_subagent_result` can show HEAD, dirty status, and last commit without manual shell inspection.
+- `needs_completion` diagnostics try to attach a best-effort worker `cwdSnapshot` for Git worktree cwds, so `get_subagent_result` can show HEAD, dirty status, and last commit without manual shell inspection when the snapshot is available.
 - Dashboard widget shows live state, turns, tokens, and cost for every spawned agent; once you hide it, lifecycle updates do not reopen it until you toggle it back in.
 - Grouped completion notifications batch multiple agents finishing together.
 - When `pi-session-bridge` is loaded, spawn/queue/start/steer/completion lifecycle points publish structured `agent.*` activity broker events without adding chat messages (`agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.pane_cwd_stale`).
