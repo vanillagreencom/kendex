@@ -767,12 +767,15 @@ async function runSingleAgentAttempt(
 				appendTranscript({ stream: "stderr", text });
 			});
 
-			proc.on("close", (code) => {
+			proc.on("close", (code, closeSignal) => {
 				if (buffer.trim()) processLine(buffer);
 				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
-				if ((code ?? (wasAborted ? 1 : 0)) !== 0) flushFilteredMessageUpdate("nonzero_exit");
-				appendTranscript({ type: "exit", code: code ?? 0, attempt });
-				Promise.allSettled(transcriptWrites).finally(() => resolve(code ?? 0));
+				const signalName = typeof closeSignal === "string" && closeSignal ? closeSignal : undefined;
+				const exitCode = code ?? (signalName || wasAborted ? 1 : 0);
+				if (signalName && !currentResult.errorMessage) currentResult.errorMessage = `Agent process terminated by signal ${signalName}`;
+				if (exitCode !== 0) flushFilteredMessageUpdate("nonzero_exit");
+				appendTranscript({ type: "exit", code: exitCode, ...(signalName ? { signal: signalName } : {}), attempt });
+				Promise.allSettled(transcriptWrites).finally(() => resolve(exitCode));
 			});
 
 			proc.on("error", (error) => {
