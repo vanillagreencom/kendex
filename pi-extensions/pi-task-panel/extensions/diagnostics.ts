@@ -23,11 +23,8 @@ export function reportTaskPanelPersistenceFailure(where: string, error: unknown,
 	const msg = error instanceof Error ? error.message : String(error);
 	logTaskPanelDiagnostic("persistence failed", { where, error: msg });
 	try {
-		const fallback = where === "sidecar-write"
-			? "This write will keep full tool-result details as a resume fallback."
-			: "Falling back to session history where available.";
 		ctx?.ui.notify?.(
-			`Task panel state persistence failed (${where}). ${fallback}`,
+			`Task panel state persistence failed (${where}). Falling back to session history where available.`,
 			"warning",
 		);
 	} catch {

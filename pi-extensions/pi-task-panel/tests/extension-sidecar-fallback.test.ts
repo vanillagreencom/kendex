@@ -42,12 +42,38 @@ function fakePi() {
 	};
 }
 
-test("tasks_write keeps full details.state and warns when oversized sidecar write fails", async () => {
+function failingSidecarEnv(): { base: string; previousPiDir: string | undefined } {
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	const base = mkdtempSync(join(tmpdir(), "pi-task-panel-sidecar-fail-"));
 	const fileNotDirectory = join(base, "not-a-directory");
 	writeFileSync(fileNotDirectory, "x", "utf8");
 	process.env.PI_CODING_AGENT_DIR = fileNotDirectory;
+	return { base, previousPiDir };
+}
+
+function restorePiDir(previousPiDir: string | undefined): void {
+	if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+}
+
+function fakeCtx(base: string, notifications: Array<{ message: string; level: string }>) {
+	return {
+		cwd: base,
+		hasUI: false,
+		sessionManager: {
+			getBranch: () => [],
+			getSessionFile: () => join(base, "session.jsonl"),
+			getSessionId: () => "sidecar-failure-test",
+		},
+		ui: {
+			notify: (message: string, level: string) => notifications.push({ message, level }),
+			setWidget: () => {},
+		},
+	};
+}
+
+test("tasks_write keeps full details.state and warns when oversized sidecar write fails", async () => {
+	const { base, previousPiDir } = failingSidecarEnv();
 
 	try {
 		const [{ default: taskPanel }, { isTaskPanelToolResultBoundedState }] = await Promise.all([
@@ -60,28 +86,47 @@ test("tasks_write keeps full details.state and warns when oversized sidecar writ
 		expect(tasksWrite).toBeDefined();
 
 		const notifications: Array<{ message: string; level: string }> = [];
-		const ctx = {
-			cwd: base,
-			hasUI: false,
-			sessionManager: {
-				getBranch: () => [],
-				getSessionFile: () => join(base, "session.jsonl"),
-				getSessionId: () => "sidecar-failure-test",
-			},
-			ui: {
-				notify: (message: string, level: string) => notifications.push({ message, level }),
-				setWidget: () => {},
-			},
-		};
-		const tasks = Array.from({ length: 200 }, (_value, index) => ({ content: `task ${index}` }));
+		const ctx = fakeCtx(base, notifications);
+		const tasks = Array.from({ length: 200 }, (_value, index) => ({ content: `${"x".repeat(400)} task ${index}` }));
 		const result = await tasksWrite.execute("tool-call-1", { action: "replace", tasks }, undefined, undefined, ctx);
 		const detailsState = result.details.state;
 
 		expect(isTaskPanelToolResultBoundedState(detailsState)).toBe(false);
 		expect(detailsState.tasks).toHaveLength(200);
 		expect(notifications.some((note) => note.level === "warning" && note.message.includes("sidecar-write"))).toBe(true);
+		expect(notifications.some((note) => note.message.includes("tool-result"))).toBe(false);
 	} finally {
-		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		restorePiDir(previousPiDir);
+	}
+});
+
+test("non-tool task mutations keep full session-entry fallback when oversized sidecar write fails", async () => {
+	const { base, previousPiDir } = failingSidecarEnv();
+
+	try {
+		const [{ default: taskPanel }, { isTaskPanelToolResultBoundedState }] = await Promise.all([
+			import("../extensions/task-panel.js"),
+			import("../extensions/tool-result-details.js"),
+		]);
+		const pi = fakePi();
+		taskPanel(pi as any);
+		const tasksImport = pi.commands.get("tasks:import");
+		expect(tasksImport).toBeDefined();
+
+		const notifications: Array<{ message: string; level: string }> = [];
+		const ctx = fakeCtx(base, notifications);
+		const importPath = join(base, "tasks.md");
+		writeFileSync(importPath, Array.from({ length: 200 }, (_value, index) => `- ${"x".repeat(400)} task ${index}`).join("\n"), "utf8");
+
+		await tasksImport.handler(importPath, ctx);
+
+		const stateEntries = pi.appended.map((entry: any) => entry.data).filter((data: any) => data?.version === 1 || data?.fullSnapshot === false);
+		expect(stateEntries).toHaveLength(1);
+		expect(isTaskPanelToolResultBoundedState(stateEntries[0])).toBe(false);
+		expect(stateEntries[0].tasks).toHaveLength(200);
+		expect(notifications.some((note) => note.level === "warning" && note.message.includes("sidecar-write"))).toBe(true);
+		expect(notifications.some((note) => note.message.includes("tool-result"))).toBe(false);
+	} finally {
+		restorePiDir(previousPiDir);
 	}
 });

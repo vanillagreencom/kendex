@@ -835,7 +835,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const persist = () => {
 		state.updatedAt = new Date().toISOString();
-		writeSidecar(activeCtx);
+		const sidecarOk = writeSidecar(activeCtx);
 		if (!activeCtx) {
 			// No active session context — fall back to the unconditional append.
 			pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
@@ -848,7 +848,10 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		const snapshot = cloneState(state);
 		const serialized = JSON.stringify(snapshot);
 		const byteSize = Buffer.byteLength(serialized, "utf8");
-		if (byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+		if (!sidecarOk || byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+			// If sidecar persistence failed, keep a full session-entry fallback even
+			// for oversized panels. Slash/manager/shortcut mutations have no tool
+			// result details, so a bounded manifest alone would make resume lossy.
 			pi.appendEntry<TaskPanelState>(STATE_TYPE, snapshot);
 			lastFingerprintBySession.set(sessionKey, fingerprint);
 		} else {
