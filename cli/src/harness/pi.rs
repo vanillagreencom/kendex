@@ -134,15 +134,26 @@ fn pi_deny_tools_for(
     frontmatter: &agent::AgentFrontmatterOverrides,
     allowed_subagents: &[String],
 ) -> Vec<String> {
+    let user_denies_delegate = frontmatter
+        .deny_tools
+        .as_deref()
+        .is_some_and(|denies| {
+            denies
+                .iter()
+                .any(|tool| normalize_pi_tool_name(tool) == "delegate_subagent")
+        });
     let mut tools = pi_default_deny_tools_for(agent, allowed_subagents);
     if let Some(deny_tools) = &frontmatter.deny_tools {
         tools.extend(deny_tools.clone());
     }
     let mut tools = dedupe_pi_tool_names(tools);
-    if !allowed_subagents.is_empty() {
-        // The agent has an explicit allowlist, so it must see the restricted
-        // delegation tool. Strip any stale `delegate_subagent` deny so the
-        // child process actually inherits the active tool.
+    if !allowed_subagents.is_empty() && !user_denies_delegate {
+        // Engineer agents ship with the scout-style allowlist by default,
+        // which implies the default `delegate_subagent` deny is no longer
+        // appropriate. Strip it so the child process actually inherits the
+        // active tool. If the user *explicitly* listed `delegate_subagent`
+        // in `deny-tools`, the explicit policy wins — keep the deny and
+        // accept that the allowlist will never resolve targets at runtime.
         tools.retain(|tool| normalize_pi_tool_name(tool) != "delegate_subagent");
     }
     tools
@@ -570,6 +581,90 @@ mod tests {
                 .any(|line| line.starts_with("allowed-subagents:"))
         );
         assert!(!content.contains("pane: true"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_delegate_subagent_deny_wins_over_engineer_default_allowlist() {
+        // Pre-PR review round-1 blocker 2: an engineer's default
+        // `allowed-subagents: scout` must not silently override an explicit
+        // user policy that denies `delegate_subagent`. The user's intent is
+        // authoritative — keep the deny even though the allowlist is
+        // non-empty, and accept that runtime delegation will refuse.
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_pi_agent_explicit_delegate_deny_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer, "opus");
+        let extras = AgentExtras {
+            frontmatter_by_harness: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "pi".into(),
+                    agent::AgentFrontmatterOverrides {
+                        deny_tools: Some(vec!["delegate_subagent".into()]),
+                        ..Default::default()
+                    },
+                );
+                map
+            },
+            ..AgentExtras::default()
+        };
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let deny_line = content
+            .lines()
+            .find(|line| line.starts_with("deny-tools:"))
+            .expect("deny-tools line");
+        assert!(
+            deny_line.contains("delegate_subagent"),
+            "explicit user deny must survive the allowlist strip: {deny_line}"
+        );
+        // Engineer default allowlist still emitted so users see what the
+        // allowlist looks like, even though deny-tools makes it inert.
+        assert!(content.contains("allowed-subagents: scout"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_delegate_subagent_deny_with_dash_alias_wins() {
+        // Same as above, exercising the normalize_pi_tool_name path that
+        // collapses dashes — `delegate-subagent` from the user must be
+        // detected as the same deny token.
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_pi_agent_explicit_delegate_deny_alias_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer, "opus");
+        let extras = AgentExtras {
+            frontmatter_by_harness: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "pi".into(),
+                    agent::AgentFrontmatterOverrides {
+                        deny_tools: Some(vec!["delegate-subagent".into()]),
+                        ..Default::default()
+                    },
+                );
+                map
+            },
+            ..AgentExtras::default()
+        };
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let deny_line = content
+            .lines()
+            .find(|line| line.starts_with("deny-tools:"))
+            .expect("deny-tools line");
+        assert!(deny_line.contains("delegate-subagent"), "{deny_line}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

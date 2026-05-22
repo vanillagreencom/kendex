@@ -108,17 +108,25 @@ describe("bg one-shot runner exports child identity env (issue #228)", () => {
 		}
 	});
 
-	test("bridge env vars (PI_BRIDGE_*) are NOT forwarded to bg children", async () => {
+	test("bridge env vars (PI_BRIDGE_*) and PI_SUBAGENT_PARENT_SESSION_ID are stripped even when set in parent", async () => {
 		// Issue #228 post-verification: bridge workaround is pane-oriented; bg
-		// children should not bleed bridge session/role.
+		// children must not bleed bridge session/role. Regression guard against
+		// the pre-PR review round-1 finding — the earlier test pre-cleared
+		// these vars, so a `{...process.env, PI_SUBAGENT_CHILD_AGENT: ...}`
+		// spread that *didn't* delete them was still passing.
 		const envs = captureSpawnedEnv([{ code: 0 }]);
 		const previousParent = process.env.PI_BRIDGE_PARENT_SESSION_ID;
 		const previousChild = process.env.PI_BRIDGE_CHILD_ROLE;
 		const previousSession = process.env.PI_SUBAGENT_PARENT_SESSION_ID;
+		const previousExtraBridge = process.env.PI_BRIDGE_SOCKET_PATH;
 		try {
-			delete process.env.PI_BRIDGE_PARENT_SESSION_ID;
-			delete process.env.PI_BRIDGE_CHILD_ROLE;
-			delete process.env.PI_SUBAGENT_PARENT_SESSION_ID;
+			// Set sentinel values BEFORE spawn so the test actually exercises
+			// the strip path. If runner.ts ever drops the explicit deletes,
+			// these sentinels would otherwise leak through.
+			process.env.PI_BRIDGE_PARENT_SESSION_ID = "sentinel-parent";
+			process.env.PI_BRIDGE_CHILD_ROLE = "sentinel-role";
+			process.env.PI_SUBAGENT_PARENT_SESSION_ID = "sentinel-session";
+			process.env.PI_BRIDGE_SOCKET_PATH = "/tmp/sentinel-socket";
 			await runSingleAgent(
 				tempRuntime(),
 				tempRuntime(),
@@ -137,6 +145,9 @@ describe("bg one-shot runner exports child identity env (issue #228)", () => {
 			expect(envs[0]?.PI_BRIDGE_PARENT_SESSION_ID).toBeUndefined();
 			expect(envs[0]?.PI_BRIDGE_CHILD_ROLE).toBeUndefined();
 			expect(envs[0]?.PI_SUBAGENT_PARENT_SESSION_ID).toBeUndefined();
+			// Any other PI_BRIDGE_* var must also be stripped, not just the
+			// two named ones.
+			expect(envs[0]?.PI_BRIDGE_SOCKET_PATH).toBeUndefined();
 		} finally {
 			setSingleAgentSpawnForTests();
 			if (previousParent === undefined) delete process.env.PI_BRIDGE_PARENT_SESSION_ID;
@@ -145,6 +156,8 @@ describe("bg one-shot runner exports child identity env (issue #228)", () => {
 			else process.env.PI_BRIDGE_CHILD_ROLE = previousChild;
 			if (previousSession === undefined) delete process.env.PI_SUBAGENT_PARENT_SESSION_ID;
 			else process.env.PI_SUBAGENT_PARENT_SESSION_ID = previousSession;
+			if (previousExtraBridge === undefined) delete process.env.PI_BRIDGE_SOCKET_PATH;
+			else process.env.PI_BRIDGE_SOCKET_PATH = previousExtraBridge;
 		}
 	});
 

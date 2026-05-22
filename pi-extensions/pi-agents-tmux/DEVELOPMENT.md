@@ -73,9 +73,11 @@ Parallel dispatch runs through a flat worker pool capped by `maxConcurrency` (de
 `delegate_subagent` is a single-mode wrapper around the same dispatch helpers `subagent` uses (`runSingleDispatch` → `runSingleAgent`). Differences from `subagent`:
 
 ```json
-// Only shape accepted.
-{ "agent": "scout", "task": "Map the cwd-snapshot module." }
+// Only shape accepted. `cwd` is the sole optional field.
+{ "agent": "scout", "task": "Map the cwd-snapshot module.", "cwd": "/optional/working/dir" }
 ```
+
+`cwd` defaults to the caller's cwd when omitted; when present it is threaded to `runSingleDispatch` as `cwdOverride`, identical to the single-mode path of full `subagent`.
 
 - **Authorization.** `PI_SUBAGENT_CHILD_AGENT` must be set in the calling Pi process. Pane launchers already export it; the bg one-shot runner exports it for issue #228. Without it the tool refuses immediately. The caller agent's discovered `AgentConfig.allowedSubagents` (parsed from `allowed-subagents:` frontmatter and aliases `allowedSubagents` / `subagent-agents` / `subagent_agents`) is the canonical allowlist. Unlisted targets, undiscovered targets, and pane targets are all rejected before launch.
 - **No orchestration knobs.** No `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, `resumeSession`, or `confirmProjectAgents`. The schema literally does not expose them; the resolver defaults `agentScope` to `"project"` and `sessionKey`/`forceSpawn`/`resumeSession` to undefined.
