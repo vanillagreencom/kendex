@@ -130,6 +130,15 @@ function reasonWithDiagnostics(reason: string, diagnostics: RepoMainSyncDiagnost
 	return suffix ? `${reason}: ${suffix}` : reason;
 }
 
+const DIAGNOSTIC_STREAM_CAP_BYTES = 2048;
+
+function capDiagnosticStream(value: string): string {
+	const trimmed = value.trim();
+	if (trimmed.length <= DIAGNOSTIC_STREAM_CAP_BYTES) return trimmed;
+	const keep = DIAGNOSTIC_STREAM_CAP_BYTES;
+	return `${trimmed.slice(0, keep)}…[truncated ${trimmed.length - keep} bytes]`;
+}
+
 function gitDiagnostic(run: GitRun): RepoMainSyncDiagnostic {
 	const diagnostic: RepoMainSyncDiagnostic = {
 		args: run.args,
@@ -137,8 +146,8 @@ function gitDiagnostic(run: GitRun): RepoMainSyncDiagnostic {
 		exit_status: run.status,
 		signal: run.signal,
 	};
-	if (run.stderr.trim()) diagnostic.stderr = run.stderr.trim();
-	if (run.stdout.trim()) diagnostic.stdout = run.stdout.trim();
+	if (run.stderr.trim()) diagnostic.stderr = capDiagnosticStream(run.stderr);
+	if (run.stdout.trim()) diagnostic.stdout = capDiagnosticStream(run.stdout);
 	if (run.error) {
 		if (run.error.code) diagnostic.error_code = run.error.code;
 		diagnostic.error_message = run.error.message;

@@ -79,6 +79,14 @@ function failStatusShim(): Record<string, string> {
 	return gitShim(`  *" status --porcelain=v1 --untracked-files=all "*) echo "status exploded" >&2; exit 44 ;;`);
 }
 
+function failStatusOversizedStdoutShim(): Record<string, string> {
+	// Emit > 4 KiB of NUL-separated path-like junk on stdout plus a short stderr,
+	// then exit non-zero. Mirrors the real-world failure mode where a `git ls-files
+	// -z` or `git diff --name-only -z` run produces huge stdout and a downstream
+	// failure ends up dumping that stdout into the diagnostic JSON.
+	return gitShim(`  *" status --porcelain=v1 --untracked-files=all "*) python3 -c 'import sys; sys.stdout.write("path/" + "\\x00".join("file" + str(i) + ".rs" for i in range(800)))' ; echo "status exploded" >&2; exit 44 ;;`);
+}
+
 function failFetchShim(): Record<string, string> {
 	return gitShim(`  *" fetch --prune --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
 }
@@ -333,6 +341,19 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json.dirty_paths).toEqual([]);
 		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 44, stderr: "status exploded" });
 		expect(result.json.diagnostics?.[0]?.command).toContain("status --porcelain=v1 --untracked-files=all");
+	});
+
+	test("diagnostic stdout/stderr are capped on oversized output", () => {
+		const result = runSync(failStatusOversizedStdoutShim());
+		expect(result.status).toBe(1);
+		expect(result.json.status).toBe("failed");
+		const diag = result.json.diagnostics?.[0];
+		expect(diag).toBeDefined();
+		const stdout = (diag?.stdout ?? "") as string;
+		// Cap is 2048 bytes; allow some headroom for the truncation marker (“ellipsis + [truncated N bytes]”).
+		expect(stdout.length).toBeGreaterThan(0);
+		expect(stdout.length).toBeLessThan(2200);
+		expect(stdout).toContain("truncated");
 	});
 
 	test("symbolic-ref failure fails before updating checked-out main ref", () => {
