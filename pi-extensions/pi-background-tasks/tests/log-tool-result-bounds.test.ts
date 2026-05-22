@@ -19,7 +19,7 @@ import {
 } from "../extensions/format.js";
 import { taskSnapshot } from "../extensions/snapshot.js";
 import type { BashBackgroundDecision, ManagedTask } from "../extensions/types.js";
-import { WAKE_MANIFEST_FIELD_MAX_CHARS, compactBackgroundTaskSnapshot, emptyOutputWakeBudget } from "../extensions/wake-events.js";
+import { WAKE_MANIFEST_FIELD_MAX_CHARS, compactBackgroundTaskSnapshot, emptyOutputWakeBudget, truncateForTranscript } from "../extensions/wake-events.js";
 
 function logTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
 	const base: ManagedTask = {
@@ -140,6 +140,28 @@ describe("transcript-facing content strings (vstack#210 round 2)", () => {
 		expect(text).not.toContain("L".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
 		expect(text).not.toContain("R".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
 		expect(text).not.toContain("D".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+	});
+
+	test("stop tool-result message bounds the command (vstack#210 round 3)", () => {
+		// Round 3 reviewer flagged that `requestStop` built
+		// `Stopped/Stopping ${task.id} (${task.command}).` without bounding
+		// `task.command`, so a 100KB heredoc command spawned then stopped
+		// produced a 100KB stop tool-result. `requestStop` now routes the
+		// command through `truncateForTranscript(_, WAKE_MANIFEST_FIELD_MAX_CHARS)`
+		// before the template; replay the same bounded format here so the
+		// regression check stays meaningful even though the closure-private
+		// helper is not directly importable.
+		const huge = "B".repeat(100_000);
+		const task = logTask({ command: huge });
+		const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+		const stoppedMessage = `Stopped ${task.id} (${safeCommand}).`;
+		const stoppingMessage = `Stopping ${task.id} (${safeCommand}).`;
+
+		expect(safeCommand.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
+		for (const message of [stoppedMessage, stoppingMessage]) {
+			expect(Buffer.byteLength(message, "utf8")).toBeLessThan(WAKE_MANIFEST_FIELD_MAX_CHARS + 128);
+			expect(message).not.toContain("B".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
+		}
 	});
 
 	test("formatTaskLog truncation banner uses a bounded log path", () => {

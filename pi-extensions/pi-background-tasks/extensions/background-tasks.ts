@@ -102,7 +102,9 @@ import {
 	sendOutputWakeBudgetExhaustedNotice,
 	sendTaskWake,
 	shouldEmitOutputWake,
+	truncateForTranscript,
 	voidPendingTaskWakes,
+	WAKE_MANIFEST_FIELD_MAX_CHARS,
 	type OutputWakeBudgetLimits,
 } from "./wake-events.js";
 
@@ -590,10 +592,15 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		task.outputTimer = null;
 		persistSnapshots();
 
+		// Bound the command preview embedded in the stop message so a 100KB
+		// heredoc command cannot leak into the bg_task/bg_status stop tool
+		// result content (vstack#210 round 3).
+		const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+
 		const sent = killTaskProcess(task, "SIGTERM");
 		if (!sent) {
 			finalizeTask(task, task.exitCode, reason === "timeout" ? "timed_out" : "stopped");
-			return { ok: true, message: `Stopped ${task.id} (${task.command}).` };
+			return { ok: true, message: `Stopped ${task.id} (${safeCommand}).` };
 		}
 
 		const forceKillGraceMs = settingNumber("forceKillGraceMs", DEFAULT_FORCE_KILL_GRACE_MS, activeCtx?.cwd);
@@ -605,7 +612,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}, forceKillGraceMs);
 		task.forceKillTimer.unref?.();
 		refreshUi();
-		return { ok: true, message: `Stopping ${task.id} (${task.command}).` };
+		return { ok: true, message: `Stopping ${task.id} (${safeCommand}).` };
 	};
 
 	const spawnTask = (options: SpawnTaskOptions): ManagedTask => {
