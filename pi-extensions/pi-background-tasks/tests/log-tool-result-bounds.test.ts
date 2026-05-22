@@ -142,15 +142,13 @@ describe("transcript-facing content strings (vstack#210 round 2)", () => {
 		expect(text).not.toContain("D".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
 	});
 
-	test("stop tool-result message bounds the command (vstack#210 round 3)", () => {
-		// Round 3 reviewer flagged that `requestStop` built
-		// `Stopped/Stopping ${task.id} (${task.command}).` without bounding
-		// `task.command`, so a 100KB heredoc command spawned then stopped
-		// produced a 100KB stop tool-result. `requestStop` now routes the
-		// command through `truncateForTranscript(_, WAKE_MANIFEST_FIELD_MAX_CHARS)`
-		// before the template; replay the same bounded format here so the
-		// regression check stays meaningful even though the closure-private
-		// helper is not directly importable.
+	test("truncateForTranscript produces a bounded `Stopped …` message shape (vstack#210 round 3 unit check)", () => {
+		// Unit-level companion to `stop-content-e2e.test.ts`: documents the
+		// bounded format `requestStop` uses for stop tool-result content so
+		// the helper layer is independently regression-checkable. The
+		// end-to-end test exercises the production call path; this one
+		// verifies the shared helper still produces a payload that fits the
+		// template under multi-KB input.
 		const huge = "B".repeat(100_000);
 		const task = logTask({ command: huge });
 		const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
