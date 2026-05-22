@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -167,6 +167,45 @@ describe("unified state location (vstack#227)", () => {
 		} finally {
 			rmSync(repo, { force: true, recursive: true });
 			rmSync(outside, { force: true, recursive: true });
+		}
+	});
+
+	test("strict 0600 fail-closed on READ of state.json (no auto-chmod)", () => {
+		// vstack#227 round-3 P2.1: a previously-trusted state.json
+		// that's been chmod'd to 0644 must fail closed at read time
+		// (CWE-732/CWE-276). The reader never silently auto-chmods.
+		const repo = makeRepo();
+		try {
+			const init = runState(repo, ["init"]);
+			expect(init.status).toBe(0);
+			const path = runState(repo, ["path"]).stdout.trim();
+			expect(path.length).toBeGreaterThan(0);
+			// Widen the mode behind the run-store's back.
+			chmodSync(path, 0o644);
+			const tracked = runState(repo, ["tracked-entries"]);
+			expect(tracked.status).not.toBe(0);
+			expect(tracked.stderr).toMatch(/mode=644 expected 600|group\/other write/);
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+		}
+	});
+
+	test("strict 0600 fail-closed on WRITE through a pre-existing 0644 state.json (no auto-chmod)", () => {
+		// vstack#227 round-3 P2.1: a state.json with wider perms
+		// must trip the writer too. ensureStoreFile() before the
+		// `set` operation refuses the write; the helper does not
+		// silently auto-chmod.
+		const repo = makeRepo();
+		try {
+			const init = runState(repo, ["init"]);
+			expect(init.status).toBe(0);
+			const path = runState(repo, ["path"]).stdout.trim();
+			chmodSync(path, 0o644);
+			const r = runState(repo, ["set", "terminated", "true"]);
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toMatch(/mode=644 expected 600|group\/other write/);
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
 		}
 	});
 

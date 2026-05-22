@@ -1387,6 +1387,12 @@ function assertStorageFileIfExists(path: string, label: string): boolean {
 	}
 	if (stat.isSymbolicLink()) throw new Error(`invalid ${label} ${path}: symlinks are not allowed`);
 	if (!stat.isFile()) throw new Error(`invalid ${label} ${path}: expected regular file`);
+	// vstack#227 round-3 P2.1: enforce strict 0600 + uid ownership on
+	// EVERY read path. Pre-existing wider perms or foreign-uid
+	// ownership now fail closed — they could indicate a previously-
+	// trusted file that's been chmod'd or chown'd out from under us.
+	// (CWE-732 / CWE-276)
+	assertStoreOwnership(stat, path, label, "strict");
 	return true;
 }
 
