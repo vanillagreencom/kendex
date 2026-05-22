@@ -129,13 +129,21 @@ describe("balanced policy caps inline text", () => {
 	});
 
 	test("payload between maxTextBlockKb and spillThresholdKb still truncates in balanced", () => {
-		// balanced: spill 48 KB, maxTextBlockKb 24 KB. A ~32 KB payload sits in the
-		// gap and must trigger truncation via the maxTextBlock cap.
+		// balanced caps: spill 48 KB, maxTextBlockKb 24 KB, maxLineCount 400,
+		// maxLineWidth 3000. Construct ~32 KB with every other cap comfortably
+		// under threshold so ONLY the per-block byte cap can fire — that proves
+		// the round-2 trigger and is not satisfied by line-width/line-count
+		// fallback if maxTextBlockKb were removed from the predicate.
 		withConfig({}, (cwd) => {
 			const ctx = fakeCtx(cwd);
-			const text = "x".repeat(32 * 1024);
+			const lineCount = 100;
+			const lineWidth = 320;
+			const lines = Array.from({ length: lineCount }, (_, i) => `${String(i).padStart(4, "0")} ${"a".repeat(lineWidth - 5)}`);
+			const text = lines.join("\n");
 			expect(text.length).toBeGreaterThan(24 * 1024);
 			expect(text.length).toBeLessThan(48 * 1024);
+			expect(lineCount).toBeLessThanOrEqual(400);
+			expect(lines.every((line) => line.length <= 3000)).toBe(true);
 			const result = processText({ toolName: "grep", toolCallId: "gap1", input: {} }, ctx, text);
 			expect(result.meta?.truncated).toBe(true);
 			expect(result.meta?.reason).toBe("max-text-block");
@@ -145,13 +153,18 @@ describe("balanced policy caps inline text", () => {
 	});
 
 	test("payload between maxTextBlockKb and spillThresholdKb still truncates in compact", () => {
-		// compact: spill 16 KB, maxTextBlockKb 8 KB. A ~12 KB payload sits in
-		// the gap.
+		// compact caps: spill 16 KB, maxTextBlockKb 8 KB, maxLineCount 200,
+		// maxLineWidth 2000. Same isolation discipline as the balanced case.
 		withConfig({ policyMode: "compact" }, (cwd) => {
 			const ctx = fakeCtx(cwd);
-			const text = "y".repeat(12 * 1024);
+			const lineCount = 60;
+			const lineWidth = 200;
+			const lines = Array.from({ length: lineCount }, (_, i) => `${String(i).padStart(4, "0")} ${"b".repeat(lineWidth - 5)}`);
+			const text = lines.join("\n");
 			expect(text.length).toBeGreaterThan(8 * 1024);
 			expect(text.length).toBeLessThan(16 * 1024);
+			expect(lineCount).toBeLessThanOrEqual(200);
+			expect(lines.every((line) => line.length <= 2000)).toBe(true);
 			const result = processText({ toolName: "grep", toolCallId: "gap2", input: {} }, ctx, text);
 			expect(result.meta?.truncated).toBe(true);
 			expect(result.meta?.reason).toBe("max-text-block");
