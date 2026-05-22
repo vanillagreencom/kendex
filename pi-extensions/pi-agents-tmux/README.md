@@ -153,7 +153,7 @@ There is one knob — `maxConcurrency` — and it caps the number of bg agent pr
 | Setting | What it does |
 | --- | --- |
 | Show agent dashboard | Render the activity card above the editor. The first agent activity may show it each session; user-hidden state blocks automatic re-open until an explicit toggle/show. |
-| Quiet inline output with dashboard | Keep inline tool output to short crumbs. |
+| Quiet inline output with dashboard | Keep inline tool output to short crumbs; single bg launches skip the initial task preview. |
 | Dashboard max items | Maximum agent rows shown. |
 | Dashboard collapsed by default | Start collapsed. |
 | Animate spinners | Animate running-agent spinner frames; disable for a static gear icon to reduce terminal flickering. |

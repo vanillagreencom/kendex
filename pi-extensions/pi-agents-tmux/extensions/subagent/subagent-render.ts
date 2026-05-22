@@ -59,12 +59,14 @@ export const subagentToolRenderers = {
 			return new Container();
 		}
 		const agentName = args.agent || "...";
+		const cwd = _context?.cwd ?? process.cwd();
 		try {
-			const agent = discoverAgents(_context?.cwd ?? process.cwd(), scope).agents.find((candidate) => candidate.name === agentName);
+			const agent = discoverAgents(cwd, scope).agents.find((candidate) => candidate.name === agentName);
 			if (agent?.pane) return new Container();
 		} catch {
 			// Keep the generic call preview if discovery fails.
 		}
+		if (dashboardEnabled(cwd) && quietInline(cwd)) return new Container();
 		const preview = args.task ? oneLinePreview(args.task, 56) : "...";
 		let text = `${agentsCommandBullet(theme)}${agentWord(theme)} ${ansiMagenta(theme.bold(agentName))}`;
 		if (scope !== "project") text += theme.fg("dim", ` · ${scope}`);
@@ -233,7 +235,7 @@ export const subagentToolRenderers = {
 
 			if (queued) return queuedTaskPreviewComponent(r, quietDashboard);
 
-			if (quietDashboard && !queued && !isError && !needsCompletion) {
+			if (quietDashboard && !queued && !isRunning && !isError && !needsCompletion) {
 				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
 				const preview = finalOutput && !finalOutputLooksLikeToolEcho(finalOutput, toolCalls)
 					? oneLinePreview(finalOutput, 180)

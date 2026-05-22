@@ -63,6 +63,11 @@ function writeManagerConfig(cwd: string, config: Record<string, unknown>): void 
 	}));
 }
 
+function writeProjectAgent(cwd: string, name: string, frontmatter: string[] = []): void {
+	mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+	writeFileSync(join(cwd, ".pi", "agents", `${name}.md`), ["---", `name: ${name}`, `description: ${name} agent`, ...frontmatter, "---", ""].join("\n"));
+}
+
 function withTempPiUserDir<T>(fn: () => T): T {
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = tempRuntime();
@@ -146,6 +151,15 @@ function renderSubagentSingle(result: SingleResult): string {
 	return subagentToolRenderers.renderResult({ content: [{ type: "text", text: "done" }], details }, {}, theme, { cwd: process.cwd() }).render(220).join("\n");
 }
 
+function renderSubagentSingleInCwd(result: SingleResult, cwd: string): string {
+	const details: SubagentDetails = { mode: "single", agentScope: "project", projectAgentsDir: null, results: [result] };
+	return subagentToolRenderers.renderResult({ content: [{ type: "text", text: "done" }], details }, {}, theme, { cwd }).render(220).join("\n");
+}
+
+function renderSubagentCall(args: Record<string, unknown>, cwd: string): string {
+	return subagentToolRenderers.renderCall(args, theme, { cwd }).render(220).join("\n");
+}
+
 function dashboardItem(patch: Partial<SubagentDashboardItem> = {}): SubagentDashboardItem {
 	return {
 		agent: "reviewer-arch",
@@ -162,6 +176,36 @@ test("subagent renderer shows session-mode chips", () => {
 	assert.match(renderSubagentSingle(singleResult({ sessionMode: "resumed", sessionKey: "very-long-session-key", sessionKeyExplicit: true })), /completed · bg · lane:very-l…-key/);
 	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "new", sessionMode: "new" })), /Queued task · pane · new/);
 	assert.match(renderSubagentSingle(singleResult({ paneId: "%1", paneSessionMode: "live", sessionMode: "resumed" })), /Queued task · pane · resumed/);
+});
+
+test("quiet dashboard suppresses single bg call preview", () => {
+	const cwd = tempRuntime();
+	writeManagerConfig(cwd, { dashboard: true, quietInlineWhenDashboard: true });
+	writeProjectAgent(cwd, "scout");
+
+	const rendered = renderSubagentCall({ agent: "scout", task: "Inspect duplicate output." }, cwd);
+
+	assert.equal(rendered, "");
+});
+
+test("single bg call preview remains when dashboard quiet mode is off", () => {
+	const cwd = tempRuntime();
+	writeManagerConfig(cwd, { dashboard: false, quietInlineWhenDashboard: true });
+	writeProjectAgent(cwd, "scout");
+
+	const rendered = renderSubagentCall({ agent: "scout", task: "Inspect duplicate output." }, cwd);
+
+	assert.match(stripAnsi(rendered), /Agent scout/);
+	assert.match(stripAnsi(rendered), /Inspect duplicate output\./);
+});
+
+test("quiet dashboard renders running bg updates as working", () => {
+	const cwd = tempRuntime();
+	writeManagerConfig(cwd, { dashboard: true, quietInlineWhenDashboard: true });
+	const rendered = renderSubagentSingleInCwd(singleResult({ agent: "scout", exitCode: -1, messages: [], task: "Inspect duplicate output." }), cwd);
+
+	assert.match(stripAnsi(rendered), /Agent scout working/);
+	assert.doesNotMatch(stripAnsi(rendered), /Agent scout completed/);
 });
 
 test("session-mode rendering ignores corrupt mode values", async () => {
