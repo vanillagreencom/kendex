@@ -285,10 +285,7 @@ mod parse_skills_field_tests {
         // Real-world shape from .claude/agents/<name>.md.
         let fm = "name: reviewer-error\nskills: linear-dev, linear\nrole: engineer";
         let skills = parse_skills_field(fm);
-        assert_eq!(
-            skills,
-            vec!["linear-dev".to_string(), "linear".to_string()]
-        );
+        assert_eq!(skills, vec!["linear-dev".to_string(), "linear".to_string()]);
     }
 
     #[test]

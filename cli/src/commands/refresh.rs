@@ -172,13 +172,8 @@ pub fn refresh_items_in_scope(
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
-                let _ = harness.generate_agent(
-                    agent,
-                    global,
-                    &skill_pairs,
-                    &matched_hooks,
-                    &extras,
-                );
+                let _ =
+                    harness.generate_agent(agent, global, &skill_pairs, &matched_hooks, &extras);
             }
         }
         stats.agents_refreshed += 1;

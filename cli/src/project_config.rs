@@ -2467,10 +2467,8 @@ mod tests {
         // header inline; after `repair_project_config_structure` runs (which
         // calls `normalize_attached_section_headers`), the file must still
         // parse as valid TOML and `[agent-skills]` entries must survive.
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_norm_comment_header_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_norm_comment_header_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vstack.toml");
         let content = concat!(

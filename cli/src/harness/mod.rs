@@ -260,13 +260,9 @@ impl Harness {
         }
         let dir = self.agents_dir(global);
         match self {
-            Harness::ClaudeCode => {
-                claude::generate_agent(agent, &dir, skills, hooks, extras)
-            }
+            Harness::ClaudeCode => claude::generate_agent(agent, &dir, skills, hooks, extras),
             Harness::Cursor => cursor::generate_agent(agent, &dir, skills, hooks, extras),
-            Harness::OpenCode => {
-                opencode::generate_agent(agent, &dir, skills, hooks, extras)
-            }
+            Harness::OpenCode => opencode::generate_agent(agent, &dir, skills, hooks, extras),
             Harness::Codex => codex::generate_agent(agent, &dir, skills, hooks, extras),
             Harness::Pi => pi::generate_agent(agent, &dir, skills, hooks, extras),
         }

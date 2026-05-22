@@ -1847,10 +1847,7 @@ where
 
 /// Apply a finished worker's outcome on the main thread. Owns every
 /// mutation that touches TUI state, the terminal, or process lifetime.
-fn apply_post_work(
-    state: &mut FlowState<'_>,
-    post: PostWork,
-) -> Result<Option<InstallFlowResult>> {
+fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<InstallFlowResult>> {
     match post {
         PostWork::Done(flash) => {
             rebuild_tabs(state);
@@ -2090,13 +2087,7 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                 );
                 for harness in &target_harnesses {
                     if harness
-                        .generate_agent(
-                            agent,
-                            to_global,
-                            &skill_pairs,
-                            &matched_hooks,
-                            &extras,
-                        )
+                        .generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras)
                         .is_ok()
                     {
                         succeeded.push(*harness);

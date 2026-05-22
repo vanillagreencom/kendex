@@ -129,8 +129,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("tpm", AgentRole::Manager);
-        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default())
-            .expect("generate ok");
+        let path =
+            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("sandbox_mode = \"workspace-write\""));
 
@@ -166,8 +166,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("scout", AgentRole::Analyst);
-        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default())
-            .expect("generate ok");
+        let path =
+            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("model_reasoning_effort"));
 

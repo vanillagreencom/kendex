@@ -282,8 +282,8 @@ mod tests {
 
         let mut agent = agent_fixture("reviewer-arch", AgentRole::Reviewer);
         agent.effort = Some("high".into());
-        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default())
-            .expect("generate ok");
+        let path =
+            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("effort: high"));

@@ -1753,12 +1753,12 @@ fn draw_confirm_dialog(frame: &mut Frame, select: &mut TabbedSelect, d: &Confirm
 // ── Help overlay ──────────────────────────────────────────
 
 /// Braille-dot spinner frames; ~10 fps when advanced every 80–100ms.
-const SPINNER_FRAMES: &[&str] = &[
-    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-];
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 fn draw_progress_overlay(frame: &mut Frame, select: &mut TabbedSelect) {
-    let Some(progress) = select.progress.as_ref() else { return };
+    let Some(progress) = select.progress.as_ref() else {
+        return;
+    };
     let elapsed = progress.started.elapsed();
     let frame_idx = (elapsed.as_millis() / 100) as usize % SPINNER_FRAMES.len();
     let spinner = SPINNER_FRAMES[frame_idx];
@@ -1774,7 +1774,10 @@ fn draw_progress_overlay(frame: &mut Frame, select: &mut TabbedSelect) {
     let (inner, _outer) = draw_dialog_chrome(frame, "Working", theme::ACCENT, 3, dialog_w);
 
     let line = Line::from(vec![
-        Span::styled(format!("{spinner} "), Style::default().fg(theme::ACCENT).bold()),
+        Span::styled(
+            format!("{spinner} "),
+            Style::default().fg(theme::ACCENT).bold(),
+        ),
         Span::styled(label, Style::default().fg(theme::TEXT_PRIMARY).bold()),
         Span::styled(
             format!("  ({elapsed_label})"),
@@ -1786,8 +1789,7 @@ fn draw_progress_overlay(frame: &mut Frame, select: &mut TabbedSelect) {
         Style::default().fg(theme::TEXT_MUTED).italic(),
     ));
     frame.render_widget(
-        Paragraph::new(vec![line, Line::from(""), hint])
-            .style(Style::default().bg(Color::Reset)),
+        Paragraph::new(vec![line, Line::from(""), hint]).style(Style::default().bg(Color::Reset)),
         inner,
     );
 }
@@ -2623,10 +2625,7 @@ mod tests {
 
     #[test]
     fn progress_overlay_renders_label_and_spinner_frame() {
-        let mut select = TabbedSelect::new(
-            "x",
-            vec![source_tab("Agents", vec![item("a", "")])],
-        );
+        let mut select = TabbedSelect::new("x", vec![source_tab("Agents", vec![item("a", "")])]);
         select.progress = Some(crate::tui::multiselect::ProgressOverlay {
             label: "Updating 3 item(s)…".into(),
             started: std::time::Instant::now(),

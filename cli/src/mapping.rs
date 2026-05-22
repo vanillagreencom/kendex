@@ -324,9 +324,10 @@ mod tests {
         let mut config = MappingConfig::default();
         // Agent "rust" has explicit entry — prefix matching should NOT run.
         // Only the listed skills (plus role-skills) should be attached.
-        config
-            .agent_skills
-            .insert("rust".into(), vec!["rust-tooling".into(), "rust-runtime".into()]);
+        config.agent_skills.insert(
+            "rust".into(),
+            vec!["rust-tooling".into(), "rust-runtime".into()],
+        );
         let available = vec![
             "rust-tooling".into(),
             "rust-runtime".into(),

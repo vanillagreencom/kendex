@@ -286,10 +286,7 @@ mod auto_include_agent_skills_tests {
         let agents = vec![agent("reviewer-error", AgentRole::Engineer)];
         let mut selected = Vec::<Skill>::new();
         let added = auto_include_agent_skills(&agents, &mapping, &all, &mut selected);
-        assert_eq!(
-            added,
-            vec!["github".to_string(), "linear-dev".to_string()]
-        );
+        assert_eq!(added, vec!["github".to_string(), "linear-dev".to_string()]);
         let names: Vec<&str> = selected.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"linear-dev"));
         assert!(names.contains(&"github"));
