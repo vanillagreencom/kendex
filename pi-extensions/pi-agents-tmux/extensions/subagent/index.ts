@@ -186,6 +186,7 @@ import {
 } from "./tasks.js";
 import {
 	CompleteSubagentParams,
+	DelegateSubagentParams,
 	GetSubagentResultParams,
 	SteerSubagentParams,
 	StopSubagentParams,
@@ -1614,23 +1615,187 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
-		if (!pi.getActiveTools().includes("subagent")) return;
+		const activeTools = pi.getActiveTools();
+		const hasSubagent = activeTools.includes("subagent");
+		const hasDelegate = activeTools.includes("delegate_subagent");
+		if (!hasSubagent && !hasDelegate) return;
 
 		const discovery = discoverAgents(ctx.cwd, "project");
 		if (discovery.agents.length === 0) return;
 
-		const agentLines = discovery.agents
-			.map((agent) => {
-				const model = agent.model ? ` model=${agent.model}` : "";
-				const denyTools = agent.denyTools && agent.denyTools.length > 0 ? ` deny-tools=${agent.denyTools.join(",")}` : "";
-				const pane = agent.pane ? " pane=true" : "";
-				return `- ${agent.name}: ${agent.description} (${agent.source}${model}${denyTools}${pane})`;
+		// Full orchestrator tool: emit the complete project agent list so the
+		// orchestrator can pick targets directly.
+		if (hasSubagent) {
+			const agentLines = discovery.agents
+				.map((agent) => {
+					const model = agent.model ? ` model=${agent.model}` : "";
+					const denyTools = agent.denyTools && agent.denyTools.length > 0 ? ` deny-tools=${agent.denyTools.join(",")}` : "";
+					const pane = agent.pane ? " pane=true" : "";
+					return `- ${agent.name}: ${agent.description} (${agent.source}${model}${denyTools}${pane})`;
+				})
+				.join("\n");
+
+			return {
+				systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nProject-local agents available to \`subagent\` (default \`agentScope: "project"\`; pass \`"both"\` only for user-level agents at \`~/.pi/agent/agents\`):\n${agentLines}`,
+			};
+		}
+
+		// Restricted delegation only: emit a compact list of the caller's
+		// allowed targets. Falls back to a hint when the caller identity is
+		// missing (parent session without PI_SUBAGENT_CHILD_AGENT).
+		const callerName = childAgentName?.trim();
+		if (!callerName) {
+			return {
+				systemPrompt: `${event.systemPrompt}\n\n## Restricted Subagent Delegation\n\`delegate_subagent\` is only usable from a child agent process with PI_SUBAGENT_CHILD_AGENT set; it is unavailable from the root session.`,
+			};
+		}
+		const caller = discovery.agents.find((agent) => agent.name === callerName);
+		const allowedList = (caller?.allowedSubagents ?? []).filter((name) => name && name.trim().length > 0);
+		if (allowedList.length === 0) {
+			return {
+				systemPrompt: `${event.systemPrompt}\n\n## Restricted Subagent Delegation\n\`delegate_subagent\` is registered but ${callerName} has no \`allowed-subagents\` configured; the tool will refuse every call.`,
+			};
+		}
+		const targetMap = new Map<string, typeof discovery.agents[number]>();
+		for (const agent of discovery.agents) targetMap.set(agent.name, agent);
+		const targetLines = allowedList
+			.map((name) => {
+				const target = targetMap.get(name);
+				if (!target) return `- ${name}: (not discovered)`;
+				const model = target.model ? ` model=${target.model}` : "";
+				const pane = target.pane ? " pane=true (delegate_subagent will refuse)" : "";
+				return `- ${target.name}: ${target.description} (${target.source}${model}${pane})`;
 			})
 			.join("\n");
 
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nProject-local agents available to \`subagent\` (default \`agentScope: "project"\`; pass \`"both"\` only for user-level agents at \`~/.pi/agent/agents\`):\n${agentLines}`,
+			systemPrompt: `${event.systemPrompt}\n\n## Restricted Subagent Delegation\nUse \`delegate_subagent\` only for context-protecting exploratory or reconnaissance work — read exact files yourself before editing. Include all needed context in the task; parent conversation is not shared with the child. The child returns a single text summary.\n\nAllowed targets for ${callerName}:\n${targetLines}`,
 		};
+	});
+
+	pi.registerTool({
+		renderShell: "self",
+		name: "delegate_subagent",
+		label: "Delegate",
+		description: [
+			"Restricted exploratory delegation. Spawn a single child agent in its own context window and return its summary.",
+			"Only callable from a child Pi process whose PI_SUBAGENT_CHILD_AGENT is set; targets must appear in the caller agent's `allowed-subagents` frontmatter.",
+			"Single dispatch only — no parallel `tasks`, no `chain`, no session reuse, no pane control. Pane targets are rejected.",
+			"Include every fact and constraint in `task`; parent conversation is not shared.",
+			"Intended for context-protecting reconnaissance and research (for example, an engineer agent dispatching `scout` to map an unknown area). Read exact files yourself before editing.",
+		].join(" "),
+		parameters: DelegateSubagentParams,
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const callerName = childAgentName?.trim();
+			const agentScope: AgentScope = "project";
+			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const agents = discovery.agents;
+			const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+			const parentThinkingLevel = pi.getThinkingLevel();
+			const parentSessionId = runtimeSessionId(ctx);
+			const runtimeRoot = sessionRuntimeDir(parentSessionId);
+			const makeDetails =
+				(_mode: "single" | "parallel" | "chain") =>
+				(results: SingleResult[]): SubagentDetails => ({
+					mode: "single",
+					agentScope,
+					projectAgentsDir: discovery.projectAgentsDir,
+					results,
+				});
+
+			if (!callerName) {
+				return {
+					content: [{ type: "text", text: "delegate_subagent is only callable from a child agent process (PI_SUBAGENT_CHILD_AGENT must be set). Use `subagent` from a root session instead." }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+
+			const caller = agents.find((agent) => agent.name === callerName);
+			const allowedList = (caller?.allowedSubagents ?? [])
+				.map((name) => name.trim())
+				.filter((name) => name.length > 0);
+			if (!caller) {
+				return {
+					content: [{ type: "text", text: `delegate_subagent: caller agent '${callerName}' is not in the discovered project inventory; cannot authorize delegation.` }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+			if (allowedList.length === 0) {
+				return {
+					content: [{ type: "text", text: `delegate_subagent: ${callerName} has no allowed-subagents configured. Add a list to the agent frontmatter (vstack.toml [agent-frontmatter.pi]) or use the full subagent tool from a parent session.` }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+
+			const requestedTarget = (params.agent ?? "").trim();
+			if (!requestedTarget) {
+				return {
+					content: [{ type: "text", text: "delegate_subagent: 'agent' parameter is required." }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+			if (!allowedList.includes(requestedTarget)) {
+				return {
+					content: [{ type: "text", text: `delegate_subagent: '${requestedTarget}' is not in ${callerName}'s allowed-subagents list. Allowed: ${allowedList.join(", ")}.` }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+
+			const target = agents.find((agent) => agent.name === requestedTarget);
+			if (!target) {
+				const available = agents.map((a) => a.name).join(", ") || "none";
+				return {
+					content: [{ type: "text", text: `delegate_subagent: target '${requestedTarget}' is not discovered in project agents. Discovered: ${available}.` }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+			if (target.pane) {
+				return {
+					content: [{ type: "text", text: `delegate_subagent: target '${requestedTarget}' is a persistent pane agent; restricted delegation is bg-only. Configure a non-pane agent or use the full subagent tool.` }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+
+			const task = (params.task ?? "").trim();
+			if (!task) {
+				return {
+					content: [{ type: "text", text: "delegate_subagent: 'task' parameter is required." }],
+					details: makeDetails("single")([]),
+					isError: true,
+				};
+			}
+
+			return runSingleDispatch({
+				agent: requestedTarget,
+				agents,
+				cwd: ctx.cwd,
+				cwdOverride: params.cwd,
+				forceSpawn: false,
+				makeDetails,
+				onUpdate,
+				parentModel,
+				parentSessionId,
+				parentThinkingLevel,
+				pi,
+				removeDashboardAgent,
+				resumeSession: undefined,
+				runtimeRoot,
+				sessionKey: undefined,
+				signal,
+				task,
+				updateDashboard,
+			});
+		},
+
+		...subagentToolRenderers,
 	});
 
 	pi.registerTool({

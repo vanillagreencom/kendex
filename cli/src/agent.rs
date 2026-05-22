@@ -246,6 +246,19 @@ pub struct AgentFrontmatterOverrides {
     /// `disallowedTools`) or preserve the denylist for the harness extension.
     #[serde(default, deserialize_with = "deserialize_optional_tools")]
     pub deny_tools: Option<Vec<String>>,
+    /// Pi restricted-delegation allowlist for `delegate_subagent`. Names must
+    /// match a discovered agent (no fuzzy matching). An explicit empty list
+    /// disables the engineer-role default. Accepts the canonical kebab key
+    /// plus camelCase / snake_case / `subagent-agents` aliases for
+    /// compatibility with the upstream `pi-subagents` convention.
+    #[serde(
+        default,
+        alias = "allowedSubagents",
+        alias = "subagent-agents",
+        alias = "subagent_agents",
+        deserialize_with = "deserialize_optional_tools"
+    )]
+    pub allowed_subagents: Option<Vec<String>>,
     /// Pi persistent pane flag.
     pub pane: Option<bool>,
     /// Claude Code background subagent flag.
@@ -299,6 +312,10 @@ impl AgentFrontmatterOverrides {
             model: harness.model.clone().or_else(|| self.model.clone()),
             tools: harness.tools.clone().or_else(|| self.tools.clone()),
             deny_tools: merge_optional_tool_lists(&self.deny_tools, &harness.deny_tools),
+            allowed_subagents: harness
+                .allowed_subagents
+                .clone()
+                .or_else(|| self.allowed_subagents.clone()),
             pane: harness.pane.or(self.pane),
             background: harness.background.or(self.background),
             effort: harness.effort.clone().or_else(|| self.effort.clone()),
@@ -722,6 +739,77 @@ Always run clippy.
         let extras = extract_user_sections(content);
         assert!(extras.guidance.is_none());
         assert!(extras.instructions.is_none());
+    }
+
+    #[test]
+    fn frontmatter_overrides_merge_allowed_subagents_with_harness_winning() {
+        let base = AgentFrontmatterOverrides {
+            allowed_subagents: Some(vec!["base-target".into()]),
+            ..Default::default()
+        };
+        let harness = AgentFrontmatterOverrides {
+            allowed_subagents: Some(vec!["harness-target".into()]),
+            ..Default::default()
+        };
+        let merged = base.merge(&harness);
+        assert_eq!(
+            merged.allowed_subagents,
+            Some(vec!["harness-target".to_string()]),
+            "harness override should win, including its full list"
+        );
+    }
+
+    #[test]
+    fn frontmatter_overrides_merge_preserves_explicit_empty_allowed_subagents() {
+        // An explicit empty list at either layer must survive — that's how
+        // users opt out of engineer-role defaults.
+        let base = AgentFrontmatterOverrides::default();
+        let harness = AgentFrontmatterOverrides {
+            allowed_subagents: Some(Vec::new()),
+            ..Default::default()
+        };
+        let merged = base.merge(&harness);
+        assert_eq!(
+            merged.allowed_subagents,
+            Some(Vec::new()),
+            "explicit empty list must override unset/default state"
+        );
+    }
+
+    #[test]
+    fn frontmatter_overrides_merge_falls_through_when_harness_unset() {
+        let base = AgentFrontmatterOverrides {
+            allowed_subagents: Some(vec!["scout".into()]),
+            ..Default::default()
+        };
+        let harness = AgentFrontmatterOverrides::default();
+        let merged = base.merge(&harness);
+        assert_eq!(merged.allowed_subagents, Some(vec!["scout".to_string()]));
+    }
+
+    #[test]
+    fn frontmatter_overrides_parses_allowed_subagents_aliases() {
+        let canonical: AgentFrontmatterOverrides =
+            serde_yaml::from_str("allowed-subagents: scout, researcher").unwrap();
+        assert_eq!(
+            canonical.allowed_subagents,
+            Some(vec!["scout".to_string(), "researcher".to_string()])
+        );
+
+        let camel: AgentFrontmatterOverrides =
+            serde_yaml::from_str("allowedSubagents:\n  - scout\n  - researcher").unwrap();
+        assert_eq!(
+            camel.allowed_subagents,
+            Some(vec!["scout".to_string(), "researcher".to_string()])
+        );
+
+        let snake: AgentFrontmatterOverrides =
+            serde_yaml::from_str("subagent_agents: scout").unwrap();
+        assert_eq!(snake.allowed_subagents, Some(vec!["scout".to_string()]));
+
+        let dashed: AgentFrontmatterOverrides =
+            serde_yaml::from_str("subagent-agents: scout").unwrap();
+        assert_eq!(dashed.allowed_subagents, Some(vec!["scout".to_string()]));
     }
 
     #[test]

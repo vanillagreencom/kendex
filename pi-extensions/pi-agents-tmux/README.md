@@ -7,6 +7,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 ## Highlights
 
 - `subagent` tool delegates one task, parallel tasks, or sequential chains.
+- `delegate_subagent` is a restricted, single-mode variant child agents can call without gaining full orchestration controls. Engineer agents installed by vstack default to `allowed-subagents: scout` so they can dispatch read-only reconnaissance into a fresh bg lane.
 - Agents with `pane: true` open a visible tmux pane that persists across turns. Other agents run in the background.
 - `/agents` browser lists agents for the selected scope with static detail, Monitor task traces, and one-key launch.
 - Monitor groups tasks by session (pane, bg lane, bg one-shot) under expandable Active and Completed sections; repeated same-agent launches get session numbers and task numbers reset per session.
@@ -87,6 +88,7 @@ Frontmatter fields:
 | `name` | yes | Unique agent name. |
 | `description` | yes | Short description shown in `/agents` and completions. |
 | `deny-tools` | no | Comma-separated Pi tools to deny. Future parent tools are inherited unless explicitly denied. |
+| `allowed-subagents` | no | Comma-separated or array of agent names this agent may call via `delegate_subagent`. Engineer agents installed by vstack default to `scout`. Set `[]` to disable delegation. Aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`. |
 | `model` | no | Pi model id; shorthands: `sonnet`, `opus*`, `haiku`. Other ids pass through. |
 | `pane` | no | `true` for a visible persistent pane; omit for bg. |
 | `color` | no | Pane badge color: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`. Aliases: `orange`, `purple`/`violet`, `teal`. |
@@ -95,7 +97,35 @@ Everything after the frontmatter is the agent's system prompt.
 
 Pane tasks move through queued → running → completed | blocked | failed. On Linux, before reusing a live pane, `subagent` verifies the pane process cwd is still present and matches the requested task `cwd`; stale or mismatched panes return a structured `pane-cwd-stale` error, publish `agent.pane_cwd_stale`, and should be recovered with `stop_subagent` plus a retry using `forceSpawn: true`. Stop kills the tmux process; the session file is preserved so the next launch resumes memory.
 
-See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `wait_for_subagent_idle`) and activity broker mapping.
+See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subagent`, `delegate_subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `wait_for_subagent_idle`) and activity broker mapping.
+
+## Restricted delegation (`delegate_subagent`)
+
+vstack-installed engineer agents default to denying `subagent` so they cannot orchestrate fleets, but they still need to spend a fresh context window on reconnaissance work. `delegate_subagent` is the bridge:
+
+- Only visible to child Pi processes whose `PI_SUBAGENT_CHILD_AGENT` is set (panes export this automatically; the bg one-shot runner sets it for issue #228).
+- Only the targets listed in the caller agent's `allowed-subagents:` frontmatter are accepted; missing or unlisted targets fail with an inventory error.
+- Single-dispatch only — no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, or `resumeSession` exposure.
+- Targets with `pane: true` are rejected — restricted delegation is bg-only.
+- The child receives its own append-system prompt, skills, and a fresh one-shot session; parent conversation is not shared.
+
+vstack defaults for `allowed-subagents`:
+
+| Role | Default |
+| --- | --- |
+| `engineer` | `scout` |
+| `analyst` / `reviewer` / `manager` | empty (delegation denied) |
+
+Customize per agent in `vstack.toml`:
+
+```toml
+[agent-frontmatter.pi]
+rust = { allowed-subagents = ["scout"] }
+iced = { allowed-subagents = ["scout", "researcher"] }
+generalist = { allowed-subagents = [] }   # disable delegation entirely
+```
+
+An explicit empty list overrides the engineer default; the matching agent file is regenerated without `allowed-subagents:` and gains `delegate_subagent` back in `deny-tools` so the child never sees the tool.
 
 ## Settings
 

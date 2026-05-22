@@ -92,12 +92,13 @@ rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "
 rust = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
-rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "question"], pane = true }
+rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "question"], allowed-subagents = ["scout"], pane = true }
 ```
 
 Key rules:
 
 - **Prefer `deny-tools` over allowlists.** Each harness inherits its normal tool set and blocks only what you list. Claude Code writes it as native `disallowedTools`; OpenCode emits `permission: <tool>: deny`; Pi enforces it via `pi-agents-tmux`. Cursor and Codex don't use per-agent deny lists — Codex subagents use `sandbox-mode`/approval instead.
+- **Pi `allowed-subagents` enables `delegate_subagent`.** vstack engineer agents default to `allowed-subagents = ["scout"]` so dev agents can dispatch read-only reconnaissance without gaining full orchestration controls. Set `[]` to disable; non-engineer roles default to disabled (and gain `delegate_subagent` in their `deny-tools`). Aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`.
 - **`effort` is written verbatim** by each harness. Valid: `low`, `medium`, `high`, `xhigh` (Claude also accepts `max`). Pi appends it to its model id as `:<effort>`.
 - **OpenCode agents default to `mode: subagent`.** Set `mode = "primary"` only when you want an OpenCode primary agent. OpenCode `color` must be hex.
 - **Claude `background` seeds from Pi `pane`** on first install (`pane = true` → `background = false`), then your edits are preserved on refresh.

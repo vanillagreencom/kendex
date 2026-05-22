@@ -303,6 +303,11 @@
         },
         {
           "kind": "tool",
+          "name": "delegate_subagent",
+          "description": "Restricted exploratory delegation for child agents. Single-mode only; targets must appear in the caller agent's allowed-subagents frontmatter (engineer agents default to ['scout']). Pane targets and session reuse are rejected."
+        },
+        {
+          "kind": "tool",
           "name": "get_subagent_result",
           "description": "Retrieve persistent pane agent task results by taskId or latest agent task; can also wait for pane idle."
         },

@@ -68,6 +68,23 @@ Live pane reuse runs a Linux cwd preflight before returning an existing pane or 
 
 Parallel dispatch runs through a flat worker pool capped by `maxConcurrency` (default 4); the whole task array shares one queue. The earlier `maxParallelTasks` setting is a deprecated no-op kept for setting-file compatibility.
 
+## Restricted delegation (`delegate_subagent`) — issue #228
+
+`delegate_subagent` is a single-mode wrapper around the same dispatch helpers `subagent` uses (`runSingleDispatch` → `runSingleAgent`). Differences from `subagent`:
+
+```json
+// Only shape accepted.
+{ "agent": "scout", "task": "Map the cwd-snapshot module." }
+```
+
+- **Authorization.** `PI_SUBAGENT_CHILD_AGENT` must be set in the calling Pi process. Pane launchers already export it; the bg one-shot runner exports it for issue #228. Without it the tool refuses immediately. The caller agent's discovered `AgentConfig.allowedSubagents` (parsed from `allowed-subagents:` frontmatter and aliases `allowedSubagents` / `subagent-agents` / `subagent_agents`) is the canonical allowlist. Unlisted targets, undiscovered targets, and pane targets are all rejected before launch.
+- **No orchestration knobs.** No `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, `resumeSession`, or `confirmProjectAgents`. The schema literally does not expose them; the resolver defaults `agentScope` to `"project"` and `sessionKey`/`forceSpawn`/`resumeSession` to undefined.
+- **Tool inheritance.** Child tools start from the parent active tools then drop the target agent's `deny-tools`. vstack-generated reviewer/analyst/manager agents already deny `delegate_subagent` so a chain like `rust → scout → researcher` is impossible by default — scout's `allowed-subagents` is empty, and `delegate_subagent` is in scout's `deny-tools`. Both layers fail closed.
+- **Bg-only.** Pane targets reject with a clear error; engineer-style delegation is intentionally disposable.
+- **System prompt.** When the only active subagent surface is `delegate_subagent`, `before_agent_start` emits a short "Restricted Subagent Delegation" section listing the caller's allowlist (with model / pane warning) instead of the full Project Agents list. When `subagent` is also active (parent orchestrator), the full list is emitted unchanged.
+
+vstack CLI defaults: engineer-role agents emit `allowed-subagents: scout` and omit `delegate_subagent` from `deny-tools`. Analyst/reviewer/manager agents omit `allowed-subagents` and add `delegate_subagent` to `deny-tools` so the child LLM never sees it. An explicit `allowed-subagents = []` in `vstack.toml` overrides the engineer default and re-denies the tool.
+
 ## One-shot transcript capture
 
 Bg one-shot agents run Pi in JSON stream mode and write a sidecar transcript under `transcripts/<agent>/<taskId>.jsonl`. The writer records `start`, `exit`, `message_start`, `message_end`, tool execution events, stderr, parse errors, and diagnostics. It drops successful `message_update` events by default because those events are full message-so-far snapshots and duplicate the final `message_end` content. If the process exits nonzero or emits a process error after an unfinalized update, the latest filtered update is flushed as a `buffered: true` diagnostic record. Set `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` in the parent environment before launching Pi to keep the full stream for debugging.

@@ -83,3 +83,25 @@ export const CompleteSubagentParams = Type.Object({
 	validation: Type.Optional(Type.Array(Type.String(), { description: "Validation performed, or empty if none" })),
 	notes: Type.Optional(Type.String({ description: "Optional concise notes" })),
 });
+
+/**
+ * Restricted exploratory delegation. Mirrors the single-mode shape of
+ * `subagent` but deliberately omits `tasks`, `chain`, `agentScope`,
+ * `sessionKey`, `forceSpawn`, and `resumeSession` — child dev agents should
+ * think "ask scout to map an unknown area", not "manage an agent fleet".
+ */
+export const DelegateSubagentParams = Type.Object({
+	agent: Type.String({
+		description:
+			"Name of the child agent to delegate to. Must be listed in the caller's allowed-subagents frontmatter; unknown or unlisted targets fail with an explicit inventory error.",
+	}),
+	task: Type.String({
+		description:
+			"Standalone task for the child. Include every fact and constraint the child needs — parent conversation context is not shared. Use only for context-protecting exploratory or reconnaissance work; read exact files yourself before editing.",
+	}),
+	cwd: Type.Optional(
+		Type.String({
+			description: "Optional working directory for the child process. Defaults to the caller's cwd.",
+		}),
+	),
+});

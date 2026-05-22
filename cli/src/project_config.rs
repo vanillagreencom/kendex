@@ -100,6 +100,10 @@ fn is_agent_frontmatter_override(value: &toml::Value) -> bool {
         "color",
         "model",
         "deny-tools",
+        "allowed-subagents",
+        "allowedSubagents",
+        "subagent-agents",
+        "subagent_agents",
         "tools",
         "pane",
         "background",
@@ -582,6 +586,7 @@ fn render_inline_table_fields(fields: &[(String, String)]) -> String {
         "model",
         "effort",
         "deny-tools",
+        "allowed-subagents",
         "pane",
         "background",
         "isolation",
@@ -1105,6 +1110,7 @@ fn pi_frontmatter_defaults(
     agent: &crate::agent::Agent,
     frontmatter: &crate::agent::AgentFrontmatterOverrides,
 ) -> Vec<(String, String)> {
+    let allowed_subagents = pi_default_allowed_subagents_with_override(agent, frontmatter);
     let mut fields = Vec::new();
     push_color_field(&mut fields, agent, frontmatter, false);
     fields.push((
@@ -1113,10 +1119,28 @@ fn pi_frontmatter_defaults(
     ));
     fields.push((
         "deny-tools".into(),
-        toml_inline_array(&pi_default_deny_tools(agent)),
+        toml_inline_array(&pi_default_deny_tools(agent, &allowed_subagents)),
+    ));
+    fields.push((
+        "allowed-subagents".into(),
+        toml_inline_array(&allowed_subagents),
     ));
     fields.push(("pane".into(), default_pi_pane(agent).to_string()));
     fields
+}
+
+fn pi_default_allowed_subagents_with_override(
+    agent: &crate::agent::Agent,
+    frontmatter: &crate::agent::AgentFrontmatterOverrides,
+) -> Vec<String> {
+    if let Some(list) = &frontmatter.allowed_subagents {
+        return list
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
+    }
+    crate::harness::pi::pi_default_allowed_subagents_for(agent)
 }
 
 fn pi_extra_default_deny_tools() -> Vec<String> {
@@ -1184,13 +1208,16 @@ fn opencode_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
     tools
 }
 
-fn pi_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
+fn pi_default_deny_tools(agent: &crate::agent::Agent, allowed_subagents: &[String]) -> Vec<String> {
     let mut tools = vec![
         "subagent".into(),
         "get_subagent_result".into(),
         "steer_subagent".into(),
         "stop_subagent".into(),
     ];
+    if allowed_subagents.is_empty() {
+        tools.push("delegate_subagent".into());
+    }
     if !agent.name.eq_ignore_ascii_case("planner") {
         tools.push("question".into());
     }
@@ -1896,9 +1923,11 @@ fn agent_frontmatter_heading() -> String {
     out.push_str("# vstack writes active defaults here for every installed agent.\n");
     out.push_str("# Edit fields, then run `vstack refresh` to regenerate harness files.\n");
     out.push_str("# Harness-specific entries apply only to that harness.\n");
-    out.push_str("# Fields: color, model, effort, deny-tools, pane, background,\n");
-    out.push_str("# isolation, memory, mode, sandbox-mode, model-reasoning-effort.\n");
+    out.push_str("# Fields: color, model, effort, deny-tools, allowed-subagents,\n");
+    out.push_str("# pane, background, isolation, memory, mode, sandbox-mode,\n");
+    out.push_str("# model-reasoning-effort.\n");
     out.push_str("# Claude background is seeded from Pi pane on first install (pane=true -> false, pane=false -> true), then preserved on refresh.\n");
+    out.push_str("# Pi allowed-subagents is the restricted delegation allowlist for delegate_subagent (engineer default ['scout']; set [] to disable).\n");
     out.push_str(
         "# OpenCode maps colors to hex. Effort values are written verbatim per harness.\n",
     );
@@ -2669,6 +2698,202 @@ planner = { background = true }
         assert!(
             planner_line.contains("background = true"),
             "planner background should stay true: {planner_line}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_agent_frontmatter_defaults_pi_engineer_seeds_allowed_subagents_scout() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_pi_allowed_engineer_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(&path, "[agent-frontmatter.pi]\n").unwrap();
+
+        let rust = crate::agent::Agent {
+            name: "rust".into(),
+            description: "Rust agent".into(),
+            model: "opus".into(),
+            role: crate::agent::AgentRole::Engineer,
+            color: None,
+            effort: Some("xhigh".into()),
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let mut harnesses = HashMap::new();
+        harnesses.insert("rust".into(), vec![crate::harness::Harness::Pi]);
+
+        write_agent_frontmatter_defaults(
+            &dir,
+            &[rust],
+            &harnesses,
+            &crate::mapping::MappingConfig::default(),
+        );
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        let rust_line = updated
+            .lines()
+            .find(|line| line.starts_with("rust =") && line.contains("allowed-subagents"))
+            .expect("rust pi frontmatter line missing allowed-subagents");
+        assert!(
+            rust_line.contains("allowed-subagents = [\"scout\"]"),
+            "{rust_line}"
+        );
+        assert!(
+            !rust_line.contains("delegate_subagent"),
+            "engineer with allowed-subagents must not deny delegate_subagent: {rust_line}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_agent_frontmatter_defaults_pi_engineer_explicit_empty_disables_default() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_pi_allowed_empty_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        // User explicitly opts out by setting allowed-subagents = [].
+        std::fs::write(
+            &path,
+            "[agent-frontmatter.pi]\nrust = { allowed-subagents = [] }\n",
+        )
+        .unwrap();
+
+        let rust = crate::agent::Agent {
+            name: "rust".into(),
+            description: "Rust agent".into(),
+            model: "opus".into(),
+            role: crate::agent::AgentRole::Engineer,
+            color: None,
+            effort: Some("xhigh".into()),
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let mut harnesses = HashMap::new();
+        harnesses.insert("rust".into(), vec![crate::harness::Harness::Pi]);
+
+        write_agent_frontmatter_defaults(
+            &dir,
+            &[rust],
+            &harnesses,
+            &crate::mapping::MappingConfig::default(),
+        );
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        let rust_line = updated
+            .lines()
+            .find(|line| line.starts_with("rust =") && line.contains("allowed-subagents"))
+            .expect("rust pi frontmatter line");
+        // User's empty list is preserved.
+        assert!(rust_line.contains("allowed-subagents = []"), "{rust_line}");
+        // And the seeded deny-tools must include delegate_subagent so the
+        // engineer with explicit empty allowlist cannot delegate.
+        assert!(
+            rust_line.contains("delegate_subagent"),
+            "engineer with empty allowed list must deny delegate_subagent: {rust_line}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_agent_frontmatter_defaults_pi_analyst_skips_allowed_subagents() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_pi_allowed_analyst_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(&path, "[agent-frontmatter.pi]\n").unwrap();
+
+        let scout = crate::agent::Agent {
+            name: "scout".into(),
+            description: "Scout agent".into(),
+            model: "haiku".into(),
+            role: crate::agent::AgentRole::Analyst,
+            color: None,
+            effort: Some("medium".into()),
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let mut harnesses = HashMap::new();
+        harnesses.insert("scout".into(), vec![crate::harness::Harness::Pi]);
+
+        write_agent_frontmatter_defaults(
+            &dir,
+            &[scout],
+            &harnesses,
+            &crate::mapping::MappingConfig::default(),
+        );
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        let scout_line = updated
+            .lines()
+            .find(|line| line.starts_with("scout ="))
+            .expect("scout pi frontmatter line");
+        // Analyst gets allowed-subagents = [] (engineer-only default), and
+        // delegate_subagent shows up in deny-tools.
+        assert!(
+            scout_line.contains("allowed-subagents = []"),
+            "scout should record empty allowed-subagents: {scout_line}"
+        );
+        assert!(
+            scout_line.contains("delegate_subagent"),
+            "non-engineer must deny delegate_subagent: {scout_line}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn project_config_parses_allowed_subagents_aliases() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_allowed_aliases_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("vstack.toml"),
+            r#"
+[agent-frontmatter.pi]
+rust = { allowed-subagents = ["scout", "researcher"] }
+iced = { allowedSubagents = ["scout"] }
+generalist = { subagent-agents = ["scout"] }
+tpm = { subagent_agents = ["scout"] }
+"#,
+        )
+        .unwrap();
+
+        let config = ProjectConfig::load(&dir);
+        let rust_pi = config.frontmatter_for("rust", "pi");
+        assert_eq!(
+            rust_pi.allowed_subagents.as_deref(),
+            Some(&["scout".to_string(), "researcher".to_string()][..])
+        );
+        let iced_pi = config.frontmatter_for("iced", "pi");
+        assert_eq!(
+            iced_pi.allowed_subagents.as_deref(),
+            Some(&["scout".to_string()][..])
+        );
+        let generalist_pi = config.frontmatter_for("generalist", "pi");
+        assert_eq!(
+            generalist_pi.allowed_subagents.as_deref(),
+            Some(&["scout".to_string()][..])
+        );
+        let tpm_pi = config.frontmatter_for("tpm", "pi");
+        assert_eq!(
+            tpm_pi.allowed_subagents.as_deref(),
+            Some(&["scout".to_string()][..])
         );
 
         let _ = std::fs::remove_dir_all(&dir);

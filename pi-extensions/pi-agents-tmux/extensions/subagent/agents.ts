@@ -21,6 +21,12 @@ export interface AgentConfig {
 	description: string;
 	color?: string;
 	denyTools?: string[];
+	/**
+	 * Allowlist for the restricted delegation tool. When non-empty the agent
+	 * can call `delegate_subagent` targeting any of the listed agents; when
+	 * empty/undefined the tool refuses and is denied at install time.
+	 */
+	allowedSubagents?: string[];
 	model?: string;
 	effort?: string;
 	pane: boolean;
@@ -55,6 +61,36 @@ function parseToolList(value: unknown): string[] | undefined {
 			.map((tool) => (typeof tool === "string" ? tool.trim() : ""))
 			.filter(Boolean);
 		return tools.length > 0 ? tools : undefined;
+	}
+	return undefined;
+}
+
+/**
+ * Parse the `allowed-subagents` frontmatter (and its aliases) into a
+ * normalized array. Unlike `parseToolList`, an explicit empty list is
+ * preserved as `[]` so callers can distinguish "user disabled delegation"
+ * from "user did not set this field". Returns undefined only when no key
+ * was present at all.
+ */
+function parseAllowedSubagents(frontmatter: Record<string, unknown>): string[] | undefined {
+	const keys = ["allowed-subagents", "allowedSubagents", "subagent-agents", "subagent_agents"];
+	for (const key of keys) {
+		if (!(key in frontmatter)) continue;
+		const value = frontmatter[key];
+		if (typeof value === "string") {
+			const names = value
+				.split(",")
+				.map((name) => name.trim())
+				.filter(Boolean);
+			return names;
+		}
+		if (Array.isArray(value)) {
+			const names = value
+				.map((name) => (typeof name === "string" ? name.trim() : ""))
+				.filter(Boolean);
+			return names;
+		}
+		return [];
 	}
 	return undefined;
 }
@@ -112,6 +148,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			description,
 			color: asString(frontmatter.color),
 			denyTools: parseToolList(frontmatter["deny-tools"] ?? frontmatter.denyTools ?? frontmatter.disallowedTools),
+			allowedSubagents: parseAllowedSubagents(frontmatter),
 			model,
 			// Reasoning effort lives under different keys depending on harness
 			// (Claude `effort`, OpenCode/Codex `model-reasoning-effort`). Both

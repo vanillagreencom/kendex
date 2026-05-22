@@ -32,7 +32,12 @@ is_source_catalog = true
 # planner = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "workspace-write" }
 #
 # [agent-frontmatter.pi]
-# planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent"], pane = true }
+# planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent"], allowed-subagents = ["scout"], pane = true }
+#
+# `allowed-subagents` is the Pi restricted-delegation allowlist for the
+# `delegate_subagent` tool. Engineer agents default to `["scout"]`; set
+# `allowed-subagents = []` to disable. Non-engineer roles default to empty.
+# Accepted aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`.
 #
 # The Pi `/agents` popup can edit model/deny-tools/color for vstack-managed project
 # agents and writes those changes into `[agent-frontmatter.pi]` automatically.

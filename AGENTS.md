@@ -143,7 +143,7 @@ rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "
 rust = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
-rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], pane = true }
+rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
 
 # Project instructions prepended to a skill's SKILL.md.
 [skill-instructions]
@@ -165,6 +165,7 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 - Prefer `deny-tools`. Claude Code writes it as native `disallowedTools`, seeds `background` from Pi `pane` on first install (`pane = true` → `background = false`, `pane = false` → `background = true`) and preserves later edits, and omits `isolation`/`memory` unless configured. Pi emits `deny-tools` for `pi-agents-tmux` (default = active parent tools minus denials); generated Pi reviewer agents additionally deny `tasks_write` so isolated review fan-outs do not mutate task panels. OpenCode defaults generated agents to `mode: subagent`, still exposes `mode` for rare primary-agent overrides, emits `permission: <tool>: deny` entries from the same deny list, maps `color` to hex values, and writes reasoning under `options.reasoningEffort` with summary/verbosity defaults.
 - Cursor and Codex don't use the same per-agent tool-deny frontmatter; Codex subagents use sandbox/approval configuration instead.
 - Per-harness frontmatter overrides live under `[agent-frontmatter.<harness>]`; use `deny-tools` rather than allowlists so harness defaults remain available while unsafe tools are blocked.
+- Pi `allowed-subagents` is the restricted delegation allowlist for `delegate_subagent`. Engineer agents default to `["scout"]` so dev agents can dispatch read-only reconnaissance into a fresh bg lane without gaining full `subagent` orchestration. Non-engineer roles default to empty (no delegation) and gain `delegate_subagent` in `deny-tools`. Set `allowed-subagents = []` in `[agent-frontmatter.pi]` to disable the engineer default. Accepted aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`. Pane targets are rejected at runtime by `delegate_subagent`.
 
 ## Rules
 

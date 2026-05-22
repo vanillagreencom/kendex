@@ -1,6 +1,8 @@
-## pi-agents-tmux — `subagent`, `steer_subagent`, `get_subagent_result`, `wait_for_subagent_idle`, `stop_subagent`
+## pi-agents-tmux — `subagent`, `delegate_subagent`, `steer_subagent`, `get_subagent_result`, `wait_for_subagent_idle`, `stop_subagent`
 
 `subagent` delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as resumable bg agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
+
+`delegate_subagent` is the restricted variant that child agents (engineer-role agents in particular) can call without gaining full orchestration controls. It only runs in child Pi processes (those launched with `PI_SUBAGENT_CHILD_AGENT` set), only accepts a single `{ agent, task, cwd? }`, and only targets agents listed in the caller's `allowed-subagents:` frontmatter. Engineer agents installed by vstack default to `allowed-subagents: scout` so they can dispatch read-only reconnaissance without absorbing the context. Pane targets, parallel/chain modes, session reuse, and the `agentScope` knob are all rejected.
 
 Use when: isolated context for a focused task; specialist review (security, performance, design); reconnaissance/planning/read-only investigation that can run in parallel; multiple independent investigations via `tasks: [...]` (parallel) or `chain: [...]` (sequential, with `{previous}` placeholder).
 
