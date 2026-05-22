@@ -53,6 +53,12 @@ export const fdWakeEventsLog = (stateDir: string, sessionKey: string) => join(st
 // reads it to surface which panes are bound vs. silently unbound — the
 // only way the operator can detect a bind-skip without tailing the log.
 export const fdSubscriberStatusFile = (stateDir: string, sessionKey: string) => join(stateDir, `fd-daemon-${sessionKey}.subscribers.json`);
+// vstack#213: daemon staleness metadata. Written at start, refreshed on
+// every reconcile pass that mutates the subscriber set. Consulted by
+// `flightdeck-session ensure_daemon_for_session` and by
+// `flightdeck-daemon health` so callers can decide stale-vs-fresh
+// without re-deriving from argv.
+export const fdMetaFile = (stateDir: string, sessionKey: string) => join(stateDir, `fd-daemon-${sessionKey}.meta.json`);
 
 export const fdAdapterFreshnessCacheFile = () => join(fdResolveStateDir(), "fd-adapter-freshness-cache.json");
 export const fdAdapterFreshnessCacheLock = () => join(fdResolveStateDir(), "fd-adapter-freshness-cache.lock");

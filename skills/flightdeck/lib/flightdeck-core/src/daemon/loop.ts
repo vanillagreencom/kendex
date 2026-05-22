@@ -29,11 +29,13 @@ import {
 	fdEventsFile,
 	fdHeartbeatFile,
 	fdLogFile,
+	fdMetaFile,
 	fdSessionLock,
 	fdSubscriberStatusFile,
 	fdWakePending,
 	fdWakeEventsLog,
 } from "../paths/daemon.ts";
+import { readDaemonMeta, writeDaemonMeta } from "./meta.ts";
 import {
 	ocSubscriberPidFile,
 } from "../paths/oc.ts";
@@ -154,6 +156,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const eventsFile = fdEventsFile(opts.stateDir, opts.sessionKey);
 	const busyFile = fdBusyFile(opts.stateDir, opts.sessionKey);
 	const heartbeatFile = fdHeartbeatFile(opts.stateDir, opts.sessionKey);
+	const metaFile = fdMetaFile(opts.stateDir, opts.sessionKey);
 	const wakeEventsLog = fdWakeEventsLog(opts.stateDir, opts.sessionKey);
 	const logFile = fdLogFile(opts.stateDir, opts.sessionKey);
 	const subscriberStatusFile = fdSubscriberStatusFile(opts.stateDir, opts.sessionKey);
@@ -508,7 +511,25 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			},
 			log: (tag, msg) => log(tag, `${msg} reason=${reason}`),
 		});
+		// vstack#213: keep the daemon meta's subscribed_pane_ids current
+		// after every reconcile pass that mutates the set. Silent on
+		// missing-meta-file (test daemons sometimes don't write one).
+		if (result.added.length > 0 || result.reaped.length > 0) {
+			refreshDaemonMetaSubscribers();
+		}
 		return void result;
+	}
+
+	function refreshDaemonMetaSubscribers(): void {
+		try {
+			const existing = readDaemonMeta(metaFile);
+			if (!existing) return;
+			writeDaemonMeta(metaFile, {
+				...existing,
+				subscribed_pane_ids: innerIds.slice(),
+				updated_at: new Date().toISOString(),
+			});
+		} catch (err) { warn("meta-refresh-failed", `${(err as Error)?.message ?? err}`); }
 	}
 
 	function subscriberLogFor(harness: string, paneId: string): string {

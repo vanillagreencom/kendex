@@ -23,7 +23,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { inprocFlockAvailable, tryAcquireLockFd } from "../shared/inproc-flock.ts";
 
-import { fdBusyFile, fdEventsFile, fdHeartbeatFile, fdLogFile, fdPidFile, fdPidLock, fdSessionLock, fdSubscriberStatusFile, fdWakeEventsLog, fdWakePending } from "../paths/daemon.ts";
+import { fdBusyFile, fdEventsFile, fdHeartbeatFile, fdLogFile, fdMetaFile, fdPidFile, fdPidLock, fdSessionLock, fdSubscriberStatusFile, fdWakeEventsLog, fdWakePending } from "../paths/daemon.ts";
 import { daemonLog, daemonWarn } from "./log.ts";
 import { gcOrphanState } from "./gc.ts";
 import { installShutdownHandlers, killAllSubscribers } from "./lifecycle.ts";
@@ -31,6 +31,10 @@ import { lockedCleanupState } from "../state/locking.ts";
 import { emitDaemonStarted, resolveDaemonActivityContext } from "./activity.ts";
 import { runLoop, type RunLoopOpts } from "./loop.ts";
 import { PaneCache, resolvePaneId } from "./pane-meta.ts";
+import { statePath as legacyStatePath } from "../state/master-state.ts";
+import { readActiveRun } from "../state/run-store.ts";
+import { resolveProjectRoot } from "../shared/project.ts";
+import { statInode, writeDaemonMeta, type DaemonMeta } from "./meta.ts";
 
 export interface StartOpts extends Omit<RunLoopOpts, "scriptPath" | "origArgs" | "fromHandoff"> {
 	foreground: boolean;
@@ -273,6 +277,46 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 	// Write own pid into the PID_FILE.
 	writeFileSync(pidFile, `${process.pid}\n`);
 
+	// vstack#213: write the daemon staleness metadata before running the
+	// loop. flightdeck-session ensure_daemon_for_session reads this file
+	// to decide whether a pre-existing daemon is aligned with the active
+	// run / live tracked entries. The loop refreshes
+	// `subscribed_pane_ids` on every reconcile pass that mutates the
+	// subscriber set.
+	const metaFile = fdMetaFile(opts.stateDir, opts.sessionKey);
+	{
+		const liveStatePath = legacyStatePath(opts.sessionName);
+		const activeRun = (() => {
+			try {
+				const projectRoot = resolveProjectRoot();
+				const result = readActiveRun(projectRoot);
+				if (result && result.active && result.active.tmux_session === opts.sessionName) {
+					return result.active.run_id;
+				}
+				return null;
+			} catch { return null; }
+		})();
+		const meta: DaemonMeta = {
+			active_run_id: activeRun,
+			inner_harnesses: opts.innerHarnesses.slice(),
+			inner_targets: opts.innerTargets.slice(),
+			master_harness: opts.masterHarness,
+			master_pane_id: opts.masterTarget,
+			pid: process.pid,
+			schema_version: 1,
+			session_id: opts.sessionId,
+			session_key: opts.sessionKey,
+			session_name: opts.sessionName,
+			started_at: new Date().toISOString(),
+			state_file_inode: statInode(liveStatePath),
+			state_file_path: liveStatePath,
+			subscribed_pane_ids: opts.innerTargets.slice(),
+			updated_at: new Date().toISOString(),
+		};
+		try { writeDaemonMeta(metaFile, meta); }
+		catch (err) { warn("meta-write-failed", `${(err as Error)?.message ?? err}`); }
+	}
+
 	// Install signal traps + EXIT cleanup BEFORE the lockedCleanupState
 	// so a signal during fresh-start wipe still cleans up subscriber
 	// state / temp files.
@@ -283,6 +327,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 		eventsFile,
 		wakeEventsLog,
 		sessionLock,
+		metaFile,
 		killSubscribers: () => killAllSubscribers({
 			stateDir: opts.stateDir,
 			sessionKey: opts.sessionKey,

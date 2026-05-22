@@ -37,6 +37,7 @@ import {
 	fdEventsFile,
 	fdHeartbeatFile,
 	fdLogFile,
+	fdMetaFile,
 	fdPidFile,
 	fdPidLock,
 	fdResolveStateDir,
@@ -48,6 +49,10 @@ import {
 } from "../paths/daemon.ts";
 import { lockedCleanupState, lockedEventsDrain } from "../state/locking.ts";
 import { FULL_REQUIRED, STATE_ONLY_REQUIRED, preflightDeps, onShutdown } from "../shared/preflight.ts";
+import { classifyStaleness, readDaemonMeta, statInode } from "../daemon/meta.ts";
+import { statePath as legacyStatePath } from "../state/master-state.ts";
+import { readActiveRun } from "../state/run-store.ts";
+import { resolveProjectRoot } from "../shared/project.ts";
 
 // Per-action required set so the hot path (ack / events) doesn't pay
 // a `command -v` fork per dep per invocation.
@@ -238,6 +243,7 @@ const busyFile = sessionKey ? fdBusyFile(stateDir, sessionKey) : "";
 const heartbeatFile = sessionKey ? fdHeartbeatFile(stateDir, sessionKey) : "";
 const wakeEventsLog = sessionKey ? fdWakeEventsLog(stateDir, sessionKey) : "";
 const subscriberStatusFile = sessionKey ? fdSubscriberStatusFile(stateDir, sessionKey) : "";
+const metaFile = sessionKey ? fdMetaFile(stateDir, sessionKey) : "";
 
 function pidAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
@@ -367,6 +373,36 @@ function cmdHealth(): void {
 	lines.push(`busy_lock=${bfState}${bfPid ? ` master_pid=${bfPid}` : ""}`);
 	lines.push(`events_queued=${eventsCount}`);
 	for (const line of subscriberLines) lines.push(line);
+	// vstack#213: surface daemon staleness so external tooling can decide
+	// whether to leave the daemon alone or arm a respawn.
+	const meta = metaFile ? readDaemonMeta(metaFile) : null;
+	if (meta) {
+		lines.push(`started_at=${meta.started_at || "(unknown)"}`);
+		lines.push(`master_pane_id=${meta.master_pane_id || "(unknown)"}`);
+		lines.push(`master_harness=${meta.master_harness || "(unknown)"}`);
+		lines.push(`subscribed_pane_ids=${meta.subscribed_pane_ids.join(",") || "(none)"}`);
+		lines.push(`state_file_path=${meta.state_file_path || "(unknown)"}`);
+		lines.push(`state_file_inode=${meta.state_file_inode ?? "(missing)"}`);
+		lines.push(`active_run_id=${meta.active_run_id ?? "(none)"}`);
+		// Compute staleness against current state file + active run.
+		let currentInode: string | null = null;
+		let currentRunId: string | null = null;
+		try { currentInode = statInode(meta.state_file_path); } catch { /* */ }
+		try {
+			const project = resolveProjectRoot();
+			const active = readActiveRun(project);
+			currentRunId = active?.active.run_id ?? null;
+		} catch { /* */ }
+		const staleness = classifyStaleness(meta, {
+			activeRunId: currentRunId,
+			livePaneIds: meta.subscribed_pane_ids, // health is a snapshot — don't drag tracked-entry scan into it
+			stateFileInode: currentInode,
+			stateFilePath: meta.state_file_path,
+		});
+		lines.push(`staleness=${staleness}`);
+	} else {
+		lines.push("staleness=meta-missing");
+	}
 	process.stdout.write(lines.join("\n") + "\n");
 }
 
@@ -482,12 +518,18 @@ function lockedStateCleanup(opts: { nonblock?: boolean } = {}): void {
 	});
 }
 
+function removeMetaFile(): void {
+	if (!metaFile) return;
+	try { unlinkSync(metaFile); } catch { /* missing OK */ }
+}
+
 function cmdStop(): void {
 	if (!pidFile || !existsSync(pidFile)) die(`no daemon for session=${sessionName}`, 1);
 	const pid = readPid(pidFile);
 	if (!pid) {
 		process.stderr.write(`stale PID file for session=${sessionName} (content=${pidFile ? readFileSync(pidFile, "utf8").trim() : ""}); removing without kill\n`);
 		try { unlinkSync(pidFile); } catch { /* */ }
+		removeMetaFile();
 		lockedStateCleanup();
 		process.exit(0);
 	}
@@ -506,6 +548,7 @@ function cmdStop(): void {
 	if (flockTest.status === 0) {
 		process.stderr.write(`stale PID file for session=${sessionName} (lock free); removing without kill\n`);
 		try { unlinkSync(pidFile); } catch { /* */ }
+		removeMetaFile();
 		lockedStateCleanup();
 		process.exit(0);
 	}
@@ -516,6 +559,7 @@ function cmdStop(): void {
 		if (pidAlive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* */ } }
 	}
 	try { unlinkSync(pidFile); } catch { /* */ }
+	removeMetaFile();
 	// Reap subscriber pid files scoped to this session_key. For each,
 	// kill the descendant tree first (bridge children, pipeline tails)
 	// before the subscriber itself — matches the bash kill_all_*

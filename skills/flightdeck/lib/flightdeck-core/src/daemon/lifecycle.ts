@@ -62,6 +62,11 @@ export interface ShutdownOpts {
 	eventsFile: string;
 	wakeEventsLog: string;
 	sessionLock: string;
+	// vstack#213: daemon staleness metadata. Removed on graceful exit so
+	// the next ensure_daemon_for_session does not mistake a dead daemon's
+	// argv for a live one. Preserved during max-lifetime handoff so the
+	// successor can refresh it in place.
+	metaFile?: string;
 	killSubscribers: () => void;
 	lockedCleanup: () => void;
 	log: (tag: string, msg: string) => void;
@@ -145,7 +150,7 @@ export function installShutdownHandlers(opts: ShutdownOpts): void {
 		}
 		opts.log("stop", `pid=${process.pid}`);
 		try { opts.killSubscribers(); } catch { /* */ }
-		for (const f of [opts.pidFile, opts.heartbeatFile]) {
+		for (const f of [opts.pidFile, opts.heartbeatFile, opts.metaFile]) {
 			if (!f) continue;
 			try { const { unlinkSync } = require("node:fs") as typeof import("node:fs"); unlinkSync(f); }
 			catch { /* missing OK */ }

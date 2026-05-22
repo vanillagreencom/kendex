@@ -99,6 +99,9 @@ Most sessions work with defaults. These are the knobs users most often change.
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default model for panes launched from `open-terminal` or `flightdeck-session --prompt`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default effort/thinking level for launched panes. |
 | `FLIGHTDECK_DISABLE_AUTO_RENAME` | `0` | Set `1` when tmux window titles spawned by `flightdeck-session start` should stay fixed instead of letting harnesses rename them. |
+| `FLIGHTDECK_ENSURE_DAEMON` | `1` | Set `0` to skip the post-registration daemon staleness check inside `flightdeck-session start` / `attach`. Use only when the supervising master loop owns daemon lifecycle. |
+| `FLIGHTDECK_DAEMON_BIN` | unset | Override the `flightdeck-daemon` trampoline used by `flightdeck-session ensure_daemon_for_session`. Useful for tests/shims. |
+| `FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP` | `0` | Set `1` to keep `flightdeck-state archive` from stopping the per-session daemon after rotating the legacy state file. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | `1` | Set `0` only when using local OpenCode shims that are not listed by `opencode models`. |
 | `FLIGHTDECK_STATE_DIR` | `tmp` | Change where Flightdeck writes session state inside the project. |
 | `FLIGHTDECK_DASHBOARD` | `1` | Set `0` to disable automatic dashboard launch. |

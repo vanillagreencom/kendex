@@ -5,7 +5,8 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { appendActivityEvent } from "../activity/append.ts";
 import { emitActivity } from "../activity/emit.ts";
 import { formatActivityJsonl, formatActivityLine, formatActivityMarkdown } from "../activity/format.ts";
@@ -144,6 +145,17 @@ switch (action) {
 		appendSessionCompletedForArchive();
 		terminateActiveRunForArchive();
 		const ap = archiveState(file);
+		// vstack#213: archive rotates the state file; the daemon's
+		// --inner argv was bound to pane ids inside it. Once archived,
+		// the daemon's subscriber set is by definition stale for the
+		// next start, and reconciliation can't recover because the
+		// inode/path the daemon snapshotted has changed. Stop the
+		// daemon as part of the archive op so the next
+		// flightdeck-session start arms a fresh daemon. Failure to stop
+		// is logged but doesn't fail the archive — the legacy state is
+		// already moved, and the next start path detects staleness via
+		// meta inode mismatch and respawns regardless.
+		stopDaemonForSessionBestEffort(session);
 		if (ap) process.stdout.write(`${ap}\n`);
 		break;
 	}
@@ -481,6 +493,40 @@ function validateDomainIssueIdOrDie(entry: TrackedEntry): string | undefined {
 	} catch (error) {
 		die(`Error: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+// vstack#213: stop the per-session flightdeck-daemon as part of the
+// archive op so the next session start arms a fresh subscriber set.
+// Failure to stop the daemon is non-fatal: we already wrote a fresh
+// state file with the new inode, and ensure_daemon_for_session will
+// observe the inode mismatch on the next start and respawn anyway.
+// Quiet when no daemon is running (the common case for sessions
+// terminated through `flightdeck-state terminate` without an active
+// daemon).
+function stopDaemonForSessionBestEffort(tmuxSession: string): void {
+	if (!tmuxSession) return;
+	if (process.env.FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP === "1") return;
+	const candidate = join(
+		dirname(fileURLToPath(import.meta.url)),
+		"flightdeck-daemon.ts",
+	);
+	const trampoline = join(
+		dirname(fileURLToPath(import.meta.url)),
+		"..", "..", "..", "scripts", "flightdeck-daemon",
+	);
+	const useTrampoline = existsSync(trampoline);
+	const cmd = useTrampoline ? trampoline : process.argv0;
+	const args = useTrampoline ? ["stop", "--session", tmuxSession] : [candidate, "stop", "--session", tmuxSession];
+	const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	if (r.status === 0) {
+		const out = (r.stdout ?? "").trim();
+		if (out) process.stderr.write(`flightdeck-state archive: ${out}\n`);
+		return;
+	}
+	// Exit 1 from flightdeck-daemon stop means "no daemon" — quiet.
+	if (r.status === 1) return;
+	process.stderr.write(`Warning: flightdeck-daemon stop exited ${r.status ?? "unknown"} during archive of ${tmuxSession}\n`);
+	if (r.stderr) process.stderr.write(r.stderr);
 }
 
 function terminateActiveRunForArchive(): void {

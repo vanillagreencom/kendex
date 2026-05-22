@@ -30,6 +30,9 @@ Master-loop env vars consulted by workflows:
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal` / `flightdeck-session --prompt` model override when the workflow/user does not pass `--model`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal` / `flightdeck-session --prompt` effort/thinking override when the workflow/user does not pass `--effort`. |
 | `FLIGHTDECK_DISABLE_AUTO_RENAME` | `0` | When `1`, `flightdeck-session start` disables tmux `automatic-rename` on the spawned window so the requested title stays sticky. Default off preserves harness-owned title updates. |
+| `FLIGHTDECK_ENSURE_DAEMON` | `1` | When `0`, `flightdeck-session start` / `attach` skips the post-registration daemon staleness check + respawn (vstack#213). Use only when the supervising master loop owns daemon lifecycle. |
+| `FLIGHTDECK_DAEMON_BIN` | unset | Override the `flightdeck-daemon` trampoline path used by `flightdeck-session ensure_daemon_for_session`. Mirrors `FLIGHTDECK_DASHBOARD_BIN`; primarily for tests/shims. |
+| `FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP` | `0` | When `1`, `flightdeck-state archive` skips its post-archive `flightdeck-daemon stop` call. The daemon's `--inner` argv still becomes stale after archive, so leave unset unless an operator wants manual daemon control. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | `1` | When launching OpenCode, require `opencode models` to list the selected provider/model before passing `--model`. Set `0` only for local smoke tests with custom shims. |
 | `FLIGHTDECK_PI_ACTIVITY_BROKER` | `1` | Set to `0` to ignore `pi-session-bridge` `vstack_activity` broker rows and rely on legacy Pi wake messages only. |
 | `FLIGHTDECK_ENTRY_ID` | auto | Exported by `flightdeck-session start` into spawned panes (and inherited by their tool wrappers). When set, `github.sh` / `linear.sh` / `label-*` activity rows auto-bind `refs.entry_id` so cross-source activity ties back to the tracked entry. Do not set by hand. |

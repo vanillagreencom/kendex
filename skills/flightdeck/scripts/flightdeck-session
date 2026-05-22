@@ -6,6 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PANE_REGISTRY="$SCRIPT_DIR/pane-registry"
+# vstack#213: allow tests / operators to swap in a custom daemon
+# binary (matches the existing FLIGHTDECK_DASHBOARD_BIN escape hatch).
+FLIGHTDECK_DAEMON_BIN="${FLIGHTDECK_DAEMON_BIN:-$SCRIPT_DIR/flightdeck-daemon}"
 
 # shellcheck source=lib/pane-env.sh
 source "$SCRIPT_DIR/lib/pane-env.sh"
@@ -752,6 +755,182 @@ ensure_active_run_for_session() {
   esac
 }
 
+# vstack#213: leave a daemon whose subscriber set matches the current
+# tracked entries before flightdeck-session returns.
+#
+# Invariant: callers must not rely on daemons started by earlier sessions.
+# Reconciliation is best-effort safety net, not the primary mechanism for
+# picking up new panes.
+#
+# Algorithm:
+#   1. If FLIGHTDECK_ENSURE_DAEMON=0 (test override) or
+#      FLIGHTDECK_SKIP_ACTIVE_RUN/FLIGHTDECK_NO_ACTIVE_RUN=1 (dashboard
+#      self-launch), skip.
+#   2. Compute the current alive inner panes + harnesses from the live
+#      tracked entries (excluding the dashboard's own entry so the daemon
+#      doesn't try to subscribe to it).
+#   3. Resolve master pane from $TMUX_PANE.
+#   4. If `flightdeck-daemon health` says fresh AND matches the active
+#      run, leave it alone.
+#   5. Otherwise stop + start with the live inner argv.
+#
+# All failures are non-fatal: the session-watch loop still respawns the
+# daemon if needed; ensure_daemon_for_session just removes the typical
+# 13-minute window of unbound subscribers seen in vstack#213.
+ensure_daemon_for_session() {
+  [[ "${FLIGHTDECK_ENSURE_DAEMON:-1}" == "1" ]] || return 0
+  [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" || "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]] && return 0
+  [[ -n "${TMUX:-}" ]] || return 0
+  local session_name master_pane inner_panes inner_harnesses
+  session_name=$(tmux display-message -p '#S' 2>/dev/null || true)
+  [[ -n "$session_name" ]] || return 0
+  master_pane="${TMUX_PANE:-}"
+  if [[ -z "$master_pane" ]]; then
+    master_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
+  fi
+  [[ -n "$master_pane" ]] || return 0
+
+  # Filter the flightdeck-dashboard self-entry out of the daemon's
+  # --inner list. The dashboard is a tracking shell, not a watch
+  # target.
+  local registry_json inner_pairs_json
+  if ! registry_json=$("$PANE_REGISTRY" list --format json 2>/dev/null); then
+    return 0
+  fi
+  inner_pairs_json=$(jq -c '
+    (if type == "array" then . else [] end)
+    | map(select((.id // "") != "flightdeck-dashboard"))
+    | map(select((.pane_id // "") | length > 0))
+    | map({pane_id: .pane_id, harness: (.harness // "")})
+  ' <<< "$registry_json" 2>/dev/null || echo "[]")
+  inner_panes=$(jq -r '. | map(.pane_id) | join(",")' <<< "$inner_pairs_json" 2>/dev/null || true)
+  inner_harnesses=$(jq -r '. | map(.harness) | join(",")' <<< "$inner_pairs_json" 2>/dev/null || true)
+  # No tracked entries beyond the dashboard → no daemon needed yet.
+  [[ -n "$inner_panes" ]] || return 0
+
+  # Filter to the panes that are actually alive in tmux right now so
+  # we don't pass dead ids to flightdeck-daemon start. Failing the
+  # tmux liveness query is non-fatal: leave the existing daemon (if
+  # any) alone and let the watch loop respawn later.
+  local alive_panes alive_tmp inner_panes_live="" inner_harnesses_live=""
+  alive_tmp=$(mktemp -t flightdeck-session-alive.XXXXXX)
+  if alive_panes=$(tmux list-panes -a -F '#{pane_id}' 2>"$alive_tmp"); then
+    local _pane _harness idx=0 panes_arr harnesses_arr
+    IFS=',' read -r -a panes_arr <<< "$inner_panes"
+    IFS=',' read -r -a harnesses_arr <<< "$inner_harnesses"
+    for _pane in "${panes_arr[@]}"; do
+      _harness="${harnesses_arr[$idx]:-}"
+      idx=$((idx + 1))
+      [[ -n "$_pane" ]] || continue
+      if grep -Fxq "$_pane" <<<"$alive_panes"; then
+        if [[ -z "$inner_panes_live" ]]; then
+          inner_panes_live="$_pane"
+          inner_harnesses_live="$_harness"
+        else
+          inner_panes_live+=",$_pane"
+          inner_harnesses_live+=",$_harness"
+        fi
+      fi
+    done
+  fi
+  rm -f "$alive_tmp"
+  [[ -n "$inner_panes_live" ]] || return 0
+
+  # Decide if the current daemon is fresh. Treat any non-fresh
+  # health output (including 'meta-missing' for daemons started
+  # before vstack#213) as stale + respawn.
+  local health_output health_status=0 staleness="" current_master=""
+  health_output=$("$FLIGHTDECK_DAEMON_BIN" health --session "$session_name" 2>/dev/null) || health_status=$?
+  if (( health_status == 0 )); then
+    staleness=$(awk -F= '/^staleness=/{print $2; exit}' <<<"$health_output")
+    current_master=$(awk -F= '/^master_pane_id=/{print $2; exit}' <<<"$health_output")
+    # If master pane diverged the daemon is wired to the wrong
+    # supervisor; treat as stale regardless of staleness field.
+    if [[ "$staleness" == "fresh" && -n "$current_master" && "$current_master" != "$master_pane" ]]; then
+      staleness="stale-master"
+    fi
+    # Also stale if the current subscribed_pane_ids miss any live
+    # tracked pane. Health reports what the daemon recorded, not what
+    # is currently live, so cross-check here.
+    if [[ "$staleness" == "fresh" ]]; then
+      local current_subs missing_pane=0 _live_pane
+      current_subs=$(awk -F= '/^subscribed_pane_ids=/{print $2; exit}' <<<"$health_output")
+      IFS=',' read -r -a _live_arr <<< "$inner_panes_live"
+      for _live_pane in "${_live_arr[@]}"; do
+        [[ -n "$_live_pane" ]] || continue
+        if ! grep -Fwq "$_live_pane" <<<"$current_subs"; then
+          missing_pane=1; break
+        fi
+      done
+      (( missing_pane == 0 )) || staleness="stale-inner"
+    fi
+  fi
+
+  # Stop the daemon when it exists and is stale; spawn a fresh one
+  # when missing or stopped.
+  local need_respawn=0
+  if (( health_status == 0 )); then
+    if [[ "$staleness" != "fresh" ]]; then
+      need_respawn=1
+      "$FLIGHTDECK_DAEMON_BIN" stop --session "$session_name" >/dev/null 2>&1 || true
+    fi
+  else
+    need_respawn=1
+  fi
+
+  (( need_respawn == 1 )) || return 0
+
+  local master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
+  if [[ -z "$master_harness" ]]; then
+    # Default to the harness the supervisor itself is running under so
+    # daemon hash/stability tuning matches. flightdeck-daemon already
+    # auto-detects pi via pi-bridge cwd-match for null masters, so
+    # leaving this empty is safe for non-pi sessions too.
+    if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
+      master_harness="$FLIGHTDECK_OWNER_HARNESS"
+    elif [[ -n "${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+      master_harness="claude"
+    elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_APP_INFO:-}" ]]; then
+      master_harness="opencode"
+    elif [[ -n "${CODEX_SESSION_ID:-}${CODEX_SANDBOX:-}" ]]; then
+      master_harness="codex"
+    fi
+  fi
+
+  local start_args=(start --session "$session_name" --master "$master_pane" --inner "$inner_panes_live" --inner-harnesses "$inner_harnesses_live")
+  [[ -n "$master_harness" ]] && start_args+=(--master-harness "$master_harness")
+  local start_err start_rc=0
+  start_err=$(mktemp -t flightdeck-daemon-start.XXXXXX)
+  "$FLIGHTDECK_DAEMON_BIN" "${start_args[@]}" >/dev/null 2>"$start_err" || start_rc=$?
+  if (( start_rc == 4 )); then
+    # Stale master target; re-resolve from TMUX_PANE and retry once.
+    master_pane="${TMUX_PANE:-}"
+    if [[ -z "$master_pane" ]]; then
+      master_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
+    fi
+    if [[ -n "$master_pane" ]]; then
+      start_args=(start --session "$session_name" --master "$master_pane" --inner "$inner_panes_live" --inner-harnesses "$inner_harnesses_live")
+      [[ -n "$master_harness" ]] && start_args+=(--master-harness "$master_harness")
+      start_rc=0
+      "$FLIGHTDECK_DAEMON_BIN" "${start_args[@]}" >/dev/null 2>"$start_err" || start_rc=$?
+    fi
+  fi
+  if (( start_rc == 1 )); then
+    # Possible lock-race with a concurrent supervisor; treat the
+    # daemon as armed if it now reports running.
+    if "$FLIGHTDECK_DAEMON_BIN" status --session "$session_name" >/dev/null 2>&1; then
+      printf 'flightdeck-session: ensure_daemon_for_session: daemon-respawn-raced session=%s\n' "$session_name" >&2
+      start_rc=0
+    fi
+  fi
+  if (( start_rc != 0 )); then
+    printf 'Warning: flightdeck-session ensure_daemon_for_session: flightdeck-daemon start rc=%s session=%s; watch loop will respawn\n' "$start_rc" "$session_name" >&2
+    if [[ -s "$start_err" ]]; then cat "$start_err" >&2; fi
+  fi
+  rm -f "$start_err"
+  return 0
+}
+
 
 cmd_start() {
   require_tmux
@@ -920,6 +1099,7 @@ cmd_start() {
   # attribution should bind to the caller-selected working directory.
   register_entry "$session_id" "$title" "$kind" "$abs_cwd" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "$launch_cmd" "$worktree" "$pr" "$branch" "$tracker" "$github_url"
   active_run_disarm_rollback
+  ensure_daemon_for_session
   printf 'flightdeck-session: started %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
@@ -983,6 +1163,7 @@ cmd_attach() {
   register_entry "$session_id" "$title" "$kind" "$CAPTURE_PANE_CWD" "$CAPTURE_WINDOW_INDEX" "$harness" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET" "$CAPTURE_WINDOW_ID" "" "$worktree" "" "$branch" "$tracker" "$github_url"
   active_run_disarm_rollback
   ensure_dashboard_launched "$session_id"
+  ensure_daemon_for_session
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
