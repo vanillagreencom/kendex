@@ -992,15 +992,28 @@ fi
 		// fresh run.
 		run(repo, ["init"]);
 		const liveActivity = activeActivityPath(repo);
-		// Make the activity path a non-empty unwritable file so the
-		// append fails but the storage assertions pass during statePath
-		// resolution.
+		// Make the activity path a non-empty file that fails closed before
+		// the append: strict 0600 enforcement (vstack#227) rejects 0o400
+		// during storage assertions in statePath resolution, which still
+		// causes archive to abort BEFORE the active pointer is cleared.
+		// We accept either error path because both leave the active
+		// pointer intact, which is the behavior under test.
 		rmSync(liveActivity, { force: true });
 		writeFileSync(liveActivity, "{\"id\": \"prior\"}\n", { mode: 0o400 });
 
 		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined });
 		expect(archived.status).not.toBe(0);
-		expect(archived.stderr).toContain("failed to append session.completed before archive");
+		// Either the append-side failure (legacy path) or the strict-mode
+		// assertion (vstack#227) is acceptable; both surface that the live
+		// activity is unsafe to use and preserve the active pointer.
+		expect(
+			archived.stderr.includes("failed to append session.completed before archive")
+			|| /invalid run activity .*: mode=400 expected 600/.test(archived.stderr),
+		).toBe(true);
+		// Restore writable perms so downstream statePath resolution (used
+		// by `run active`) succeeds; we have already verified archive
+		// aborted under the 0o400 condition above.
+		chmodSync(liveActivity, 0o600);
 		const stillActive = JSON.parse(run(repo, ["run", "active", "--project-root", repo]).stdout);
 		expect(stillActive).not.toBeNull();
 	});
