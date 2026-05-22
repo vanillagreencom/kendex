@@ -25,7 +25,30 @@ fi
 
 # Check for Rust files
 if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
-  OUTPUT=$(cargo clippy --workspace --all-targets -- -D warnings 2>&1 || true)
+  # Locate Cargo.toml so the hook works when the manifest is nested
+  # (vstack's own `cli/Cargo.toml` is the canonical case) and when the
+  # hook is invoked from a subdirectory. Earlier versions ran `cargo
+  # clippy` from cwd unconditionally and surfaced "could not find
+  # Cargo.toml" as a clippy error.
+  MANIFEST_ARGS=()
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$REPO_ROOT" ] && [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
+    MANIFEST=$(echo "$ALL_CHANGED" | grep -E '\.rs$' | while IFS= read -r path; do
+      dir=$(dirname "$path")
+      while [ -n "$dir" ] && [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+        if [ -f "$REPO_ROOT/$dir/Cargo.toml" ]; then
+          echo "$REPO_ROOT/$dir/Cargo.toml"
+          break
+        fi
+        dir=$(dirname "$dir")
+      done
+    done | head -1)
+    if [ -n "$MANIFEST" ]; then
+      MANIFEST_ARGS=(--manifest-path "$MANIFEST")
+    fi
+  fi
+
+  OUTPUT=$(cargo clippy "${MANIFEST_ARGS[@]}" --workspace --all-targets -- -D warnings 2>&1 || true)
   # grep no-match exits 1 — swallow under pipefail so an empty result is success.
   ISSUES=$(echo "$OUTPUT" | grep -E '^error' | head -15 || true)
 

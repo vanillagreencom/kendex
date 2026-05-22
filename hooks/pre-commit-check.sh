@@ -26,16 +26,18 @@ fi
 # Check for Rust files
 if echo "$STAGED" | grep -qE '\.rs$'; then
   # Locate Cargo.toml so the hook works in repos that nest the manifest
-  # (vstack's own `cli/Cargo.toml` is the canonical example). Earlier
-  # versions ran `cargo fmt --check` from the repo root unconditionally
-  # and misreported "could not find Cargo.toml" as a fmt failure.
+  # (vstack's own `cli/Cargo.toml` is the canonical example) and when
+  # the hook is invoked from a subdirectory. Earlier versions ran
+  # `cargo fmt --check` from cwd unconditionally and misreported "could
+  # not find Cargo.toml" as a fmt failure.
   MANIFEST_ARGS=()
-  if [ ! -f Cargo.toml ]; then
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$REPO_ROOT" ] && [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
     MANIFEST=$(echo "$STAGED" | grep -E '\.rs$' | while IFS= read -r path; do
       dir=$(dirname "$path")
       while [ -n "$dir" ] && [ "$dir" != "." ] && [ "$dir" != "/" ]; do
-        if [ -f "$dir/Cargo.toml" ]; then
-          echo "$dir/Cargo.toml"
+        if [ -f "$REPO_ROOT/$dir/Cargo.toml" ]; then
+          echo "$REPO_ROOT/$dir/Cargo.toml"
           break
         fi
         dir=$(dirname "$dir")
