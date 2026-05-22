@@ -1,5 +1,8 @@
 import { readTrackedEntries } from "../state/tracked-entry.ts";
+import { readActiveRun } from "../state/run-store.ts";
+import { resolveProjectRoot } from "../shared/project.ts";
 import type { FlightdeckStateLike, TrackedEntry } from "../state/types.ts";
+import { dirname, join } from "node:path";
 
 export interface TerminationPartition {
 	entryCount: number;
@@ -126,9 +129,17 @@ function stringField(value: unknown, fallback = "—"): string {
 
 function summaryPath(opts: TerminationSummaryOptions): string {
 	if (opts.summaryPath) return opts.summaryPath;
+	// vstack#227: default summary path is the active run's summary.md.
+	// Fallback to the placeholder when no active run is resolvable
+	// (callers without a project root context).
+	try {
+		const root = resolveProjectRoot();
+		const active = readActiveRun(root);
+		if (active) return join(dirname(active.active.state_path), "summary.md");
+	} catch { /* fall through */ }
 	const session = opts.session ?? "SESSION";
 	const ts = (opts.timestamp ?? "TS").replace(/:/g, "");
-	return `tmp/flightdeck-summary-${session}-${ts}.md`;
+	return `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/summary.md (session=${session}, ts=${ts})`;
 }
 
 export function renderEmptyTerminationSummary(opts: TerminationSummaryOptions = {}): string {

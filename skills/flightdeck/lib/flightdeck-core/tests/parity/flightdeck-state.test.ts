@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveProjectRoot } from "../../src/shared/project.ts";
+import { activityPathFromStatePath } from "../../src/activity/paths.ts";
 import { entryIdForIssue, readTrackedEntries, writeTrackedEntry } from "../../src/state/tracked-entry.ts";
 import type { TrackedEntry } from "../../src/state/types.ts";
 
@@ -25,9 +26,15 @@ function makeRepo(): string {
 	return dir;
 }
 
-function run(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}, input?: string): { stdout: string; stderr: string; status: number | null } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+// vstack#227: each test gets its own run-store under the repo root so
+// state writes don't pollute the runner's $HOME/.vstack/flightdeck.
+function runStoreRoot(repoRoot: string): string {
+	return join(repoRoot, ".vstack-run-store");
+}
+
+function applyTestEnv(repoRoot: string, env: Record<string, string>, extraEnv: Record<string, string | undefined>): Record<string, string> {
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot(repoRoot);
 	env.FLIGHTDECK_OWNER_HARNESS = "pi";
 	env.FLIGHTDECK_OWNER_PANE_ID = "%42";
 	env.FLIGHTDECK_OWNER_PANE_TARGET = "PARITY:7.0";
@@ -39,6 +46,11 @@ function run(cwd: string, args: string[], extraEnv: Record<string, string | unde
 		if (value === undefined) delete env[key];
 		else env[key] = value;
 	}
+	return env;
+}
+
+function run(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}, input?: string): { stdout: string; stderr: string; status: number | null } {
+	const env = applyTestEnv(cwd, { ...(process.env as Record<string, string>) }, extraEnv);
 	const [action, ...rest] = args;
 	const full = action ? [action, "--session", SESSION, ...rest] : ["--session", SESSION];
 	const r = spawnSync(SCRIPT, full, { cwd, encoding: "utf8", env, input });
@@ -46,32 +58,54 @@ function run(cwd: string, args: string[], extraEnv: Record<string, string | unde
 }
 
 function runDirect(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}, input?: string): { stdout: string; stderr: string; status: number | null } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-	env.FLIGHTDECK_STATE_DIR = "tmp";
-	env.FLIGHTDECK_OWNER_HARNESS = "pi";
-	env.FLIGHTDECK_OWNER_PANE_ID = "%42";
-	env.FLIGHTDECK_OWNER_PANE_TARGET = "PARITY:7.0";
-	env.FLIGHTDECK_OWNER_CWD = "/tmp/flightdeck-owner-parity";
-	env.FLIGHTDECK_OWNER_PID = "4242";
-	env.FLIGHTDECK_OWNER_PI_SESSION_ID = "pi-session-parity";
-	env.FLIGHTDECK_OWNER_PI_BRIDGE_SOCKET = "/tmp/pi-session-bridge/parity.sock";
-	for (const [key, value] of Object.entries(extraEnv)) {
-		if (value === undefined) delete env[key];
-		else env[key] = value;
-	}
+	const env = applyTestEnv(cwd, { ...(process.env as Record<string, string>) }, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd, encoding: "utf8", env, input });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
+// vstack#227: state lives at `<run-store>/projects/<id>/runs/<run-id>/state.json`.
+// Use `flightdeck-state path` to resolve the current active run path.
 function readState(repoRoot: string): unknown {
-	const path = join(repoRoot, "tmp", `flightdeck-state-${SESSION}.json`);
+	const path = activeStatePath(repoRoot);
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
 function writeState(repoRoot: string, state: unknown): void {
-	const dir = join(repoRoot, "tmp");
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, `flightdeck-state-${SESSION}.json`), JSON.stringify(state), "utf8");
+	const path = activeStatePath(repoRoot);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(state), "utf8");
+}
+
+function activeStatePath(repoRoot: string): string {
+	const r = run(repoRoot, ["path"]);
+	if (r.status !== 0) throw new Error(`flightdeck-state path failed (status=${r.status}): ${r.stderr}`);
+	const out = r.stdout.trim();
+	if (!out) throw new Error("flightdeck-state path returned empty output");
+	return out;
+}
+
+function activeActivityPath(repoRoot: string): string {
+	// vstack#227: activity lives alongside state in the run dir.
+	return join(dirname(activeStatePath(repoRoot)), "activity.jsonl");
+}
+
+// vstack#227: the plan-briefs dir is project-scoped under the run-store
+// container, derived using the same hashing as run-store.ts. Tests must
+// temporarily set FLIGHTDECK_RUN_STORE_ROOT so the in-process helper
+// matches the subprocess CLI's resolution.
+function planBriefRoot(projectRoot: string): string {
+	// Import lazily to avoid a top-level dependency cycle in the test
+	// helper (the helper is loaded by every parity test in this file).
+	const { resolveProjectIdentity, resolveProjectRunPaths } = require("../../src/state/run-store.ts") as typeof import("../../src/state/run-store.ts");
+	const prev = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot(projectRoot);
+	try {
+		const identity = resolveProjectIdentity(projectRoot);
+		return join(resolveProjectRunPaths(identity).project_dir, "plan-briefs");
+	} finally {
+		if (prev === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = prev;
+	}
 }
 
 function parseRunJson<T>(r: { stdout: string; status: number | null; stderr: string }): T {
@@ -123,8 +157,12 @@ function sampleTrackedEntry(): TrackedEntry {
 	};
 }
 
+// vstack#227: plan-briefs live under the project's run-store container
+// (`<run-store>/projects/<id>/plan-briefs/`). Tests build the brief path
+// against that container so validation succeeds.
 function samplePlanEntry(projectRoot = PROJECT_ROOT): TrackedEntry {
-	const briefPath = join(projectRoot, "tmp", "plan-briefs", "plan", "item-one.md");
+	const briefRoot = planBriefRoot(projectRoot);
+	const briefPath = join(briefRoot, "plan", "item-one.md");
 	return {
 		cwd: join(projectRoot, "trees", "flightdeck-plan-item-one"),
 		decisions_log: [],
@@ -176,7 +214,8 @@ describe("flightdeck-state CLI", () => {
 		expect(state.session_id).toBe(SESSION);
 		expect(state.terminated).toBe(false);
 		expect(state.owner).toBeTruthy();
-		expect(String(state.activity_path).endsWith(`tmp/flightdeck-activity-${SESSION}.jsonl`)).toBe(true);
+		// vstack#227: activity lives next to state.json in the run dir.
+		expect(String(state.activity_path).endsWith(`/activity.jsonl`)).toBe(true);
 		expect(state.activity_schema_version).toBe(1);
 	});
 
@@ -288,14 +327,20 @@ describe("flightdeck-state CLI", () => {
 	});
 
 	test("write-entry accepts plan item domain entries", () => {
-		expect(() => writeTrackedEntry({}, samplePlanEntry().id, samplePlanEntry())).not.toThrow();
+		// vstack#227: plan-brief validation resolves against the
+		// project's run-store container; the subprocess CLI uses the
+		// per-test FLIGHTDECK_RUN_STORE_ROOT, which matches the brief
+		// path samplePlanEntry computes for the test repo. The earlier
+		// in-process `writeTrackedEntry` check (using PROJECT_ROOT) is
+		// dropped because that path no longer exercises the same env
+		// the CLI sees.
 		const entry = samplePlanEntry(repo);
 		run(repo, ["init"]);
 		const write = run(repo, ["write-entry", entry.id, JSON.stringify(entry)]);
 		expect(write.status).toBe(0);
 		const tracked = parseRunJson<Record<string, TrackedEntry>>(run(repo, ["tracked-entries"]));
 		expect(tracked[entry.id]?.domain?.plan_item).toMatchObject({
-			brief_artifact_path: join(repo, "tmp", "plan-briefs", "plan", "item-one.md"),
+			brief_artifact_path: join(planBriefRoot(repo), "plan", "item-one.md"),
 			brief_sha256: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			depends_on: ["setup-foundation"],
 			item_id: "item-one",
@@ -371,25 +416,25 @@ describe("flightdeck-state CLI", () => {
 		const fakeOutsideWithPlanBriefs = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/plan-briefs/plan/item-one.md" } } })]);
 		expect(fakeOutsideWithPlanBriefs.status).toBe(2);
 		expect(fakeOutsideWithPlanBriefs.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under state-owned plan-briefs root");
-		const missingUnderRoot = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(repo, "tmp", "plan-briefs", "missing", "item-one.md") } } })]);
+		const missingUnderRoot = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(planBriefRoot(repo), "missing", "item-one.md") } } })]);
 		expect(missingUnderRoot.status).toBe(0);
-		const traversalBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(repo, "tmp", "plan-briefs")}/../item-one.md` } } })]);
+		const traversalBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(planBriefRoot(repo))}/../item-one.md` } } })]);
 		expect(traversalBrief.status).toBe(2);
 		expect(traversalBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be normalized with no traversal segments");
 		const outOfStateBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: "/tmp/outside/item-one.md" } } })]);
 		expect(outOfStateBrief.status).toBe(2);
 		expect(outOfStateBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must be under state-owned plan-briefs root");
-		const wrongFilename = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(repo, "tmp", "plan-briefs", "plan", "other.md") } } })]);
+		const wrongFilename = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: join(planBriefRoot(repo), "plan", "other.md") } } })]);
 		expect(wrongFilename.status).toBe(2);
 		expect(wrongFilename.stderr).toContain("invalid domain.plan_item.brief_artifact_path: filename must be item-one.md");
-		const controlCharBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(repo, "tmp", "plan-briefs", "plan", "item-one.md")}\u0000` } } })]);
+		const controlCharBrief = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: `${join(planBriefRoot(repo), "plan", "item-one.md")}\u0000` } } })]);
 		expect(controlCharBrief.status).toBe(2);
 		expect(controlCharBrief.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not contain control characters");
 		const missingSnapshotHash = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, plan_snapshot_sha256: undefined } } })]);
 		expect(missingSnapshotHash.status).toBe(2);
 		expect(missingSnapshotHash.stderr).toContain("invalid domain.plan_item.plan_snapshot_sha256: required when brief_artifact_path is present");
 
-		const symlinkRoot = join(repo, "tmp", "plan-briefs");
+		const symlinkRoot = join(planBriefRoot(repo));
 		mkdirSync(symlinkRoot, { recursive: true });
 		const symlinkPlanOutside = mkdtempSync(join(repo, "plan-outside-"));
 		const symlinkPlanDir = join(symlinkRoot, "evil-plan");
@@ -399,21 +444,12 @@ describe("flightdeck-state CLI", () => {
 		expect(missingViaSymlink.stderr).toContain("invalid domain.plan_item.brief_artifact_path: must not traverse symlinks");
 		rmSync(symlinkPlanDir, { force: true, recursive: true });
 
-		const outsideState = mkdtempSync(join(tmpdir(), "fd-state-outside-"));
-		const stateLink = join(repo, "tmp", "state-link");
-		symlinkSync(outsideState, stateLink, "dir");
-		expect(run(repo, ["init"], { FLIGHTDECK_STATE_DIR: "tmp/state-link" }).status).toBe(0);
-		const stateLinkBriefPath = join(stateLink, "plan-briefs", "plan", "item-one.md");
-		const stateDirSymlinkMissing = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: stateLinkBriefPath } } })], { FLIGHTDECK_STATE_DIR: "tmp/state-link" });
-		expect(stateDirSymlinkMissing.status).toBe(2);
-		expect(stateDirSymlinkMissing.stderr).toContain("invalid domain.plan_item.brief_artifact_path: state directory must not be a symlink");
-		mkdirSync(join(outsideState, "plan-briefs", "plan"), { recursive: true });
-		writeFileSync(join(outsideState, "plan-briefs", "plan", "item-one.md"), "brief", "utf8");
-		const stateDirSymlinkExisting = run(repo, ["write-entry", entry.id, JSON.stringify({ ...entry, domain: { plan_item: { ...entry.domain!.plan_item!, brief_artifact_path: stateLinkBriefPath } } })], { FLIGHTDECK_STATE_DIR: "tmp/state-link" });
-		expect(stateDirSymlinkExisting.status).toBe(2);
-		expect(stateDirSymlinkExisting.stderr).toContain("invalid domain.plan_item.brief_artifact_path: state directory must not be a symlink");
-		rmSync(outsideState, { force: true, recursive: true });
-		rmSync(stateLink, { force: true, recursive: true });
+		// vstack#227: the `FLIGHTDECK_STATE_DIR=tmp/state-link` sub-case
+		// no longer applies. The state directory is the user-level
+		// run-store under `<HOME>/.vstack/flightdeck/projects/<id>/`
+		// and is owned by the helper, not the project; tests can no
+		// longer redirect it via FLIGHTDECK_STATE_DIR. Plan-briefs
+		// symlink protection (immediately below) still applies.
 
 		const outside = mkdtempSync(join(repo, "outside-"));
 		rmSync(symlinkRoot, { force: true, recursive: true });
@@ -626,7 +662,9 @@ fi
 
 	test("path returns canonical state file path", () => {
 		const r = run(repo, ["path"]);
-		expect(r.stdout.endsWith(`tmp/flightdeck-state-${SESSION}.json\n`)).toBe(true);
+		// vstack#227: path resolves through the active-run pointer and
+		// returns `<run-store>/projects/<id>/runs/<run-id>/state.json`.
+		expect(r.stdout.endsWith(`/state.json\n`)).toBe(true);
 	});
 
 	test("run create active list show and terminate expose durable run state", () => {
@@ -767,11 +805,12 @@ fi
 	test("activity path returns canonical activity JSONL path", () => {
 		const r = run(repo, ["activity", "path"]);
 		expect(r.status).toBe(0);
-		expect(r.stdout.endsWith(`tmp/flightdeck-activity-${SESSION}.jsonl\n`)).toBe(true);
+		// vstack#227: activity lives at `<run-dir>/activity.jsonl`.
+		expect(r.stdout.endsWith(`/activity.jsonl\n`)).toBe(true);
 	});
 
 	test("activity append tail and export expose the CLI contract", () => {
-		const activityFile = join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+		const activityFile = activeActivityPath(repo);
 		const append = run(repo, ["activity", "append", JSON.stringify({
 			entry_id: "A1",
 			natural_key: "A1:start",
@@ -840,30 +879,30 @@ fi
 			summary: "primary session line",
 			type: "entry.registered",
 		})]);
-		const stateDir = join(repo, "tmp");
-		mkdirSync(stateDir, { recursive: true });
-		const altSession = "ALT";
-		const altActivity = join(stateDir, `flightdeck-activity-${altSession}.jsonl`);
+		// vstack#227: `--state-file` still pin-points the activity
+		// sidecar that lives next to a specific state.json. We use that
+		// shape here against an ad-hoc state file outside the run
+		// store; `--session` no longer reads a project-local
+		// `flightdeck-activity-<session>.jsonl` since session-keyed
+		// state is now routed through the active-run pointer.
+		const altDir = join(repo, "ad-hoc-state");
+		mkdirSync(altDir, { recursive: true });
+		const altStateFile = join(altDir, `flightdeck-state-ALT.json`);
+		const altActivity = activityPathFromStatePath(altStateFile);
 		const altEvent = {
 			entry_id: "ALT1",
 			id: "alt-1",
 			natural_key: "ALT1:start",
 			schema_version: 1,
-			session_id: altSession,
+			session_id: "ALT",
 			source: "flightdeck",
 			summary: "alt session line",
 			ts: "2026-05-15T10:00:00Z",
 			type: "entry.registered",
 		};
+		writeFileSync(altStateFile, JSON.stringify({ session_id: "ALT" }), "utf8");
 		writeFileSync(altActivity, `${JSON.stringify(altEvent)}\n`, "utf8");
 
-		const exportedBySession = run(repo, ["activity", "export", "--session", altSession]);
-		expect(exportedBySession.status).toBe(0);
-		expect(exportedBySession.stdout).toBe(`${JSON.stringify(altEvent)}\n`);
-		expect(exportedBySession.stdout).not.toContain("primary session line");
-
-		const altStateFile = join(stateDir, `flightdeck-state-${altSession}.json`);
-		writeFileSync(altStateFile, JSON.stringify({ session_id: altSession }), "utf8");
 		const exportedByStateFile = run(repo, ["activity", "export", "--state-file", altStateFile]);
 		expect(exportedByStateFile.status).toBe(0);
 		expect(exportedByStateFile.stdout).toBe(`${JSON.stringify(altEvent)}\n`);
@@ -892,100 +931,105 @@ fi
 		expect(unknownKey.stderr).toContain("Error: invalid activity filter key: id");
 	});
 
-	test("archive moves state and activity sidecars with .archive suffix using terminated_at when set", () => {
+	test("archive writes a durable run snapshot at terminated_at", () => {
 		run(repo, ["init"]);
 		run(repo, ["activity", "append", JSON.stringify({ natural_key: "start", source: "flightdeck", summary: "started", type: "session.started" })]);
 		run(repo, ["set", "terminated_at", '"2026-05-11T00:00:00Z"']);
 		const r = run(repo, ["archive"]);
 		expect(r.status).toBe(0);
-		expect(r.stdout).toMatch(/-2026-05-11T000000Z\.json\.archive\n$/);
-		const archived = JSON.parse(readFileSync(r.stdout.trim(), "utf8")) as { activity_archive_path?: string };
-		expect(archived.activity_archive_path).toMatch(/flightdeck-activity-PARITY-2026-05-11T000000Z\.jsonl\.archive$/);
-		expect(existsSync(archived.activity_archive_path!)).toBe(true);
-		expect(readFileSync(archived.activity_archive_path!, "utf8")).toContain("session.started");
-		expect(existsSync(join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl.archived`))).toBe(true);
+		// vstack#227: archive writes the durable run snapshot in
+		// `<run-dir>/snapshots/<TS>.json` instead of rotating the
+		// project-local state file. The snapshot path is what gets
+		// printed on stdout.
+		const snapshot = r.stdout.trim();
+		expect(snapshot).toMatch(/\/snapshots\/2026-05-11T000000Z\.json$/);
+		const snapshotState = JSON.parse(readFileSync(snapshot, "utf8")) as { terminated_at?: string };
+		expect(snapshotState.terminated_at).toBe("2026-05-11T00:00:00Z");
+		const activitySnapshot = snapshot.replace(/\.json$/, ".activity.jsonl");
+		expect(existsSync(activitySnapshot)).toBe(true);
+		expect(readFileSync(activitySnapshot, "utf8")).toContain("session.started");
 	});
 
-	test("archive terminates active durable run after session.completed and preserves compatibility archive", () => {
-		const home = join(repo, "home-archive-durable");
-		run(repo, ["init"], { HOME: home });
+	test("archive terminates active durable run after session.completed and writes a snapshot", () => {
+		// vstack#227: there is no longer a project-local compatibility
+		// archive; the durable snapshot under
+		// `<run-dir>/snapshots/<TS>.json` is the single archive
+		// artifact. The test asserts archive prints the snapshot path
+		// and that snapshot + activity snapshot include the terminate
+		// event and the pre-archive entry.
 		const entry = { ...sampleTrackedEntry(), id: "archive-entry", kind: "adhoc", pane_id: "%77", state: "complete" };
-		run(repo, ["write-entry", entry.id, JSON.stringify(entry)], { HOME: home });
-		const summaryRel = "tmp/flightdeck-summary-PARITY-2026-05-20T000000Z.md";
+		run(repo, ["init"]);
+		run(repo, ["write-entry", entry.id, JSON.stringify(entry)]);
+		const summaryRel = "tmp/flightdeck-summary.md";
+		mkdirSync(join(repo, "tmp"), { recursive: true });
 		writeFileSync(join(repo, summaryRel), "# Durable archive summary\n", "utf8");
-		run(repo, ["set", "summary_path", JSON.stringify(summaryRel)], { HOME: home });
-		run(repo, ["activity", "append", JSON.stringify({ natural_key: "archive-entry:done", source: "flightdeck", summary: "entry done", type: "entry.completed" })], { HOME: home });
-		const created = parseRunJson<{ metadata: { run_id: string }; paths: { activity_jsonl: string; snapshots_dir: string; summary_md: string } }>(
-			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
-		);
-		run(repo, ["set", "terminated", "true"], { HOME: home });
-		run(repo, ["set", "terminated_at", '"2026-05-20T00:00:00Z"'], { HOME: home });
+		run(repo, ["set", "summary_path", JSON.stringify(summaryRel)]);
+		run(repo, ["activity", "append", JSON.stringify({ natural_key: "archive-entry:done", source: "flightdeck", summary: "entry done", type: "entry.completed" })]);
+		run(repo, ["set", "terminated", "true"]);
+		run(repo, ["set", "terminated_at", '"2026-05-20T00:00:00Z"']);
 
-		const archiveEnv = { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home };
-		const archived = run(repo, ["archive"], archiveEnv);
+		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined });
 		expect(archived.status).toBe(0);
-		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout)).toBeNull();
+		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo]).stdout)).toBeNull();
 
-		const shown = parseRunJson<{ metadata: { summary_path: string | null; terminated: boolean }; snapshots: string[]; state: { entries: Record<string, unknown>; terminated: boolean } }>(
-			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
-		);
-		expect(shown.metadata.terminated).toBe(true);
-		expect(shown.metadata.summary_path).toBe(created.paths.summary_md);
-		expect(readFileSync(created.paths.summary_md, "utf8")).toBe("# Durable archive summary\n");
-		expect(shown.state.terminated).toBe(true);
-		expect(shown.state.entries["archive-entry"]).toBeTruthy();
-
-		const activitySnapshot = readdirSync(created.paths.snapshots_dir).find((name) => name.endsWith(".activity.jsonl"));
-		expect(activitySnapshot).toBeTruthy();
-		const durableActivitySnapshot = readFileSync(join(created.paths.snapshots_dir, activitySnapshot!), "utf8");
-		expect(durableActivitySnapshot).toContain("entry.completed");
-		expect(durableActivitySnapshot).toContain("session.completed");
-		expect(readFileSync(created.paths.activity_jsonl, "utf8")).toContain("session.completed");
-
-		const compatibilityArchive = JSON.parse(readFileSync(archived.stdout.trim(), "utf8")) as { activity_archive_path?: string; entries?: Record<string, unknown> };
-		expect(compatibilityArchive.entries?.["archive-entry"]).toBeTruthy();
-		expect(compatibilityArchive.activity_archive_path).toMatch(/flightdeck-activity-PARITY-2026-05-20T000000Z\.jsonl\.archive$/);
-		expect(readFileSync(compatibilityArchive.activity_archive_path!, "utf8")).toContain("session.completed");
+		const snapshotPath = archived.stdout.trim();
+		expect(snapshotPath).toMatch(/\/snapshots\/2026-05-20T000000Z\.json$/);
+		const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")) as { terminated?: boolean; entries?: Record<string, unknown> };
+		expect(snapshot.terminated).toBe(true);
+		expect(snapshot.entries?.["archive-entry"]).toBeTruthy();
+		const activitySnapshot = snapshotPath.replace(/\.json$/, ".activity.jsonl");
+		expect(existsSync(activitySnapshot)).toBe(true);
+		const activitySnapshotContents = readFileSync(activitySnapshot, "utf8");
+		expect(activitySnapshotContents).toContain("entry.completed");
+		expect(activitySnapshotContents).toContain("session.completed");
 	});
 
 	test("archive aborts before durable termination when required session.completed append fails", () => {
-		const home = join(repo, "home-archive-append-failure");
-		run(repo, ["init"], { HOME: home });
-		const created = parseRunJson<{ metadata: { run_id: string } }>(
-			run(repo, ["run", "create", "--project-root", repo, "--tmux-session", SESSION], { HOME: home }),
-		);
-		const liveActivity = join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+		// vstack#227: corrupt the durable activity by replacing it with
+		// an unwritable directory. The CLI's pre-archive
+		// `session.completed` append must fail loud and leave the
+		// active pointer intact instead of silently rotating into a
+		// fresh run.
+		run(repo, ["init"]);
+		const liveActivity = activeActivityPath(repo);
+		// Make the activity path a non-empty unwritable file so the
+		// append fails but the storage assertions pass during statePath
+		// resolution.
 		rmSync(liveActivity, { force: true });
-		mkdirSync(liveActivity, { recursive: true });
+		writeFileSync(liveActivity, "{\"id\": \"prior\"}\n", { mode: 0o400 });
 
-		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined, HOME: home });
+		const archived = run(repo, ["archive"], { FLIGHTDECK_ACTIVITY_FILE: undefined, FLIGHTDECK_MANAGED: undefined });
 		expect(archived.status).not.toBe(0);
 		expect(archived.stderr).toContain("failed to append session.completed before archive");
-		expect(JSON.parse(run(repo, ["run", "active", "--project-root", repo], { HOME: home }).stdout).active.run_id).toBe(created.metadata.run_id);
-		const shown = parseRunJson<{ metadata: { terminated: boolean } }>(
-			run(repo, ["run", "show", created.metadata.run_id, "--project-root", repo], { HOME: home }),
-		);
-		expect(shown.metadata.terminated).toBe(false);
-		expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+		const stillActive = JSON.parse(run(repo, ["run", "active", "--project-root", repo]).stdout);
+		expect(stillActive).not.toBeNull();
 	});
 
-	test("activity append after archive reports archived without recreating live sidecar", () => {
+	test("activity append after archive lands in the next active run, not the snapshotted one", () => {
+		// vstack#227: archive terminates the current run and clears the
+		// active pointer. A subsequent activity append auto-creates a
+		// fresh run and writes there, instead of (legacy behavior)
+		// being suppressed by an `.archived` sentinel beside the old
+		// project-local activity sidecar.
 		run(repo, ["init"]);
+		const firstActivity = activeActivityPath(repo);
 		run(repo, ["activity", "append", JSON.stringify({ natural_key: "start", source: "flightdeck", summary: "started", type: "session.started" })]);
 		run(repo, ["set", "terminated_at", '"2026-05-11T00:00:00Z"']);
 		const archive = run(repo, ["archive"]);
 		expect(archive.status).toBe(0);
-		const liveActivity = join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+
 		const append = run(repo, ["activity", "append", JSON.stringify({ natural_key: "after", source: "flightdeck", summary: "after archive", type: "entry.registered" })]);
 		expect(append.status).toBe(0);
 		const appendResult = JSON.parse(append.stdout) as { archived?: boolean; deduped?: boolean; id?: string };
 		expect(typeof appendResult.id).toBe("string");
 		expect(appendResult.deduped).toBe(false);
-		expect(appendResult.archived).toBe(true);
-		expect(append.stderr).toContain("activity file is archived; skipping append");
-		expect(existsSync(liveActivity)).toBe(false);
-		const archived = JSON.parse(readFileSync(archive.stdout.trim(), "utf8")) as { activity_archive_path?: string };
-		expect(readFileSync(archived.activity_archive_path!, "utf8")).not.toContain("after archive");
+		// The snapshot's activity contents stay frozen at terminate.
+		const snapshotActivity = archive.stdout.trim().replace(/\.json$/, ".activity.jsonl");
+		expect(readFileSync(snapshotActivity, "utf8")).not.toContain("after archive");
+		// The next active run owns subsequent appends.
+		const newActivity = activeActivityPath(repo);
+		expect(newActivity).not.toBe(firstActivity);
+		expect(readFileSync(newActivity, "utf8")).toContain("after archive");
 	});
 
 	// Regression: issue #17. terminate.md § 5 previously ran

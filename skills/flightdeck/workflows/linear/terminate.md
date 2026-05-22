@@ -126,7 +126,10 @@ If no follow-ups warrant precedence, the recommendation is "stick with planned c
 
 ## § 5: Write Summary File
 
-Emit to `tmp/flightdeck-summary-<SESSION>-<TS>.md` (TS = ISO8601, no colons).
+Emit to `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`.
+The active run dir is resolvable via `flightdeck-state run active`. vstack#227
+unified summary location; the legacy `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+location was removed.
 
 For generic-only sessions or empty sessions, write:
 
@@ -191,7 +194,7 @@ When issue entries exist, append the existing issue-mode sections after any gene
 ```
 flightdeck-state set terminated true
 flightdeck-state set terminated_at "\"<ISO8601>\""
-flightdeck-state set summary_path "\"<tmp/flightdeck-summary-<SESSION>-<TS>.md>\""
+flightdeck-state set summary_path "\"<RUN_DIR>/summary.md\""
 flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
@@ -206,7 +209,7 @@ Before archiving, offer cleanup for merged issue entries:
 
 Do NOT call `pane-registry remove-merged` here. Earlier revisions did, but `close-issue.md § 4` has already killed every terminal-state issue's tmux window by the time terminate runs, so `remove-merged` would unconditionally delete every `merged|aborted|dead` issue's history — including `decisions_log`, `pr_number`, and `merge_commit` — from the file that is about to be archived. Dashboard renderers depend on those records to surface the post-completion Sessions / Decisions / Conflicts views; deleting them collapses the dashboard to an empty state immediately after a successful session. The archive's value is precisely the full session history (see [[issue-17]]).
 
-`flightdeck-daemon stop` terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` first emits `session.completed`, then marks the matching durable active run terminated, copies the final project-local state/activity into the run snapshot, copies the summary into the run directory when present, clears `active-run.json`, and rotates the live state file to `tmp/flightdeck-state-<SESSION>-<terminated_at>.json.archive`. This keeps durable and compatibility activity snapshots aligned and lets the next session in the same tmux name (e.g. `HT`) start clean instead of inheriting this session's entries, merge queue, and `terminated` flag. The archive preserves the full `.entries` map for post-mortem inspection and dashboard rendering.
+`flightdeck-daemon stop` terminates the external wake daemon (validates PID + flock holder before killing; refuses on stale PID file). `archive` (vstack#227) first emits `session.completed`, then terminates the matching durable active run: marks metadata terminated, writes a final state snapshot under `runs/<run-id>/snapshots/<TS>.json`, snapshots the activity sidecar alongside, copies the summary into `runs/<run-id>/summary.md` when present, clears `active-run.json`, and renames any surviving legacy project-local `tmp/flightdeck-state-<S>.json` / activity sidecar to `.migrated` so the next session in the same tmux name (e.g. `HT`) starts clean instead of inheriting this session's entries, merge queue, and `terminated` flag. The run dir preserves the full `.entries` map for post-mortem inspection and dashboard rendering.
 
 ---
 
@@ -227,7 +230,7 @@ For generic entries, emit this block when `GENERIC_ENTRIES` is non-empty:
 
 **Counts**: [N] sessions · [N] complete · [N] cancelled · [N] dead
 
-Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+Summary file: `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`
 </generic_output_format>
 
 If no tracked entries exist, emit this explicit diagnostic block:
@@ -239,7 +242,7 @@ Session terminated with no tracked entries.
 
 **Counts**: 0 sessions · 0 complete · 0 cancelled · 0 dead
 
-Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+Summary file: `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`
 </empty_output_format>
 
 For issue entries, emit the existing issue summary block only when `ISSUE_ENTRIES` is non-empty:
@@ -282,7 +285,7 @@ Standalone follow-ups:
 [If no cleanup candidates exist:]
 - No stale worktrees or branches owned by this session.
 
-Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+Summary file: `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`
 </issue_output_format>
 
 For mixed sessions, emit `<generic_output_format>` first, then `<issue_output_format>`. For empty sessions, emit only `<empty_output_format>`. Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.

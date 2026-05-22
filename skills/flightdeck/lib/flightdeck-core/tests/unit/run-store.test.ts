@@ -255,7 +255,10 @@ describe("Flightdeck durable run store", () => {
 		}), "utf8");
 		installTmuxShim("%other\n");
 
-		const ensured = ensureActiveRun(repo, SESSION);
+		// vstack#227: lifecycle callers opt in to the stale check; CLI
+		// helpers default to skipping it so an idle `flightdeck-state
+		// get` doesn't surprise-rotate the run.
+		const ensured = ensureActiveRun(repo, SESSION, { checkStale: true });
 		expect(ensured.action).toBe("created-after-stale");
 		expect(ensured.previous_run_id).toBe(created.metadata.run_id);
 		expect(ensured.previous_termination?.metadata.terminated).toBe(true);
@@ -333,7 +336,10 @@ describe("Flightdeck durable run store", () => {
 		}), "utf8");
 		installTmuxShim("tmux unavailable", 7);
 
-		expect(() => ensureActiveRun(repo, SESSION)).toThrow(/cannot verify active Flightdeck run liveness/);
+		// vstack#227: only lifecycle-mode (`checkStale: true`) callers
+		// throw on liveness failure. Helper callers reuse the active
+		// run silently.
+		expect(() => ensureActiveRun(repo, SESSION, { checkStale: true })).toThrow(/cannot verify active Flightdeck run liveness/);
 		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
 	});
 

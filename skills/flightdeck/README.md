@@ -102,9 +102,10 @@ Most sessions work with defaults. These are the knobs users most often change.
 | `FLIGHTDECK_ENSURE_DAEMON` | `1` | Set `0` to skip the post-registration daemon staleness check inside `flightdeck-session start` / `attach`. Use only when the supervising master loop owns daemon lifecycle. |
 | `FLIGHTDECK_DAEMON_BIN` | unset | Override the `flightdeck-daemon` trampoline used by `flightdeck-session ensure_daemon_for_session` and `flightdeck-state archive`'s daemon-stop helper. Validated as absolute path + executable; production operators should leave it unset (developer/test escape hatch). |
 | `FLIGHTDECK_PANE_REGISTRY_BIN` | unset | Override the `pane-registry` trampoline used by `flightdeck-session ensure_daemon_for_session`. Test-only; see ENV.md. |
-| `FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP` | `0` | Set `1` to keep `flightdeck-state archive` from stopping the per-session daemon after rotating the legacy state file. |
+| `FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP` | `0` | Set `1` to keep `flightdeck-state archive` from stopping the per-session daemon after terminating the active run. |
 | `FLIGHTDECK_OPENCODE_VALIDATE_MODEL` | `1` | Set `0` only when using local OpenCode shims that are not listed by `opencode models`. |
-| `FLIGHTDECK_STATE_DIR` | `tmp` | Change where Flightdeck writes session state inside the project. |
+| `FLIGHTDECK_STATE_DIR` | `tmp` | **Deprecated since vstack#227.** Live state now lives under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. Only consulted by the legacy migration shim. |
+| `FLIGHTDECK_RUN_STORE_ROOT` | `$HOME/.vstack/flightdeck` | Override the user-level run-store root (tests/sandboxes). |
 | `FLIGHTDECK_DASHBOARD` | `1` | Set `0` to disable automatic dashboard launch. |
 | `FLIGHTDECK_DASHBOARD_WINDOW` | ` FD` | Change the tmux window name used for the dashboard app. |
 | `FLIGHTDECK_DASHBOARD_WINDOW_ICON` | `1` | Set `0` to use plain `FD` as the default dashboard window name when no explicit name is set. |
@@ -118,7 +119,8 @@ Most sessions work with defaults. These are the knobs users most often change.
 Full env reference: [`ENV.md`](./ENV.md).
 
 Dashboard settings can also be edited from inside the Rust dashboard. The
-dashboard writes overrides to `<project-root>/tmp/flightdeck-settings.toml` and
+dashboard writes overrides to
+`~/.vstack/flightdeck/projects/<project-id>/settings.toml` (vstack#227) and
 reloads them on the next dashboard launch/command. Those overrides are scoped to
 dashboard behavior; set shell env vars when the master workflow itself needs a
 different value.
@@ -127,7 +129,7 @@ different value.
 
 The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked work items, current tmux tab names, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners. The dashboard's own tmux window is hidden from the work table so the view stays focused on child work. In tmux, `flightdeck-dashboard focus-or-launch` focuses an existing app window or launches one if missing. Child/session launches treat dashboard startup as best-effort: a dashboard CLI/path failure prints a warning and the tracked pane still launches so daemon supervision remains canonical.
 
-The dashboard treats active and archived runs separately. Live mode reads the canonical project-local state file for the requested tmux session; durable run metadata is used only to label/link that live run. If no matching active run exists, startup shows `No active Flightdeck run` instead of automatically rendering the newest terminated archive as if it were live. Press `H` to open the History popup, filter runs, expand snapshots inline, load an archived/imported snapshot read-only, import legacy project archives, or return to the active run with `A`. Read-only archive views disable stale-prune and tmux-focus actions.
+The dashboard treats active and archived runs separately. Live mode reads the active run's `state.json` under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/` (vstack#227 unified state); durable run metadata labels/links that live run. If no matching active run exists, startup shows `No active Flightdeck run` instead of automatically rendering the newest terminated archive as if it were live. Press `H` to open the History popup, filter runs, expand snapshots inline, load an archived/imported snapshot read-only, import legacy project archives, or return to the active run with `A`. Read-only archive views disable stale-prune and tmux-focus actions.
 
 The header's `state: live file` chip means the dashboard is watching Flightdeck's state file directly. That is normal live mode and is separate from the supervisor daemon that wakes the master agent. History/archive chips (`state: history archive`, `state: imported archive`, `state: legacy archive`) are read-only views. Socket telemetry is optional extra dashboard-side telemetry, not required for work/status rendering. Pi session costs are read from `pi-bridge history` when bridge metadata is available.
 
@@ -162,7 +164,7 @@ flightdeck-state run terminate-active --project-root "$PWD" --tmux-session <name
 flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
 ```
 
-Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. If `flightdeck-session start` / `attach` creates a fresh active run and aborts before registering an entry, it terminates that new run; reused active runs are preserved. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place. Flightdeck does not delete durable runs or imported legacy archives by default; remove old `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/` directories only as an explicit manual retention decision.
+Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. If `flightdeck-session start` / `attach` creates a fresh active run and aborts before registering an entry, it terminates that new run; reused active runs are preserved. vstack#227: `flightdeck-state archive` writes the durable snapshot under `<run-dir>/snapshots/` and renames any pre-existing `<project>/tmp/flightdeck-state-<S>.json` to `.migrated` (`activity.jsonl`/`.lock` siblings get the same suffix). Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place. Flightdeck does not delete durable runs or imported legacy archives by default; remove old `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/` directories only as an explicit manual retention decision.
 
 ## High-level architecture
 

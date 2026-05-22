@@ -2,7 +2,7 @@
 
 GitHub issue master loop. It reuses the generic `workflows/shared/session-watch.md` loop for daemon/poll/generic prompt plumbing, then adds GitHub PR/CI/review lifecycle handling.
 
-**Inputs**: optional GitHub issue numbers. When omitted, recover from `tmp/flightdeck-state-<SESSION>.json`.
+**Inputs**: optional GitHub issue numbers. When omitted, recover from `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/state.json`.
 
 **Pre-conditions**:
 - `$TMUX` set.

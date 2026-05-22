@@ -8,7 +8,7 @@ End-of-session unwind for GitHub issue entries. Generic session entries still us
 - `github/watch.md` confirmed GitHub entries are terminal (`merged | aborted | dead`).
 - Generic entries, if any, are terminal enough for `workflows/shared/session-watch.md`.
 
-**Post-condition**: `tmp/flightdeck-summary-<SESSION>-<TS>.md` written, master state terminated/archived, user-visible summaries emitted.
+**Post-condition**: `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md` written, master state terminated/archived, user-visible summaries emitted.
 
 ---
 
@@ -79,7 +79,7 @@ Do not infer project/cycle priority. Do not call `project-management`.
 
 ## § 4: Write summary file
 
-Write `tmp/flightdeck-summary-<SESSION>-<TS>.md`.
+Write `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`.
 
 When generic entries exist, include generic section first:
 
@@ -122,7 +122,7 @@ Only finalize after all applicable lane summaries are written.
 ```bash
 flightdeck-state set terminated true
 flightdeck-state set terminated_at '"<ISO8601>"'
-flightdeck-state set summary_path '"<tmp/flightdeck-summary-<SESSION>-<TS>.md>"'
+flightdeck-state set summary_path '"<~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md>"'
 flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
@@ -168,7 +168,7 @@ Emit generic block first when applicable, then GitHub block.
 [If no cleanup candidates exist:]
 - No stale worktrees or branches owned by this session.
 
-Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+Summary file: `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/summary.md`
 </github_output_format>
 
 For mixed sessions, emit generic output, then `<github_output_format>`, then the Linear issue output from `linear/terminate.md` if Linear entries exist. Never collapse to a one-liner.

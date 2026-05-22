@@ -1,4 +1,10 @@
 // Master-state CRUD on per-tmux-session JSON files.
+//
+// vstack#227: state files live under the user-level run store
+// (`~/.vstack/flightdeck/projects/<id>/runs/<run-id>/state.json`), NOT
+// inside the project's tmp/. statePath() resolves through active-run.json
+// and auto-ensures a run when needed.
+//
 // Mirrors scripts/flightdeck-state semantics: jq for filter execution,
 // flock(1) for atomic write coordination, temp+rename for crash safety.
 
@@ -15,6 +21,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { activityArchivePathFromStatePath, activityPathFromStatePath } from "../activity/paths.ts";
 import { resolveProjectRoot, loadDotEnvIntoProcess } from "../shared/project.ts";
 import { lockedArchiveStateAndActivity, lockedJqUpdate } from "./locking.ts";
+import { ensureActiveRun, readActiveRun, resolveProjectIdentity, resolveProjectRunPaths, terminateActiveRun } from "./run-store.ts";
 
 export interface FlightdeckOwner {
 	harness: string;
@@ -27,15 +34,31 @@ export interface FlightdeckOwner {
 	discovery_error: string | null;
 }
 
-export function resolveStateBase(): string {
+// Per-process cache so repeated statePath() calls in one CLI invocation
+// don't re-lock the project on every file resolution.
+const statePathCache = new Map<string, string>();
+
+// vstack#227: resolveStateBase returns the active run's directory under
+// `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. Auto-ensures a
+// run when a tmux session is available. Falls back to the project
+// store's run directory when no tmux session is set.
+export function resolveStateBase(session?: string): string {
 	const root = resolveProjectRoot();
 	loadDotEnvIntoProcess(root);
-	const dir = process.env.FLIGHTDECK_STATE_DIR && process.env.FLIGHTDECK_STATE_DIR.trim()
-		? process.env.FLIGHTDECK_STATE_DIR.trim()
-		: "tmp";
-	const base = resolve(root, dir);
-	mkdirSync(base, { recursive: true });
-	return base;
+	warnIfLegacyStateDirEnvSet();
+	const explicit = session && session.trim() ? session.trim() : currentTmuxSessionOrEmpty();
+	if (explicit) {
+		const ensured = ensureActiveRun(root, explicit);
+		return ensured.paths.run_dir;
+	}
+	// No session available — return the project's container so callers
+	// that don't strictly need a run dir (e.g., legacy listings) can
+	// resolve a stable base. They are responsible for handling the case
+	// where state.json doesn't exist.
+	const identity = resolveProjectIdentity(root);
+	const projectPaths = resolveProjectRunPaths(identity);
+	mkdirSync(projectPaths.project_dir, { recursive: true });
+	return projectPaths.project_dir;
 }
 
 export function resolveSession(explicit?: string): string {
@@ -53,8 +76,47 @@ export function resolveSession(explicit?: string): string {
 	return name;
 }
 
+// vstack#227: statePath resolves through the active-run pointer. If no
+// active run exists for the project, one is created. The returned path
+// is `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/state.json`.
 export function statePath(session: string): string {
-	return join(resolveStateBase(), `flightdeck-state-${session}.json`);
+	const root = resolveProjectRoot();
+	loadDotEnvIntoProcess(root);
+	warnIfLegacyStateDirEnvSet();
+	const cacheKey = `${root}\0${session}`;
+	const cached = statePathCache.get(cacheKey);
+	if (cached) return cached;
+	const ensured = ensureActiveRun(root, session);
+	statePathCache.set(cacheKey, ensured.paths.state_json);
+	return ensured.paths.state_json;
+}
+
+// Read-only state path lookup. Returns the active run's state.json or
+// null if no active run exists yet. Use for read-paths that must not
+// create a new run as a side-effect (daemon discovery, dashboards).
+export function tryResolveStatePath(session: string): string | null {
+	const root = resolveProjectRoot();
+	loadDotEnvIntoProcess(root);
+	warnIfLegacyStateDirEnvSet();
+	const active = readActiveRun(root);
+	if (!active) return null;
+	if (active.active.tmux_session !== session) return null;
+	return active.active.state_path;
+}
+
+function currentTmuxSessionOrEmpty(): string {
+	if (!process.env.TMUX) return "";
+	const r = spawnSync("tmux", ["display-message", "-p", "#S"], { encoding: "utf8" });
+	return (r.stdout ?? "").trim();
+}
+
+// vstack#227: FLIGHTDECK_STATE_DIR is no longer the live-state base; it
+// is only used by the migration shim as the directory to look for
+// legacy state files in. The deprecation note lives in ENV.md so it
+// doesn't pollute every CLI invocation with a stderr warning that
+// existing test fixtures and supervisor stderr scrapers don't expect.
+function warnIfLegacyStateDirEnvSet(): void {
+	// Intentionally empty; see comment above.
 }
 
 // Bash accepts `terminated` as shorthand for `.terminated`; mirror it.
@@ -269,12 +331,14 @@ function livePaneIds(): Set<string> {
 export function initState(file: string): void {
 	gcTmpOrphans(file);
 	const lock = `${file}.lock`;
-	// idempotent: the locked jq filter writes the initial state only if
-	// the file doesn't already exist. .empty preserves the existing
-	// contents; the alternate branch builds the canonical init payload.
+	// vstack#227: in the new run-store layout, ensureActiveRun has
+	// already created `<run-dir>/state.json` with the canonical init
+	// payload (see run-store.initialRunState). initState therefore
+	// becomes a backfill pass for any optional fields the run-store
+	// might not have populated (owner metadata, schema version, etc.).
 	// Locked under the same lock as updateState so concurrent init +
 	// set are serialized correctly.
-	const session = basename(file).replace(/^flightdeck-state-/, "").replace(/\.json$/, "");
+	const session = sessionFromStatePath(file);
 	const startedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 	const owner = resolveOwnerMetadata();
 	const ownerJson = JSON.stringify(owner);
@@ -324,7 +388,33 @@ export function initState(file: string): void {
 	}
 }
 
+// vstack#227: archiveState's primary contract is now to terminate the
+// active durable run for the file's project. The durable run snapshot
+// under `runs/<run-id>/snapshots/` replaces the project-local
+// `tmp/flightdeck-state-<session>.json.archive` rotation.
+//
+// Backward-compat fallback: if no active run exists for the project,
+// rotate the legacy file in place (preserving the historical contract
+// for callers that operate on a synthesized state file without ever
+// going through the run-store, e.g. ad-hoc unit fixtures).
 export function archiveState(file: string): string | null {
+	if (!existsSync(file)) return null;
+	const session = sessionFromStatePath(file);
+	const root = resolveProjectRoot();
+	loadDotEnvIntoProcess(root);
+	statePathCache.delete(`${root}\0${session}`);
+	const active = readActiveRun(root);
+	const hasMatchingActive = active && active.active.tmux_session === session;
+	if (hasMatchingActive) {
+		const result = terminateActiveRun(root, session, {});
+		if (result.reason === "terminated" && result.terminated) {
+			return result.terminated.snapshot_path;
+		}
+	}
+	return legacyArchiveState(file);
+}
+
+function legacyArchiveState(file: string): string | null {
 	if (!existsSync(file)) return null;
 	let ts = runJqRaw(".terminated_at // empty", file).trim();
 	if (!ts) ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -340,6 +430,23 @@ export function archiveState(file: string): string | null {
 		process.exit(r.status ?? 1);
 	}
 	return archive;
+}
+
+function sessionFromStatePath(file: string): string {
+	// New layout: <run-dir>/state.json — look up via active-run.json.
+	const base = basename(file);
+	if (base === "state.json") {
+		const root = resolveProjectRoot();
+		loadDotEnvIntoProcess(root);
+		const active = readActiveRun(root);
+		if (active) return active.active.tmux_session;
+	}
+	// Legacy layout: tmp/flightdeck-state-<session>.json
+	if (base.startsWith("flightdeck-state-") && base.endsWith(".json")) {
+		return base.slice("flightdeck-state-".length, -".json".length);
+	}
+	// Fallback: use current tmux session.
+	return resolveSession();
 }
 
 function gcTmpOrphans(file: string): void {

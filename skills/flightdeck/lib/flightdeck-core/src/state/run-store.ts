@@ -15,9 +15,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { activityArchivePathFromStatePath, activityPathForSession, activityPathFromStatePath } from "../activity/paths.ts";
 import { loadDotEnvIntoProcess, resolveProjectRoot } from "../shared/project.ts";
-import { lockedArchiveStateAndActivity, withFlockHeldSync } from "./locking.ts";
+import { withFlockHeldSync } from "./locking.ts";
 
 export const RUN_STORE_SCHEMA_VERSION = 1;
 export const MAX_LEGACY_ACTIVITY_ARCHIVE_BYTES = 50 * 1024 * 1024;
@@ -205,7 +204,12 @@ function storeHome(): string {
 	return process.env.HOME && process.env.HOME.trim() ? process.env.HOME.trim() : homedir();
 }
 
+// vstack#227: tests can override the run-store root with
+// FLIGHTDECK_RUN_STORE_ROOT to point at an isolated tmpdir. Production
+// callers leave it unset and use `$HOME/.vstack/flightdeck`.
 export function flightdeckRunStoreRoot(): string {
+	const override = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	if (typeof override === "string" && override.trim()) return resolve(override.trim());
 	return join(storeHome(), ".vstack", "flightdeck");
 }
 
@@ -250,7 +254,11 @@ export function legacyStatePath(projectRoot: string, tmuxSession: string, stateD
 }
 
 export function legacyActivityPath(projectRoot: string, tmuxSession: string, stateDir?: string): string {
-	return activityPathForSession(safeLegacySessionName(tmuxSession), legacyStateDir(projectRoot, stateDir));
+	// vstack#227: explicitly returns the prefixed legacy form so callers
+	// migrating off project-local tmp/ files still find them. The unified
+	// path is `<run-dir>/activity.jsonl`; resolveActivityPath / the
+	// active-run pointer expose that.
+	return join(legacyStateDir(projectRoot, stateDir), `flightdeck-activity-${safeLegacySessionName(tmuxSession)}.jsonl`);
 }
 
 export function resolveProjectIdentity(projectRoot: string): ProjectIdentity {
@@ -270,7 +278,22 @@ export function createRun(projectRoot: string, tmuxSession: string, stateDir?: s
 	return withProjectLock(projectRoot, (ctx) => createRunLocked(ctx, session, stateDir));
 }
 
-export function ensureActiveRun(projectRoot: string, tmuxSession: string, stateDir?: string): RunEnsureResult {
+export interface EnsureActiveRunOptions {
+	stateDir?: string;
+	// vstack#227: lifecycle callers (flightdeck-session start, attach)
+	// run the tmux pane-liveness check to detect orphan runs. Helper
+	// callers (statePath/getField/setField from CLI verbs) skip it so
+	// that a normal `flightdeck-state get` on a session whose tracked
+	// panes are no longer alive doesn't surprise-rotate the run.
+	checkStale?: boolean;
+}
+
+export function ensureActiveRun(projectRoot: string, tmuxSession: string, optionsOrStateDir?: EnsureActiveRunOptions | string): RunEnsureResult {
+	const options = typeof optionsOrStateDir === "string"
+		? { stateDir: optionsOrStateDir }
+		: optionsOrStateDir ?? {};
+	const stateDir = options.stateDir;
+	const checkStale = options.checkStale === true;
 	const session = safeLegacySessionName(requireNonEmpty(tmuxSession, "tmux session"));
 	return withProjectLock(projectRoot, (ctx) => {
 		const timestamp = nowIso();
@@ -286,21 +309,31 @@ export function ensureActiveRun(projectRoot: string, tmuxSession: string, stateD
 			throw new Error(activeRunMissingMetadataMessage(loaded.paths.active_run_json, active, activePaths.metadata_json, loaded.project.root_path));
 		}
 		if (metadata.terminated) {
-			const legacyArchivePath = archiveLegacyStateIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
-			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-terminated", metadata.run_id, null, legacyArchivePath);
+			markLegacyStateMigratedIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
+			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-terminated", metadata.run_id, null, null);
 		}
 		if (active.tmux_session !== session || metadata.tmux_session !== session) {
 			throw new Error(activeRunSessionMismatchMessage(loaded.paths.active_run_json, active, metadata, session));
 		}
-		const stale = checkActiveRunStale(loaded.project.root_path, metadata, activePaths, stateDir);
-		if (stale.reason === "tmux-query-failed") {
-			throw new Error(activeRunLivenessUnknownMessage(loaded.paths.active_run_json, metadata, session, stale));
+		if (checkStale) {
+			const stale = checkActiveRunStale(loaded.project.root_path, metadata, activePaths, stateDir);
+			if (stale.reason === "tmux-query-failed") {
+				throw new Error(activeRunLivenessUnknownMessage(loaded.paths.active_run_json, metadata, session, stale));
+			}
+			if (stale.stale) {
+				const terminated = terminateRunLocked(ctx, loaded, metadata.run_id, { stateDir, syncLegacy: true, tmuxSession: metadata.tmux_session });
+				markLegacyStateMigratedIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
+				return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-stale", metadata.run_id, terminated, null);
+			}
 		}
-		if (stale.stale) {
-			const terminated = terminateRunLocked(ctx, loaded, metadata.run_id, { stateDir, syncLegacy: true, tmuxSession: metadata.tmux_session });
-			const legacyArchivePath = archiveLegacyStateIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
-			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-stale", metadata.run_id, terminated, legacyArchivePath);
-		}
+		// vstack#227 migration shim: for live (non-stale) runs that
+		// existed pre-change, the legacy `<project>/tmp/flightdeck-
+		// state-<session>.json` may have continued receiving writes
+		// while the run's state.json stayed at create-time content.
+		// Copy newer legacy state/activity into the run dir, then mark
+		// the legacy file as `.migrated` so we never re-import. The
+		// rename is idempotent: subsequent calls find no legacy file.
+		migrateLegacyStateIntoActiveRun(loaded.project.root_path, metadata.tmux_session, activePaths, stateDir);
 		return ensureResult({ active, metadata, paths: activePaths, project: loaded.project }, "reused", metadata.run_id, null, null);
 	});
 }
@@ -504,13 +537,20 @@ function createRunLocked(ctx: ProjectLockContext, session: string, stateDir?: st
 	ensureRunStorageDirectories(paths);
 	const liveStateDir = legacyStateDirForRoot(project.root_path, stateDir);
 	const liveState = join(liveStateDir, `flightdeck-state-${session}.json`);
-	const liveActivity = activityPathForSession(session, liveStateDir);
+	const liveStateExists = existsSync(liveState);
+	// NB: explicit legacy path; the public activityPathForSession helper
+	// now collapses to `<run-dir>/activity.jsonl` for run-shaped bases.
+	const liveActivity = legacyActivityPathInDir(session, liveStateDir);
 	const liveStateJson = readStateObject(liveState, "live state");
 	const state = liveStateJson === JSON_MISSING ? initialRunState(session, timestamp, paths.activity_jsonl) : liveStateJson;
 	state.activity_path = paths.activity_jsonl;
 	writeJsonAtomic(paths.state_json, state);
 	if (existsSync(liveActivity)) copyFileAtomic(liveActivity, paths.activity_jsonl);
 	else writeFileAtomic(paths.activity_jsonl, "");
+	// vstack#227: once the run dir owns live state, rotate the legacy
+	// project-local file out of the way so subsequent calls (including
+	// dashboards/daemons that previously read it) won't see stale data.
+	if (liveStateExists) markLegacyStatePathMigrated(liveState, liveActivity);
 	const metadata: RunMetadata = {
 		activity_path: paths.activity_jsonl,
 		imported: false,
@@ -560,7 +600,6 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 		if (active.tmux_session !== metadata.tmux_session) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
 		if (requestedTmuxSession && active.tmux_session !== requestedTmuxSession) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
 	}
-	const timestamp = normalizeTimestamp(metadata.terminated_at ?? nowIso(), "terminated_at");
 	ensureRunStorageDirectories(paths);
 	assertRunStorageFile(paths, paths.state_json, "run state");
 	let state = readStateObject(paths.state_json, "run state");
@@ -576,6 +615,13 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 			legacyActivityPath = synced.activityPath;
 		}
 	}
+	// Prefer the timestamp the caller already wrote into state via
+	// `flightdeck-state set terminated_at "..."`, falling back to run
+	// metadata or `now` for fresh terminations.
+	const preferredTimestamp = typeof state.terminated_at === "string" && state.terminated_at.trim()
+		? state.terminated_at.trim()
+		: metadata.terminated_at ?? nowIso();
+	const timestamp = normalizeTimestamp(preferredTimestamp, "terminated_at");
 	state.activity_path = paths.activity_jsonl;
 	state.terminated = true;
 	state.terminated_at = timestamp.iso;
@@ -604,6 +650,10 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 		rmSync(loaded.paths.active_run_json, { force: true });
 		activeCleared = true;
 	}
+	// vstack#227: once the run is terminated and the durable snapshot
+	// is written, mark any surviving legacy project-local file as
+	// `.migrated` so subsequent reads don't pick up stale data.
+	markLegacyStateMigratedIfPresent(loaded.project.root_path, metadata.tmux_session, options.stateDir);
 	return { active_cleared: activeCleared, activity_snapshot_path: activitySnapshotPath, metadata: nextMetadata, snapshot_path: snapshotPath };
 }
 
@@ -690,7 +740,7 @@ function readRunStateFromLegacy(projectRoot: string, metadata: RunMetadata, path
 	const liveState = join(dir, `flightdeck-state-${session}.json`);
 	const liveStateJson = readStateObject(liveState, "live state");
 	if (liveStateJson === JSON_MISSING) return null;
-	const liveActivity = activityPathForSession(session, dir);
+	const liveActivity = legacyActivityPathInDir(session, dir);
 	liveStateJson.activity_path = paths.activity_jsonl;
 	return { activityPath: existsSync(liveActivity) ? liveActivity : null, state: liveStateJson };
 }
@@ -722,24 +772,77 @@ function livePaneIds(): LivePaneIdsResult {
 	return { ok: true, panes };
 }
 
-function archiveLegacyStateIfPresent(projectRoot: string, tmuxSession: string, stateDir?: string): string | null {
-	const statePath = join(legacyStateDirForRoot(projectRoot, stateDir), `flightdeck-state-${safeLegacySessionName(tmuxSession)}.json`);
-	if (!existsSync(statePath)) return null;
-	const state = readStateObject(statePath, "legacy state");
-	if (state === JSON_MISSING) return null;
-	const rawTerminatedAt = typeof state.terminated_at === "string" && state.terminated_at.trim() ? state.terminated_at.trim() : nowIso();
-	let terminatedAt: NormalizedTimestamp;
-	try {
-		terminatedAt = normalizeTimestamp(rawTerminatedAt, "legacy terminated_at");
-	} catch {
-		terminatedAt = normalizeTimestamp(nowIso(), "legacy terminated_at fallback");
+// vstack#227: when a run has been terminated or replaced, rotate the
+// legacy project-local state file out of the way so dashboards/daemons
+// stop reading it. The durable run snapshot already preserves the
+// archive history under `runs/<run-id>/`; this helper just makes the
+// stale project-local copy non-readable by ordinary scan paths.
+function markLegacyStateMigratedIfPresent(projectRoot: string, tmuxSession: string, stateDir?: string): void {
+	const dir = legacyStateDirForRoot(projectRoot, stateDir);
+	const statePath = join(dir, `flightdeck-state-${safeLegacySessionName(tmuxSession)}.json`);
+	const activityPath = legacyActivityPathInDir(tmuxSession, dir);
+	markLegacyStatePathMigrated(statePath, activityPath);
+}
+
+// vstack#227: best-effort rename of legacy state/activity files to a
+// `.migrated` suffix. We do not delete the originals; operators can
+// remove them after verification.
+function markLegacyStatePathMigrated(statePath: string, activityPath: string): void {
+	tryRename(statePath, `${statePath}.migrated`);
+	tryRename(`${statePath}.lock`, `${statePath}.lock.migrated`);
+	tryRename(activityPath, `${activityPath}.migrated`);
+	tryRename(`${activityPath}.lock`, `${activityPath}.lock.migrated`);
+	tryRename(`${activityPath}.archived`, `${activityPath}.archived.migrated`);
+}
+
+function tryRename(from: string, to: string): void {
+	if (!existsSync(from)) return;
+	try { renameSync(from, to); } catch { /* best-effort */ }
+}
+
+// vstack#227 migration shim: for live runs whose state.json predates
+// the cutover, fold any pending writes from the legacy `tmp/flightdeck-
+// state-<S>.json` (and matching activity sidecar) into the run dir
+// before downstream consumers read state.json. Idempotent: once the
+// legacy paths are renamed to `.migrated`, this is a no-op.
+function migrateLegacyStateIntoActiveRun(projectRoot: string, tmuxSession: string, paths: RunPaths, stateDir?: string): void {
+	const dir = legacyStateDirForRoot(projectRoot, stateDir);
+	const legacyState = join(dir, `flightdeck-state-${safeLegacySessionName(tmuxSession)}.json`);
+	const legacyActivity = legacyActivityPathInDir(tmuxSession, dir);
+	const legacyStateExists = existsSync(legacyState);
+	const legacyActivityExists = existsSync(legacyActivity);
+	if (!legacyStateExists && !legacyActivityExists) return;
+	if (legacyStateExists) {
+		const legacyMtime = safeMtimeMs(legacyState);
+		const runMtime = safeMtimeMs(paths.state_json);
+		if (legacyMtime !== null && (runMtime === null || legacyMtime >= runMtime)) {
+			const live = readStateObject(legacyState, "legacy state");
+			if (live !== JSON_MISSING) {
+				live.activity_path = paths.activity_jsonl;
+				writeJsonAtomic(paths.state_json, live);
+			}
+		}
 	}
-	const archivePath = `${statePath.replace(/\.json$/, "")}-${terminatedAt.basename}.json.archive`;
-	const activityPath = activityPathFromStatePath(statePath);
-	const activityArchivePath = activityArchivePathFromStatePath(statePath, terminatedAt.iso);
-	const result = lockedArchiveStateAndActivity(`${statePath}.lock`, statePath, archivePath, activityPath, activityArchivePath, `${activityPath}.lock`);
-	if (result.status !== 0) throw new Error(result.stderr.trim() || `failed to archive legacy state: ${statePath}`);
-	return archivePath;
+	if (legacyActivityExists) {
+		const legacyMtime = safeMtimeMs(legacyActivity);
+		const runMtime = safeMtimeMs(paths.activity_jsonl);
+		if (legacyMtime !== null && (runMtime === null || legacyMtime >= runMtime)) {
+			copyFileAtomic(legacyActivity, paths.activity_jsonl);
+		}
+	}
+	markLegacyStatePathMigrated(legacyState, legacyActivity);
+}
+
+function safeMtimeMs(path: string): number | null {
+	try { return statSync(path).mtimeMs; } catch { return null; }
+}
+
+// Legacy activity path inside an arbitrary state directory. Distinct
+// from the public activityPathForSession helper, which now treats
+// run-directory stateBases as the canonical layout and returns a
+// non-prefixed `activity.jsonl`.
+function legacyActivityPathInDir(session: string, dir: string): string {
+	return join(dir, `flightdeck-activity-${safeLegacySessionName(session)}.jsonl`);
 }
 
 function stageSummaryIfAvailable(projectRoot: string, paths: RunPaths, explicitSummaryPath: string | undefined, state: Record<string, unknown>): StagedSummaryCopy | null {

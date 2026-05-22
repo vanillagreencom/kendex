@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { emitActivityWithPath } from "../activity/emit.ts";
 import { activityPathFromStatePath, resolveActivityPath } from "../activity/paths.ts";
+import { readActiveRun } from "../state/run-store.ts";
 import type { ActivityEventInput, ActivitySeverity } from "../activity/types.ts";
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
 
@@ -510,8 +511,19 @@ function resolveMasterStatePath(sessionName: string): string | null {
 	if (gitCommonDir && gitCommonDir !== ".git") {
 		root = resolve(root, gitCommonDir, "..");
 	}
+	// vstack#227: read the active-run pointer instead of synthesizing
+	// a project-local path. Returns null when no active run exists for
+	// this session so callers can fall back to other discovery paths.
+	try {
+		const active = readActiveRun(root);
+		if (active && active.active.tmux_session === sessionName) return active.active.state_path;
+	} catch {
+		// Project may not have a run store yet (cold start, brand-new
+		// repo); fall through to legacy lookup for back-compat.
+	}
 	const stateDir = process.env.FLIGHTDECK_STATE_DIR?.trim() || "tmp";
-	return resolve(root, stateDir, `flightdeck-state-${sessionName}.json`);
+	const legacy = resolve(root, stateDir, `flightdeck-state-${sessionName}.json`);
+	return existsSync(legacy) ? legacy : null;
 }
 
 function subagentActivityType(status: string): string {

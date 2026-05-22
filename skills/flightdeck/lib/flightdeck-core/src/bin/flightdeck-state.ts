@@ -72,8 +72,19 @@ function parseGlobalAndArgs(): { action: string; session: string; rest: string[]
 }
 
 const { action, session: rawSession, rest } = parseGlobalAndArgs();
-const session = action === "run" && !rawSession ? "" : resolveSession(rawSession);
-const file = session ? statePath(session) : "";
+// vstack#227: `run` and `activity` subcommands either own their own
+// project context or rely on FLIGHTDECK_ACTIVITY_FILE / explicit
+// --state-file. They must NOT trigger statePath()'s auto-ensure
+// (which would create/rotate a run for the wrong tmux session, or
+// reject a session-mismatch when the caller already passed
+// FLIGHTDECK_ACTIVITY_FILE). statePath is computed lazily per action
+// for the remaining verbs.
+const isRunAction = action === "run";
+const isActivityAction = action === "activity";
+const isMasterBusyAction = action === "master-busy";
+const skipEagerStatePath = isRunAction || isActivityAction || isMasterBusyAction;
+const session = (isRunAction && !rawSession) ? "" : isRunAction ? rawSession.trim() : resolveSession(rawSession);
+const file = !skipEagerStatePath && session ? statePath(session) : "";
 
 switch (action) {
 	case "path": {
@@ -142,21 +153,15 @@ switch (action) {
 		break;
 	}
 	case "archive": {
+		// vstack#227: archive is now a thin wrapper around
+		// terminateActiveRun. The durable run snapshot under
+		// `runs/<run-id>/snapshots/` replaces the project-local
+		// `tmp/flightdeck-state-<S>-<TS>.json.archive` rotation;
+		// vstack#213's daemon-stop sequence still applies.
 		appendSessionCompletedForArchive();
-		terminateActiveRunForArchive();
-		const ap = archiveState(file);
-		// vstack#213: archive rotates the state file; the daemon's
-		// --inner argv was bound to pane ids inside it. Once archived,
-		// the daemon's subscriber set is by definition stale for the
-		// next start, and reconciliation can't recover because the
-		// inode/path the daemon snapshotted has changed. Stop the
-		// daemon as part of the archive op so the next
-		// flightdeck-session start arms a fresh daemon. Failure to stop
-		// is logged but doesn't fail the archive — the legacy state is
-		// already moved, and the next start path detects staleness via
-		// meta inode mismatch and respawns regardless.
+		const snapshotPath = archiveState(file);
 		stopDaemonForSessionBestEffort(session);
-		if (ap) process.stdout.write(`${ap}\n`);
+		if (snapshotPath) process.stdout.write(`${snapshotPath}\n`);
 		break;
 	}
 	case "activity": {
@@ -356,10 +361,13 @@ function dieActivityError(error: unknown): never {
 
 function activityFile(overrides: { session?: string; stateFile?: string } = {}): string {
 	if (overrides.stateFile) return activityPathFromStatePath(overrides.stateFile);
-	if (overrides.session) return activityPathForSession(overrides.session, resolveStateBase());
 	const envActivity = process.env.FLIGHTDECK_ACTIVITY_FILE;
-	if (typeof envActivity === "string" && envActivity.trim()) return envActivity.trim();
-	return activityPathForSession(session, resolveStateBase());
+	if (!overrides.session && typeof envActivity === "string" && envActivity.trim()) return envActivity.trim();
+	const targetSession = overrides.session || session;
+	// vstack#227: derive the activity file from the active run's
+	// state.json so the session arg is the authoritative selector and
+	// we don't fall back to whatever tmux says the current session is.
+	return activityPathFromStatePath(statePath(targetSession));
 }
 
 function runActivity(args: string[]): void {
@@ -584,21 +592,6 @@ function resolveDaemonBin(): { bin: string; args: string[] } {
 	return { args: [tsEntry], bin: process.argv0 || "bun" };
 }
 
-function terminateActiveRunForArchive(): void {
-	try {
-		const result = terminateActiveRun(resolveProjectRoot(), session, { stateDir: process.env.FLIGHTDECK_STATE_DIR });
-		if (result.reason === "session-mismatch" && result.active) {
-			const diagnostic = result.diagnostic ? ` ${result.diagnostic}` : ` active_tmux_session=${result.active.tmux_session}`;
-			if (result.active.tmux_session === session) {
-				die(`Error: active Flightdeck run metadata mismatch before archive; durable active pointer unchanged.${diagnostic}`, 1);
-			}
-			process.stderr.write(`Warning: active Flightdeck run ${result.active.run_id} does not match archive tmux session ${session}; durable active pointer unchanged.${diagnostic}\n`);
-		}
-	} catch (error) {
-		die(`Error: failed to terminate active Flightdeck run before archive: ${error instanceof Error ? error.message : String(error)}`, 1);
-	}
-}
-
 function appendSessionCompletedForArchive(): void {
 	const activityPath = activityPathFromStatePath(file);
 	try {
@@ -645,7 +638,11 @@ function runRun(args: string[], globalSession: string): void {
 			}
 			case "ensure": {
 				const tmuxSession = flags.tmuxSession || globalSession || resolveSession("");
-				writeJson(ensureActiveRun(projectRoot, tmuxSession, flags.stateDir));
+				// vstack#227: lifecycle entrypoint runs the pane-liveness
+				// stale check so flightdeck-session start/attach rotate
+				// orphan runs from prior sessions. Helper callers via
+				// statePath() opt out by passing { checkStale: false }.
+				writeJson(ensureActiveRun(projectRoot, tmuxSession, { stateDir: flags.stateDir, checkStale: true }));
 				break;
 			}
 			case "list": {

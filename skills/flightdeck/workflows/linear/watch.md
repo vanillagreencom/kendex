@@ -8,7 +8,7 @@ Issue-mode master loop. It extends the generic `session-watch.md` loop with PR/L
 - `$TMUX` set.
 - `workflows/shared/session-watch.md` is the core loop for state init, entry reconciliation, daemon startup, polling, generic prompt routing, and ack/yield.
 - Issue-mode skills are loaded now: `github`, `linear`, `worktree`, and `project-management` as needed by the issue workflow. Generic `session-watch.md` does not load or require them.
-- `[ISSUE_IDS]` non-empty or `tmp/flightdeck-state-<SESSION>.json` exists.
+- `[ISSUE_IDS]` non-empty or `~/.vstack/flightdeck/projects/<PROJECT_ID>/runs/<RUN_ID>/state.json` exists.
 
 **Post-condition**: issue entries reach a terminal issue outcome (`merged`, `aborted`, or `dead`), `terminate.md` writes the issue summary, and control returns to the watch loop.
 

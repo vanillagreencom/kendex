@@ -6,6 +6,7 @@ import type {
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import { loadDotEnvIntoProcess, resolveProjectRoot } from "../shared/project.ts";
+import { resolveProjectIdentity, resolveProjectRunPaths } from "./run-store.ts";
 
 export const ENTRY_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DOMAIN_KEYS = new Set(["issue", "github_issue", "plan_item"]);
@@ -142,8 +143,14 @@ interface PlanBriefLocation {
 function expectedPlanBriefLocation(): PlanBriefLocation {
 	const projectRoot = resolveProjectRoot();
 	loadDotEnvIntoProcess(projectRoot);
-	const stateDir = process.env.FLIGHTDECK_STATE_DIR?.trim() || "tmp";
-	const stateBase = resolve(projectRoot, stateDir);
+	// vstack#227: plan briefs live under the project's run-store
+	// container, not inside any specific run directory. Plans outlive
+	// individual run rotations, so binding the briefs to a single run
+	// would orphan them on terminate/restart. The validator therefore
+	// accepts any path under `<project_dir>/plan-briefs/`, regardless of
+	// the active run.
+	const identity = resolveProjectIdentity(projectRoot);
+	const stateBase = resolveProjectRunPaths(identity).project_dir;
 	return { projectRoot, stateBase, briefRoot: resolve(stateBase, "plan-briefs") };
 }
 

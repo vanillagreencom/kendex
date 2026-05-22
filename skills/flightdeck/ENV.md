@@ -5,7 +5,8 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 ## Configuration
 
 Rust dashboard users can press `S` (or `Alt+S`) to open the Settings popup.
-Editable values are persisted in `<project-root>/tmp/flightdeck-settings.toml`;
+Editable values are persisted in
+`~/.vstack/flightdeck/projects/<project-id>/settings.toml`;
 `flightdeck-dashboard` commands load that file at startup and apply its values
 inside the dashboard process without mutating the parent shell. These overrides
 are dashboard-scoped: they affect dashboard launch/TUI/daemon behavior, not the
@@ -13,12 +14,20 @@ master workflow shell or already-running child panes. Rows marked as
 restart-required in the popup take effect on the next dashboard launch or
 `flightdeck-dashboard` command.
 
+vstack#227: runtime state (master state JSON, activity sidecar, archives,
+terminate summary) lives under
+`~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/`. The legacy
+project-local `tmp/flightdeck-*` files are migrated to `.migrated` markers
+on first contact with the new helpers. Project tmp/ is no longer Flightdeck's
+state surface.
+
 Master-loop env vars consulted by workflows:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | UNKNOWN-state wait threshold before considering force-merge (predicate also requires APPROVED + green + disjoint) |
-| `FLIGHTDECK_STATE_DIR` | `tmp` | Project-relative master-state file directory |
+| `FLIGHTDECK_STATE_DIR` | `tmp` | **DEPRECATED** since vstack#227. Setting it emits a warning. Only honored as the directory the legacy migration shim looks at; live state lives under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. |
+| `FLIGHTDECK_RUN_STORE_ROOT` | `$HOME/.vstack/flightdeck` | Override the user-level run store root. Primarily for tests that need an isolated path. |
 | `FLIGHTDECK_ACTIVITY_FILE` | unset | Explicit activity JSONL target for wrapper/workflow emitters and `flightdeck-state activity append`; when unset, managed workflows use `activity_path` from master state. |
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
 | `FLIGHTDECK_AUTO_MERGE` | `1` | When `0`, merge-now, force-merge-confirm, and UNKNOWN-timer force-merge transitions escalate instead of auto-answering. For sessions where the human gate is desired (compliance, big-blast-radius PRs) |

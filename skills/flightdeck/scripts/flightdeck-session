@@ -718,61 +718,14 @@ flightdeck_session_pane_env_str() {
   flightdeck_shell_join env FLIGHTDECK_MANAGED=1 FLIGHTDECK_CHILD_PANE=1 "FLIGHTDECK_ENTRY_ID=${entry_id}"
 }
 
-# Archive a stale state file before a fresh session start. Predicates:
-#   1. terminated == true — prior session was wrapped up
-#   2. file has tracked entries but ZERO pane_id is currently alive in tmux
-#   3. file has no `.entries` map but a legacy `.issues` map exists
-#      — pre-purge schema, no longer readable; archive so init rewrites it
-# Any of those signals means there's no live work to preserve and we can
-# safely roll the old file to a .json.archive sibling.
+# vstack#227: archive-stale-state is now handled inside the run-store.
+# ensureActiveRun detects `terminated == true` / `all panes missing`
+# active runs and rotates them into a fresh durable run; the old
+# project-local `tmp/flightdeck-state-<S>.json.archive` rename is gone.
+# This wrapper is preserved as a thin shim so the existing call sites
+# continue to compile, but it no longer does any work itself.
 archive_stale_state_if_needed() {
-  local state_file
-  state_file=$("$SCRIPT_DIR/flightdeck-state" path 2>/dev/null || true)
-  [[ -n "$state_file" && -f "$state_file" ]] || return 0
-  local terminated entries_count issues_count paneids alive_panes pid reason=""
-  terminated=$(jq -r '.terminated // false' "$state_file" 2>/dev/null || echo false)
-  if [[ "$terminated" == "true" ]]; then
-    reason="terminated"
-  else
-    entries_count=$(jq -r '(.entries // {}) | length' "$state_file" 2>/dev/null || echo 0)
-    issues_count=$(jq -r '(.issues // {}) | length' "$state_file" 2>/dev/null || echo 0)
-    if (( entries_count == 0 && issues_count > 0 )); then
-      reason="pre-purge-schema"
-    else
-      paneids=$(jq -r '(.entries // {}) | to_entries[] | .value.pane_id // empty' "$state_file" 2>/dev/null | awk 'NF' || true)
-      [[ -n "$paneids" ]] || return 0
-      local tmux_err tmux_status=0
-      tmux_err=$(mktemp -t flightdeck-tmux-list-panes.XXXXXX) || { echo "Error: unable to create tmux liveness diagnostic tempfile" >&2; exit 2; }
-      alive_panes=$(tmux list-panes -a -F '#{pane_id}' 2>"$tmux_err") || tmux_status=$?
-      if (( tmux_status != 0 )); then
-        local tmux_stderr
-        tmux_stderr=$(cat "$tmux_err" 2>/dev/null || true)
-        rm -f "$tmux_err"
-        echo "Error: unable to verify live tmux panes before archiving stale Flightdeck state" >&2
-        echo "tmux list-panes -a -F '#{pane_id}' failed with status $tmux_status" >&2
-        [[ -n "$tmux_stderr" ]] && printf '%s\n' "$tmux_stderr" >&2
-        echo "Refusing to archive $state_file; retry when tmux liveness is available or terminate/archive explicitly after verifying panes are gone." >&2
-        exit 2
-      fi
-      rm -f "$tmux_err"
-      local any_alive=0
-      while IFS= read -r pid; do
-        [[ -n "$pid" ]] || continue
-        if grep -Fxq "$pid" <<<"$alive_panes"; then any_alive=1; break; fi
-      done <<<"$paneids"
-      (( any_alive == 0 )) || return 0
-      reason="no-live-panes"
-    fi
-  fi
-  local archived archive_status=0
-  archived=$("$SCRIPT_DIR/flightdeck-state" archive) || archive_status=$?
-  if (( archive_status != 0 )); then
-    echo "Error: flightdeck-state archive failed while archiving stale state ($reason): $state_file" >&2
-    exit "$archive_status"
-  fi
-  if [[ -n "$archived" ]]; then
-    printf 'flightdeck-session: archived stale state (%s) -> %s\n' "$reason" "$archived" >&2
-  fi
+  return 0
 }
 
 ensure_active_run_for_session() {

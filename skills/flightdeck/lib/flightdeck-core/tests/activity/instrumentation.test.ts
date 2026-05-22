@@ -64,6 +64,9 @@ function writeShimState(state: ShimState): string {
 function registryEnv(): Record<string, string> {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: isolate the run-store per test so writes land under
+	// the test's repo dir instead of $HOME/.vstack/flightdeck.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_MANAGED = "1";
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.TMUX = env.TMUX || "shim";
@@ -91,11 +94,16 @@ function runFlightdeckState(args: string[]): { stdout: string; stderr: string; s
 }
 
 function activityPath(): string {
-	return join(repo, "tmp", `flightdeck-activity-${SESSION}.jsonl`);
+	// vstack#227: activity lives in the active run dir, resolved via
+	// flightdeck-state. Returns empty string if the active run hasn't
+	// been created yet.
+	const r = spawnSync(FLIGHTDECK_STATE, ["activity", "path", "--session", SESSION], { cwd: repo, encoding: "utf8", env: registryEnv() });
+	return (r.stdout ?? "").trim();
 }
 
 function statePath(): string {
-	return join(repo, "tmp", `flightdeck-state-${SESSION}.json`);
+	const r = spawnSync(FLIGHTDECK_STATE, ["path", "--session", SESSION], { cwd: repo, encoding: "utf8", env: registryEnv() });
+	return (r.stdout ?? "").trim();
 }
 
 function events(): ActivityEvent[] {
@@ -397,8 +405,12 @@ describe("pane-registry activity instrumentation", () => {
 		expect(changes[0]?.details).toMatchObject({ new: "ready", old: "waiting" });
 	});
 
-	test("activity disabled succeeds silently without creating activity JSONL", () => {
-		mkdirSync(join(repo, "tmp"), { recursive: true });
+	test("set-state succeeds even without explicit init", () => {
+		// vstack#227: statePath auto-ensures an active run, so set-state
+		// is no longer dependent on an upfront `init` call. The
+		// legacy "activity disabled" semantics — where init wasn't
+		// called and thus activity emission was skipped — are gone; the
+		// run dir is always initialized with an `activity.jsonl`.
 		writeFileSync(statePath(), JSON.stringify({
 			entries: {
 				"DISABLED-1": { id: "DISABLED-1", kind: "adhoc", state: "waiting", title: "Disabled", window: "disabled", harness: "pi" },
@@ -407,6 +419,5 @@ describe("pane-registry activity instrumentation", () => {
 		}), "utf8");
 		const result = run(["set-state", "DISABLED-1", "ready"]);
 		expect(result.status).toBe(0);
-		expect(existsSync(activityPath())).toBe(false);
 	});
 });

@@ -5,12 +5,19 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::state::tracked_entries;
 
-pub const OVERRIDE_RELATIVE_PATH: &str = "tmp/flightdeck-settings.toml";
+// vstack#227: settings file lives under the user-level run store so it
+// is no longer polluting `<project>/tmp/`. The basename inside the
+// project dir is still `settings.toml`; older callers asking for the
+// "relative path" get the new basename so existing UI hints stay
+// truthful.
+pub const OVERRIDE_FILE_BASENAME: &str = "settings.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingCategory {
@@ -947,9 +954,157 @@ pub fn resolve_project_root_from(cwd: &Path) -> Result<PathBuf, SettingsError> {
     })
 }
 
+// vstack#227: settings live under the user-level run store, not the
+// project tmp/. Mirror the project_id hashing logic in
+// `flightdeck-core/state/run-store.ts::projectIdentityForRoot`.
+//
+// The env var `FLIGHTDECK_RUN_STORE_ROOT` overrides the storage root
+// for tests that need to redirect away from `$HOME/.vstack/flightdeck`.
 #[must_use]
 pub fn override_path(project_root: &Path) -> PathBuf {
-    project_root.join(OVERRIDE_RELATIVE_PATH)
+    project_dir(project_root).join(OVERRIDE_FILE_BASENAME)
+}
+
+#[must_use]
+pub fn project_dir(project_root: &Path) -> PathBuf {
+    flightdeck_run_store_root()
+        .join("projects")
+        .join(project_id(project_root))
+}
+
+#[must_use]
+pub fn flightdeck_run_store_root() -> PathBuf {
+    if let Some(override_root) = env::var("FLIGHTDECK_RUN_STORE_ROOT")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+    {
+        return PathBuf::from(override_root);
+    }
+    let home = env::var("HOME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "/".to_owned());
+    PathBuf::from(home).join(".vstack").join("flightdeck")
+}
+
+fn project_id(project_root: &Path) -> String {
+    let root_str = project_root.display().to_string();
+    let remote_url = git_remote_url(project_root);
+    let root_hash = sha256_hex(&root_str);
+    let name = remote_url
+        .as_deref()
+        .map(remote_repo_name)
+        .unwrap_or_else(|| {
+            project_root
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("project")
+                .to_owned()
+        });
+    let identity_material = match &remote_url {
+        Some(url) => format!("{url}\n{root_hash}"),
+        None => root_hash,
+    };
+    let identity_hash = sha256_hex(&identity_material);
+    let suffix = identity_hash.get(..16).unwrap_or(&identity_hash);
+    format!("{}-{suffix}", safe_segment(&name))
+}
+
+fn git_remote_url(project_root: &Path) -> Option<String> {
+    let origin = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .ok()?;
+    let origin_text = String::from_utf8(origin.stdout).ok()?;
+    let origin_trim = origin_text.trim();
+    if origin.status.success() && !origin_trim.is_empty() {
+        return Some(origin_trim.to_owned());
+    }
+    let first_remote = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .arg("remote")
+        .output()
+        .ok()?;
+    let remotes = String::from_utf8(first_remote.stdout).ok()?;
+    let remote = remotes
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let value = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["config", "--get", &format!("remote.{remote}.url")])
+        .output()
+        .ok()?;
+    if !value.status.success() {
+        return None;
+    }
+    let v = String::from_utf8(value.stdout).ok()?;
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn remote_repo_name(remote_url: &str) -> String {
+    let stripped = remote_url.trim();
+    let no_query = stripped.split(['?', '#']).next().unwrap_or(stripped);
+    let trimmed = no_query.strip_suffix(".git").unwrap_or(no_query);
+    trimmed
+        .split(['/', ':'])
+        .rfind(|s| !s.is_empty())
+        .unwrap_or("project")
+        .to_owned()
+}
+
+fn safe_segment(value: &str) -> String {
+    let lowered = value.trim().to_lowercase();
+    let mut out = String::with_capacity(lowered.len());
+    let mut last_dash = false;
+    for ch in lowered.chars() {
+        let ok = ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-';
+        if ok {
+            out.push(ch);
+            last_dash = ch == '-';
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.starts_with('-') {
+        out.remove(0);
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.len() > 48 {
+        out.truncate(48);
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "project".to_owned()
+    } else {
+        out
+    }
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 #[must_use]
@@ -1185,9 +1340,18 @@ fn write_override_file(
             message: format!("expected {}", expected_path.display()),
         });
     }
-    let tmp_dir = project_root.join("tmp");
-    ensure_safe_tmp_dir(&project_root, &tmp_dir)?;
-    ensure_safe_final_path(&project_root, path)?;
+    // vstack#227: project_dir lives under the user-level run store; the
+    // safety checks here ensure the immediate parent of settings.toml
+    // is a real directory, not a symlink, and is created if missing.
+    let store_dir = project_dir(&project_root);
+    if let Err(error) = fs::create_dir_all(&store_dir) {
+        return Err(SettingsError::Write {
+            path: store_dir.clone(),
+            source: error,
+        });
+    }
+    ensure_safe_directory(&store_dir)?;
+    ensure_safe_final_path_against(&store_dir, path)?;
 
     let mut out = String::from(
         "# Flightdeck dashboard settings override.\n# Edited by the dashboard settings popup. Values are process env strings.\n\n",
@@ -1214,77 +1378,70 @@ fn write_override_file(
         })
 }
 
-fn ensure_safe_tmp_dir(project_root: &Path, tmp_dir: &Path) -> Result<(), SettingsError> {
-    match fs::symlink_metadata(tmp_dir) {
+fn ensure_safe_directory(dir: &Path) -> Result<(), SettingsError> {
+    match fs::symlink_metadata(dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
                 return Err(SettingsError::UnsafePath {
-                    path: tmp_dir.to_path_buf(),
-                    message: String::from("tmp directory is a symlink"),
+                    path: dir.to_path_buf(),
+                    message: String::from("settings directory is a symlink"),
                 });
             }
-            if !metadata.is_dir() {
+            if !metadata.file_type().is_dir() {
                 return Err(SettingsError::UnsafePath {
-                    path: tmp_dir.to_path_buf(),
-                    message: String::from("tmp path is not a directory"),
+                    path: dir.to_path_buf(),
+                    message: String::from("settings directory path is not a directory"),
                 });
             }
+            Ok(())
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(tmp_dir).map_err(|source| SettingsError::Write {
-                path: tmp_dir.to_path_buf(),
-                source,
-            })?;
-        }
-        Err(source) => {
-            return Err(SettingsError::Write {
-                path: tmp_dir.to_path_buf(),
-                source,
-            })
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SettingsError::Write {
+            path: dir.to_path_buf(),
+            source: error,
+        }),
     }
-    let canonical_tmp = tmp_dir
-        .canonicalize()
-        .map_err(|source| SettingsError::Write {
-            path: tmp_dir.to_path_buf(),
-            source,
-        })?;
-    if !canonical_tmp.starts_with(project_root) {
-        return Err(SettingsError::UnsafePath {
-            path: tmp_dir.to_path_buf(),
-            message: String::from("canonical tmp directory escapes project root"),
-        });
-    }
-    Ok(())
 }
 
-fn ensure_safe_final_path(project_root: &Path, path: &Path) -> Result<(), SettingsError> {
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            return Err(SettingsError::UnsafePath {
-                path: path.to_path_buf(),
-                message: String::from("settings file is a symlink"),
-            });
+fn ensure_safe_final_path_against(parent_dir: &Path, path: &Path) -> Result<(), SettingsError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(SettingsError::UnsafePath {
+                    path: path.to_path_buf(),
+                    message: String::from("settings file is a symlink"),
+                });
+            }
+            if !metadata.file_type().is_file() {
+                return Err(SettingsError::UnsafePath {
+                    path: path.to_path_buf(),
+                    message: String::from("settings path is not a regular file"),
+                });
+            }
+            // Defense in depth: ensure the file lives inside the
+            // expected store dir (rejects any unusual path tricks).
+            if path.parent() != Some(parent_dir) {
+                return Err(SettingsError::UnsafePath {
+                    path: path.to_path_buf(),
+                    message: format!("settings file must be inside {}", parent_dir.display()),
+                });
+            }
+            Ok(())
         }
-        if !metadata.is_file() {
-            return Err(SettingsError::UnsafePath {
-                path: path.to_path_buf(),
-                message: String::from("settings path is not a regular file"),
-            });
-        }
-        let canonical = path.canonicalize().map_err(|source| SettingsError::Write {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SettingsError::Write {
             path: path.to_path_buf(),
-            source,
-        })?;
-        if !canonical.starts_with(project_root) {
-            return Err(SettingsError::UnsafePath {
-                path: path.to_path_buf(),
-                message: String::from("canonical settings file escapes project root"),
-            });
-        }
+            source: error,
+        }),
     }
-    Ok(())
 }
+
+// vstack#227: legacy `ensure_safe_tmp_dir` / `ensure_safe_final_path`
+// validated that project-local `tmp/` and its settings file stayed
+// inside `project_root`. The unified settings now live under the
+// user-level run store; the equivalent guarantees are provided by
+// `ensure_safe_directory` + `ensure_safe_final_path_against` on the
+// new store dir.
 
 fn parse_override_content(
     path: &Path,
@@ -1425,6 +1582,37 @@ fn valid_env_key(key: &str) -> bool {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    // vstack#227: settings now live under FLIGHTDECK_RUN_STORE_ROOT. The
+    // env var is process-global; serialize the tests that mutate it so
+    // parallel test runs in this binary don't trample one another.
+    static SETTINGS_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct SettingsEnvGuard {
+        previous: Option<String>,
+    }
+
+    impl SettingsEnvGuard {
+        fn install(root: &Path) -> Self {
+            let previous = std::env::var("FLIGHTDECK_RUN_STORE_ROOT").ok();
+            std::env::set_var("FLIGHTDECK_RUN_STORE_ROOT", root);
+            Self { previous }
+        }
+    }
+
+    impl Drop for SettingsEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(prev) => std::env::set_var("FLIGHTDECK_RUN_STORE_ROOT", prev),
+                None => std::env::remove_var("FLIGHTDECK_RUN_STORE_ROOT"),
+            }
+        }
+    }
+
+    fn settings_root(dir: &Path) -> PathBuf {
+        dir.join(".vstack-store")
+    }
 
     #[test]
     fn parse_override_file_accepts_quoted_bare_and_booleans() {
@@ -1447,9 +1635,11 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
 
     #[test]
     fn write_override_file_round_trips_strings() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("vstack.toml"), "").expect("marker");
-        let path = dir.path().join(OVERRIDE_RELATIVE_PATH);
+        let _env = SettingsEnvGuard::install(&settings_root(dir.path()));
+        let path = override_path(dir.path());
         let mut values = BTreeMap::new();
         values.insert(
             "FLIGHTDECK_LAUNCH_MODEL".to_owned(),
@@ -1462,8 +1652,10 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
 
     #[test]
     fn settings_state_toggle_prepares_and_applies_boolean_override() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("vstack.toml"), "").expect("marker");
+        let _env = SettingsEnvGuard::install(&settings_root(dir.path()));
         let mut state = SettingsState::load(dir.path().to_path_buf(), BTreeMap::new());
         let index = state
             .entries
@@ -1521,9 +1713,11 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
 
     #[test]
     fn invalid_override_file_surfaces_error() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join(OVERRIDE_RELATIVE_PATH);
-        std::fs::create_dir_all(path.parent().unwrap()).expect("tmp dir");
+        let _env = SettingsEnvGuard::install(&settings_root(dir.path()));
+        let path = override_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).expect("settings dir");
         std::fs::write(&path, "FLIGHTDECK_DEBOUNCE_CYCLES = -1\n").expect("write invalid");
         let state = SettingsState::load(dir.path().to_path_buf(), BTreeMap::new());
         assert!(state
@@ -1534,9 +1728,11 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
 
     #[test]
     fn malformed_override_file_surfaces_error() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join(OVERRIDE_RELATIVE_PATH);
-        std::fs::create_dir_all(path.parent().unwrap()).expect("tmp dir");
+        let _env = SettingsEnvGuard::install(&settings_root(dir.path()));
+        let path = override_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).expect("settings dir");
         std::fs::write(&path, "not a setting line\n").expect("write malformed");
         let state = SettingsState::load(dir.path().to_path_buf(), BTreeMap::new());
         assert!(state
@@ -1559,16 +1755,25 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
 
     #[test]
     #[cfg(unix)]
-    fn write_rejects_tmp_symlink_escape() {
+    fn write_rejects_store_dir_symlink_escape() {
         use std::os::unix::fs::symlink;
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let project = tempfile::tempdir().expect("project tempdir");
+        std::fs::write(project.path().join("vstack.toml"), "").expect("marker");
         let outside = tempfile::tempdir().expect("outside tempdir");
-        symlink(outside.path(), project.path().join("tmp")).expect("tmp symlink");
-        let path = project.path().join(OVERRIDE_RELATIVE_PATH);
+        // Point the resolved settings store dir at a symlink to escape
+        // the safe per-project directory.
+        let store_root = settings_root(project.path());
+        let _env = SettingsEnvGuard::install(&store_root);
+        let canonical_project = project.path().canonicalize().expect("canonicalize project");
+        let store_dir = project_dir(&canonical_project);
+        std::fs::create_dir_all(store_dir.parent().unwrap()).expect("projects parent");
+        symlink(outside.path(), &store_dir).expect("store dir symlink");
+        let path = override_path(&canonical_project);
         let mut values = BTreeMap::new();
         values.insert(String::from("FLIGHTDECK_AUTO_MERGE"), String::from("0"));
-        let error =
-            write_override_file(project.path(), &path, &values).expect_err("reject symlink");
+        let error = write_override_file(project.path(), &path, &values)
+            .expect_err("reject symlink store dir");
         assert!(error.to_string().contains("symlink"));
     }
 
@@ -1576,12 +1781,16 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
     #[cfg(unix)]
     fn write_rejects_final_file_symlink_escape() {
         use std::os::unix::fs::symlink;
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
         let project = tempfile::tempdir().expect("project tempdir");
+        std::fs::write(project.path().join("vstack.toml"), "").expect("marker");
         let outside = tempfile::tempdir().expect("outside tempdir");
-        std::fs::create_dir(project.path().join("tmp")).expect("tmp dir");
+        let _env = SettingsEnvGuard::install(&settings_root(project.path()));
         let outside_file = outside.path().join("settings.toml");
         std::fs::write(&outside_file, "").expect("outside file");
-        let path = project.path().join(OVERRIDE_RELATIVE_PATH);
+        let canonical_project = project.path().canonicalize().expect("canonicalize project");
+        let path = override_path(&canonical_project);
+        std::fs::create_dir_all(path.parent().unwrap()).expect("store dir");
         symlink(&outside_file, &path).expect("settings symlink");
         let mut values = BTreeMap::new();
         values.insert(String::from("FLIGHTDECK_AUTO_MERGE"), String::from("0"));
@@ -1604,6 +1813,9 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
             "FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_PAUSE_FILE",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_RELEASE_FILE",
+            // vstack#227: test/sandbox-only run-store overrides; not
+            // user-editable from the dashboard settings popup.
+            "FLIGHTDECK_RUN_STORE_ROOT",
             "NO_MOTION",
             "NO_COLOR",
             "BEHIND",
