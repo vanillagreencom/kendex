@@ -218,8 +218,8 @@ describe("pane-registry parity", () => {
 		expect(aHarnesses.stdout.trim()).toBe("pi,codex");
 		expect(bHarnesses.stdout.trim()).toBe("pi,codex");
 		expect(JSON.parse(atomic.stdout)).toEqual([
-			{ harness: "pi", pane_id: "%210" },
-			{ harness: "codex", pane_id: "%211" },
+			{ harness: "pi", id: "LIVE-A", pane_id: "%210" },
+			{ harness: "codex", id: "LIVE-B", pane_id: "%211" },
 		]);
 	});
 

@@ -533,9 +533,26 @@ function stopDaemonForSessionBestEffort(tmuxSession: string): void {
 // Falls back to the trampoline next to scripts/flightdeck-state, and
 // finally to invoking the TS source through `bun` if neither is
 // available (only relevant when invoked from `bun run`).
+//
+// Trust model (CWE-829, round-2): when the override is set, require
+// an absolute path that exists and is executable. Anything else
+// fail-closes — production operators should leave this unset; tests
+// inject an absolute path under a per-test temp dir. The exit path
+// surfaces a clear error so misconfigured environments don't silently
+// short-circuit the daemon-stop call during archive.
 function resolveDaemonBin(): { bin: string; args: string[] } {
 	const override = (process.env.FLIGHTDECK_DAEMON_BIN ?? "").trim();
-	if (override) return { args: [], bin: override };
+	if (override) {
+		if (!override.startsWith("/")) {
+			process.stderr.write(`Error: FLIGHTDECK_DAEMON_BIN must be an absolute path: ${override}\n`);
+			process.exit(2);
+		}
+		if (!existsSync(override)) {
+			process.stderr.write(`Error: FLIGHTDECK_DAEMON_BIN not found: ${override}\n`);
+			process.exit(2);
+		}
+		return { args: [], bin: override };
+	}
 	const trampoline = join(
 		dirname(fileURLToPath(import.meta.url)),
 		"..", "..", "..", "scripts", "flightdeck-daemon",

@@ -186,6 +186,25 @@ describe("classifyStaleness", () => {
 			stateFilePath: "/tmp/flightdeck-state-vstack.json",
 		})).toBe("stale-inner");
 	});
+
+	test("fresh when callers fall back to recorded subscribers on probe failure (round-2)", () => {
+		// cmdHealth substitutes the meta's recorded subscribers when
+		// pane-registry can't be probed. classifyStaleness must yield
+		// `fresh` in that case so a transient pane-registry failure
+		// doesn't trigger a respawn storm. The recorded subscribers
+		// trivially match themselves once zipped with their harnesses.
+		const m = meta();
+		const fallback = m.subscribed_pane_ids.map((paneId, i) => ({
+			harness: m.subscribed_pane_harnesses[i] ?? "",
+			paneId,
+		}));
+		expect(classifyStaleness(m, {
+			activeRunId: "run-1",
+			liveInnerEntries: fallback,
+			stateFileInode: "12345",
+			stateFilePath: "/tmp/flightdeck-state-vstack.json",
+		})).toBe("fresh");
+	});
 });
 
 describe("statInode", () => {

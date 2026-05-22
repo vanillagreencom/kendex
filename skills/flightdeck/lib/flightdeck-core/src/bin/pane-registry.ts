@@ -970,8 +970,14 @@ function cmdList(args: string[]): void {
 			process.stdout.write(`${liveRows().map((row) => String(row.harness ?? "")).join(",")}\n`);
 			break;
 		case "inner-live-json":
+			// vstack#213 round-2: include `id` so external consumers
+			// (flightdeck-daemon health probe, ensure_daemon_for_session
+			// filter) can drop the dashboard self-entry consistently.
+			// Existing consumers (max-lifetime handoff) ignore extra
+			// fields, so this is additive.
 			process.stdout.write(`${JSON.stringify(strictLiveRows().map((row) => ({
 				harness: String(row.harness ?? ""),
+				id: typeof row.id === "string" ? row.id : "",
 				pane_id: row.pane_id,
 			})))}\n`);
 			break;

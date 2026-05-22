@@ -5,9 +5,41 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PANE_REGISTRY="$SCRIPT_DIR/pane-registry"
+# vstack#213 round-2: test-only override for the canonical pane-registry
+# binary. Production callers leave it unset and we use the script-local
+# trampoline; tests inject a shim path to exercise registry-probe
+# failures inside ensure_daemon_for_session.
+PANE_REGISTRY="${FLIGHTDECK_PANE_REGISTRY_BIN:-$SCRIPT_DIR/pane-registry}"
 # vstack#213: allow tests / operators to swap in a custom daemon
 # binary (matches the existing FLIGHTDECK_DASHBOARD_BIN escape hatch).
+#
+# Trust model (CWE-829): the binary is invoked for daemon
+# lifecycle (status/health/stop/start), so a hostile override could
+# misroute wake-arming or silently fail-open. The override is intended
+# strictly for tests and developer iteration; production operators
+# should leave it unset. We enforce a minimal sanity gate here:
+#   1. If set, must be an absolute path.
+#   2. Must exist and be executable.
+# Both checks fail-closed with a stderr message so operators don't
+# silently bypass the gate.
+#
+# We deliberately stop short of stat-ing ownership / group/world-write
+# bits because the same shim mechanism is used by every test in
+# tests/parity/flightdeck-session.test.ts that lives under a per-test
+# temp dir. Adding those checks here without a test-time opt-out would
+# force every test to flip a bypass env var. The tradeoff is documented
+# in ENV.md so operators can decide whether to expose this env in
+# untrusted contexts.
+if [[ -n "${FLIGHTDECK_DAEMON_BIN:-}" ]]; then
+  if [[ "$FLIGHTDECK_DAEMON_BIN" != /* ]]; then
+    echo "Error: FLIGHTDECK_DAEMON_BIN must be an absolute path: $FLIGHTDECK_DAEMON_BIN" >&2
+    exit 2
+  fi
+  if [[ ! -x "$FLIGHTDECK_DAEMON_BIN" ]]; then
+    echo "Error: FLIGHTDECK_DAEMON_BIN not executable: $FLIGHTDECK_DAEMON_BIN" >&2
+    exit 2
+  fi
+fi
 FLIGHTDECK_DAEMON_BIN="${FLIGHTDECK_DAEMON_BIN:-$SCRIPT_DIR/flightdeck-daemon}"
 
 # shellcheck source=lib/pane-env.sh
@@ -942,15 +974,19 @@ ensure_daemon_for_session() {
   if (( start_rc == 1 )); then
     # Possible lock race: confirm by re-running health and treating
     # this as benign only when the running daemon now reports
-    # staleness=fresh. Anything else (still stale / refusal) is
-    # surfaced as daemon-respawn-failed.
-    local verify_output="" verify_status=0 verify_staleness=""
+    # staleness=fresh AND master_pane_id matches the current
+    # supervisor. A still-stale daemon, a different master, or any
+    # other refusal must surface daemon-respawn-failed so the
+    # operator sees the stop+start stderr instead of a silent
+    # "raced" log line that masks the real issue.
+    local verify_output="" verify_status=0 verify_staleness="" verify_master=""
     verify_output=$("$FLIGHTDECK_DAEMON_BIN" health --session "$session_name" 2>/dev/null) || verify_status=$?
     if (( verify_status == 0 )); then
       verify_staleness=$(awk -F= '/^staleness=/{print $2; exit}' <<<"$verify_output")
+      verify_master=$(awk -F= '/^master_pane_id=/{print $2; exit}' <<<"$verify_output")
     fi
-    if [[ "$verify_staleness" == "fresh" ]]; then
-      printf 'flightdeck-session: ensure_daemon: daemon-respawn-raced session=%s (verified fresh after lock-race)\n' "$session_name" >&2
+    if [[ "$verify_staleness" == "fresh" && "$verify_master" == "$master_pane" ]]; then
+      printf 'flightdeck-session: ensure_daemon: daemon-respawn-raced session=%s (verified fresh + master=%s after lock-race)\n' "$session_name" "$master_pane" >&2
       start_rc=0
     fi
   fi

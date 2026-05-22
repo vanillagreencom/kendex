@@ -409,10 +409,21 @@ function cmdHealth(): void {
 			lines.push(`active_run_probe_error=${activeRunProbeError}`);
 		}
 		// Probe live tracked entries via pane-registry list. If the probe
-		// fails, emit a diagnostic and pass the recorded subscribers as
-		// the live set so the staleness call still produces a deterministic
-		// result (fresh in the absence of contrary evidence).
-		const liveInnerEntries = probeLiveInnerEntries(meta.session_name || meta.session_id, lines);
+		// fails (spawn/exit/malformed/not-array), we fall back to the
+		// recorded subscribers from the meta file so classifyStaleness
+		// yields a deterministic `fresh` in the absence of contrary
+		// evidence. The probe failure is surfaced via
+		// `live_inner_probe_error=` for operator visibility — health
+		// stays fail-OPEN here rather than triggering false respawns
+		// (round-2 fix; aligns code with the documented contract in
+		// SCHEMA.md).
+		const probe = probeLiveInnerEntries(lines);
+		const liveInnerEntries = probe.ok
+			? probe.entries
+			: meta.subscribed_pane_ids.map((paneId, i) => ({
+				harness: meta.subscribed_pane_harnesses[i] ?? "",
+				paneId,
+			}));
 		const staleness = classifyStaleness(meta, {
 			activeRunId: currentRunId,
 			liveInnerEntries,
@@ -486,32 +497,36 @@ function readSubscriberStatusLines(): string[] {
 }
 
 // Spawn pane-registry list --format inner-live-json to recover the
-// live (pane_id, harness) pairs for cmdHealth. On failure we emit a
-// diagnostic line and fall back to the recorded subscribers so the
-// classify call still produces a deterministic result (operators can
-// see the probe failed and act on it instead of getting a silent
-// false-fresh).
-function probeLiveInnerEntries(sessionLabel: string, diagLines: string[]): { paneId: string; harness: string }[] {
+// live (pane_id, harness) pairs for cmdHealth. Returns ok=true when
+// the probe succeeded (entries may be empty: zero live tracked panes
+// is meaningful and distinct from a probe failure). Returns ok=false
+// when spawn/exit/parse failed — cmdHealth treats that as fail-OPEN
+// and falls back to the meta's recorded subscribers so the daemon
+// isn't classified stale just because pane-registry briefly broke.
+function probeLiveInnerEntries(diagLines: string[]):
+	{ ok: true; entries: { paneId: string; harness: string }[] }
+	| { ok: false }
+{
 	const env = { ...process.env };
 	const r = spawnSync(PANE_REGISTRY_BIN, ["list", "--format", "inner-live-json"], { encoding: "utf8", env });
 	if (r.error) {
 		diagLines.push(`live_inner_probe_error=spawn_failed:${r.error.message}`);
-		return [];
+		return { ok: false };
 	}
 	if (r.status !== 0) {
 		const stderr = (r.stderr ?? "").trim().slice(0, 200);
 		diagLines.push(`live_inner_probe_error=exit_${r.status ?? "unknown"}:${stderr || "(no stderr)"}`);
-		return [];
+		return { ok: false };
 	}
 	let parsed: unknown;
 	try { parsed = JSON.parse((r.stdout ?? "").trim() || "[]"); }
 	catch (err) {
 		diagLines.push(`live_inner_probe_error=malformed_json:${(err as Error)?.message ?? err}`);
-		return [];
+		return { ok: false };
 	}
 	if (!Array.isArray(parsed)) {
 		diagLines.push("live_inner_probe_error=not_array");
-		return [];
+		return { ok: false };
 	}
 	const out: { paneId: string; harness: string }[] = [];
 	for (const row of parsed) {
@@ -520,13 +535,14 @@ function probeLiveInnerEntries(sessionLabel: string, diagLines: string[]): { pan
 		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
 		const harness = typeof entry.harness === "string" ? entry.harness : "";
 		// Exclude the dashboard self-entry — it's not a watch target.
+		// Requires the `id` field added to inner-live-json by
+		// pane-registry (vstack#213 round-2).
 		const id = typeof entry.id === "string" ? entry.id : "";
 		if (id === "flightdeck-dashboard") continue;
 		if (!paneId) continue;
 		out.push({ harness, paneId });
 	}
-	void sessionLabel;
-	return out;
+	return { entries: out, ok: true };
 }
 
 function collectDescendants(rootPid: number): number[] {

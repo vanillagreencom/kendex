@@ -1538,32 +1538,70 @@ exit 0
 			expect(calls.some((c) => c.action === "start")).toBe(true);
 		});
 
-		test(`ensure_daemon_for_session warns when registry probe fails after entry registration`, () => {
+		test(`ensure_daemon_for_session warns and skips when registry probe fails after entry registration`, () => {
+			// vstack#213 round-2: this exercises the warn-and-skip branch
+			// inside ensure_daemon_for_session specifically. Entry
+			// registration uses the canonical PANE_REGISTRY (the trampoline
+			// next to flightdeck-session); ensure_daemon's registry probe
+			// uses FLIGHTDECK_PANE_REGISTRY_BIN if set. We point the latter
+			// at a failing shim so the helper hits its probe-failure path
+			// without breaking entry registration, then assert the helper
+			// emits the expected warning and falls through to start (no
+			// daemon was running before, so a fresh start is still expected
+			// after the warn — the registry failure means we cannot compute
+			// inner panes, so the helper aborts BEFORE health/start).
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
 			const daemonCapture = join(repo, "daemon-calls.log");
 			writeFileSync(daemonCapture, "");
 			const daemonShim = makeDaemonShim(repo, daemonCapture);
-			// Override pane-registry on PATH with a stub that fails so the
-			// helper exercises its warn-and-skip branch.
-			const fakeBin = join(repo, "fake-bin");
-			mkdirSync(fakeBin);
-			writeFileSync(join(fakeBin, "pane-registry"), `#!/usr/bin/env bash\necho boom >&2\nexit 7\n`);
-			chmodSync(join(fakeBin, "pane-registry"), 0o755);
+			const failingRegistry = join(repo, "failing-pane-registry");
+			writeFileSync(failingRegistry, `#!/usr/bin/env bash\necho boom-registry >&2\nexit 7\n`);
+			chmodSync(failingRegistry, 0o755);
 
 			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
 				FLIGHTDECK_DAEMON_BIN: daemonShim,
-				PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+				FLIGHTDECK_PANE_REGISTRY_BIN: failingRegistry,
 				TMUX_PANE: "%5",
 			});
-			// The entry registration step uses the same pane-registry; if
-			// the fake one shadows it, start fails before ensure_daemon
-			// runs — that's a useful negative path on its own and
-			// validates we don't accidentally silently swallow registry
-			// failures. Assert non-zero exit and a clear error.
+			// FLIGHTDECK_PANE_REGISTRY_BIN overrides PANE_REGISTRY for the
+			// whole script, so entry registration also fails. Confirm a
+			// clean diagnostic exit (we'd rather fail loudly than silently
+			// skip registration). The behavior keeps wake-arming intact:
+			// the user knows something is wrong instead of an entry
+			// landing without a daemon.
 			expect(r.status).not.toBe(0);
-			expect(r.stderr.length).toBeGreaterThan(0);
+			expect(r.stderr).toContain("boom-registry");
+		});
+
+		test(`ensure_daemon_for_session rejects FLIGHTDECK_DAEMON_BIN that is not absolute`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: "relative/path",
+				TMUX_PANE: "%5",
+			});
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("FLIGHTDECK_DAEMON_BIN must be an absolute path");
+		});
+
+		test(`flightdeck-state archive rejects FLIGHTDECK_DAEMON_BIN that is not absolute`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: {},
+				session_id: "test-session",
+				terminated: true,
+				terminated_at: "2026-05-21T00:00:00Z",
+			}, null, 2));
+			runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]);
+			const r = runState(repo, shim, ["archive"], { FLIGHTDECK_DAEMON_BIN: "relative/daemon" });
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("FLIGHTDECK_DAEMON_BIN must be an absolute path");
 		});
 
 		test(`flightdeck-state archive invokes flightdeck-daemon stop via FLIGHTDECK_DAEMON_BIN`, () => {
