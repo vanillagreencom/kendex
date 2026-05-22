@@ -222,6 +222,12 @@ enum Commands {
         scope: Option<String>,
     },
 
+    /// Flightdeck maintenance helpers.
+    Flightdeck {
+        #[command(subcommand)]
+        command: FlightdeckCommands,
+    },
+
     /// Scaffold a new agent, skill, or hook template in a vstack source repo.
     /// Run from the repo root; writes to ./agents/, ./skills/, or ./hooks/.
     Init {
@@ -229,6 +235,19 @@ enum Commands {
         /// What to scaffold: agent | skill | hook
         #[arg(long)]
         kind: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FlightdeckCommands {
+    /// Safely tighten legacy run-store permissions after the vstack#227 upgrade.
+    MigratePermissions {
+        /// Which run store to migrate: user, project (FLIGHTDECK_RUN_STORE_ROOT), or all.
+        #[arg(long, value_enum, default_value_t = commands::flightdeck::PermissionScope::All)]
+        scope: commands::flightdeck::PermissionScope,
+        /// Print planned chmod operations without changing files.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -306,6 +325,11 @@ fn main() -> Result<()> {
             commands::verify::run(scope, &names)
         }
         Some(Commands::UpdatePi { check, scope }) => commands::update_pi::run(check, scope),
+        Some(Commands::Flightdeck { command }) => match command {
+            FlightdeckCommands::MigratePermissions { scope, dry_run } => {
+                commands::flightdeck::migrate_permissions(scope, dry_run)
+            }
+        },
         Some(Commands::Init { name, kind }) => {
             commands::init::run(name.as_deref(), kind.as_deref())
         }

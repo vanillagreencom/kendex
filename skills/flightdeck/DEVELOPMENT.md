@@ -140,6 +140,8 @@ Each run directory contains `metadata.json`, `state.json`, `activity.jsonl`, opt
 
 `flightdeck-state run import-legacy [--state-dir <dir>]` scans `flightdeck-state-*.json.archive`, copies matching state/activity archives into durable run directories, and never deletes the legacy files. Imported run ids are deterministic from project id, session id, termination time, and archive filename so repeat imports skip existing runs. Legacy activity archives are accepted only from the same state directory with the expected basename, regular-file type, and size cap; malformed legacy state archives are skipped with diagnostics while corrupt durable project/run JSON fails loud with the path. No retention process deletes durable run directories by default.
 
+`vstack flightdeck migrate-permissions [--scope user|project|all] [--dry-run]` is the one-time post-vstack#227 repair path for legacy run stores. It walks `projects/` under `$HOME/.vstack/flightdeck` and/or `FLIGHTDECK_RUN_STORE_ROOT`, changes safe directories to `0700` and safe files to `0600`, and refuses symlinks, foreign uid ownership, group/other write bits, or non-file/non-directory paths. The strict read path must continue to fail closed; do not add auto-chmod-on-read.
+
 ## Daemon tuning (`FD_*` env vars)
 
 The background daemon (`flightdeck-daemon`) is configurable but defaults are fine for normal use. Listed for advanced setups:

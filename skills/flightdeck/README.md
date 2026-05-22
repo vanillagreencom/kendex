@@ -37,6 +37,19 @@ Requirements:
 - Plan lane: `gh` authenticated plus worktree creation configured; see [`PLAN-FILE.md`](./PLAN-FILE.md) for plan format.
 - macOS: GNU coreutils for `sha256sum` and GNU date.
 
+### Upgrade note: run-store permissions
+
+vstack#227 tightened durable run-store permissions under `~/.vstack/flightdeck/projects`. Existing installs may still have legacy `0644` files or `0755` directories and then fail with errors such as `mode=644 expected 600`.
+
+Review and repair safe legacy paths with:
+
+```bash
+vstack flightdeck migrate-permissions --dry-run
+vstack flightdeck migrate-permissions
+```
+
+The command sets directories to `0700` and files to `0600`, logs each old→new mode, and refuses symlinks, foreign-owned paths, or group/other-writable paths.
+
 ## Commands quick reference
 
 Run commands by asking your agent for `flightdeck <command>`.

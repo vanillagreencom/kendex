@@ -185,6 +185,7 @@ describe("unified state location (vstack#227)", () => {
 			const tracked = runState(repo, ["tracked-entries"]);
 			expect(tracked.status).not.toBe(0);
 			expect(tracked.stderr).toMatch(/mode=644 expected 600|group\/other write/);
+			expect(tracked.stderr).toContain("vstack flightdeck migrate-permissions --dry-run");
 		} finally {
 			rmSync(repo, { force: true, recursive: true });
 		}
@@ -204,6 +205,7 @@ describe("unified state location (vstack#227)", () => {
 			const r = runState(repo, ["set", "terminated", "true"]);
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toMatch(/mode=644 expected 600|group\/other write/);
+			expect(r.stderr).toContain("vstack flightdeck migrate-permissions --dry-run");
 		} finally {
 			rmSync(repo, { force: true, recursive: true });
 		}

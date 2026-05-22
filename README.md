@@ -44,6 +44,17 @@ nix run github:vanillagreencom/vstack -- add vanillagreencom/vstack
 
 That opens an interactive installer where you pick which agents, skills, hooks, and Pi extensions to bring in, and which tools to install them into.
 
+### Flightdeck upgrade note
+
+If Flightdeck reports a run-store permission error after upgrading, such as `mode=644 expected 600`, review and repair legacy permissions with:
+
+```bash
+vstack flightdeck migrate-permissions --dry-run
+vstack flightdeck migrate-permissions
+```
+
+The migration tightens Flightdeck run-store directories to `0700` and files to `0600`. It refuses symlinks, foreign-owned paths, and group/other-writable paths instead of silently masking possible tampering.
+
 ## How It Works
 
 A source repo is a package registry. vstack discovers what's there, asks which pieces you want, then writes the right files for each tool.

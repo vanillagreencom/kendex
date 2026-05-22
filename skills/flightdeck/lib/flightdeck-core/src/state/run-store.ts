@@ -221,6 +221,10 @@ export function flightdeckRunStoreRoot(): string {
 // outside the intended root by way of a symlinked ancestor.
 const STORE_DIR_MODE = 0o700;
 const STORE_FILE_MODE = 0o600;
+const RUN_STORE_PERMISSION_MIGRATION_HINT =
+	"\nThis can happen after upgrading legacy Flightdeck run-store data. Review and fix safe legacy permissions with:\n" +
+	"  vstack flightdeck migrate-permissions --dry-run\n" +
+	"  vstack flightdeck migrate-permissions";
 
 function currentUidOrNull(): number | null {
 	const fn = (process as unknown as { getuid?: () => number }).getuid;
@@ -260,7 +264,7 @@ function assertStoreOwnership(stat: { uid?: number; mode: number; isFile?: () =>
 	// state.json or activity.jsonl would expose cc_channel_token,
 	// transcripts, and other sensitive payloads.
 	if (masked !== STORE_FILE_MODE) {
-		throw new Error(`invalid ${label} ${path}: mode=${masked.toString(8)} expected ${STORE_FILE_MODE.toString(8)}`);
+		throw new Error(`invalid ${label} ${path}: mode=${masked.toString(8)} expected ${STORE_FILE_MODE.toString(8)}${RUN_STORE_PERMISSION_MIGRATION_HINT}`);
 	}
 }
 

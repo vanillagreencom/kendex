@@ -129,6 +129,8 @@ Plan file format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 Durable run commands are read/write state helpers only. They do not start dashboard UI or spawn panes. `flightdeck-session start` / `attach` call `run ensure`; terminate/archive workflows call `run terminate-active` through `flightdeck-state archive`. If a start/attach path creates a fresh active run and aborts before registration, `flightdeck-session` terminates that new run while preserving reused active runs.
 
+If a strict permission error mentions `mode=644 expected 600`, tell the user to run `vstack flightdeck migrate-permissions --dry-run` and then `vstack flightdeck migrate-permissions`. Do not recommend blind `chmod -R`: directories must become `0700`, files must become `0600`, and the migration command refuses symlinks, foreign-owned paths, or group/other-writable paths.
+
 | Command | Arguments | Script | Notes |
 |---------|-----------|--------|-------|
 | `state run create` | `--project-root <path> --tmux-session <name> [--state-dir <dir>]` | `flightdeck-state run create` | Creates a durable run under `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/`, writes `metadata.json`, `state.json`, `activity.jsonl`, and sets `active-run.json`. Honors `FLIGHTDECK_STATE_DIR` / `.env.local` unless `--state-dir` is supplied. |
