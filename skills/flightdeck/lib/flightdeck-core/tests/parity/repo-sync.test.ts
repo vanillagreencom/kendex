@@ -176,7 +176,12 @@ describe("flightdeck-repo-sync main", () => {
 	});
 
 	test("managed activity setup failure logs stderr without changing helper result", () => {
-		const result = runSync({ FLIGHTDECK_MANAGED: "1", FLIGHTDECK_SESSION: "managed-session", FLIGHTDECK_STATE_DIR: "/dev/null/fd-state" });
+		// vstack#227: FLIGHTDECK_STATE_DIR no longer controls live
+		// state. Point FLIGHTDECK_RUN_STORE_ROOT at a non-directory
+		// path so the run-store setup throws and the helper logs the
+		// emit failure on stderr without altering the JSON payload's
+		// `status: already-synced`.
+		const result = runSync({ FLIGHTDECK_MANAGED: "1", FLIGHTDECK_SESSION: "managed-session", FLIGHTDECK_RUN_STORE_ROOT: "/dev/null/fd-state" });
 		expect(result.status).toBe(0);
 		expect(result.json.status).toBe("already-synced");
 		expect(result.stderr).toContain("flightdeck-repo-sync: activity emit failed");

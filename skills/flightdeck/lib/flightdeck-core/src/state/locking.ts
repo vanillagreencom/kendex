@@ -11,7 +11,7 @@
 // never via interpolation into the script source — no shell injection.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, openSync, closeSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 
 interface SpawnResult { status: number | null; stdout: string; stderr: string }
@@ -19,6 +19,25 @@ interface SpawnResult { status: number | null; stdout: string; stderr: string }
 function run(args: string[], opts?: { input?: string }): SpawnResult {
 	const r = spawnSync("flock", args, { encoding: "utf8", input: opts?.input });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+// vstack#227 round-2: flock(1) creates the lock file with `O_CREAT |
+// 0o666 & ~umask`, which under a typical `0022` umask lands at `0644`.
+// Run-store strict-mode checks reject `0644`. Pre-create the lock file
+// at `0600` so flock just acquires the lock without changing perms.
+function ensureSecureLockFile(lockFile: string): void {
+	mkdirSync(dirname(lockFile), { recursive: true });
+	if (!existsSync(lockFile)) {
+		const fd = openSync(lockFile, "a", 0o600);
+		closeSync(fd);
+	}
+	// If the file existed but had wider perms (legacy), tighten.
+	try { chmodSync(lockFile, 0o600); } catch { /* best-effort */ }
+}
+
+function runWithSecureLock(lockFile: string, args: string[], opts?: { input?: string }): SpawnResult {
+	ensureSecureLockFile(lockFile);
+	return run(["-x", lockFile, ...args], opts);
 }
 
 function sleepSync(ms: number): void {
@@ -55,19 +74,26 @@ export function withFlockHeldSync<T>(lockFile: string, fn: () => T): T {
 
 // jq read-modify-write of a JSON file under flock.
 // Empty file body becomes `{}` before the filter (matches bash semantics).
+// vstack#227 round-2: every bash-side write sets `umask 0077` so the
+// resulting file lands at `0600` regardless of the parent process'
+// umask, and the lock file (created by flock if missing) lands at
+// `0600` too. Run-store reads enforce `0600`/`0700` strictly; without
+// the umask here, default `0644` files would trip those checks.
 export function lockedJqUpdate(lockFile: string, file: string, filter: string): SpawnResult {
 	const tmp = `${file}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		file="$1"; tmp="$2"; filter="$3"
 		if [[ -f "$file" ]]; then
 			jq "$filter" "$file" > "$tmp"
 		else
 			echo '{}' | jq "$filter" > "$tmp"
 		fi
+		chmod 0600 "$tmp"
 		mv "$tmp" "$file"
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", file, tmp, filter]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", file, tmp, filter]);
 }
 
 // Locked atomic write of bytes to a target file. Used by master-busy lock
@@ -76,11 +102,13 @@ export function lockedAtomicWrite(lockFile: string, file: string, contents: stri
 	const tmp = `${file}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		file="$1"; tmp="$2"
 		cat > "$tmp"
+		chmod 0600 "$tmp"
 		mv "$tmp" "$file"
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", file, tmp], { input: contents });
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", file, tmp], { input: contents });
 }
 
 // Locked atomic write + sibling unlink. Used by master-busy lock where
@@ -90,18 +118,20 @@ export function lockedAtomicWriteAndUnlink(lockFile: string, file: string, conte
 	const tmp = `${file}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		file="$1"; tmp="$2"; also="$3"
 		cat > "$tmp"
+		chmod 0600 "$tmp"
 		mv "$tmp" "$file"
 		rm -f "$also"
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", file, tmp, alsoUnlink], { input: contents });
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", file, tmp, alsoUnlink], { input: contents });
 }
 
 // Locked unlink (master-busy unlock — file remove under the session lock).
 export function lockedUnlink(lockFile: string, file: string): SpawnResult {
 	const script = `rm -f "$1"`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", file]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", file]);
 }
 
 // Locked drain of a JSONL events file, atomically renaming it out, dumping
@@ -112,6 +142,7 @@ export function lockedEventsDrain(lockFile: string, eventsFile: string, opts: { 
 	const wp = opts.clearWakePending ?? "";
 	const script = `
 		set -e
+		umask 0077
 		events="$1"; wp="$2"
 		# Recover any stranded .draining.<pid> orphans whose owner is dead.
 		shopt -s nullglob
@@ -134,7 +165,7 @@ export function lockedEventsDrain(lockFile: string, eventsFile: string, opts: { 
 			rm -f "$wp"
 		fi
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", eventsFile, wp]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", eventsFile, wp]);
 }
 
 // Locked read-modify-write of a JSON file via an in-process callback.
@@ -233,8 +264,8 @@ export function lockedAllocPort(
 			'. + {($p): ($owner + {allocated_at:$ts})}' "$ports" > "$tmp" && mv "$tmp" "$ports"
 		echo "$port"
 	`;
-	return run([
-		"-x", lockFile, "bash", "-c", script, "_",
+	return runWithSecureLock(lockFile, [
+		"bash", "-c", script, "_",
 		portsFile, tmp,
 		String(rangeStart), String(rangeEnd),
 		ownerJson,
@@ -246,11 +277,12 @@ export function lockedReleasePort(lockFile: string, portsFile: string, port: num
 	const tmp = `${portsFile}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		ports="$1"; tmp="$2"; port="$3"
 		[[ -f "$ports" ]] || exit 0
 		jq --arg p "$port" 'del(.[$p])' "$ports" > "$tmp" 2>/dev/null && mv "$tmp" "$ports"
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", portsFile, tmp, String(port)]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", portsFile, tmp, String(port)]);
 }
 
 // Locked port-pid update — merges {pid: $pid} into the existing entry.
@@ -258,6 +290,7 @@ export function lockedRegisterPortPid(lockFile: string, portsFile: string, port:
 	const tmp = `${portsFile}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		ports="$1"; tmp="$2"; port="$3"; pid="$4"
 		[[ -f "$ports" ]] || echo '{}' > "$ports"
 		if jq --arg p "$port" --argjson pid "$pid" \\
@@ -268,7 +301,7 @@ export function lockedRegisterPortPid(lockFile: string, portsFile: string, port:
 			rm -f "$tmp"
 		fi
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", portsFile, tmp, String(port), String(pid)]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", portsFile, tmp, String(port), String(pid)]);
 }
 
 // Locked state archive with matching activity sidecar archive. The state
@@ -286,27 +319,32 @@ export function lockedArchiveStateAndActivity(
 	const tmp = `${stateFile}.tmp.${process.pid}`;
 	const script = `
 		set -e
+		umask 0077
 		state="$1"; state_archive="$2"; activity="$3"; activity_archive="$4"; activity_lock="$5"; tmp="$6"
 		flock -x "$activity_lock" bash -c '
 			set -e
+			umask 0077
 			state="$1"; state_archive="$2"; activity="$3"; activity_archive="$4"; tmp="$5"
 			if [[ -s "$activity" ]]; then
 				mkdir -p "$(dirname "$activity_archive")"
 				jq --arg activity_path "$activity" --arg activity_archive_path "$activity_archive" \
 					".activity_path = (.activity_path // \\$activity_path) | .activity_archive_path = \\$activity_archive_path" \
 					"$state" > "$tmp"
+				chmod 0600 "$tmp"
 				mv "$tmp" "$state"
 				mv "$state" "$state_archive"
 				mv "$activity" "$activity_archive"
 				: > "$activity.archived"
+				chmod 0600 "$activity.archived" 2>/dev/null || true
 			else
 				jq "del(.activity_path, .activity_archive_path)" "$state" > "$tmp"
+				chmod 0600 "$tmp"
 				mv "$tmp" "$state"
 				mv "$state" "$state_archive"
 			fi
 		' _ "$state" "$state_archive" "$activity" "$activity_archive" "$tmp"
 	`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", stateFile, stateArchive, activityFile, activityArchive, activityLockFile, tmp]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", stateFile, stateArchive, activityFile, activityArchive, activityLockFile, tmp]);
 }
 
 // vstack#227 migration shim: copy a legacy `<project>/tmp/flightdeck-
@@ -330,8 +368,14 @@ export function lockedMigrateLegacyIntoRun(
 	// state lock. We acquire the activity lock via fd 9 (subshell
 	// pattern: `( flock -x 9; ...) 9>$lock`) — no further bash -c
 	// recursion, so quoting stays sane.
+	//
+	// vstack#227 round-2: `umask 0077` + post-write `chmod 0600` so the
+	// migrated state.json/activity.jsonl land at `0600` (matches
+	// run-store strict checks). `mkdir`s in this script also create
+	// dirs at `0700` thanks to the umask.
 	const script = `
 		set -euo pipefail
+		umask 0077
 		legacy_state="$1"
 		legacy_activity="$2"
 		run_state="$3"
@@ -349,6 +393,7 @@ export function lockedMigrateLegacyIntoRun(
 				mkdir -p "$(dirname "$run_state")"
 				tmp="$run_state.migrate.$$"
 				cp "$legacy_state" "$tmp"
+				chmod 0600 "$tmp"
 				mv "$tmp" "$run_state"
 				migrated_any=1
 			fi
@@ -370,6 +415,7 @@ export function lockedMigrateLegacyIntoRun(
 					mkdir -p "$(dirname "$run_activity")"
 					tmp="$run_activity.migrate.$$"
 					cp "$legacy_activity" "$tmp"
+					chmod 0600 "$tmp"
 					mv "$tmp" "$run_activity"
 				fi
 				mv "$legacy_activity" "$legacy_activity.migrated"
@@ -384,9 +430,7 @@ export function lockedMigrateLegacyIntoRun(
 			exit 2
 		fi
 	`;
-	return run([
-		"-x",
-		stateLock,
+	return runWithSecureLock(stateLock, [
 		"bash",
 		"-c",
 		script,
@@ -403,7 +447,7 @@ export function lockedMigrateLegacyIntoRun(
 // activity sidecar.
 export function lockedRename(lockFile: string, srcFile: string, dstFile: string): SpawnResult {
 	const script = `mv "$1" "$2"`;
-	return run(["-x", lockFile, "bash", "-c", script, "_", srcFile, dstFile]);
+	return runWithSecureLock(lockFile, ["bash", "-c", script, "_", srcFile, dstFile]);
 }
 
 // Locked cleanup of all daemon per-session state files. Mirrors the

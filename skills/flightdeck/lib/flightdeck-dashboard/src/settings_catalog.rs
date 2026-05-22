@@ -1479,18 +1479,24 @@ fn enforce_store_file_mode(path: &Path) -> Result<(), SettingsError> {
     enforce_mode_unix(path, STORE_FILE_MODE, "store file")
 }
 
+// vstack#227 round-2: walk every ancestor of `root` with `lstat`
+// (`symlink_metadata`) BEFORE creating anything. Reject any symlink
+// in the chain (CWE-22/CWE-59) — `create_dir_all` would otherwise
+// follow it and silently redirect writes. Missing components get
+// created one at a time with `0700`.
 fn ensure_store_root_chain(root: &Path) -> Result<(), SettingsError> {
-    fs::create_dir_all(root).map_err(|source| SettingsError::Write {
-        path: root.to_path_buf(),
-        source,
-    })?;
+    if !root.is_absolute() {
+        return Err(SettingsError::UnsafePath {
+            path: root.to_path_buf(),
+            message: String::from("run-store root must be an absolute path"),
+        });
+    }
+    ensure_safe_ancestor_chain(root)?;
+    create_one_at_a_time(root)?;
     enforce_store_dir_mode(root)?;
     ensure_safe_directory(root)?;
     let projects = root.join("projects");
-    fs::create_dir_all(&projects).map_err(|source| SettingsError::Write {
-        path: projects.clone(),
-        source,
-    })?;
+    create_one_at_a_time(&projects)?;
     enforce_store_dir_mode(&projects)?;
     ensure_safe_directory(&projects)?;
     let real_root = root.canonicalize().map_err(|source| SettingsError::Write {
@@ -1508,6 +1514,75 @@ fn ensure_store_root_chain(root: &Path) -> Result<(), SettingsError> {
             path: projects,
             message: format!("canonical projects dir escapes {}", root.display()),
         });
+    }
+    Ok(())
+}
+
+fn ensure_safe_ancestor_chain(target: &Path) -> Result<(), SettingsError> {
+    let mut current = PathBuf::from("/");
+    for component in target.components() {
+        if let std::path::Component::Normal(name) = component {
+            current.push(name);
+            match fs::symlink_metadata(&current) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        return Err(SettingsError::UnsafePath {
+                            path: target.to_path_buf(),
+                            message: format!(
+                                "ancestor {} is a symlink (CWE-22/CWE-59)",
+                                current.display()
+                            ),
+                        });
+                    }
+                    if !meta.file_type().is_dir() {
+                        return Err(SettingsError::UnsafePath {
+                            path: target.to_path_buf(),
+                            message: format!("ancestor {} is not a directory", current.display()),
+                        });
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => {
+                    return Err(SettingsError::Write {
+                        path: current.clone(),
+                        source: error,
+                    })
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn create_one_at_a_time(target: &Path) -> Result<(), SettingsError> {
+    let mut current = PathBuf::from("/");
+    for component in target.components() {
+        if let std::path::Component::Normal(name) = component {
+            current.push(name);
+            match fs::symlink_metadata(&current) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        return Err(SettingsError::UnsafePath {
+                            path: target.to_path_buf(),
+                            message: format!("ancestor {} is a symlink", current.display()),
+                        });
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir(&current).map_err(|source| SettingsError::Write {
+                        path: current.clone(),
+                        source,
+                    })?;
+                    enforce_store_dir_mode(&current)?;
+                }
+                Err(error) => {
+                    return Err(SettingsError::Write {
+                        path: current.clone(),
+                        source: error,
+                    })
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1979,9 +2054,30 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
             "FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_PAUSE_FILE",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_RELEASE_FILE",
-            // vstack#227: test/sandbox-only run-store overrides; not
+            // vstack#227: test/sandbox-only run-store override; not
             // user-editable from the dashboard settings popup.
             "FLIGHTDECK_RUN_STORE_ROOT",
+            // Daemon hygiene: bind-skip throttles documented in ENV.md
+            // but tuned via the daemon, not the dashboard popup.
+            "FD_PI_BIND_SKIP_LOG_INTERVAL_SEC",
+            "FD_PI_BIND_SKIP_STUCK_THRESHOLD",
+            "FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC",
+            "FD_SUB_BIND_SKIP_STUCK_THRESHOLD",
+            // Test/dev trampoline overrides documented in ENV.md but
+            // are not user-editable settings (they swap out subprocess
+            // binaries for test shims).
+            "FLIGHTDECK_DAEMON_BIN",
+            "FLIGHTDECK_DASHBOARD_BIN",
+            "FLIGHTDECK_PANE_REGISTRY_BIN",
+            "FLIGHTDECK_CLAUDE_BIN",
+            "FLIGHTDECK_ARCHIVE_SKIP_DAEMON_STOP",
+            "FLIGHTDECK_ENSURE_DAEMON",
+            "FLIGHTDECK_CLAUDE_CHANNELS",
+            // Pre-PR review flow knobs consumed by master-loop, not
+            // the dashboard.
+            "FLIGHTDECK_PRE_PR_REVIEW",
+            "FLIGHTDECK_PRE_PR_REVIEWERS",
+            "FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS",
             "NO_MOTION",
             "NO_COLOR",
             "BEHIND",

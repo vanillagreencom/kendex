@@ -607,8 +607,16 @@ describe("Flightdeck durable run store", () => {
 		mkdirSync(stateDir, { recursive: true });
 		const liveState = join(stateDir, `flightdeck-state-${SESSION}.json`);
 		writeFileSync(liveState, "null", "utf8");
-		expect(() => createRun(repo, SESSION)).toThrow(new RegExp(liveState.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-		expect(readFileSync(liveState, "utf8")).toBe("null");
+		// vstack#227 round-2: createRunLocked routes the legacy seed
+		// through the locked migration helper, which copies the
+		// malformed legacy file into the run dir before re-reading.
+		// The validator raises against the run-dir state.json path
+		// rather than the legacy source.
+		expect(() => createRun(repo, SESSION)).toThrow(/invalid run state JSON .*\bstate\.json: expected object/);
+		// Source legacy file is renamed `.migrated` by the locked
+		// migration; the original payload is preserved alongside.
+		const migratedPath = `${liveState}.migrated`;
+		expect(existsSync(migratedPath) ? readFileSync(migratedPath, "utf8") : readFileSync(liveState, "utf8")).toBe("null");
 	});
 
 	test("create honors FLIGHTDECK_STATE_DIR from .env.local", () => {

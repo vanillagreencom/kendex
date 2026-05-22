@@ -101,6 +101,75 @@ describe("unified state location (vstack#227)", () => {
 		}
 	});
 
+	test("createRunLocked migration runs under flock and preserves the latest legacy write", async () => {
+		// vstack#227 round-2 P1 regression: the legacy migration shim
+		// must hold the legacy state and activity locks before copying
+		// + renaming. We simulate a concurrent legacy writer by taking
+		// the legacy state lock first; createRunLocked-driven
+		// `flightdeck-state init` must serialize behind that lock and
+		// pick up the writer's last-write-wins payload.
+		const repo = makeRepo();
+		try {
+			const tmpDir = join(repo, "tmp");
+			mkdirSync(tmpDir, { recursive: true });
+			const legacyState = join(tmpDir, `flightdeck-state-${SESSION}.json`);
+			writeFileSync(legacyState, JSON.stringify({ session_id: SESSION, entries: { OLD: { id: "OLD", kind: "issue" } } }), "utf8");
+			// Spawn the lock holder in the background. flock takes the
+			// lock, sleeps ~300ms, writes the racing payload, then
+			// exits (releasing the lock). This is a single shell
+			// command per flock(1) idiom: `flock -x file -c '<cmd>'`.
+			const racingPayload = JSON.stringify({ session_id: SESSION, entries: { OLD: { id: "OLD", kind: "issue" }, RACE: { id: "RACE", kind: "adhoc" } } });
+			const holder = Bun.spawn([
+				"flock",
+				"-x",
+				`${legacyState}.lock`,
+				"bash",
+				"-c",
+				`sleep 0.3; printf '%s\n' "$1" > "$2"`,
+				"_",
+				racingPayload,
+				legacyState,
+			], { stderr: "pipe", stdout: "pipe" });
+			// Brief delay so flock acquires the lock before init runs.
+			await Bun.sleep(80);
+			const init = runState(repo, ["init"]);
+			expect(init.status).toBe(0);
+			expect(await holder.exited).toBe(0);
+			const tracked = JSON.parse(runState(repo, ["tracked-entries"]).stdout);
+			expect(Object.keys(tracked).sort()).toEqual(["OLD", "RACE"]);
+			expect(existsSync(`${legacyState}.migrated`)).toBe(true);
+			expect(existsSync(legacyState)).toBe(false);
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+		}
+	});
+
+	test("symlinked ancestor in FLIGHTDECK_RUN_STORE_ROOT is rejected (CWE-22/CWE-59)", async () => {
+		const repo = makeRepo();
+		const outside = mkdtempSync(join(tmpdir(), "fdunified-outside-"));
+		try {
+			// Create `<repo>/intermediate -> <outside>`, then point the
+			// run-store root inside the symlinked path. The migration
+			// shim must refuse before any mkdir/copy/rename touches
+			// disk via the symlink.
+			const fs = await import("node:fs");
+			fs.symlinkSync(outside, join(repo, "intermediate"));
+			const r = spawnSync(SCRIPT, ["init", "--session", SESSION], {
+				cwd: repo, encoding: "utf8",
+				env: envFor(repo, { FLIGHTDECK_RUN_STORE_ROOT: join(repo, "intermediate", "store") }),
+			});
+			expect(r.status).not.toBe(0);
+			expect(r.stderr).toMatch(/ancestor .*intermediate.*is a symlink|CWE-22/);
+			// The symlink target must not have been used as a store
+			// dir: no `projects/` got created inside <outside>.
+			const outsideContents = fs.readdirSync(outside);
+			expect(outsideContents).toEqual([]);
+		} finally {
+			rmSync(repo, { force: true, recursive: true });
+			rmSync(outside, { force: true, recursive: true });
+		}
+	});
+
 	test("archive writes a durable snapshot and clears the active pointer", () => {
 		const repo = makeRepo();
 		try {
