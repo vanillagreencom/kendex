@@ -4,7 +4,7 @@
 // Subcommands: init | get | set | append | increment | tracked-entries | write-entry | path | phase | archive | activity | master-busy | run
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendActivityEvent } from "../activity/append.ts";
@@ -534,12 +534,24 @@ function stopDaemonForSessionBestEffort(tmuxSession: string): void {
 // finally to invoking the TS source through `bun` if neither is
 // available (only relevant when invoked from `bun run`).
 //
-// Trust model (CWE-829, round-2): when the override is set, require
-// an absolute path that exists and is executable. Anything else
-// fail-closes — production operators should leave this unset; tests
-// inject an absolute path under a per-test temp dir. The exit path
-// surfaces a clear error so misconfigured environments don't silently
-// short-circuit the daemon-stop call during archive.
+// Trust model (CWE-829, round-2/3): when the override is set, the
+// binary is invoked for daemon lifecycle (stop) during archive, so a
+// hostile override could mask or impersonate the per-session daemon.
+// The override is intended strictly for tests and developer iteration;
+// production operators should leave it unset. We enforce a minimal
+// sanity gate here, mirroring the bash check in scripts/flightdeck-session:
+//   1. Must be an absolute path.
+//   2. Must exist.
+//   3. Must be a regular file marked user-executable (any of u/g/o
+//      exec bits) — catches the common typo of pointing at a config
+//      file or symlink to a non-executable target. Symlinks to
+//      executables resolve through statSync.
+// We deliberately stop short of stat-ing ownership / group-or-world-
+// writable bits / setuid because the same shim mechanism is used by
+// every parity test under per-test temp dirs. Adding those checks here
+// without a test-time opt-out would force every test to flip a bypass
+// env var. The tradeoff is documented in ENV.md so production
+// operators understand the trust boundary.
 function resolveDaemonBin(): { bin: string; args: string[] } {
 	const override = (process.env.FLIGHTDECK_DAEMON_BIN ?? "").trim();
 	if (override) {
@@ -549,6 +561,16 @@ function resolveDaemonBin(): { bin: string; args: string[] } {
 		}
 		if (!existsSync(override)) {
 			process.stderr.write(`Error: FLIGHTDECK_DAEMON_BIN not found: ${override}\n`);
+			process.exit(2);
+		}
+		try {
+			const st = statSync(override);
+			if (!st.isFile() || (st.mode & 0o111) === 0) {
+				process.stderr.write(`Error: FLIGHTDECK_DAEMON_BIN not executable: ${override}\n`);
+				process.exit(2);
+			}
+		} catch (err) {
+			process.stderr.write(`Error: FLIGHTDECK_DAEMON_BIN stat failed for ${override}: ${(err as Error)?.message ?? err}\n`);
 			process.exit(2);
 		}
 		return { args: [], bin: override };

@@ -5,41 +5,53 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# vstack#213 trust model (CWE-829, rounds 2/3) for FLIGHTDECK_DAEMON_BIN
+# and FLIGHTDECK_PANE_REGISTRY_BIN.
+#
+# Both env vars cause external binaries to be invoked for daemon
+# lifecycle and tracked-entry queries. A hostile override could
+# misroute wake-arming, mask the daemon stop call, or impersonate the
+# registry. They are intended strictly for tests and developer
+# iteration; production operators should leave them unset.
+#
+# We enforce a minimal sanity gate via validate_override_bin:
+#   1. Must be an absolute path.
+#   2. Must exist and be executable.
+# Both checks fail-closed with a clear stderr message.
+#
+# We deliberately stop short of stat-ing ownership / group/world-write
+# bits / setuid because the same shim mechanism is used by every test
+# in tests/parity/flightdeck-session.test.ts that lives under a
+# per-test temp dir. Adding those checks here without a test-time
+# opt-out would force every test to flip a bypass env var. The
+# tradeoff is documented in ENV.md so production operators understand
+# the trust boundary.
+validate_override_bin() {
+  local name="$1" value="$2"
+  [[ -n "$value" ]] || return 0
+  if [[ "$value" != /* ]]; then
+    echo "Error: $name must be an absolute path: $value" >&2
+    exit 2
+  fi
+  if [[ ! -x "$value" ]]; then
+    echo "Error: $name not executable: $value" >&2
+    exit 2
+  fi
+}
+validate_override_bin FLIGHTDECK_PANE_REGISTRY_BIN "${FLIGHTDECK_PANE_REGISTRY_BIN:-}"
+validate_override_bin FLIGHTDECK_DAEMON_BIN "${FLIGHTDECK_DAEMON_BIN:-}"
+
 # vstack#213 round-2: test-only override for the canonical pane-registry
 # binary. Production callers leave it unset and we use the script-local
 # trampoline; tests inject a shim path to exercise registry-probe
-# failures inside ensure_daemon_for_session.
+# failures inside ensure_daemon_for_session. Trust model: see
+# validate_override_bin block above.
 PANE_REGISTRY="${FLIGHTDECK_PANE_REGISTRY_BIN:-$SCRIPT_DIR/pane-registry}"
+
 # vstack#213: allow tests / operators to swap in a custom daemon
 # binary (matches the existing FLIGHTDECK_DASHBOARD_BIN escape hatch).
-#
-# Trust model (CWE-829): the binary is invoked for daemon
-# lifecycle (status/health/stop/start), so a hostile override could
-# misroute wake-arming or silently fail-open. The override is intended
-# strictly for tests and developer iteration; production operators
-# should leave it unset. We enforce a minimal sanity gate here:
-#   1. If set, must be an absolute path.
-#   2. Must exist and be executable.
-# Both checks fail-closed with a stderr message so operators don't
-# silently bypass the gate.
-#
-# We deliberately stop short of stat-ing ownership / group/world-write
-# bits because the same shim mechanism is used by every test in
-# tests/parity/flightdeck-session.test.ts that lives under a per-test
-# temp dir. Adding those checks here without a test-time opt-out would
-# force every test to flip a bypass env var. The tradeoff is documented
-# in ENV.md so operators can decide whether to expose this env in
-# untrusted contexts.
-if [[ -n "${FLIGHTDECK_DAEMON_BIN:-}" ]]; then
-  if [[ "$FLIGHTDECK_DAEMON_BIN" != /* ]]; then
-    echo "Error: FLIGHTDECK_DAEMON_BIN must be an absolute path: $FLIGHTDECK_DAEMON_BIN" >&2
-    exit 2
-  fi
-  if [[ ! -x "$FLIGHTDECK_DAEMON_BIN" ]]; then
-    echo "Error: FLIGHTDECK_DAEMON_BIN not executable: $FLIGHTDECK_DAEMON_BIN" >&2
-    exit 2
-  fi
-fi
+# Trust model: see validate_override_bin block above.
 FLIGHTDECK_DAEMON_BIN="${FLIGHTDECK_DAEMON_BIN:-$SCRIPT_DIR/flightdeck-daemon}"
 
 # shellcheck source=lib/pane-env.sh
@@ -926,15 +938,22 @@ ensure_daemon_for_session() {
 
   (( need_respawn == 1 )) || return 0
 
+  # vstack#213 round-3: hold the stop stderr capture until after the
+  # subsequent start completes so a daemon-respawn-failed message can
+  # surface both the stop-side and the start-side context. Operators
+  # investigating a failed respawn need both: the start-side stderr
+  # alone hides the case where stop refused (exit 3 / safety) and the
+  # start then races a daemon that the helper failed to terminate.
+  local stop_err="" stop_rc=0
   if (( health_status == 0 )); then
-    local stop_err stop_rc=0
     stop_err=$(mktemp -t flightdeck-daemon-stop.XXXXXX)
     "$FLIGHTDECK_DAEMON_BIN" stop --session "$session_name" >/dev/null 2>"$stop_err" || stop_rc=$?
     if (( stop_rc != 0 && stop_rc != 1 )); then
       local _serr; _serr=$(cat "$stop_err" 2>/dev/null || true)
       printf 'Warning: flightdeck-session ensure_daemon: flightdeck-daemon stop rc=%s session=%s; daemon may still be running with stale --inner. stderr=%s\n' "$stop_rc" "$session_name" "${_serr:-(none)}" >&2
     fi
-    rm -f "$stop_err"
+    # Deliberately do NOT rm "$stop_err" yet — keep it for the
+    # daemon-respawn-failed branch below.
   fi
 
   local master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
@@ -991,10 +1010,18 @@ ensure_daemon_for_session() {
     fi
   fi
   if (( start_rc != 0 )); then
-    printf 'Warning: flightdeck-session ensure_daemon: daemon-respawn-failed session=%s rc=%s; watch loop will retry\n' "$session_name" "$start_rc" >&2
-    if [[ -s "$start_err" ]]; then cat "$start_err" >&2; fi
+    printf 'Warning: flightdeck-session ensure_daemon: daemon-respawn-failed session=%s start_rc=%s stop_rc=%s; watch loop will retry\n' "$session_name" "$start_rc" "$stop_rc" >&2
+    if [[ -n "$stop_err" && -s "$stop_err" ]]; then
+      printf '%s\n' '--- flightdeck-daemon stop stderr ---' >&2
+      cat "$stop_err" >&2
+    fi
+    if [[ -s "$start_err" ]]; then
+      printf '%s\n' '--- flightdeck-daemon start stderr ---' >&2
+      cat "$start_err" >&2
+    fi
   fi
   rm -f "$start_err"
+  if [[ -n "$stop_err" ]]; then rm -f "$stop_err"; fi
   return 0
 }
 

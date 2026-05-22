@@ -1587,6 +1587,104 @@ exit 0
 			expect(r.stderr).toContain("FLIGHTDECK_DAEMON_BIN must be an absolute path");
 		});
 
+		test(`ensure_daemon_for_session rejects FLIGHTDECK_DAEMON_BIN that is not executable`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const nonExecBin = join(repo, "not-executable");
+			writeFileSync(nonExecBin, "#!/usr/bin/env bash\nexit 0\n");
+			chmodSync(nonExecBin, 0o644);
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: nonExecBin,
+				TMUX_PANE: "%5",
+			});
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("FLIGHTDECK_DAEMON_BIN not executable");
+		});
+
+		test(`ensure_daemon_for_session rejects FLIGHTDECK_PANE_REGISTRY_BIN that is not absolute`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_PANE_REGISTRY_BIN: "relative/registry",
+				TMUX_PANE: "%5",
+			});
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("FLIGHTDECK_PANE_REGISTRY_BIN must be an absolute path");
+		});
+
+		test(`flightdeck-state archive rejects FLIGHTDECK_DAEMON_BIN that is not executable`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+			mkdirSync(join(repo, "tmp"), { recursive: true });
+			writeFileSync(stateFile(repo), JSON.stringify({
+				entries: {},
+				session_id: "test-session",
+				terminated: true,
+				terminated_at: "2026-05-21T00:00:00Z",
+			}, null, 2));
+			runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]);
+			const nonExecBin = join(repo, "not-executable-state");
+			writeFileSync(nonExecBin, "#!/usr/bin/env bash\nexit 0\n");
+			chmodSync(nonExecBin, 0o644);
+			const r = runState(repo, shim, ["archive"], { FLIGHTDECK_DAEMON_BIN: nonExecBin });
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("FLIGHTDECK_DAEMON_BIN not executable");
+		});
+
+		test(`ensure_daemon_for_session surfaces stop AND start stderr on daemon-respawn-failed`, () => {
+			// vstack#213 round-3: daemon-respawn-failed must include both
+			// stop-side and start-side stderr so operators can diagnose
+			// cases where stop refused (exit 3 / safety) and then start
+			// raced a still-running daemon. Drive the shim to a state
+			// where stop exits 3 with a known marker, start exits 1 (lock
+			// race) with a known marker, and the post-start health
+			// verifier reports still-stale (forcing daemon-respawn-failed
+			// instead of daemon-respawn-raced).
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const captureFile = join(repo, "daemon-calls.log");
+			writeFileSync(captureFile, "");
+			const failingDaemon = join(repo, "failing-daemon");
+			writeFileSync(failingDaemon, `#!/usr/bin/env bash
+set -e
+printf '%s\\n' "$*" >> ${JSON.stringify(captureFile)}
+action="\${1:-}"; shift || true
+case "$action" in
+  status) echo "session=test daemon=4242 running"; exit 0 ;;
+  health)
+    printf 'session=test daemon_pid=4242 alive=true\\n'
+    printf 'master_pane_id=%s\\n' "%5"
+    printf 'subscribed_pane_ids=%s\\n' "%99"
+    printf 'staleness=stale-inner\\n'
+    exit 0 ;;
+  stop)
+    echo "stop-stderr-marker: PID lock missing" >&2
+    exit 3 ;;
+  start)
+    echo "start-stderr-marker: lock race detected" >&2
+    exit 1 ;;
+esac
+exit 0
+`);
+			chmodSync(failingDaemon, 0o755);
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: failingDaemon,
+				TMUX_PANE: "%5",
+			});
+			// flightdeck-session start itself succeeds — ensure_daemon
+			// failures are warn-only by design (watch loop retries).
+			expect(r.status).toBe(0);
+			// But stderr must include BOTH markers AND the
+			// daemon-respawn-failed line.
+			expect(r.stderr).toContain("daemon-respawn-failed");
+			expect(r.stderr).toContain("stop-stderr-marker");
+			expect(r.stderr).toContain("start-stderr-marker");
+		});
+
 		test(`flightdeck-state archive rejects FLIGHTDECK_DAEMON_BIN that is not absolute`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
