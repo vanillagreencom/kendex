@@ -105,7 +105,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 
 ### Execution
 
-There is one knob — `maxConcurrency` — and it caps the number of bg agent processes running simultaneously. Earlier versions exposed `maxParallelTasks` as a batch size; that knob is now a no-op kept for setting-file compatibility (parallel dispatch uses a flat worker pool across the whole queue).
+There is one knob — `maxConcurrency` — and it caps the number of bg agent processes running simultaneously. Earlier versions exposed `maxParallelTasks` as an internal chunk size; that knob is now a no-op kept for setting-file compatibility (parallel dispatch uses a flat worker pool capped by `maxConcurrency` across the whole queue).
 
 | Setting | What it does |
 | --- | --- |
