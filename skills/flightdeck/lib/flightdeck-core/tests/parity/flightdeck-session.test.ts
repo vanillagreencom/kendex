@@ -50,8 +50,18 @@ function readShimState(path: string): ShimState {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
+// vstack#227: state lives in the active run dir; resolve via the CLI.
 function stateFile(repo: string): string {
-	return join(repo, "tmp", "flightdeck-state-test-session.json");
+	const flightdeckState = resolve(HERE, "../../../../scripts/flightdeck-state");
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.HOME = join(repo, "home");
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
+	const r = spawnSync(flightdeckState, ["path", "--session", "test-session"], { cwd: repo, encoding: "utf8", env });
+	if (r.status !== 0) {
+		throw new Error(`flightdeck-state path failed: ${r.stderr}`);
+	}
+	return (r.stdout ?? "").trim();
 }
 
 function run(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
@@ -62,6 +72,8 @@ function run(repo: string, statePath: string, args: string[], extraEnv: Record<s
 	env.TMUX_PARITY_SESSION = "test-session";
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: per-test run-store isolation.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
@@ -76,6 +88,7 @@ function runState(repo: string, statePath: string, args: string[], extraEnv: Rec
 	env.TMUX_PARITY_SESSION = "test-session";
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
 	Object.assign(env, extraEnv);
 	const r = spawnSync(resolve(HERE, "../../../../scripts/flightdeck-state"), args, { cwd: repo, encoding: "utf8", env });
@@ -103,11 +116,16 @@ exit 17
 
 function makeDashboardStateShim(repo: string, captureFile: string, dashboardWindowId = "@2"): string {
 	const bin = join(repo, "flightdeck-dashboard-state-shim");
+	const flightdeckState = resolve(HERE, "../../../../scripts/flightdeck-state");
+	// vstack#227: dashboard shim writes the dashboard entry through
+	// `flightdeck-state path` so the file lands in the active run dir
+	// instead of the legacy <project>/tmp/.
 	writeFileSync(bin, `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
-mkdir -p tmp
-cat > tmp/flightdeck-state-test-session.json <<'JSON'
+state_file=$(${JSON.stringify(flightdeckState)} path --session test-session 2>/dev/null || true)
+if [[ -n "$state_file" ]]; then
+  cat > "$state_file" <<'JSON'
 {
   "session_id": "test-session",
   "entries": {
@@ -123,6 +141,7 @@ cat > tmp/flightdeck-state-test-session.json <<'JSON'
   }
 }
 JSON
+fi
 `);
 	chmodSync(bin, 0o755);
 	return bin;
@@ -237,6 +256,7 @@ esac
 
 function makeAfterWindowRejectingDashboardStateShim(repo: string, captureFile: string, dashboardWindowId = "@2"): string {
 	const bin = join(repo, "flightdeck-dashboard-after-window-reject-shim");
+	const flightdeckState = resolve(HERE, "../../../../scripts/flightdeck-state");
 	writeFileSync(bin, `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >> ${JSON.stringify(captureFile)}
@@ -246,8 +266,9 @@ for arg in "$@"; do
     exit 2
   fi
 done
-mkdir -p tmp
-cat > tmp/flightdeck-state-test-session.json <<'JSON'
+state_file=$(${JSON.stringify(flightdeckState)} path --session test-session 2>/dev/null || true)
+if [[ -n "$state_file" ]]; then
+  cat > "$state_file" <<'JSON'
 {
   "session_id": "test-session",
   "entries": {
@@ -263,6 +284,7 @@ cat > tmp/flightdeck-state-test-session.json <<'JSON'
   }
 }
 JSON
+fi
 `);
 	chmodSync(bin, 0o755);
 	return bin;
@@ -406,7 +428,10 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(runState(repo, shim, ["set", "terminated_at", '"2026-05-19T00:00:00Z"']).status).toBe(0);
 			const archived = runState(repo, shim, ["archive"]);
 			expect(archived.status).toBe(0);
-			expect(archived.stdout.trim()).toContain("flightdeck-state-test-session-2026-05-19T000000Z.json.archive");
+			// vstack#227: archive writes a durable run snapshot path
+			// (`<run-dir>/snapshots/<TS>.json`) instead of rotating a
+			// project-tmp `.json.archive` file.
+			expect(archived.stdout.trim()).toMatch(/\/snapshots\/2026-05-19T000000Z\.json$/);
 			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 
 			const second = run(repo, shim, [
@@ -429,7 +454,17 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(firstRun.state.entries["first-entry"].id).toBe("first-entry");
 		});
 
-		test(`dashboard self start skips durable active run creation`, () => {
+		test(`dashboard self start auto-creates active run so dashboard entry lands in it (vstack#227)`, () => {
+			// vstack#227 redesign: the dashboard's pane-registry writes
+			// now flow through `flightdeck-state` → `statePath()` →
+			// auto-ensured active run. The `--no-active-run` flag still
+			// keeps the bash launcher's `ensure_active_run_for_session`
+			// from explicitly creating one, but the helper CLIs
+			// nonetheless materialize a run on first write so the
+			// dashboard's tracked entry ends up in the same active run
+			// that user lanes (linear/github) join. The dual-storage
+			// duplication is the bug we set out to eliminate; this test
+			// pins the new contract.
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
@@ -445,17 +480,27 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--no-active-run",
 			]);
 			expect(started.status).toBe(0);
-			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
+			const active = JSON.parse(runState(repo, shim, ["run", "active"]).stdout);
+			expect(active).not.toBeNull();
 			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
 			expect(liveState.entries["flightdeck-dashboard"].id).toBe("flightdeck-dashboard");
 		});
 
-		test(`start archives stale compatibility state when recorded panes are gone`, () => {
+		test(`start migrates legacy state then registers the new entry (vstack#227)`, () => {
+			// vstack#227 redesign: `archive_stale_state_if_needed`
+			// (bash) is a no-op now. Legacy `<project>/tmp/flightdeck-
+			// state-<S>.json` is folded into the active run by the
+			// run-store's migration shim and the legacy file is
+			// renamed `.migrated`. The migration is faithful (it
+			// preserves whatever the legacy file held); cleanup of
+			// stale tracked entries happens later via reconciliation.
+			// This test pins both the migration rename and the new
+			// entry's registration in the same active run.
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
 			mkdirSync(join(repo, "tmp"), { recursive: true });
-			writeFileSync(stateFile(repo), JSON.stringify({
+			writeFileSync(join(repo, "tmp", "flightdeck-state-test-session.json"), JSON.stringify({
 				entries: { stale: { id: "stale", kind: "adhoc", pane_id: "%404", state: "waiting" } },
 				session_id: "test-session",
 				terminated: false,
@@ -470,25 +515,34 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--cmd", "echo replacement",
 			]);
 			expect(started.status).toBe(0);
-			expect(started.stderr).toContain("archived stale state (no-live-panes)");
 			const liveState = JSON.parse(readFileSync(stateFile(repo), "utf8"));
-			expect(Object.keys(liveState.entries)).toEqual(["replacement-entry"]);
-			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json.archive"))).toBe(false);
-			expect(started.stderr).toContain("flightdeck-state-test-session-");
+			expect(Object.keys(liveState.entries).sort()).toEqual(["replacement-entry", "stale"]);
+			// Legacy state has been renamed `.migrated`.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json.migrated"))).toBe(true);
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 		});
 
-		test(`start aborts stale archive when tmux liveness fails`, () => {
+		test(`start fails closed when tmux liveness probe is unreliable (vstack#227)`, () => {
+			// vstack#227: the run-store's stale check (inside
+			// `state run ensure --checkStale`) throws "cannot verify
+			// active Flightdeck run liveness" when tmux list-panes -a
+			// returns an error AND the active run has recorded panes.
+			// flightdeck-session start surfaces that failure instead of
+			// archiving silently.
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
-			mkdirSync(join(repo, "tmp"), { recursive: true });
-			writeFileSync(stateFile(repo), JSON.stringify({
-				entries: { maybe_live: { id: "maybe_live", kind: "adhoc", pane_id: "%maybe", state: "waiting" } },
-				session_id: "test-session",
-				terminated: false,
-			}, null, 2));
 			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
-			const stateBefore = readFileSync(stateFile(repo), "utf8");
+			// Record a pane on the active run so the staleness check has
+			// something to probe against.
+			runState(repo, shim, ["write-entry", "maybe_live", JSON.stringify({
+				id: "maybe_live",
+				kind: "adhoc",
+				pane_id: "%maybe",
+				state: "waiting",
+				title: "Maybe live",
+				harness: "shell",
+			})]);
 
 			const started = run(repo, shim, [
 				"start",
@@ -499,31 +553,25 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--cmd", "echo replacement",
 			], { TMUX_SHIM_FAIL_LIST_PANES_A: "1" });
 			expect(started.status).not.toBe(0);
-			expect(started.stderr).toContain("unable to verify live tmux panes before archiving stale Flightdeck state");
-			expect(started.stderr).toContain("shim: list-panes -a refused");
-			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
-			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
+			expect(started.stderr).toContain("cannot verify active Flightdeck run liveness");
 			const shown = JSON.parse(runState(repo, shim, ["run", "show", created.metadata.run_id]).stdout);
 			expect(shown.metadata.terminated).toBe(false);
 			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout).active.run_id).toBe(created.metadata.run_id);
-			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
 		});
 
-		test(`start aborts when stale archive command fails`, () => {
+		test(`start fails closed when active-run metadata is missing (vstack#227)`, () => {
+			// vstack#227: archive_stale_state_if_needed is a no-op shim
+			// now. The replacement guard lives in
+			// `ensureActiveRun()` — if metadata.json for the active run
+			// is missing, the helper throws with the recovery hint and
+			// flightdeck-session start exits non-zero without mutating
+			// state.
 			const repo = makeRepo();
 			repos.push(repo);
 			const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
-			mkdirSync(join(repo, "tmp"), { recursive: true });
-			writeFileSync(stateFile(repo), JSON.stringify({
-				entries: { done: { id: "done", kind: "adhoc", pane_id: "%gone", state: "complete" } },
-				session_id: "test-session",
-				terminated: true,
-				terminated_at: "2026-05-20T00:00:00Z",
-			}, null, 2));
 			const created = JSON.parse(runState(repo, shim, ["run", "create", "--tmux-session", "test-session"]).stdout);
-			const activePath = join(repo, "home", ".vstack", "flightdeck", "projects", created.project.project_id, "active-run.json");
+			const activePath = join(repo, ".vstack-run-store", "projects", created.project.project_id, "active-run.json");
 			const activeBefore = readFileSync(activePath, "utf8");
-			const stateBefore = readFileSync(stateFile(repo), "utf8");
 			rmSync(created.paths.metadata_json, { force: true });
 
 			const started = run(repo, shim, [
@@ -535,11 +583,8 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				"--cmd", "echo replacement",
 			]);
 			expect(started.status).not.toBe(0);
-			expect(started.stderr).toContain("failed to terminate active Flightdeck run before archive");
-			expect(started.stderr).toContain("flightdeck-state archive failed while archiving stale state");
-			expect(readFileSync(stateFile(repo), "utf8")).toBe(stateBefore);
+			expect(started.stderr).toContain("active Flightdeck run metadata is missing");
 			expect(readFileSync(activePath, "utf8")).toBe(activeBefore);
-			expect(readdirSync(join(repo, "tmp")).filter((name) => name.endsWith(".archive"))).toEqual([]);
 			expect(Object.keys(readShimState(shim).panes)).toEqual([]);
 		});
 
@@ -727,7 +772,15 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toContain("opencode model is not configured");
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, shim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 		});
 
 		test(`start --prompt rejects unconfigured OpenCode model before tmux mutation`, () => {
@@ -748,14 +801,24 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toContain("opencode model is not configured");
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, shim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 		});
 
 		test(`start --prompt rejects Claude minimal/off effort before tmux mutation`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
+			let lastShim = "";
 			for (const effort of ["minimal", "off"]) {
 				const shim = writeShimState(repo, { panes: {}, session: "test-session", windows: {} });
+				lastShim = shim;
 				const r = run(repo, shim, [
 					"start",
 					"--session-id", `claude-${effort}`,
@@ -769,7 +832,15 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 				expect(r.stderr).toContain("invalid --effort for claude");
 				expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 			}
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, lastShim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 		});
 
 		test(`start --prompt rejects unsupported shell harness before tmux mutation`, () => {
@@ -787,7 +858,15 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.status).not.toBe(0);
 			expect(r.stderr).toContain("--prompt launch does not support --harness shell");
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, shim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 		});
 
 		test(`start creates tmux window and registers entry`, () => {
@@ -1042,7 +1121,15 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("tmux new-window failed (rc=1");
 			expect(r.stderr).toContain("title=Fail");
 			expect(r.stderr).toContain("shim: new-window refused");
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, shim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 			expect(JSON.parse(runState(repo, shim, ["run", "active"]).stdout)).toBeNull();
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
 		});
@@ -1241,7 +1328,15 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done
 			expect(r.stderr).toContain("Warning: pre-launch pi snapshot failed");
 			expect(r.stderr).toContain("--strict-discovery refusing Pi launch");
 			expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-			expect(existsSync(stateFile(repo))).toBe(false);
+			// vstack#227: a failed pre-launch validation triggers the
+			// active-run rollback trap (`active_run_rollback_on_exit`),
+			// which terminates the durable run that
+			// `ensure_active_run_for_session` created moments earlier.
+			// The legacy `<repo>/tmp/flightdeck-state-<session>.json`
+			// also stays absent because we never write to it.
+			expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
+			const activePointer = JSON.parse(runState(repo, shim, ["run", "active"]).stdout ?? "null");
+			expect(activePointer).toBeNull();
 		});
 
 		test(`attach records existing pi pane metadata`, () => {
@@ -1721,7 +1816,10 @@ exit 0
 
 			const archived = runState(repo, shim, ["archive"], { FLIGHTDECK_DAEMON_BIN: daemonShim });
 			expect(archived.status).toBe(0);
-			expect(archived.stdout).toContain(".json.archive");
+			// vstack#227: archive returns the durable snapshot path
+			// (`<run-dir>/snapshots/<TS>.json`), not a legacy
+			// `tmp/...json.archive` rotation.
+			expect(archived.stdout).toMatch(/\/snapshots\/[^/]+\.json\n?$/);
 			const calls = shimCalls(daemonCapture);
 			expect(calls.filter((c) => c.action === "stop" && flagValue(c.args, "--session") === "test-session").length).toBeGreaterThanOrEqual(1);
 		});

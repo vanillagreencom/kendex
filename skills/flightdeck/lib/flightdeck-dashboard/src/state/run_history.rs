@@ -187,6 +187,22 @@ pub fn list_runs(project_root: &Path) -> Result<Vec<HistoryRun>, RunHistoryError
         .collect())
 }
 
+/// vstack#227: lightweight active-run lookup used by
+/// `resolve_session_state_from` to route the dashboard's live read at
+/// `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/state.json`. Returns
+/// `Ok(None)` if no active run exists (or the active run belongs to a
+/// different session), so the caller can fall back to the legacy
+/// project-local path without bubbling a daemon-only error.
+pub fn load_active_state_path(
+    project_root: &Path,
+    expected_session: &str,
+) -> Result<Option<PathBuf>, RunHistoryError> {
+    match load_active_run_metadata(project_root, expected_session)? {
+        ActiveRunLookup::Matched(metadata) if !metadata.terminated => Ok(Some(metadata.state_path)),
+        _ => Ok(None),
+    }
+}
+
 pub fn load_active_run_metadata(
     project_root: &Path,
     expected_session: &str,

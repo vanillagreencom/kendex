@@ -949,9 +949,45 @@ pub fn resolve_project_root() -> Result<PathBuf, SettingsError> {
 }
 
 pub fn resolve_project_root_from(cwd: &Path) -> Result<PathBuf, SettingsError> {
-    tracked_entries::resolve_project_root(cwd).map_err(|error| SettingsError::ProjectRoot {
-        message: error.to_string(),
-    })
+    let initial =
+        tracked_entries::resolve_project_root(cwd).map_err(|error| SettingsError::ProjectRoot {
+            message: error.to_string(),
+        })?;
+    // vstack#227: collapse worktree paths to the main repo root so the
+    // Rust dashboard and the TypeScript run-store derive the same
+    // project id. Mirrors `flightdeck-core/src/shared/project.ts`:
+    // `git rev-parse --git-common-dir` of a worktree points at the
+    // main repo's `.git`; its parent is the canonical main-repo root.
+    Ok(canonicalize_to_main_repo_root(&initial))
+}
+
+fn canonicalize_to_main_repo_root(initial: &Path) -> PathBuf {
+    let common = Command::new("git")
+        .arg("-C")
+        .arg(initial)
+        .args(["rev-parse", "--git-common-dir"])
+        .output();
+    let Ok(out) = common else {
+        return initial.to_path_buf();
+    };
+    if !out.status.success() {
+        return initial.to_path_buf();
+    }
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == ".git" {
+        return initial.to_path_buf();
+    }
+    let common_path = if Path::new(trimmed).is_absolute() {
+        PathBuf::from(trimmed)
+    } else {
+        initial.join(trimmed)
+    };
+    common_path
+        .parent()
+        .map(Path::to_path_buf)
+        .and_then(|p| p.canonicalize().ok())
+        .unwrap_or_else(|| initial.to_path_buf())
 }
 
 // vstack#227: settings live under the user-level run store, not the
@@ -979,7 +1015,15 @@ pub fn flightdeck_run_store_root() -> PathBuf {
         .map(|v| v.trim().to_owned())
         .filter(|v| !v.is_empty())
     {
-        return PathBuf::from(override_root);
+        // vstack#227: absolutize the override before joining
+        // `projects/<id>` so a relative override doesn't redirect
+        // writes into the current working dir.
+        let raw = PathBuf::from(override_root);
+        return if raw.is_absolute() {
+            raw
+        } else {
+            env::current_dir().map(|cwd| cwd.join(&raw)).unwrap_or(raw)
+        };
     }
     let home = env::var("HOME")
         .ok()
@@ -1333,6 +1377,13 @@ fn write_override_file(
             path: project_root.to_path_buf(),
             source,
         })?;
+    // Use the canonical/worktree-collapsed root so it stays in lockstep
+    // with the TS run-store identity.
+    let project_root =
+        resolve_project_root_from(&project_root).map_err(|error| SettingsError::UnsafePath {
+            path: project_root.clone(),
+            message: error.to_string(),
+        })?;
     let expected_path = override_path(&project_root);
     if path != expected_path {
         return Err(SettingsError::UnsafePath {
@@ -1340,9 +1391,10 @@ fn write_override_file(
             message: format!("expected {}", expected_path.display()),
         });
     }
-    // vstack#227: project_dir lives under the user-level run store; the
-    // safety checks here ensure the immediate parent of settings.toml
-    // is a real directory, not a symlink, and is created if missing.
+    // vstack#227: ensure the run-store root + `projects/` ancestor are
+    // real (non-symlinked) user-owned directories before touching the
+    // per-project leaf, mirroring `run-store.ts::ensureStoreRootChain`.
+    ensure_store_root_chain(&flightdeck_run_store_root())?;
     let store_dir = project_dir(&project_root);
     if let Err(error) = fs::create_dir_all(&store_dir) {
         return Err(SettingsError::Write {
@@ -1350,6 +1402,7 @@ fn write_override_file(
             source: error,
         });
     }
+    enforce_store_dir_mode(&store_dir)?;
     ensure_safe_directory(&store_dir)?;
     ensure_safe_final_path_against(&store_dir, path)?;
 
@@ -1366,7 +1419,10 @@ fn write_override_file(
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    {
+        options.custom_flags(libc::O_NOFOLLOW);
+        options.mode(STORE_FILE_MODE);
+    }
     let mut file = options.open(path).map_err(|source| SettingsError::Write {
         path: path.to_path_buf(),
         source,
@@ -1375,7 +1431,116 @@ fn write_override_file(
         .map_err(|source| SettingsError::Write {
             path: path.to_path_buf(),
             source,
-        })
+        })?;
+    // vstack#227: force-tighten in case umask added extra bits on
+    // file creation.
+    enforce_store_file_mode(path)?;
+    Ok(())
+}
+
+// vstack#227: store dirs must be 0700; settings.toml is 0600. We also
+// reject any existing dir that is a symlink, owned by another uid, or
+// has group/other write bits set, matching the TS run-store posture.
+const STORE_DIR_MODE: u32 = 0o700;
+const STORE_FILE_MODE: u32 = 0o600;
+
+#[cfg(unix)]
+fn current_uid() -> Option<u32> {
+    Some(unsafe { libc::getuid() })
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> Option<u32> {
+    None
+}
+
+#[cfg(unix)]
+fn enforce_mode_unix(path: &Path, mode: u32, label: &str) -> Result<(), SettingsError> {
+    use std::os::unix::fs::PermissionsExt;
+    let permissions = fs::Permissions::from_mode(mode);
+    fs::set_permissions(path, permissions).map_err(|source| SettingsError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let _ = label;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn enforce_mode_unix(_path: &Path, _mode: u32, _label: &str) -> Result<(), SettingsError> {
+    Ok(())
+}
+
+fn enforce_store_dir_mode(path: &Path) -> Result<(), SettingsError> {
+    enforce_mode_unix(path, STORE_DIR_MODE, "store directory")
+}
+
+fn enforce_store_file_mode(path: &Path) -> Result<(), SettingsError> {
+    enforce_mode_unix(path, STORE_FILE_MODE, "store file")
+}
+
+fn ensure_store_root_chain(root: &Path) -> Result<(), SettingsError> {
+    fs::create_dir_all(root).map_err(|source| SettingsError::Write {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    enforce_store_dir_mode(root)?;
+    ensure_safe_directory(root)?;
+    let projects = root.join("projects");
+    fs::create_dir_all(&projects).map_err(|source| SettingsError::Write {
+        path: projects.clone(),
+        source,
+    })?;
+    enforce_store_dir_mode(&projects)?;
+    ensure_safe_directory(&projects)?;
+    let real_root = root.canonicalize().map_err(|source| SettingsError::Write {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let real_projects = projects
+        .canonicalize()
+        .map_err(|source| SettingsError::Write {
+            path: projects.clone(),
+            source,
+        })?;
+    if !real_projects.starts_with(&real_root) {
+        return Err(SettingsError::UnsafePath {
+            path: projects,
+            message: format!("canonical projects dir escapes {}", root.display()),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_owner_and_mode(meta: &fs::Metadata, path: &Path) -> Result<(), SettingsError> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(uid) = current_uid() {
+        if meta.uid() != uid {
+            return Err(SettingsError::UnsafePath {
+                path: path.to_path_buf(),
+                message: format!("owned by uid {}, not {}", meta.uid(), uid),
+            });
+        }
+    }
+    // Fail closed only on group/other write bits — those allow another
+    // local user to tamper with settings. Read bits are tightened down
+    // by enforce_store_*_mode on each call rather than failing pre-
+    // existing files created under the default umask.
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o022 != 0 {
+        return Err(SettingsError::UnsafePath {
+            path: path.to_path_buf(),
+            message: format!("group/other write bits set (mode={:o})", mode),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn assert_owner_and_mode(_meta: &fs::Metadata, _path: &Path) -> Result<(), SettingsError> {
+    Ok(())
 }
 
 fn ensure_safe_directory(dir: &Path) -> Result<(), SettingsError> {
@@ -1393,6 +1558,7 @@ fn ensure_safe_directory(dir: &Path) -> Result<(), SettingsError> {
                     message: String::from("settings directory path is not a directory"),
                 });
             }
+            assert_owner_and_mode(&metadata, dir)?;
             Ok(())
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

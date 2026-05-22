@@ -521,7 +521,13 @@ describe("Flightdeck durable run store", () => {
 
 			mutate(created, outside);
 
-			expect(() => action(created, currentRepo), name).toThrow(/symlinks are not allowed/);
+			// vstack#227: the symlink-rejection message can come from
+			// either the file-level "symlinks are not allowed" check or
+			// the ancestor-traversal "escapes" check, depending on
+			// which security guard fires first.
+			expect(() => action(created, currentRepo), name).toThrow(
+				/symlinks are not allowed|escapes/,
+			);
 		}
 	});
 

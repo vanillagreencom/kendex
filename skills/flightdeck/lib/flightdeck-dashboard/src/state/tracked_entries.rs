@@ -356,6 +356,26 @@ pub fn resolve_session_state_from(
     session: &str,
 ) -> Result<SessionResolution, SnapshotError> {
     let project_root = resolve_project_root(cwd.as_ref())?;
+    // vstack#227: live state lives in the active run directory under
+    // `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. Consult the
+    // run-store first; only fall back to the legacy
+    // `<project>/tmp/flightdeck-state-<session>.json` path when no
+    // active run is resolvable (cold-start scenarios, history/archive
+    // flows, and tests that intentionally seed legacy layout).
+    if let Ok(Some(active_state_path)) =
+        super::run_history::load_active_state_path(&project_root, session)
+    {
+        let state_dir = active_state_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| project_root.clone());
+        return Ok(SessionResolution {
+            project_root,
+            state_dir,
+            session: session.to_owned(),
+            state_path: active_state_path,
+        });
+    }
     let state_dir = resolve_state_dir(&project_root);
     let state_path = state_dir.join(format!("flightdeck-state-{session}.json"));
     Ok(SessionResolution {

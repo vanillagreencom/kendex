@@ -49,8 +49,14 @@ function readShimState(path: string): ShimState {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
+// vstack#227: state lives in the active run dir; resolve via the CLI.
 function stateFile(repo: string): string {
-	return join(repo, "tmp", "flightdeck-state-test-session.json");
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
+	const r = spawnSync(STATE_SCRIPT, ["path", "--session", "test-session"], { cwd: repo, encoding: "utf8", env });
+	if (r.status !== 0) throw new Error(`flightdeck-state path failed: ${r.stderr}`);
+	return (r.stdout ?? "").trim();
 }
 
 function makeWorktreeShim(repo: string): string {
@@ -128,6 +134,8 @@ function runOpenTerminal(repo: string, shimState: string, args: string[], extraE
 	env.PATH = `${repo}:${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.WORKTREE_CLI = makeWorktreeShim(repo);
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: per-test run-store isolation.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
 	env.FLIGHTDECK_OPEN_TERMINAL_DISABLE_ADAPTERS = "1";
 	Object.assign(env, extraEnv);
@@ -153,6 +161,8 @@ function runOpenTerminalChannelsOn(repo: string, shimState: string, fakeBin: str
 	env.HOME = fakeHome;
 	env.WORKTREE_CLI = makeWorktreeShim(repo);
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: per-test run-store isolation.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
 	env.FD_STATE_DIR = fdStateDir;
 	// vstack#216: pin the claude bin to our fake so resolve_claude_bin
@@ -171,6 +181,7 @@ function runOpenTerminalChannelsOn(repo: string, shimState: string, fakeBin: str
 function runState(repo: string, args: string[]) {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	const r = spawnSync(STATE_SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
@@ -219,7 +230,10 @@ describe("open-terminal smoke", () => {
 		expect(r.status).not.toBe(0);
 		expect(r.stderr).toContain("model not configured");
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-		expect(existsSync(stateFile(repo))).toBe(false);
+		// vstack#227: assert the legacy file is absent. The active run
+		// may have been auto-created but no entries got registered, so
+		// we look at the registry side instead.
+		expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 	});
 
 	test("pi effort off omits --thinking and records unsupported effort metadata", () => {
@@ -281,7 +295,11 @@ describe("open-terminal smoke", () => {
 		expect(r.status).not.toBe(0);
 		expect(r.stderr).toContain("invalid --effort for claude");
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-		expect(existsSync(stateFile(repo))).toBe(false);
+		// vstack#227: assert legacy file absence — active run may
+		// have been auto-created by the helper CLI but the entry was
+		// never registered. The legacy `<repo>/tmp/` location stays
+		// clean.
+		expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 	});
 
 	for (const harness of ["pi", "codex", "claude", "opencode"] as const) {
@@ -476,6 +494,10 @@ except KeyboardInterrupt: pass`;
 				const argsEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
 				argsEnv.FD_STATE_DIR = fdStateDir;
 				argsEnv.FLIGHTDECK_STATE_DIR = "tmp";
+				// vstack#227: per-test run-store isolation so the
+				// pane-registry subprocess resolves the same active run
+				// the open-terminal driver wrote to.
+				argsEnv.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 				argsEnv.FD_ADAPTER_FRESHNESS_TTL = "0";
 				argsEnv.TMUX_PARITY_SESSION = "test-session";
 				argsEnv.TMUX_SHIM_STATE = shim;
@@ -522,7 +544,11 @@ except KeyboardInterrupt: pass`;
 		expect(r.status).not.toBe(0);
 		expect(r.stderr).toContain("github tracker requires numeric issue IDs");
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-		expect(existsSync(stateFile(repo))).toBe(false);
+		// vstack#227: assert legacy file absence — active run may
+		// have been auto-created by the helper CLI but the entry was
+		// never registered. The legacy `<repo>/tmp/` location stays
+		// clean.
+		expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 	});
 
 	test("bare numeric without github tracker is treated as group id and does not spawn", () => {
@@ -533,7 +559,11 @@ except KeyboardInterrupt: pass`;
 		expect(r.status).not.toBe(0);
 		expect(r.stderr).toContain("no active group with id 120");
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-		expect(existsSync(stateFile(repo))).toBe(false);
+		// vstack#227: assert legacy file absence — active run may
+		// have been auto-created by the helper CLI but the entry was
+		// never registered. The legacy `<repo>/tmp/` location stays
+		// clean.
+		expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 	});
 
 	test("github tracker validates issue before creating worktree", () => {
@@ -554,7 +584,11 @@ printf '%s\n' ${JSON.stringify(repo)}
 		expect(r.stderr).toContain("auth failed for owner/repo");
 		expect(existsSync(marker)).toBe(false);
 		expect(Object.keys(readShimState(shim).panes)).toHaveLength(0);
-		expect(existsSync(stateFile(repo))).toBe(false);
+		// vstack#227: assert legacy file absence — active run may
+		// have been auto-created by the helper CLI but the entry was
+		// never registered. The legacy `<repo>/tmp/` location stays
+		// clean.
+		expect(existsSync(join(repo, "tmp", "flightdeck-state-test-session.json"))).toBe(false);
 	});
 
 	test("mixed Linear and GitHub domains round-trip through flightdeck-state", () => {

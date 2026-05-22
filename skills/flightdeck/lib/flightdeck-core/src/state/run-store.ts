@@ -16,7 +16,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { loadDotEnvIntoProcess, resolveProjectRoot } from "../shared/project.ts";
-import { withFlockHeldSync } from "./locking.ts";
+import { lockedMigrateLegacyIntoRun, withFlockHeldSync } from "./locking.ts";
 
 export const RUN_STORE_SCHEMA_VERSION = 1;
 export const MAX_LEGACY_ACTIVITY_ARCHIVE_BYTES = 50 * 1024 * 1024;
@@ -207,10 +207,122 @@ function storeHome(): string {
 // vstack#227: tests can override the run-store root with
 // FLIGHTDECK_RUN_STORE_ROOT to point at an isolated tmpdir. Production
 // callers leave it unset and use `$HOME/.vstack/flightdeck`.
+//
+// The override is absolutized before use so a relative path doesn't
+// silently redirect writes into the current working directory. Ancestor
+// symlinks/permissions are validated lazily by
+// `ensureStoreDirSecurity()` when paths are created or touched (see
+// `withProjectLock`).
 export function flightdeckRunStoreRoot(): string {
 	const override = process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	if (typeof override === "string" && override.trim()) return resolve(override.trim());
 	return join(storeHome(), ".vstack", "flightdeck");
+}
+
+// vstack#227: store directories are private (0700) and files are 0600.
+// We also fail closed if an existing directory is a symlink, owned by a
+// different uid, or readable/writable by group or other. These checks
+// also catch a project/env-controlled override that redirects writes
+// outside the intended root by way of a symlinked ancestor.
+const STORE_DIR_MODE = 0o700;
+const STORE_FILE_MODE = 0o600;
+
+function currentUidOrNull(): number | null {
+	const fn = (process as unknown as { getuid?: () => number }).getuid;
+	return typeof fn === "function" ? fn.call(process) : null;
+}
+
+function assertStoreOwnership(stat: { uid?: number; mode: number }, path: string, label: string): void {
+	const uid = currentUidOrNull();
+	if (uid !== null && typeof stat.uid === "number" && stat.uid !== uid) {
+		throw new Error(`invalid ${label} ${path}: owned by uid ${stat.uid}, not ${uid}`);
+	}
+	// Fail closed only on group/other write bits — those allow another
+	// local user to tamper with state. Read bits (0o044) are tightened
+	// down by `chmodSyncSafe` on next write rather than throwing, since
+	// pre-existing files created with the default umask are a benign
+	// upgrade case.
+	if ((stat.mode & 0o022) !== 0) {
+		throw new Error(`invalid ${label} ${path}: group/other write bits set (mode=${(stat.mode & 0o777).toString(8)})`);
+	}
+}
+
+function ensureStoreDir(path: string, label: string): void {
+	let stat: ReturnType<typeof lstatSync> | null = null;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	if (stat) {
+		if (stat.isSymbolicLink()) throw new Error(`invalid ${label} ${path}: symlinks are not allowed`);
+		if (!stat.isDirectory()) throw new Error(`invalid ${label} ${path}: expected directory`);
+		assertStoreOwnership(stat, path, label);
+		return;
+	}
+	mkdirSync(path, { mode: STORE_DIR_MODE, recursive: false });
+	try {
+		const created = lstatSync(path);
+		// `mkdir` honors umask; force the safe mode explicitly.
+		if ((created.mode & 0o777) !== STORE_DIR_MODE) chmodSyncSafe(path, STORE_DIR_MODE);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+}
+
+function ensureStoreFile(path: string, label: string): void {
+	let stat: ReturnType<typeof lstatSync> | null = null;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!stat) return;
+	if (stat.isSymbolicLink()) throw new Error(`invalid ${label} ${path}: symlinks are not allowed`);
+	if (!stat.isFile()) throw new Error(`invalid ${label} ${path}: expected regular file`);
+	assertStoreOwnership(stat, path, label);
+	if ((stat.mode & 0o077) !== 0) {
+		// Defensive: tighten down to 0600 in place. assertStoreOwnership
+		// already threw above; this branch is unreachable in practice
+		// but kept as a safety net for future relaxations.
+		chmodSyncSafe(path, STORE_FILE_MODE);
+	}
+}
+
+function chmodSyncSafe(path: string, mode: number): void {
+	try {
+		(require("node:fs") as typeof import("node:fs")).chmodSync(path, mode);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+}
+
+// vstack#227: create the run-store root + `projects/` ancestor under
+// strict ownership/perm checks so the per-project lock acquired below
+// cannot be redirected via a symlinked ancestor.
+function ensureStoreRootChain(projectDir: string): void {
+	const root = flightdeckRunStoreRoot();
+	mkdirSync(root, { mode: STORE_DIR_MODE, recursive: true });
+	ensureStoreDir(root, "run-store root");
+	const projects = join(root, "projects");
+	mkdirSync(projects, { mode: STORE_DIR_MODE, recursive: true });
+	ensureStoreDir(projects, "run-store projects dir");
+	const realRoot = realpathSync(root);
+	const realProjects = realpathSync(projects);
+	if (!isPathInside(realRoot, realProjects)) {
+		throw new Error(`invalid run-store projects dir ${projects}: escapes ${root}`);
+	}
+	// Project dir must resolve inside realProjects too. If it doesn't
+	// exist yet, just verify the parent (above) and let the caller
+	// create the leaf.
+	if (existsSync(projectDir)) {
+		const realProject = realpathSync(projectDir);
+		if (!isPathInside(realProjects, realProject)) {
+			throw new Error(`invalid project directory ${projectDir}: escapes ${projects}`);
+		}
+	}
 }
 
 export function canonicalProjectRoot(projectRoot: string = process.cwd()): string {
@@ -495,7 +607,13 @@ function withProjectLock<T>(projectRoot: string, fn: (ctx: ProjectLockContext) =
 	const root = canonicalProjectRoot(projectRoot);
 	const identity = projectIdentityForRoot(root);
 	const paths = resolveProjectRunPaths(identity);
-	mkdirSync(paths.project_dir, { recursive: true });
+	// vstack#227: validate the run-store root + projects/ ancestors as
+	// real (non-symlinked) user-owned directories before mkdir'ing the
+	// per-project leaf. Prevents a symlinked ancestor from redirecting
+	// state writes outside the intended root (CWE-22 / CWE-59).
+	ensureStoreRootChain(paths.project_dir);
+	mkdirSync(paths.project_dir, { mode: STORE_DIR_MODE, recursive: true });
+	ensureStoreDir(paths.project_dir, "project directory");
 	assertStorageDirectory(paths.project_dir, "project directory");
 	return withFlockHeldSync(paths.project_lock, () => fn({ identity, paths, root }));
 }
@@ -777,6 +895,12 @@ function livePaneIds(): LivePaneIdsResult {
 // stop reading it. The durable run snapshot already preserves the
 // archive history under `runs/<run-id>/`; this helper just makes the
 // stale project-local copy non-readable by ordinary scan paths.
+//
+// Failure mode: the state-file rename is load-bearing; if it fails
+// (race, perms, etc.) we throw so callers do not return success while
+// the legacy file is still live. The lock + activity sidecars are
+// non-critical: their rename failures warn to stderr but don't abort
+// the parent operation.
 function markLegacyStateMigratedIfPresent(projectRoot: string, tmuxSession: string, stateDir?: string): void {
 	const dir = legacyStateDirForRoot(projectRoot, stateDir);
 	const statePath = join(dir, `flightdeck-state-${safeLegacySessionName(tmuxSession)}.json`);
@@ -784,20 +908,36 @@ function markLegacyStateMigratedIfPresent(projectRoot: string, tmuxSession: stri
 	markLegacyStatePathMigrated(statePath, activityPath);
 }
 
-// vstack#227: best-effort rename of legacy state/activity files to a
-// `.migrated` suffix. We do not delete the originals; operators can
-// remove them after verification.
 function markLegacyStatePathMigrated(statePath: string, activityPath: string): void {
-	tryRename(statePath, `${statePath}.migrated`);
-	tryRename(`${statePath}.lock`, `${statePath}.lock.migrated`);
-	tryRename(activityPath, `${activityPath}.migrated`);
-	tryRename(`${activityPath}.lock`, `${activityPath}.lock.migrated`);
-	tryRename(`${activityPath}.archived`, `${activityPath}.archived.migrated`);
+	// State path is load-bearing: callers that reach here expect the
+	// legacy file to stop being read after migration. Surface failures
+	// loudly so we never silently return with a live legacy state.
+	renameOrThrow(statePath, `${statePath}.migrated`, "legacy state");
+	// Lock + activity sidecars: warn-only. Operators can clean these up
+	// manually after verification.
+	tryRenameWarn(`${statePath}.lock`, `${statePath}.lock.migrated`, "legacy state lock");
+	renameOrThrow(activityPath, `${activityPath}.migrated`, "legacy activity");
+	tryRenameWarn(`${activityPath}.lock`, `${activityPath}.lock.migrated`, "legacy activity lock");
+	tryRenameWarn(`${activityPath}.archived`, `${activityPath}.archived.migrated`, "legacy activity .archived sentinel");
 }
 
-function tryRename(from: string, to: string): void {
+function renameOrThrow(from: string, to: string, label: string): void {
 	if (!existsSync(from)) return;
-	try { renameSync(from, to); } catch { /* best-effort */ }
+	try {
+		renameSync(from, to);
+	} catch (error) {
+		throw new Error(`failed to rename ${label} ${from} -> ${to}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+function tryRenameWarn(from: string, to: string, label: string): void {
+	if (!existsSync(from)) return;
+	try {
+		renameSync(from, to);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`Warning: failed to rename ${label} ${from} -> ${to}: ${message}\n`);
+	}
 }
 
 // vstack#227 migration shim: for live runs whose state.json predates
@@ -805,6 +945,15 @@ function tryRename(from: string, to: string): void {
 // state-<S>.json` (and matching activity sidecar) into the run dir
 // before downstream consumers read state.json. Idempotent: once the
 // legacy paths are renamed to `.migrated`, this is a no-op.
+//
+// The migration runs under the legacy state-lock + activity-lock so
+// concurrent legacy writers can't race with the copy+rename. The
+// shell-side script (see locking.ts::lockedMigrateLegacyIntoRun)
+// performs the work atomically and exits:
+//   * 0  → migration succeeded (state and/or activity moved)
+//   * 2  → no-op (no legacy files present)
+//   * other → failure; we surface stderr and abort so callers do not
+//     proceed against a half-migrated layout.
 function migrateLegacyStateIntoActiveRun(projectRoot: string, tmuxSession: string, paths: RunPaths, stateDir?: string): void {
 	const dir = legacyStateDirForRoot(projectRoot, stateDir);
 	const legacyState = join(dir, `flightdeck-state-${safeLegacySessionName(tmuxSession)}.json`);
@@ -812,29 +961,18 @@ function migrateLegacyStateIntoActiveRun(projectRoot: string, tmuxSession: strin
 	const legacyStateExists = existsSync(legacyState);
 	const legacyActivityExists = existsSync(legacyActivity);
 	if (!legacyStateExists && !legacyActivityExists) return;
-	if (legacyStateExists) {
-		const legacyMtime = safeMtimeMs(legacyState);
-		const runMtime = safeMtimeMs(paths.state_json);
-		if (legacyMtime !== null && (runMtime === null || legacyMtime >= runMtime)) {
-			const live = readStateObject(legacyState, "legacy state");
-			if (live !== JSON_MISSING) {
-				live.activity_path = paths.activity_jsonl;
-				writeJsonAtomic(paths.state_json, live);
-			}
-		}
-	}
-	if (legacyActivityExists) {
-		const legacyMtime = safeMtimeMs(legacyActivity);
-		const runMtime = safeMtimeMs(paths.activity_jsonl);
-		if (legacyMtime !== null && (runMtime === null || legacyMtime >= runMtime)) {
-			copyFileAtomic(legacyActivity, paths.activity_jsonl);
-		}
-	}
-	markLegacyStatePathMigrated(legacyState, legacyActivity);
-}
-
-function safeMtimeMs(path: string): number | null {
-	try { return statSync(path).mtimeMs; } catch { return null; }
+	mkdirSync(dir, { recursive: true });
+	const r = lockedMigrateLegacyIntoRun(
+		`${legacyState}.lock`,
+		`${legacyActivity}.lock`,
+		legacyState,
+		legacyActivity,
+		paths.state_json,
+		paths.activity_jsonl,
+	);
+	if (r.status === 0 || r.status === 2) return;
+	const stderr = r.stderr.trim();
+	throw new Error(`legacy state migration failed (status=${r.status}): ${stderr || "<no stderr>"}`);
 }
 
 // Legacy activity path inside an arbitrary state directory. Distinct
@@ -1333,15 +1471,18 @@ function writeJsonAtomic(path: string, value: unknown): void {
 }
 
 function writeFileAtomic(path: string, text: string): void {
-	mkdirSync(dirname(path), { recursive: true });
+	mkdirSync(dirname(path), { mode: STORE_DIR_MODE, recursive: true });
 	assertStorageDirectory(dirname(path), "destination directory");
-	assertStorageFileIfExists(path, "destination file");
+	ensureStoreFile(path, "destination file");
 	const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
 	try {
-		writeFileSync(tmp, text, "utf8");
+		writeFileSync(tmp, text, { encoding: "utf8", mode: STORE_FILE_MODE });
+		// writeFileSync respects mode only on file creation; force the
+		// tightened bits explicitly in case of umask quirks.
+		chmodSyncSafe(tmp, STORE_FILE_MODE);
 		assertStorageFileIfExists(tmp, "temporary file");
 		assertStorageDirectory(dirname(path), "destination directory");
-		assertStorageFileIfExists(path, "destination file");
+		ensureStoreFile(path, "destination file");
 		renameSync(tmp, path);
 	} catch (error) {
 		rmSync(tmp, { force: true });
@@ -1350,15 +1491,16 @@ function writeFileAtomic(path: string, text: string): void {
 }
 
 function copyFileAtomic(src: string, dst: string): void {
-	mkdirSync(dirname(dst), { recursive: true });
+	mkdirSync(dirname(dst), { mode: STORE_DIR_MODE, recursive: true });
 	assertStorageDirectory(dirname(dst), "destination directory");
-	assertStorageFileIfExists(dst, "destination file");
+	ensureStoreFile(dst, "destination file");
 	const tmp = `${dst}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
 	try {
 		copyFileSync(src, tmp);
+		chmodSyncSafe(tmp, STORE_FILE_MODE);
 		assertStorageFileIfExists(tmp, "temporary file");
 		assertStorageDirectory(dirname(dst), "destination directory");
-		assertStorageFileIfExists(dst, "destination file");
+		ensureStoreFile(dst, "destination file");
 		renameSync(tmp, dst);
 	} catch (error) {
 		rmSync(tmp, { force: true });

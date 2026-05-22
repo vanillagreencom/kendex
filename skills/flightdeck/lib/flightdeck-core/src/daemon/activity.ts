@@ -512,14 +512,24 @@ function resolveMasterStatePath(sessionName: string): string | null {
 		root = resolve(root, gitCommonDir, "..");
 	}
 	// vstack#227: read the active-run pointer instead of synthesizing
-	// a project-local path. Returns null when no active run exists for
-	// this session so callers can fall back to other discovery paths.
+	// a project-local path. Only "no active run for this project"
+	// scenarios are tolerated as a benign fallback path — everything
+	// else (corrupt project index, malformed active-run.json, etc.)
+	// must surface as a daemon warning so a silent fallback to the
+	// legacy tmp/ path doesn't mask the real problem.
 	try {
 		const active = readActiveRun(root);
 		if (active && active.active.tmux_session === sessionName) return active.active.state_path;
-	} catch {
-		// Project may not have a run store yet (cold start, brand-new
-		// repo); fall through to legacy lookup for back-compat.
+		// `active === null` is the cold-start case — no run store
+		// initialized yet. Fall through to legacy lookup.
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		// Surface unexpected failures so daemon logs at least record
+		// the corruption. Do NOT fall through to legacy: a corrupt
+		// active-run pointer plus a stale tmp/ file would silently
+		// route daemon activity to the wrong file.
+		process.stderr.write(`Warning: daemon active-run lookup failed for session=${sessionName}: ${message}\n`);
+		return null;
 	}
 	const stateDir = process.env.FLIGHTDECK_STATE_DIR?.trim() || "tmp";
 	const legacy = resolve(root, stateDir, `flightdeck-state-${sessionName}.json`);

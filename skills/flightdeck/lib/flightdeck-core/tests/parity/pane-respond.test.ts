@@ -202,6 +202,8 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 	function shimEnv(repo: string, statePath: string): Record<string, string> {
 		const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 		env.FLIGHTDECK_STATE_DIR = "tmp";
+		// vstack#227: per-test run-store isolation.
+		env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 		env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 		env.TMUX_SHIM_STATE = statePath;
 		env.TMUX_PARITY_SESSION = JSON.parse(readFileSync(statePath, "utf8")).session;
@@ -209,6 +211,16 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 		// outer tmux session has; pane-respond doesn't actually look up
 		// TMUX, it just gates on its presence.
 		return env;
+	}
+
+	// vstack#227: resolve the active run state.json path via the
+	// flightdeck-state CLI so registry-side reads use the canonical
+	// run-store location instead of the legacy project tmp/.
+	const FLIGHTDECK_STATE_BIN = resolve(HERE, "../../../../scripts/flightdeck-state");
+	function activeStateFile(repo: string, env: Record<string, string>): string {
+		const r = spawnSync(FLIGHTDECK_STATE_BIN, ["path", "--session", env.TMUX_PARITY_SESSION ?? "test-session"], { cwd: repo, encoding: "utf8", env });
+		if (r.status !== 0) throw new Error(`flightdeck-state path failed: ${r.stderr}`);
+		return (r.stdout ?? "").trim();
 	}
 
 	function runScript(repo: string, env: Record<string, string>, script: string, args: string[], input?: string): { stdout: string; stderr: string; status: number | null } {
@@ -267,7 +279,7 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 			}
 
 			// Sanity: the registry's cached pane_target is stale.
-			const beforeRegistry = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			const beforeRegistry = JSON.parse(readFileSync(activeStateFile(repo, env), "utf8"));
 			expect(beforeRegistry.entries.A.pane_target).toBe("test-session:4.0");
 
 			// Call pane-respond %200 (entry A). With the vstack#214 fix,
@@ -362,7 +374,7 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 
 			// Registry-side assertion: B/C now point at their new live
 			// coords; A's row was dropped because its pane is gone.
-			const reg = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			const reg = JSON.parse(readFileSync(activeStateFile(repo, env), "utf8"));
 			expect(reg.entries.A).toBeUndefined();
 			expect(reg.entries.B.pane_target).toBe("test-session:5.0");
 			expect(reg.entries.B.window_index).toBe(5);
@@ -426,7 +438,7 @@ describe("pane-respond %PANE_ID after tmux renumber (vstack#214)", () => {
 			expect(refresh.status).toBe(0);
 			const parsed = JSON.parse(refresh.stdout) as { updated: string[] };
 			expect(parsed.updated.sort()).toEqual(["A", "B"]);
-			const reg = JSON.parse(readFileSync(join(repo, "tmp/flightdeck-state-test-session.json"), "utf8"));
+			const reg = JSON.parse(readFileSync(activeStateFile(repo, env), "utf8"));
 			expect(reg.entries.A.pane_target).toBe("test-session:8.0");
 			expect(reg.entries.A.window_index).toBe(8);
 			expect(reg.entries.A.window).toBe("8");

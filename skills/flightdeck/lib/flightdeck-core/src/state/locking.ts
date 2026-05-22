@@ -309,6 +309,96 @@ export function lockedArchiveStateAndActivity(
 	return run(["-x", lockFile, "bash", "-c", script, "_", stateFile, stateArchive, activityFile, activityArchive, activityLockFile, tmp]);
 }
 
+// vstack#227 migration shim: copy a legacy `<project>/tmp/flightdeck-
+// state-<S>.json` + activity sidecar into the active run directory,
+// then rename the legacy paths to `.migrated`. The whole thing runs
+// inside flock on the legacy state and activity locks so concurrent
+// writers can't slip a write in between mtime check and rename. The
+// script's exit status (0 = ok; 2 = no-op nothing to migrate; non-zero
+// = failure) is bubbled back to TS. stderr carries human-readable
+// diagnostics. The script applies the same mtime-prefer-newer policy
+// as the previous TS-only path but under locks.
+export function lockedMigrateLegacyIntoRun(
+	stateLock: string,
+	activityLock: string,
+	legacyState: string,
+	legacyActivity: string,
+	runState: string,
+	runActivity: string,
+): SpawnResult {
+	// Single-shell script: parent `flock` already holds the legacy
+	// state lock. We acquire the activity lock via fd 9 (subshell
+	// pattern: `( flock -x 9; ...) 9>$lock`) — no further bash -c
+	// recursion, so quoting stays sane.
+	const script = `
+		set -euo pipefail
+		legacy_state="$1"
+		legacy_activity="$2"
+		run_state="$3"
+		run_activity="$4"
+		activity_lock="$5"
+		migrated_any=0
+		if [[ -f "$legacy_state" ]]; then
+			legacy_mtime=$(stat -c %Y "$legacy_state" 2>/dev/null || echo 0)
+			if [[ -f "$run_state" ]]; then
+				run_mtime=$(stat -c %Y "$run_state" 2>/dev/null || echo 0)
+			else
+				run_mtime=0
+			fi
+			if (( legacy_mtime >= run_mtime )); then
+				mkdir -p "$(dirname "$run_state")"
+				tmp="$run_state.migrate.$$"
+				cp "$legacy_state" "$tmp"
+				mv "$tmp" "$run_state"
+				migrated_any=1
+			fi
+			mv "$legacy_state" "$legacy_state.migrated"
+			rm -f "$legacy_state.lock" 2>/dev/null || true
+			touch "$legacy_state.lock.migrated"
+		fi
+		mkdir -p "$(dirname "$activity_lock")"
+		(
+			flock -x 9
+			if [[ -f "$legacy_activity" ]]; then
+				legacy_mtime=$(stat -c %Y "$legacy_activity" 2>/dev/null || echo 0)
+				if [[ -f "$run_activity" ]]; then
+					run_mtime=$(stat -c %Y "$run_activity" 2>/dev/null || echo 0)
+				else
+					run_mtime=0
+				fi
+				if (( legacy_mtime >= run_mtime )); then
+					mkdir -p "$(dirname "$run_activity")"
+					tmp="$run_activity.migrate.$$"
+					cp "$legacy_activity" "$tmp"
+					mv "$tmp" "$run_activity"
+				fi
+				mv "$legacy_activity" "$legacy_activity.migrated"
+				rm -f "$legacy_activity.lock" 2>/dev/null || true
+				touch "$legacy_activity.lock.migrated"
+				if [[ -f "$legacy_activity.archived" ]]; then
+					mv "$legacy_activity.archived" "$legacy_activity.archived.migrated"
+				fi
+			fi
+		) 9>"$activity_lock"
+		if (( migrated_any == 0 )) && [[ ! -f "$legacy_activity.migrated" ]]; then
+			exit 2
+		fi
+	`;
+	return run([
+		"-x",
+		stateLock,
+		"bash",
+		"-c",
+		script,
+		"_",
+		legacyState,
+		legacyActivity,
+		runState,
+		runActivity,
+		activityLock,
+	]);
+}
+
 // Locked file rename — used by archive callers that do not own an
 // activity sidecar.
 export function lockedRename(lockFile: string, srcFile: string, dstFile: string): SpawnResult {

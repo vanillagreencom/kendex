@@ -28,29 +28,59 @@ function makeRepo(): string {
 function run(cwd: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: per-test run-store isolation so live state writes
+	// land under <repo>/.vstack-run-store instead of $HOME/.vstack.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(cwd, ".vstack-run-store");
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
+}
+
+const STATE_SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-state");
+
+function envForState(repo: string): Record<string, string> {
+	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+	env.FLIGHTDECK_STATE_DIR = "tmp";
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
+	return env;
+}
+
+// vstack#227: state.json lives in the active run dir; resolve via the
+// CLI so the test follows the same active-run pointer that registry
+// writes use. Returns "" if no active run exists.
+function activeStatePath(repo: string, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): string {
+	const r = spawnSync(STATE_SCRIPT, ["path", "--session", session], { cwd: repo, encoding: "utf8", env: envForState(repo) });
+	if (r.status !== 0) return "";
+	return (r.stdout ?? "").trim();
 }
 
 function readIssues(repo: string, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): unknown {
 	// `.issues` has been removed from the state schema; any test that
 	// still expects an empty issues map sees a normalized `{}` so the
 	// assertion stays valid.
-	const file = join(repo, "tmp", `flightdeck-state-${session}.json`);
+	const file = activeStatePath(repo, session);
+	if (!file || !existsSync(file)) return {};
 	const raw = JSON.parse(readFileSync(file, "utf8")).issues;
 	return raw && typeof raw === "object" ? raw : {};
 }
 
 function readEntries(repo: string, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): unknown {
-	const file = join(repo, "tmp", `flightdeck-state-${session}.json`);
+	const file = activeStatePath(repo, session);
+	if (!file || !existsSync(file)) return {};
 	return JSON.parse(readFileSync(file, "utf8")).entries;
 }
 
 function writeRawState(repo: string, state: unknown, session = process.env.TMUX_PARITY_SESSION ?? sessionName()): void {
-	const dir = join(repo, "tmp");
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, `flightdeck-state-${session}.json`), JSON.stringify(state), "utf8");
+	// Force the active run to exist before writing; that resolves the
+	// canonical state.json path under the run-store.
+	const file = activeStatePath(repo, session);
+	if (!file) throw new Error(`flightdeck-state path failed for session=${session} in ${repo}`);
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, JSON.stringify(state), "utf8");
+}
+
+function stateFilePath(repo: string, session: string): string {
+	return activeStatePath(repo, session);
 }
 
 function sessionName(): string {
@@ -677,6 +707,10 @@ function readShimState(path: string): ShimState {
 function runShim(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	env.FLIGHTDECK_STATE_DIR = "tmp";
+	// vstack#227: per-test run-store isolation; mirrors top-level
+	// `run()` helper so registry writes from the shim-driven describe
+	// block land inside the per-test repo.
+	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
 	env.TMUX_SHIM_STATE = statePath;
 	env.TMUX_PARITY_SESSION = readShimState(statePath).session;
@@ -685,10 +719,9 @@ function runShim(repo: string, statePath: string, args: string[], extraEnv: Reco
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
-function stateFilePath(repo: string, session: string): string {
-	return join(repo, "tmp", `flightdeck-state-${session}.json`);
-}
-
+// vstack#227 note: second `stateFilePath` definition kept inside the
+// shim-driven describe block delegates to the top-level helper so all
+// state lookups go through the active-run pointer.
 function baseShim(session: string, extras: Partial<ShimState> = {}): ShimState {
 	return {
 		panes: {},

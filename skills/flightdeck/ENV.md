@@ -26,7 +26,7 @@ Master-loop env vars consulted by workflows:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | UNKNOWN-state wait threshold before considering force-merge (predicate also requires APPROVED + green + disjoint) |
-| `FLIGHTDECK_STATE_DIR` | `tmp` | **DEPRECATED** since vstack#227. Setting it emits a warning. Only honored as the directory the legacy migration shim looks at; live state lives under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. |
+| `FLIGHTDECK_STATE_DIR` | `tmp` | **DEPRECATED** since vstack#227. Only honored by the legacy migration shim (where to look for pre-existing `flightdeck-state-<S>.json` to fold into the active run). Live state lives under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/`. The CLI does NOT emit a runtime warning when this env var is set — supervisor wrappers and parity tests rely on empty stderr for non-error invocations. |
 | `FLIGHTDECK_RUN_STORE_ROOT` | `$HOME/.vstack/flightdeck` | Override the user-level run store root. Primarily for tests that need an isolated path. |
 | `FLIGHTDECK_ACTIVITY_FILE` | unset | Explicit activity JSONL target for wrapper/workflow emitters and `flightdeck-state activity append`; when unset, managed workflows use `activity_path` from master state. |
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
