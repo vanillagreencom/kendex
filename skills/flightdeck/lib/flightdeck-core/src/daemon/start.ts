@@ -289,7 +289,7 @@ async function foregroundStart(opts: StartOpts): Promise<void> {
 		const activeRun = (() => {
 			try {
 				const projectRoot = resolveProjectRoot();
-				const result = readActiveRun(projectRoot);
+				const result = readActiveRun(projectRoot, opts.sessionName);
 				if (result && result.active && result.active.tmux_session === opts.sessionName) {
 					return result.active.run_id;
 				}

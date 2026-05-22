@@ -1186,18 +1186,20 @@ esac
         imported: bool,
         terminated: bool,
     ) {
+        let project = env::current_dir().expect("fixture cwd");
+        let run_dir = project.join("tmp");
         fs::write(
             responses.join("active.json"),
             json!({
                 "active": { "run_id": run_id, "tmux_session": session },
                 "metadata": {
                     "run_id": run_id,
-                    "project_root": "/project",
+                    "project_root": project,
                     "tmux_session": session,
-                    "state_path": format!("/store/{run_id}/state.json"),
-                    "activity_path": format!("/store/{run_id}/activity.jsonl"),
+                    "state_path": run_dir.join(format!("flightdeck-state-{session}.json")),
+                    "activity_path": run_dir.join(format!("flightdeck-activity-{session}.jsonl")),
                     "summary_path": null,
-                    "snapshots_path": format!("/store/{run_id}/snapshots"),
+                    "snapshots_path": run_dir.join("snapshots"),
                     "started_at": "2026-05-19T12:00:00Z",
                     "last_seen_at": "2026-05-19T12:01:00Z",
                     "terminated": terminated,

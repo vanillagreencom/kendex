@@ -214,6 +214,8 @@ pub fn load_active_run_metadata(
             "active".to_owned(),
             "--project-root".to_owned(),
             project_root.display().to_string(),
+            "--tmux-session".to_owned(),
+            expected_session.to_owned(),
         ],
     )?;
     if output_is_json_null(&output) {

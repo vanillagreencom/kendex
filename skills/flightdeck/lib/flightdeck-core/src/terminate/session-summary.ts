@@ -134,7 +134,7 @@ function summaryPath(opts: TerminationSummaryOptions): string {
 	// (callers without a project root context).
 	try {
 		const root = resolveProjectRoot();
-		const active = readActiveRun(root);
+		const active = readActiveRun(root, opts.session);
 		if (active) return join(dirname(active.active.state_path), "summary.md");
 	} catch { /* fall through */ }
 	const session = opts.session ?? "SESSION";

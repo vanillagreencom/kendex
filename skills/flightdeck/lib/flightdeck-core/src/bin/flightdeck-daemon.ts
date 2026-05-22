@@ -402,7 +402,7 @@ function cmdHealth(): void {
 		}
 		try {
 			const project = resolveProjectRoot();
-			const active = readActiveRun(project);
+			const active = readActiveRun(project, meta.session_name);
 			currentRunId = active?.active.run_id ?? null;
 		} catch (err) {
 			activeRunProbeError = (err as Error)?.message ?? String(err);

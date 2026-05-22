@@ -34,6 +34,7 @@ import {
 	createRun,
 	ensureActiveRun,
 	importLegacyArchives,
+	listActiveRunPointers,
 	listRuns,
 	readActiveRun,
 	showRun,
@@ -611,6 +612,7 @@ function appendSessionCompletedForArchive(): void {
 }
 
 interface RunFlags {
+	all?: boolean;
 	json: boolean;
 	positionals: string[];
 	projectRoot?: string;
@@ -628,7 +630,11 @@ function runRun(args: string[], globalSession: string): void {
 	try {
 		switch (sub) {
 			case "active": {
-				writeJson(readActiveRun(projectRoot));
+				if (flags.all) writeJson(listActiveRunPointers(projectRoot));
+				else {
+					const tmuxSession = flags.tmuxSession || globalSession || "";
+					writeJson(tmuxSession ? readActiveRun(projectRoot, tmuxSession) : readActiveRun(projectRoot));
+				}
 				break;
 			}
 			case "create": {
@@ -689,6 +695,7 @@ function parseRunFlags(args: string[]): RunFlags {
 	const flags: RunFlags = { json: false, positionals: [] };
 	for (let i = 0; i < args.length; i += 1) {
 		const arg = args[i]!;
+		if (arg === "--all") { flags.all = true; continue; }
 		if (arg === "--json") { flags.json = true; continue; }
 		if (arg === "--project-root") { flags.projectRoot = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--project-root=")) { flags.projectRoot = arg.slice("--project-root=".length); continue; }

@@ -129,7 +129,7 @@ different value.
 
 The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked work items, current tmux tab names, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners. The dashboard's own tmux window is hidden from the work table so the view stays focused on child work. In tmux, `flightdeck-dashboard focus-or-launch` focuses an existing app window or launches one if missing. Child/session launches treat dashboard startup as best-effort: a dashboard CLI/path failure prints a warning and the tracked pane still launches so daemon supervision remains canonical.
 
-The dashboard treats active and archived runs separately. Live mode reads the active run's `state.json` under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/` (vstack#227 unified state); durable run metadata labels/links that live run. If no matching active run exists, startup shows `No active Flightdeck run` instead of automatically rendering the newest terminated archive as if it were live. Press `H` to open the History popup, filter runs, expand snapshots inline, load an archived/imported snapshot read-only, import legacy project archives, or return to the active run with `A`. Read-only archive views disable stale-prune and tmux-focus actions.
+The dashboard treats active and archived runs separately. Live mode reads the active run's `state.json` under `~/.vstack/flightdeck/projects/<id>/runs/<run-id>/` (vstack#227 unified state). Active pointers are per tmux session, so the same project can have separate active Flightdeck runs in different tmux sessions. If no matching active run exists, startup shows `No active Flightdeck run` instead of automatically rendering the newest terminated archive as if it were live. Press `H` to open the History popup, filter runs, expand snapshots inline, load an archived/imported snapshot read-only, import legacy project archives, or return to the active run with `A`. Read-only archive views disable stale-prune and tmux-focus actions.
 
 The header's `state: live file` chip means the dashboard is watching Flightdeck's state file directly. That is normal live mode and is separate from the supervisor daemon that wakes the master agent. History/archive chips (`state: history archive`, `state: imported archive`, `state: legacy archive`) are read-only views. Socket telemetry is optional extra dashboard-side telemetry, not required for work/status rendering. Pi session costs are read from `pi-bridge history` when bridge metadata is available.
 
@@ -156,7 +156,8 @@ Flightdeck can create and inspect durable run records separately from the live t
 ```bash
 flightdeck-state run create --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
 flightdeck-state run ensure --project-root "$PWD" --tmux-session <name> [--state-dir tmp]
-flightdeck-state run active --project-root "$PWD"
+flightdeck-state run active --project-root "$PWD" --tmux-session <name>
+flightdeck-state run active --project-root "$PWD" --all --json
 flightdeck-state run list --project-root "$PWD" --json
 flightdeck-state run show <run-id> --project-root "$PWD"
 flightdeck-state run terminate <run-id> --project-root "$PWD"
@@ -168,7 +169,7 @@ Normal Flightdeck start/attach and terminate/archive flows call the lifecycle he
 
 ## High-level architecture
 
-Flightdeck always runs inside one tmux session. The master agent owns the Flightdeck workflow and records tracked entries in a project-local state file. Each child agent runs in its own tmux window, never as a split of the active pane. Flightdeck talks to child panes through the best available native channel for that harness, with tmux as fallback. A daemon watches child panes and wakes the master only when there is work to do. The master classifies prompts, answers known safe shapes, pauses for risky or novel shapes, and updates state. Issue and plan lanes add GitHub/Linear/worktree checks on top of the same session loop. The dashboard reads the same state and activity data the workflows already write; it does not replace the workflows.
+Flightdeck always runs inside one tmux session. The master agent owns the Flightdeck workflow and records tracked entries in the active run's durable state file. Each child agent runs in its own tmux window, never as a split of the active pane. Flightdeck talks to child panes through the best available native channel for that harness, with tmux as fallback. A daemon watches child panes and wakes the master only when there is work to do. The master classifies prompts, answers known safe shapes, pauses for risky or novel shapes, and updates state. Issue and plan lanes add GitHub/Linear/worktree checks on top of the same session loop. The dashboard reads the same state and activity data the workflows already write; it does not replace the workflows.
 
 ```
 user request

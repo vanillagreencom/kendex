@@ -66,6 +66,7 @@ export interface ProjectRunPaths {
 	store_root: string;
 	project_dir: string;
 	project_json: string;
+	active_runs_dir: string;
 	active_run_json: string;
 	runs_dir: string;
 	project_lock: string;
@@ -119,6 +120,17 @@ export interface ActiveRunTerminateResult {
 	terminated: RunTerminateResult | null;
 	reason: "terminated" | "no-active-run" | "session-mismatch";
 	diagnostic?: string;
+}
+
+export interface ActiveRunReadResult {
+	project: ProjectIndex;
+	active: ActiveRunPointer;
+	metadata: RunMetadata | null;
+}
+
+export interface ActiveRunListResult {
+	project: ProjectIndex;
+	active_runs: ActiveRunReadResult[];
 }
 
 export interface RunTerminateOptions {
@@ -414,6 +426,7 @@ export function resolveProjectRunPaths(project: ProjectIndex | ProjectIdentity):
 	const storeRoot = flightdeckRunStoreRoot();
 	const projectDir = join(storeRoot, "projects", project.project_id);
 	return {
+		active_runs_dir: join(projectDir, "active-runs"),
 		active_run_json: join(projectDir, "active-run.json"),
 		project_dir: projectDir,
 		project_json: join(projectDir, "project.json"),
@@ -489,27 +502,28 @@ export function ensureActiveRun(projectRoot: string, tmuxSession: string, option
 	return withProjectLock(projectRoot, (ctx) => {
 		const timestamp = nowIso();
 		const loaded = ensureProjectIndexLocked(ctx, timestamp);
-		const active = readActivePointer(loaded.paths.active_run_json);
-		if (active === JSON_MISSING) {
+		const activeRead = readActivePointerForSession(loaded, session);
+		if (activeRead === JSON_MISSING) {
 			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created", null, null, null);
 		}
-		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
+		const { active, path: activePath } = activeRead;
+		validateActivePointerProject(active, ctx.identity.project_id, activePath);
 		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
 		const metadata = readRunMetadataForRun(activePaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		if (metadata === JSON_MISSING) {
-			throw new Error(activeRunMissingMetadataMessage(loaded.paths.active_run_json, active, activePaths.metadata_json, loaded.project.root_path));
+			throw new Error(activeRunMissingMetadataMessage(activePath, active, activePaths.metadata_json, loaded.project.root_path));
 		}
 		if (metadata.terminated) {
 			markLegacyStateMigratedIfPresent(loaded.project.root_path, metadata.tmux_session, stateDir);
 			return ensureResult(createRunLocked(ctx, session, stateDir, timestamp), "created-after-terminated", metadata.run_id, null, null);
 		}
 		if (active.tmux_session !== session || metadata.tmux_session !== session) {
-			throw new Error(activeRunSessionMismatchMessage(loaded.paths.active_run_json, active, metadata, session));
+			throw new Error(activeRunSessionMismatchMessage(activePath, active, metadata, session));
 		}
 		if (checkStale) {
 			const stale = checkActiveRunStale(loaded.project.root_path, metadata, activePaths, stateDir);
 			if (stale.reason === "tmux-query-failed") {
-				throw new Error(activeRunLivenessUnknownMessage(loaded.paths.active_run_json, metadata, session, stale));
+				throw new Error(activeRunLivenessUnknownMessage(activePath, metadata, session, stale));
 			}
 			if (stale.stale) {
 				const terminated = terminateRunLocked(ctx, loaded, metadata.run_id, { stateDir, syncLegacy: true, tmuxSession: metadata.tmux_session });
@@ -529,16 +543,33 @@ export function ensureActiveRun(projectRoot: string, tmuxSession: string, option
 	});
 }
 
-export function readActiveRun(projectRoot: string): { project: ProjectIndex; active: ActiveRunPointer; metadata: RunMetadata | null } | null {
+export function readActiveRun(projectRoot: string, tmuxSession?: string): ActiveRunReadResult | null {
 	return withProjectLock(projectRoot, (ctx) => {
 		const loaded = loadProjectIndexLocked(ctx);
 		if (!loaded) return null;
-		const active = readActivePointer(loaded.paths.active_run_json);
-		if (active === JSON_MISSING) return null;
-		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
+		const activeRead = tmuxSession && tmuxSession.trim()
+			? readActivePointerForSession(loaded, safeLegacySessionName(tmuxSession))
+			: readDefaultActivePointer(loaded);
+		if (activeRead === JSON_MISSING) return null;
+		const { active, path: activePath } = activeRead;
+		validateActivePointerProject(active, ctx.identity.project_id, activePath);
 		const runPaths = resolveRunPaths(loaded.paths, active.run_id);
 		const metadata = readRunMetadataForRun(runPaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		return { active, metadata: metadata === JSON_MISSING ? null : metadata, project: loaded.project };
+	});
+}
+
+export function listActiveRunPointers(projectRoot: string): ActiveRunListResult | null {
+	return withProjectLock(projectRoot, (ctx) => {
+		const loaded = loadProjectIndexLocked(ctx);
+		if (!loaded) return null;
+		const active_runs = listActivePointersLocked(loaded).map(({ active, path: activePath }) => {
+			validateActivePointerProject(active, ctx.identity.project_id, activePath);
+			const runPaths = resolveRunPaths(loaded.paths, active.run_id);
+			const metadata = readRunMetadataForRun(runPaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
+			return { active, metadata: metadata === JSON_MISSING ? null : metadata, project: loaded.project };
+		});
+		return { active_runs, project: loaded.project };
 	});
 }
 
@@ -596,9 +627,10 @@ export function terminateActiveRun(projectRoot: string, tmuxSession: string, opt
 	return withProjectLock(projectRoot, (ctx) => {
 		const loaded = loadProjectIndexLocked(ctx);
 		if (!loaded) return { active: null, project: null, reason: "no-active-run", terminated: null };
-		const active = readActivePointer(loaded.paths.active_run_json);
-		if (active === JSON_MISSING) return { active: null, project: loaded.project, reason: "no-active-run", terminated: null };
-		validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
+		const activeRead = readActivePointerForSession(loaded, session);
+		if (activeRead === JSON_MISSING) return { active: null, project: loaded.project, reason: "no-active-run", terminated: null };
+		const { active, path: activePath } = activeRead;
+		validateActivePointerProject(active, ctx.identity.project_id, activePath);
 		const activePaths = resolveRunPaths(loaded.paths, active.run_id);
 		const metadata = readRunMetadataForRun(activePaths, ctx.identity.project_id, active.run_id, loaded.project.root_path);
 		if (metadata === JSON_MISSING) throw new Error(`run not found: ${active.run_id}`);
@@ -697,6 +729,57 @@ function withProjectLock<T>(projectRoot: string, fn: (ctx: ProjectLockContext) =
 	return withFlockHeldSync(paths.project_lock, () => fn({ identity, paths, root }));
 }
 
+function activePointerPathForSession(paths: ProjectRunPaths, tmuxSession: string): string {
+	return join(paths.active_runs_dir, `${safeLegacySessionName(tmuxSession)}.json`);
+}
+
+function readActivePointerForSession(loaded: { project: ProjectIndex; paths: ProjectRunPaths }, session: string): { active: ActiveRunPointer; path: string } | JsonMissing {
+	const pointerPath = activePointerPathForSession(loaded.paths, session);
+	const sessionActive = readActivePointer(pointerPath);
+	if (sessionActive !== JSON_MISSING) return { active: sessionActive, path: pointerPath };
+	const legacyActive = readActivePointer(loaded.paths.active_run_json);
+	if (legacyActive === JSON_MISSING || legacyActive.tmux_session !== session) return JSON_MISSING;
+	mkdirSync(loaded.paths.active_runs_dir, { recursive: true });
+	assertStorageDirectory(loaded.paths.active_runs_dir, "active runs directory");
+	writeJsonAtomic(pointerPath, legacyActive);
+	return { active: legacyActive, path: pointerPath };
+}
+
+function readDefaultActivePointer(loaded: { project: ProjectIndex; paths: ProjectRunPaths }): { active: ActiveRunPointer; path: string } | JsonMissing {
+	const legacyActive = readActivePointer(loaded.paths.active_run_json);
+	if (legacyActive !== JSON_MISSING) return { active: legacyActive, path: loaded.paths.active_run_json };
+	const activeRuns = listActivePointersLocked(loaded);
+	return activeRuns.length === 1 ? activeRuns[0]! : JSON_MISSING;
+}
+
+function migrateLegacyActivePointer(loaded: { project: ProjectIndex; paths: ProjectRunPaths }): void {
+	const legacyActive = readActivePointer(loaded.paths.active_run_json);
+	if (legacyActive === JSON_MISSING) return;
+	const pointerPath = activePointerPathForSession(loaded.paths, legacyActive.tmux_session);
+	if (readActivePointer(pointerPath) !== JSON_MISSING) return;
+	mkdirSync(loaded.paths.active_runs_dir, { recursive: true });
+	assertStorageDirectory(loaded.paths.active_runs_dir, "active runs directory");
+	writeJsonAtomic(pointerPath, legacyActive);
+}
+
+function listActivePointersLocked(loaded: { project: ProjectIndex; paths: ProjectRunPaths }): { active: ActiveRunPointer; path: string }[] {
+	const bySession = new Map<string, { active: ActiveRunPointer; path: string }>();
+	if (existsSync(loaded.paths.active_runs_dir)) {
+		assertStorageDirectory(loaded.paths.active_runs_dir, "active runs directory");
+		for (const entry of readdirSync(loaded.paths.active_runs_dir).sort()) {
+			if (!isSafeBasename(entry) || !entry.endsWith(".json")) continue;
+			const path = join(loaded.paths.active_runs_dir, entry);
+			const active = readActivePointer(path);
+			if (active !== JSON_MISSING) bySession.set(active.tmux_session, { active, path });
+		}
+	}
+	const legacyActive = readActivePointer(loaded.paths.active_run_json);
+	if (legacyActive !== JSON_MISSING && !bySession.has(legacyActive.tmux_session)) {
+		bySession.set(legacyActive.tmux_session, { active: legacyActive, path: loaded.paths.active_run_json });
+	}
+	return [...bySession.values()].sort((a, b) => a.active.tmux_session.localeCompare(b.active.tmux_session));
+}
+
 function ensureProjectIndexLocked(ctx: ProjectLockContext, timestamp = nowIso()): { project: ProjectIndex; paths: ProjectRunPaths } {
 	mkdirSync(ctx.paths.runs_dir, { recursive: true });
 	assertStorageDirectory(ctx.paths.project_dir, "project directory");
@@ -729,6 +812,7 @@ function loadProjectIndexLocked(ctx: ProjectLockContext): { project: ProjectInde
 
 function createRunLocked(ctx: ProjectLockContext, session: string, stateDir?: string, timestamp = nowIso()): RunCreateResult {
 	const { project, paths: projectPaths } = ensureProjectIndexLocked(ctx, timestamp);
+	migrateLegacyActivePointer({ paths: projectPaths, project });
 	const runId = newRunId(timestamp);
 	const paths = resolveRunPaths(projectPaths, runId);
 	ensureRunStorageDirectories(paths);
@@ -799,6 +883,7 @@ function createRunLocked(ctx: ProjectLockContext, session: string, stateDir?: st
 		tmux_session: session,
 		updated_at: timestamp,
 	};
+	writeJsonAtomic(activePointerPathForSession(projectPaths, session), active);
 	writeJsonAtomic(projectPaths.active_run_json, active);
 	return { active, metadata, paths, project };
 }
@@ -814,11 +899,14 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	if (requestedTmuxSession && metadata.tmux_session !== requestedTmuxSession) {
 		throw new Error(runTmuxSessionMismatchMessage(metadata, requestedTmuxSession));
 	}
-	const active = readActivePointer(loaded.paths.active_run_json);
-	if (active !== JSON_MISSING) validateActivePointerProject(active, ctx.identity.project_id, loaded.paths.active_run_json);
-	if (active !== JSON_MISSING && active.run_id === requestedRunId) {
-		if (active.tmux_session !== metadata.tmux_session) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
-		if (requestedTmuxSession && active.tmux_session !== requestedTmuxSession) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
+	const activeRead = readActivePointerForSession(loaded, metadata.tmux_session);
+	if (activeRead !== JSON_MISSING) {
+		const active = activeRead.active;
+		validateActivePointerProject(active, ctx.identity.project_id, activeRead.path);
+		if (active.run_id === requestedRunId) {
+			if (active.tmux_session !== metadata.tmux_session) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
+			if (requestedTmuxSession && active.tmux_session !== requestedTmuxSession) throw new Error(activePointerTerminateMismatchMessage(active, metadata, requestedTmuxSession));
+		}
 	}
 	ensureRunStorageDirectories(paths);
 	assertRunStorageFile(paths, paths.state_json, "run state");
@@ -889,8 +977,8 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	};
 	writeJsonAtomic(paths.metadata_json, nextMetadata);
 	let activeCleared = false;
-	if (active !== JSON_MISSING && active.project_id === ctx.identity.project_id && active.run_id === requestedRunId) {
-		rmSync(loaded.paths.active_run_json, { force: true });
+	if (activeRead !== JSON_MISSING && activeRead.active.project_id === ctx.identity.project_id && activeRead.active.run_id === requestedRunId) {
+		rmSync(activeRead.path, { force: true });
 		activeCleared = true;
 	}
 	// vstack#227 round-2: the locked migration block above already
@@ -900,6 +988,11 @@ function terminateRunLocked(ctx: ProjectLockContext, loaded: { project: ProjectI
 	// file out of the way.
 	if (options.syncLegacy !== true && !requestedTmuxSession) {
 		markLegacyStateMigratedIfPresent(loaded.project.root_path, metadata.tmux_session, options.stateDir);
+	}
+	const legacyActive = readActivePointer(loaded.paths.active_run_json);
+	if (legacyActive !== JSON_MISSING && legacyActive.run_id === requestedRunId) {
+		validateActivePointerProject(legacyActive, ctx.identity.project_id, loaded.paths.active_run_json);
+		rmSync(loaded.paths.active_run_json, { force: true });
 	}
 	return { active_cleared: activeCleared, activity_snapshot_path: activitySnapshotPath, metadata: nextMetadata, snapshot_path: snapshotPath };
 }

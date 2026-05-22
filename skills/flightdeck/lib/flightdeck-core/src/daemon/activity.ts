@@ -518,8 +518,8 @@ function resolveMasterStatePath(sessionName: string): string | null {
 	// must surface as a daemon warning so a silent fallback to the
 	// legacy tmp/ path doesn't mask the real problem.
 	try {
-		const active = readActiveRun(root);
-		if (active && active.active.tmux_session === sessionName) return active.active.state_path;
+		const active = readActiveRun(root, sessionName);
+		if (active) return active.active.state_path;
 		// `active === null` is the cold-start case — no run store
 		// initialized yet. Fall through to legacy lookup.
 	} catch (error) {

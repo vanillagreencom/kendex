@@ -12,6 +12,7 @@ import {
 	legacyActivityPath,
 	legacyStateDir,
 	legacyStatePath,
+	listActiveRunPointers,
 	listRuns,
 	loadProjectIndex,
 	readActiveRun,
@@ -62,7 +63,7 @@ exit ${status}
 
 function runFileSnapshot(created: ReturnType<typeof createRun>): { active: string; activity: string; metadata: string; state: string } {
 	return {
-		active: JSON.stringify(readActiveRun(repo)),
+		active: JSON.stringify(readActiveRun(repo, created.metadata.tmux_session)),
 		activity: existsSync(created.paths.activity_jsonl) ? readFileSync(created.paths.activity_jsonl, "utf8") : "<missing>",
 		metadata: readFileSync(created.paths.metadata_json, "utf8"),
 		state: readFileSync(created.paths.state_json, "utf8"),
@@ -70,7 +71,7 @@ function runFileSnapshot(created: ReturnType<typeof createRun>): { active: strin
 }
 
 function expectRunFilesUnchanged(created: ReturnType<typeof createRun>, before: { active: string; activity: string; metadata: string; state: string }): void {
-	expect(JSON.stringify(readActiveRun(repo))).toBe(before.active);
+	expect(JSON.stringify(readActiveRun(repo, created.metadata.tmux_session))).toBe(before.active);
 	expect(existsSync(created.paths.activity_jsonl) ? readFileSync(created.paths.activity_jsonl, "utf8") : "<missing>").toBe(before.activity);
 	expect(readFileSync(created.paths.metadata_json, "utf8")).toBe(before.metadata);
 	expect(readFileSync(created.paths.state_json, "utf8")).toBe(before.state);
@@ -197,12 +198,13 @@ describe("Flightdeck durable run store", () => {
 		expect(state.terminated).toBe(true);
 	});
 
-	test("terminating an older run does not clear a newer active pointer", () => {
+	test("terminating a run clears only that session's active pointer", () => {
 		const first = createRun(repo, SESSION);
 		const second = createRun(repo, "RUNSTORE2");
 		const terminated = terminateRun(repo, first.metadata.run_id);
-		expect(terminated.active_cleared).toBe(false);
-		expect(readActiveRun(repo)?.active.run_id).toBe(second.metadata.run_id);
+		expect(terminated.active_cleared).toBe(true);
+		expect(readActiveRun(repo, SESSION)).toBeNull();
+		expect(readActiveRun(repo, "RUNSTORE2")?.active.run_id).toBe(second.metadata.run_id);
 	});
 
 	test("ensure reuses active run and creates fresh after active termination", () => {
@@ -275,13 +277,29 @@ describe("Flightdeck durable run store", () => {
 		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
 	});
 
-	test("ensure refuses non-stale active run from another tmux session", () => {
+	test("ensure creates an independent active run for another tmux session", () => {
 		const created = createRun(repo, SESSION);
-		expect(() => ensureActiveRun(repo, "OTHERSESSION")).toThrow(/belongs to a different tmux session/);
-		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+		const other = ensureActiveRun(repo, "OTHERSESSION");
+		expect(other.action).toBe("created");
+		expect(other.metadata.run_id).not.toBe(created.metadata.run_id);
+		expect(readActiveRun(repo, SESSION)?.active.run_id).toBe(created.metadata.run_id);
+		expect(readActiveRun(repo, "OTHERSESSION")?.active.run_id).toBe(other.metadata.run_id);
+		expect(listActiveRunPointers(repo)?.active_runs.map((row) => row.active.tmux_session).sort()).toEqual(["OTHERSESSION", SESSION].sort());
 	});
 
-	test("ensure refuses tmux session mismatch even when recorded panes are gone", () => {
+	test("ensure preserves legacy-only active pointer before creating another session", () => {
+		const legacy = createRun(repo, SESSION);
+		const projectPaths = resolveProjectRunPaths(legacy.project);
+		rmSync(join(projectPaths.active_runs_dir, `${SESSION}.json`), { force: true });
+
+		const other = ensureActiveRun(repo, "OTHERSESSION");
+
+		expect(other.action).toBe("created");
+		expect(readActiveRun(repo, SESSION)?.active.run_id).toBe(legacy.metadata.run_id);
+		expect(readActiveRun(repo, "OTHERSESSION")?.active.run_id).toBe(other.metadata.run_id);
+	});
+
+	test("another session's stale panes do not block a new active run", () => {
 		const created = createRun(repo, SESSION);
 		const stateDir = join(repo, "tmp");
 		mkdirSync(stateDir, { recursive: true });
@@ -291,8 +309,10 @@ describe("Flightdeck durable run store", () => {
 		}), "utf8");
 		installTmuxShim("%other\n");
 
-		expect(() => ensureActiveRun(repo, "OTHERSESSION")).toThrow(/belongs to a different tmux session/);
-		expect(readActiveRun(repo)?.active.run_id).toBe(created.metadata.run_id);
+		const other = ensureActiveRun(repo, "OTHERSESSION");
+		expect(other.action).toBe("created");
+		expect(readActiveRun(repo, SESSION)?.active.run_id).toBe(created.metadata.run_id);
+		expect(readActiveRun(repo, "OTHERSESSION")?.active.run_id).toBe(other.metadata.run_id);
 		expect(showRun(repo, created.metadata.run_id).metadata.terminated).toBe(false);
 	});
 
@@ -319,7 +339,7 @@ describe("Flightdeck durable run store", () => {
 	test("explicit terminate refuses matching active pointer with mismatched tmux session before mutation", () => {
 		const created = createRun(repo, SESSION);
 		const projectPaths = resolveProjectRunPaths(created.project);
-		writeFileSync(projectPaths.active_run_json, JSON.stringify({ ...created.active, tmux_session: "OTHERSESSION" }), "utf8");
+		writeFileSync(join(projectPaths.active_runs_dir, `${SESSION}.json`), JSON.stringify({ ...created.active, tmux_session: "OTHERSESSION" }), "utf8");
 		const before = runFileSnapshot(created);
 
 		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(/active Flightdeck run pointer tmux session does not match/);
@@ -557,14 +577,14 @@ describe("Flightdeck durable run store", () => {
 		const created = createRun(repo, SESSION);
 		const projectPaths = resolveProjectRunPaths(created.project);
 		const forgedProjectId = resolveProjectIdentity(makeRepo("forged", "https://example.invalid/acme/forged.git")).project_id;
-		writeFileSync(projectPaths.active_run_json, JSON.stringify({ ...created.active, project_id: forgedProjectId }), "utf8");
+		writeFileSync(join(projectPaths.active_runs_dir, `${SESSION}.json`), JSON.stringify({ ...created.active, project_id: forgedProjectId }), "utf8");
 		const stateBefore = readFileSync(created.paths.state_json, "utf8");
 		const metadataBefore = readFileSync(created.paths.metadata_json, "utf8");
 
 		expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(/active run pointer.*project_id .*does not match project/);
 		expect(readFileSync(created.paths.state_json, "utf8")).toBe(stateBefore);
 		expect(readFileSync(created.paths.metadata_json, "utf8")).toBe(metadataBefore);
-		expect((JSON.parse(readFileSync(projectPaths.active_run_json, "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
+		expect((JSON.parse(readFileSync(join(projectPaths.active_runs_dir, `${SESSION}.json`), "utf8")) as { project_id?: string }).project_id).toBe(forgedProjectId);
 	});
 
 	test("snapshot lookup rejects traversal and unsafe basenames", () => {
@@ -587,6 +607,7 @@ describe("Flightdeck durable run store", () => {
 
 		writeFileSync(projectPaths.active_run_json, "null", "utf8");
 		expect(() => readActiveRun(repo)).toThrow(/active run pointer.*expected object/);
+		rmSync(projectPaths.active_run_json, { force: true });
 
 		const metadataCase = createRun(repo, "META");
 		writeFileSync(metadataCase.paths.metadata_json, "null", "utf8");

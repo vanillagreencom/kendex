@@ -21,7 +21,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { activityArchivePathFromStatePath, activityPathFromStatePath } from "../activity/paths.ts";
 import { resolveProjectRoot, loadDotEnvIntoProcess } from "../shared/project.ts";
 import { lockedArchiveStateAndActivity, lockedJqUpdate } from "./locking.ts";
-import { ensureActiveRun, readActiveRun, resolveProjectIdentity, resolveProjectRunPaths, terminateActiveRun } from "./run-store.ts";
+import { ensureActiveRun, listActiveRunPointers, readActiveRun, resolveProjectIdentity, resolveProjectRunPaths, terminateActiveRun } from "./run-store.ts";
 
 export interface FlightdeckOwner {
 	harness: string;
@@ -98,9 +98,8 @@ export function tryResolveStatePath(session: string): string | null {
 	const root = resolveProjectRoot();
 	loadDotEnvIntoProcess(root);
 	warnIfLegacyStateDirEnvSet();
-	const active = readActiveRun(root);
+	const active = readActiveRun(root, session);
 	if (!active) return null;
-	if (active.active.tmux_session !== session) return null;
 	return active.active.state_path;
 }
 
@@ -403,9 +402,8 @@ export function archiveState(file: string): string | null {
 	const root = resolveProjectRoot();
 	loadDotEnvIntoProcess(root);
 	statePathCache.delete(`${root}\0${session}`);
-	const active = readActiveRun(root);
-	const hasMatchingActive = active && active.active.tmux_session === session;
-	if (hasMatchingActive) {
+	const active = readActiveRun(root, session);
+	if (active) {
 		const result = terminateActiveRun(root, session, {});
 		if (result.reason === "terminated" && result.terminated) {
 			return result.terminated.snapshot_path;
@@ -438,7 +436,9 @@ function sessionFromStatePath(file: string): string {
 	if (base === "state.json") {
 		const root = resolveProjectRoot();
 		loadDotEnvIntoProcess(root);
-		const active = readActiveRun(root);
+		const activeRuns = listActiveRunPointers(root);
+		const resolvedFile = resolve(file);
+		const active = activeRuns?.active_runs.find((row) => resolve(row.active.state_path) === resolvedFile);
 		if (active) return active.active.tmux_session;
 	}
 	// Legacy layout: tmp/flightdeck-state-<session>.json

@@ -3,9 +3,34 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const SESSION: &str = "test-fd";
 const SESSION_KEY: &str = "s42";
+
+fn write_settings(project: &Path, store_root: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
+    let root_hash = hex_sha256(&project.display().to_string());
+    let identity_hash = hex_sha256(&root_hash);
+    let suffix = &identity_hash[..16];
+    let path = store_root
+        .join("projects")
+        .join(format!("project-{suffix}"))
+        .join("settings.toml");
+    std::fs::create_dir_all(path.parent().expect("settings parent"))?;
+    std::fs::write(&path, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn hex_sha256(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 #[test]
 fn launch_without_tmux_skips() -> Result<(), Box<dyn Error>> {
@@ -639,10 +664,8 @@ fn startup_override_file_can_disable_dashboard_launch() -> Result<(), Box<dyn Er
     let project = temp.path().join("project");
     std::fs::create_dir_all(project.join("tmp"))?;
     std::fs::write(project.join("vstack.toml"), "")?;
-    std::fs::write(
-        project.join("tmp/flightdeck-settings.toml"),
-        "FLIGHTDECK_DASHBOARD = \"0\"\n",
-    )?;
+    let store_root = temp.path().join("store");
+    write_settings(&project, &store_root, "FLIGHTDECK_DASHBOARD = \"0\"\n")?;
 
     let output = Command::new(dashboard_bin())
         .current_dir(&project)
@@ -650,6 +673,7 @@ fn startup_override_file_can_disable_dashboard_launch() -> Result<(), Box<dyn Er
         .env_remove("TMUX")
         .env("FD_STATE_DIR", temp.path().join("runtime"))
         .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_RUN_STORE_ROOT", &store_root)
         .output()?;
 
     assert!(output.status.success());
@@ -664,8 +688,10 @@ fn startup_override_file_forwards_theme_and_motion() -> Result<(), Box<dyn Error
     let project = temp.path().join("project");
     std::fs::create_dir_all(project.join("tmp"))?;
     std::fs::write(project.join("vstack.toml"), "")?;
-    std::fs::write(
-        project.join("tmp/flightdeck-settings.toml"),
+    let store_root = temp.path().join("store");
+    write_settings(
+        &project,
+        &store_root,
         "FLIGHTDECK_DASHBOARD_THEME = \"pantera\"\nFLIGHTDECK_DASHBOARD_MOTION = \"off\"\n",
     )?;
     let bin_dir = temp.path().join("bin");
@@ -676,8 +702,9 @@ fn startup_override_file_forwards_theme_and_motion() -> Result<(), Box<dyn Error
     write_capturing_flightdeck_session(&bin_dir.join("flightdeck-session"), &capture)?;
     let path = path_with_bin(&bin_dir);
 
-    let output =
-        launch_command_without_daemon(&path, &temp.path().join("runtime"), &project).output()?;
+    let output = launch_command_without_daemon(&path, &temp.path().join("runtime"), &project)
+        .env("FLIGHTDECK_RUN_STORE_ROOT", &store_root)
+        .output()?;
 
     assert!(
         output.status.success(),
@@ -696,8 +723,10 @@ fn malformed_settings_file_surfaces_for_non_tty_tui() -> Result<(), Box<dyn Erro
     let project = temp.path().join("project");
     std::fs::create_dir_all(project.join("tmp"))?;
     std::fs::write(project.join("vstack.toml"), "")?;
-    std::fs::write(
-        project.join("tmp/flightdeck-settings.toml"),
+    let store_root = temp.path().join("store");
+    write_settings(
+        &project,
+        &store_root,
         "FLIGHTDECK_DASHBOARD_COST_POLL_SECS = \"0.5\"\n",
     )?;
 
@@ -705,6 +734,7 @@ fn malformed_settings_file_surfaces_for_non_tty_tui() -> Result<(), Box<dyn Erro
         .current_dir(&project)
         .args(["tui", "--demo"])
         .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_RUN_STORE_ROOT", &store_root)
         .output()?;
 
     assert!(output.status.success());
