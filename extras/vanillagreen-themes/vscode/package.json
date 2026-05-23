@@ -2,7 +2,7 @@
   "name": "vstack-themes",
   "displayName": "vstack themes",
   "description": "Matched Ghostty + VS Code-family theme pack. 25 color themes + Ros\u00e9 Pine icon theme, curated by vanillagreen and distributed with vstack.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "vanillagreen",
   "icon": "icon.png",
   "engines": {
