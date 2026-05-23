@@ -133,6 +133,27 @@ enum Commands {
         no_auto_skills: bool,
     },
 
+    /// Apply an extra package, currently theme packs (dry-run supported)
+    Apply {
+        /// Extra name discovered from the current vstack source
+        extra_name: String,
+        /// Theme id to apply (defaults to the extra's default theme)
+        #[arg(long)]
+        theme: Option<String>,
+        /// Comma-separated target subset (default: all detected declared targets)
+        #[arg(long)]
+        target: Option<String>,
+        /// User/global scope; app theme config is user-level by default
+        #[arg(long)]
+        global: bool,
+        /// Print planned changes without writing files
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip confirmation prompt before mutations
+        #[arg(short, long)]
+        yes: bool,
+    },
+
     /// Remove installed agents, skills, hooks, or Pi packages
     Remove {
         names: Vec<String>,
@@ -283,6 +304,14 @@ fn main() -> Result<()> {
             clobber,
             no_auto_skills,
         ),
+        Some(Commands::Apply {
+            extra_name,
+            theme,
+            target,
+            global,
+            dry_run,
+            yes,
+        }) => commands::apply::run(extra_name, theme, target, global, dry_run, yes),
         Some(Commands::Remove {
             names,
             global,
