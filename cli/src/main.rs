@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod extra;
 mod frontmatter;
+mod ghostty_apply;
 mod harness;
 mod hook;
 mod installer;

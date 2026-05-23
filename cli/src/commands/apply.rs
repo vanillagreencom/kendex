@@ -1,11 +1,13 @@
 use crate::config;
 use crate::extra::{Extra, ExtraKind, ThemeSpec};
+use crate::ghostty_apply::{self, GhosttyPathContext, GhosttyPlatform};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Command;
 
 const GHOSTTY_TARGET: &str = "ghostty";
 const VSCODE_TARGET: &str = "vscode";
@@ -26,8 +28,10 @@ pub struct ApplyRequest {
 struct ApplyEnvironment {
     home_dir: PathBuf,
     config_dir: PathBuf,
+    xdg_config_home: Option<PathBuf>,
     temp_dir: PathBuf,
     path_entries: Vec<PathBuf>,
+    platform: GhosttyPlatform,
     timestamp: String,
 }
 
@@ -81,7 +85,7 @@ struct ResolvedTarget {
     name: String,
     kind: TargetKind,
     cli_name: String,
-    cli_path: PathBuf,
+    cli_path: Option<PathBuf>,
 }
 
 impl ApplyEnvironment {
@@ -92,9 +96,11 @@ impl ApplyEnvironment {
         Self {
             home_dir: config::user_home_dir(),
             config_dir: config::user_config_dir(),
+            xdg_config_home: std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
             temp_dir: std::env::temp_dir(),
             path_entries,
-            timestamp: timestamp_now(),
+            platform: GhosttyPlatform::current(),
+            timestamp: ghostty_apply::utc_timestamp_now(),
         }
     }
 
@@ -178,7 +184,96 @@ pub fn run(
         bail!("apply cancelled");
     }
 
-    bail!("theme-pack apply is not implemented in this release; use --dry-run")
+    apply_plan(&plan)?;
+    Ok(())
+}
+
+fn apply_plan(plan: &ApplyPlan) -> Result<()> {
+    if let Some(unsupported) = plan
+        .targets
+        .iter()
+        .find(|target| target.name != GHOSTTY_TARGET)
+    {
+        bail!(
+            "target `{}` apply is not implemented yet; use --target ghostty or --dry-run",
+            unsupported.name
+        );
+    }
+
+    for target in &plan.targets {
+        apply_ghostty_target(&plan.extra_name, target)?;
+        println!("Ghostty config updated. Reload Ghostty to apply the new theme.");
+    }
+    Ok(())
+}
+
+fn apply_ghostty_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
+    let managed_block = target
+        .managed_block
+        .as_ref()
+        .context("Ghostty target plan is missing a managed block")?;
+
+    let original = ghostty_apply::write_backup(&target.config_file, &target.backup_file)?;
+
+    for copy in &target.copies {
+        if let Some(parent) = copy.destination.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::copy(&copy.source, &copy.destination).with_context(|| {
+            format!(
+                "copying {} to {}",
+                copy.source.display(),
+                copy.destination.display()
+            )
+        })?;
+    }
+
+    let original_config = String::from_utf8(original).with_context(|| {
+        format!(
+            "Ghostty config {} is not valid UTF-8",
+            target.config_file.display()
+        )
+    })?;
+    let updated_config =
+        ghostty_apply::insert_or_replace_managed_block(&original_config, extra_name, managed_block);
+    ghostty_apply::validate_managed_block_syntax(&updated_config, extra_name)?;
+
+    if let Some(parent) = target.config_file.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(&target.config_file, updated_config)
+        .with_context(|| format!("writing {}", target.config_file.display()))?;
+
+    if let Some(cli_path) = &target.cli_path {
+        validate_ghostty_config(cli_path, &target.config_file, &target.backup_file)?;
+    } else {
+        eprintln!("warning: ghostty CLI not found on PATH; skipped `ghostty +validate-config`");
+    }
+
+    Ok(())
+}
+
+fn validate_ghostty_config(cli_path: &Path, config_file: &Path, backup_file: &Path) -> Result<()> {
+    let output = Command::new(cli_path)
+        .arg("+validate-config")
+        .arg(format!("--config-file={}", config_file.display()))
+        .output()
+        .with_context(|| format!("running {} +validate-config", cli_path.display()))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let _ = ghostty_apply::restore_backup(backup_file, config_file);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    bail!(
+        "Ghostty config validation failed; restored {} from {}\nstdout:\n{}\nstderr:\n{}",
+        config_file.display(),
+        backup_file.display(),
+        stdout.trim_end(),
+        stderr.trim_end()
+    )
 }
 
 fn parse_target_list(raw: Option<&str>) -> Result<Option<Vec<String>>> {
@@ -360,8 +455,19 @@ fn resolve_targets(
                 name: target_name,
                 kind,
                 cli_name,
-                cli_path,
+                cli_path: Some(cli_path),
             }),
+            None if kind == TargetKind::Ghostty => {
+                warnings.push(format!(
+                    "target `{target_name}`: CLI `{cli_name}` not found on PATH; external validation will be skipped"
+                ));
+                resolved.push(ResolvedTarget {
+                    name: target_name,
+                    kind,
+                    cli_name,
+                    cli_path: None,
+                });
+            }
             None if explicit_targets.is_some() => bail!(
                 "target `{target_name}` was requested explicitly but CLI `{cli_name}` was not found on PATH"
             ),
@@ -418,8 +524,8 @@ fn build_ghostty_plan(
     })?;
 
     let config_dir = ghostty_config_dir(env);
-    let config_file = ghostty_config_file(&config_dir);
-    let backup_file = backup_path(&config_file, &env.timestamp);
+    let config_file = ghostty_apply::resolve_config_file(&config_dir);
+    let backup_file = ghostty_apply::backup_path(&config_file, &env.timestamp);
     let theme_destination = config_dir.join("themes").join("vstack").join(&theme.id);
     let mut copies = vec![FileCopyPlan {
         source: extra.source_dir.join(&ghostty.theme_file),
@@ -442,18 +548,29 @@ fn build_ghostty_plan(
         });
     }
 
-    let managed_block = ghostty_managed_block(extra.name(), theme, &shader_destinations);
-    let commands = vec![vec![
-        target.cli_path.display().to_string(),
-        "+validate-config".to_string(),
-        "--config-file".to_string(),
-        config_file.display().to_string(),
-    ]];
+    let shader_file_names = shader_destinations
+        .iter()
+        .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let managed_block = ghostty_apply::managed_block(extra.name(), &theme.id, &shader_file_names);
+    let commands = target
+        .cli_path
+        .as_ref()
+        .map(|cli_path| {
+            vec![
+                cli_path.display().to_string(),
+                "+validate-config".to_string(),
+                format!("--config-file={}", config_file.display()),
+            ]
+        })
+        .into_iter()
+        .collect();
 
     Ok(TargetPlan {
         name: target.name.clone(),
         cli_name: target.cli_name.clone(),
-        cli_path: Some(target.cli_path.clone()),
+        cli_path: target.cli_path.clone(),
         config_dir,
         config_file,
         backup_file,
@@ -481,19 +598,23 @@ fn build_vscode_family_plan(
 
     let user_dir = vscode_user_dir(target.kind, env);
     let settings_file = user_dir.join("settings.json");
-    let backup_file = backup_path(&settings_file, &env.timestamp);
+    let backup_file = ghostty_apply::backup_path(&settings_file, &env.timestamp);
     let vsix_path = env
         .temp_dir
         .join(format!("vstack-{}-{}.vsix", extra.name(), theme.id));
+    let cli_path = target
+        .cli_path
+        .as_ref()
+        .context("VS Code-family target plan is missing a CLI path")?;
     let commands = vec![
         vec![
-            target.cli_path.display().to_string(),
+            cli_path.display().to_string(),
             "--install-extension".to_string(),
             vsix_path.display().to_string(),
             "--force".to_string(),
         ],
         vec![
-            target.cli_path.display().to_string(),
+            cli_path.display().to_string(),
             "--list-extensions".to_string(),
         ],
     ];
@@ -501,7 +622,7 @@ fn build_vscode_family_plan(
     Ok(TargetPlan {
         name: target.name.clone(),
         cli_name: target.cli_name.clone(),
-        cli_path: Some(target.cli_path.clone()),
+        cli_path: Some(cli_path.clone()),
         config_dir: user_dir,
         config_file: settings_file,
         backup_file,
@@ -517,30 +638,11 @@ fn build_vscode_family_plan(
 }
 
 fn ghostty_config_dir(env: &ApplyEnvironment) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        let xdg = env.config_dir.join("ghostty");
-        if xdg.join("config").exists() || xdg.join("config.ghostty").exists() {
-            return xdg;
-        }
-        env.home_dir
-            .join("Library")
-            .join("Application Support")
-            .join("com.mitchellh.ghostty")
-    } else {
-        env.config_dir.join("ghostty")
-    }
-}
-
-fn ghostty_config_file(config_dir: &Path) -> PathBuf {
-    let config = config_dir.join("config");
-    if config.exists() {
-        return config;
-    }
-    let config_ghostty = config_dir.join("config.ghostty");
-    if config_ghostty.exists() {
-        return config_ghostty;
-    }
-    config
+    ghostty_apply::resolve_config_dir(&GhosttyPathContext {
+        home_dir: env.home_dir.clone(),
+        xdg_config_home: env.xdg_config_home.clone(),
+        platform: env.platform,
+    })
 }
 
 fn vscode_user_dir(kind: TargetKind, env: &ApplyEnvironment) -> PathBuf {
@@ -567,32 +669,6 @@ fn shader_destination(config_dir: &Path, shader: &str) -> Result<PathBuf> {
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("shader path `{shader}` has no file name"))?;
     Ok(config_dir.join("shaders").join("vstack").join(file_name))
-}
-
-fn ghostty_managed_block(
-    extra_name: &str,
-    theme: &ThemeSpec,
-    shader_destinations: &[PathBuf],
-) -> String {
-    let mut lines = vec![
-        format!("# vstack:begin {extra_name}"),
-        "# Managed by vstack. Edit source extras or remove this block to opt out.".to_string(),
-        format!("theme = vstack/{}", theme.id),
-    ];
-    for destination in shader_destinations {
-        if let Some(file_name) = destination.file_name().and_then(|name| name.to_str()) {
-            lines.push(format!("custom-shader = shaders/vstack/{file_name}"));
-        }
-    }
-    if !shader_destinations.is_empty() {
-        lines.push("custom-shader-animation = always".to_string());
-    }
-    lines.push(format!("# vstack:end {extra_name}"));
-    lines.join("\n")
-}
-
-fn backup_path(path: &Path, timestamp: &str) -> PathBuf {
-    PathBuf::from(format!("{}.vstack-backup.{timestamp}", path.display()))
 }
 
 fn render_plan(plan: &ApplyPlan, env: &ApplyEnvironment, dry_run: bool) -> String {
@@ -717,14 +793,6 @@ fn split_paths(paths: OsString) -> Vec<PathBuf> {
     std::env::split_paths(&paths).collect()
 }
 
-fn timestamp_now() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    seconds.to_string()
-}
-
 fn dedupe_preserving_order(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -813,6 +881,34 @@ theme-file = "vscode/themes/forest-color-theme.json"
         extra_dir
     }
 
+    fn write_ghostty_only_extra_without_shaders(root: &Path) -> PathBuf {
+        let extra_dir = root.join("extras").join("vanillagreen-themes");
+        fs::create_dir_all(extra_dir.join("ghostty/themes")).unwrap();
+        fs::write(
+            extra_dir.join("extra.toml"),
+            r##"name = "vanillagreen-themes"
+kind = "theme-pack"
+description = "Matched themes."
+default-theme = "forest"
+targets = ["ghostty"]
+
+[[themes]]
+id = "forest"
+display = "Forest"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/forest.conf"
+"##,
+        )
+        .unwrap();
+        fs::write(
+            extra_dir.join("ghostty/themes/forest.conf"),
+            "background = #000000\nforeground = #ffffff\n",
+        )
+        .unwrap();
+        extra_dir
+    }
+
     fn env_for(root: &Path, cli_names: &[&str]) -> ApplyEnvironment {
         let home_dir = root.join("home");
         let config_dir = root.join("config");
@@ -827,9 +923,11 @@ theme-file = "vscode/themes/forest-color-theme.json"
         }
         ApplyEnvironment {
             home_dir,
-            config_dir,
+            config_dir: config_dir.clone(),
+            xdg_config_home: Some(config_dir),
             temp_dir,
             path_entries: vec![bin_dir],
+            platform: GhosttyPlatform::Linux,
             timestamp: "20260522T120000Z".to_string(),
         }
     }
@@ -844,6 +942,24 @@ theme-file = "vscode/themes/forest-color-theme.json"
             perms.set_mode(0o755);
             fs::set_permissions(&path, perms).unwrap();
         }
+    }
+
+    fn write_cli_script(bin_dir: &Path, name: &str, script: &str) {
+        let path = bin_dir.join(name);
+        fs::write(&path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).unwrap();
+        }
+    }
+
+    fn path_entries_from_current_path() -> Vec<PathBuf> {
+        std::env::var_os("PATH")
+            .map(split_paths)
+            .unwrap_or_default()
     }
 
     fn request(extra_name: &str) -> ApplyRequest {
@@ -917,38 +1033,41 @@ theme-file = "vscode/themes/forest-color-theme.json"
     }
 
     #[test]
-    fn explicit_missing_target_cli_fails() {
+    fn explicit_missing_vscode_target_cli_fails() {
         let root = sandbox("explicit_missing");
         write_sample_extra(&root);
         let env = env_for(&root, &[]);
         let mut req = request("vanillagreen-themes");
-        req.targets = Some(vec!["ghostty".to_string()]);
+        req.targets = Some(vec!["vscode".to_string()]);
 
         let err = build_plan_for_source(&root, &req, &env).unwrap_err();
         let msg = format!("{err:#}");
 
         assert!(
-            msg.contains("target `ghostty` was requested explicitly"),
+            msg.contains("target `vscode` was requested explicitly"),
             "{msg}"
         );
-        assert!(msg.contains("CLI `ghostty` was not found on PATH"), "{msg}");
+        assert!(msg.contains("CLI `code` was not found on PATH"), "{msg}");
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn implicit_unavailable_target_is_skipped_when_other_targets_remain() {
-        let root = sandbox("implicit_skip");
+    fn explicit_missing_ghostty_cli_is_allowed_with_validation_warning() {
+        let root = sandbox("explicit_missing_ghostty");
         write_sample_extra(&root);
-        let env = env_for(&root, &["code"]);
+        let env = env_for(&root, &[]);
+        let mut req = request("vanillagreen-themes");
+        req.targets = Some(vec!["ghostty".to_string()]);
 
-        let plan = build_plan_for_source(&root, &request("vanillagreen-themes"), &env).unwrap();
+        let plan = build_plan_for_source(&root, &req, &env).unwrap();
 
         assert_eq!(plan.targets.len(), 1);
-        assert_eq!(plan.targets[0].name, "vscode");
+        assert_eq!(plan.targets[0].name, "ghostty");
+        assert!(plan.targets[0].cli_path.is_none());
         assert!(
             plan.warnings
                 .iter()
-                .any(|warning| warning.contains("target `ghostty` skipped")),
+                .any(|warning| warning.contains("external validation will be skipped")),
             "{:?}",
             plan.warnings
         );
@@ -956,16 +1075,43 @@ theme-file = "vscode/themes/forest-color-theme.json"
     }
 
     #[test]
-    fn implicit_all_targets_unavailable_fails() {
-        let root = sandbox("implicit_none");
+    fn implicit_unavailable_vscode_family_targets_are_skipped_when_ghostty_remains() {
+        let root = sandbox("implicit_skip");
+        write_sample_extra(&root);
+        let env = env_for(&root, &["ghostty"]);
+
+        let plan = build_plan_for_source(&root, &request("vanillagreen-themes"), &env).unwrap();
+
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].name, "ghostty");
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.contains("target `vscode` skipped")),
+            "{:?}",
+            plan.warnings
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn implicit_missing_ghostty_cli_still_plans_ghostty_apply() {
+        let root = sandbox("implicit_missing_ghostty");
         write_sample_extra(&root);
         let env = env_for(&root, &[]);
 
-        let err = build_plan_for_source(&root, &request("vanillagreen-themes"), &env).unwrap_err();
-        let msg = format!("{err:#}");
+        let plan = build_plan_for_source(&root, &request("vanillagreen-themes"), &env).unwrap();
 
-        assert!(msg.contains("no declared targets"), "{msg}");
-        assert!(msg.contains("available on this system"), "{msg}");
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].name, "ghostty");
+        assert!(plan.targets[0].cli_path.is_none());
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.contains("external validation will be skipped")),
+            "{:?}",
+            plan.warnings
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1017,6 +1163,92 @@ theme-file = "vscode/themes/forest-color-theme.json"
         assert!(
             output.contains("config.vstack-backup.20260522T120000Z"),
             "expected Ghostty backup path in {output}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_ghostty_target_into_temp_xdg_config_home() {
+        let root = sandbox("apply_ghostty_temp_xdg");
+        write_ghostty_only_extra_without_shaders(&root);
+        let home_dir = root.join("home");
+        let config_dir = root.join("xdg");
+        let temp_dir = root.join("tmp");
+        fs::create_dir_all(&home_dir).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::create_dir_all(&temp_dir).unwrap();
+        let ghostty_config_dir = config_dir.join("ghostty");
+        fs::create_dir_all(&ghostty_config_dir).unwrap();
+        let config_file = ghostty_config_dir.join("config");
+        fs::write(&config_file, "font-size = 14\n").unwrap();
+        let env = ApplyEnvironment {
+            home_dir,
+            config_dir: config_dir.clone(),
+            xdg_config_home: Some(config_dir.clone()),
+            temp_dir,
+            path_entries: path_entries_from_current_path(),
+            platform: GhosttyPlatform::Linux,
+            timestamp: "20260522T120000Z".to_string(),
+        };
+        let mut req = request("vanillagreen-themes");
+        req.targets = Some(vec!["ghostty".to_string()]);
+
+        let plan = build_plan_for_source(&root, &req, &env).unwrap();
+        apply_ghostty_target(&plan.extra_name, &plan.targets[0]).unwrap();
+
+        let updated = fs::read_to_string(&config_file).unwrap();
+        ghostty_apply::validate_managed_block_syntax(&updated, "vanillagreen-themes").unwrap();
+        assert!(
+            updated.contains("config-file = themes/vstack/forest"),
+            "{updated}"
+        );
+        assert_eq!(
+            fs::read(ghostty_config_dir.join("config.vstack-backup.20260522T120000Z")).unwrap(),
+            b"font-size = 14\n"
+        );
+        assert_eq!(
+            fs::read_to_string(ghostty_config_dir.join("themes/vstack/forest")).unwrap(),
+            "background = #000000\nforeground = #ffffff\n"
+        );
+        if plan.targets[0].cli_path.is_none() {
+            eprintln!("ghostty not on PATH; skipped external `ghostty +validate-config` assertion");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_ghostty_validation_restores_backup() {
+        let root = sandbox("apply_ghostty_restore");
+        write_ghostty_only_extra_without_shaders(&root);
+        let env = env_for(&root, &[]);
+        let bin_dir = root.join("bin");
+        write_cli_script(
+            &bin_dir,
+            "ghostty",
+            "#!/bin/sh\necho validate failed >&2\nexit 7\n",
+        );
+        let config_file = env.config_dir.join("ghostty/config");
+        fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        fs::write(&config_file, "font-size = 13\n").unwrap();
+        let mut req = request("vanillagreen-themes");
+        req.targets = Some(vec!["ghostty".to_string()]);
+
+        let plan = build_plan_for_source(&root, &req, &env).unwrap();
+        let err = apply_ghostty_target(&plan.extra_name, &plan.targets[0]).unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("Ghostty config validation failed"), "{msg}");
+        assert_eq!(
+            fs::read_to_string(&config_file).unwrap(),
+            "font-size = 13\n"
+        );
+        assert_eq!(
+            fs::read(
+                env.config_dir
+                    .join("ghostty/config.vstack-backup.20260522T120000Z")
+            )
+            .unwrap(),
+            b"font-size = 13\n"
         );
         let _ = fs::remove_dir_all(root);
     }
