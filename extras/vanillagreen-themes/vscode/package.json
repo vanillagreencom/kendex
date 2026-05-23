@@ -1,0 +1,24 @@
+{
+  "_comment": "Color-only VS Code-family theme package. Palette derived by hand for deep forest ink, moss and leaf greens, misty lake blues, and warm earth accents.",
+  "name": "vanillagreen-themes",
+  "displayName": "Vanillagreen Themes",
+  "description": "Matched Ghostty and VS Code-family color themes.",
+  "version": "0.1.0",
+  "publisher": "vanillagreen",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "Ghibli Serene Nature",
+        "uiTheme": "vs-dark",
+        "path": "./themes/ghibli-serene-nature-color-theme.json"
+      }
+    ]
+  }
+}

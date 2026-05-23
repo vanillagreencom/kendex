@@ -1,0 +1,21 @@
+# Vanillagreen theme pack manifest.
+# Palette derived by hand for a Ghibli-inspired serene nature mood:
+# deep forest ink, moss and leaf greens, misty lake blues, sun-warmed earth accents.
+name = "vanillagreen-themes"
+kind = "theme-pack"
+description = "Matched Ghostty + VS Code-family color themes with Ghostty shaders."
+default-theme = "ghibli-serene-nature"
+targets = ["ghostty", "vscode", "vscodium", "cursor"]
+
+[[themes]]
+id = "ghibli-serene-nature"
+display = "Ghibli Serene Nature"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/ghibli-serene-nature.conf"
+shaders = ["ghostty/shaders/ghibli-serene-nature-ambient.glsl"]
+pulse-shader = "ghostty/shaders/ghibli-serene-nature-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Ghibli Serene Nature"
+theme-file = "vscode/themes/ghibli-serene-nature-color-theme.json"
