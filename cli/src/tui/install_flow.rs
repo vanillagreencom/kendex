@@ -41,6 +41,10 @@ struct FlowState<'a> {
     /// loop ticks the spinner overlay and drains input until the worker
     /// finishes; only then is normal input handling resumed.
     pending_work: Option<PendingWork>,
+    /// Set by `open_apply_stub` to defer the inline theme picker into the
+    /// main loop, which can safely suspend/restore the terminal between
+    /// frames. Drained next loop iteration.
+    pending_inline_apply: Option<String>,
 }
 
 /// Spinner tick interval. Drives both the spinner frame advance and the
@@ -125,6 +129,7 @@ pub fn run_install_flow(
         source_selector,
         cli_update,
         pending_work: None,
+        pending_inline_apply: None,
     };
 
     if let Some(idx) = state
@@ -153,6 +158,10 @@ pub fn run_install_flow(
     let mut last_click: Option<std::time::Instant> = None;
 
     let result = loop {
+        if let Some(extra_name) = state.pending_inline_apply.take() {
+            run_apply_inline(&mut state, &extra_name)?;
+            terminal.clear()?;
+        }
         terminal.draw(|f| render::draw_tabbed_select(f, &mut state.select))?;
 
         // While a worker thread is running, tick the spinner instead of
@@ -1156,10 +1165,147 @@ fn open_apply_stub(state: &mut FlowState) {
         return;
     }
 
-    state.select.flash_message = Some(format!(
-        "Apply not implemented yet for {} extra(s); no files changed.",
-        names.len()
-    ));
+    if names.len() > 1 {
+        state.select.flash_message = Some(format!(
+            "Apply runs one extra at a time; mark exactly one. Got: {}",
+            names.join(", ")
+        ));
+        return;
+    }
+
+    state.pending_inline_apply = Some(names.into_iter().next().unwrap());
+}
+
+/// Drive an interactive theme picker for the given extra name by suspending
+/// the TUI, prompting on the shell, running `commands::apply::run`, then
+/// restoring the alt-screen. Mirrors the `run_cli_update_inline` lifecycle,
+/// but resumes the TUI instead of exiting the process.
+fn run_apply_inline(state: &mut FlowState, extra_name: &str) -> Result<()> {
+    let extras = state.items.extras.clone();
+    let extra = extras.iter().find(|e| e.name() == extra_name);
+    let Some(extra) = extra else {
+        state.select.flash_message =
+            Some(format!("extra `{extra_name}` not found in discovery cache"));
+        return Ok(());
+    };
+
+    let suspend = suspend_terminal_for_inline();
+    if let Err(err) = &suspend {
+        eprintln!("warning: could not fully suspend TUI for apply: {err}");
+    }
+
+    let pick_result = pick_and_apply_theme(extra);
+
+    let resume = resume_terminal_after_inline();
+    if let Err(err) = &resume {
+        eprintln!("warning: could not restore TUI after apply: {err}");
+    }
+
+    let _ = (suspend, resume);
+
+    state.select.flash_message = Some(match pick_result {
+        Ok(Some(msg)) => msg,
+        Ok(None) => format!("apply cancelled for `{extra_name}`"),
+        Err(err) => format!("apply failed for `{extra_name}`: {err}"),
+    });
+    Ok(())
+}
+
+fn suspend_terminal_for_inline() -> Result<()> {
+    io::stdout().execute(DisableMouseCapture)?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+fn resume_terminal_after_inline() -> Result<()> {
+    terminal::enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    io::stdout().execute(EnableMouseCapture)?;
+    Ok(())
+}
+
+fn pick_and_apply_theme(extra: &crate::extra::Extra) -> Result<Option<String>> {
+    use std::io::{BufRead as _, Write as _};
+
+    let themes = &extra.theme_pack.themes;
+    if themes.is_empty() {
+        return Err(anyhow::anyhow!(
+            "extra `{}` declares no themes",
+            extra.name()
+        ));
+    }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out)?;
+    writeln!(out, "vstack apply: pick a theme from `{}`", extra.name())?;
+    writeln!(
+        out,
+        "  targets: {} (auto-detect; --target on the CLI to filter)",
+        extra.theme_pack.targets.join(", ")
+    )?;
+    writeln!(out, "  default: {}", extra.theme_pack.default_theme)?;
+    writeln!(out)?;
+    for (i, theme) in themes.iter().enumerate() {
+        let default_marker = if theme.id == extra.theme_pack.default_theme {
+            "  (default)"
+        } else {
+            ""
+        };
+        writeln!(
+            out,
+            "  {:>2}  {:<32}  {}{}",
+            i + 1,
+            theme.id,
+            theme.display,
+            default_marker
+        )?;
+    }
+    writeln!(out)?;
+    write!(
+        out,
+        "Pick a theme (number or id, blank=default, q=cancel): "
+    )?;
+    out.flush()?;
+    drop(out);
+
+    let stdin = io::stdin();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line)?;
+    let pick = line.trim();
+
+    if pick.eq_ignore_ascii_case("q") || pick.eq_ignore_ascii_case("quit") {
+        return Ok(None);
+    }
+
+    let theme_id = if pick.is_empty() {
+        extra.theme_pack.default_theme.clone()
+    } else if let Ok(idx) = pick.parse::<usize>() {
+        themes
+            .get(idx.saturating_sub(1))
+            .map(|t| t.id.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("theme index {idx} out of range (1..={})", themes.len())
+            })?
+    } else {
+        themes
+            .iter()
+            .find(|t| t.id.eq_ignore_ascii_case(pick) || t.display.eq_ignore_ascii_case(pick))
+            .map(|t| t.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no theme matches `{pick}`"))?
+    };
+
+    crate::commands::apply::run(extra.name().to_string(), Some(theme_id.clone()), None, false, false, false)?;
+
+    let mut trash = String::new();
+    print!("\nPress enter to return to vstack...");
+    io::stdout().flush()?;
+    let _ = io::stdin().lock().read_line(&mut trash);
+    Ok(Some(format!(
+        "applied `{}` theme `{theme_id}`",
+        extra.name()
+    )))
 }
 
 fn open_install_confirm(state: &mut FlowState) {
@@ -2366,6 +2512,7 @@ mod tests {
             source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
+        pending_inline_apply: None,
         };
 
         open_install_confirm(&mut state);
@@ -2437,6 +2584,7 @@ mod tests {
             source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
+        pending_inline_apply: None,
         };
 
         handle_key(&mut state, key(KeyCode::Down)).unwrap();

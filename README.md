@@ -240,10 +240,10 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 Extras are optional non-agent packages distributed by vstack, such as theme packs. See [`extras/README.md`](extras/README.md) for the catalog and per-extra documentation.
 
 ```bash
-vstack apply vanillagreen-themes --theme ghibli-serene-nature --target ghostty,vscodium
+vstack apply vanillagreen-themes --theme ghibli-serene-nature --target ghostty,vscodium,tmux
 ```
 
-`vstack apply` uses global/user scope by default for app themes. Add `--dry-run` to preview planned changes before writing config.
+`vstack apply` uses global/user scope by default for app themes. Add `--dry-run` to preview planned changes before writing config. The TUI's **Extras** tab also lets you pick a theme interactively — select the pack, hit `Apply`, and you get a numbered theme picker.
 
 ## License
 

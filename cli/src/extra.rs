@@ -38,6 +38,8 @@ pub struct ThemeSpec {
     pub ghostty: Option<GhosttyThemeSpec>,
     #[serde(default)]
     pub vscode: Option<VscodeThemeSpec>,
+    #[serde(default)]
+    pub tmux: Option<TmuxThemeSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +56,12 @@ pub struct GhosttyThemeSpec {
 pub struct VscodeThemeSpec {
     #[serde(rename = "theme-name")]
     pub theme_name: String,
+    #[serde(rename = "theme-file")]
+    pub theme_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxThemeSpec {
     #[serde(rename = "theme-file")]
     pub theme_file: String,
 }
@@ -152,6 +160,9 @@ fn validate_theme_pack_paths(
         }
         if let Some(vscode) = &theme.vscode {
             validate_manifest_path(&vscode.theme_file, source_dir, manifest_path)?;
+        }
+        if let Some(tmux) = &theme.tmux {
+            validate_manifest_path(&tmux.theme_file, source_dir, manifest_path)?;
         }
     }
     Ok(())

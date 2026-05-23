@@ -1,11 +1,11 @@
 # Vanillagreen theme pack manifest.
 # Distributed as one VS Code extension contributing all themes + a matched icon theme,
-# with per-theme Ghostty palette + ambient shaders.
+# with per-theme Ghostty palette + ambient shaders and per-theme tmux color block.
 name = "vanillagreen-themes"
 kind = "theme-pack"
-description = "Matched Ghostty + VS Code-family theme pack (25 color themes + Rosé Pine icons)."
+description = "Matched Ghostty + VS Code-family + tmux theme pack (25 color themes + Rosé Pine icons)."
 default-theme = "ghibli-serene-nature"
-targets = ["ghostty", "vscode", "vscodium", "cursor"]
+targets = ["ghostty", "vscode", "vscodium", "cursor", "tmux"]
 
 [[themes]]
 id = "anthropic"
@@ -20,6 +20,9 @@ pulse-shader = "ghostty/shaders/anthropic-ambient-pulse.glsl"
 theme-name = "Anthropic"
 theme-file = "vscode/themes/anthropic-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/anthropic.conf"
+
 [[themes]]
 id = "catppuccin-latte"
 display = "Catppuccin Latte"
@@ -32,6 +35,9 @@ pulse-shader = "ghostty/shaders/catppuccin-latte-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Catppuccin Latte"
 theme-file = "vscode/themes/catppuccin-latte-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/catppuccin-latte.conf"
 
 [[themes]]
 id = "ghibli-serene-nature"
@@ -46,6 +52,9 @@ pulse-shader = "ghostty/shaders/ghibli-serene-nature-ambient-pulse.glsl"
 theme-name = "Ghibli Serene Nature"
 theme-file = "vscode/themes/ghibli-serene-nature-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/ghibli-serene-nature.conf"
+
 [[themes]]
 id = "kawaii-pixel"
 display = "Kawaii Pixel"
@@ -58,6 +67,9 @@ pulse-shader = "ghostty/shaders/kawaii-pixel-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Kawaii Pixel"
 theme-file = "vscode/themes/kawaii-pixel-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/kawaii-pixel.conf"
 
 [[themes]]
 id = "rose-pine-dawn"
@@ -72,6 +84,9 @@ pulse-shader = "ghostty/shaders/rose-pine-dawn-ambient-pulse.glsl"
 theme-name = "Rosé Pine Dawn"
 theme-file = "vscode/themes/rose-pine-dawn-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/rose-pine-dawn.conf"
+
 [[themes]]
 id = "anthropic-dark"
 display = "Anthropic Dark"
@@ -84,6 +99,9 @@ pulse-shader = "ghostty/shaders/anthropic-dark-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Anthropic Dark"
 theme-file = "vscode/themes/anthropic-dark-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/anthropic-dark.conf"
 
 [[themes]]
 id = "anthropic-slate"
@@ -98,6 +116,9 @@ pulse-shader = "ghostty/shaders/anthropic-slate-ambient-pulse.glsl"
 theme-name = "Anthropic Slate"
 theme-file = "vscode/themes/anthropic-slate-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/anthropic-slate.conf"
+
 [[themes]]
 id = "aura-dark"
 display = "Aura Dark"
@@ -110,6 +131,9 @@ pulse-shader = "ghostty/shaders/aura-dark-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Aura Dark"
 theme-file = "vscode/themes/aura-dark-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/aura-dark.conf"
 
 [[themes]]
 id = "bearded-theme-monokai-black"
@@ -124,6 +148,9 @@ pulse-shader = "ghostty/shaders/bearded-theme-monokai-black-ambient-pulse.glsl"
 theme-name = "Bearded Theme Monokai Black"
 theme-file = "vscode/themes/bearded-theme-monokai-black-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/bearded-theme-monokai-black.conf"
+
 [[themes]]
 id = "catppuccin-frappe"
 display = "Catppuccin Frappé"
@@ -136,6 +163,9 @@ pulse-shader = "ghostty/shaders/catppuccin-frappe-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Catppuccin Frappé"
 theme-file = "vscode/themes/catppuccin-frappe-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/catppuccin-frappe.conf"
 
 [[themes]]
 id = "catppuccin-macchiato"
@@ -150,6 +180,9 @@ pulse-shader = "ghostty/shaders/catppuccin-macchiato-ambient-pulse.glsl"
 theme-name = "Catppuccin Macchiato"
 theme-file = "vscode/themes/catppuccin-macchiato-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/catppuccin-macchiato.conf"
+
 [[themes]]
 id = "catppuccin-mocha"
 display = "Catppuccin Mocha"
@@ -162,6 +195,9 @@ pulse-shader = "ghostty/shaders/catppuccin-mocha-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Catppuccin Mocha"
 theme-file = "vscode/themes/catppuccin-mocha-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/catppuccin-mocha.conf"
 
 [[themes]]
 id = "citrus"
@@ -176,6 +212,9 @@ pulse-shader = "ghostty/shaders/citrus-ambient-pulse.glsl"
 theme-name = "Citrus"
 theme-file = "vscode/themes/citrus-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/citrus.conf"
+
 [[themes]]
 id = "dracula"
 display = "Dracula"
@@ -188,6 +227,9 @@ pulse-shader = "ghostty/shaders/dracula-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Dracula"
 theme-file = "vscode/themes/dracula-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/dracula.conf"
 
 [[themes]]
 id = "flowers"
@@ -202,6 +244,9 @@ pulse-shader = "ghostty/shaders/flowers-ambient-pulse.glsl"
 theme-name = "Flowers"
 theme-file = "vscode/themes/flowers-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/flowers.conf"
+
 [[themes]]
 id = "iceberg"
 display = "Iceberg"
@@ -215,6 +260,9 @@ pulse-shader = "ghostty/shaders/iceberg-ambient-pulse.glsl"
 theme-name = "Iceberg"
 theme-file = "vscode/themes/iceberg-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/iceberg.conf"
+
 [[themes]]
 id = "method-dark"
 display = "Method Dark"
@@ -222,6 +270,9 @@ display = "Method Dark"
 [themes.vscode]
 theme-name = "Method Dark"
 theme-file = "vscode/themes/method-dark-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/method-dark.conf"
 
 [[themes]]
 id = "pixel-corsair"
@@ -236,6 +287,9 @@ pulse-shader = "ghostty/shaders/pixel-corsair-ambient-pulse.glsl"
 theme-name = "Pixel Corsair"
 theme-file = "vscode/themes/pixel-corsair-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/pixel-corsair.conf"
+
 [[themes]]
 id = "retro-city-console"
 display = "Retro City Console"
@@ -248,6 +302,9 @@ pulse-shader = "ghostty/shaders/retro-city-console-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Retro City Console"
 theme-file = "vscode/themes/retro-city-console-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/retro-city-console.conf"
 
 [[themes]]
 id = "rose-pine"
@@ -262,6 +319,9 @@ pulse-shader = "ghostty/shaders/rose-pine-ambient-pulse.glsl"
 theme-name = "Rosé Pine"
 theme-file = "vscode/themes/rose-pine-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/rose-pine.conf"
+
 [[themes]]
 id = "rose-pine-black"
 display = "Rosé Pine Black"
@@ -274,6 +334,9 @@ pulse-shader = "ghostty/shaders/rose-pine-black-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Rosé Pine Black"
 theme-file = "vscode/themes/rose-pine-black-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/rose-pine-black.conf"
 
 [[themes]]
 id = "rose-pine-extra-black"
@@ -288,6 +351,9 @@ pulse-shader = "ghostty/shaders/rose-pine-extra-black-ambient-pulse.glsl"
 theme-name = "Rosé Pine Extra Black"
 theme-file = "vscode/themes/rose-pine-extra-black-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/rose-pine-extra-black.conf"
+
 [[themes]]
 id = "rose-pine-moon"
 display = "Rosé Pine Moon"
@@ -300,6 +366,9 @@ pulse-shader = "ghostty/shaders/rose-pine-moon-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Rosé Pine Moon"
 theme-file = "vscode/themes/rose-pine-moon-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/rose-pine-moon.conf"
 
 [[themes]]
 id = "tokyo-night"
@@ -314,6 +383,9 @@ pulse-shader = "ghostty/shaders/tokyo-night-ambient-pulse.glsl"
 theme-name = "Tokyo Night"
 theme-file = "vscode/themes/tokyo-night-color-theme.json"
 
+[themes.tmux]
+theme-file = "tmux/themes/tokyo-night.conf"
+
 [[themes]]
 id = "warp"
 display = "Warp"
@@ -326,3 +398,6 @@ pulse-shader = "ghostty/shaders/warp-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Warp"
 theme-file = "vscode/themes/warp-color-theme.json"
+
+[themes.tmux]
+theme-file = "tmux/themes/warp.conf"

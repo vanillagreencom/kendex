@@ -1241,7 +1241,7 @@ impl InspectorButton {
 
     fn apply() -> Self {
         Self {
-            label: "Apply (not implemented)".into(),
+            label: "Apply (pick theme)".into(),
             action: ActionButton::InspectorApply,
             bg: theme::STATUS_OK,
             fg: theme::ON_DARK,

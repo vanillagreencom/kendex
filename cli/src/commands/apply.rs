@@ -14,6 +14,8 @@ const GHOSTTY_TARGET: &str = "ghostty";
 const VSCODE_TARGET: &str = "vscode";
 const VSCODIUM_TARGET: &str = "vscodium";
 const CURSOR_TARGET: &str = "cursor";
+const TMUX_TARGET: &str = "tmux";
+const TMUX_ACTIVE_THEME_FILE: &str = "vstack-active-theme.conf";
 
 #[derive(Debug, Clone)]
 pub struct ApplyRequest {
@@ -88,6 +90,7 @@ enum TargetKind {
     Vscode,
     Vscodium,
     Cursor,
+    Tmux,
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +144,7 @@ impl TargetKind {
             VSCODE_TARGET => Some(Self::Vscode),
             VSCODIUM_TARGET => Some(Self::Vscodium),
             CURSOR_TARGET => Some(Self::Cursor),
+            TMUX_TARGET => Some(Self::Tmux),
             _ => None,
         }
     }
@@ -151,6 +155,7 @@ impl TargetKind {
             Self::Vscode => "code",
             Self::Vscodium => "codium",
             Self::Cursor => "cursor",
+            Self::Tmux => "tmux",
         }
     }
 
@@ -164,7 +169,7 @@ fn vscode_editor(kind: TargetKind) -> Option<VscodeEditor> {
         TargetKind::Vscode => Some(VscodeEditor::Vscode),
         TargetKind::Vscodium => Some(VscodeEditor::Vscodium),
         TargetKind::Cursor => Some(VscodeEditor::Cursor),
-        TargetKind::Ghostty => None,
+        TargetKind::Ghostty | TargetKind::Tmux => None,
     }
 }
 
@@ -216,6 +221,9 @@ fn apply_plan(plan: &ApplyPlan) -> Result<()> {
             }
             TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => {
                 apply_vscode_family_target(target)?;
+            }
+            TargetKind::Tmux => {
+                apply_tmux_target(&plan.extra_name, target)?;
             }
         }
     }
@@ -610,9 +618,14 @@ fn resolve_targets(
                 cli_name,
                 cli_path: Some(cli_path),
             }),
-            None if kind == TargetKind::Ghostty => {
+            None if matches!(kind, TargetKind::Ghostty | TargetKind::Tmux) => {
+                let skip_note = if kind == TargetKind::Tmux {
+                    "live reload will be skipped"
+                } else {
+                    "external validation will be skipped"
+                };
                 warnings.push(format!(
-                    "target `{target_name}`: CLI `{cli_name}` not found on PATH; external validation will be skipped"
+                    "target `{target_name}`: CLI `{cli_name}` not found on PATH; {skip_note}"
                 ));
                 resolved.push(ResolvedTarget {
                     name: target_name,
@@ -660,6 +673,7 @@ fn build_target_plan(
         TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => {
             build_vscode_family_plan(extra, theme, target, env)
         }
+        TargetKind::Tmux => build_tmux_plan(extra, theme, target, env),
     }
 }
 
@@ -809,6 +823,214 @@ fn build_vscode_family_plan(
     })
 }
 
+fn tmux_config_dir(env: &ApplyEnvironment) -> PathBuf {
+    env.xdg_config_home
+        .clone()
+        .unwrap_or_else(|| env.home_dir.join(".config"))
+        .join("tmux")
+}
+
+fn resolve_tmux_config_file(env: &ApplyEnvironment) -> PathBuf {
+    let xdg = tmux_config_dir(env).join("tmux.conf");
+    let home = env.home_dir.join(".tmux.conf");
+    if xdg.exists() {
+        return xdg;
+    }
+    if home.exists() {
+        return home;
+    }
+    xdg
+}
+
+fn build_tmux_plan(
+    extra: &Extra,
+    theme: &ThemeSpec,
+    target: &ResolvedTarget,
+    env: &ApplyEnvironment,
+) -> Result<TargetPlan> {
+    let tmux = theme.tmux.as_ref().with_context(|| {
+        format!(
+            "theme `{}` does not define tmux settings required for target `{}`",
+            theme.id, target.name
+        )
+    })?;
+
+    let config_dir = tmux_config_dir(env);
+    let config_file = resolve_tmux_config_file(env);
+    let backup_file = ghostty_apply::backup_path(&config_file, &env.timestamp);
+    let theme_destination = config_dir.join(TMUX_ACTIVE_THEME_FILE);
+    let copies = vec![FileCopyPlan {
+        source: extra.source_dir.join(&tmux.theme_file),
+        destination: theme_destination.clone(),
+    }];
+    let managed_block = tmux_managed_block(extra.name(), &theme_destination);
+    let commands = target
+        .cli_path
+        .as_ref()
+        .map(|cli_path| {
+            vec![
+                cli_path.display().to_string(),
+                "source-file".to_string(),
+                config_file.display().to_string(),
+            ]
+        })
+        .into_iter()
+        .collect();
+
+    Ok(TargetPlan {
+        name: target.name.clone(),
+        kind: target.kind,
+        cli_name: target.cli_name.clone(),
+        cli_path: target.cli_path.clone(),
+        config_dir,
+        config_file,
+        backup_file,
+        copies,
+        managed_block: Some(managed_block),
+        json_change: None,
+        vsix_path: None,
+        vscode: None,
+        commands,
+    })
+}
+
+fn tmux_managed_block(extra_name: &str, theme_destination: &Path) -> String {
+    [
+        format!("# vstack:begin {extra_name}"),
+        "# Managed by vstack. Edit source extras or remove this block to opt out.".to_string(),
+        format!("source-file -q \"{}\"", theme_destination.display()),
+        format!("# vstack:end {extra_name}"),
+    ]
+    .join("\n")
+}
+
+fn apply_tmux_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
+    let managed_block = target
+        .managed_block
+        .as_ref()
+        .context("tmux target plan is missing a managed block")?;
+
+    let original = ghostty_apply::write_backup(&target.config_file, &target.backup_file)?;
+
+    for copy in &target.copies {
+        if let Some(parent) = copy.destination.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::copy(&copy.source, &copy.destination).with_context(|| {
+            format!(
+                "copying {} to {}",
+                copy.source.display(),
+                copy.destination.display()
+            )
+        })?;
+    }
+
+    let original_config = String::from_utf8(original).with_context(|| {
+        format!(
+            "tmux config {} is not valid UTF-8",
+            target.config_file.display()
+        )
+    })?;
+    let updated_config =
+        ghostty_apply::insert_or_replace_managed_block(&original_config, extra_name, managed_block);
+
+    if let Some(parent) = target.config_file.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(&target.config_file, updated_config)
+        .with_context(|| format!("writing {}", target.config_file.display()))?;
+
+    if let Some(cli_path) = &target.cli_path {
+        reload_running_tmux_servers(cli_path, &target.config_file);
+    } else {
+        eprintln!(
+            "warning: tmux CLI not found on PATH; skipped live reload (existing servers will pick up the theme on next config reload)"
+        );
+    }
+
+    println!(
+        "tmux: wrote {} and ensured `source-file` block in {}",
+        target.copies[0].destination.display(),
+        target.config_file.display()
+    );
+
+    Ok(())
+}
+
+fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
+    let mut sockets: Vec<PathBuf> = Vec::new();
+    if let Ok(uid) = std::env::var("UID")
+        .or_else(|_| std::env::var("USER_ID"))
+        .or_else(|_| unix_uid_string())
+    {
+        let socket_dir = PathBuf::from(format!("/tmp/tmux-{uid}"));
+        if let Ok(entries) = fs::read_dir(&socket_dir) {
+            for entry in entries.flatten() {
+                sockets.push(entry.path());
+            }
+        }
+    }
+
+    if let Ok(tmux) = std::env::var("TMUX")
+        && let Some(socket) = tmux.split(',').next()
+        && !socket.is_empty()
+    {
+        let socket_path = PathBuf::from(socket);
+        if !sockets.iter().any(|existing| existing == &socket_path) {
+            sockets.push(socket_path);
+        }
+    }
+
+    if sockets.is_empty() {
+        return;
+    }
+
+    for socket in sockets {
+        let output = Command::new(cli_path)
+            .arg("-S")
+            .arg(&socket)
+            .arg("source-file")
+            .arg(config_file)
+            .output();
+        match output {
+            Ok(out) if !out.status.success() => {
+                eprintln!(
+                    "warning: failed to reload tmux server at {} ({})",
+                    socket.display(),
+                    String::from_utf8_lossy(&out.stderr).trim_end()
+                );
+            }
+            Err(err) => {
+                eprintln!(
+                    "warning: could not run `tmux -S {} source-file {}`: {err}",
+                    socket.display(),
+                    config_file.display()
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn unix_uid_string() -> Result<String, std::env::VarError> {
+    #[cfg(unix)]
+    {
+        // SAFETY: getuid is a thread-safe getter with no preconditions.
+        let uid = unsafe { libc_getuid() };
+        Ok(uid.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        Err(std::env::VarError::NotPresent)
+    }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    #[link_name = "getuid"]
+    fn libc_getuid() -> u32;
+}
+
 fn ghostty_config_dir(env: &ApplyEnvironment) -> PathBuf {
     ghostty_apply::resolve_config_dir(&GhosttyPathContext {
         home_dir: env.home_dir.clone(),
@@ -822,7 +1044,9 @@ fn vscode_user_dir(kind: TargetKind, env: &ApplyEnvironment) -> PathBuf {
         TargetKind::Vscode => "Code",
         TargetKind::Vscodium => "VSCodium",
         TargetKind::Cursor => "Cursor",
-        TargetKind::Ghostty => unreachable!("Ghostty is not a VS Code-family target"),
+        TargetKind::Ghostty | TargetKind::Tmux => {
+            unreachable!("non-vscode-family TargetKind passed to vscode_user_dir")
+        }
     };
 
     if cfg!(target_os = "macos") {
