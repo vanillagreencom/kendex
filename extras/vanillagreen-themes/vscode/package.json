@@ -1,5 +1,5 @@
 {
-  "_comment": "Color-only VS Code-family theme package. Palette derived by hand for deep forest ink, moss and leaf greens, misty lake blues, and warm earth accents.",
+  "_comment": "Color-only VS Code-family theme package. Ghibli Serene Nature derived from the canonical dotfiles palette: cream paper background, dark forest foreground, deep forest accents, terracotta warnings.",
   "name": "vanillagreen-themes",
   "displayName": "Vanillagreen Themes",
   "description": "Matched Ghostty and VS Code-family color themes.",
@@ -16,7 +16,7 @@
     "themes": [
       {
         "label": "Ghibli Serene Nature",
-        "uiTheme": "vs-dark",
+        "uiTheme": "vs",
         "path": "./themes/ghibli-serene-nature-color-theme.json"
       }
     ]
