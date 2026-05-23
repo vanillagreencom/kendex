@@ -1,11 +1,37 @@
 # Vanillagreen theme pack manifest.
-# Palette derived by hand for a Ghibli-inspired serene nature mood:
-# deep forest ink, moss and leaf greens, misty lake blues, sun-warmed earth accents.
+# Distributed as one VS Code extension contributing all themes + a matched icon theme,
+# with per-theme Ghostty palette + ambient shaders.
 name = "vanillagreen-themes"
 kind = "theme-pack"
-description = "Matched Ghostty + VS Code-family color themes with Ghostty shaders."
+description = "Matched Ghostty + VS Code-family theme pack (25 color themes + Rosé Pine icons)."
 default-theme = "ghibli-serene-nature"
 targets = ["ghostty", "vscode", "vscodium", "cursor"]
+
+[[themes]]
+id = "anthropic"
+display = "Anthropic"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/anthropic.conf"
+shaders = ["ghostty/shaders/anthropic-ambient.glsl"]
+pulse-shader = "ghostty/shaders/anthropic-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Anthropic"
+theme-file = "vscode/themes/anthropic-color-theme.json"
+
+[[themes]]
+id = "catppuccin-latte"
+display = "Catppuccin Latte"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/catppuccin-latte.conf"
+shaders = ["ghostty/shaders/catppuccin-latte-ambient.glsl"]
+pulse-shader = "ghostty/shaders/catppuccin-latte-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Catppuccin Latte"
+theme-file = "vscode/themes/catppuccin-latte-color-theme.json"
 
 [[themes]]
 id = "ghibli-serene-nature"
@@ -19,3 +45,284 @@ pulse-shader = "ghostty/shaders/ghibli-serene-nature-ambient-pulse.glsl"
 [themes.vscode]
 theme-name = "Ghibli Serene Nature"
 theme-file = "vscode/themes/ghibli-serene-nature-color-theme.json"
+
+[[themes]]
+id = "kawaii-pixel"
+display = "Kawaii Pixel"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/kawaii-pixel.conf"
+shaders = ["ghostty/shaders/kawaii-pixel-ambient.glsl"]
+pulse-shader = "ghostty/shaders/kawaii-pixel-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Kawaii Pixel"
+theme-file = "vscode/themes/kawaii-pixel-color-theme.json"
+
+[[themes]]
+id = "rose-pine-dawn"
+display = "Rosé Pine Dawn"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/rose-pine-dawn.conf"
+shaders = ["ghostty/shaders/rose-pine-dawn-ambient.glsl"]
+pulse-shader = "ghostty/shaders/rose-pine-dawn-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Rosé Pine Dawn"
+theme-file = "vscode/themes/rose-pine-dawn-color-theme.json"
+
+[[themes]]
+id = "anthropic-dark"
+display = "Anthropic Dark"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/anthropic-dark.conf"
+shaders = ["ghostty/shaders/anthropic-dark-ambient.glsl"]
+pulse-shader = "ghostty/shaders/anthropic-dark-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Anthropic Dark"
+theme-file = "vscode/themes/anthropic-dark-color-theme.json"
+
+[[themes]]
+id = "anthropic-slate"
+display = "Anthropic Slate"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/anthropic-slate.conf"
+shaders = ["ghostty/shaders/anthropic-slate-ambient.glsl"]
+pulse-shader = "ghostty/shaders/anthropic-slate-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Anthropic Slate"
+theme-file = "vscode/themes/anthropic-slate-color-theme.json"
+
+[[themes]]
+id = "aura-dark"
+display = "Aura Dark"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/aura-dark.conf"
+shaders = ["ghostty/shaders/aura-dark-ambient.glsl"]
+pulse-shader = "ghostty/shaders/aura-dark-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Aura Dark"
+theme-file = "vscode/themes/aura-dark-color-theme.json"
+
+[[themes]]
+id = "bearded-theme-monokai-black"
+display = "Bearded Theme Monokai Black"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/bearded-theme-monokai-black.conf"
+shaders = ["ghostty/shaders/bearded-theme-monokai-black-ambient.glsl"]
+pulse-shader = "ghostty/shaders/bearded-theme-monokai-black-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Bearded Theme Monokai Black"
+theme-file = "vscode/themes/bearded-theme-monokai-black-color-theme.json"
+
+[[themes]]
+id = "catppuccin-frappe"
+display = "Catppuccin Frappé"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/catppuccin-frappe.conf"
+shaders = ["ghostty/shaders/catppuccin-frappe-ambient.glsl"]
+pulse-shader = "ghostty/shaders/catppuccin-frappe-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Catppuccin Frappé"
+theme-file = "vscode/themes/catppuccin-frappe-color-theme.json"
+
+[[themes]]
+id = "catppuccin-macchiato"
+display = "Catppuccin Macchiato"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/catppuccin-macchiato.conf"
+shaders = ["ghostty/shaders/catppuccin-macchiato-ambient.glsl"]
+pulse-shader = "ghostty/shaders/catppuccin-macchiato-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Catppuccin Macchiato"
+theme-file = "vscode/themes/catppuccin-macchiato-color-theme.json"
+
+[[themes]]
+id = "catppuccin-mocha"
+display = "Catppuccin Mocha"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/catppuccin-mocha.conf"
+shaders = ["ghostty/shaders/catppuccin-mocha-ambient.glsl"]
+pulse-shader = "ghostty/shaders/catppuccin-mocha-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Catppuccin Mocha"
+theme-file = "vscode/themes/catppuccin-mocha-color-theme.json"
+
+[[themes]]
+id = "citrus"
+display = "Citrus"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/citrus.conf"
+shaders = ["ghostty/shaders/citrus-ambient.glsl"]
+pulse-shader = "ghostty/shaders/citrus-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Citrus"
+theme-file = "vscode/themes/citrus-color-theme.json"
+
+[[themes]]
+id = "dracula"
+display = "Dracula"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/dracula.conf"
+shaders = ["ghostty/shaders/dracula-ambient.glsl"]
+pulse-shader = "ghostty/shaders/dracula-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Dracula"
+theme-file = "vscode/themes/dracula-color-theme.json"
+
+[[themes]]
+id = "flowers"
+display = "Flowers"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/flowers.conf"
+shaders = ["ghostty/shaders/flowers-ambient.glsl"]
+pulse-shader = "ghostty/shaders/flowers-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Flowers"
+theme-file = "vscode/themes/flowers-color-theme.json"
+
+[[themes]]
+id = "iceberg"
+display = "Iceberg"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/iceberg.conf"
+shaders = ["ghostty/shaders/iceberg-ambient.glsl"]
+pulse-shader = "ghostty/shaders/iceberg-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Iceberg"
+theme-file = "vscode/themes/iceberg-color-theme.json"
+
+[[themes]]
+id = "method-dark"
+display = "Method Dark"
+
+[themes.vscode]
+theme-name = "Method Dark"
+theme-file = "vscode/themes/method-dark-color-theme.json"
+
+[[themes]]
+id = "pixel-corsair"
+display = "Pixel Corsair"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/pixel-corsair.conf"
+shaders = ["ghostty/shaders/pixel-corsair-ambient.glsl"]
+pulse-shader = "ghostty/shaders/pixel-corsair-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Pixel Corsair"
+theme-file = "vscode/themes/pixel-corsair-color-theme.json"
+
+[[themes]]
+id = "retro-city-console"
+display = "Retro City Console"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/retro-city-console.conf"
+shaders = ["ghostty/shaders/retro-city-console-ambient.glsl"]
+pulse-shader = "ghostty/shaders/retro-city-console-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Retro City Console"
+theme-file = "vscode/themes/retro-city-console-color-theme.json"
+
+[[themes]]
+id = "rose-pine"
+display = "Rosé Pine"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/rose-pine.conf"
+shaders = ["ghostty/shaders/rose-pine-ambient.glsl"]
+pulse-shader = "ghostty/shaders/rose-pine-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Rosé Pine"
+theme-file = "vscode/themes/rose-pine-color-theme.json"
+
+[[themes]]
+id = "rose-pine-black"
+display = "Rosé Pine Black"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/rose-pine-black.conf"
+shaders = ["ghostty/shaders/rose-pine-black-ambient.glsl"]
+pulse-shader = "ghostty/shaders/rose-pine-black-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Rosé Pine Black"
+theme-file = "vscode/themes/rose-pine-black-color-theme.json"
+
+[[themes]]
+id = "rose-pine-extra-black"
+display = "Rosé Pine Extra Black"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/rose-pine-extra-black.conf"
+shaders = ["ghostty/shaders/rose-pine-extra-black-ambient.glsl"]
+pulse-shader = "ghostty/shaders/rose-pine-extra-black-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Rosé Pine Extra Black"
+theme-file = "vscode/themes/rose-pine-extra-black-color-theme.json"
+
+[[themes]]
+id = "rose-pine-moon"
+display = "Rosé Pine Moon"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/rose-pine-moon.conf"
+shaders = ["ghostty/shaders/rose-pine-moon-ambient.glsl"]
+pulse-shader = "ghostty/shaders/rose-pine-moon-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Rosé Pine Moon"
+theme-file = "vscode/themes/rose-pine-moon-color-theme.json"
+
+[[themes]]
+id = "tokyo-night"
+display = "Tokyo Night"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/tokyo-night.conf"
+shaders = ["ghostty/shaders/tokyo-night-ambient.glsl"]
+pulse-shader = "ghostty/shaders/tokyo-night-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Tokyo Night"
+theme-file = "vscode/themes/tokyo-night-color-theme.json"
+
+[[themes]]
+id = "warp"
+display = "Warp"
+
+[themes.ghostty]
+theme-file = "ghostty/themes/warp.conf"
+shaders = ["ghostty/shaders/warp-ambient.glsl"]
+pulse-shader = "ghostty/shaders/warp-ambient-pulse.glsl"
+
+[themes.vscode]
+theme-name = "Warp"
+theme-file = "vscode/themes/warp-color-theme.json"

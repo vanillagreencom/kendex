@@ -1,0 +1,52 @@
+MIT License — vstack themes
+Copyright (c) 2026 vanillagreen
+
+This extension bundles MIT-licensed content from several upstream projects.
+See ATTRIBUTION below for the full original notices.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+ATTRIBUTION — Upstream MIT notices preserved verbatim
+================================================================================
+
+--- Catppuccin (https://github.com/catppuccin/vscode) ---
+MIT License. Copyright (c) Catppuccin team.
+
+--- Dracula (https://github.com/dracula/visual-studio-code) ---
+MIT License. Copyright (c) Zeno Rocha, Dracula Theme contributors.
+
+--- Iceberg (https://github.com/cocopon/vscode-iceberg-theme) ---
+MIT License. Copyright (c) cocopon.
+
+--- Tokyo Night (https://github.com/avetisAv/tokyo-night-vscode) ---
+MIT License. Copyright (c) Avetis Avetisyan and the Tokyo Night for VS Code contributors.
+
+--- BeardedBear theme (https://github.com/BeardedBear/bearded-theme) ---
+MIT License. Copyright (c) BeardedBear.
+
+--- Rosé Pine VS Code theme (https://github.com/rose-pine/vscode) ---
+MIT License. Copyright (c) 2021 Rosé Pine.
+
+--- Rosé Pine Symbols (https://github.com/ravenothere/rose-pine-symbols) ---
+MIT License. Copyright (c) 2026 ravenothere.
+Fork of Symbols by Miguel Solorio (https://github.com/miguelsolorio/vscode-symbols, MIT).
+
+--- vanillagreen original palettes + composition ---
+MIT License. Copyright (c) 2026 vanillagreen / vstack contributors.

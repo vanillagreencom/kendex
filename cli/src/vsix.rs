@@ -4,8 +4,23 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use walkdir::WalkDir;
 use zip::CompressionMethod;
 use zip::write::FileOptions;
+
+/// Top-level directories or filenames inside `extension_root` that the bundler skips.
+/// Build artifacts and VCS metadata are never shipped in the VSIX even when present.
+const EXTENSION_BUNDLE_DENYLIST: &[&str] = &[
+    ".git",
+    ".gitignore",
+    ".gitattributes",
+    ".vscode",
+    ".vscode-test",
+    ".vscodeignore",
+    "node_modules",
+    "target",
+    ".DS_Store",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VsixInfo {
@@ -83,6 +98,11 @@ pub fn write_vsix(
         options,
     )?;
 
+    // Track every file added to the VSIX (relative to extension/) so the
+    // post-theme directory walk doesn't double-bundle anything.
+    let mut already_bundled: BTreeSet<String> = BTreeSet::new();
+    already_bundled.insert("package.json".to_string());
+
     let mut seen_theme_basenames = BTreeSet::new();
     let mut included_theme_files = Vec::new();
     for theme_path in &package.theme_paths {
@@ -110,6 +130,35 @@ pub fn write_vsix(
         let entry = format!("extension/themes/{basename_string}");
         write_zip_entry(&mut zip, &entry, &contents, options)?;
         included_theme_files.push(source);
+        already_bundled.insert(format!("themes/{basename_string}"));
+    }
+
+    // Bundle every other file under `extension_root` so iconThemes, README,
+    // LICENSE, ext icon, and arbitrary asset directories ship with the VSIX.
+    // Skip the manifest + theme files we already wrote, plus a small denylist
+    // of VCS / build artifacts.
+    for entry in WalkDir::new(extension_root).follow_links(false) {
+        let entry = entry
+            .with_context(|| format!("walking extension root {}", extension_root.display()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(extension_root)
+            .with_context(|| format!("path outside extension root: {}", path.display()))?;
+        if rel.components().any(|c| matches!(c, Component::Normal(p) if EXTENSION_BUNDLE_DENYLIST.iter().any(|d| p == std::ffi::OsStr::new(*d)))) {
+            continue;
+        }
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        if rel_str.is_empty() || rel_str == "package.json" || already_bundled.contains(&rel_str) {
+            continue;
+        }
+        let contents = std::fs::read(path)
+            .with_context(|| format!("reading bundled file {}", path.display()))?;
+        let zip_entry = format!("extension/{rel_str}");
+        write_zip_entry(&mut zip, &zip_entry, &contents, options)?;
+        already_bundled.insert(rel_str);
     }
 
     zip.finish()
@@ -292,6 +341,83 @@ fn xml_escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bundles_icon_theme_and_assets_alongside_themes() {
+        // Synthesize a small extension tree that mirrors a real theme pack:
+        // package.json (with 1 color theme + 1 icon theme + pkg.icon), themes/<theme>.json,
+        // icon-theme/<icon-theme>.json, icon-theme/icons/files/foo.svg, icon.png, README.md, LICENSE.txt.
+        let root = sandbox("bundle");
+        let _cleanup = scopeguard_remove(root.clone());
+        let root = root.as_path();
+        let pkg = r#"{
+            "name": "sample-pack",
+            "displayName": "Sample",
+            "publisher": "test",
+            "version": "1.0.0",
+            "description": "d",
+            "icon": "icon.png",
+            "engines": {"vscode": "^1.60.0"},
+            "categories": ["Themes"],
+            "contributes": {
+                "themes": [{"label": "Sample", "uiTheme": "vs-dark", "path": "./themes/sample-color-theme.json"}],
+                "iconThemes": [{"id": "sample-icons", "label": "Sample Icons", "path": "./icon-theme/sample-icons.json"}]
+            }
+        }"#;
+        std::fs::write(root.join("package.json"), pkg).unwrap();
+        std::fs::create_dir_all(root.join("themes")).unwrap();
+        std::fs::write(root.join("themes/sample-color-theme.json"), r#"{"name":"Sample"}"#).unwrap();
+        std::fs::create_dir_all(root.join("icon-theme/icons/files")).unwrap();
+        std::fs::write(root.join("icon-theme/sample-icons.json"), r#"{"iconDefinitions":{}}"#).unwrap();
+        std::fs::write(root.join("icon-theme/icons/files/foo.svg"), "<svg/>").unwrap();
+        std::fs::write(root.join("icon.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        std::fs::write(root.join("README.md"), "# Sample").unwrap();
+        std::fs::write(root.join("LICENSE.txt"), "MIT").unwrap();
+        // Denylisted entries that must NOT end up in the VSIX
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/dep")).unwrap();
+        std::fs::write(root.join("node_modules/dep/index.js"), "// dep").unwrap();
+
+        let vsix_path = root.join("out.vsix");
+        let _info = super::write_vsix(root, &root.join("package.json"), &vsix_path).expect("vsix");
+
+        // Read the VSIX and list entries
+        let f = std::fs::File::open(&vsix_path).unwrap();
+        let mut archive = zip::ZipArchive::new(f).unwrap();
+        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).unwrap();
+            names.insert(entry.name().to_string());
+        }
+
+        let expected = [
+            "extension/package.json",
+            "extension/themes/sample-color-theme.json",
+            "extension/icon-theme/sample-icons.json",
+            "extension/icon-theme/icons/files/foo.svg",
+            "extension/icon.png",
+            "extension/README.md",
+            "extension/LICENSE.txt",
+        ];
+        for e in expected {
+            assert!(names.contains(e), "VSIX missing {e}; got: {names:?}");
+        }
+        // Denylist must be excluded
+        for d in ["extension/.git/HEAD", "extension/node_modules/dep/index.js"] {
+            assert!(!names.contains(d), "VSIX should not contain {d}");
+        }
+    }
+
+    fn scopeguard_remove(root: std::path::PathBuf) -> ScopeRemove {
+        ScopeRemove { root }
+    }
+    struct ScopeRemove { root: std::path::PathBuf }
+    impl Drop for ScopeRemove {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     use super::*;
     use std::fs;
     use std::io::Read;

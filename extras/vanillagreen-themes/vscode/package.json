@@ -1,23 +1,171 @@
 {
-  "_comment": "Color-only VS Code-family theme package. Ghibli Serene Nature derived from the canonical dotfiles palette: cream paper background, dark forest foreground, deep forest accents, terracotta warnings.",
-  "name": "vanillagreen-themes",
-  "displayName": "Vanillagreen Themes",
-  "description": "Matched Ghostty and VS Code-family color themes.",
-  "version": "0.1.0",
+  "name": "vstack-themes",
+  "displayName": "vstack themes",
+  "description": "Matched Ghostty + VS Code-family theme pack. 25 color themes + Ros\u00e9 Pine icon theme, curated by vanillagreen and distributed with vstack.",
+  "version": "1.0.0",
   "publisher": "vanillagreen",
-  "license": "MIT",
+  "icon": "icon.png",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.60.0"
   },
   "categories": [
     "Themes"
   ],
+  "keywords": [
+    "theme",
+    "color-theme",
+    "icon-theme",
+    "vanillagreen",
+    "vstack",
+    "anthropic",
+    "catppuccin",
+    "dracula",
+    "iceberg",
+    "rose-pine",
+    "tokyo-night"
+  ],
+  "homepage": "https://github.com/vanillagreencom/vstack/blob/main/extras/README.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vanillagreencom/vstack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "license": "MIT",
   "contributes": {
     "themes": [
+      {
+        "label": "Anthropic",
+        "uiTheme": "vs",
+        "path": "./themes/anthropic-color-theme.json"
+      },
+      {
+        "label": "Catppuccin Latte",
+        "uiTheme": "vs",
+        "path": "./themes/catppuccin-latte-color-theme.json"
+      },
       {
         "label": "Ghibli Serene Nature",
         "uiTheme": "vs",
         "path": "./themes/ghibli-serene-nature-color-theme.json"
+      },
+      {
+        "label": "Kawaii Pixel",
+        "uiTheme": "vs",
+        "path": "./themes/kawaii-pixel-color-theme.json"
+      },
+      {
+        "label": "Ros\u00e9 Pine Dawn",
+        "uiTheme": "vs",
+        "path": "./themes/rose-pine-dawn-color-theme.json"
+      },
+      {
+        "label": "Anthropic Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/anthropic-dark-color-theme.json"
+      },
+      {
+        "label": "Anthropic Slate",
+        "uiTheme": "vs-dark",
+        "path": "./themes/anthropic-slate-color-theme.json"
+      },
+      {
+        "label": "Aura Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/aura-dark-color-theme.json"
+      },
+      {
+        "label": "Bearded Theme Monokai Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/bearded-theme-monokai-black-color-theme.json"
+      },
+      {
+        "label": "Catppuccin Frapp\u00e9",
+        "uiTheme": "vs-dark",
+        "path": "./themes/catppuccin-frappe-color-theme.json"
+      },
+      {
+        "label": "Catppuccin Macchiato",
+        "uiTheme": "vs-dark",
+        "path": "./themes/catppuccin-macchiato-color-theme.json"
+      },
+      {
+        "label": "Catppuccin Mocha",
+        "uiTheme": "vs-dark",
+        "path": "./themes/catppuccin-mocha-color-theme.json"
+      },
+      {
+        "label": "Citrus",
+        "uiTheme": "vs-dark",
+        "path": "./themes/citrus-color-theme.json"
+      },
+      {
+        "label": "Dracula",
+        "uiTheme": "vs-dark",
+        "path": "./themes/dracula-color-theme.json"
+      },
+      {
+        "label": "Flowers",
+        "uiTheme": "vs-dark",
+        "path": "./themes/flowers-color-theme.json"
+      },
+      {
+        "label": "Iceberg",
+        "uiTheme": "vs-dark",
+        "path": "./themes/iceberg-color-theme.json"
+      },
+      {
+        "label": "Method Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/method-dark-color-theme.json"
+      },
+      {
+        "label": "Pixel Corsair",
+        "uiTheme": "vs-dark",
+        "path": "./themes/pixel-corsair-color-theme.json"
+      },
+      {
+        "label": "Retro City Console",
+        "uiTheme": "vs-dark",
+        "path": "./themes/retro-city-console-color-theme.json"
+      },
+      {
+        "label": "Ros\u00e9 Pine",
+        "uiTheme": "vs-dark",
+        "path": "./themes/rose-pine-color-theme.json"
+      },
+      {
+        "label": "Ros\u00e9 Pine Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/rose-pine-black-color-theme.json"
+      },
+      {
+        "label": "Ros\u00e9 Pine Extra Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/rose-pine-extra-black-color-theme.json"
+      },
+      {
+        "label": "Ros\u00e9 Pine Moon",
+        "uiTheme": "vs-dark",
+        "path": "./themes/rose-pine-moon-color-theme.json"
+      },
+      {
+        "label": "Tokyo Night",
+        "uiTheme": "vs-dark",
+        "path": "./themes/tokyo-night-color-theme.json"
+      },
+      {
+        "label": "Warp",
+        "uiTheme": "vs-dark",
+        "path": "./themes/warp-color-theme.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "rose-pine-icons",
+        "label": "Ros\u00e9 Pine Icons",
+        "path": "./icon-theme/rose-pine-icons-theme.json"
       }
     ]
   }
