@@ -18,6 +18,8 @@ mod skill;
 #[cfg(test)]
 mod test_util;
 mod tui;
+mod vscode_apply;
+mod vsix;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

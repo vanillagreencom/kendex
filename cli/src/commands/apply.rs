@@ -1,13 +1,14 @@
 use crate::config;
 use crate::extra::{Extra, ExtraKind, ThemeSpec};
 use crate::ghostty_apply::{self, GhosttyPathContext, GhosttyPlatform};
+use crate::vscode_apply::VscodeEditor;
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 const GHOSTTY_TARGET: &str = "ghostty";
 const VSCODE_TARGET: &str = "vscode";
@@ -48,6 +49,7 @@ struct ApplyPlan {
 #[derive(Debug, Clone)]
 struct TargetPlan {
     name: String,
+    kind: TargetKind,
     cli_name: String,
     cli_path: Option<PathBuf>,
     config_dir: PathBuf,
@@ -57,6 +59,7 @@ struct TargetPlan {
     managed_block: Option<String>,
     json_change: Option<JsonChangePlan>,
     vsix_path: Option<PathBuf>,
+    vscode: Option<VscodeThemePlan>,
     commands: Vec<Vec<String>>,
 }
 
@@ -70,6 +73,13 @@ struct FileCopyPlan {
 struct JsonChangePlan {
     key: String,
     value: String,
+}
+
+#[derive(Debug, Clone)]
+struct VscodeThemePlan {
+    extension_root: PathBuf,
+    package_json: PathBuf,
+    theme_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +159,15 @@ impl TargetKind {
     }
 }
 
+fn vscode_editor(kind: TargetKind) -> Option<VscodeEditor> {
+    match kind {
+        TargetKind::Vscode => Some(VscodeEditor::Vscode),
+        TargetKind::Vscodium => Some(VscodeEditor::Vscodium),
+        TargetKind::Cursor => Some(VscodeEditor::Cursor),
+        TargetKind::Ghostty => None,
+    }
+}
+
 pub fn run(
     extra_name: String,
     theme_id: Option<String>,
@@ -189,20 +208,16 @@ pub fn run(
 }
 
 fn apply_plan(plan: &ApplyPlan) -> Result<()> {
-    if let Some(unsupported) = plan
-        .targets
-        .iter()
-        .find(|target| target.name != GHOSTTY_TARGET)
-    {
-        bail!(
-            "target `{}` apply is not implemented yet; use --target ghostty or --dry-run",
-            unsupported.name
-        );
-    }
-
     for target in &plan.targets {
-        apply_ghostty_target(&plan.extra_name, target)?;
-        println!("Ghostty config updated. Reload Ghostty to apply the new theme.");
+        match target.kind {
+            TargetKind::Ghostty => {
+                apply_ghostty_target(&plan.extra_name, target)?;
+                println!("Ghostty config updated. Reload Ghostty to apply the new theme.");
+            }
+            TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => {
+                apply_vscode_family_target(target)?;
+            }
+        }
     }
     Ok(())
 }
@@ -274,6 +289,144 @@ fn validate_ghostty_config(cli_path: &Path, config_file: &Path, backup_file: &Pa
         stdout.trim_end(),
         stderr.trim_end()
     )
+}
+
+fn apply_vscode_family_target(target: &TargetPlan) -> Result<()> {
+    let cli_path = target
+        .cli_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("target `{}` has no CLI path", target.name))?;
+    let vscode = target.vscode.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "target `{}` has no VS Code-family package plan",
+            target.name
+        )
+    })?;
+    let vsix_path = target
+        .vsix_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("target `{}` has no VSIX path", target.name))?;
+
+    let cleanup = TempDirCleanup::from_child_path(vsix_path);
+    let vsix = crate::vsix::write_vsix(&vscode.extension_root, &vscode.package_json, vsix_path)
+        .with_context(|| format!("building VSIX for target `{}`", target.name))?;
+
+    run_checked_command(
+        cli_path,
+        &[
+            "--install-extension".to_string(),
+            vsix_path.display().to_string(),
+            "--force".to_string(),
+        ],
+    )
+    .with_context(|| format!("installing VSIX for target `{}`", target.name))?;
+
+    let settings_existed = target.config_file.exists();
+    let original_settings = if settings_existed {
+        fs::read_to_string(&target.config_file)
+            .with_context(|| format!("reading {}", target.config_file.display()))?
+    } else {
+        "{}\n".to_string()
+    };
+    let patched_settings =
+        crate::vscode_apply::patch_settings_text(&original_settings, &vscode.theme_name)
+            .with_context(|| format!("patching {}", target.config_file.display()))?;
+
+    if !settings_existed || patched_settings != original_settings {
+        backup_settings_file(&target.config_file, &target.backup_file, settings_existed)?;
+        if let Some(parent) = target.config_file.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::write(&target.config_file, patched_settings)
+            .with_context(|| format!("writing {}", target.config_file.display()))?;
+    }
+
+    let listed = run_checked_command(cli_path, &["--list-extensions".to_string()])
+        .with_context(|| format!("listing extensions for target `{}`", target.name))?;
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    if !extension_list_contains(&stdout, &vsix.extension_id) {
+        bail!(
+            "target `{}` did not list installed extension `{}` after VSIX install",
+            target.name,
+            vsix.extension_id
+        );
+    }
+
+    drop(cleanup);
+    Ok(())
+}
+
+fn backup_settings_file(settings_file: &Path, backup_file: &Path, existed: bool) -> Result<()> {
+    if let Some(parent) = settings_file.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    if existed {
+        fs::copy(settings_file, backup_file).with_context(|| {
+            format!(
+                "backing up {} to {}",
+                settings_file.display(),
+                backup_file.display()
+            )
+        })?;
+    } else {
+        fs::write(backup_file, b"").with_context(|| {
+            format!(
+                "creating empty backup for missing settings file {} at {}",
+                settings_file.display(),
+                backup_file.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn run_checked_command(program: &Path, args: &[String]) -> Result<Output> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("running {}", render_command_for_program(program, args)))?;
+    if !output.status.success() {
+        bail!(
+            "command failed ({}):\nstdout:\n{}\nstderr:\n{}",
+            render_command_for_program(program, args),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output)
+}
+
+fn render_command_for_program(program: &Path, args: &[String]) -> String {
+    let mut command = Vec::with_capacity(args.len() + 1);
+    command.push(program.display().to_string());
+    command.extend(args.iter().cloned());
+    render_command(&command)
+}
+
+fn extension_list_contains(list_output: &str, extension_id: &str) -> bool {
+    list_output
+        .lines()
+        .any(|line| line.trim().eq_ignore_ascii_case(extension_id))
+}
+
+struct TempDirCleanup {
+    path: Option<PathBuf>,
+}
+
+impl TempDirCleanup {
+    fn from_child_path(path: &Path) -> Self {
+        Self {
+            path: path.parent().map(Path::to_path_buf),
+        }
+    }
+}
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
 }
 
 fn parse_target_list(raw: Option<&str>) -> Result<Option<Vec<String>>> {
@@ -569,6 +722,7 @@ fn build_ghostty_plan(
 
     Ok(TargetPlan {
         name: target.name.clone(),
+        kind: target.kind,
         cli_name: target.cli_name.clone(),
         cli_path: target.cli_path.clone(),
         config_dir,
@@ -578,6 +732,7 @@ fn build_ghostty_plan(
         managed_block: Some(managed_block),
         json_change: None,
         vsix_path: None,
+        vscode: None,
         commands,
     })
 }
@@ -596,12 +751,23 @@ fn build_vscode_family_plan(
         )
     })?;
 
-    let user_dir = vscode_user_dir(target.kind, env);
+    let editor = vscode_editor(target.kind).ok_or_else(|| {
+        anyhow::anyhow!("target `{}` is not a VS Code-family target", target.name)
+    })?;
+    let user_dir =
+        crate::vscode_apply::user_dir_for_current_os(editor, &env.home_dir, &env.config_dir);
     let settings_file = user_dir.join("settings.json");
     let backup_file = ghostty_apply::backup_path(&settings_file, &env.timestamp);
-    let vsix_path = env
-        .temp_dir
-        .join(format!("vstack-{}-{}.vsix", extra.name(), theme.id));
+    let vsix_dir = env.temp_dir.join(format!(
+        "vstack-{}-{}-{}-{}",
+        extra.name(),
+        theme.id,
+        target.name,
+        env.timestamp
+    ));
+    let vsix_path = vsix_dir.join(format!("{}-{}.vsix", extra.name(), theme.id));
+    let extension_root = extra.source_dir.join("vscode");
+    let package_json = extension_root.join("package.json");
     let cli_path = target
         .cli_path
         .as_ref()
@@ -621,6 +787,7 @@ fn build_vscode_family_plan(
 
     Ok(TargetPlan {
         name: target.name.clone(),
+        kind: target.kind,
         cli_name: target.cli_name.clone(),
         cli_path: Some(cli_path.clone()),
         config_dir: user_dir,
@@ -633,6 +800,11 @@ fn build_vscode_family_plan(
             value: vscode.theme_name.clone(),
         }),
         vsix_path: Some(vsix_path),
+        vscode: Some(VscodeThemePlan {
+            extension_root,
+            package_json,
+            theme_name: vscode.theme_name.clone(),
+        }),
         commands,
     })
 }

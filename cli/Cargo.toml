@@ -24,6 +24,7 @@ regex-lite = "0.1"
 
 # Filesystem
 walkdir = "2"
+zip = "0.6"
 
 # Error handling
 anyhow = "1"
