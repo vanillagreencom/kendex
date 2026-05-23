@@ -217,7 +217,16 @@ fn apply_plan(plan: &ApplyPlan) -> Result<()> {
         match target.kind {
             TargetKind::Ghostty => {
                 apply_ghostty_target(&plan.extra_name, target)?;
-                println!("Ghostty config updated. Reload Ghostty to apply the new theme.");
+                let reloaded = reload_running_ghostty_processes();
+                if reloaded > 0 {
+                    println!(
+                        "Ghostty config updated; sent SIGUSR2 live-reload to {reloaded} running ghostty process(es)."
+                    );
+                } else {
+                    println!(
+                        "Ghostty config updated. No live ghostty process detected; the new theme will load on next launch."
+                    );
+                }
             }
             TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => {
                 apply_vscode_family_target(target)?;
@@ -823,6 +832,43 @@ fn build_vscode_family_plan(
     })
 }
 
+/// Send Ghostty's live-reload signal (SIGUSR2) to every running ghostty
+/// process owned by this user. Mirrors Ghostty's default `super+shift+,`
+/// keybind so the user sees the new theme without manual reload. Unix-only;
+/// no-op on other platforms.
+fn reload_running_ghostty_processes() -> usize {
+    #[cfg(unix)]
+    {
+        let output = match Command::new("pgrep").arg("-U").arg(format!("{}", unix_uid())).arg("-x").arg("ghostty").output() {
+            Ok(out) => out,
+            Err(_) => return 0,
+        };
+        if !output.status.success() {
+            return 0;
+        }
+        let mut count = 0usize;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Ok(pid) = line.trim().parse::<i32>() else { continue };
+            // SAFETY: kill is a thread-safe libc call. SIGUSR2 = 12 on Linux/macOS/BSD.
+            let rc = unsafe { libc_kill(pid, 12) };
+            if rc == 0 {
+                count += 1;
+            }
+        }
+        count
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+#[cfg(unix)]
+fn unix_uid() -> u32 {
+    // SAFETY: getuid has no preconditions and is thread-safe.
+    unsafe { libc_getuid() }
+}
+
 fn tmux_config_dir(env: &ApplyEnvironment) -> PathBuf {
     env.xdg_config_home
         .clone()
@@ -1015,9 +1061,7 @@ fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
 fn unix_uid_string() -> Result<String, std::env::VarError> {
     #[cfg(unix)]
     {
-        // SAFETY: getuid is a thread-safe getter with no preconditions.
-        let uid = unsafe { libc_getuid() };
-        Ok(uid.to_string())
+        Ok(unix_uid().to_string())
     }
     #[cfg(not(unix))]
     {
@@ -1029,6 +1073,8 @@ fn unix_uid_string() -> Result<String, std::env::VarError> {
 unsafe extern "C" {
     #[link_name = "getuid"]
     fn libc_getuid() -> u32;
+    #[link_name = "kill"]
+    fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
 fn ghostty_config_dir(env: &ApplyEnvironment) -> PathBuf {
