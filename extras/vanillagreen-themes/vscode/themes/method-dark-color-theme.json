@@ -89,9 +89,9 @@
     "editorWidget.background": "#0a0a0a",
     "editorWidget.resizeBorder": "#FFFFFF",
     "errorForeground": "#bf616a",
-    "extensionButton.prominentBackground": "#565656",
-    "extensionButton.prominentForeground": "#FFFFFF",
-    "extensionButton.prominentHoverBackground": "#767676",
+    "extensionButton.prominentBackground": "#81A1C1",
+    "extensionButton.prominentForeground": "#191c22",
+    "extensionButton.prominentHoverBackground": "#87A6C4",
     "focusBorder": "#30373a",
     "foreground": "#CCCCCCdd",
     "gitDecoration.addedResourceForeground": "#A3BE8C",
@@ -242,7 +242,10 @@
     "tab.inactiveModifiedBorder": "#BF616A",
     "diffEditor.insertedLineBackground": "#3FA26633",
     "diffEditor.removedLineBackground": "#B8004933",
-    "diffEditor.diagonalFill": "#E4E4E413"
+    "diffEditor.diagonalFill": "#E4E4E413",
+    "extensionButton.background": "#81A1C1",
+    "extensionButton.foreground": "#191c22",
+    "extensionButton.hoverBackground": "#87A6C4"
   },
   "semanticHighlighting": true,
   "semanticTokenColors": {

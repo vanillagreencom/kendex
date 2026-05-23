@@ -538,7 +538,7 @@
 		"editorCommentsWidget.rangeActiveBackground": "#FFFDF220",
 		"editorCommentsWidget.rangeBackground": "#FFFDF212",
 		"editorCommentsWidget.replyInputBackground": "#FFFDF2",
-		"extensionButton.separator": "#A76D54AA"
+		"extensionButton.separator": "#D8C79644"
 	},
 	"tokenColors": [
 		{

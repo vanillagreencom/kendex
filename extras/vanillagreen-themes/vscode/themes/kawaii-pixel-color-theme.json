@@ -188,12 +188,12 @@
 		"errorLens.hintForeground": "#0468bffc",
 		"errorLens.infoForeground": "#0468bffc",
 		"errorLens.warningForeground": "#bc7400fc",
-		"extensionButton.background": "#FBE6F2",
-		"extensionButton.foreground": "#D7EEF9",
-		"extensionButton.hoverBackground": "#FFFFFF",
-		"extensionButton.prominentBackground": "#FBE6F2",
-		"extensionButton.prominentForeground": "#D7EEF9",
-		"extensionButton.prominentHoverBackground": "#FFFFFF",
+		"extensionButton.background": "#6C3F9C",
+		"extensionButton.foreground": "#FFFFFF",
+		"extensionButton.hoverBackground": "#844EA7",
+		"extensionButton.prominentBackground": "#6C3F9C",
+		"extensionButton.prominentForeground": "#FFFFFF",
+		"extensionButton.prominentHoverBackground": "#844EA7",
 		"gitDecoration.conflictingResourceForeground": "#8C5F24",
 		"gitDecoration.deletedResourceForeground": "#9C4A7D",
 		"gitDecoration.ignoredResourceForeground": "#844EA7",
@@ -537,7 +537,8 @@
 		"commentsView.unresolvedIcon": "#9C4A7D",
 		"editorCommentsWidget.rangeActiveBackground": "#FFFFFF20",
 		"editorCommentsWidget.rangeBackground": "#FFFFFF12",
-		"editorCommentsWidget.replyInputBackground": "#FFFFFF"
+		"editorCommentsWidget.replyInputBackground": "#FFFFFF",
+		"extensionButton.separator": "#A1ABE0"
 	},
 	"tokenColors": [
 		{

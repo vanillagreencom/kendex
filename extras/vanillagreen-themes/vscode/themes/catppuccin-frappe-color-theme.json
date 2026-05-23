@@ -1,5 +1,5 @@
 {
-  "name": "Catppuccin Frappé",
+  "name": "Catppuccin Frapp\u00e9",
   "type": "dark",
   "colors": {
     "focusBorder": "#ca9ee6",
@@ -203,7 +203,7 @@
     "problemsWarningIcon.foreground": "#ef9f76",
     "extensionButton.prominentForeground": "#232634",
     "extensionButton.prominentBackground": "#ca9ee6",
-    "extensionButton.separator": "#303446",
+    "extensionButton.separator": "#00000000",
     "extensionButton.prominentHoverBackground": "#d9baed",
     "extensionBadge.remoteBackground": "#8caaee",
     "extensionBadge.remoteForeground": "#232634",
@@ -565,7 +565,10 @@
     "button.secondaryBorder": "#ca9ee6",
     "table.headerBackground": "#414559",
     "table.headerForeground": "#c6d0f5",
-    "list.focusAndSelectionBackground": "#51576d"
+    "list.focusAndSelectionBackground": "#51576d",
+    "extensionButton.background": "#ca9ee6",
+    "extensionButton.foreground": "#232634",
+    "extensionButton.hoverBackground": "#d9baed"
   },
   "semanticHighlighting": true,
   "semanticTokenColors": {

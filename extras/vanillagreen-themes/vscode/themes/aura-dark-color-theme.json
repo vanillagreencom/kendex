@@ -178,12 +178,12 @@
 		"editorWidget.border": "#343140",
 		"editorWidget.resizeBorder": "#a277ff50",
 		"errorForeground": "#ff6767",
-		"extensionButton.background": "#a277ff80",
-		"extensionButton.foreground": "#edecee",
-		"extensionButton.hoverBackground": "#a277ff99",
-		"extensionButton.prominentBackground": "#a277ff9d",
-		"extensionButton.prominentForeground": "#edecee",
-		"extensionButton.prominentHoverBackground": "#a277ff",
+		"extensionButton.background": "#a277ff99",
+		"extensionButton.foreground": "#15141b",
+		"extensionButton.hoverBackground": "#b894ffcc",
+		"extensionButton.prominentBackground": "#a277ff99",
+		"extensionButton.prominentForeground": "#15141b",
+		"extensionButton.prominentHoverBackground": "#b894ffcc",
 		"focusBorder": "#a277ff80",
 		"foreground": "#b9b4c5",
 		"gitDecoration.conflictingResourceForeground": "#ffca85",
@@ -443,7 +443,8 @@
 		"widget.shadow": "#15141b33",
 		"editorInfo.foreground": "#82e2ff",
 		"gitDecoration.addedResourceForeground": "#61ffca",
-		"panel.foreground": "#edecee"
+		"panel.foreground": "#edecee",
+		"extensionButton.separator": "#edecee4d"
 	},
 	"tokenColors": [
 		{

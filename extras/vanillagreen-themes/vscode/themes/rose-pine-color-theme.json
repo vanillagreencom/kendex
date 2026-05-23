@@ -1,5 +1,5 @@
 {
-	"name": "Rosé Pine",
+	"name": "Ros\u00e9 Pine",
 	"type": "dark",
 	"colors": {
 		"activityBar.activeBorder": "#e0def4",
@@ -465,30 +465,42 @@
 		"window.activeBorder": "#1f1d2e",
 		"window.inactiveBorder": "#1f1d2e",
 		"editorIndentGuide.activeBackground1": "#6e6a86",
-		"editorIndentGuide.background1": "#6e6a8666"
+		"editorIndentGuide.background1": "#6e6a8666",
+		"extensionButton.background": "#ebbcba",
+		"extensionButton.foreground": "#191724",
+		"extensionButton.hoverBackground": "#ebbcbae6"
 	},
 	"tokenColors": [
 		{
-			"scope": ["comment"],
+			"scope": [
+				"comment"
+			],
 			"settings": {
 				"foreground": "#6e6a86",
 				"fontStyle": "italic"
 			}
 		},
 		{
-			"scope": ["constant"],
+			"scope": [
+				"constant"
+			],
 			"settings": {
 				"foreground": "#31748f"
 			}
 		},
 		{
-			"scope": ["constant.numeric", "constant.language"],
+			"scope": [
+				"constant.numeric",
+				"constant.language"
+			],
 			"settings": {
 				"foreground": "#ebbcba"
 			}
 		},
 		{
-			"scope": ["entity.name"],
+			"scope": [
+				"entity.name"
+			],
 			"settings": {
 				"foreground": "#ebbcba"
 			}
@@ -505,38 +517,52 @@
 			}
 		},
 		{
-			"scope": ["entity.other.attribute-name", "entity.other.inherited-class"],
+			"scope": [
+				"entity.other.attribute-name",
+				"entity.other.inherited-class"
+			],
 			"settings": {
 				"foreground": "#c4a7e7",
 				"fontStyle": "italic"
 			}
 		},
 		{
-			"scope": ["invalid"],
+			"scope": [
+				"invalid"
+			],
 			"settings": {
 				"foreground": "#eb6f92"
 			}
 		},
 		{
-			"scope": ["invalid.deprecated"],
+			"scope": [
+				"invalid.deprecated"
+			],
 			"settings": {
 				"foreground": "#908caa"
 			}
 		},
 		{
-			"scope": ["keyword", "variable.language.this"],
+			"scope": [
+				"keyword",
+				"variable.language.this"
+			],
 			"settings": {
 				"foreground": "#31748f"
 			}
 		},
 		{
-			"scope": ["markup.inserted.diff"],
+			"scope": [
+				"markup.inserted.diff"
+			],
 			"settings": {
 				"foreground": "#9ccfd8"
 			}
 		},
 		{
-			"scope": ["markup.deleted.diff"],
+			"scope": [
+				"markup.deleted.diff"
+			],
 			"settings": {
 				"foreground": "#eb6f92"
 			}
@@ -560,19 +586,27 @@
 			}
 		},
 		{
-			"scope": ["meta.diff.range"],
+			"scope": [
+				"meta.diff.range"
+			],
 			"settings": {
 				"foreground": "#c4a7e7"
 			}
 		},
 		{
-			"scope": ["meta.tag", "meta.brace"],
+			"scope": [
+				"meta.tag",
+				"meta.brace"
+			],
 			"settings": {
 				"foreground": "#e0def4"
 			}
 		},
 		{
-			"scope": ["meta.import", "meta.export"],
+			"scope": [
+				"meta.import",
+				"meta.export"
+			],
 			"settings": {
 				"foreground": "#31748f"
 			}
@@ -603,62 +637,83 @@
 			}
 		},
 		{
-			"scope": ["punctuation"],
+			"scope": [
+				"punctuation"
+			],
 			"settings": {
 				"foreground": "#908caa"
 			}
 		},
 		{
-			"scope": ["punctuation.accessor"],
+			"scope": [
+				"punctuation.accessor"
+			],
 			"settings": {
 				"foreground": "#31748f"
 			}
 		},
 		{
-			"scope": ["punctuation.definition.string"],
+			"scope": [
+				"punctuation.definition.string"
+			],
 			"settings": {
 				"foreground": "#f6c177"
 			}
 		},
 		{
-			"scope": ["punctuation.definition.tag"],
+			"scope": [
+				"punctuation.definition.tag"
+			],
 			"settings": {
 				"foreground": "#6e6a86"
 			}
 		},
 		{
-			"scope": ["storage.type", "storage.modifier"],
+			"scope": [
+				"storage.type",
+				"storage.modifier"
+			],
 			"settings": {
 				"foreground": "#31748f"
 			}
 		},
 		{
-			"scope": ["string"],
+			"scope": [
+				"string"
+			],
 			"settings": {
 				"foreground": "#f6c177"
 			}
 		},
 		{
-			"scope": ["support"],
+			"scope": [
+				"support"
+			],
 			"settings": {
 				"foreground": "#9ccfd8"
 			}
 		},
 		{
-			"scope": ["support.constant"],
+			"scope": [
+				"support.constant"
+			],
 			"settings": {
 				"foreground": "#f6c177"
 			}
 		},
 		{
-			"scope": ["support.function"],
+			"scope": [
+				"support.function"
+			],
 			"settings": {
 				"foreground": "#eb6f92",
 				"fontStyle": "italic"
 			}
 		},
 		{
-			"scope": ["variable"],
+			"scope": [
+				"variable"
+			],
 			"settings": {
 				"foreground": "#ebbcba",
 				"fontStyle": "italic"
@@ -676,7 +731,9 @@
 			}
 		},
 		{
-			"scope": ["variable.parameter"],
+			"scope": [
+				"variable.parameter"
+			],
 			"settings": {
 				"foreground": "#c4a7e7"
 			}

@@ -203,7 +203,7 @@
     "problemsWarningIcon.foreground": "#fe640b",
     "extensionButton.prominentForeground": "#dce0e8",
     "extensionButton.prominentBackground": "#8839ef",
-    "extensionButton.separator": "#eff1f5",
+    "extensionButton.separator": "#00000000",
     "extensionButton.prominentHoverBackground": "#9c5af2",
     "extensionBadge.remoteBackground": "#1e66f5",
     "extensionBadge.remoteForeground": "#dce0e8",
@@ -565,7 +565,10 @@
     "button.secondaryBorder": "#8839ef",
     "table.headerBackground": "#ccd0da",
     "table.headerForeground": "#4c4f69",
-    "list.focusAndSelectionBackground": "#bcc0cc"
+    "list.focusAndSelectionBackground": "#bcc0cc",
+    "extensionButton.background": "#8839ef",
+    "extensionButton.foreground": "#dce0e8",
+    "extensionButton.hoverBackground": "#9c5af2"
   },
   "semanticHighlighting": true,
   "semanticTokenColors": {

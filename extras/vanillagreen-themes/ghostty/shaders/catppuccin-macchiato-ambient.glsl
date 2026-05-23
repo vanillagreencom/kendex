@@ -42,7 +42,7 @@
 
 #define SHOW_BELL    0.0
 #define SHOW_BELL_ID 0
-#define BG_COL       vec3(0.200, 0.169, 0.157)
+#define BG_COL       vec3(0.141, 0.153, 0.227)
 
 float hash11(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }

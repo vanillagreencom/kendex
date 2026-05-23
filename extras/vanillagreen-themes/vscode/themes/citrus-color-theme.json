@@ -178,12 +178,12 @@
 		"editorWidget.border": "#333837",
 		"editorWidget.resizeBorder": "#8ae7d250",
 		"errorForeground": "#ff6b88",
-		"extensionButton.background": "#8ae7d280",
-		"extensionButton.foreground": "#dfe3e1",
-		"extensionButton.hoverBackground": "#8ae7d299",
-		"extensionButton.prominentBackground": "#8ae7d29d",
-		"extensionButton.prominentForeground": "#dfe3e1",
-		"extensionButton.prominentHoverBackground": "#8ae7d2",
+		"extensionButton.background": "#8ae7d2",
+		"extensionButton.foreground": "#101413",
+		"extensionButton.hoverBackground": "#9af0db",
+		"extensionButton.prominentBackground": "#8ae7d2",
+		"extensionButton.prominentForeground": "#101413",
+		"extensionButton.prominentHoverBackground": "#9af0db",
 		"focusBorder": "#353a38",
 		"foreground": "#87938f",
 		"gitDecoration.conflictingResourceForeground": "#ff8f3f",
@@ -440,7 +440,8 @@
 		"welcomePage.tileBackground": "#87938f1a",
 		"welcomePage.tileBorder": "#87938f33",
 		"welcomePage.tileHoverBackground": "#87938f33",
-		"widget.shadow": "#10141333"
+		"widget.shadow": "#10141333",
+		"extensionButton.separator": "#dfe3e14d"
 	},
 	"tokenColors": [
 		{

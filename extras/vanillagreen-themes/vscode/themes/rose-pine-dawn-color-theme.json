@@ -206,9 +206,9 @@
 		"errorForeground": "#b4637a",
 		"extensionBadge.remoteBackground": "#907aa9",
 		"extensionBadge.remoteForeground": "#faf4ed",
-		"extensionButton.prominentBackground": "#d7827e",
+		"extensionButton.prominentBackground": "#286983",
 		"extensionButton.prominentForeground": "#faf4ed",
-		"extensionButton.prominentHoverBackground": "#d7827ee6",
+		"extensionButton.prominentHoverBackground": "#317792",
 		"extensionIcon.preReleaseForeground": "#286983",
 		"extensionIcon.starForeground": "#d7827e",
 		"extensionIcon.verifiedForeground": "#907aa9",
@@ -473,7 +473,10 @@
 		"panelSectionHeader.border": "#dfdad9",
 		"sash.hoverBorder": "#c4a7e7",
 		"textPreformat.background": "#f2e9e1",
-		"terminal.background": "#faf4ed"
+		"terminal.background": "#faf4ed",
+		"extensionButton.background": "#286983",
+		"extensionButton.foreground": "#faf4ed",
+		"extensionButton.hoverBackground": "#317792"
 	},
 	"tokenColors": [
 		{
