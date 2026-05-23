@@ -3,6 +3,7 @@
 mod agent;
 mod commands;
 mod config;
+mod extra;
 mod frontmatter;
 mod harness;
 mod hook;

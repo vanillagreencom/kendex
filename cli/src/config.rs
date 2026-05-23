@@ -25,6 +25,7 @@ pub enum ItemKind {
     Agent,
     Hook,
     PiExtension,
+    Extra,
 }
 
 impl ItemKind {
@@ -37,6 +38,7 @@ impl ItemKind {
             ItemKind::Skill => "skill",
             ItemKind::Hook => "hook",
             ItemKind::PiExtension => "pi-package",
+            ItemKind::Extra => "extra",
         }
     }
 
@@ -54,7 +56,24 @@ impl std::fmt::Display for ItemKind {
             ItemKind::Agent => write!(f, "agent"),
             ItemKind::Hook => write!(f, "hook"),
             ItemKind::PiExtension => write!(f, "pi-extension"),
+            ItemKind::Extra => write!(f, "extra"),
         }
+    }
+}
+
+#[cfg(test)]
+mod item_kind_tests {
+    use super::ItemKind;
+
+    #[test]
+    fn extra_round_trips_through_serialization_and_display() {
+        let encoded = serde_json::to_string(&ItemKind::Extra).unwrap();
+        assert_eq!(encoded, "\"extra\"");
+
+        let decoded: ItemKind = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, ItemKind::Extra);
+        assert_eq!(ItemKind::Extra.to_string(), "extra");
+        assert_eq!(ItemKind::Extra.label_short(), "extra");
     }
 }
 
@@ -807,6 +826,12 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
         }
         ItemKind::PiExtension => {
             if let Some(dir) = resolve_pi_extension_dir(&source_root, &entry.name) {
+                state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
+            }
+        }
+        ItemKind::Extra => {
+            let dir = source_root.join("extras").join(&entry.name);
+            if dir.exists() {
                 state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
             }
         }

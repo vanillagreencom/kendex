@@ -368,11 +368,12 @@ fn kind_bucket(kind: Option<crate::config::ItemKind>) -> &'static str {
         Some(crate::config::ItemKind::Agent) => "Agents",
         Some(crate::config::ItemKind::Hook) => "Hooks",
         Some(crate::config::ItemKind::PiExtension) => "Pi Packages",
+        Some(crate::config::ItemKind::Extra) => "Extras",
         _ => "Skills",
     }
 }
 
-const KIND_ORDER: &[&str] = &["Agents", "Skills", "Hooks", "Pi Packages"];
+const KIND_ORDER: &[&str] = &["Agents", "Skills", "Hooks", "Pi Packages", "Extras"];
 
 fn build_installed_tab(installed: &InstalledState) -> Option<Tab> {
     if installed.is_empty() {

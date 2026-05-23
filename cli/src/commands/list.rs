@@ -5,7 +5,7 @@ use anyhow::Result;
 
 pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
     let mut printed_anything = false;
-    let mut totals = (0usize, 0usize, 0usize, 0usize); // agents, skills, hooks, pi
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize); // agents, skills, hooks, pi, extras
 
     for &global in scope.globals() {
         let lock_path = config::lock_file_path(global);
@@ -30,6 +30,7 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
         let mut skills = Vec::new();
         let mut hooks = Vec::new();
         let mut pi_extensions = Vec::new();
+        let mut extras = Vec::new();
 
         for entry in lock.entries.values() {
             if let Some(filter) = harness_filter
@@ -47,10 +48,16 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
                 config::ItemKind::Skill => skills.push(entry),
                 config::ItemKind::Hook => hooks.push(entry),
                 config::ItemKind::PiExtension => pi_extensions.push(entry),
+                config::ItemKind::Extra => extras.push(entry),
             }
         }
 
-        if agents.is_empty() && skills.is_empty() && hooks.is_empty() && pi_extensions.is_empty() {
+        if agents.is_empty()
+            && skills.is_empty()
+            && hooks.is_empty()
+            && pi_extensions.is_empty()
+            && extras.is_empty()
+        {
             continue;
         }
 
@@ -64,6 +71,7 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
             ("Skills", &skills),
             ("Hooks", &hooks),
             ("Pi packages", &pi_extensions),
+            ("Extras", &extras),
         ] {
             if items.is_empty() {
                 continue;
@@ -79,6 +87,7 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
         totals.1 += skills.len();
         totals.2 += hooks.len();
         totals.3 += pi_extensions.len();
+        totals.4 += extras.len();
         printed_anything = true;
     }
 
@@ -88,8 +97,8 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
     }
 
     eprintln!(
-        "\nTotal: {} agent(s), {} skill(s), {} hook(s), {} Pi package(s)",
-        totals.0, totals.1, totals.2, totals.3
+        "\nTotal: {} agent(s), {} skill(s), {} hook(s), {} Pi package(s), {} extra(s)",
+        totals.0, totals.1, totals.2, totals.3, totals.4
     );
     Ok(())
 }

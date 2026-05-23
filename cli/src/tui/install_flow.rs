@@ -2146,6 +2146,7 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                     succeeded = target_harnesses.clone();
                 }
             }
+            crate::config::ItemKind::Extra => {}
         }
 
         if succeeded.is_empty() {
@@ -2305,6 +2306,7 @@ mod tests {
             skills: Vec::new(),
             hooks: Vec::new(),
             pi_extensions: Vec::new(),
+            extras: Vec::new(),
         };
         let source_selector = SourceSelectorData {
             current_label: "local".into(),
@@ -2362,6 +2364,7 @@ mod tests {
             skills: Vec::new(),
             hooks: Vec::new(),
             pi_extensions: Vec::new(),
+            extras: Vec::new(),
         };
         let source_selector = SourceSelectorData {
             current_label: "local".into(),

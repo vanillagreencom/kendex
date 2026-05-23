@@ -943,6 +943,7 @@ fn build_inspector_rows(
             crate::config::ItemKind::Skill => "skill",
             crate::config::ItemKind::Hook => "hook",
             crate::config::ItemKind::PiExtension => "pi-pkg",
+            crate::config::ItemKind::Extra => "extra",
         };
         title_spans.push(Span::styled(
             format!("  {label}"),

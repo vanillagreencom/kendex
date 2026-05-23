@@ -131,6 +131,7 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
         ItemKind::Skill => verify_skill_install(&entry.name, &entry.harnesses, global),
         ItemKind::Agent => verify_agent_install(&entry.name, &entry.harnesses, global),
         ItemKind::Hook => verify_hook_install(&entry.name, &entry.harnesses, global),
+        ItemKind::Extra => (None, None),
     };
 
     VerifyRow {

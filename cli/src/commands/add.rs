@@ -1,6 +1,7 @@
 use crate::agent;
 use crate::agent::Agent;
 use crate::config::{self, InstallMethod, LockFile};
+use crate::extra;
 use crate::harness::Harness;
 use crate::hook;
 use crate::hook::Hook;
@@ -609,15 +610,17 @@ Drop --global to install at project scope (default).
                 let mut s = 0;
                 let mut h = 0;
                 let mut p = 0;
+                let mut x = 0;
                 for entry in global_lock.entries.values() {
                     match entry.kind {
                         config::ItemKind::Agent => a += 1,
                         config::ItemKind::Skill => s += 1,
                         config::ItemKind::Hook => h += 1,
                         config::ItemKind::PiExtension => p += 1,
+                        config::ItemKind::Extra => x += 1,
                     }
                 }
-                format!("{a} agent(s), {s} skill(s), {h} hook(s), {p} Pi package(s)")
+                format!("{a} agent(s), {s} skill(s), {h} hook(s), {p} Pi package(s), {x} extra(s)")
             };
             eprintln!(
                 "
@@ -680,6 +683,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         let all_hooks = hook::discover_hooks(&hooks_dir)?;
         let all_pi_extensions =
             crate::pi_extension::discover_pi_extensions(&pi_ext_dir).unwrap_or_default();
+        let extras = extra::discover_extras(&source_dir)?;
         let dep_graph = skill::build_dependency_graph(&all_skills);
 
         // Filter semantics: passing any item filter restricts the install to
@@ -750,21 +754,22 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             None => all_pi_extensions,
         };
 
-        let total = agents.len() + skills.len() + hooks.len() + pi_extensions.len();
-        if total == 0 && (yes || all || harness_filter.is_some()) {
+        let installable_total = agents.len() + skills.len() + hooks.len() + pi_extensions.len();
+        if installable_total == 0 && extras.is_empty() && (yes || all || harness_filter.is_some()) {
             eprintln!(
-                "No agents, skills, hooks, or pi-packages found in {}",
+                "No agents, skills, hooks, pi-packages, or extras found in {}",
                 source_dir.display()
             );
             return Ok(());
         }
 
         eprintln!(
-            "Found {} agent(s), {} skill(s), {} hook(s), {} pi-package(s) in {}",
+            "Found {} agent(s), {} skill(s), {} hook(s), {} pi-package(s), {} extra(s) in {}",
             agents.len(),
             skills.len(),
             hooks.len(),
             pi_extensions.len(),
+            extras.len(),
             source_dir.display()
         );
 
@@ -837,6 +842,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 skills,
                 hooks,
                 pi_extensions,
+                extras,
             };
             match tui::run_install_flow(items, &selector)? {
                 tui::InstallFlowResult::Install(sel) => {

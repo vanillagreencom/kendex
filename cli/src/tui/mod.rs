@@ -11,6 +11,7 @@ pub use summary::run_summary_screen;
 
 use crate::agent::Agent;
 use crate::config::InstallMethod;
+use crate::extra::Extra;
 use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::pi_extension::PiExtension;
@@ -40,6 +41,7 @@ pub struct DiscoveredItems {
     pub skills: Vec<Skill>,
     pub hooks: Vec<Hook>,
     pub pi_extensions: Vec<PiExtension>,
+    pub extras: Vec<Extra>,
 }
 
 pub struct InstallSelections {
