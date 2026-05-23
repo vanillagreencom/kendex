@@ -357,6 +357,8 @@ pub enum ActionButton {
     OpenHelp,
     // Bottom action bar (operate on marked set)
     BatchInstall,
+    /// Apply selected extras. Display-only stub until the apply pathway lands.
+    BatchApply,
     BatchUpdate,
     BatchRemove,
     /// Move selected project-only items to global.
@@ -368,6 +370,8 @@ pub enum ActionButton {
     // Inspector panel (operate on cursor item)
     InspectorMarkToggle,
     InspectorInstall,
+    /// Apply the cursor extra. Display-only stub until the apply pathway lands.
+    InspectorApply,
     InspectorUpdate,
     InspectorRemove,
     InspectorDropProject,

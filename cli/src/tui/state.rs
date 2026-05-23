@@ -285,6 +285,38 @@ pub(super) fn build_item_tabs(
         });
     }
 
+    if !items.extras.is_empty() {
+        let items_list: Vec<SelectItem> = items
+            .extras
+            .iter()
+            .map(|extra| {
+                let name = extra.name();
+                let info = installed.get(name);
+                SelectItem {
+                    label: name.to_string(),
+                    description: extra.description().to_string(),
+                    selected: false,
+                    suffix: Some(extra_row_suffix(extra)),
+                    locked: false,
+                    installed: info.is_some(),
+                    installed_scope: info.map(|i| i.scope),
+                    outdated: info.is_some_and(|i| i.outdated),
+                    kind: Some(crate::config::ItemKind::Extra),
+                    search_haystack: String::new(),
+                }
+            })
+            .collect();
+
+        tabs.push(Tab {
+            name: "Extras".into(),
+            kind: TabKind::Source,
+            groups: vec![ItemGroup {
+                label: String::new(),
+                items: items_list,
+            }],
+        });
+    }
+
     if let Some(installed_tab) = build_installed_tab(installed) {
         tabs.push(installed_tab);
     }
@@ -361,6 +393,20 @@ pub(super) fn build_item_tabs(
     }
 
     tabs
+}
+
+fn extra_row_suffix(extra: &crate::extra::Extra) -> String {
+    let theme_count = extra.theme_pack.themes.len();
+    let theme_label = if theme_count == 1 { "theme" } else { "themes" };
+    let target_summary = if extra.theme_pack.targets.is_empty() {
+        "—".to_string()
+    } else {
+        extra.theme_pack.targets.join(", ")
+    };
+    format!(
+        "{} · {theme_count} {theme_label} · targets: {target_summary}",
+        extra.description()
+    )
 }
 
 fn kind_bucket(kind: Option<crate::config::ItemKind>) -> &'static str {
@@ -556,4 +602,74 @@ pub(super) fn build_dep_display(
     }
 
     display
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extra::{Extra, ExtraKind, ThemePack, ThemeSpec};
+
+    fn discovered(extras: Vec<Extra>) -> crate::tui::DiscoveredItems {
+        crate::tui::DiscoveredItems {
+            agents: Vec::new(),
+            skills: Vec::new(),
+            hooks: Vec::new(),
+            pi_extensions: Vec::new(),
+            extras,
+        }
+    }
+
+    fn extra_fixture() -> Extra {
+        Extra {
+            kind: ExtraKind::ThemePack,
+            theme_pack: ThemePack {
+                name: "vanillagreen-themes".into(),
+                description: "Matched Ghostty + VS Code-family themes.".into(),
+                default_theme: "forest".into(),
+                targets: vec!["ghostty".into(), "vscode".into(), "vscodium".into()],
+                themes: vec![
+                    ThemeSpec {
+                        id: "forest".into(),
+                        display: "Forest".into(),
+                        ghostty: None,
+                        vscode: None,
+                    },
+                    ThemeSpec {
+                        id: "meadow".into(),
+                        display: "Meadow".into(),
+                        ghostty: None,
+                        vscode: None,
+                    },
+                ],
+            },
+            source_dir: std::path::PathBuf::from("/tmp/vanillagreen-themes"),
+        }
+    }
+
+    #[test]
+    fn extras_tab_hidden_when_no_extras_discovered() {
+        let items = discovered(Vec::new());
+        let tabs = build_item_tabs(&items, &HashMap::new(), &InstalledState::new(), None);
+
+        assert!(!tabs.iter().any(|tab| tab.name == "Extras"));
+    }
+
+    #[test]
+    fn extras_tab_present_and_rows_include_manifest_summary() {
+        let items = discovered(vec![extra_fixture()]);
+        let tabs = build_item_tabs(&items, &HashMap::new(), &InstalledState::new(), None);
+        let extras_tab = tabs
+            .iter()
+            .find(|tab| tab.name == "Extras")
+            .expect("extras tab should be present");
+
+        let row = &extras_tab.groups[0].items[0];
+        assert_eq!(row.label, "vanillagreen-themes");
+        assert_eq!(row.description, "Matched Ghostty + VS Code-family themes.");
+        assert_eq!(row.kind, Some(crate::config::ItemKind::Extra));
+        let suffix = row.suffix.as_deref().unwrap_or_default();
+        assert!(suffix.contains("Matched Ghostty + VS Code-family themes."));
+        assert!(suffix.contains("2 themes"));
+        assert!(suffix.contains("targets: ghostty, vscode, vscodium"));
+    }
 }

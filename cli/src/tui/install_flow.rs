@@ -75,8 +75,9 @@ pub fn run_install_flow(
         && items.skills.is_empty()
         && items.hooks.is_empty()
         && items.pi_extensions.is_empty()
+        && items.extras.is_empty()
     {
-        eprintln!("No agents, skills, hooks, or pi-packages found.");
+        eprintln!("No agents, skills, hooks, pi-packages, or extras found.");
         return Ok(InstallFlowResult::Cancelled);
     }
 
@@ -1006,6 +1007,7 @@ fn dispatch_action_button(
             state.select.help_overlay = true;
         }
         ActionButton::BatchInstall => open_install_confirm(state),
+        ActionButton::BatchApply => open_apply_stub(state),
         ActionButton::BatchUpdate => open_update_confirm(state, false)?,
         ActionButton::BatchRemove => open_remove_confirm(state),
         ActionButton::BatchMoveToGlobal => open_move_confirm(state, true),
@@ -1019,6 +1021,10 @@ fn dispatch_action_button(
         ActionButton::InspectorInstall => {
             mark_cursor_if_unmarked(state);
             open_install_confirm(state);
+        }
+        ActionButton::InspectorApply => {
+            mark_cursor_if_unmarked(state);
+            open_apply_stub(state);
         }
         ActionButton::InspectorUpdate => {
             mark_cursor_if_unmarked(state);
@@ -1134,6 +1140,28 @@ fn unlock_orphan_deps(select: &mut TabbedSelect, graph: &HashMap<String, Vec<Str
 
 // ── Confirm dialog construction ──────────────────────────────
 
+fn open_apply_stub(state: &mut FlowState) {
+    let mut names: Vec<String> = state
+        .select
+        .marked_items()
+        .into_iter()
+        .filter(|item| item.kind == Some(crate::config::ItemKind::Extra))
+        .map(|item| item.label.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+
+    if names.is_empty() {
+        state.select.flash_message = Some("No extras selected to apply.".into());
+        return;
+    }
+
+    state.select.flash_message = Some(format!(
+        "Apply not implemented yet for {} extra(s); no files changed.",
+        names.len()
+    ));
+}
+
 fn open_install_confirm(state: &mut FlowState) {
     let to_install = marked_install_items(&state.select);
 
@@ -1215,7 +1243,7 @@ fn open_install_confirm(state: &mut FlowState) {
 fn is_install_candidate(item: &SelectItem) -> bool {
     // CLI update rows live in the Updates tab and use `kind = None`.
     // The install action is package-only; CLI updates stay on `u`.
-    item.kind.is_some()
+    item.kind.is_some() && item.kind != Some(crate::config::ItemKind::Extra)
 }
 
 fn marked_install_items(select: &TabbedSelect) -> Vec<&SelectItem> {

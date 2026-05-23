@@ -1239,6 +1239,15 @@ impl InspectorButton {
         }
     }
 
+    fn apply() -> Self {
+        Self {
+            label: "Apply (not implemented)".into(),
+            action: ActionButton::InspectorApply,
+            bg: theme::STATUS_OK,
+            fg: theme::ON_DARK,
+        }
+    }
+
     fn update() -> Self {
         // Update matches "outdated" badge color (STATUS_WARN / Yellow).
         Self {
@@ -1295,7 +1304,9 @@ impl InspectorButton {
 fn inspector_buttons(item: &SelectItem, scope_global: bool) -> Vec<InspectorButton> {
     let mut out = vec![InspectorButton::select(item.selected)];
 
-    if item.is_duplicate() {
+    if item.kind == Some(crate::config::ItemKind::Extra) && !item.installed {
+        out.push(InspectorButton::apply());
+    } else if item.is_duplicate() {
         out.push(InspectorButton::install(scope_global, true));
         out.push(InspectorButton::drop_project());
         out.push(InspectorButton::drop_global());
@@ -1342,6 +1353,7 @@ fn draw_action_bar(frame: &mut Frame, area: Rect, select: &mut TabbedSelect) {
     // of items the verb can act on; the user picks which verb to run.
     let mut install_n = 0usize;
     let mut reinstall_n = 0usize;
+    let mut apply_n = 0usize;
     let mut update_n = 0usize;
     let mut remove_n = 0usize;
     // Move counts are direction-specific. project-only selected items can
@@ -1351,7 +1363,9 @@ fn draw_action_bar(frame: &mut Frame, area: Rect, select: &mut TabbedSelect) {
     let mut move_to_global_n = 0usize;
     let mut move_to_project_n = 0usize;
     for item in select.marked_items() {
-        if item.kind.is_some() {
+        if item.kind == Some(crate::config::ItemKind::Extra) {
+            apply_n += 1;
+        } else if item.kind.is_some() {
             if item.installed {
                 reinstall_n += 1;
             } else {
@@ -1425,6 +1439,15 @@ fn draw_action_bar(frame: &mut Frame, area: Rect, select: &mut TabbedSelect) {
         buttons.push((
             label,
             ActionButton::BatchInstall,
+            theme::ON_DARK,
+            theme::STATUS_OK,
+            true,
+        ));
+    }
+    if apply_n > 0 {
+        buttons.push((
+            format!(" Apply ({apply_n}) "),
+            ActionButton::BatchApply,
             theme::ON_DARK,
             theme::STATUS_OK,
             true,
@@ -2775,6 +2798,81 @@ mod tests {
             .iter()
             .any(|b| b.action == ActionButton::BatchInstall && b.enabled);
         assert!(install_btn, "install button should be enabled with 1 mark");
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(
+            rendered.contains("Install project (1)"),
+            "source package marks should keep Install label: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Apply (1)"),
+            "non-extra tabs must not use Apply label: {rendered}"
+        );
+    }
+
+    #[test]
+    fn extras_tab_action_bar_renders_apply_instead_of_install() {
+        let mut item = item("vanillagreen-themes", "Matched themes");
+        item.selected = true;
+        item.kind = Some(crate::config::ItemKind::Extra);
+        let mut select = TabbedSelect::new("x", vec![source_tab("Extras", vec![item])]);
+
+        let backend = TestBackend::new(140, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_tabbed_select(f, &mut select))
+            .unwrap();
+
+        assert!(
+            select
+                .button_hits
+                .iter()
+                .any(|b| b.action == ActionButton::BatchApply && b.enabled),
+            "apply button should be enabled for selected extras"
+        );
+        assert!(
+            !select
+                .button_hits
+                .iter()
+                .any(|b| b.action == ActionButton::BatchInstall),
+            "extras must not surface install action"
+        );
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(
+            rendered.contains("Apply (1)"),
+            "missing Apply label: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Install project") && !rendered.contains("Install packages"),
+            "extras action bar should not render install action: {rendered}"
+        );
+    }
+
+    #[test]
+    fn extras_row_renders_description_theme_count_and_targets() {
+        let mut item = item(
+            "vanillagreen-themes",
+            "Matched Ghostty + VS Code-family themes.",
+        );
+        item.kind = Some(crate::config::ItemKind::Extra);
+        item.suffix = Some(
+            "Matched Ghostty + VS Code-family themes. · 2 themes · targets: ghostty, vscode".into(),
+        );
+        let mut select = TabbedSelect::new("x", vec![source_tab("Extras", vec![item])]);
+
+        let backend = TestBackend::new(180, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_tabbed_select(f, &mut select))
+            .unwrap();
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("vanillagreen-themes"), "{rendered}");
+        assert!(
+            rendered.contains("Matched Ghostty + VS Code-family themes."),
+            "{rendered}"
+        );
+        assert!(rendered.contains("2 themes"), "{rendered}");
+        assert!(rendered.contains("targets: ghostty, vscode"), "{rendered}");
     }
 
     #[test]
