@@ -235,6 +235,16 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 | [`pi-tool-renderer`](pi-extensions/pi-tool-renderer/README.md) | Compact Claude/opencode-style renderers for built-in tools. |
 | [`pi-web-tools`](pi-extensions/pi-web-tools/README.md) | First-party web stack: search, deep research, fetch, video, and more. |
 
+## Extras
+
+Extras are optional non-agent packages distributed by vstack, such as theme packs. See `extras/README.md` for the catalog and per-extra documentation.
+
+```bash
+vstack apply vanillagreen-themes --theme ghibli-serene-nature --target ghostty,vscodium
+```
+
+`vstack apply` uses global/user scope by default for app themes. Add `--dry-run` to preview planned changes before writing config.
+
 ## License
 
 MIT
