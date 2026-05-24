@@ -1032,6 +1032,26 @@ fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
     }
 
     for socket in sockets {
+        // Clear `window-style` first so a stale fg from a prior theme cannot
+        // outlive the re-source (the new theme conf deliberately omits a
+        // `window-style` set to keep inactive panes readable on dark themes).
+        let unset = Command::new(cli_path)
+            .arg("-S")
+            .arg(&socket)
+            .arg("set")
+            .arg("-gu")
+            .arg("window-style")
+            .output();
+        if let Ok(out) = &unset
+            && !out.status.success()
+        {
+            eprintln!(
+                "warning: failed to unset window-style on tmux server at {} ({})",
+                socket.display(),
+                String::from_utf8_lossy(&out.stderr).trim_end()
+            );
+        }
+
         let output = Command::new(cli_path)
             .arg("-S")
             .arg(&socket)
