@@ -136,6 +136,8 @@ pub fn draw_tabbed_select(frame: &mut Frame, select: &mut TabbedSelect) {
             typed_input: dialog.typed_input.clone(),
         };
         draw_confirm_dialog(frame, select, &snapshot);
+    } else if select.apply_picker.is_some() {
+        draw_apply_picker(frame, select);
     } else if select.repo_dialog.is_some() {
         draw_repo_dialog(frame, select);
     } else if select.method_dialog.is_some() {
@@ -149,6 +151,8 @@ pub fn draw_tabbed_select(frame: &mut Frame, select: &mut TabbedSelect) {
         select.repo_dialog_outer = Rect::default();
         select.method_dialog_outer = Rect::default();
         select.harness_dialog_outer = Rect::default();
+        select.apply_picker_outer = Rect::default();
+        select.apply_picker_row_areas.clear();
     }
 
     if select.help_overlay {
@@ -1241,7 +1245,7 @@ impl InspectorButton {
 
     fn apply() -> Self {
         Self {
-            label: "Apply (pick theme)".into(),
+            label: "Apply theme".into(),
             action: ActionButton::InspectorApply,
             bg: theme::STATUS_OK,
             fg: theme::ON_DARK,
@@ -2283,9 +2287,181 @@ fn draw_repo_dialog(frame: &mut Frame, select: &mut TabbedSelect) {
     }
 }
 
+/// Native scrollable theme-pack picker. Renders the pack's themes in a
+/// bordered list with cursor highlight, plus a footer with Apply/Cancel
+/// buttons + key hints. Mouse hits are recorded into
+/// `select.apply_picker_*` so the click handler can drive it without
+/// re-laying out.
+fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
+    let Some(dialog) = select.apply_picker.as_ref() else {
+        return;
+    };
+    let extra_name = dialog.extra_name.clone();
+    let default_id = dialog.default_theme_id.clone();
+    let targets = dialog.targets.clone();
+    let themes = dialog.themes.clone();
+    let cursor = dialog.cursor;
+    let scroll = dialog.scroll;
+
+    let header_lines: u16 = 3;
+    let footer_lines: u16 = 3;
+    let max_rows = themes.len().max(1) as u16;
+    let desired_content = header_lines + max_rows + footer_lines;
+    let dialog_w: u16 = 72;
+    let (inner, dialog_area) = draw_dialog_chrome(
+        frame,
+        &format!("Apply theme \u{2014} {extra_name}"),
+        theme::ACCENT,
+        desired_content,
+        dialog_w,
+    );
+    select.apply_picker_outer = dialog_area;
+    select.apply_picker_row_areas.clear();
+    select.apply_picker_apply_area = Rect::default();
+    select.apply_picker_cancel_area = Rect::default();
+
+    let mut y = inner.y;
+    let max_y = inner.bottom();
+    if y < max_y {
+        let header = Line::from(vec![
+            Span::styled("targets: ", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled(
+                if targets.is_empty() { "(none declared)".to_string() } else { targets.join(", ") },
+                Style::default().fg(theme::TEXT_PRIMARY),
+            ),
+            Span::styled("   auto-detect at apply time", Style::default().fg(theme::TEXT_MUTED)),
+        ]);
+        frame.render_widget(Paragraph::new(header), Rect::new(inner.x, y, inner.width, 1));
+        y += 1;
+    }
+    if y < max_y {
+        let header2 = Line::from(vec![
+            Span::styled("default: ", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled(default_id.clone(), Style::default().fg(theme::ACCENT)),
+        ]);
+        frame.render_widget(Paragraph::new(header2), Rect::new(inner.x, y, inner.width, 1));
+        y += 1;
+    }
+    if y < max_y {
+        y += 1;
+    }
+
+    let footer_height: u16 = footer_lines.min(max_y.saturating_sub(y));
+    let list_height = max_y.saturating_sub(y).saturating_sub(footer_height);
+
+    let visible = list_height as usize;
+    let scroll = if visible == 0 {
+        scroll
+    } else if cursor < scroll {
+        cursor
+    } else if cursor >= scroll + visible {
+        cursor + 1 - visible
+    } else {
+        scroll
+    };
+    if let Some(d) = select.apply_picker.as_mut() {
+        d.scroll = scroll;
+    }
+
+    let mut row_y = y;
+    for (idx, theme) in themes.iter().enumerate().skip(scroll).take(visible) {
+        if row_y >= y + list_height {
+            break;
+        }
+        let is_cursor = idx == cursor;
+        let is_default = theme.id == default_id;
+        let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
+        select.apply_picker_row_areas.push(row_rect);
+        let mark = if is_cursor { "\u{25b8} " } else { "  " };
+        let default_tag = if is_default { "  (default)" } else { "" };
+        let style = if is_cursor {
+            Style::default()
+                .fg(theme::ON_DARK)
+                .bg(theme::DIALOG_CURSOR_BG)
+                .bold()
+        } else {
+            Style::default().fg(theme::TEXT_PRIMARY)
+        };
+        let label = format!(
+            " {mark}{:<28}  {}{}",
+            theme.id,
+            theme.display,
+            default_tag
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(label, style))),
+            row_rect,
+        );
+        row_y += 1;
+    }
+
+    if scroll > 0 && y < max_y {
+        let up_rect = Rect::new(inner.right().saturating_sub(2), y, 1, 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("\u{25b4}", Style::default().fg(theme::TEXT_MUTED)))),
+            up_rect,
+        );
+    }
+    if scroll + visible < themes.len() && list_height > 0 {
+        let down_y = y + list_height - 1;
+        let down_rect = Rect::new(inner.right().saturating_sub(2), down_y, 1, 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("\u{25be}", Style::default().fg(theme::TEXT_MUTED)))),
+            down_rect,
+        );
+    }
+
+    let mut fy = y + list_height;
+    if fy < max_y {
+        fy += 1;
+    }
+    if fy < max_y {
+        let apply_label = " Apply ";
+        let cancel_label = " Cancel ";
+        let apply_w = apply_label.chars().count() as u16;
+        let cancel_w = cancel_label.chars().count() as u16;
+        let apply_rect = Rect::new(inner.x, fy, apply_w, 1);
+        select.apply_picker_apply_area = apply_rect;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                apply_label,
+                Style::default().fg(theme::ON_DARK).bg(theme::ACCENT).bold(),
+            ))),
+            apply_rect,
+        );
+        let cancel_x = inner.x + apply_w + 2;
+        let cancel_rect = Rect::new(cancel_x, fy, cancel_w, 1);
+        select.apply_picker_cancel_area = cancel_rect;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                cancel_label,
+                Style::default()
+                    .fg(theme::TEXT_MUTED)
+                    .bold(),
+            ))),
+            cancel_rect,
+        );
+        fy += 1;
+    }
+    if fy < max_y {
+        let hint = Line::from(vec![
+            Span::styled("\u{2191}\u{2193}", Style::default().fg(theme::ACCENT)),
+            Span::styled(" move  ", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled("PgUp/PgDn", Style::default().fg(theme::ACCENT)),
+            Span::styled(" page  ", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled("enter", Style::default().fg(theme::ACCENT)),
+            Span::styled(" apply  ", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled("esc", Style::default().fg(theme::ACCENT)),
+            Span::styled(" cancel", Style::default().fg(theme::TEXT_MUTED)),
+        ]);
+        frame.render_widget(Paragraph::new(hint), Rect::new(inner.x, fy, inner.width, 1));
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────
 
 /// Centered modal frame with thick accent border + padded inner area.
+
 /// Renders Clear, the outer border, title; returns (inner, outer) so the
 /// caller can record hit areas and lay out content.
 fn draw_dialog_chrome(

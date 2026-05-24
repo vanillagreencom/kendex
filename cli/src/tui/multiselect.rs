@@ -102,6 +102,9 @@ pub enum ConfirmAction {
     },
     /// Generic acknowledgement (used for warnings).
     Acknowledge,
+    /// Apply one theme from a theme-pack extra. Sized for the spawn_work
+    /// runner; opens the global/user `vstack apply` pipeline.
+    ApplyExtraTheme { extra_name: String, theme_id: String },
 }
 
 /// One row in a remove plan: name + which scope(s) the removal targets.
@@ -176,6 +179,56 @@ fn build_haystack(label: &str, description: &str) -> String {
 pub struct RepoOption {
     pub label: String,
     pub source: String,
+}
+
+/// Native scrollable picker for an extras theme-pack. The user picks one
+/// theme from the list; pressing Enter (or the Apply button) launches
+/// `vstack apply --theme <id>` via the same worker thread infra that
+/// install/remove/update use, with a spinner overlay and a flash result.
+pub struct ApplyPickerDialog {
+    pub extra_name: String,
+    pub default_theme_id: String,
+    pub targets: Vec<String>,
+    pub themes: Vec<ApplyPickerTheme>,
+    pub cursor: usize,
+    pub scroll: usize,
+}
+
+#[derive(Clone)]
+pub struct ApplyPickerTheme {
+    pub id: String,
+    pub display: String,
+}
+
+impl ApplyPickerDialog {
+    pub fn cursor_theme_id(&self) -> Option<&str> {
+        self.themes.get(self.cursor).map(|t| t.id.as_str())
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        if self.themes.is_empty() {
+            return;
+        }
+        let len = self.themes.len() as isize;
+        let mut new = self.cursor as isize + delta;
+        if new < 0 {
+            new = 0;
+        } else if new >= len {
+            new = len - 1;
+        }
+        self.cursor = new as usize;
+    }
+
+    pub fn scroll_into_view(&mut self, visible_rows: usize) {
+        if visible_rows == 0 {
+            return;
+        }
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        } else if self.cursor >= self.scroll + visible_rows {
+            self.scroll = self.cursor + 1 - visible_rows;
+        }
+    }
 }
 
 pub struct RepoDialog {
@@ -313,6 +366,11 @@ pub struct TabbedSelect {
     pub confirm_dialog_outer: ratatui::layout::Rect,
     pub confirm_dialog_accept_area: ratatui::layout::Rect,
     pub confirm_dialog_cancel_area: ratatui::layout::Rect,
+    pub apply_picker: Option<ApplyPickerDialog>,
+    pub apply_picker_outer: ratatui::layout::Rect,
+    pub apply_picker_row_areas: Vec<ratatui::layout::Rect>,
+    pub apply_picker_apply_area: ratatui::layout::Rect,
+    pub apply_picker_cancel_area: ratatui::layout::Rect,
     pub help_overlay_outer: ratatui::layout::Rect,
     pub rendered_list_rows: Vec<Option<usize>>,
     pub rendered_total_rows: usize,
@@ -438,6 +496,11 @@ impl TabbedSelect {
             confirm_dialog_outer: ratatui::layout::Rect::default(),
             confirm_dialog_accept_area: ratatui::layout::Rect::default(),
             confirm_dialog_cancel_area: ratatui::layout::Rect::default(),
+            apply_picker: None,
+            apply_picker_outer: ratatui::layout::Rect::default(),
+            apply_picker_row_areas: Vec::new(),
+            apply_picker_apply_area: ratatui::layout::Rect::default(),
+            apply_picker_cancel_area: ratatui::layout::Rect::default(),
             help_overlay_outer: ratatui::layout::Rect::default(),
             rendered_list_rows: Vec::new(),
             rendered_total_rows: 0,
