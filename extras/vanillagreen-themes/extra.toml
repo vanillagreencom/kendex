@@ -1,11 +1,12 @@
 # Vanillagreen theme pack manifest.
 # Distributed as one VS Code extension contributing all themes + a matched icon theme,
-# with per-theme Ghostty palette + ambient shaders and per-theme tmux color block.
+# per-theme Ghostty palette + ambient shaders, per-theme tmux color block,
+# and per-theme Pi (coding-agent) theme JSON.
 name = "vanillagreen-themes"
 kind = "theme-pack"
-description = "Matched Ghostty + VS Code-family + tmux theme pack (25 color themes + Rosé Pine icons)."
+description = "Matched Ghostty + VS Code-family + tmux + Pi theme pack (25 color themes + Rosé Pine icons)."
 default-theme = "ghibli-serene-nature"
-targets = ["ghostty", "vscode", "vscodium", "cursor", "tmux"]
+targets = ["ghostty", "vscode", "vscodium", "cursor", "tmux", "pi"]
 
 [[themes]]
 id = "anthropic"
@@ -23,6 +24,10 @@ theme-file = "vscode/themes/anthropic-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/anthropic.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-anthropic"
+theme-file = "pi/themes/anthropic.json"
+
 [[themes]]
 id = "catppuccin-latte"
 display = "Catppuccin Latte"
@@ -38,6 +43,10 @@ theme-file = "vscode/themes/catppuccin-latte-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/catppuccin-latte.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-catppuccin-latte"
+theme-file = "pi/themes/catppuccin-latte.json"
 
 [[themes]]
 id = "ghibli-serene-nature"
@@ -55,6 +64,10 @@ theme-file = "vscode/themes/ghibli-serene-nature-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/ghibli-serene-nature.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-ghibli-serene-nature"
+theme-file = "pi/themes/ghibli-serene-nature.json"
+
 [[themes]]
 id = "kawaii-pixel"
 display = "Kawaii Pixel"
@@ -70,6 +83,10 @@ theme-file = "vscode/themes/kawaii-pixel-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/kawaii-pixel.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-kawaii-pixel"
+theme-file = "pi/themes/kawaii-pixel.json"
 
 [[themes]]
 id = "rose-pine-dawn"
@@ -87,6 +104,10 @@ theme-file = "vscode/themes/rose-pine-dawn-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/rose-pine-dawn.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-rose-pine-dawn"
+theme-file = "pi/themes/rose-pine-dawn.json"
+
 [[themes]]
 id = "anthropic-dark"
 display = "Anthropic Dark"
@@ -102,6 +123,10 @@ theme-file = "vscode/themes/anthropic-dark-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/anthropic-dark.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-anthropic-dark"
+theme-file = "pi/themes/anthropic-dark.json"
 
 [[themes]]
 id = "anthropic-slate"
@@ -119,6 +144,10 @@ theme-file = "vscode/themes/anthropic-slate-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/anthropic-slate.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-anthropic-slate"
+theme-file = "pi/themes/anthropic-slate.json"
+
 [[themes]]
 id = "aura-dark"
 display = "Aura Dark"
@@ -134,6 +163,10 @@ theme-file = "vscode/themes/aura-dark-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/aura-dark.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-aura-dark"
+theme-file = "pi/themes/aura-dark.json"
 
 [[themes]]
 id = "bearded-theme-monokai-black"
@@ -151,6 +184,10 @@ theme-file = "vscode/themes/bearded-theme-monokai-black-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/bearded-theme-monokai-black.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-bearded-theme-monokai-black"
+theme-file = "pi/themes/bearded-theme-monokai-black.json"
+
 [[themes]]
 id = "catppuccin-frappe"
 display = "Catppuccin Frappé"
@@ -166,6 +203,10 @@ theme-file = "vscode/themes/catppuccin-frappe-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/catppuccin-frappe.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-catppuccin-frappe"
+theme-file = "pi/themes/catppuccin-frappe.json"
 
 [[themes]]
 id = "catppuccin-macchiato"
@@ -183,6 +224,10 @@ theme-file = "vscode/themes/catppuccin-macchiato-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/catppuccin-macchiato.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-catppuccin-macchiato"
+theme-file = "pi/themes/catppuccin-macchiato.json"
+
 [[themes]]
 id = "catppuccin-mocha"
 display = "Catppuccin Mocha"
@@ -198,6 +243,10 @@ theme-file = "vscode/themes/catppuccin-mocha-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/catppuccin-mocha.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-catppuccin-mocha"
+theme-file = "pi/themes/catppuccin-mocha.json"
 
 [[themes]]
 id = "citrus"
@@ -215,6 +264,10 @@ theme-file = "vscode/themes/citrus-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/citrus.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-citrus"
+theme-file = "pi/themes/citrus.json"
+
 [[themes]]
 id = "dracula"
 display = "Dracula"
@@ -230,6 +283,10 @@ theme-file = "vscode/themes/dracula-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/dracula.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-dracula"
+theme-file = "pi/themes/dracula.json"
 
 [[themes]]
 id = "flowers"
@@ -247,6 +304,10 @@ theme-file = "vscode/themes/flowers-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/flowers.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-flowers"
+theme-file = "pi/themes/flowers.json"
+
 [[themes]]
 id = "iceberg"
 display = "Iceberg"
@@ -263,6 +324,10 @@ theme-file = "vscode/themes/iceberg-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/iceberg.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-iceberg"
+theme-file = "pi/themes/iceberg.json"
+
 [[themes]]
 id = "method-dark"
 display = "Method Dark"
@@ -273,6 +338,10 @@ theme-file = "vscode/themes/method-dark-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/method-dark.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-method-dark"
+theme-file = "pi/themes/method-dark.json"
 
 [[themes]]
 id = "pixel-corsair"
@@ -290,6 +359,10 @@ theme-file = "vscode/themes/pixel-corsair-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/pixel-corsair.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-pixel-corsair"
+theme-file = "pi/themes/pixel-corsair.json"
+
 [[themes]]
 id = "retro-city-console"
 display = "Retro City Console"
@@ -305,6 +378,10 @@ theme-file = "vscode/themes/retro-city-console-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/retro-city-console.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-retro-city-console"
+theme-file = "pi/themes/retro-city-console.json"
 
 [[themes]]
 id = "rose-pine"
@@ -322,6 +399,10 @@ theme-file = "vscode/themes/rose-pine-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/rose-pine.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-rose-pine"
+theme-file = "pi/themes/rose-pine.json"
+
 [[themes]]
 id = "rose-pine-black"
 display = "Rosé Pine Black"
@@ -337,6 +418,10 @@ theme-file = "vscode/themes/rose-pine-black-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/rose-pine-black.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-rose-pine-black"
+theme-file = "pi/themes/rose-pine-black.json"
 
 [[themes]]
 id = "rose-pine-extra-black"
@@ -354,6 +439,10 @@ theme-file = "vscode/themes/rose-pine-extra-black-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/rose-pine-extra-black.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-rose-pine-extra-black"
+theme-file = "pi/themes/rose-pine-extra-black.json"
+
 [[themes]]
 id = "rose-pine-moon"
 display = "Rosé Pine Moon"
@@ -369,6 +458,10 @@ theme-file = "vscode/themes/rose-pine-moon-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/rose-pine-moon.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-rose-pine-moon"
+theme-file = "pi/themes/rose-pine-moon.json"
 
 [[themes]]
 id = "tokyo-night"
@@ -386,6 +479,10 @@ theme-file = "vscode/themes/tokyo-night-color-theme.json"
 [themes.tmux]
 theme-file = "tmux/themes/tokyo-night.conf"
 
+[themes.pi]
+theme-name = "vanillagreen-tokyo-night"
+theme-file = "pi/themes/tokyo-night.json"
+
 [[themes]]
 id = "warp"
 display = "Warp"
@@ -401,3 +498,7 @@ theme-file = "vscode/themes/warp-color-theme.json"
 
 [themes.tmux]
 theme-file = "tmux/themes/warp.conf"
+
+[themes.pi]
+theme-name = "vanillagreen-warp"
+theme-file = "pi/themes/warp.json"

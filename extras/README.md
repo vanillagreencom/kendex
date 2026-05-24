@@ -1,6 +1,6 @@
 # vstack extras
 
-Optional non-agent packages distributed by [vstack](../README.md). Currently one pack — `vanillagreen-themes` — bundling a VS Code-family theme/icon extension with matched Ghostty palettes/shaders and a tmux color block.
+Optional non-agent packages distributed by [vstack](../README.md). Currently one pack — `vanillagreen-themes` — bundling a VS Code-family theme/icon extension with matched Ghostty palettes/shaders, a tmux color block, and a Pi (coding-agent) theme.
 
 ## vanillagreen-themes
 
@@ -8,7 +8,7 @@ Optional non-agent packages distributed by [vstack](../README.md). Currently one
 
 > some of the shaders/animations are better than others.. feel free to improve them and submit a PR!
 
-25 color themes + 1 file/folder icon theme shipped as a single VS Code extension (`vanillagreen.vstack-themes`), with per-theme Ghostty palette + ambient shader pairs and per-theme tmux color block. One `vstack apply` call installs the editor extension, switches the active editor theme, swaps the live Ghostty palette, swaps the Ghostty `custom-shader`, and rewrites the tmux color block (then reloads any live tmux servers).
+25 color themes + 1 file/folder icon theme shipped as a single VS Code extension (`vanillagreen.vstack-themes`), with per-theme Ghostty palette + ambient shader pairs, per-theme tmux color block, and per-theme Pi (coding-agent) theme JSON. One `vstack apply` call installs the editor extension, switches the active editor theme, swaps the live Ghostty palette, swaps the Ghostty `custom-shader`, rewrites the tmux color block (then reloads any live tmux servers), and registers + activates the matching Pi theme.
 
 ### Themes
 
@@ -55,19 +55,20 @@ vstack apply vanillagreen-themes --theme rose-pine            --target ghostty,v
 vstack apply vanillagreen-themes --theme dracula --dry-run
 ```
 
-Targets: `ghostty`, `vscode`, `vscodium`, `cursor`, `tmux`. Add `--target` to restrict; omit to apply to every detected target.
+Targets: `ghostty`, `vscode`, `vscodium`, `cursor`, `tmux`, `pi`. Add `--target` to restrict; omit to apply to every detected target.
 
-There is no "installed vs not" — only **active vs not**. `vstack apply <theme>` is idempotent: it (re)installs the extension VSIX and switches the active theme. Settings.json (VS Code-family), `~/.config/ghostty/config`, and `~/.tmux.conf` (or `~/.config/tmux/tmux.conf`, whichever exists) are backed up before every mutation.
+There is no "installed vs not" — only **active vs not**. `vstack apply <theme>` is idempotent: it (re)installs the extension VSIX and switches the active theme. Settings.json (VS Code-family and Pi), `~/.config/ghostty/config`, and `~/.tmux.conf` (or `~/.config/tmux/tmux.conf`, whichever exists) are backed up before every mutation.
 
 ### What each target writes
 
 | Target | Writes | Reload |
 |---|---|---|
-| `ghostty` | per-theme `themes/vstack/<id>` + shaders under `shaders/vstack/`; managed `config-file =` / `custom-shader =` block in the live Ghostty config. | Reload Ghostty (`cmd+,` reload, or restart). |
+| `ghostty` | per-theme `themes/vstack/<id>` + shaders under `shaders/vstack/`; managed `config-file =` / `custom-shader =` block in the live Ghostty config. | `vstack apply` broadcasts SIGUSR2 to every running ghostty process for live reload. |
 | `vscode` / `vscodium` / `cursor` | per-call VSIX install of `vanillagreen.vstack-themes`; flips `workbench.colorTheme` in user `settings.json`. | Editor picks the new theme up live; reload window if it lingers. |
 | `tmux` | per-theme `vstack-active-theme.conf` under `~/.config/tmux/`; one-line managed `source-file -q "…"` block in your `tmux.conf`. | `vstack apply` runs `tmux -S … source-file <conf>` against every live server it finds. |
+| `pi` | per-theme `vanillagreen-<id>.json` under `~/.pi/agent/themes/`; flips top-level `theme` key in `~/.pi/settings.json`. | New Pi sessions pick up the theme on launch; in a live Pi session use `/theme` to switch or `/settings reload`. |
 
-The tmux block is colors-only (status/window/pane/border/mode/copy-mode-selection/clock); no `status-left/right` or `window-status-format`, so your own status bar layout is preserved. Remove the `# vstack:begin … # vstack:end` block from your `tmux.conf` to opt out.
+The tmux block is colors-only (status/window/pane/border/mode/copy-mode-selection/clock); no `status-left/right` or `window-status-format`, so your own status bar layout is preserved. Remove the `# vstack:begin … # vstack:end` block from your `tmux.conf` to opt out. The Pi theme JSONs follow the [`coding-agent` theme schema](https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json) — to opt out, delete the matching `~/.pi/agent/themes/vanillagreen-*.json` and unset `theme` from `~/.pi/settings.json`.
 
 ### Attribution
 

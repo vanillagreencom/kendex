@@ -65,6 +65,15 @@ enum PostWork {
     /// updater (which exits the process). Used when an update batch mixes
     /// content items with the vstack (cli) row.
     DoneThenCliUpdate(String),
+    /// Apply-picker outcome: leave the picker open, mark the just-applied
+    /// theme as active, and flash success or the error message.
+    ApplyPickerResult {
+        extra_name: String,
+        theme_id: String,
+        result: std::sync::Arc<
+            std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
+        >,
+    },
 }
 
 pub fn run_install_flow(
@@ -1217,18 +1226,19 @@ fn open_apply_picker(state: &mut FlowState, extra_name: &str) {
         ));
         return;
     }
-    let default_id = extra.theme_pack.default_theme.clone();
-    let cursor = themes
-        .iter()
-        .position(|t| t.id == default_id)
+    let active_theme_id = crate::commands::apply::active_theme_id(extra_name);
+    let cursor = active_theme_id
+        .as_ref()
+        .and_then(|active| themes.iter().position(|t| &t.id == active))
         .unwrap_or(0);
     state.select.apply_picker = Some(crate::tui::multiselect::ApplyPickerDialog {
         extra_name: extra_name.to_string(),
-        default_theme_id: default_id,
+        default_theme_id: extra.theme_pack.default_theme.clone(),
         targets: extra.theme_pack.targets.clone(),
         themes,
         cursor,
         scroll: 0,
+        active_theme_id,
     });
 }
 
@@ -1278,7 +1288,9 @@ fn handle_apply_picker_key(
         dialog.scroll_into_view(visible_rows);
     }
     if let Some(action) = action {
-        state.select.apply_picker = None;
+        // Picker intentionally stays open so the user can switch themes in
+        // quick succession; PostWork::ApplyPickerResult updates the active
+        // marker on the still-open dialog and flashes the result.
         return execute_action(state, action);
     }
     Ok(None)
@@ -1874,26 +1886,24 @@ fn execute_action(
     match action {
         ConfirmAction::Acknowledge => Ok(None),
         ConfirmAction::ApplyExtraTheme { extra_name, theme_id } => {
-            let label = format!("Applying `{theme_id}` from `{extra_name}`\u{2026}");
+            let label = format!("Applying `{theme_id}`\u{2026}");
             let extra_for_post = extra_name.clone();
             let theme_for_post = theme_id.clone();
+            let result_slot: std::sync::Arc<
+                std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
+            > = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let result_writer = std::sync::Arc::clone(&result_slot);
             spawn_work(
                 state,
                 label,
-                PostWork::Done(format!(
-                    "Applied `{theme_for_post}` from `{extra_for_post}`"
-                )),
+                PostWork::ApplyPickerResult {
+                    extra_name: extra_for_post,
+                    theme_id: theme_for_post,
+                    result: result_slot,
+                },
                 move || {
-                    if let Err(err) = crate::commands::apply::run(
-                        extra_name,
-                        Some(theme_id),
-                        None,
-                        false,
-                        false,
-                        true,
-                    ) {
-                        eprintln!("apply failed: {err}");
-                    }
+                    let res = crate::commands::apply::run_silent(extra_name, theme_id);
+                    *result_writer.lock().unwrap() = Some(res);
                 },
             );
             Ok(None)
@@ -2026,6 +2036,42 @@ where
 /// mutation that touches TUI state, the terminal, or process lifetime.
 fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<InstallFlowResult>> {
     match post {
+        PostWork::ApplyPickerResult {
+            extra_name,
+            theme_id,
+            result,
+        } => {
+            let outcome = result.lock().ok().and_then(|mut g| g.take());
+            match outcome {
+                Some(Ok(apply_outcome)) => {
+                    if let Some(dialog) = state.select.apply_picker.as_mut() {
+                        if dialog.extra_name == extra_name {
+                            dialog.active_theme_id = Some(theme_id.clone());
+                        }
+                    }
+                    // Rebuild tabs so the extras list row picks up the new
+                    // "active: <theme>" suffix from the cache marker.
+                    rebuild_tabs(state);
+                    let base = format!("Applied {theme_id} ({extra_name})");
+                    let msg = if apply_outcome.notices.is_empty() {
+                        base
+                    } else {
+                        format!("{base} \u{2014} {}", apply_outcome.notices.join(" / "))
+                    };
+                    state.select.flash_message = Some(msg);
+                }
+                Some(Err(err)) => {
+                    state.select.flash_message =
+                        Some(format!("Apply failed for {theme_id}: {err}"));
+                }
+                None => {
+                    state.select.flash_message = Some(format!(
+                        "Apply finished but produced no result for {theme_id}"
+                    ));
+                }
+            }
+            Ok(None)
+        }
         PostWork::Done(flash) => {
             rebuild_tabs(state);
             state.select.flash_message = Some(flash);

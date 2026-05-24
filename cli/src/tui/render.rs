@@ -2297,17 +2297,27 @@ fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
         return;
     };
     let extra_name = dialog.extra_name.clone();
-    let default_id = dialog.default_theme_id.clone();
     let targets = dialog.targets.clone();
     let themes = dialog.themes.clone();
     let cursor = dialog.cursor;
     let scroll = dialog.scroll;
+    let active_id = dialog.active_theme_id.clone();
 
-    let header_lines: u16 = 3;
-    let footer_lines: u16 = 3;
+    let pi_target = targets.iter().any(|t| t == "pi");
+    let dialog_w: u16 = 72;
+    // dialog_chrome takes width directly; inner width is dialog_w - 2 (borders) - 4 (padding).
+    let inner_w = dialog_w.saturating_sub(6) as usize;
+    let pi_setup_text = "Pi setup: in any running Pi session run /settings \u{2192} Theme \u{2192} pick `vstack-active` (one time).";
+    let pi_followup_text = "After that, every vstack apply reloads Pi automatically.";
+    let pi_setup_wrapped = if pi_target { wrap_text(pi_setup_text, inner_w) } else { Vec::new() };
+    let pi_followup_wrapped = if pi_target { wrap_text(pi_followup_text, inner_w) } else { Vec::new() };
+    // 1 targets line + (pi wrapped lines, both blocks) + 1 spacer
+    let header_lines: u16 =
+        1 + pi_setup_wrapped.len() as u16 + pi_followup_wrapped.len() as u16 + 1;
+    // 1 apply/cancel row + 1 blank spacer + 1 hint row
+    let footer_lines: u16 = 3 + 1;
     let max_rows = themes.len().max(1) as u16;
     let desired_content = header_lines + max_rows + footer_lines;
-    let dialog_w: u16 = 72;
     let (inner, dialog_area) = draw_dialog_chrome(
         frame,
         &format!("Apply theme \u{2014} {extra_name}"),
@@ -2329,17 +2339,30 @@ fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
                 if targets.is_empty() { "(none declared)".to_string() } else { targets.join(", ") },
                 Style::default().fg(theme::TEXT_PRIMARY),
             ),
-            Span::styled("   auto-detect at apply time", Style::default().fg(theme::TEXT_MUTED)),
         ]);
         frame.render_widget(Paragraph::new(header), Rect::new(inner.x, y, inner.width, 1));
         y += 1;
     }
-    if y < max_y {
-        let header2 = Line::from(vec![
-            Span::styled("default: ", Style::default().fg(theme::TEXT_MUTED)),
-            Span::styled(default_id.clone(), Style::default().fg(theme::ACCENT)),
-        ]);
-        frame.render_widget(Paragraph::new(header2), Rect::new(inner.x, y, inner.width, 1));
+    for line in pi_setup_wrapped.iter() {
+        if y >= max_y { break; }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                line.clone(),
+                Style::default().fg(theme::TEXT_PRIMARY),
+            ))),
+            Rect::new(inner.x, y, inner.width, 1),
+        );
+        y += 1;
+    }
+    for line in pi_followup_wrapped.iter() {
+        if y >= max_y { break; }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                line.clone(),
+                Style::default().fg(theme::TEXT_MUTED),
+            ))),
+            Rect::new(inner.x, y, inner.width, 1),
+        );
         y += 1;
     }
     if y < max_y {
@@ -2369,12 +2392,12 @@ fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
             break;
         }
         let is_cursor = idx == cursor;
-        let is_default = theme.id == default_id;
+        let is_active = active_id.as_deref() == Some(theme.id.as_str());
         let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
         select.apply_picker_row_areas.push(row_rect);
         let mark = if is_cursor { "\u{25b8} " } else { "  " };
-        let default_tag = if is_default { "  (default)" } else { "" };
-        let style = if is_cursor {
+        let active_chip = if is_active { " \u{2713} active" } else { "" };
+        let row_style = if is_cursor {
             Style::default()
                 .fg(theme::ON_DARK)
                 .bg(theme::DIALOG_CURSOR_BG)
@@ -2382,14 +2405,26 @@ fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
         } else {
             Style::default().fg(theme::TEXT_PRIMARY)
         };
-        let label = format!(
-            " {mark}{:<28}  {}{}",
-            theme.id,
-            theme.display,
-            default_tag
-        );
+        let chip_style = if is_cursor {
+            Style::default()
+                .fg(theme::ON_DARK)
+                .bg(theme::DIALOG_CURSOR_BG)
+                .bold()
+        } else {
+            Style::default().fg(theme::STATUS_OK).bold()
+        };
+        let visible_width = inner.width as usize;
+        let prefix_len = 1 + mark.chars().count();
+        let display_len = theme.display.chars().count();
+        let chip_len = active_chip.chars().count();
+        let pad = visible_width.saturating_sub(prefix_len + display_len + chip_len);
+        let body = format!(" {mark}{}", theme.display);
+        let trailing = format!("{}{}", active_chip, " ".repeat(pad));
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(label, style))),
+            Paragraph::new(Line::from(vec![
+                Span::styled(body, row_style),
+                Span::styled(trailing, chip_style),
+            ])),
             row_rect,
         );
         row_y += 1;
@@ -2441,7 +2476,7 @@ fn draw_apply_picker(frame: &mut Frame, select: &mut TabbedSelect) {
             ))),
             cancel_rect,
         );
-        fy += 1;
+        fy += 2;
     }
     if fy < max_y {
         let hint = Line::from(vec![

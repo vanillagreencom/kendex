@@ -192,6 +192,10 @@ pub struct ApplyPickerDialog {
     pub themes: Vec<ApplyPickerTheme>,
     pub cursor: usize,
     pub scroll: usize,
+    /// Theme that was most recently applied via this picker session.
+    /// Renders a checkmark/chip on that row so the user can see what's active
+    /// without having to remember the last pick.
+    pub active_theme_id: Option<String>,
 }
 
 #[derive(Clone)]

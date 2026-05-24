@@ -403,8 +403,20 @@ fn extra_row_suffix(extra: &crate::extra::Extra) -> String {
     } else {
         extra.theme_pack.targets.join(", ")
     };
+    let active = crate::commands::apply::active_theme_id(extra.name())
+        .map(|id| {
+            let display = extra
+                .theme_pack
+                .themes
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.display.clone())
+                .unwrap_or(id);
+            format!(" · active: {display}")
+        })
+        .unwrap_or_default();
     format!(
-        "{} · {theme_count} {theme_label} · targets: {target_summary}",
+        "{} · {theme_count} {theme_label} · targets: {target_summary}{active}",
         extra.description()
     )
 }
@@ -634,6 +646,7 @@ mod tests {
                         ghostty: None,
                         vscode: None,
                         tmux: None,
+                        pi: None,
                     },
                     ThemeSpec {
                         id: "meadow".into(),
@@ -641,6 +654,7 @@ mod tests {
                         ghostty: None,
                         vscode: None,
                         tmux: None,
+                        pi: None,
                     },
                 ],
             },

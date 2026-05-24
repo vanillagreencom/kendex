@@ -40,6 +40,8 @@ pub struct ThemeSpec {
     pub vscode: Option<VscodeThemeSpec>,
     #[serde(default)]
     pub tmux: Option<TmuxThemeSpec>,
+    #[serde(default)]
+    pub pi: Option<PiThemeSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +66,19 @@ pub struct VscodeThemeSpec {
 pub struct TmuxThemeSpec {
     #[serde(rename = "theme-file")]
     pub theme_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiThemeSpec {
+    /// JSON theme file in the pack (pi schema). Copied verbatim to the
+    /// user's `~/.pi/agent/themes/<theme-name>.json` directory on apply.
+    #[serde(rename = "theme-file")]
+    pub theme_file: String,
+    /// `name` field inside the JSON file. Used as the value vstack writes
+    /// to `~/.pi/settings.json` `theme`. Mirrors the JSON's own `name`
+    /// field so we don't have to parse it at apply time.
+    #[serde(rename = "theme-name")]
+    pub theme_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,6 +178,9 @@ fn validate_theme_pack_paths(
         }
         if let Some(tmux) = &theme.tmux {
             validate_manifest_path(&tmux.theme_file, source_dir, manifest_path)?;
+        }
+        if let Some(pi) = &theme.pi {
+            validate_manifest_path(&pi.theme_file, source_dir, manifest_path)?;
         }
     }
     Ok(())

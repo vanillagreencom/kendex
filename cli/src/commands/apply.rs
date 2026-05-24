@@ -16,6 +16,7 @@ const VSCODIUM_TARGET: &str = "vscodium";
 const CURSOR_TARGET: &str = "cursor";
 const TMUX_TARGET: &str = "tmux";
 const TMUX_ACTIVE_THEME_FILE: &str = "vstack-active-theme.conf";
+const PI_TARGET: &str = "pi";
 
 #[derive(Debug, Clone)]
 pub struct ApplyRequest {
@@ -91,6 +92,7 @@ enum TargetKind {
     Vscodium,
     Cursor,
     Tmux,
+    Pi,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +147,7 @@ impl TargetKind {
             VSCODIUM_TARGET => Some(Self::Vscodium),
             CURSOR_TARGET => Some(Self::Cursor),
             TMUX_TARGET => Some(Self::Tmux),
+            PI_TARGET => Some(Self::Pi),
             _ => None,
         }
     }
@@ -156,6 +159,7 @@ impl TargetKind {
             Self::Vscodium => "codium",
             Self::Cursor => "cursor",
             Self::Tmux => "tmux",
+            Self::Pi => "pi",
         }
     }
 
@@ -169,7 +173,7 @@ fn vscode_editor(kind: TargetKind) -> Option<VscodeEditor> {
         TargetKind::Vscode => Some(VscodeEditor::Vscode),
         TargetKind::Vscodium => Some(VscodeEditor::Vscodium),
         TargetKind::Cursor => Some(VscodeEditor::Cursor),
-        TargetKind::Ghostty | TargetKind::Tmux => None,
+        TargetKind::Ghostty | TargetKind::Tmux | TargetKind::Pi => None,
     }
 }
 
@@ -208,38 +212,138 @@ pub fn run(
         bail!("apply cancelled");
     }
 
-    apply_plan(&plan)?;
+    apply_plan(&plan, false)?;
+    if let Some(theme_id) = request.theme_id.as_deref() {
+        let _ = write_active_theme_marker(&env, &request.extra_name, theme_id);
+    }
     Ok(())
 }
 
-fn apply_plan(plan: &ApplyPlan) -> Result<()> {
+/// Silent variant used from in-process callers (e.g. the TUI picker). Skips
+/// the plan render, the y/N prompt, and all subcommand stdout/stderr inheritance
+/// so the output cannot collide with a live ratatui frame. Warnings/errors
+/// are returned via the Result chain.
+/// Result of a programmatic apply (TUI / scripted callers). `notices`
+/// surfaces non-fatal one-shot messages — e.g. "restart Pi sessions once
+/// to enable live theme reload" — that the caller should bubble up to the
+/// user without treating as a failure.
+pub struct ApplyOutcome {
+    pub notices: Vec<String>,
+}
+
+pub fn run_silent(extra_name: String, theme_id: String) -> Result<ApplyOutcome> {
+    let request = ApplyRequest {
+        extra_name: extra_name.clone(),
+        theme_id: Some(theme_id.clone()),
+        targets: None,
+        global: false,
+        dry_run: false,
+        yes: true,
+    };
+    let env = ApplyEnvironment::current();
+    let source_root = resolve_apply_source_root()?;
+    let plan = build_plan_for_source(&source_root, &request, &env)?;
+    let mut notices = Vec::new();
+    if pi_settings_theme_will_change(&plan)? {
+        notices.push(
+            "Pi: settings.json theme field flipped to `vstack-active`. \
+Restart existing Pi sessions once to enable live reload \
+(subsequent applies will reload automatically)."
+                .to_string(),
+        );
+    }
+    apply_plan(&plan, true)?;
+    let _ = write_active_theme_marker(&env, &extra_name, &theme_id);
+    Ok(ApplyOutcome { notices })
+}
+
+fn pi_settings_theme_will_change(plan: &ApplyPlan) -> Result<bool> {
+    for target in &plan.targets {
+        if target.kind != TargetKind::Pi {
+            continue;
+        }
+        let Some(change) = target.json_change.as_ref() else {
+            continue;
+        };
+        if !target.config_file.exists() {
+            return Ok(true);
+        }
+        let text = fs::read_to_string(&target.config_file).with_context(|| {
+            format!("reading {}", target.config_file.display())
+        })?;
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|_| {
+            serde_json::Value::Object(serde_json::Map::new())
+        });
+        let prior = value
+            .get("theme")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        return Ok(prior != change.value);
+    }
+    Ok(false)
+}
+
+/// Cache file vstack writes after every apply success so the TUI (and any
+/// other consumer) can show the currently-active theme without re-parsing
+/// the target configs. Best-effort: any IO error is swallowed.
+pub fn active_theme_id(extra_name: &str) -> Option<String> {
+    let env = ApplyEnvironment::current();
+    fs::read_to_string(active_theme_marker_path(&env, extra_name))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn active_theme_marker_path(env: &ApplyEnvironment, extra_name: &str) -> PathBuf {
+    let cache = env
+        .home_dir
+        .join(".cache")
+        .join("vstack-extras");
+    cache.join(format!("{extra_name}.active"))
+}
+
+fn write_active_theme_marker(env: &ApplyEnvironment, extra_name: &str, theme_id: &str) -> Result<()> {
+    let path = active_theme_marker_path(env, extra_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(&path, theme_id).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
+fn apply_plan(plan: &ApplyPlan, silent: bool) -> Result<()> {
     for target in &plan.targets {
         match target.kind {
             TargetKind::Ghostty => {
-                apply_ghostty_target(&plan.extra_name, target)?;
+                apply_ghostty_target(&plan.extra_name, target, silent)?;
                 let reloaded = reload_running_ghostty_processes();
-                if reloaded > 0 {
-                    println!(
-                        "Ghostty config updated; sent SIGUSR2 live-reload to {reloaded} running ghostty process(es)."
-                    );
-                } else {
-                    println!(
-                        "Ghostty config updated. No live ghostty process detected; the new theme will load on next launch."
-                    );
+                if !silent {
+                    if reloaded > 0 {
+                        println!(
+                            "Ghostty config updated; sent SIGUSR2 live-reload to {reloaded} running ghostty process(es)."
+                        );
+                    } else {
+                        println!(
+                            "Ghostty config updated. No live ghostty process detected; the new theme will load on next launch."
+                        );
+                    }
                 }
             }
             TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => {
-                apply_vscode_family_target(target)?;
+                apply_vscode_family_target(target, silent)?;
             }
             TargetKind::Tmux => {
-                apply_tmux_target(&plan.extra_name, target)?;
+                apply_tmux_target(&plan.extra_name, target, silent)?;
+            }
+            TargetKind::Pi => {
+                apply_pi_target(target, silent)?;
             }
         }
     }
     Ok(())
 }
 
-fn apply_ghostty_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
+fn apply_ghostty_target(extra_name: &str, target: &TargetPlan, silent: bool) -> Result<()> {
     let managed_block = target
         .managed_block
         .as_ref()
@@ -266,6 +370,13 @@ fn apply_ghostty_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
             target.config_file.display()
         )
     })?;
+    // Ghostty treats every `custom-shader =` line as additive, so a stale
+    // shader line outside our managed block (written by an unrelated theme
+    // switcher or hand-edited) would render simultaneously with the vstack
+    // shader. Comment out any non-managed `custom-shader = ...` lines so
+    // vstack's shader is the only one active. The user can restore by
+    // un-commenting the `# vstack:disabled-shader: ...` lines.
+    let original_config = strip_stray_shader_lines(&original_config, extra_name);
     let updated_config =
         ghostty_apply::insert_or_replace_managed_block(&original_config, extra_name, managed_block);
     ghostty_apply::validate_managed_block_syntax(&updated_config, extra_name)?;
@@ -279,7 +390,9 @@ fn apply_ghostty_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
     if let Some(cli_path) = &target.cli_path {
         validate_ghostty_config(cli_path, &target.config_file, &target.backup_file)?;
     } else {
-        eprintln!("warning: ghostty CLI not found on PATH; skipped `ghostty +validate-config`");
+        if !silent {
+            eprintln!("warning: ghostty CLI not found on PATH; skipped `ghostty +validate-config`");
+        }
     }
 
     Ok(())
@@ -308,7 +421,8 @@ fn validate_ghostty_config(cli_path: &Path, config_file: &Path, backup_file: &Pa
     )
 }
 
-fn apply_vscode_family_target(target: &TargetPlan) -> Result<()> {
+fn apply_vscode_family_target(target: &TargetPlan, silent: bool) -> Result<()> {
+    let _ = silent;
     let cli_path = target
         .cli_path
         .as_ref()
@@ -620,6 +734,30 @@ fn resolve_targets(
             );
         };
         let cli_name = kind.cli_name().to_string();
+        if kind == TargetKind::Pi {
+            let home = &env.home_dir;
+            let pi_themes_dir = home.join(".pi").join("agent").join("themes");
+            let pi_settings = home.join(".pi").join("settings.json");
+            if pi_themes_dir.exists() || pi_settings.exists() || home.join(".pi").exists() {
+                resolved.push(ResolvedTarget {
+                    name: target_name,
+                    kind,
+                    cli_name,
+                    cli_path: None,
+                });
+            } else if explicit_targets.is_some() {
+                bail!(
+                    "target `pi` was requested explicitly but no Pi install detected at {}",
+                    home.join(".pi").display()
+                );
+            } else {
+                warnings.push(format!(
+                    "target `pi` skipped: no Pi install detected at {}",
+                    home.join(".pi").display()
+                ));
+            }
+            continue;
+        }
         match env.find_cli(&cli_name) {
             Some(cli_path) => resolved.push(ResolvedTarget {
                 name: target_name,
@@ -683,6 +821,7 @@ fn build_target_plan(
             build_vscode_family_plan(extra, theme, target, env)
         }
         TargetKind::Tmux => build_tmux_plan(extra, theme, target, env),
+        TargetKind::Pi => build_pi_plan(extra, theme, target, env),
     }
 }
 
@@ -832,6 +971,45 @@ fn build_vscode_family_plan(
     })
 }
 
+/// Comment out every `custom-shader = ...` line that sits outside the vstack
+/// managed block. Ghostty would otherwise render every `custom-shader` line
+/// it parses, so a stale entry from a non-vstack theme switcher would show
+/// alongside the vstack-managed shader.
+fn strip_stray_shader_lines(input: &str, extra_name: &str) -> String {
+    let begin = format!("# vstack:begin {extra_name}");
+    let end = format!("# vstack:end {extra_name}");
+    let mut inside_block = false;
+    let mut out = String::with_capacity(input.len());
+    for line in input.split_inclusive('\n') {
+        let trimmed_end = line.trim_end_matches(['\r', '\n']);
+        if trimmed_end == begin {
+            inside_block = true;
+            out.push_str(line);
+            continue;
+        }
+        if trimmed_end == end {
+            inside_block = false;
+            out.push_str(line);
+            continue;
+        }
+        if inside_block {
+            out.push_str(line);
+            continue;
+        }
+        let trimmed_start = trimmed_end.trim_start();
+        if trimmed_start.starts_with("custom-shader") {
+            // Both `custom-shader =` (the assignment) and the
+            // `custom-shader-animation =` knob need disabling so the stale
+            // animation can't apply against the new shader either.
+            out.push_str("# vstack:disabled-shader: ");
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 /// Send Ghostty's live-reload signal (SIGUSR2) to every running ghostty
 /// process owned by this user. Mirrors Ghostty's default `super+shift+,`
 /// keybind so the user sees the new theme without manual reload. Unix-only;
@@ -849,8 +1027,11 @@ fn reload_running_ghostty_processes() -> usize {
         let mut count = 0usize;
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let Ok(pid) = line.trim().parse::<i32>() else { continue };
-            // SAFETY: kill is a thread-safe libc call. SIGUSR2 = 12 on Linux/macOS/BSD.
-            let rc = unsafe { libc_kill(pid, 12) };
+            // SIGUSR2 number diverges between Linux (12) and macOS/BSD (31)
+            // -- POSIX does not nail the value down.
+            let sig = SIGUSR2;
+            // SAFETY: kill is a thread-safe libc call.
+            let rc = unsafe { libc_kill(pid, sig) };
             if rc == 0 {
                 count += 1;
             }
@@ -863,10 +1044,146 @@ fn reload_running_ghostty_processes() -> usize {
     }
 }
 
+#[cfg(all(unix, target_os = "linux"))]
+const SIGUSR2: i32 = 12;
+#[cfg(all(unix, not(target_os = "linux")))]
+const SIGUSR2: i32 = 31;
+
 #[cfg(unix)]
 fn unix_uid() -> u32 {
     // SAFETY: getuid has no preconditions and is thread-safe.
     unsafe { libc_getuid() }
+}
+
+/// Active filename Pi watches. Holding all 25 theme colors in one fixed-name
+/// file means Pi's settings-side `theme = "<name>"` value never changes,
+/// only the file's CONTENTS, which trips Pi's existing per-theme file
+/// watcher and produces live reload. Switching the value in settings.json
+/// alone does NOT trigger reload in a running Pi session.
+const PI_ACTIVE_THEME_NAME: &str = "vstack-active";
+
+fn build_pi_plan(
+    extra: &Extra,
+    theme: &ThemeSpec,
+    target: &ResolvedTarget,
+    env: &ApplyEnvironment,
+) -> Result<TargetPlan> {
+    let pi = theme.pi.as_ref().with_context(|| {
+        format!(
+            "theme `{}` does not define Pi settings required for target `{}`",
+            theme.id, target.name
+        )
+    })?;
+    let pi_root = env.home_dir.join(".pi");
+    let themes_dir = pi_root.join("agent").join("themes");
+    let settings_file = pi_root.join("settings.json");
+    let backup_file = ghostty_apply::backup_path(&settings_file, &env.timestamp);
+    let destination = themes_dir.join(format!("{PI_ACTIVE_THEME_NAME}.json"));
+    let copies = vec![FileCopyPlan {
+        source: extra.source_dir.join(&pi.theme_file),
+        destination,
+    }];
+    Ok(TargetPlan {
+        name: target.name.clone(),
+        kind: target.kind,
+        cli_name: target.cli_name.clone(),
+        cli_path: None,
+        config_dir: themes_dir,
+        config_file: settings_file,
+        backup_file,
+        copies,
+        managed_block: None,
+        json_change: Some(JsonChangePlan {
+            key: "theme".to_string(),
+            value: PI_ACTIVE_THEME_NAME.to_string(),
+        }),
+        vsix_path: None,
+        vscode: None,
+        commands: Vec::new(),
+    })
+}
+
+fn apply_pi_target(target: &TargetPlan, silent: bool) -> Result<()> {
+    // Pi keys themes by both the filename stem and the JSON's `name` field,
+    // and the watcher fires on filename. We always write to
+    // `vstack-active.json`, but the source JSON inside the pack has its
+    // own `name` field ("vanillagreen-<id>"). Rewrite `name` to match the
+    // fixed active filename so Pi loads it without complaining.
+    for copy in &target.copies {
+        if let Some(parent) = copy.destination.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let raw = fs::read_to_string(&copy.source).with_context(|| {
+            format!("reading {}", copy.source.display())
+        })?;
+        let mut value: serde_json::Value = serde_json::from_str(&raw).with_context(|| {
+            format!("parsing {}", copy.source.display())
+        })?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "name".to_string(),
+                serde_json::Value::String(PI_ACTIVE_THEME_NAME.to_string()),
+            );
+        }
+        let rewritten = serde_json::to_string_pretty(&value)? + "\n";
+        fs::write(&copy.destination, rewritten).with_context(|| {
+            format!("writing {}", copy.destination.display())
+        })?;
+    }
+
+    let change = target
+        .json_change
+        .as_ref()
+        .context("Pi target plan is missing a json_change for `theme`")?;
+    let settings_existed = target.config_file.exists();
+    let original = if settings_existed {
+        fs::read_to_string(&target.config_file)
+            .with_context(|| format!("reading {}", target.config_file.display()))?
+    } else {
+        "{}\n".to_string()
+    };
+    let patched = patch_pi_settings(&original, &change.value)
+        .with_context(|| format!("patching {}", target.config_file.display()))?;
+    if !settings_existed || patched != original {
+        backup_settings_file(&target.config_file, &target.backup_file, settings_existed)?;
+        if let Some(parent) = target.config_file.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::write(&target.config_file, patched)
+            .with_context(|| format!("writing {}", target.config_file.display()))?;
+    }
+    if !silent {
+        println!(
+            "pi: installed theme `{}` and set `theme = \"{}\"` in {}",
+            change.value,
+            change.value,
+            target.config_file.display()
+        );
+    }
+    Ok(())
+}
+
+/// Set the top-level `"theme": "..."` key in Pi's settings.json (which is
+/// strict JSON, not JSONC). Preserves all other keys and the file's existing
+/// indentation style as best we can (2-space default).
+fn patch_pi_settings(original: &str, theme_name: &str) -> Result<String> {
+    let mut value: serde_json::Value = if original.trim().is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(original).context("settings.json is not valid JSON")?
+    };
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("settings.json root must be an object"))?;
+    obj.insert(
+        "theme".to_string(),
+        serde_json::Value::String(theme_name.to_string()),
+    );
+    let mut out = serde_json::to_string_pretty(&value)?;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 fn tmux_config_dir(env: &ApplyEnvironment) -> PathBuf {
@@ -950,7 +1267,7 @@ fn tmux_managed_block(extra_name: &str, theme_destination: &Path) -> String {
     .join("\n")
 }
 
-fn apply_tmux_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
+fn apply_tmux_target(extra_name: &str, target: &TargetPlan, silent: bool) -> Result<()> {
     let managed_block = target
         .managed_block
         .as_ref()
@@ -987,32 +1304,48 @@ fn apply_tmux_target(extra_name: &str, target: &TargetPlan) -> Result<()> {
         .with_context(|| format!("writing {}", target.config_file.display()))?;
 
     if let Some(cli_path) = &target.cli_path {
-        reload_running_tmux_servers(cli_path, &target.config_file);
-    } else {
+        reload_running_tmux_servers(cli_path, &target.config_file, silent);
+    } else if !silent {
         eprintln!(
             "warning: tmux CLI not found on PATH; skipped live reload (existing servers will pick up the theme on next config reload)"
         );
     }
 
-    println!(
-        "tmux: wrote {} and ensured `source-file` block in {}",
-        target.copies[0].destination.display(),
-        target.config_file.display()
-    );
+    if !silent {
+        println!(
+            "tmux: wrote {} and ensured `source-file` block in {}",
+            target.copies[0].destination.display(),
+            target.config_file.display()
+        );
+    }
 
     Ok(())
 }
 
-fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
+fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path, silent: bool) {
     let mut sockets: Vec<PathBuf> = Vec::new();
-    if let Ok(uid) = std::env::var("UID")
+    // tmux socket dir precedence: $TMUX_TMPDIR -> $TMPDIR -> /tmp. On Linux
+    // $TMPDIR is usually unset so /tmp wins; on macOS $TMPDIR points into
+    // /var/folders/.../T/ which is the real tmux socket location.
+    let uid = std::env::var("UID")
         .or_else(|_| std::env::var("USER_ID"))
         .or_else(|_| unix_uid_string())
-    {
-        let socket_dir = PathBuf::from(format!("/tmp/tmux-{uid}"));
-        if let Ok(entries) = fs::read_dir(&socket_dir) {
-            for entry in entries.flatten() {
-                sockets.push(entry.path());
+        .unwrap_or_default();
+    if !uid.is_empty() {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(d) = std::env::var("TMUX_TMPDIR") {
+            candidates.push(PathBuf::from(d));
+        }
+        if let Ok(d) = std::env::var("TMPDIR") {
+            candidates.push(PathBuf::from(d));
+        }
+        candidates.push(PathBuf::from("/tmp"));
+        for base in candidates {
+            let socket_dir = base.join(format!("tmux-{uid}"));
+            if let Ok(entries) = fs::read_dir(&socket_dir) {
+                for entry in entries.flatten() {
+                    sockets.push(entry.path());
+                }
             }
         }
     }
@@ -1042,7 +1375,8 @@ fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
             .arg("-gu")
             .arg("window-style")
             .output();
-        if let Ok(out) = &unset
+        if !silent
+            && let Ok(out) = &unset
             && !out.status.success()
         {
             eprintln!(
@@ -1060,18 +1394,22 @@ fn reload_running_tmux_servers(cli_path: &Path, config_file: &Path) {
             .output();
         match output {
             Ok(out) if !out.status.success() => {
-                eprintln!(
-                    "warning: failed to reload tmux server at {} ({})",
-                    socket.display(),
-                    String::from_utf8_lossy(&out.stderr).trim_end()
-                );
+                if !silent {
+                    eprintln!(
+                        "warning: failed to reload tmux server at {} ({})",
+                        socket.display(),
+                        String::from_utf8_lossy(&out.stderr).trim_end()
+                    );
+                }
             }
             Err(err) => {
-                eprintln!(
-                    "warning: could not run `tmux -S {} source-file {}`: {err}",
-                    socket.display(),
-                    config_file.display()
-                );
+                if !silent {
+                    eprintln!(
+                        "warning: could not run `tmux -S {} source-file {}`: {err}",
+                        socket.display(),
+                        config_file.display()
+                    );
+                }
             }
             _ => {}
         }
@@ -1110,7 +1448,7 @@ fn vscode_user_dir(kind: TargetKind, env: &ApplyEnvironment) -> PathBuf {
         TargetKind::Vscode => "Code",
         TargetKind::Vscodium => "VSCodium",
         TargetKind::Cursor => "Cursor",
-        TargetKind::Ghostty | TargetKind::Tmux => {
+        TargetKind::Ghostty | TargetKind::Tmux | TargetKind::Pi => {
             unreachable!("non-vscode-family TargetKind passed to vscode_user_dir")
         }
     };
@@ -1656,7 +1994,7 @@ theme-file = "ghostty/themes/forest.conf"
         req.targets = Some(vec!["ghostty".to_string()]);
 
         let plan = build_plan_for_source(&root, &req, &env).unwrap();
-        apply_ghostty_target(&plan.extra_name, &plan.targets[0]).unwrap();
+        apply_ghostty_target(&plan.extra_name, &plan.targets[0], false).unwrap();
 
         let updated = fs::read_to_string(&config_file).unwrap();
         ghostty_apply::validate_managed_block_syntax(&updated, "vanillagreen-themes").unwrap();
@@ -1696,7 +2034,7 @@ theme-file = "ghostty/themes/forest.conf"
         req.targets = Some(vec!["ghostty".to_string()]);
 
         let plan = build_plan_for_source(&root, &req, &env).unwrap();
-        let err = apply_ghostty_target(&plan.extra_name, &plan.targets[0]).unwrap_err();
+        let err = apply_ghostty_target(&plan.extra_name, &plan.targets[0], false).unwrap_err();
         let msg = format!("{err:#}");
 
         assert!(msg.contains("Ghostty config validation failed"), "{msg}");
