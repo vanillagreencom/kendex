@@ -1017,7 +1017,15 @@ fn strip_stray_shader_lines(input: &str, extra_name: &str) -> String {
 fn reload_running_ghostty_processes() -> usize {
     #[cfg(unix)]
     {
-        let output = match Command::new("pgrep").arg("-U").arg(format!("{}", unix_uid())).arg("-x").arg("ghostty").output() {
+        // On macOS the binary inside Ghostty.app shows up as `ghostty` from
+        // a CLI launch but as `Ghostty` when the .app bundle is launched
+        // from Finder/Dock (process renamed to the bundle display name).
+        // `-i` makes the exact match case-insensitive so both work.
+        let uid = format!("{}", unix_uid());
+        let output = match Command::new("pgrep")
+            .args(["-U", &uid, "-i", "-x", "ghostty"])
+            .output()
+        {
             Ok(out) => out,
             Err(_) => return 0,
         };
