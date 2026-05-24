@@ -343,6 +343,52 @@ fn apply_plan(plan: &ApplyPlan, silent: bool) -> Result<()> {
     Ok(())
 }
 
+/// Rewrite a Shadertoy-style mainImage entry so the body sees a bottom-left
+/// fragCoord regardless of the host backend's native Y convention. Ghostty's
+/// macOS Metal backend hands shaders a top-left origin (Vulkan/SPIR-V/MSL
+/// chain), while the Linux OpenGL backend hands them bottom-left -- the
+/// existing shader bodies all assume Linux's bottom-left convention.
+///
+/// The transform renames the original `fragCoord` parameter to a unique
+/// shim name, then declares a local `vec2 fragCoord` re-bound to the
+/// y-flipped value. All references in the function body resolve to the
+/// local, so no other edits are needed.
+fn flip_shader_y_for_metal(src: &str) -> String {
+    let needle = "void mainImage(out vec4 fragColor, in vec2 fragCoord)";
+    let Some(idx) = src.find(needle) else {
+        // Shader has a non-standard signature -- leave it alone. The skipped
+        // y-flip will be visible to the user but the shader still compiles.
+        return src.to_string();
+    };
+    let after_needle = idx + needle.len();
+    // Find the next `{` after the signature -- that's the body open brace.
+    // Insert our local right after it so it's the first statement inside
+    // mainImage. We renamed the parameter to a shim name so the local can
+    // re-use the original `fragCoord` identifier; the rest of the body
+    // resolves to the local automatically.
+    let Some(brace_offset) = src[after_needle..].find('{') else {
+        return src.to_string();
+    };
+    let body_open = after_needle + brace_offset;
+    let new_sig = "void mainImage(out vec4 fragColor, in vec2 _vstack_macos_fragCoord_in)";
+    let injection = concat!(
+        "\n",
+        "    // vstack macOS shim: Ghostty's Metal/MSL pipeline hands us a\n",
+        "    // top-left fragCoord (Vulkan/SPIR-V convention). The body of\n",
+        "    // this shader was authored against the Linux/OpenGL backend's\n",
+        "    // bottom-left convention, so we re-bind `fragCoord` to the\n",
+        "    // y-flipped value before any body code runs.\n",
+        "    vec2 fragCoord = vec2(_vstack_macos_fragCoord_in.x, iResolution.y - _vstack_macos_fragCoord_in.y);\n",
+    );
+    let mut out = String::with_capacity(src.len() + injection.len() + 64);
+    out.push_str(&src[..idx]);
+    out.push_str(new_sig);
+    out.push_str(&src[after_needle..body_open + 1]);
+    out.push_str(injection);
+    out.push_str(&src[body_open + 1..]);
+    out
+}
+
 fn apply_ghostty_target(extra_name: &str, target: &TargetPlan, silent: bool) -> Result<()> {
     let managed_block = target
         .managed_block
@@ -355,13 +401,29 @@ fn apply_ghostty_target(extra_name: &str, target: &TargetPlan, silent: bool) -> 
         if let Some(parent) = copy.destination.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        fs::copy(&copy.source, &copy.destination).with_context(|| {
-            format!(
-                "copying {} to {}",
-                copy.source.display(),
-                copy.destination.display()
-            )
-        })?;
+        let needs_flip = cfg!(target_os = "macos")
+            && copy
+                .source
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("glsl"));
+        if needs_flip {
+            let src = fs::read_to_string(&copy.source).with_context(|| {
+                format!("reading shader {}", copy.source.display())
+            })?;
+            let flipped = flip_shader_y_for_metal(&src);
+            fs::write(&copy.destination, flipped).with_context(|| {
+                format!("writing shader {}", copy.destination.display())
+            })?;
+        } else {
+            fs::copy(&copy.source, &copy.destination).with_context(|| {
+                format!(
+                    "copying {} to {}",
+                    copy.source.display(),
+                    copy.destination.display()
+                )
+            })?;
+        }
     }
 
     let original_config = String::from_utf8(original).with_context(|| {
@@ -664,9 +726,26 @@ fn build_plan_for_source(
         .find(|theme| theme.id == theme_id)
         .ok_or_else(|| unknown_theme_error(extra, theme_id))?;
 
-    let (targets, warnings) = resolve_targets(extra, request.targets.as_deref(), env)?;
+    let (targets, mut warnings) = resolve_targets(extra, request.targets.as_deref(), env)?;
     let mut target_plans = Vec::new();
     for target in targets {
+        // Themes don't have to cover every target the pack declares -- e.g.
+        // method-dark ships as a VS Code-only theme with no Ghostty palette.
+        // Skip targets the theme doesn't define unless the user asked for
+        // that specific target explicitly.
+        if !theme_defines_target(theme, target.kind) {
+            if request.targets.is_some() {
+                bail!(
+                    "theme `{}` does not define settings for target `{}`",
+                    theme.id, target.name
+                );
+            }
+            warnings.push(format!(
+                "theme `{}` skipped target `{}`: theme does not define that target",
+                theme.id, target.name
+            ));
+            continue;
+        }
         target_plans.push(build_target_plan(extra, theme, &target, env)?);
     }
 
@@ -809,6 +888,15 @@ fn resolve_targets(
     Ok((resolved, warnings))
 }
 
+fn theme_defines_target(theme: &ThemeSpec, kind: TargetKind) -> bool {
+    match kind {
+        TargetKind::Ghostty => theme.ghostty.is_some(),
+        TargetKind::Vscode | TargetKind::Vscodium | TargetKind::Cursor => theme.vscode.is_some(),
+        TargetKind::Tmux => theme.tmux.is_some(),
+        TargetKind::Pi => theme.pi.is_some(),
+    }
+}
+
 fn build_target_plan(
     extra: &Extra,
     theme: &ThemeSpec,
@@ -850,28 +938,23 @@ fn build_ghostty_plan(
     // The shipped GLSL shaders are authored against Ghostty's Linux/OpenGL
     // backend (bottom-left gl_FragCoord origin). Ghostty's macOS backend goes
     // GLSL -> SPIR-V (Vulkan, top-left) -> MSL, which yields a flipped Y for
-    // the same source -- bottom-anchored sprites render at the top of the
-    // window. Skip the shader copies + managed-block shader directives on
-    // macOS so users get the correct palette without broken animations. The
-    // theme/config-file copy still happens.
-    let include_shaders = env.platform != GhosttyPlatform::Macos;
-
+    // the same source. Apply-time, on macOS, we transform each shader to
+    // wrap mainImage with a y-flip so the body sees the original Linux
+    // bottom-left orientation -- floor/blocks/sprite anchors all line up.
     let mut shader_destinations = Vec::new();
-    if include_shaders {
-        for shader in &ghostty.shaders {
-            let destination = shader_destination(&config_dir, shader)?;
-            shader_destinations.push(destination.clone());
-            copies.push(FileCopyPlan {
-                source: extra.source_dir.join(shader),
-                destination,
-            });
-        }
-        if let Some(pulse_shader) = &ghostty.pulse_shader {
-            copies.push(FileCopyPlan {
-                source: extra.source_dir.join(pulse_shader),
-                destination: shader_destination(&config_dir, pulse_shader)?,
-            });
-        }
+    for shader in &ghostty.shaders {
+        let destination = shader_destination(&config_dir, shader)?;
+        shader_destinations.push(destination.clone());
+        copies.push(FileCopyPlan {
+            source: extra.source_dir.join(shader),
+            destination,
+        });
+    }
+    if let Some(pulse_shader) = &ghostty.pulse_shader {
+        copies.push(FileCopyPlan {
+            source: extra.source_dir.join(pulse_shader),
+            destination: shader_destination(&config_dir, pulse_shader)?,
+        });
     }
 
     let shader_file_names = shader_destinations
