@@ -116,11 +116,6 @@
         "path": "./themes/iceberg-color-theme.json"
       },
       {
-        "label": "Method Dark",
-        "uiTheme": "vs-dark",
-        "path": "./themes/method-dark-color-theme.json"
-      },
-      {
         "label": "Pixel Corsair",
         "uiTheme": "vs-dark",
         "path": "./themes/pixel-corsair-color-theme.json"

@@ -4,7 +4,7 @@
 # and per-theme Pi (coding-agent) theme JSON.
 name = "vanillagreen-themes"
 kind = "theme-pack"
-description = "Matched Ghostty + VS Code-family + tmux + Pi theme pack (25 color themes + Rosé Pine icons)."
+description = "Matched Ghostty + VS Code-family + tmux + Pi theme pack (24 color themes + Rosé Pine icons)."
 default-theme = "ghibli-serene-nature"
 targets = ["ghostty", "vscode", "vscodium", "cursor", "tmux", "pi"]
 
@@ -327,21 +327,6 @@ theme-file = "tmux/themes/iceberg.conf"
 [themes.pi]
 theme-name = "vanillagreen-iceberg"
 theme-file = "pi/themes/iceberg.json"
-
-[[themes]]
-id = "method-dark"
-display = "Method Dark"
-
-[themes.vscode]
-theme-name = "Method Dark"
-theme-file = "vscode/themes/method-dark-color-theme.json"
-
-[themes.tmux]
-theme-file = "tmux/themes/method-dark.conf"
-
-[themes.pi]
-theme-name = "vanillagreen-method-dark"
-theme-file = "pi/themes/method-dark.json"
 
 [[themes]]
 id = "pixel-corsair"

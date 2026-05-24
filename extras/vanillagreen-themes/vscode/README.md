@@ -2,7 +2,7 @@
 
 ![Showcase](https://github.com/vanillagreencom/vstack/raw/main/extras/assets/vanillagreen-themes.gif)
 
-A single VS Code / VSCodium / Cursor extension contributing **25 color themes** + a matched **Rosé Pine icon theme**, curated by **vanillagreen** and distributed through [vstack](https://github.com/vanillagreencom/vstack/blob/main/extras/README.md).
+A single VS Code / VSCodium / Cursor extension contributing **24 color themes** + a matched **Rosé Pine icon theme**, curated by **vanillagreen** and distributed through [vstack](https://github.com/vanillagreencom/vstack/blob/main/extras/README.md).
 
 Each theme has a matching Ghostty palette + ambient shader pair in the vstack extras pack, so the editor and terminal stay in sync. Install + switch the whole pack with one command:
 
@@ -30,7 +30,6 @@ Dark (`uiTheme: vs-dark`):
 - Dracula
 - Flowers
 - Iceberg
-- Method Dark
 - Pixel Corsair
 - Retro City Console
 - Rosé Pine, Rosé Pine Black, Rosé Pine Extra Black, Rosé Pine Moon
@@ -67,7 +66,7 @@ This pack redistributes content from several MIT-licensed upstream projects, com
 - **BeardedBear** (`beardedbear.beardedtheme`) — bearded-theme-monokai-black
 - **Rosé Pine** (`mvllow.rose-pine`) — rose-pine, rose-pine-moon (+ the four generic icon SVGs)
 - **Rosé Pine Symbols** (`ravenothere.rose-pine-symbols`, itself a fork of `miguelsolorio.vscode-symbols`) — the 326 file/folder icons
-- All other themes (anthropic*, aura-dark, citrus, flowers, ghibli-serene-nature, kawaii-pixel, method-dark, pixel-corsair, retro-city-console, rose-pine-black, rose-pine-dawn, rose-pine-extra-black, warp) — original vanillagreen palettes.
+- All other themes (anthropic*, aura-dark, citrus, flowers, ghibli-serene-nature, kawaii-pixel, pixel-corsair, retro-city-console, rose-pine-black, rose-pine-dawn, rose-pine-extra-black, warp) — original vanillagreen palettes.
 
 See `LICENSE.txt` for the full combined notice.
 
