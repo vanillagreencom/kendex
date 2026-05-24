@@ -356,21 +356,15 @@ fn apply_plan(plan: &ApplyPlan, silent: bool) -> Result<()> {
 fn flip_shader_y_for_metal(src: &str) -> String {
     let needle = "void mainImage(out vec4 fragColor, in vec2 fragCoord)";
     let Some(idx) = src.find(needle) else {
-        // Shader has a non-standard signature -- leave it alone. The skipped
-        // y-flip will be visible to the user but the shader still compiles.
+        // Shader has a non-standard signature -- leave it alone.
         return src.to_string();
     };
     let after_needle = idx + needle.len();
-    // Find the next `{` after the signature -- that's the body open brace.
-    // Insert our local right after it so it's the first statement inside
-    // mainImage. We renamed the parameter to a shim name so the local can
-    // re-use the original `fragCoord` identifier; the rest of the body
-    // resolves to the local automatically.
     let Some(brace_offset) = src[after_needle..].find('{') else {
         return src.to_string();
     };
     let body_open = after_needle + brace_offset;
-    let new_sig = "void mainImage(out vec4 fragColor, in vec2 _vstack_macos_fragCoord_in)";
+    let new_sig = "void mainImage(out vec4 fragColor, in vec2 _vstack_screen_fragCoord)";
     let injection = concat!(
         "\n",
         "    // vstack macOS shim: Ghostty's Metal/MSL pipeline hands us a\n",
@@ -378,15 +372,24 @@ fn flip_shader_y_for_metal(src: &str) -> String {
         "    // this shader was authored against the Linux/OpenGL backend's\n",
         "    // bottom-left convention, so we re-bind `fragCoord` to the\n",
         "    // y-flipped value before any body code runs.\n",
-        "    vec2 fragCoord = vec2(_vstack_macos_fragCoord_in.x, iResolution.y - _vstack_macos_fragCoord_in.y);\n",
+        "    vec2 fragCoord = vec2(_vstack_screen_fragCoord.x, iResolution.y - _vstack_screen_fragCoord.y);\n",
     );
-    let mut out = String::with_capacity(src.len() + injection.len() + 64);
+    let mut out = String::with_capacity(src.len() + injection.len() + 256);
     out.push_str(&src[..idx]);
     out.push_str(new_sig);
     out.push_str(&src[after_needle..body_open + 1]);
     out.push_str(injection);
     out.push_str(&src[body_open + 1..]);
-    out
+
+    // The iChannel0 terminal texture is uploaded matching the actual screen
+    // visual orientation, so it must be sampled using the UNFLIPPED screen
+    // coord. Every shipped shader uses exactly this one sample pattern;
+    // route it to the unflipped param so the terminal text doesn't render
+    // upside down on top of the corrected positional rendering.
+    out.replace(
+        "texture(iChannel0, fragCoord.xy / iResolution.xy)",
+        "texture(iChannel0, _vstack_screen_fragCoord.xy / iResolution.xy)",
+    )
 }
 
 fn apply_ghostty_target(extra_name: &str, target: &TargetPlan, silent: bool) -> Result<()> {
