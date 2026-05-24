@@ -847,20 +847,31 @@ fn build_ghostty_plan(
         destination: theme_destination,
     }];
 
+    // The shipped GLSL shaders are authored against Ghostty's Linux/OpenGL
+    // backend (bottom-left gl_FragCoord origin). Ghostty's macOS backend goes
+    // GLSL -> SPIR-V (Vulkan, top-left) -> MSL, which yields a flipped Y for
+    // the same source -- bottom-anchored sprites render at the top of the
+    // window. Skip the shader copies + managed-block shader directives on
+    // macOS so users get the correct palette without broken animations. The
+    // theme/config-file copy still happens.
+    let include_shaders = env.platform != GhosttyPlatform::Macos;
+
     let mut shader_destinations = Vec::new();
-    for shader in &ghostty.shaders {
-        let destination = shader_destination(&config_dir, shader)?;
-        shader_destinations.push(destination.clone());
-        copies.push(FileCopyPlan {
-            source: extra.source_dir.join(shader),
-            destination,
-        });
-    }
-    if let Some(pulse_shader) = &ghostty.pulse_shader {
-        copies.push(FileCopyPlan {
-            source: extra.source_dir.join(pulse_shader),
-            destination: shader_destination(&config_dir, pulse_shader)?,
-        });
+    if include_shaders {
+        for shader in &ghostty.shaders {
+            let destination = shader_destination(&config_dir, shader)?;
+            shader_destinations.push(destination.clone());
+            copies.push(FileCopyPlan {
+                source: extra.source_dir.join(shader),
+                destination,
+            });
+        }
+        if let Some(pulse_shader) = &ghostty.pulse_shader {
+            copies.push(FileCopyPlan {
+                source: extra.source_dir.join(pulse_shader),
+                destination: shader_destination(&config_dir, pulse_shader)?,
+            });
+        }
     }
 
     let shader_file_names = shader_destinations

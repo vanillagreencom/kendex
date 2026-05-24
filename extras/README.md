@@ -63,7 +63,9 @@ There is no "installed vs not" — only **active vs not**. `vstack apply <theme>
 
 | Target | Writes | Reload |
 |---|---|---|
-| `ghostty` | per-theme `themes/vstack/<id>` + shaders under `shaders/vstack/`; managed `config-file =` / `custom-shader =` block in the live Ghostty config. | `vstack apply` broadcasts SIGUSR2 to every running ghostty process for live reload. |
+| `ghostty` | per-theme `themes/vstack/<id>` + (Linux only) shaders under `shaders/vstack/`; managed `config-file =` / `custom-shader =` block in the live Ghostty config. | `vstack apply` broadcasts SIGUSR2 to every running ghostty process for live reload. |
+
+> macOS note: the bundled GLSL shaders are authored against Ghostty's Linux/OpenGL backend (bottom-left `gl_FragCoord` origin). Ghostty's macOS pipeline routes through SPIR-V (Vulkan, top-left origin) then MSL, which flips Y for the same source -- bottom-anchored sprites render at the top, etc. vstack skips the shader directives on macOS automatically; the theme palette still applies.
 | `vscode` / `vscodium` / `cursor` | per-call VSIX install of `vanillagreen.vstack-themes`; flips `workbench.colorTheme` in user `settings.json`. | Editor picks the new theme up live; reload window if it lingers. |
 | `tmux` | per-theme `vstack-active-theme.conf` under `~/.config/tmux/`; one-line managed `source-file -q "…"` block in your `tmux.conf`. | `vstack apply` runs `tmux -S … source-file <conf>` against every live server it finds. |
 | `pi` | per-theme `vanillagreen-<id>.json` under `~/.pi/agent/themes/`; flips top-level `theme` key in `~/.pi/settings.json`. | New Pi sessions pick up the theme on launch; in a live Pi session use `/theme` to switch or `/settings reload`. |
