@@ -21953,7 +21953,7 @@ function convertPiMessages(messages, customToolNameToSdk) {
 }
 
 // src/models.ts
-var MODEL_IDS_IN_ORDER = ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
+var MODEL_IDS_IN_ORDER = ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
 function buildModels(piAiModels) {
   return MODEL_IDS_IN_ORDER.map((id) => piAiModels.find((m2) => m2.id === id)).filter((m2) => m2 != null).map(({ id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
     id,

@@ -9,7 +9,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 ## Highlights
 
-- `claude-bridge/claude-opus-4-7`, Sonnet, and Haiku in `/model`.
+- `claude-bridge/claude-opus-4-8`, Opus 4-7, Sonnet, and Haiku in `/model`.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
 - Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
 - Thinking-level forwarding with summarized Opus thinking display.
