@@ -68,6 +68,8 @@ Live pane reuse runs a Linux cwd preflight before returning an existing pane or 
 
 Parallel dispatch runs through a flat worker pool capped by `maxConcurrency` (default 4); the whole task array shares one queue. The earlier `maxParallelTasks` setting is a deprecated no-op kept for setting-file compatibility.
 
+Bg one-shot children complete through their final assistant output, which the runner captures from the JSON stream and publishes as the `subagents:completed` summary. They do not have a durable pane task outbox, so the runner filters `complete_subagent` out of inherited active tools, passes `--exclude-tools complete_subagent`, and falls back to `--no-tools` if that was the only inherited tool. Persistent pane and follow-up tasks remain the only paths that instruct children to call `complete_subagent`.
+
 ## Restricted delegation (`delegate_subagent`) — issue #228
 
 `delegate_subagent` is a single-mode wrapper around the same dispatch helpers `subagent` uses (`runSingleDispatch` → `runSingleAgent`). Differences from `subagent`:

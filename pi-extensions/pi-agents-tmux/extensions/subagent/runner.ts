@@ -29,6 +29,7 @@ import {
 	selectedModelForAgent,
 	selectedThinkingLevelForAgent,
 	selectedToolsForAgent,
+	normalizedPiToolName,
 	settingBoolean,
 } from "./settings.js";
 import {
@@ -55,6 +56,8 @@ export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => vo
 type SpawnProcess = typeof spawn;
 let spawnProcess: SpawnProcess = spawn;
 const MAX_RESULT_DIAGNOSTICS = 12;
+const BG_EXCLUDED_TOOLS = ["complete_subagent"];
+const BG_EXCLUDED_TOOL_SET = new Set(BG_EXCLUDED_TOOLS.map(normalizedPiToolName));
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
 	spawnProcess = spawner ?? spawn;
@@ -74,6 +77,10 @@ function appendResultDiagnostic(result: Pick<SingleResult, "diagnostics">, diagn
 
 function transcriptFullStreamEnabled(): boolean {
 	return /^(1|true|yes|on)$/i.test(process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL?.trim() ?? "");
+}
+
+function activeToolsForBgAgent(activeTools: string[]): string[] {
+	return activeTools.filter((tool) => !BG_EXCLUDED_TOOL_SET.has(normalizedPiToolName(tool)));
 }
 
 function streamEventName(event: any): string | undefined {
@@ -487,8 +494,11 @@ async function runSingleAgentAttempt(
 	const args: string[] = ["--mode", "json", "-p", "--name", agent.name, "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
 	if (selectedThinking && selectedThinking !== "off") args.push("--thinking", selectedThinking);
-	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], pi.getActiveTools?.() ?? []);
+	args.push("--exclude-tools", BG_EXCLUDED_TOOLS.join(","));
+	const inheritedActiveTools = pi.getActiveTools?.() ?? [];
+	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], activeToolsForBgAgent(inheritedActiveTools));
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
+	else if (inheritedActiveTools.length > 0) args.push("--no-tools");
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;

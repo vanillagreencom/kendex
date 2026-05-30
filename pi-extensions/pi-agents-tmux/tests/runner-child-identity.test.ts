@@ -46,6 +46,26 @@ function captureSpawnedEnv(scenarios: Array<{ code: number; stdout?: string }>):
 	return envs;
 }
 
+function captureSpawnedLaunches(scenarios: Array<{ code: number; stdout?: string }>): Array<{ args: string[]; env?: NodeJS.ProcessEnv }> {
+	const launches: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
+	setSingleAgentSpawnForTests(((command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+		void command;
+		launches.push({ args, env: options?.env });
+		const proc = new EventEmitter() as any;
+		proc.stdout = new EventEmitter();
+		proc.stderr = new EventEmitter();
+		proc.killed = false;
+		proc.kill = () => { proc.killed = true; return true; };
+		const scenario = scenarios.shift() ?? { code: 0 };
+		queueMicrotask(() => {
+			if (scenario.stdout) proc.stdout.emit("data", Buffer.from(scenario.stdout));
+			proc.emit("close", scenario.code, null);
+		});
+		return proc;
+	}) as any);
+	return launches;
+}
+
 function agent(name: string, color?: string): AgentConfig {
 	return {
 		name,
@@ -186,6 +206,66 @@ describe("bg one-shot runner exports child identity env (issue #228)", () => {
 			setSingleAgentSpawnForTests();
 			if (previous === undefined) delete process.env.PI_SUBAGENT_CHILD_COLOR;
 			else process.env.PI_SUBAGENT_CHILD_COLOR = previous;
+		}
+	});
+
+	test("complete_subagent is excluded from bg one-shot child tools", async () => {
+		const launches = captureSpawnedLaunches([{ code: 0 }]);
+		try {
+			await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[agent("reviewer-test")],
+				"reviewer-test",
+				"review issue",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				{ getActiveTools: () => ["read", "complete_subagent", "delegate_subagent"], events: { emit: () => undefined } } as any,
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			expect(launches).toHaveLength(1);
+			const args = launches[0].args;
+			const excludeToolsIndex = args.indexOf("--exclude-tools");
+			expect(excludeToolsIndex).toBeGreaterThanOrEqual(0);
+			expect(args[excludeToolsIndex + 1]?.split(",")).toContain("complete_subagent");
+
+			const toolsIndex = args.indexOf("--tools");
+			expect(toolsIndex).toBeGreaterThanOrEqual(0);
+			expect(args[toolsIndex + 1]?.split(",")).toEqual(["read", "delegate_subagent"]);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	});
+
+	test("bg one-shot child gets no tools when complete_subagent was the only inherited tool", async () => {
+		const launches = captureSpawnedLaunches([{ code: 0 }]);
+		try {
+			await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[agent("reviewer-arch")],
+				"reviewer-arch",
+				"review issue",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				{ getActiveTools: () => ["complete_subagent"], events: { emit: () => undefined } } as any,
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			expect(launches).toHaveLength(1);
+			const args = launches[0].args;
+			expect(args).toContain("--exclude-tools");
+			expect(args).not.toContain("--tools");
+			expect(args).toContain("--no-tools");
+		} finally {
+			setSingleAgentSpawnForTests();
 		}
 	});
 });

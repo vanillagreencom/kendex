@@ -42,7 +42,7 @@ Code-review and QA-review workflows plus the structured-finding schema. Load thi
 
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-- **Return requires an agent-to-agent message.** Every `**Return exactly**` step must be delivered via the harness's message tool. Disk writes and turn text are not a valid return path. In Pi persistent panes, after printing the exact return body once, call `complete_subagent` with the final status/summary/files/validation; a plain final assistant message without that durable record leaves the parent task in `needs_completion` and is not a valid return.
+- **Return requires an agent-to-agent message.** Every `**Return exactly**` step must be delivered through the harness return channel. Claude Code uses `SendMessage`; Codex uses `send_input`; OpenCode resumes the stored `task_id`; Pi bg agents return via the final assistant message captured by `subagent`. Disk writes never count as a return path. In Pi persistent panes, after printing the exact return body once, call `complete_subagent` with the final status/summary/files/validation; bg agents must not call `complete_subagent`.
 
 ## Configuration
 
