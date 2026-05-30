@@ -87,6 +87,10 @@ function failStatusOversizedStdoutShim(): Record<string, string> {
 	return gitShim(`  *" status --porcelain=v1 --untracked-files=all "*) python3 -c 'import sys; sys.stdout.write("path/" + "\\x00".join("file" + str(i) + ".rs" for i in range(800)))' ; echo "status exploded" >&2; exit 44 ;;`);
 }
 
+function hugeIgnoredListShim(): Record<string, string> {
+	return gitShim(`  *" ls-files -z -o -i --exclude-standard "*) python3 -c 'import sys; sys.stdout.write("".join("ignored/tree/file-" + str(i) + ".txt\\x00" for i in range(90000)))' ; exit 0 ;;`);
+}
+
 function failFetchShim(): Record<string, string> {
 	return gitShim(`  *" fetch --prune --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
 }
@@ -245,6 +249,17 @@ describe("flightdeck-repo-sync main", () => {
 		expect(rev(fixture.clone, "main")).toBe(rev(fixture.clone, "origin/main"));
 		expect(readFileSync(join(fixture.clone, "tagged.txt"), "utf8")).toBe("tagged\n");
 		expect(hasRef(fixture.clone, tagRef)).toBe(false);
+	});
+
+	test("large unrelated ignored output does not block checked-out main fast-forward", () => {
+		if (!fixture) throw new Error("fixture missing");
+		pushSeed("remote.txt", "remote\n", "remote update");
+		const result = runSync(hugeIgnoredListShim());
+		expect(result.status).toBe(0);
+		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "fast-forwarded-worktree", status: "synced" });
+		expect(result.json.diagnostics).toBeUndefined();
+		expect(rev(fixture.clone, "main")).toBe(rev(fixture.clone, "origin/main"));
+		expect(readFileSync(join(fixture.clone, "remote.txt"), "utf8")).toBe("remote\n");
 	});
 
 	test("ignored file collision blocks before checked-out main fast-forward", () => {

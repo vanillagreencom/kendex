@@ -3,7 +3,7 @@
 // Only fast-forwards a clean local default branch to its remote-tracking ref.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, opendirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { emitRepoMainSync, type RepoMainSyncDiagnostic, type RepoMainSyncResult } from "../activity/workflow-emit.ts";
@@ -68,9 +68,9 @@ function isSafeRefPath(value: string): boolean {
 	return true;
 }
 
-function runGit(cwd: string, args: string[]): GitRun {
+function runGit(cwd: string, args: string[], opts: { input?: string } = {}): GitRun {
 	const fullArgs = ["-C", cwd, ...args];
-	const r = spawnSync("git", fullArgs, { encoding: "utf8" });
+	const r = spawnSync("git", fullArgs, { encoding: "utf8", input: opts.input });
 	return {
 		args: ["git", ...fullArgs],
 		command: shellCommand(["git", ...fullArgs]),
@@ -243,31 +243,94 @@ function incomingChangedPaths(root: string, localRef: string, remoteRef: string,
 	return { ok: true, paths: parseNulPaths(r.stdout) };
 }
 
-function ignoredUntrackedPaths(root: string, ahead = 0, behind = 0): PathListResult {
-	const r = runGit(root, ["ls-files", "-z", "-o", "-i", "--exclude-standard"]);
-	if (!ok(r)) return { ok: false, result: failGit("ignored-paths-failed", r, [r.command], ahead, behind) };
-	return { ok: true, paths: parseNulPaths(r.stdout) };
-}
-
-function pathsCollide(a: string, b: string): boolean {
-	return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
-}
-
-function collidingIgnoredPaths(incomingPaths: string[], ignoredPaths: string[]): string[] {
-	const collisions = new Set<string>();
-	for (const ignored of ignoredPaths) {
-		if (incomingPaths.some((incoming) => pathsCollide(incoming, ignored))) collisions.add(ignored);
-	}
-	return [...collisions].sort();
-}
-
 function ignoredFileCollisions(root: string, localRef: string, remoteRef: string, ahead: number, behind: number): PathListResult {
 	const incoming = incomingChangedPaths(root, localRef, remoteRef, ahead, behind);
 	if (!incoming.ok) return incoming;
 	if (incoming.paths.length === 0) return { ok: true, paths: [] };
-	const ignored = ignoredUntrackedPaths(root, ahead, behind);
+	const candidates = existingCollisionCandidates(root, incoming.paths);
+	const ignored = ignoredCandidatePaths(root, candidates.checkIgnore, ahead, behind);
 	if (!ignored.ok) return ignored;
-	return { ok: true, paths: collidingIgnoredPaths(incoming.paths, ignored.paths) };
+	return { ok: true, paths: [...new Set([...candidates.directoryCollisions, ...ignored.paths])].sort() };
+}
+
+function existingCollisionCandidates(root: string, incomingPaths: string[]): { checkIgnore: string[]; directoryCollisions: string[] } {
+	const checkIgnore = new Set<string>();
+	const directoryCollisions = new Set<string>();
+	for (const incomingPath of incomingPaths) {
+		const parts = incomingPath.split("/").filter(Boolean);
+		for (let i = 1; i <= parts.length; i += 1) {
+			const candidate = parts.slice(0, i).join("/");
+			let stat;
+			try {
+				stat = lstatSync(resolve(root, candidate));
+			} catch {
+				break;
+			}
+
+			const isLeaf = i === parts.length;
+			if (!isLeaf) {
+				if (!stat.isDirectory()) {
+					checkIgnore.add(candidate);
+					break;
+				}
+				continue;
+			}
+
+			if (stat.isDirectory()) {
+				if (directoryHasEntries(resolve(root, candidate))) directoryCollisions.add(candidate);
+			} else {
+				checkIgnore.add(candidate);
+			}
+		}
+	}
+	return { checkIgnore: [...checkIgnore].sort(), directoryCollisions: [...directoryCollisions].sort() };
+}
+
+function directoryHasEntries(path: string): boolean {
+	let dir: ReturnType<typeof opendirSync> | null = null;
+	try {
+		dir = opendirSync(path);
+		return dir.readSync() !== null;
+	} catch {
+		return false;
+	} finally {
+		dir?.closeSync();
+	}
+}
+
+const CHECK_IGNORE_STDIN_CHUNK_BYTES = 256 * 1024;
+const CHECK_IGNORE_STDIN_CHUNK_PATHS = 512;
+
+function ignoredCandidatePaths(root: string, paths: string[], ahead = 0, behind = 0): PathListResult {
+	if (paths.length === 0) return { ok: true, paths: [] };
+	const ignored = new Set<string>();
+	for (const chunk of pathChunks(paths)) {
+		const input = `${chunk.join("\0")}\0`;
+		const r = runGit(root, ["check-ignore", "-z", "--stdin"], { input });
+		if (r.error || (r.status !== 0 && r.status !== 1)) return { ok: false, result: failGit("ignored-paths-failed", r, [r.command], ahead, behind) };
+		if (r.status === 0) {
+			for (const path of parseNulPaths(r.stdout)) ignored.add(path);
+		}
+	}
+	return { ok: true, paths: [...ignored].sort() };
+}
+
+function pathChunks(paths: string[]): string[][] {
+	const chunks: string[][] = [];
+	let chunk: string[] = [];
+	let bytes = 0;
+	for (const path of paths) {
+		const size = Buffer.byteLength(path, "utf8") + 1;
+		if (chunk.length > 0 && (chunk.length >= CHECK_IGNORE_STDIN_CHUNK_PATHS || bytes + size > CHECK_IGNORE_STDIN_CHUNK_BYTES)) {
+			chunks.push(chunk);
+			chunk = [];
+			bytes = 0;
+		}
+		chunk.push(path);
+		bytes += size;
+	}
+	if (chunk.length > 0) chunks.push(chunk);
+	return chunks;
 }
 
 type RemoteBranchResult =
