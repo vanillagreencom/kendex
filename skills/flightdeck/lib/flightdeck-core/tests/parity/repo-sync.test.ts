@@ -127,6 +127,7 @@ function makeFixture(): Fixture {
 }
 
 function commitFile(repo: string, file: string, content: string, message: string): void {
+	mkdirSync(dirname(join(repo, file)), { recursive: true });
 	writeFileSync(join(repo, file), content, "utf8");
 	git(repo, ["add", file]);
 	git(repo, ["commit", "-q", "-m", message]);
@@ -279,6 +280,61 @@ describe("flightdeck-repo-sync main", () => {
 		expect(result.json.dirty_paths).toContain("ignored.txt");
 		expect(result.json.commands_suggested.join("\n")).toContain("ls-files -o -i --exclude-standard");
 		expect(result.json.commands_suggested.join("\n")).toContain("do not delete or discard ignored/untracked files");
+		expect(readFileSync(ignoredPath, "utf8")).toBe("local ignored work\n");
+		expect(rev(fixture.clone, "main")).toBe(before);
+		expect(rev(fixture.clone, "origin/main")).not.toBe(before);
+	});
+
+	test("tracked-only directory replaced by incoming file fast-forwards checked-out main", () => {
+		if (!fixture) throw new Error("fixture missing");
+		pushSeed("foo/a.txt", "tracked dir content\n", "track foo dir");
+		const setup = runSync();
+		expect(setup.status).toBe(0);
+		expect(setup.json.status).toBe("synced");
+		expect(readFileSync(join(fixture.clone, "foo/a.txt"), "utf8")).toBe("tracked dir content\n");
+
+		rmSync(join(fixture.seed, "foo"), { force: true, recursive: true });
+		writeFileSync(join(fixture.seed, "foo"), "remote file content\n", "utf8");
+		git(fixture.seed, ["add", "-A", "foo"]);
+		git(fixture.seed, ["commit", "-q", "-m", "replace foo dir with file"]);
+		git(fixture.seed, ["push", "-q", "origin", "main"]);
+		expect(git(fixture.clone, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+
+		const result = runSync();
+		expect(result.status).toBe(0);
+		expect(result.json).toMatchObject({ ahead: 0, behind: 0, reason: "fast-forwarded-worktree", status: "synced" });
+		expect(result.json.dirty_paths).toEqual([]);
+		expect(readFileSync(join(fixture.clone, "foo"), "utf8")).toBe("remote file content\n");
+		expect(existsSync(join(fixture.clone, "foo/a.txt"))).toBe(false);
+		expect(rev(fixture.clone, "main")).toBe(rev(fixture.clone, "origin/main"));
+	});
+
+	test("ignored entry inside directory replaced by incoming file still blocks", () => {
+		if (!fixture) throw new Error("fixture missing");
+		pushSeed("foo/a.txt", "tracked dir content\n", "track foo dir");
+		const setup = runSync();
+		expect(setup.status).toBe(0);
+		expect(setup.json.status).toBe("synced");
+
+		const ignoredPath = join(fixture.clone, "foo/ignored.txt");
+		writeFileSync(join(fixture.clone, ".git/info/exclude"), "\nfoo/ignored.txt\n", { flag: "a" });
+		writeFileSync(ignoredPath, "local ignored work\n", "utf8");
+		expect(git(fixture.clone, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+		const before = rev(fixture.clone, "main");
+
+		rmSync(join(fixture.seed, "foo"), { force: true, recursive: true });
+		writeFileSync(join(fixture.seed, "foo"), "remote file content\n", "utf8");
+		git(fixture.seed, ["add", "-A", "foo"]);
+		git(fixture.seed, ["commit", "-q", "-m", "replace foo dir with file"]);
+		git(fixture.seed, ["push", "-q", "origin", "main"]);
+
+		const result = runSync();
+		expect(result.status).toBe(0);
+		expect(result.json.status).toBe("blocked");
+		expect(result.json.reason).toBe("ignored-file-collision");
+		expect(result.json.ahead).toBe(0);
+		expect(result.json.behind).toBe(1);
+		expect(result.json.dirty_paths).toContain("foo");
 		expect(readFileSync(ignoredPath, "utf8")).toBe("local ignored work\n");
 		expect(rev(fixture.clone, "main")).toBe(before);
 		expect(rev(fixture.clone, "origin/main")).not.toBe(before);

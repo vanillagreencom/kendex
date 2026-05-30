@@ -3,7 +3,7 @@
 // Only fast-forwards a clean local default branch to its remote-tracking ref.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, opendirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { emitRepoMainSync, type RepoMainSyncDiagnostic, type RepoMainSyncResult } from "../activity/workflow-emit.ts";
@@ -247,13 +247,18 @@ function ignoredFileCollisions(root: string, localRef: string, remoteRef: string
 	const incoming = incomingChangedPaths(root, localRef, remoteRef, ahead, behind);
 	if (!incoming.ok) return incoming;
 	if (incoming.paths.length === 0) return { ok: true, paths: [] };
-	const candidates = existingCollisionCandidates(root, incoming.paths);
+	const candidates = existingCollisionCandidates(root, incoming.paths, ahead, behind);
+	if (!candidates.ok) return { ok: false, result: candidates.result };
 	const ignored = ignoredCandidatePaths(root, candidates.checkIgnore, ahead, behind);
 	if (!ignored.ok) return ignored;
 	return { ok: true, paths: [...new Set([...candidates.directoryCollisions, ...ignored.paths])].sort() };
 }
 
-function existingCollisionCandidates(root: string, incomingPaths: string[]): { checkIgnore: string[]; directoryCollisions: string[] } {
+type CollisionCandidateResult =
+	| { checkIgnore: string[]; directoryCollisions: string[]; ok: true }
+	| { ok: false; result: RepoMainSyncResult };
+
+function existingCollisionCandidates(root: string, incomingPaths: string[], ahead = 0, behind = 0): CollisionCandidateResult {
 	const checkIgnore = new Set<string>();
 	const directoryCollisions = new Set<string>();
 	for (const incomingPath of incomingPaths) {
@@ -277,25 +282,33 @@ function existingCollisionCandidates(root: string, incomingPaths: string[]): { c
 			}
 
 			if (stat.isDirectory()) {
-				if (directoryHasEntries(resolve(root, candidate))) directoryCollisions.add(candidate);
+				const localOnlyEntries = directoryHasNonTrackedEntries(root, candidate, ahead, behind);
+				if (!localOnlyEntries.ok) return localOnlyEntries;
+				if (localOnlyEntries.hasNonTrackedEntries) directoryCollisions.add(candidate);
 			} else {
 				checkIgnore.add(candidate);
 			}
 		}
 	}
-	return { checkIgnore: [...checkIgnore].sort(), directoryCollisions: [...directoryCollisions].sort() };
+	return { checkIgnore: [...checkIgnore].sort(), directoryCollisions: [...directoryCollisions].sort(), ok: true };
 }
 
-function directoryHasEntries(path: string): boolean {
-	let dir: ReturnType<typeof opendirSync> | null = null;
-	try {
-		dir = opendirSync(path);
-		return dir.readSync() !== null;
-	} catch {
-		return false;
-	} finally {
-		dir?.closeSync();
+type DirectoryNonTrackedEntriesResult =
+	| { hasNonTrackedEntries: boolean; ok: true }
+	| { ok: false; result: RepoMainSyncResult };
+
+function directoryHasNonTrackedEntries(root: string, candidate: string, ahead = 0, behind = 0): DirectoryNonTrackedEntriesResult {
+	const checks = [
+		["ls-files", "-z", "--others", "--exclude-standard", "--", candidate],
+		["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", candidate],
+	];
+	for (const args of checks) {
+		const r = runGit(root, args);
+		if (r.error?.code === "ENOBUFS") return { hasNonTrackedEntries: true, ok: true };
+		if (!ok(r)) return { ok: false, result: failGit("directory-collision-check-failed", r, [r.command], ahead, behind, [candidate]) };
+		if (r.stdout.length > 0) return { hasNonTrackedEntries: true, ok: true };
 	}
+	return { hasNonTrackedEntries: false, ok: true };
 }
 
 const CHECK_IGNORE_STDIN_CHUNK_BYTES = 256 * 1024;
@@ -392,6 +405,7 @@ function commandsForDirty(root: string, remote: string, branch: string): string[
 function commandsForCollision(root: string, localRef: string, remoteRef: string, remote: string, branch: string): string[] {
 	return [
 		`git -C ${shellQuote(root)} diff --name-only ${shellQuote(`${localRef}..${remoteRef}`)}`,
+		`git -C ${shellQuote(root)} ls-files -o --exclude-standard`,
 		`git -C ${shellQuote(root)} ls-files -o -i --exclude-standard`,
 		"commit work, move/copy colliding ignored files aside intentionally, or rerun later after the checkout is safe",
 		"do not delete or discard ignored/untracked files just to make repo sync pass",
