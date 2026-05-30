@@ -907,14 +907,106 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     items
 }
 
+fn normalize_path_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn managed_skill_roots(global: bool) -> Vec<PathBuf> {
+    if global {
+        vec![
+            global_state_dir().join("skills"),
+            codex_home_dir().join("skills"),
+        ]
+    } else {
+        vec![project_root().join(".agents").join("skills")]
+    }
+}
+
+fn harness_skill_dirs(global: bool) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for harness in crate::harness::Harness::ALL {
+        let dir = harness.skills_dir(global);
+        let key = normalize_path_lexical(&dir);
+        if seen.insert(key) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+fn prune_broken_skill_symlinks_in_dirs(dirs: &[PathBuf], managed_roots: &[PathBuf]) -> bool {
+    let managed_roots: Vec<PathBuf> = managed_roots
+        .iter()
+        .map(|root| normalize_path_lexical(root))
+        .collect();
+    let mut modified = false;
+
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_symlink() || path.exists() {
+                continue;
+            }
+
+            let Ok(target) = std::fs::read_link(&path) else {
+                continue;
+            };
+            let target = if target.is_absolute() {
+                target
+            } else {
+                path.parent().unwrap_or(dir).join(target)
+            };
+            let target = normalize_path_lexical(&target);
+
+            if !managed_roots.iter().any(|root| target.starts_with(root)) {
+                continue;
+            }
+
+            if std::fs::remove_file(&path).is_ok() {
+                eprintln!("  Removed stale skill symlink: {}", path.display());
+                modified = true;
+            }
+        }
+    }
+
+    modified
+}
+
+fn prune_broken_skill_symlinks(global: bool) -> bool {
+    let dirs = harness_skill_dirs(global);
+    let roots = managed_skill_roots(global);
+    prune_broken_skill_symlinks_in_dirs(&dirs, &roots)
+}
+
 /// Reconcile the lock file with what's actually on disk.
 ///
 /// - Items on disk (with `.vstack-refreshed` marker) but missing from lock are
 ///   re-added.
 /// - Items in lock but missing from disk are removed from lock.
+/// - Broken harness skill symlinks pointing at vstack's canonical skill roots
+///   are removed so generated `.claude/skills/*` entries cannot survive with
+///   missing `.agents/skills/*` targets.
 /// - Returns true if the lock was modified.
 pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str) -> bool {
     let mut modified = false;
+
+    if prune_broken_skill_symlinks(global) {
+        modified = true;
+    }
 
     // Re-add skills found on disk but missing from lock
     let disk_skills = scan_installed_skills_on_disk(global);
@@ -1380,6 +1472,46 @@ mod source_registry_tests {
         {
             assert!(is_temporary_local_path("/tmp/vstack-install-foo"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prunes_broken_generated_skill_symlinks_only() {
+        use std::os::unix::fs::symlink;
+
+        let dir = sandbox("prune_broken_skill_symlinks");
+        let claude_skills = dir.join(".claude").join("skills");
+        let managed_root = dir.join(".agents").join("skills");
+        fs::create_dir_all(&claude_skills).unwrap();
+        fs::create_dir_all(&managed_root).unwrap();
+
+        let broken_managed = claude_skills.join("agent-browser");
+        symlink("../../.agents/skills/agent-browser", &broken_managed).unwrap();
+
+        let external_broken = claude_skills.join("external");
+        symlink("../../not-vstack/skills/external", &external_broken).unwrap();
+
+        fs::create_dir_all(managed_root.join("github")).unwrap();
+        let live_managed = claude_skills.join("github");
+        symlink("../../.agents/skills/github", &live_managed).unwrap();
+
+        let modified = prune_broken_skill_symlinks_in_dirs(&[claude_skills], &[managed_root]);
+
+        assert!(modified, "broken generated symlink should be pruned");
+        assert!(
+            !broken_managed.is_symlink(),
+            "stale .claude/skills symlink to missing .agents/skills target must be removed"
+        );
+        assert!(
+            external_broken.is_symlink(),
+            "non-vstack broken symlinks must be left alone"
+        );
+        assert!(
+            live_managed.is_symlink() && live_managed.exists(),
+            "live generated symlinks must be preserved"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
