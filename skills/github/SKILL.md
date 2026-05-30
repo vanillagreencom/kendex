@@ -119,6 +119,10 @@ Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pa
 - Returns `{"error": "message"}` on stderr with exit code 1
 - Automatic retry on rate limiting (3 attempts with backoff)
 - NOT_FOUND errors return clean `{"error": "Not found"}`
+- Flightdeck activity emission is best-effort. If the shared Flightdeck helper
+  is unavailable in a managed context, wrappers continue and print one clear
+  non-blocking warning instead of raw shell diagnostics. Standalone use outside
+  Flightdeck stays silent.
 
 ## Troubleshooting
 
