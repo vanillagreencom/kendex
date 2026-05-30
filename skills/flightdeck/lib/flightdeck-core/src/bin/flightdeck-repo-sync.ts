@@ -282,9 +282,9 @@ function existingCollisionCandidates(root: string, incomingPaths: string[], ahea
 			}
 
 			if (stat.isDirectory()) {
-				const localOnlyEntries = directoryHasNonTrackedEntries(root, candidate, ahead, behind);
-				if (!localOnlyEntries.ok) return localOnlyEntries;
-				if (localOnlyEntries.hasNonTrackedEntries) directoryCollisions.add(candidate);
+				const nonTracked = directoryHasNonTrackedEntries(root, candidate, ahead, behind);
+				if (!nonTracked.ok) return nonTracked;
+				if (nonTracked.hasNonTrackedEntries) directoryCollisions.add(candidate);
 			} else {
 				checkIgnore.add(candidate);
 			}
@@ -298,9 +298,13 @@ type DirectoryNonTrackedEntriesResult =
 	| { ok: false; result: RepoMainSyncResult };
 
 function directoryHasNonTrackedEntries(root: string, candidate: string, ahead = 0, behind = 0): DirectoryNonTrackedEntriesResult {
+	// Pass candidate as a literal path, not a git pathspec: directory names
+	// containing glob magic ([ ] * ?) or a leading ':' must match exactly, or a
+	// real collision could be missed and an unsafe fast-forward could clobber
+	// local untracked/ignored content.
 	const checks = [
-		["ls-files", "-z", "--others", "--exclude-standard", "--", candidate],
-		["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", candidate],
+		["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", candidate],
+		["--literal-pathspecs", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", candidate],
 	];
 	for (const args of checks) {
 		const r = runGit(root, args);

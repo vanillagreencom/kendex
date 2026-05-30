@@ -91,6 +91,19 @@ function hugeIgnoredListShim(): Record<string, string> {
 	return gitShim(`  *" ls-files -z -o -i --exclude-standard "*) python3 -c 'import sys; sys.stdout.write("".join("ignored/tree/file-" + str(i) + ".txt\\x00" for i in range(90000)))' ; exit 0 ;;`);
 }
 
+function hugeDirectoryOthersShim(): Record<string, string> {
+	// Force the directory-collision predicate's `ls-files --others -- foo` probe to
+	// emit > 1 MiB of NUL-separated output so spawnSync raises ENOBUFS, exercising the
+	// directoryHasNonTrackedEntries ENOBUFS -> treat-as-collision fail-safe branch.
+	return gitShim(`  *" ls-files -z --others --exclude-standard -- foo "*) python3 -c 'import sys; sys.stdout.write("".join("foo/junk-" + str(i) + ".txt\\x00" for i in range(90000)))' ; exit 0 ;;`);
+}
+
+function failDirectoryOthersShim(): Record<string, string> {
+	// Force the directory-collision predicate's `ls-files --others -- foo` probe to
+	// fail non-zero, exercising the directory-collision-check-failed propagation path.
+	return gitShim(`  *" ls-files -z --others --exclude-standard -- foo "*) echo "ls-files exploded" >&2; exit 33 ;;`);
+}
+
 function failFetchShim(): Record<string, string> {
 	return gitShim(`  *" fetch --prune --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main "*) echo "fetch exploded" >&2; exit 47 ;;`);
 }
@@ -338,6 +351,51 @@ describe("flightdeck-repo-sync main", () => {
 		expect(readFileSync(ignoredPath, "utf8")).toBe("local ignored work\n");
 		expect(rev(fixture.clone, "main")).toBe(before);
 		expect(rev(fixture.clone, "origin/main")).not.toBe(before);
+	});
+
+	test("oversized directory others-listing treats dir->file transition as collision (ENOBUFS fail-safe)", () => {
+		if (!fixture) throw new Error("fixture missing");
+		pushSeed("foo/a.txt", "tracked dir content\n", "track foo dir");
+		expect(runSync().json.status).toBe("synced");
+
+		rmSync(join(fixture.seed, "foo"), { force: true, recursive: true });
+		writeFileSync(join(fixture.seed, "foo"), "remote file content\n", "utf8");
+		git(fixture.seed, ["add", "-A", "foo"]);
+		git(fixture.seed, ["commit", "-q", "-m", "replace foo dir with file"]);
+		git(fixture.seed, ["push", "-q", "origin", "main"]);
+		expect(git(fixture.clone, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+		const before = rev(fixture.clone, "main");
+
+		// Huge `ls-files --others -- foo` output trips spawnSync ENOBUFS; the predicate
+		// must fail safe by treating the directory as a collision and blocking the ff.
+		const result = runSync(hugeDirectoryOthersShim());
+		expect(result.status).toBe(0);
+		expect(result.json.status).toBe("blocked");
+		expect(result.json.reason).toBe("ignored-file-collision");
+		expect(result.json.dirty_paths).toContain("foo");
+		expect(existsSync(join(fixture.clone, "foo/a.txt"))).toBe(true);
+		expect(rev(fixture.clone, "main")).toBe(before);
+	});
+
+	test("directory others-listing git failure surfaces directory-collision-check-failed", () => {
+		if (!fixture) throw new Error("fixture missing");
+		pushSeed("foo/a.txt", "tracked dir content\n", "track foo dir");
+		expect(runSync().json.status).toBe("synced");
+
+		rmSync(join(fixture.seed, "foo"), { force: true, recursive: true });
+		writeFileSync(join(fixture.seed, "foo"), "remote file content\n", "utf8");
+		git(fixture.seed, ["add", "-A", "foo"]);
+		git(fixture.seed, ["commit", "-q", "-m", "replace foo dir with file"]);
+		git(fixture.seed, ["push", "-q", "origin", "main"]);
+		const before = rev(fixture.clone, "main");
+
+		const result = runSync(failDirectoryOthersShim());
+		expect(result.status).toBe(1);
+		expect(result.json.status).toBe("failed");
+		expect(result.json.reason).toContain("directory-collision-check-failed");
+		expect(result.json.reason).toContain("exit 33");
+		expect(result.json.diagnostics?.[0]).toMatchObject({ exit_status: 33 });
+		expect(rev(fixture.clone, "main")).toBe(before);
 	});
 
 	test("clean non-main checkout fast-forwards local main ref without switching", () => {
