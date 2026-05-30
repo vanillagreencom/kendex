@@ -62,7 +62,13 @@ resolve_linear_api_key() {
     return 0
 }
 
-resolve_linear_api_key || exit 1
+# Most commands hit the Linear API and should resolve op:// references during
+# startup so authentication failures surface before any mutation/read work.
+# Local-cache commands source this file only for shared formatters/defaults; they
+# must not require API auth for documented cache-only reads.
+if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" != "1" ]]; then
+    resolve_linear_api_key || exit 1
+fi
 
 # Validate API key
 check_api_key() {

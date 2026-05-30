@@ -6,7 +6,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Cache queries are local reads. Source common helpers without resolving
+# LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
+LINEAR_SKIP_API_KEY_RESOLUTION=1
 source "$SCRIPT_DIR/../lib/common.sh"
+unset LINEAR_SKIP_API_KEY_RESOLUTION
 source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 source "$SCRIPT_DIR/../lib/issue-validation.sh"

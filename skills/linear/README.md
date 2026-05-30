@@ -22,7 +22,7 @@ skills/linear/
 
 ## Setup
 
-1. Add `LINEAR_API_KEY` to `.env.local`
+1. Add `LINEAR_API_KEY` to `.env.local` for live API commands and sync
 2. Optionally set `LINEAR_TEAM` and `LINEAR_TEAM_PREFIX` if defaults don't match
 
 ```bash
@@ -30,11 +30,13 @@ skills/linear/
 ./scripts/linear.sh sync --reconcile
 ```
 
+Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachments fetch`) use existing `.cache/linear` data and do not require API auth.
+
 ## Configuration
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LINEAR_API_KEY` | API key (required) | — |
+| `LINEAR_API_KEY` | API key (required for live API commands and sync; not required for cache reads) | — |
 | `LINEAR_TEAM` | Default team name | `Claude` |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `CC` |

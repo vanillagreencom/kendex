@@ -96,7 +96,7 @@ linear.sh sync --full           # Full re-sync
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LINEAR_API_KEY` | API key (required, in `.env.local`) | — |
+| `LINEAR_API_KEY` | API key (required for live API commands and sync; not required for cache reads) | — |
 | `LINEAR_TEAM` | Default team name | `Claude` |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `CC` |
