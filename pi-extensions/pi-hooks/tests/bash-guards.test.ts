@@ -68,6 +68,8 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("env --split-string='git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git -c alias.ci=commit ci -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git -c ALIAS.upper=commit upper -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git -c alias.zzz=commit ZZZ -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git -c 'alias.ci=commit -m test' ci", project, 1000)).toBe(resolve(project));
 			runGit(["config", "alias.ci", "commit"], project);
 			runGit(["config", "alias.ca", "commit -a"], project);
@@ -80,14 +82,22 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("ALIAS=commit git --config-env=alias.ce=ALIAS ce -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env ALIAS=commit git --config-env=alias.ee=ALIAS ee -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("cmd=git; $cmd commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git config alias.zzz276 commit; git zzz276 -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("shopt -s expand_aliases; alias g=git; g commit -m test", project, 1000)).toBe(resolve(project));
+			expect((await resolveProjectGitCommit("cmd=git; $cmd commit -m test", project, 1000)).kind).toBe("error");
 			expect(await projectGitCommitCwd("G=git; ${G} commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("${G:-git} commit -m test", project, 1000)).toBe(resolve(project));
+			expect((await resolveProjectGitCommit("$(echo git) commit -m test", project, 1000)).kind).toBe("error");
+			expect(await projectGitCommitCwd("`echo git` commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("v=commit; git${IFS}$v -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git${IFS}commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git${IFS} commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("eval \"git commit -m test\"", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("eval 'git `echo commit` -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("eval 'git \"$(echo commit)\" -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("bash <<<\"git commit -m test\"", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("bash -c -- 'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("bash -c '$1 commit -m test' _ git", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("cmd=git bash -c '$cmd commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("bash -c 'git $(echo commit) -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("printf 'git commit -m test\\n' | bash", project, 1000)).toBe(resolve(project));
@@ -208,6 +218,7 @@ describe("git commit target detection", () => {
 			mkdirSync(otherWorkTree);
 			expect(await projectGitCommitCwd("git -C /proc/self/cwd commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(link)} commit -m test`, project, 1000)).toBe(resolve(link));
+			expect(await projectGitCommitCwd(`git --git-dir=${q(join(link, ".git"))} commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git --work-tree=${q(otherWorkTree)} commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -273,6 +284,8 @@ git commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(includeAlias.kind).toBe("error");
 			const includeIfAlias = await resolveProjectGitCommit(`git -c includeIf.gitdir:${project}/.git.path=/tmp/aliases zzz276 -m base`, project, 1000);
 			expect(includeIfAlias.kind).toBe("error");
+			const globalAlias = await resolveProjectGitCommit("GIT_CONFIG_GLOBAL=/tmp/aliases git zzz276 -m base", project, 1000);
+			expect(globalAlias.kind).toBe("error");
 			const dynamicCount = await resolveProjectGitCommit("n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit git zzz -m base", project, 1000);
 			expect(dynamicCount.kind).toBe("error");
 		} finally {

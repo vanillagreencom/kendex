@@ -181,6 +181,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 					"git a src/new.rs && git commit -m test",
 					"git${IFS}add src/new.rs && git commit -m test",
 					"git${IFS} add src/new.rs && git commit -m test",
+					"$(echo git) add src/new.rs && git commit -m test",
+					"`echo git` add src/new.rs && git commit -m test",
 					"G=git; ${G} add src/new.rs && git commit -m test",
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
@@ -244,15 +246,19 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`/usr/bin/git commit -m project`,
 					`command /usr/bin/git commit -m project`,
 					`git -c alias.ci=commit ci -m project`,
+					`git -c ALIAS.upper=commit upper -m project`,
+					`git -c alias.zzz=commit ZZZ -m project`,
 					`git -c 'alias.ci=commit -m project' ci`,
 					`ALIAS=commit git --config-env=alias.ce=ALIAS ce -m project`,
 					`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
-					`cmd=git; $cmd commit -am project`,
-					`G=git; ${"${G}"} commit -am project`,
+					`git config alias.zzz276 commit; git zzz276 -am project`,
+					`shopt -s expand_aliases; alias g=git; g commit -am project`,
 					`eval "git commit -am project"`,
 					`eval 'git \`echo commit\` -am project'`,
+					`eval 'git "$(echo commit)" -am project'`,
 					`bash <<<"git commit -am project"`,
 					`bash -c -- 'git commit -am project'`,
+					`bash -c '$1 commit -am project' _ git`,
 					`cmd=git bash -c '$cmd commit -am project'`,
 					`bash -c 'git $(echo commit) -am project'`,
 					`printf 'git commit -am project\\n' | bash`,
@@ -268,10 +274,17 @@ describe("pi-hooks pre-commit tool_call", () => {
 					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
 				}
 				for (const command of [
+					`cmd=git; $cmd commit -am project`,
+					`G=git; ${"${G}"} commit -am project`,
+					`${"${G:-git}"} commit -am project`,
+					`$(echo git) commit -am project`,
+					`\`echo git\` commit -am project`,
+					`v=commit; git${"${IFS}"}$v -am project`,
 					`git${"${IFS}"}commit -am project`,
 					`git${"${IFS}"} commit -am project`,
 					`x=zz; ALIAS=commit git --config-env=alias.$x=ALIAS zz -m project`,
 					`n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
+					`GIT_CONFIG_GLOBAL=/tmp/pi-hooks-aliases git zzz276 -am project`,
 					`git -c include.path=/tmp/pi-hooks-aliases zzz276 -am project`,
 					`git -c includeIf.gitdir:${project}/.git.path=/tmp/pi-hooks-aliases zzz276 -am project`,
 				]) {
