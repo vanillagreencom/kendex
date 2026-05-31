@@ -83,11 +83,11 @@ export interface ActiveRunStateResolution {
 }
 
 const PROJECT_ID_CACHE = new Map<string, string>();
-const DOT_ENV_LOADED_FOR = new Set<string>();
+const DOT_ENV_CACHE = new Map<string, { values?: Map<string, string>; error?: string }>();
 
 export function resetRunStoreCacheForTests(): void {
 	PROJECT_ID_CACHE.clear();
-	DOT_ENV_LOADED_FOR.clear();
+	DOT_ENV_CACHE.clear();
 }
 
 function sha256(value: string): string {
@@ -131,7 +131,22 @@ function usesShellFeatures(text: string): boolean {
 	return false;
 }
 
-function loadDotEnvNative(text: string): void {
+
+function declaredEnvKeys(text: string): Set<string> {
+	const keys = new Set<string>();
+	for (const rawLine of text.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		const stripped = line.replace(/^export\s+/, "");
+		const pattern = /(?:^|[\s;])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=/g;
+		let match: RegExpExecArray | null;
+		while ((match = pattern.exec(stripped)) !== null) keys.add(match[1]!);
+	}
+	return keys;
+}
+
+function loadDotEnvNative(text: string): Map<string, string> {
+	const values = new Map<string, string>();
 	for (const rawLine of text.split(/\r?\n/)) {
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) continue;
@@ -142,27 +157,42 @@ function loadDotEnvNative(text: string): void {
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
 		let value = stripped.slice(eq + 1).trim();
 		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-		(process.env as Record<string, string>)[key] = value;
+		values.set(key, value);
 	}
+	return values;
 }
 
-function loadProjectDotEnvIntoProcess(projectRoot: string): void {
+function loadProjectDotEnvValues(projectRoot: string): Map<string, string> {
 	const root = resolve(projectRoot);
-	if (DOT_ENV_LOADED_FOR.has(root)) return;
-	DOT_ENV_LOADED_FOR.add(root);
+	const cached = DOT_ENV_CACHE.get(root);
+	if (cached?.error) throw new Error(cached.error);
+	if (cached?.values) return cached.values;
 	const envLocal = join(root, ".env.local");
 	const envBase = join(root, ".env");
 	const target = existsSync(envLocal) ? envLocal : existsSync(envBase) ? envBase : "";
-	if (!target) return;
+	if (!target) {
+		const values = new Map<string, string>();
+		DOT_ENV_CACHE.set(root, { values });
+		return values;
+	}
 	let text = "";
 	try {
 		text = readFileSync(target, "utf8");
 	} catch (error) {
-		throw new Error(`.env read failed: ${error instanceof Error ? error.message : String(error)}`);
+		const message = `.env read failed: ${error instanceof Error ? error.message : String(error)}`;
+		DOT_ENV_CACHE.set(root, { error: message });
+		throw new Error(message);
 	}
 	if (!usesShellFeatures(text)) {
-		loadDotEnvNative(text);
-		return;
+		const values = loadDotEnvNative(text);
+		DOT_ENV_CACHE.set(root, { values });
+		return values;
+	}
+	const declared = declaredEnvKeys(text);
+	if (declared.size === 0) {
+		const values = new Map<string, string>();
+		DOT_ENV_CACHE.set(root, { values });
+		return values;
 	}
 	const script = `
 		set -euo pipefail
@@ -172,47 +202,25 @@ function loadProjectDotEnvIntoProcess(projectRoot: string): void {
 		env -0
 	`;
 	const r = spawnSync("bash", ["-c", script, "_", target], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
-	if (r.status !== 0) throw new Error(`.env load failed: ${r.stderr ?? ""}`);
-	const diffScript = `
-		set -euo pipefail
-		before=$(mktemp)
-		after=$(mktemp)
-		compgen -v | sort > "$before"
-		set -a
-		source "$1"
-		set +a
-		compgen -v | sort > "$after"
-		comm -13 "$before" "$after"
-		rm -f "$before" "$after"
-	`;
-	const diffR = spawnSync("bash", ["-c", diffScript, "_", target], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
-	const declared = new Set<string>();
-	if (diffR.status === 0) {
-		for (const raw of (diffR.stdout ?? "").split("\n")) {
-			const key = raw.trim();
-			if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) declared.add(key);
-		}
-	} else {
-		for (const raw of text.split(/\r?\n/)) {
-			const line = raw.trim();
-			if (!line || line.startsWith("#")) continue;
-			const stripped = line.replace(/^export\s+/, "");
-			const eq = stripped.indexOf("=");
-			const key = eq > 0 ? stripped.slice(0, eq).trim() : "";
-			if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) declared.add(key);
-		}
+	if (r.status !== 0) {
+		const message = `.env load failed: ${r.stderr ?? ""}`;
+		DOT_ENV_CACHE.set(root, { error: message });
+		throw new Error(message);
 	}
+	const values = new Map<string, string>();
 	for (const entry of (r.stdout ?? "").split("\0")) {
 		const eq = entry.indexOf("=");
 		if (eq <= 0) continue;
 		const key = entry.slice(0, eq);
-		if (declared.has(key)) (process.env as Record<string, string>)[key] = entry.slice(eq + 1);
+		if (declared.has(key)) values.set(key, entry.slice(eq + 1));
 	}
+	DOT_ENV_CACHE.set(root, { values });
+	return values;
 }
 
 function runStoreRoot(projectRoot: string): string {
-	loadProjectDotEnvIntoProcess(projectRoot);
-	const override = nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
+	const envValues = loadProjectDotEnvValues(projectRoot);
+	const override = nonEmpty(envValues.get("FLIGHTDECK_RUN_STORE_ROOT")) ?? nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
 	if (override) return resolve(expandHome(override));
 	return join(homedir(), ".vstack", "flightdeck");
 }
