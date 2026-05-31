@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { repairToolPairing } from "cc-session-io";
 import { verifyWrittenSession } from "../src/session-verify.js";
+import { findUnpairedToolUses, summarizeMissingToolNames } from "../src/tool-pairing-audit.js";
 
 // --- repairToolPairing ---
 
@@ -42,6 +43,36 @@ describe("repairToolPairing", () => {
 
 	it("empty input returns empty", () => {
 		assert.deepEqual(repairToolPairing([]), []);
+	});
+});
+
+describe("tool pairing audit", () => {
+	it("detects every tool_use that repairToolPairing would pad with a synthetic result", () => {
+		const msgs = [
+			{ role: "assistant", content: [
+				{ type: "tool_use", id: "ok", name: "Read", input: {} },
+				{ type: "tool_use", id: "lost-a", name: "Grep", input: {} },
+				{ type: "tool_use", id: "lost-b", name: "Grep", input: {} },
+			] },
+			{ role: "user", content: [{ type: "tool_result", tool_use_id: "ok", content: "fine" }] },
+		];
+
+		const missing = findUnpairedToolUses(msgs);
+		assert.deepEqual(missing.map((item) => item.id), ["lost-a", "lost-b"]);
+		assert.deepEqual(summarizeMissingToolNames(missing), [{ name: "Grep", count: 2 }]);
+	});
+
+	it("detects a missing result before the next normal user turn", () => {
+		const msgs = [
+			{ role: "assistant", content: [{ type: "tool_use", id: "orphan", name: "Bash", input: {} }] },
+			{ role: "user", content: "next prompt" },
+		];
+
+		const missing = findUnpairedToolUses(msgs);
+		assert.equal(missing.length, 1);
+		assert.equal(missing[0].id, "orphan");
+		assert.equal(missing[0].toolName, "Bash");
+		assert.equal(missing[0].userIndex, 1);
 	});
 });
 

@@ -88,7 +88,8 @@ export function convertPiMessages(
 	const anthropicMessages = [];
 	const sanitizedIds = new Map();
 
-	for (const msg of messages) {
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
@@ -126,11 +127,19 @@ export function convertPiMessages(
 			if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
 			anthropicMessages.push({ role: "assistant", content: blocks });
 		} else if (msg.role === "toolResult") {
-			const content = toolResultContentToAnthropic(msg.content);
-			anthropicMessages.push({
-				role: "user",
-				content: [{ type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: content || "", is_error: msg.isError }],
-			});
+			const blocks = [];
+			for (; i < messages.length; i++) {
+				const toolMsg = messages[i];
+				if (toolMsg.role !== "toolResult") { i--; break; }
+				const content = toolResultContentToAnthropic(toolMsg.content);
+				blocks.push({
+					type: "tool_result",
+					tool_use_id: sanitizeToolId(toolMsg.toolCallId, sanitizedIds),
+					content: content || "",
+					is_error: toolMsg.isError,
+				});
+			}
+			anthropicMessages.push({ role: "user", content: blocks });
 		}
 	}
 
