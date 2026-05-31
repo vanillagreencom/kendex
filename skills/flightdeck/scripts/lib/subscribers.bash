@@ -397,6 +397,19 @@ pi_subscriber_loop() {
   if [[ -z "$rate_limit_decider" ]]; then
     rate_limit_decider="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../lib/flightdeck-core/src/daemon" 2>/dev/null && pwd)/rate-limit-watchdog.ts"
   fi
+  local rate_limit_retry_state_file rate_limit_retry_nonce=""
+  rate_limit_retry_state_file="${FD_STATE_DIR}/pi-rate-limit-retry-$(printf '%s' "$pane_id" | sha256sum | awk '{print substr($1,1,16)}').state"
+
+  pi_rate_limit_clear_retry() {
+    local reason="${1:-cleared}"
+    if [[ -n "$rate_limit_retry_nonce" ]]; then
+      printf '%s [pi-rate-limit-retry-cancelled] pane=%s reason=%s nonce=%s\n' \
+        "$(date -Iseconds)" "$pane_id" "$reason" "$rate_limit_retry_nonce" \
+        >> "$sub_log" 2>/dev/null || true
+    fi
+    rate_limit_retry_nonce=""
+    rm -f "$rate_limit_retry_state_file" 2>/dev/null || true
+  }
 
   pi_rate_limit_emit_event() {
     local tag="$1" event_type="$2" hash="$3" reason="${4:-}" attempt="${5:-}" next_retry_at="${6:-}" error="${7:-}" rc="${8:-}"
@@ -612,17 +625,32 @@ pi_subscriber_loop() {
             (( rl_delay_ms < 0 )) && rl_delay_ms=0
             rl_hash=$(printf '%s|rate-limit|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" | sha256sum | awk '{print substr($1,1,12)}')
             pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry" "$rl_hash" "" "$rl_attempt_next" "$rl_at"
-            # Detached steer dispatcher: sleep then deliver via pi-bridge.
-            # nohup + disown so the sleeper survives the loop body.
+            # Detached steer dispatcher: sleep, then validate a nonce file
+            # before delivering via pi-bridge. Healthy/completed turns remove
+            # the nonce, so long session-limit reset timers cannot steer a
+            # recovered or repurposed pane hours later.
             local rl_delay_sec=$(( rl_delay_ms / 1000 ))
             (( rl_delay_sec < 1 )) && rl_delay_sec=1
-            ( nohup bash -c "sleep $rl_delay_sec; '$pi_bin' send ${pi_target_args[*]} --steer 'API rate limit was detected. Try to continue from where you left off.' >/dev/null 2>&1" >/dev/null 2>&1 & ) >/dev/null 2>&1
-            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s\n' \
-              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" \
+            local rl_state_tmp
+            rate_limit_retry_nonce=$(printf '%s|rate-limit-retry|%s|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,24)}')
+            rl_state_tmp="${rate_limit_retry_state_file}.${BASHPID:-$$}.tmp"
+            printf '%s\n' "$rate_limit_retry_nonce" > "$rl_state_tmp" 2>/dev/null && mv -f "$rl_state_tmp" "$rate_limit_retry_state_file" 2>/dev/null || true
+            rm -f "$rl_state_tmp" 2>/dev/null || true
+            ( nohup bash -c '
+                delay="$1"; state_file="$2"; nonce="$3"; parent_pid="$4"; pi_bin="$5"; shift 5
+                sleep "$delay"
+                kill -0 "$parent_pid" 2>/dev/null || exit 0
+                current=$(cat "$state_file" 2>/dev/null || true)
+                [[ "$current" == "$nonce" ]] || exit 0
+                "$pi_bin" send "$@" --steer "API rate limit was detected. Try to continue from where you left off." >/dev/null 2>&1
+              ' bash "$rl_delay_sec" "$rate_limit_retry_state_file" "$rate_limit_retry_nonce" "$parent_pid" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
+            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s\n' \
+              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" \
               >> "$sub_log" 2>/dev/null || true
             continue
           elif [[ "$rl_kind" == "exhausted" ]]; then
             rl_attempt_next=$(jq -r '.attempt // 0' <<< "$rl_decision" 2>/dev/null)
+            pi_rate_limit_clear_retry "exhausted"
             local rl_hash
             rl_hash=$(printf '%s|rate-limit-exhausted|%s' "$pane_id" "$rl_attempt_next" | sha256sum | awk '{print substr($1,1,12)}')
             pi_rate_limit_emit_event "pi-rate-limit-exhausted" "rate_limit_exhausted" "$rl_hash" "" "$rl_attempt_next"
@@ -648,6 +676,7 @@ pi_subscriber_loop() {
               local rl_previous_attempt rl_hash
               rl_previous_attempt="$rate_limit_attempt"
               rate_limit_attempt=0
+              pi_rate_limit_clear_retry "resolved"
               rl_hash=$(printf '%s|rate-limit-resolved|%s|%s' "$pane_id" "$rl_previous_attempt" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,12)}')
               pi_rate_limit_emit_event "pi-rate-limit-resolved" "rate_limit_resolved" "$rl_hash" "" "$rl_previous_attempt"
               printf '%s [pi-rate-limit-resolved] pane=%s attempt=%s hash=%s\n' \
@@ -744,6 +773,8 @@ pi_subscriber_loop() {
         [[ -z "$details" || "$details" == "null" ]] && details="{}"
         hash=$(printf '%s' "$details" | sha256sum | awk '{print substr($1,1,12)}')
         [[ "$hash" == "$last_hash" ]] && continue
+        rate_limit_attempt=0
+        pi_rate_limit_clear_retry "subagent-completion"
         if jq -e '(.completions // []) | any((.status // "") == "blocked" or (.status // "") == "failed" or (.status // "") == "needs_completion")' <<< "$details" >/dev/null 2>&1; then
           has_bad=1
         else

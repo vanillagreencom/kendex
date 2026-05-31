@@ -290,6 +290,12 @@ function nextClockOccurrenceInLocalTime(
 ): number {
 	const candidate = new Date(now);
 	candidate.setHours(clock.hour, clock.minute, clock.second, 0);
+	if (candidate.getTime() > now) {
+		const previous = new Date(candidate);
+		previous.setDate(previous.getDate() - 1);
+		if (now - previous.getTime() <= RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS) return previous.getTime();
+		return candidate.getTime();
+	}
 	if (candidate.getTime() <= now) {
 		const elapsedMs = now - candidate.getTime();
 		if (elapsedMs <= RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS) return candidate.getTime();
@@ -305,6 +311,19 @@ function nextClockOccurrenceInTimeZone(
 ): number | null {
 	const nowParts = zonedDateParts(now, timeZone);
 	if (!nowParts) return null;
+	const previousDate = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day - 1));
+	const previousCandidate = zonedLocalTimeToUtcMs(
+		previousDate.getUTCFullYear(),
+		previousDate.getUTCMonth() + 1,
+		previousDate.getUTCDate(),
+		clock.hour,
+		clock.minute,
+		clock.second,
+		timeZone,
+	);
+	if (previousCandidate !== null && previousCandidate <= now && now - previousCandidate <= RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS) {
+		return previousCandidate;
+	}
 	for (let dayOffset = 0; dayOffset < 3; dayOffset += 1) {
 		const date = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + dayOffset));
 		const candidate = zonedLocalTimeToUtcMs(

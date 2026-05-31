@@ -114,7 +114,17 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 
 	test("bash resets subscriber retry budget on resolved assistant turn", () => {
 		expect(bashSrc).toContain("rate_limit_attempt=0");
+		expect(bashSrc).toContain('pi_rate_limit_clear_retry "resolved"');
 		expect(bashSrc).toContain("pi-rate-limit-resolved");
+	});
+
+	test("bash cancels stale detached rate-limit retries with a nonce state file", () => {
+		expect(bashSrc).toContain("rate_limit_retry_state_file=");
+		expect(bashSrc).toContain("rate_limit_retry_nonce=");
+		expect(bashSrc).toContain("pi_rate_limit_clear_retry");
+		expect(bashSrc).toContain('current=$(cat "$state_file" 2>/dev/null || true)');
+		expect(bashSrc).toContain('[[ "$current" == "$nonce" ]] || exit 0');
+		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subagent-completion"');
 	});
 
 	test("bash references the canonical TS module name for parity", () => {

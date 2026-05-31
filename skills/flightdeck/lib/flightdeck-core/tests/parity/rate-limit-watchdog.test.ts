@@ -79,6 +79,18 @@ const CLAUDE_USAGE_LIMIT_EVENT = {
 const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
 const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0);
 const SESSION_LIMIT_JUST_AFTER_RESET = SESSION_LIMIT_RESET_AT + 1_000;
+const MIDNIGHT_BOUNDARY_NOW = Date.UTC(2026, 4, 31, 7, 0, 1);
+const MIDNIGHT_BOUNDARY_RESET_AT = Date.UTC(2026, 4, 31, 6, 59, 0);
+
+const CLAUDE_MIDNIGHT_BOUNDARY_SESSION_LIMIT_EVENT = {
+	message: {
+		errorMessage:
+			"Claude Code returned an error result: You've hit your session limit · resets 11:59pm (America/Los_Angeles)",
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message",
+};
 
 describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 	test("returns not-rate-limited for an unrelated assistant turn", () => {
@@ -231,6 +243,25 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 	test("clock-only reset prose beyond the past tolerance rolls to the next day", () => {
 		const now = SESSION_LIMIT_RESET_AT + RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS + 1;
 		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, now)).toBe(SESSION_LIMIT_RESET_AT + 86_400_000);
+	});
+
+	test("canonical and vendored reset parser check previous local day at midnight boundary", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			expect(module.extractResetAtMs(CLAUDE_MIDNIGHT_BOUNDARY_SESSION_LIMIT_EVENT, MIDNIGHT_BOUNDARY_NOW)).toBe(MIDNIGHT_BOUNDARY_RESET_AT);
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: CLAUDE_MIDNIGHT_BOUNDARY_SESSION_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: MIDNIGHT_BOUNDARY_NOW,
+					paneId: "%41",
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(MIDNIGHT_BOUNDARY_NOW + 1_000);
+		}
 	});
 
 	test("structured reset timestamps win over the backoff ladder when later", () => {
