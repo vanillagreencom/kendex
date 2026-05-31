@@ -50,7 +50,9 @@ function gitCommitSyntaxCount(command: string): number {
 	return countRegexMatches(GIT_COMMIT, normalized)
 		+ countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
 		+ countRegexMatches(ENV_SHORT_SPLIT_GIT_COMMIT, normalized)
-		+ countShellCVerb(command, "commit");
+		+ countShellCVerb(command, "commit")
+		+ countShellDispatchVerb(command, "commit")
+		+ (dynamicGitVerbSyntax(command, "commit") ? 1 : 0);
 }
 
 function commandMayStageFiles(command: string): boolean {
@@ -59,6 +61,8 @@ function commandMayStageFiles(command: string): boolean {
 		|| ENV_SPLIT_GIT_ADD.test(normalized)
 		|| ENV_SHORT_SPLIT_GIT_ADD.test(normalized)
 		|| countShellCVerb(command, "add") > 0
+		|| countShellDispatchVerb(command, "add") > 0
+		|| dynamicGitVerbSyntax(command, "add")
 		|| commandMayRunGitAddAlias(command);
 }
 
@@ -393,12 +397,27 @@ function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "
 	if (!commandWord) return false;
 	let text = commandWord.text;
 	if (text.startsWith("$")) text = text.slice(1);
-	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(text) && /\$(?:@|\*|[0-9]|\{(?:@|\*|[0-9]+)\})/.test(text)) return true;
+	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(text) && /\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{(?:@|\*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\})/.test(text)) return true;
 	if (commandWord.dynamic && !/(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+(?:add|commit)(?=$|\s|[;&|){}])/.test(text)) return true;
 	const verbPattern = verb === "add"
 		? /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/
 		: /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 	return verbPattern.test(text);
+}
+
+function dynamicGitVerbSyntax(command: string, verb: "add" | "commit"): boolean {
+	const normalized = normalizeShell(command);
+	const fieldSplit = new RegExp(`(?:^|[\\s;&|({!])git(?:\\$IFS|\\$\\{IFS\\})${verb}(?=$|[\\s;&|){}])`);
+	return fieldSplit.test(normalized);
+}
+
+function countShellDispatchVerb(command: string, verb: "add" | "commit"): number {
+	const normalized = normalizeShell(command);
+	const quotedPayload = `(?:\\$?['"][^'"]*git(?:\\s+[^'"]+)*\\s+${verb}(?=$|['"\\s;&|){}])[^'"]*['"])`;
+	const evalPattern = new RegExp(`(?:^|[\\s;&|({!])eval\\s+${quotedPayload}`, "g");
+	const hereStringPattern = new RegExp(`(?:^|[\\s;&|({!])(?:[^\\s;&|(){}]+\\/)?(?:sh|bash|zsh|dash)(?:\\s+[^;&|(){}<>]+)*\\s*<<<\\s*${quotedPayload}`, "g");
+	const pipePattern = new RegExp(`(?:^|[\\s;&|({!])(?:printf|echo)\\s+${quotedPayload}(?:\\s+[^|]*)?\\|\\s*(?:[^\\s;&|(){}]+\\/)?(?:sh|bash|zsh|dash)(?=$|[\\s;&|){}])`, "g");
+	return countRegexMatches(evalPattern, normalized) + countRegexMatches(hereStringPattern, normalized) + countRegexMatches(pipePattern, normalized);
 }
 
 function countShellCVerb(command: string, verb: "add" | "commit"): number {
@@ -436,6 +455,8 @@ const KNOWN_NON_STAGING_GIT_COMMANDS = new Set([
 	"help", "init", "log", "ls-files", "merge", "pull", "push", "rebase", "remote", "restore", "rev-parse", "show", "stash",
 	"status", "switch", "tag", "version", "worktree",
 ]);
+
+const KNOWN_NON_COMMIT_GIT_COMMANDS = new Set([...KNOWN_NON_STAGING_GIT_COMMANDS, "add"]);
 
 function parseGitMayRunAdd(tokens: ShellToken[], gitIndex: number): { mayStage: boolean; next: number } {
 	const aliases = new Map<string, string | null>();
@@ -602,6 +623,16 @@ function recordTextAssignment(word: ShellWord, variables: ShellTextVariables): v
 	else variables.set(name, value);
 }
 
+function resolvedCommandText(word: ShellWord, variables: ShellTextVariables): string | null {
+	if (!word.dynamic) return word.text;
+	const ref = variableRef(word.text);
+	return ref ? variables.get(ref) ?? null : null;
+}
+
+function dynamicFieldSplitGitVerb(word: ShellWord, verb: "add" | "commit"): boolean {
+	return word.dynamic && new RegExp(`^git(?:\\$IFS|\\$\\{IFS\\})${verb}$`).test(word.text);
+}
+
 function nextWord(tokens: ShellToken[], start: number): { token: ShellWord | undefined; index: number } {
 	let index = start;
 	while (tokens[index]?.kind === "op" && tokens[index]?.text === "\n") index += 1;
@@ -648,6 +679,26 @@ function recordInlineAlias(config: string, aliases: Map<string, string | null>, 
 	if (direct) aliases.set(direct[1], direct[2]);
 }
 
+function collectEnvConfigAliases(textVariables: ShellTextVariables, aliases: Map<string, string | null>): boolean {
+	const countText = textVariables.get("GIT_CONFIG_COUNT");
+	if (!countText) return false;
+	const count = Number.parseInt(countText, 10);
+	if (!Number.isFinite(count) || count < 0) return true;
+	let unknown = false;
+	for (let index = 0; index < count; index += 1) {
+		const key = textVariables.get(`GIT_CONFIG_KEY_${index}`);
+		const value = textVariables.get(`GIT_CONFIG_VALUE_${index}`);
+		if (!key || value === undefined) {
+			unknown = true;
+			continue;
+		}
+		if (key === "include.path") unknown = true;
+		const alias = /^alias\.([^=]+)$/.exec(key);
+		if (alias) aliases.set(alias[1], value);
+	}
+	return unknown;
+}
+
 function parseGitTarget(
 	tokens: ShellToken[],
 	gitIndex: number,
@@ -669,6 +720,12 @@ function parseGitTarget(
 	external ||= Boolean(gitDirRef?.external || workTreeRef?.external);
 	unknown ||= Boolean(gitDirRef?.unknown || workTreeRef?.unknown);
 	const aliases = new Map<string, string | null>();
+	let aliasConfigMayDefineUnknown = collectEnvConfigAliases(textVariables, aliases);
+	const recordConfig = (config: ShellWord, fromConfigEnv = false) => {
+		if (config.dynamic && /(?:^|\s)(?:alias\.|include\.path)/.test(config.text)) aliasConfigMayDefineUnknown = true;
+		if (/^include\.path(?:=|$)/.test(config.text)) aliasConfigMayDefineUnknown = true;
+		recordInlineAlias(config.text, aliases, textVariables, fromConfigEnv);
+	};
 	let j = gitIndex + 1;
 
 	while (j < tokens.length) {
@@ -731,19 +788,19 @@ function parseGitTarget(
 		if (word === "-c" || word === "--config-env" || word === "--namespace") {
 			const consumed = nextWord(tokens, j + 1);
 			if (consumed.token) {
-				if (word === "-c") recordInlineAlias(consumed.token.text, aliases, textVariables);
-				else if (word === "--config-env") recordInlineAlias(consumed.token.text, aliases, textVariables, true);
+				if (word === "-c") recordConfig(consumed.token);
+				else if (word === "--config-env") recordConfig(consumed.token, true);
 			}
 			j = consumed.token ? consumed.index + 1 : j + 1;
 			continue;
 		}
 		if (word.startsWith("-c") && word.length > 2) {
-			recordInlineAlias(word.slice(2), aliases, textVariables);
+			recordConfig({ kind: "word", text: word.slice(2), dynamic: token.dynamic });
 			j += 1;
 			continue;
 		}
 		if (word.startsWith("--config-env=")) {
-			recordInlineAlias(word.slice("--config-env=".length), aliases, textVariables, true);
+			recordConfig({ kind: "word", text: word.slice("--config-env=".length), dynamic: token.dynamic }, true);
 			j += 1;
 			continue;
 		}
@@ -772,7 +829,9 @@ function parseGitTarget(
 			};
 		}
 
-		return { target: { cwd: currentCwd, external, unknown, hasGitDir, gitDir, hasWorkTree, workTree, aliasName: word }, next: j + 1 };
+		if (KNOWN_NON_COMMIT_GIT_COMMANDS.has(word)) return { target: null, next: j + 1 };
+
+		return { target: { cwd: currentCwd, external, unknown: unknown || aliasConfigMayDefineUnknown, hasGitDir, gitDir, hasWorkTree, workTree, aliasName: word }, next: j + 1 };
 	}
 
 	return { target: null, next: j };
@@ -903,7 +962,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			}
 			break;
 		}
-		if (isWord(tokens[envIndex]) && isGitExecutable((tokens[envIndex] as ShellWord).text)) {
+		if (isWord(tokens[envIndex]) && isGitExecutable(resolvedCommandText(tokens[envIndex] as ShellWord, envTextVariables) ?? (tokens[envIndex] as ShellWord).text)) {
 			return { targets: null, parsed: parseGitTarget(tokens, envIndex, envCtx.cwd, envCtx.external, envCtx.unknown, envVariables, envTextVariables), envIndex };
 		}
 		return { targets: null, parsed: null, envIndex };
@@ -955,6 +1014,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 
 		if (commandStart && isAssignment(token.text)) {
 			recordTextAssignment(token, prefixTextVariables);
+			recordTextAssignment(token, textVariables);
 			if (token.text.startsWith("GIT_DIR=") || token.text.startsWith("GIT_WORK_TREE=")) {
 				recordAssignment(token, ctx.cwd, prefixGitVariables);
 			} else {
@@ -979,7 +1039,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 		if (commandStart && token.text === "command") {
 			let commandIndex = i + 1;
 			while (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text.startsWith("-")) commandIndex += 1;
-			if (isWord(tokens[commandIndex]) && isGitExecutable((tokens[commandIndex] as ShellWord).text)) {
+			if (isWord(tokens[commandIndex]) && isGitExecutable(resolvedCommandText(tokens[commandIndex] as ShellWord, gitTextVariables()) ?? (tokens[commandIndex] as ShellWord).text)) {
 				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables(), gitTextVariables());
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
@@ -990,7 +1050,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			}
 		}
 
-		if (commandStart && isEnvExecutable(token.text)) {
+		if (commandStart && isEnvExecutable(resolvedCommandText(token, gitTextVariables()) ?? token.text)) {
 			const { targets: envTargets, parsed, envIndex } = parseEnvWrapper(i);
 			if (envTargets) {
 				targets.push(...envTargets);
@@ -1011,7 +1071,15 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			i = Math.max(i, envIndex - 1);
 		}
 
-		if (commandStart && isGitExecutable(token.text)) {
+		if (commandStart && dynamicFieldSplitGitVerb(token, "commit")) {
+			targets.push({ cwd: ctx.cwd, external: ctx.external, unknown: true, hasGitDir: false, gitDir: null, hasWorkTree: false, workTree: null });
+			pending = pendingCommand("other", cloneContext(ctx));
+			commandStart = false;
+			markCommandConsumed();
+			continue;
+		}
+
+		if (commandStart && isGitExecutable(resolvedCommandText(token, gitTextVariables()) ?? token.text)) {
 			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables(), gitTextVariables());
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
