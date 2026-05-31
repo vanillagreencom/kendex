@@ -19,6 +19,7 @@ export interface PaneMeta {
 	bell: number;
 	activity: number;
 	inMode: number;
+	panePid: number;
 }
 
 export class PaneCache {
@@ -28,7 +29,7 @@ export class PaneCache {
 		this.map.clear();
 		const r = spawnSync(
 			"tmux",
-			["list-panes", "-a", "-F", "#{pane_id}|#{session_name}:#{window_index}.#{pane_index}|#{window_id}|#{window_bell_flag}|#{window_activity_flag}|#{pane_in_mode}"],
+			["list-panes", "-a", "-F", "#{pane_id}|#{session_name}:#{window_index}.#{pane_index}|#{window_id}|#{window_bell_flag}|#{window_activity_flag}|#{pane_in_mode}|#{pane_pid}"],
 			{ encoding: "utf8" },
 		);
 		if (r.status !== 0) return;
@@ -36,7 +37,7 @@ export class PaneCache {
 			if (!line) continue;
 			const parts = line.split("|");
 			if (parts.length < 6) continue;
-			const [pid, target, windowId, bell, activity, inMode] = parts as [string, string, string, string, string, string];
+			const [pid, target, windowId, bell, activity, inMode, panePidRaw] = parts as [string, string, string, string, string, string, string | undefined];
 			if (!pid) continue;
 			this.map.set(pid, {
 				target,
@@ -44,6 +45,7 @@ export class PaneCache {
 				bell: Number.parseInt(bell || "0", 10) || 0,
 				activity: Number.parseInt(activity || "0", 10) || 0,
 				inMode: Number.parseInt(inMode || "0", 10) || 0,
+				panePid: Number.parseInt(panePidRaw || "0", 10) || 0,
 			});
 		}
 	}
@@ -53,6 +55,7 @@ export class PaneCache {
 	bell(paneId: string): number { return this.map.get(paneId)?.bell ?? 0; }
 	activity(paneId: string): number { return this.map.get(paneId)?.activity ?? 0; }
 	inMode(paneId: string): number { return this.map.get(paneId)?.inMode ?? 0; }
+	panePid(paneId: string): number { return this.map.get(paneId)?.panePid ?? 0; }
 	alive(paneId: string): boolean { return this.map.has(paneId); }
 }
 

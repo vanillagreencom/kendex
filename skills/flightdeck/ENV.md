@@ -62,6 +62,11 @@ Watchdog gates (operator-facing; see [`WATCHDOGS.md`](./WATCHDOGS.md) for behavi
 | `VSTACK_RATE_LIMIT_WATCHDOG` | `1` | Toggle for the rate-limit retry watchdog. |
 | `VSTACK_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Maximum retry attempts before surfacing `agent.rate_limit_exhausted`. |
 | `VSTACK_RATE_LIMIT_BACKOFF_LADDER` | `60,120,300,600,1800` | Comma-separated seconds per attempt; clamped to `MAX_ATTEMPTS`. |
+| `FD_BUSY_STALL_WATCHDOG` | `1` | Toggle for Flightdeck's Pi busy-stall watchdog (high CPU + frozen bridge + no progress). |
+| `FD_BUSY_STALL_THRESHOLD_SEC` | `300` | Seconds of sustained CPU-bound/no-progress behavior required before probing and waking. |
+| `FD_BUSY_STALL_CPU_PCT` | `90` | Per-core CPU percent threshold for the pane process tree. |
+| `FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC` | `30` | Minimum seconds between bounded bridge-state probes for a candidate stalled pane. |
+| `FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC` | `30` | Minimum seconds between git HEAD progress probes for a candidate pane. |
 
 Daemon hygiene env vars (operator-facing; details in `DEVELOPMENT.md`):
 
@@ -69,6 +74,7 @@ Daemon hygiene env vars (operator-facing; details in `DEVELOPMENT.md`):
 |----------|---------|---------|
 | `FD_BELL_WAKE_INTERVAL_SEC` | `60` | Per-pane-per-tag bell-wake rate-limit; suppresses storm-y duplicates within the window. |
 | `FD_RECONCILE_INTERVAL_SEC` | `5` | Mid-session reconcile cadence: spawn subscribers for newly tracked panes, reap subscribers for departed panes, drop dead `.entries` rows. |
+| `FD_PANE_REGISTRY_READ_TIMEOUT_SEC` | `5` | Bounds daemon → `pane-registry` read helpers used by reconcile and subscriber binding so a helper cannot wedge the daemon tick. |
 | `FD_HEARTBEAT_OWNER_CGROUP` | `1` | Set to `0` to skip the optional `MemoryCurrent` / `MemoryPeak` cgroup probe attached to heartbeat events. |
 | `FD_PI_BIND_SKIP_LOG_INTERVAL_SEC` | `60` | Per-(pane,reason) throttle interval for `[pi-subscriber-bind-skip]` daemon log lines. Lower for more verbose bind-attempt logging during diagnosis; raise to quiet a chronically-unbindable pane. |
 | `FD_PI_BIND_SKIP_STUCK_THRESHOLD` | `12` | Consecutive `[pi-subscriber-bind-skip]` ticks for the same pane before the daemon emits a one-shot `[pi-subscriber-bind-stuck]` warning naming the missing adapter fields. Reset when the binder succeeds or the pane is reaped. |
@@ -110,14 +116,22 @@ daemon and do not affect master operation directly, but two are
 consulted on the master poll path through the TS `pane-poll`:
 `FD_ADAPTER_READ_TIMEOUT_SEC` (default `2`, fractional values honored)
 caps each adapter read subprocess so one stale adapter cannot dominate
-a tick, `FD_ADAPTER_MAX_BUFFER_MB` (default `16`) caps captured adapter
-stdout for large Pi histories, and `FD_ADAPTER_FRESHNESS_TTL` (default
-`5`) gates freshness probe caching.
+a tick, `FD_PI_BRIDGE_READ_TIMEOUT_SEC` (default: same as
+`FD_ADAPTER_READ_TIMEOUT_SEC`) bounds Flightdeck daemon/pane-poll
+`pi-bridge` list/state/history connect/read probes with SIGKILL on timeout,
+`FD_ADAPTER_MAX_BUFFER_MB` (default `16`) caps captured adapter stdout for
+large Pi histories, and `FD_ADAPTER_FRESHNESS_TTL` (default `5`) gates
+freshness probe caching. Exceptions: bridge binary PATH lookup uses a fixed
+500ms guard, owner metadata discovery during `flightdeck-state init` uses
+`FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS` (milliseconds, default `1000`),
+and the Pi subscriber preflight keeps its legacy `FD_ADAPTER_READ_TIMEOUT_SEC`
+contract.
 
 Additional tuning:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FD_ADAPTER_READ_TIMEOUT_SEC` | `2` | Bounds per-adapter read subprocesses in `pane-poll` (fractional values honored). Stale adapters fall through to tmux capture rather than wedging the tick. |
+| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Bounds Flightdeck daemon/pane-poll `pi-bridge` list/state/history probes, including freshness checks before adapter reads. Uses SIGKILL on timeout so an unresponsive bridge child is reaped promptly. Does not replace the fixed 500ms binary PATH lookup, `flightdeck-state init` owner discovery timeout (`FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS`), or Pi subscriber preflight timeout (`FD_ADAPTER_READ_TIMEOUT_SEC`). |
 | `FD_ADAPTER_MAX_BUFFER_MB` | `16` | Maximum stdout captured from adapter reads such as `pi-bridge history`; prevents Node's default 1 MiB buffer from forcing a tmux fallback on long Pi sessions. |
 | `FD_ADAPTER_FRESHNESS_TTL` | `5` | Freshness probe cache TTL in seconds for adapter reads; set `0` to disable cache reuse. |

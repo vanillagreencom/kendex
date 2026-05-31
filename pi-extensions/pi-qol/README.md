@@ -15,7 +15,7 @@ Quality-of-life extension for Pi: compact statusline, multiline input, session n
 - `/search` browses previous sessions with snippet previews; the configured shortcut opens it instantly.
 - `/context` shows a Claude-style context-window breakdown.
 - `/handoff <goal>` drafts a focused prompt for a new session.
-- `/schedule 20m <message>` sends a delayed prompt without invoking the model until the timer fires.
+- `/schedule 20m <message>` or `/schedule 1h45m <message>` sends a delayed prompt without invoking the model until the timer fires.
 - Optional rate-limit auto-resume sends a configurable continuation after reset.
 - Permission gate prompts before risky `bash` commands. Default match: `rm -Rf`.
 - Notifications for ready, questions, blocked states, and task completion.
@@ -53,11 +53,11 @@ Restart Pi after installation.
 | `/search [query]` | Open previous-session search. |
 | `/search:refresh` | Refresh the session search cache. |
 | `/handoff <goal>` | Draft a handoff prompt for a new session. |
-| `/schedule <delay> <message>` | Send a user message after a timer without invoking the model now. Example: `/schedule 20m retry the previous request`. |
+| `/schedule <delay> <message>` | Send a user message after a timer without invoking the model now. Example: `/schedule 1h45m retry the previous request`. |
 
 Arguments support autocomplete.
 
-`/schedule` accepts `ms`, `s`, `m`, `h`, and `d` units; bare numbers mean minutes. Pending prompts render above the statusline like steering/follow-up previews until they are sent or cancelled. Manage pending prompts with `/schedule list` and `/schedule cancel <id|all>`. Schedules are stored in the Pi session and re-armed on reload/resume; if Pi is not running at the due time, an overdue prompt sends when that session is next loaded.
+`/schedule` accepts `ms`, `s`, `m`, `h`, and `d` units; bare numbers mean minutes. Compact composite durations are accepted in largest-to-smallest order, like `1h45m`, `45m10s`, or `1h45m30s`. Pending prompts render above the statusline like steering/follow-up previews until they are sent or cancelled. Manage pending prompts with `/schedule list` and `/schedule cancel <id|all>`. Schedules are stored in the Pi session and re-armed on reload/resume; if Pi is not running at the due time, an overdue prompt sends when that session is next loaded.
 
 ## Settings
 

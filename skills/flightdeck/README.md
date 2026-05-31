@@ -18,7 +18,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
 - Keep durable run history under `~/.vstack/flightdeck` so completed run state survives project `tmp/` cleanup.
-- Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, and rate limits.
+- Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, rate limits, and CPU-wedged Pi panes on Linux/procfs hosts.
 
 ## Install
 
@@ -127,7 +127,7 @@ Most sessions work with defaults. These are the knobs users most often change.
 | `FLIGHTDECK_DASHBOARD_BELL` | `1` | Set `0` to suppress terminal bell on pause-for-user. |
 | `FLIGHTDECK_DASHBOARD_QUICK_FOCUS` | `0` | Set `1` to let dashboard `g` focus a tmux window without confirmation. |
 | `FLIGHTDECK_DASHBOARD_PRICING_FILE` | bundled table | Point dashboard cost calculations at a custom pricing TOML. |
-| `VSTACK_AGENT_END_WATCHDOG` / `VSTACK_STALL_WATCHDOG` / `VSTACK_EDIT_LOOP_DETECTOR` / `VSTACK_RATE_LIMIT_WATCHDOG` | `1` | Set any to `0` to disable that recovery watchdog. |
+| `VSTACK_AGENT_END_WATCHDOG` / `VSTACK_STALL_WATCHDOG` / `VSTACK_EDIT_LOOP_DETECTOR` / `VSTACK_RATE_LIMIT_WATCHDOG` / `FD_BUSY_STALL_WATCHDOG` | `1` | Set any to `0` to disable that recovery watchdog. |
 
 Full env reference: [`ENV.md`](./ENV.md).
 

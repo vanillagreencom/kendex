@@ -174,7 +174,7 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 	let discoveryError = "";
 	const timeoutMs = Number.parseInt(nonEmptyEnv("FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS") || "1000", 10);
 	const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1000;
-	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", timeout });
+	const r = spawnSync("pi-bridge", ["list", "--json", "--pid", String(pid)], { encoding: "utf8", killSignal: "SIGKILL", timeout });
 	if (r.error) {
 		const code = (r.error as NodeJS.ErrnoException).code;
 		discoveryError = code === "ENOENT" ? "pi_bridge_not_found" : code === "ETIMEDOUT" ? "pi_bridge_timeout" : `pi_bridge_error_${code ?? "unknown"}`;
@@ -208,7 +208,7 @@ function piBridgeMetadata(pid: number): { sessionId: string; socketPath: string;
 }
 
 function piBridgeMetadataByCwd(cwd: string, timeout: number): { sessionId: string; socketPath: string; discoveryError: string } {
-	const r = spawnSync("pi-bridge", ["list", "--json"], { encoding: "utf8", timeout });
+	const r = spawnSync("pi-bridge", ["list", "--json"], { encoding: "utf8", killSignal: "SIGKILL", timeout });
 	if (r.error) {
 		const code = (r.error as NodeJS.ErrnoException).code;
 		return { discoveryError: code === "ETIMEDOUT" ? "pi_bridge_timeout" : `pi_bridge_error_${code ?? "unknown"}`, sessionId: "", socketPath: "" };

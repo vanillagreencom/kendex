@@ -51,4 +51,5 @@ These tags come from harness events, not normal assistant text classification.
 | `pi-rate-limit-resolved` | Pi rate-limit watchdog | Activity-only recovery row; maps to `agent.rate_limit_resolved` after a healthy assistant turn resets the retry budget. |
 | `pi-rate-limit-exhausted` | Pi rate-limit watchdog | Activity-only exhaustion/advisory row; maps to `agent.rate_limit_exhausted` without waking master or falling through to completion/blocking. Later independent events or polls handle completion/blocking. |
 | `pi-rate-limit-decider-error` | Pi rate-limit watchdog | Activity-only decider failure row; maps to `daemon.warning` with error/unavailable details. |
+| `pi-busy-stall` | Flightdeck busy-stall watchdog | Pi pane process tree is CPU-bound, bridge-unresponsive, and output/commit progress is stable beyond threshold. Wakes master and maps to `agent.busy_stalled`; handler pauses for recovery instead of auto-killing. |
 | `daemon-exited` | Flightdeck daemon lifecycle | Daemon exited for master-gone, signal, startup-error, or recorded reason; route through respawn/recovery flow and inspect `details.error` / `details.exit_code` when present. |

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { ocAttachArgsFromSpawn, ocIssueFromPaneTarget } from "../paths/oc.ts";
 import { ccSpawnFile } from "../paths/cc.ts";
-import { piBridgeIsFresh, piResolveBridgeBin, piSpawnFile } from "../paths/pi.ts";
+import { piBridgeIsFresh, piBridgeSpawnSync, piResolveBridgeBin, piSpawnFile } from "../paths/pi.ts";
 import { cxBridgeRun, cxSpawnFile } from "../paths/codex.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,21 @@ const FLIGHTDECK_STATE = resolve(HERE, "../../../../scripts/flightdeck-state");
 function die(msg: string, code = 2): never {
 	process.stderr.write(`${msg}\n`);
 	process.exit(code);
+}
+
+function piBridgeFailureDetail(r: ReturnType<typeof piBridgeSpawnSync>): string {
+	const stdout = (r.stdout ?? "").trim();
+	const stderr = (r.stderr ?? "").trim();
+	const error = r.error as NodeJS.ErrnoException | undefined;
+	const diagnostics = [
+		`status=${r.status ?? "null"}`,
+		`signal=${r.signal ?? "null"}`,
+	];
+	if (error) {
+		diagnostics.push(`error_code=${error.code ?? "unknown"}`);
+		diagnostics.push(`error_message=${JSON.stringify(error.message)}`);
+	}
+	return `${stdout || stderr || "no stdout/stderr"} (${diagnostics.join(" ")})`;
 }
 
 if (!process.env.TMUX) die("Error: not inside a tmux session");
@@ -438,9 +453,9 @@ if (args.mode === "question" && args.harness === "pi") {
 	const bin = piResolveBridgeBin();
 	if (!bin) die("Error: pi-bridge binary not found", 5);
 	if (args.rejectQuestion) {
-		const r = spawnSync(bin, ["reject", ...target, "--request-id", args.questionId], { encoding: "utf8" });
+		const r = piBridgeSpawnSync(bin, ["reject", ...target, "--request-id", args.questionId]);
 		const resp = (r.stdout ?? "").trim();
-		if (r.status !== 0) die(`Error: pi question reject failed: ${resp || r.stderr}`, 5);
+		if (r.status !== 0) die(`Error: pi question reject failed: ${piBridgeFailureDetail(r)}`, 5);
 		try {
 			const ok = JSON.parse(resp || "{}").success === true;
 			if (!ok) die(`Error: pi question reject returned non-success: ${resp}`, 5);
@@ -452,9 +467,9 @@ if (args.mode === "question" && args.harness === "pi") {
 		else if (args.answerLabel) payload = JSON.stringify([[args.answerLabel]]);
 		else if (args.answerText) payload = JSON.stringify([[args.answerText]]);
 		else payload = JSON.stringify([args.answerMultiCsv.split(",")]);
-		const r = spawnSync(bin, ["answer", ...target, "--request-id", args.questionId, "--answers", payload], { encoding: "utf8" });
+		const r = piBridgeSpawnSync(bin, ["answer", ...target, "--request-id", args.questionId, "--answers", payload]);
 		const resp = (r.stdout ?? "").trim();
-		if (r.status !== 0) die(`Error: pi question answer failed: ${resp || r.stderr}`, 5);
+		if (r.status !== 0) die(`Error: pi question answer failed: ${piBridgeFailureDetail(r)}`, 5);
 		try {
 			const ok = JSON.parse(resp || "{}").success === true;
 			if (!ok) die(`Error: pi question answer returned non-success: ${resp}`, 5);
@@ -577,8 +592,8 @@ if (args.harness === "pi" && !ocAdapterUsed && !ccAdapterUsed && !piAdapterUsed)
 				: args.optionMultiCsv.replace(/,/g, ", ");
 			const bin = piResolveBridgeBin();
 			if (!bin) die("Error: pi-bridge binary not found", 5);
-			const r = spawnSync(bin, ["send", ...target, "--auto", msg], { encoding: "utf8" });
-			if (r.status !== 0) die(`Error: pi-bridge send failed: ${r.stdout || r.stderr}`, 5);
+			const r = piBridgeSpawnSync(bin, ["send", ...target, "--auto", msg]);
+			if (r.status !== 0) die(`Error: pi-bridge send failed: ${piBridgeFailureDetail(r)}`, 5);
 			piAdapterUsed = true;
 		}
 	} else {

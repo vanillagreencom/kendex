@@ -8,7 +8,7 @@ Most scripts under `scripts/` are bash trampolines that exec the TypeScript impl
 
 ## Reliability watchdogs
 
-Four watchdogs sit between the daemon, the canonical TS subscriber, and the `pi-agents-tmux` extension. SKILL.md and README.md describe behavior and env vars; this section is the parity contract.
+Five watchdogs sit between the daemon, the canonical TS subscriber, and the `pi-agents-tmux` extension. SKILL.md and README.md describe behavior and env vars; this section is the parity contract.
 
 | Watchdog | Canonical decision module | Activity types | Parity rule |
 | --- | --- | --- | --- |
@@ -16,8 +16,9 @@ Four watchdogs sit between the daemon, the canonical TS subscriber, and the `pi-
 | idle-stall | `pi-extensions/pi-agents-tmux/extensions/subagent/idle-stall-watchdog.ts` | `agent.idle_stalled` | Polls bridge-idle subagent panes on `VSTACK_STALL_WATCHDOG_INTERVAL_SEC` and synthesizes a `blocked` outbox after `VSTACK_STALL_WATCHDOG_THRESHOLD_SEC`. Bridge-idle is the canonical signal; never substitute pane bell or tmux capture. |
 | edit-loop | `skills/flightdeck/lib/flightdeck-core/src/daemon/edit-loop-detector.ts` | `agent.edit_loop_blocked` | Counts edit-tool failures within `VSTACK_EDIT_LOOP_WINDOW_SEC`; trips on `VSTACK_EDIT_LOOP_THRESHOLD_N`. Failure classification uses the tool-renderer's structured error path — never substring matches against assistant text. |
 | rate-limit | `skills/flightdeck/lib/flightdeck-core/src/daemon/rate-limit-watchdog.ts` plus `pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-decision.ts` + `rate-limit-watchdog.ts` | `agent.rate_limit_skipped`, `agent.rate_limited`, `agent.rate_limit_retry`, `agent.rate_limit_resolved`, `agent.rate_limit_exhausted`, `daemon.warning` for decider failures | Decision module is the source of truth. The Pi subscriber routes rate-limit events through it (`flightdeck-core/src/daemon/rate-limit-watchdog.ts` for the in-daemon path; the `subagent/` siblings for the inline subagent path). Backoff ladder is `VSTACK_RATE_LIMIT_BACKOFF_LADDER`, clamped to `VSTACK_RATE_LIMIT_MAX_ATTEMPTS`. Any change to the decision module must keep both sides in lock-step. |
+| busy-stall | `skills/flightdeck/lib/flightdeck-core/src/daemon/busy-stall-watchdog.ts` + `busy-stall-emitter.ts` | `agent.busy_stalled` + wake tag `pi-busy-stall` | Samples the Pi pane process tree from `/proc`, tmux output hash, git HEAD, and bounded `pi-bridge state`. After subscriber spawn, bridge probes use the validated subscriber binding before registry metadata. Trips only when CPU remains above `FD_BUSY_STALL_CPU_PCT`, process state includes `R`, progress is unchanged for `FD_BUSY_STALL_THRESHOLD_SEC`, and the bridge probe is unresponsive. This is Flightdeck-daemon-only; do not mirror into `pi-agents-tmux` subagent outbox logic. |
 
-All four emit activity-only rows for soft signals (skipped, detection, retry). Pi subscriber rate-limit exhaustion is also activity/advisory only: `pi-rate-limit-exhausted` does not wake master or fall through to completion/blocking; later independent events or daemon polls handle that state. Watchdogs wake master only when they synthesize a terminal outbox.
+All watchdogs emit activity-only rows for soft signals (skipped, detection, retry). Pi subscriber rate-limit exhaustion is also activity/advisory only: `pi-rate-limit-exhausted` does not wake master or fall through to completion/blocking; later independent events or daemon polls handle that state. Busy-stall wakes master because there is no bridge-idle/subagent outbox to synthesize; the handler pauses for operator recovery instead of killing the pane automatically.
 
 ## Daemon hygiene
 
@@ -61,7 +62,7 @@ Flightdeck core is the generic tmux-session manager. It owns `TrackedEntry` life
 
 `flightdeck-state init` writes `entries`, `merge_queue`, `conflict_graph`, and `owner`. All readers go through `readTrackedEntries(state)` for the canonical `TrackedEntry` view; `writeTrackedEntry` validates `entry.id`, optional `entry.domain.issue.id`, optional `entry.domain.github_issue`, rejects unknown `entry.domain.*` sub-keys, and stores the entry under `entries[id]`. Pi owner discovery first checks explicit env, then `pi-bridge list --pid <owner-pid>`, then falls back to a cwd match; `flightdeck-state init` often runs under a helper process, so code must not treat helper PID mismatch as `Master unknown` while cwd metadata is available.
 
-Use the TrackedEntry seam everywhere new code reads tracked sessions. Core helpers (`readTrackedEntries`, `writeTrackedEntry`, `entryIdForIssue`, `issueIdForEntry`) live under `lib/flightdeck-core/src/state/`; `pane-registry list --format json` and `flightdeck-state tracked-entries` expose the same normalized view to scripts, including flattened PR/worktree fields from `domain.plan_item`. The Rust dashboard (`lib/flightdeck-dashboard/`) is the canonical read-only consumer for active state and durable history. Live startup uses `flightdeck-state run active` only to validate/label the active run for the requested tmux session, then reads the canonical project-local state file; it must not use durable `runs/<id>/state.json` as the live mutation source unless core mirrors every live write. History/`--run-id`/`--archive` are explicit read-only archive paths. Any new dashboard work goes through that path — don't add a parallel reader.
+Use the TrackedEntry seam everywhere new code reads tracked sessions. Core helpers (`readTrackedEntries`, `writeTrackedEntry`, `entryIdForIssue`, `issueIdForEntry`) live under `lib/flightdeck-core/src/state/`; `pane-registry list --format json` and `flightdeck-state tracked-entries` expose the same normalized view to scripts, including flattened PR/worktree fields from `domain.plan_item`. Subscriber classifier calls must carry tracked-entry context (`FD_ENTRY_KIND` / `FD_ENTRY_HARNESS`) into `prompt-classify`; otherwise issue-only adapter sentinels fail closed as `domain-mismatch` and issue lanes can miss workflow handshakes. The Rust dashboard (`lib/flightdeck-dashboard/`) is the canonical read-only consumer for active state and durable history. Live startup uses `flightdeck-state run active` only to validate/label the active run for the requested tmux session, then reads the canonical project-local state file; it must not use durable `runs/<id>/state.json` as the live mutation source unless core mirrors every live write. History/`--run-id`/`--archive` are explicit read-only archive paths. Any new dashboard work goes through that path — don't add a parallel reader.
 
 ## Activity stream architecture
 
@@ -156,6 +157,13 @@ The background daemon (`flightdeck-daemon`) is configurable but defaults are fin
 | `FD_MASTER_TURN_TTL` | `3600` | Maximum master turn duration before the busy lock is treated as stale. |
 | `FD_ADAPTER_FRESHNESS_TTL` | `5` | Adapter freshness probe cache. Set `0` to disable during debugging. |
 | `FD_ADAPTER_READ_TIMEOUT_SEC` | `2` | Per-adapter read subprocess timeout. Fractional seconds honored. |
+| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Per-`pi-bridge` list/state/history timeout for daemon and `pane-poll` probes; uses SIGKILL on timeout so stale bridge connects are reaped before fallback. Exceptions: fixed 500ms bridge binary PATH lookup, `flightdeck-state init` owner discovery via `FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS`, and Pi subscriber preflight via `FD_ADAPTER_READ_TIMEOUT_SEC`. |
+| `FD_PANE_REGISTRY_READ_TIMEOUT_SEC` | `5` | Daemon helper timeout for `pane-registry` reads used by reconcile/subscriber binding. |
+| `FD_BUSY_STALL_WATCHDOG` | `1` | Enable Pi busy-stall detection. |
+| `FD_BUSY_STALL_THRESHOLD_SEC` | `300` | Sustained CPU-bound/no-progress seconds before `pi-busy-stall` can fire. |
+| `FD_BUSY_STALL_CPU_PCT` | `90` | Per-core CPU threshold for the pane process tree. |
+| `FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC` | `30` | Minimum seconds between bounded bridge probes for a local busy-stall candidate. |
+| `FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC` | `30` | Minimum seconds between git HEAD progress probes per pane. |
 | `FD_SPAWN_MODE` | `detach` | `detach` (setsid+nohup) or `tmux-window` (visible daemon window). Use `tmux-window` for codex/opencode/pi masters where backgrounding is unreliable. |
 | `FD_MAX_LIFETIME` | `14400` | Seconds before daemon restarts itself for a fresh process (`0` disables). |
 | `FD_STATE_DIR` | `$XDG_RUNTIME_DIR/flightdeck` (or `/tmp/flightdeck-$UID`) | Daemon-private state directory. Must be user-owned, mode `0700`. |
@@ -316,7 +324,7 @@ Env knobs: `VSTACK_RATE_LIMIT_WATCHDOG=0` kills it, `VSTACK_RATE_LIMIT_MAX_ATTEM
 
 ## Adapter read recovery
 
-`FD_ADAPTER_READ_TIMEOUT_SEC` caps each adapter read subprocess (`curl`/`pi-bridge`/`codex-bridge`/`gh`) in `pane-poll`. Fractional seconds are honored. When an adapter read times out or returns an empty body, `pane-poll` clears the per-harness `*_used` flag and falls through to `tmux capture-pane` on the same tick. A wedged opencode/pi/codex adapter therefore recovers via tmux instead of classifying as idle until the freshness probe expires.
+`FD_ADAPTER_READ_TIMEOUT_SEC` caps each adapter read subprocess (`curl`/`pi-bridge`/`codex-bridge`/`gh`) in `pane-poll`. Fractional seconds are honored. `FD_PI_BRIDGE_READ_TIMEOUT_SEC` defaults to the same value and also bounds Pi freshness probes (`piBridgeIsFresh` / `pi-bridge state`) plus bridge list/history calls, using `killSignal: "SIGKILL"` so a stuck connect child is reaped promptly. Daemon reconcile wraps `pane-registry` read helpers with `FD_PANE_REGISTRY_READ_TIMEOUT_SEC` and skips the reconcile tick on registry read failure instead of treating the entry list as empty. When an adapter read times out or returns an empty body, `pane-poll` clears the per-harness `*_used` flag and falls through to `tmux capture-pane` on the same tick. A wedged opencode/pi/codex adapter therefore recovers via tmux instead of classifying as idle until the freshness probe expires.
 
 ## Scripts
 

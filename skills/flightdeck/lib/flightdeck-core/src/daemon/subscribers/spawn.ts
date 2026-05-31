@@ -62,6 +62,8 @@ function baseEnv(opts: BaseSpawnEnv): NodeJS.ProcessEnv {
 		WAKE_EVENTS_LOG: opts.wakeEventsLog,
 		LOG: opts.logFile,
 		CLASSIFIER: opts.classifier,
+		FD_ENTRY_KIND: "",
+		FD_ENTRY_HARNESS: "",
 	};
 }
 

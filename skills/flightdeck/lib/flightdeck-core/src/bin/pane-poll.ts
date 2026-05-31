@@ -15,7 +15,7 @@ import { classifyBuffer } from "../classifier/classify.ts";
 import { extractFinalGithubPullUrl, type GithubPullUrlMatch } from "../classifier/github-pr-url.ts";
 import { OC_LAST_ASSISTANT_JQ, ocAdapterIsFresh, ocIssueFromPaneTarget, ocSpawnFile } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ, ccAdapterIsFresh, ccSpawnFile } from "../paths/cc.ts";
-import { PI_LAST_ASSISTANT_JQ, piBridgeIsFresh, piResolveBridgeBin, piSpawnFile } from "../paths/pi.ts";
+import { PI_LAST_ASSISTANT_JQ, piBridgeIsFresh, piBridgeReadTimeoutMs, piBridgeSpawnSync, piResolveBridgeBin, piSpawnFile } from "../paths/pi.ts";
 import { CX_LAST_ASSISTANT_JQ, cxAdapterIsFresh, cxBridgeRun, cxSpawnFile } from "../paths/codex.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -380,11 +380,9 @@ function pollOne(row: PollRow): string {
 			if (bin) {
 				const target = piSocket ? ["--socket", piSocket] : ["--pid", piPid];
 				// Bound the bridge call so a hung pi-bridge cannot dominate
-				// the tick. pi-bridge has no --timeout flag, so we use
-				// spawnSync's built-in `timeout` option — same semantics as
-				// timeout(1) (SIGTERM after the deadline) but in-process,
-				// dropping one fork per Pi pane per tick.
-				const r = spawnSync(bin, ["history", ...target, "50"], { encoding: "utf8", maxBuffer: adapterMaxBufferBytes(), timeout: adapterTimeoutMs() });
+				// the tick. piBridgeSpawnSync uses a SIGKILL timeout so a
+				// wedged connect/read subprocess is reaped before fallback.
+				const r = piBridgeSpawnSync(bin, ["history", ...target, "50"], { maxBuffer: adapterMaxBufferBytes(), timeoutMs: piBridgeReadTimeoutMs() });
 				if (r.status === 0 && r.stdout) {
 					const extracted = jqOut(PI_LAST_ASSISTANT_JQ, r.stdout);
 					if (extracted) { buf = extracted; piUsed = true; }

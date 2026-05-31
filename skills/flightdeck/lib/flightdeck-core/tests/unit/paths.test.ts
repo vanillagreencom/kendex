@@ -1,11 +1,11 @@
 // Unit tests for the lib/paths/*.ts ports. Pure-function helpers
-// (encoders, derivers, jq filter strings) — no subprocess dependencies.
+// (encoders, derivers, candidate path construction) — no subprocess dependencies.
 
 import { describe, expect, test } from "bun:test";
 import { ccEncodeCwd, ccUuidForIssue, ccTranscriptPath } from "../../src/paths/cc.ts";
 import { ocIssueFromPaneTarget, ocPaneIdSafe } from "../../src/paths/oc.ts";
 import { fdSessionKeyFromId } from "../../src/paths/daemon.ts";
-import { piBridgeExtensionCandidates } from "../../src/paths/pi.ts";
+import { piBridgeExtensionCandidates, piBridgeReadTimeoutMs } from "../../src/paths/pi.ts";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
@@ -57,6 +57,12 @@ describe("daemon session key", () => {
 });
 
 describe("pi helpers", () => {
+	test("piBridgeReadTimeoutMs prefers Pi-specific override then adapter timeout", () => {
+		expect(piBridgeReadTimeoutMs({ FD_PI_BRIDGE_READ_TIMEOUT_SEC: "0.25" } as NodeJS.ProcessEnv)).toBe(250);
+		expect(piBridgeReadTimeoutMs({ FD_ADAPTER_READ_TIMEOUT_SEC: "0.5" } as NodeJS.ProcessEnv)).toBe(500);
+		expect(piBridgeReadTimeoutMs({ FD_PI_BRIDGE_READ_TIMEOUT_SEC: "bogus" } as NodeJS.ProcessEnv)).toBe(2000);
+	});
+
 	test("piBridgeExtensionCandidates includes project/user vstack and Pi 0.75 npm install paths", () => {
 		const root = mkdtempSync(join(tmpdir(), "flightdeck-pi-paths-"));
 		try {

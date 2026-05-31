@@ -109,4 +109,26 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.equal(c.turnBlocks[0].type, "text");
 		assert.equal(c.turnBlocks[0].text, "next turn text");
 	});
+
+	it("ignores late unmatched content_block events so assistant fallback is not masked", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent({ type: "stream_event", event: { type: "content_block_delta", index: 7, delta: { type: "text_delta", text: "late" } } }, new Map(), model);
+		processStreamEvent({ type: "stream_event", event: { type: "content_block_stop", index: 7 } }, new Map(), model);
+
+		assert.equal(c.turnSawStreamEvent, false, "unmatched late content events must not mask assistant fallback");
+		assert.equal(c.turnBlocks.length, 0);
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{ type: "text", text: "fallback after stale content event" }],
+			},
+		}, model, new Map());
+
+		assert.equal(c.turnBlocks.length, 1);
+		assert.equal(c.turnBlocks[0].text, "fallback after stale content event");
+	});
 });

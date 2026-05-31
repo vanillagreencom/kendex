@@ -667,30 +667,52 @@ exit 1
 
 	test("tmux-window mode propagates env to the child window (round-4 #4)", async () => {
 		// Regression: tmux new-window dispatch must explicitly pass
-		// FD_STATE_DIR into the child env. tmux server doesn't inherit
+		// daemon env into the child env. tmux server doesn't inherit
 		// caller env; without the explicit env wiring the child wrote
 		// state to the default dir (not our isolated stateDir) and the
 		// caller's dispatch timed out after 10s waiting for a pid file.
-		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId, "--in-tmux-window"]);
-		expect(r.status).toBe(0);
-		expect(r.stdout).toContain("mode=tmux-window");
-		// Child must have written its pid into OUR isolated stateDir,
-		// proving FD_STATE_DIR was propagated through the tmux dispatch.
-		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
-		expect(existsSync(pidFile)).toBe(true);
-		const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-		expect(pidAlive(pid)).toBe(true);
-		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
-		await sleep(500);
-		expect(existsSync(logFile)).toBe(true);
-		const foundWindow = runDaemon("find-window");
-		expect(foundWindow.status).toBe(0);
-		const windowName = spawnSync("tmux", ["display-message", "-p", "-t", foundWindow.stdout.trim(), "#{window_name}"], { encoding: "utf8" }).stdout.trim();
-		expect(windowName).toBe(`[fd] daemon-${SESSION_KEY}`);
-		runDaemon("stop");
-		await sleep(300);
-		// Kill the tmux daemon window if it's still around.
-		spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
+		// Round-5: timeout + busy-stall knobs must also ride this path.
+		const forwardedEnv = {
+			FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC: "7.01",
+			FD_BUSY_STALL_CLK_TCK: "1234",
+			FD_BUSY_STALL_CPU_PCT: "66.6",
+			FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC: "8.02",
+			FD_BUSY_STALL_THRESHOLD_SEC: "9.03",
+			FD_BUSY_STALL_WATCHDOG: "0",
+			FD_PANE_REGISTRY_READ_TIMEOUT_SEC: "1.23",
+			FD_PI_BRIDGE_READ_TIMEOUT_SEC: "0.42",
+		};
+		const saved = Object.fromEntries(Object.keys(forwardedEnv).map((key) => [key, process.env[key]]));
+		for (const [key, value] of Object.entries(forwardedEnv)) process.env[key] = value;
+		try {
+			const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId, "--in-tmux-window"]);
+			expect(r.status).toBe(0);
+			expect(r.stdout).toContain("mode=tmux-window");
+			// Child must have written its pid into OUR isolated stateDir,
+			// proving FD_STATE_DIR was propagated through the tmux dispatch.
+			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+			expect(existsSync(pidFile)).toBe(true);
+			const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			expect(pidAlive(pid)).toBe(true);
+			const childEnv = readFileSync(`/proc/${pid}/environ`, "utf8");
+			for (const [key, value] of Object.entries(forwardedEnv)) expect(childEnv).toContain(`${key}=${value}\0`);
+			const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+			await sleep(500);
+			expect(existsSync(logFile)).toBe(true);
+			const foundWindow = runDaemon("find-window");
+			expect(foundWindow.status).toBe(0);
+			const windowName = spawnSync("tmux", ["display-message", "-p", "-t", foundWindow.stdout.trim(), "#{window_name}"], { encoding: "utf8" }).stdout.trim();
+			expect(windowName).toBe(`[fd] daemon-${SESSION_KEY}`);
+		} finally {
+			runDaemon("stop");
+			await sleep(300);
+			// Kill the tmux daemon window if it's still around.
+			spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
 	}, 15000);
 
 	test("from-handoff startup warns and drops stale inner panes instead of exiting", async () => {
@@ -919,6 +941,305 @@ exit 1
 		runDaemon("stop");
 		await sleep(200);
 	});
+
+	test("pi busy-stall run-loop appends event, activity, and wake pending", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-busy-stall-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-busystall-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-busy-stall.jsonl");
+		const fakeDir = join(stateDir, "fake-busy-stall");
+		mkdirSync(fakeDir, { recursive: true });
+		const net = require("node:net") as typeof import("node:net");
+		const realSocket = join(stateDir, "pi-real.sock");
+		const staleSocket = join(stateDir, "pi-stale.sock");
+		const stateCountFile = join(stateDir, "pi-real-state-count");
+		const realServer = net.createServer();
+		const staleServer = net.createServer();
+		await new Promise<void>((resolveListen, rejectListen) => {
+			let ready = 0;
+			const done = () => { ready += 1; if (ready === 2) resolveListen(); };
+			realServer.once("error", rejectListen);
+			staleServer.once("error", rejectListen);
+			realServer.listen(realSocket, () => { realServer.off("error", rejectListen); done(); });
+			staleServer.listen(staleSocket, () => { staleServer.off("error", rejectListen); done(); });
+		});
+		const bridgeBin = join(fakeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+set -euo pipefail
+real_socket=${JSON.stringify(realSocket)}
+stale_socket=${JSON.stringify(staleSocket)}
+count_file=${JSON.stringify(stateCountFile)}
+case "\${1:-}" in
+  list)
+    printf '%s\n' '[{"pid":${process.pid},"cwd":${JSON.stringify(process.cwd())},"sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}]'
+    ;;
+  state)
+    args=" $* "
+    if [[ "$args" == *"$stale_socket"* ]]; then
+      printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"stale-session","socketPath":${JSON.stringify(staleSocket)}}}'
+      exit 0
+    fi
+    count=0
+    [[ -f "$count_file" ]] && count=$(cat "$count_file")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$count_file"
+    if (( count == 1 )); then
+      printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}}'
+      exit 0
+    fi
+    sleep 5
+    ;;
+  questions)
+    printf '{"success":true,"data":{"questions":[]}}\n'
+    ;;
+  stream)
+    printf '%s\n' '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}}'
+    sleep 30
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`);
+		chmodSync(bridgeBin, 0o755);
+		tmuxKillPaneFor(innerPaneId);
+		innerPaneId = (spawnSync("tmux", [
+			"new-window", "-d", "-t", SESSION, "-n", `fd-busy-stall-inner-${Date.now()}`,
+			"-P", "-F", "#{pane_id}", "bash -lc 'while :; do :; done'",
+		], { encoding: "utf8" }).stdout ?? "").trim();
+		expect(innerPaneId).toMatch(/^%/);
+		await sleep(500);
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_bridge_socket: staleSocket, pi_session_id: "busy-session" }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+case "\${1:-}" in
+  list)
+    printf '%s\n' ${JSON.stringify(rows)}
+    ;;
+  find-by-pane)
+    printf '{"id":"busy-entry","kind":"workflow"}\n'
+    ;;
+  pi-bridge-args)
+    printf -- '--pid %s --socket %s\n' ${process.pid} ${JSON.stringify(staleSocket)}
+    ;;
+  refresh-window-names)
+    printf '{"updated":[],"cleared":[],"warnings":[]}\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`);
+		chmodSync(registryBin, 0o755);
+
+		const saved = {
+			busyCpu: process.env.FD_BUSY_STALL_CPU_PCT,
+			busyGit: process.env.FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC,
+			busyProbe: process.env.FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC,
+			busyThreshold: process.env.FD_BUSY_STALL_THRESHOLD_SEC,
+			bridgeBin: process.env.PI_BRIDGE_BIN,
+			bridgeTimeout: process.env.FD_PI_BRIDGE_READ_TIMEOUT_SEC,
+			stateDir: process.env.FD_STATE_DIR,
+		};
+		process.env.FD_BUSY_STALL_CPU_PCT = "0.1";
+		process.env.FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC = "0.05";
+		process.env.FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC = "0.05";
+		process.env.FD_BUSY_STALL_THRESHOLD_SEC = "0.05";
+		process.env.FD_PI_BRIDGE_READ_TIMEOUT_SEC = "0.1";
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.PI_BRIDGE_BIN = bridgeBin;
+
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "busy-stall-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "pi",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["pi"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const eventsFile = join(stateDir, `fd-daemon-events-${testSessionKey}.jsonl`);
+			const wakePending = join(stateDir, `fd-wake-pending-${testSessionKey}`);
+			const sawBusyStall = await waitFor(() => {
+				if (!existsSync(eventsFile) || !existsSync(wakePending) || !existsSync(activityPath)) return false;
+				const eventsText = readFileSync(eventsFile, "utf8");
+				const activityText = readFileSync(activityPath, "utf8");
+				const wakeText = readFileSync(wakePending, "utf8");
+				return eventsText.includes('"tag":"pi-busy-stall"')
+					&& eventsText.includes('"bridge_reason":"bridge-timeout"')
+					&& activityText.includes('"type":"agent.busy_stalled"')
+					&& wakeText.includes('"tag":"pi-busy-stall"');
+			}, 8000);
+			expect(sawBusyStall).toBe(true);
+			const busyRows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+			const busyRow = busyRows.find((row) => row.tag === "pi-busy-stall");
+			expect(busyRow?.details?.pi_socket).toBe(realSocket);
+			expect(busyRow?.details?.pi_socket).not.toBe(staleSocket);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			await new Promise<void>((resolveClose) => realServer.close(() => resolveClose()));
+			await new Promise<void>((resolveClose) => staleServer.close(() => resolveClose()));
+			for (const [key, value] of Object.entries({
+				FD_BUSY_STALL_CPU_PCT: saved.busyCpu,
+				FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC: saved.busyGit,
+				FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC: saved.busyProbe,
+				FD_BUSY_STALL_THRESHOLD_SEC: saved.busyThreshold,
+				FD_PI_BRIDGE_READ_TIMEOUT_SEC: saved.bridgeTimeout,
+				FD_STATE_DIR: saved.stateDir,
+				PI_BRIDGE_BIN: saved.bridgeBin,
+			})) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	}, 12000);
+
+	test("FD_BUSY_STALL_WATCHDOG=0 skips busy-stall registry probes on subscribed Pi panes", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-busy-disabled-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-busydisabled-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-busy-disabled.jsonl");
+		const fakeDir = join(stateDir, "fake-busy-disabled");
+		mkdirSync(fakeDir, { recursive: true });
+		const listCountFile = join(stateDir, "registry-list-count");
+		const fakeSocket = join(stateDir, "pi-disabled.sock");
+		const bridgeBin = join(fakeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  list)
+    printf '%s\n' '[{"pid":${process.pid},"cwd":${JSON.stringify(process.cwd())},"sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}]'
+    ;;
+  state)
+    printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}}'
+    ;;
+  questions)
+    printf '{"success":true,"data":{"questions":[]}}\n'
+    ;;
+  stream)
+    printf '%s\n' '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}}'
+    sleep 30
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`);
+		chmodSync(bridgeBin, 0o755);
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_bridge_socket: fakeSocket, pi_session_id: "disabled-session" }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+case "\${1:-}" in
+  list)
+    count=0
+    [[ -f ${JSON.stringify(listCountFile)} ]] && count=$(cat ${JSON.stringify(listCountFile)})
+    count=$((count + 1))
+    printf '%s\n' "$count" > ${JSON.stringify(listCountFile)}
+    printf '%s\n' ${JSON.stringify(rows)}
+    ;;
+  find-by-pane)
+    printf '{"id":"disabled-entry","kind":"workflow"}\n'
+    ;;
+  pi-bridge-args)
+    printf -- '--pid %s --socket %s\n' ${process.pid} ${JSON.stringify(fakeSocket)}
+    ;;
+  refresh-window-names)
+    printf '{"updated":[],"cleared":[],"warnings":[]}\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`);
+		chmodSync(registryBin, 0o755);
+
+		const saved = {
+			bridgeBin: process.env.PI_BRIDGE_BIN,
+			stateDir: process.env.FD_STATE_DIR,
+			watchdog: process.env.FD_BUSY_STALL_WATCHDOG,
+		};
+		process.env.FD_BUSY_STALL_WATCHDOG = "0";
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.PI_BRIDGE_BIN = bridgeBin;
+
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "busy-disabled-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "pi",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["pi"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const pidFile = join(stateDir, `fd-pi-subscriber-${testSessionKey}-${innerPaneId.replace(/^%/, "")}.pid`);
+			const spawned = await waitFor(() => existsSync(pidFile), 3000);
+			expect(spawned).toBe(true);
+			const initialCount = Number.parseInt(readFileSync(listCountFile, "utf8").trim() || "0", 10);
+			await sleep(700);
+			const laterCount = Number.parseInt(readFileSync(listCountFile, "utf8").trim() || "0", 10);
+			expect(laterCount).toBe(initialCount);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			const pidFile = join(stateDir, `fd-pi-subscriber-${testSessionKey}-${innerPaneId.replace(/^%/, "")}.pid`);
+			if (existsSync(pidFile)) {
+				const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+				if (pid) {
+					try { process.kill(-pid, "SIGTERM"); } catch { /* */ }
+					try { process.kill(pid, "SIGTERM"); } catch { /* */ }
+				}
+			}
+			for (const [key, value] of Object.entries({
+				FD_BUSY_STALL_WATCHDOG: saved.watchdog,
+				FD_STATE_DIR: saved.stateDir,
+				PI_BRIDGE_BIN: saved.bridgeBin,
+			})) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	}, 12000);
 
 	// vstack#180: when the tracked entry lacks pi adapter metadata the
 	// daemon used to emit one [pi-subscriber-bind-skip] per pane per tick
