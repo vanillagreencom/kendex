@@ -133,14 +133,8 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT(?:\s*(?:\[|\+?=)|\S*=)/.test(stripped);
 		const eq = stripped.indexOf("=");
 		if (eq <= 0) {
-			for (const name of nonAssignmentVariableMentions(stripped)) {
-				const reason = `unsupported non-assignment directive for ${name} at ${path}:${lineNumber}`;
-				values.delete(name);
-				assignmentLines.delete(name);
-				unsupported.set(name, reason);
-			}
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
-			continue;
+			throw new Error(`unsupported .env directive at ${path}:${lineNumber}`);
 		}
 		const rawKey = stripped.slice(0, eq);
 		const rawValue = stripped.slice(eq + 1);
@@ -153,9 +147,10 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 				values.delete(unsupportedKey);
 				assignmentLines.delete(unsupportedKey);
 				unsupported.set(unsupportedKey, reason);
+				throw new Error(reason);
 			}
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
-			continue;
+			throw new Error(`unsupported .env assignment at ${path}:${lineNumber}`);
 		}
 		if (key !== "FLIGHTDECK_RUN_STORE_ROOT" && hasRunStoreAssignment) {
 			throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
@@ -165,8 +160,7 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 			values.delete(key);
 			assignmentLines.delete(key);
 			unsupported.set(key, reason);
-			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw new Error(reason);
-			continue;
+			throw new Error(reason);
 		}
 		const valueText = rawValue.trim();
 		try {
@@ -193,7 +187,7 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 			values.delete(key);
 			assignmentLines.delete(key);
 			unsupported.set(key, reason);
-			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw error;
+			throw error;
 		}
 	}
 	const runStoreError = unsupported.get("FLIGHTDECK_RUN_STORE_ROOT");
@@ -203,12 +197,6 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 
 function hasEnvMutatingDirective(stripped: string): boolean {
 	return /(?:^|[;\s])(?:source|\.)(?:\s+\S+|\$\{?IFS\}?\S*)/.test(stripped);
-}
-
-function nonAssignmentVariableMentions(stripped: string): string[] {
-	const names = new Set<string>();
-	for (const match of stripped.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) names.add(match[0]);
-	return Array.from(names);
 }
 
 function unsupportedAssignmentVariable(key: string): string | undefined {

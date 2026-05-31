@@ -698,6 +698,7 @@ test("project .env unsupported run-store assignment forms fail closed", () => {
 		"FLIGHTDECK_RUN_STORE_ROOT+=/tmp/unsupported\n",
 		"FLIGHTDECK_RUN_STORE_ROOT[0]=/tmp/unsupported\n",
 		"FLIGHTDECK_RUN_STORE_ROOT=/tmp/unsupported\nunset FLIGHTDECK_RUN_STORE_ROOT\n",
+		": ${FLIGHTDECK_RUN_STORE_ROOT:=/tmp/unsupported}\n",
 	];
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
@@ -718,7 +719,7 @@ test("project .env unsupported run-store assignment forms fail closed", () => {
 				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
 				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
-				assert.match(snapshot.masterError ?? "", /unsupported .*FLIGHTDECK_RUN_STORE_ROOT/, envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported (.*FLIGHTDECK_RUN_STORE_ROOT|\.env directive|\.env assignment)/, envText.trim());
 				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
 			} finally {
 				resetRunStoreCacheForTests();
@@ -738,6 +739,7 @@ test("project .env unsupported helper assignment referenced by run-store fails c
 		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT[0]=/tmp/unsupported\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
 		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT[0]+=-suffix\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
 		"CUSTOM_ROOT=/tmp/unsupported\nunset CUSTOM_ROOT\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		": ${CUSTOM_ROOT:=/tmp/unsupported}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
 	];
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
@@ -758,7 +760,7 @@ test("project .env unsupported helper assignment referenced by run-store fails c
 				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
 				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
-				assert.match(snapshot.masterError ?? "", /unsupported variable reference CUSTOM_ROOT/, envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported (assignment for CUSTOM_ROOT|variable reference CUSTOM_ROOT|\.env assignment|\.env directive)/, envText.trim());
 				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
 			} finally {
 				resetRunStoreCacheForTests();
@@ -773,7 +775,18 @@ test("project .env unsupported helper assignment referenced by run-store fails c
 });
 
 test("project .env source-provided run-store root fails closed before legacy fallback", () => {
-	const cases = ["source ./flightdeck.env", ". ./flightdeck.env", "source${IFS}./flightdeck.env", ".${IFS}./flightdeck.env"];
+	const cases = [
+		"source ./flightdeck.env",
+		". ./flightdeck.env",
+		"source${IFS}./flightdeck.env",
+		".${IFS}./flightdeck.env",
+		"source${IFS:- }./flightdeck.env",
+		".${IFS:- }./flightdeck.env",
+		"\\source ./flightdeck.env",
+		"\\. ./flightdeck.env",
+		"source${SPACE}./flightdeck.env",
+		".${SPACE}./flightdeck.env",
+	];
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	try {
@@ -802,7 +815,7 @@ test("project .env source-provided run-store root fails closed before legacy fal
 				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
 				assert.equal(flightdeckSessionStatus(snapshot), "state-error", directive);
-				assert.match(snapshot.masterError ?? "", /unsupported env-mutating directive/, directive);
+				assert.match(snapshot.masterError ?? "", /unsupported (env-mutating directive|\.env directive)/, directive);
 				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, directive);
 			} finally {
 				resetRunStoreCacheForTests();
@@ -847,7 +860,7 @@ test("project .env source-tainted helper reference fails closed before legacy fa
 				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
 				assert.equal(flightdeckSessionStatus(snapshot), "state-error", directive);
-				assert.match(snapshot.masterError ?? "", /unsupported variable reference CUSTOM_ROOT/, directive);
+				assert.match(snapshot.masterError ?? "", /unsupported (variable reference CUSTOM_ROOT|env-mutating directive|\.env directive)/, directive);
 				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, directive);
 			} finally {
 				resetRunStoreCacheForTests();
@@ -1050,7 +1063,7 @@ test("project .env quoted run-store export with extra assignment fails closed be
 	}
 });
 
-test("unrelated source directives are ignored while project run-store override still loads", () => {
+test("source directives fail closed even when project run-store override follows", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
 	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-source-"));
@@ -1066,7 +1079,7 @@ test("unrelated source directives are ignored while project run-store override s
 			paused_for_user: null,
 			terminated: false,
 		});
-		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
 			conflict_graph: { computed_at: null, edges: [] },
 			entries: {},
 			merge_queue: [],
@@ -1076,7 +1089,8 @@ test("unrelated source directives are ignored while project run-store override s
 
 		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
-		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported (env-mutating directive|\.env directive)/);
 		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
 	} finally {
 		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
