@@ -64,18 +64,9 @@
           "apply": "live"
         },
         {
-          "key": "maxParallelTasks",
-          "label": "Max parallel tasks (deprecated)",
-          "description": "Deprecated no-op kept for setting-file compatibility. Earlier versions used this as an internal chunk size; the dispatcher now uses a flat worker pool capped by maxConcurrency. Safe to delete.",
-          "type": "number",
-          "default": 8,
-          "category": "Execution",
-          "apply": "live"
-        },
-        {
           "key": "maxConcurrency",
           "label": "Max concurrency",
-          "description": "Maximum number of bg agent processes to run at the same time. The single knob governing parallel dispatch.",
+          "description": "Maximum number of one-shot/background agent executions running concurrently in the parallel dispatch queue. Persistent pane agents occupy a worker only until launch/enqueue; they are not long-running bg workers after that.",
           "type": "number",
           "default": 4,
           "category": "Execution",

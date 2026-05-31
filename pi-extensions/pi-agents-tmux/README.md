@@ -138,13 +138,12 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 
 ### Execution
 
-There is one knob — `maxConcurrency` — and it caps the number of bg agent processes running simultaneously. Earlier versions exposed `maxParallelTasks` as an internal chunk size; that knob is now a no-op kept for setting-file compatibility (parallel dispatch uses a flat worker pool capped by `maxConcurrency` across the whole queue).
+There is one execution-concurrency knob — `maxConcurrency` — and it caps concurrent one-shot/background agent execution in the parallel dispatch queue. Persistent pane agents occupy the queue only until they are launched/enqueued; after that they are not long-running bg workers for this limit. Earlier versions exposed `maxParallelTasks` as an internal chunk size; that key is now a no-op kept only for settings-file compatibility and safe to delete.
 
 | Setting | What it does |
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
-| Max concurrency | Cap on bg agent processes running simultaneously; the single knob that governs parallel dispatch. |
-| Max parallel tasks (deprecated) | No-op kept for setting-file compatibility; parallel dispatch uses a flat worker pool capped at `maxConcurrency`. Safe to delete. |
+| Max concurrency | Cap on concurrent one-shot/background agent executions in the parallel dispatch queue; persistent pane agents only occupy the queue until launch/enqueue. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 | Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |
