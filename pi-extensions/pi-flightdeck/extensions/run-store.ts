@@ -112,54 +112,59 @@ function nonEmpty(value: unknown): string | undefined {
 	return trimmed ? trimmed : undefined;
 }
 
-function usesShellFeatures(text: string): boolean {
-	for (const rawLine of text.split(/\r?\n/)) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith("#")) continue;
-		if (/[$`;|&<>(){}]/.test(line)) return true;
-		if (line.endsWith("\\")) return true;
-		if (line.includes("\\")) return true;
-		const stripped = line.replace(/^export\s+/, "");
-		if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(stripped)) return true;
-		const eq = stripped.indexOf("=");
-		const rhs = stripped.slice(eq + 1).trim();
-		const fullyQuoted = (rhs.startsWith('"') && rhs.endsWith('"') && rhs.length >= 2) ||
-			(rhs.startsWith("'") && rhs.endsWith("'") && rhs.length >= 2);
-		if (!fullyQuoted && /\s#/.test(rhs)) return true;
-		if (!fullyQuoted && /\s/.test(rhs)) return true;
-	}
-	return false;
-}
-
-
-function declaredEnvKeys(text: string): Set<string> {
-	const keys = new Set<string>();
-	for (const rawLine of text.split(/\r?\n/)) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith("#")) continue;
-		const stripped = line.replace(/^export\s+/, "");
-		const pattern = /(?:^|[\s;])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=/g;
-		let match: RegExpExecArray | null;
-		while ((match = pattern.exec(stripped)) !== null) keys.add(match[1]!);
-	}
-	return keys;
-}
-
-function loadDotEnvNative(text: string): Map<string, string> {
+function parseDotEnvNonExecuting(text: string, path: string): Map<string, string> {
 	const values = new Map<string, string>();
+	let lineNumber = 0;
 	for (const rawLine of text.split(/\r?\n/)) {
+		lineNumber += 1;
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) continue;
-		const stripped = line.replace(/^export\s+/, "");
+		const stripped = line.replace(/^export\s+/, "").trim();
 		const eq = stripped.indexOf("=");
-		if (eq <= 0) continue;
+		if (eq <= 0) throw new Error(`unsupported shell syntax at ${path}:${lineNumber}`);
 		const key = stripped.slice(0, eq).trim();
-		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-		let value = stripped.slice(eq + 1).trim();
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-		values.set(key, value);
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid assignment key at ${path}:${lineNumber}`);
+		const rawValue = stripped.slice(eq + 1).trim();
+		values.set(key, parseDotEnvValue(rawValue, values, path, lineNumber));
 	}
 	return values;
+}
+
+function parseDotEnvValue(raw: string, values: Map<string, string>, path: string, lineNumber: number): string {
+	if (raw === "") return "";
+	let text = raw;
+	let expand = true;
+	if (raw.startsWith("'")) {
+		if (!raw.endsWith("'") || raw.length < 2) throw new Error(`unterminated single-quoted value at ${path}:${lineNumber}`);
+		text = raw.slice(1, -1);
+		expand = false;
+	} else if (raw.startsWith('"')) {
+		if (!raw.endsWith('"') || raw.length < 2) throw new Error(`unterminated double-quoted value at ${path}:${lineNumber}`);
+		text = raw.slice(1, -1);
+	} else if (/[`;&|<>$]/.test(raw)) {
+		text = raw;
+	} else if (/\s/.test(raw)) {
+		throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
+	}
+	if (/[`;&|<>]/.test(text) || text.includes("$")) {
+		// Only non-executing variable expansion is supported. Command
+		// substitution, source directives, separators, pipes, and redirects
+		// are rejected rather than executed during dashboard polling.
+		if (!/^([^`;&|<>$]|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})*$/.test(text)) {
+			throw new Error(`unsupported shell expansion at ${path}:${lineNumber}`);
+		}
+	}
+	if (!expand) return text;
+	return expandEnvValue(text, values, path, lineNumber);
+}
+
+function expandEnvValue(text: string, values: Map<string, string>, path: string, lineNumber: number): string {
+	return text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced: string | undefined, bare: string | undefined) => {
+		const key = braced ?? bare ?? "";
+		const value = values.get(key) ?? process.env[key];
+		if (value === undefined) throw new Error(`undefined variable ${key} at ${path}:${lineNumber}`);
+		return value;
+	});
 }
 
 function loadProjectDotEnvValues(projectRoot: string): Map<string, string> {
@@ -183,46 +188,25 @@ function loadProjectDotEnvValues(projectRoot: string): Map<string, string> {
 		DOT_ENV_CACHE.set(root, { error: message });
 		throw new Error(message);
 	}
-	if (!usesShellFeatures(text)) {
-		const values = loadDotEnvNative(text);
+	try {
+		const values = parseDotEnvNonExecuting(text, target);
 		DOT_ENV_CACHE.set(root, { values });
 		return values;
-	}
-	const declared = declaredEnvKeys(text);
-	if (declared.size === 0) {
-		const values = new Map<string, string>();
-		DOT_ENV_CACHE.set(root, { values });
-		return values;
-	}
-	const script = `
-		set -euo pipefail
-		set -a
-		source "$1"
-		set +a
-		env -0
-	`;
-	const r = spawnSync("bash", ["-c", script, "_", target], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
-	if (r.status !== 0) {
-		const message = `.env load failed: ${r.stderr ?? ""}`;
+	} catch (error) {
+		const message = `.env load failed: ${error instanceof Error ? error.message : String(error)}`;
 		DOT_ENV_CACHE.set(root, { error: message });
 		throw new Error(message);
 	}
-	const values = new Map<string, string>();
-	for (const entry of (r.stdout ?? "").split("\0")) {
-		const eq = entry.indexOf("=");
-		if (eq <= 0) continue;
-		const key = entry.slice(0, eq);
-		if (declared.has(key)) values.set(key, entry.slice(eq + 1));
-	}
-	DOT_ENV_CACHE.set(root, { values });
-	return values;
 }
 
 function runStoreRoot(projectRoot: string): string {
 	const envValues = loadProjectDotEnvValues(projectRoot);
-	const override = nonEmpty(envValues.get("FLIGHTDECK_RUN_STORE_ROOT")) ?? nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
+	const override = envValues.has("FLIGHTDECK_RUN_STORE_ROOT")
+		? nonEmpty(envValues.get("FLIGHTDECK_RUN_STORE_ROOT"))
+		: nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
 	if (override) return resolve(expandHome(override));
-	return join(homedir(), ".vstack", "flightdeck");
+	const home = typeof process.env.HOME === "string" && process.env.HOME.trim() ? process.env.HOME.trim() : homedir();
+	return join(home, ".vstack", "flightdeck");
 }
 
 function gitRemoteUrl(projectRoot: string): string | null {
