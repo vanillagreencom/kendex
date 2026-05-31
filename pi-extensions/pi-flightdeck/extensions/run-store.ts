@@ -114,13 +114,22 @@ function nonEmpty(value: unknown): string | undefined {
 
 function parseDotEnvNonExecuting(text: string, path: string): Map<string, string> {
 	const values = new Map<string, string>();
+	const assignmentLines = new Map<string, number>();
 	const unsupported = new Map<string, string>();
+	let lastEnvDirectiveLine = 0;
 	let lineNumber = 0;
 	for (const rawLine of text.split(/\r?\n/)) {
 		lineNumber += 1;
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) continue;
 		const stripped = line.replace(/^export\s+/, "").trim();
+		if (hasEnvMutatingDirective(stripped)) {
+			lastEnvDirectiveLine = lineNumber;
+			const reason = `unsupported env-mutating directive at ${path}:${lineNumber}`;
+			values.delete("FLIGHTDECK_RUN_STORE_ROOT");
+			assignmentLines.delete("FLIGHTDECK_RUN_STORE_ROOT");
+			unsupported.set("FLIGHTDECK_RUN_STORE_ROOT", reason);
+		}
 		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT(?:\s*(?:\[|\+?=)|\S*=)/.test(stripped);
 		const eq = stripped.indexOf("=");
 		if (eq <= 0) {
@@ -136,6 +145,7 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 			if (unsupportedKey) {
 				const reason = `unsupported assignment for ${unsupportedKey} at ${path}:${lineNumber}`;
 				values.delete(unsupportedKey);
+				assignmentLines.delete(unsupportedKey);
 				unsupported.set(unsupportedKey, reason);
 			}
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
@@ -147,6 +157,7 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		if (hasAssignmentWhitespace) {
 			const reason = `unsupported whitespace around assignment at ${path}:${lineNumber}`;
 			values.delete(key);
+			assignmentLines.delete(key);
 			unsupported.set(key, reason);
 			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw new Error(reason);
 			continue;
@@ -156,22 +167,42 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 			const value = parseDotEnvValue(valueText, (ref) => {
 				const unsupportedReason = unsupported.get(ref);
 				if (unsupportedReason) throw new Error(`unsupported variable reference ${ref}: ${unsupportedReason}`);
-				return values.get(ref) ?? process.env[ref];
+				const assignmentLine = assignmentLines.get(ref);
+				if (assignmentLine !== undefined) {
+					if (assignmentLine <= lastEnvDirectiveLine) {
+						throw new Error(`unsupported variable reference ${ref}: env-mutating directive at ${path}:${lastEnvDirectiveLine}`);
+					}
+					return values.get(ref);
+				}
+				if (lastEnvDirectiveLine > 0) {
+					throw new Error(`unsupported variable reference ${ref}: env-mutating directive at ${path}:${lastEnvDirectiveLine}`);
+				}
+				return process.env[ref];
 			}, path, lineNumber);
 			values.set(key, value);
+			assignmentLines.set(key, lineNumber);
 			unsupported.delete(key);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			values.delete(key);
+			assignmentLines.delete(key);
 			unsupported.set(key, reason);
 			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw error;
 		}
 	}
+	const runStoreError = unsupported.get("FLIGHTDECK_RUN_STORE_ROOT");
+	if (runStoreError) throw new Error(runStoreError);
 	return values.has("FLIGHTDECK_RUN_STORE_ROOT") ? new Map([["FLIGHTDECK_RUN_STORE_ROOT", values.get("FLIGHTDECK_RUN_STORE_ROOT") ?? ""]]) : new Map();
+}
+
+function hasEnvMutatingDirective(stripped: string): boolean {
+	return /(?:^|[;\s])(?:source|\.)\s+\S+/.test(stripped);
 }
 
 function unsupportedAssignmentVariable(key: string): string | undefined {
 	let match = /^([A-Za-z_][A-Za-z0-9_]*)\+$/.exec(key);
+	if (match) return match[1];
+	match = /^([A-Za-z_][A-Za-z0-9_]*)\[.*\]\+$/.exec(key);
 	if (match) return match[1];
 	match = /^([A-Za-z_][A-Za-z0-9_]*)\[.*\]$/.exec(key);
 	return match?.[1];
