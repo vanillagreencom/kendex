@@ -122,9 +122,18 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		expect(bashSrc).toContain("rate_limit_retry_state_file=");
 		expect(bashSrc).toContain("rate_limit_retry_nonce=");
 		expect(bashSrc).toContain("pi_rate_limit_clear_retry");
+		expect(bashSrc).toContain("pi_rate_limit_retry_state_file_for_pane");
+		expect(bashSrc).toContain("rl_expected_state=");
+		expect(bashSrc).toContain("expected_pi_pid");
+		expect(bashSrc).toContain("expected_session");
+		expect(bashSrc).toContain("expected_socket");
 		expect(bashSrc).toContain('current=$(cat "$state_file" 2>/dev/null || true)');
-		expect(bashSrc).toContain('[[ "$current" == "$nonce" ]] || exit 0');
+		expect(bashSrc).toContain('[[ "$current" == "$expected_state" ]] || exit 0');
+		expect(bashSrc).toContain('state=$("$pi_bin" state "$@" 2>/dev/null) || exit 0');
+		expect(bashSrc).toContain('[[ "$actual_session" == "$expected_session" ]] || exit 0');
 		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subagent-completion"');
+		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subscriber-stream-end"');
+		expect(bashSrc).toContain('rm -f "$cleanup_file"');
 	});
 
 	test("bash references the canonical TS module name for parity", () => {

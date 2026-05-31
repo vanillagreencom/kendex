@@ -270,6 +270,10 @@ pi_subscriber_extract_session_id() {
   jq -r '.state.sessionId // .state.session_id // .data.sessionId // .data.session_id // .sessionId // .session_id // ""' 2>/dev/null
 }
 
+pi_rate_limit_retry_state_file_for_pane() {
+  echo "${FD_STATE_DIR}/pi-rate-limit-retry-$(printf '%s' "$1" | sha256sum | awk '{print substr($1,1,16)}').state"
+}
+
 pi_subscriber_loop() {
   exec 200<&- 2>/dev/null || true
   local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}" expected_pi_session_id="${5:-}"
@@ -398,7 +402,7 @@ pi_subscriber_loop() {
     rate_limit_decider="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../lib/flightdeck-core/src/daemon" 2>/dev/null && pwd)/rate-limit-watchdog.ts"
   fi
   local rate_limit_retry_state_file rate_limit_retry_nonce=""
-  rate_limit_retry_state_file="${FD_STATE_DIR}/pi-rate-limit-retry-$(printf '%s' "$pane_id" | sha256sum | awk '{print substr($1,1,16)}').state"
+  rate_limit_retry_state_file=$(pi_rate_limit_retry_state_file_for_pane "$pane_id")
 
   pi_rate_limit_clear_retry() {
     local reason="${1:-cleared}"
@@ -631,21 +635,32 @@ pi_subscriber_loop() {
             # recovered or repurposed pane hours later.
             local rl_delay_sec=$(( rl_delay_ms / 1000 ))
             (( rl_delay_sec < 1 )) && rl_delay_sec=1
-            local rl_state_tmp
+            local rl_state_tmp rl_expected_state
             rate_limit_retry_nonce=$(printf '%s|rate-limit-retry|%s|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,24)}')
+            rl_expected_state=$(printf '%s\t%s\t%s\t%s\t%s' "$rate_limit_retry_nonce" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$pane_id")
             rl_state_tmp="${rate_limit_retry_state_file}.${BASHPID:-$$}.tmp"
-            printf '%s\n' "$rate_limit_retry_nonce" > "$rl_state_tmp" 2>/dev/null && mv -f "$rl_state_tmp" "$rate_limit_retry_state_file" 2>/dev/null || true
+            printf '%s\n' "$rl_expected_state" > "$rl_state_tmp" 2>/dev/null && mv -f "$rl_state_tmp" "$rate_limit_retry_state_file" 2>/dev/null || true
             rm -f "$rl_state_tmp" 2>/dev/null || true
             ( nohup bash -c '
-                delay="$1"; state_file="$2"; nonce="$3"; parent_pid="$4"; pi_bin="$5"; shift 5
+                delay="$1"; state_file="$2"; expected_state="$3"; parent_pid="$4"; expected_pi_pid="$5"; expected_session="$6"; expected_socket="$7"; pi_bin="$8"; shift 8
                 sleep "$delay"
                 kill -0 "$parent_pid" 2>/dev/null || exit 0
+                [[ -z "$expected_pi_pid" ]] || kill -0 "$expected_pi_pid" 2>/dev/null || exit 0
                 current=$(cat "$state_file" 2>/dev/null || true)
-                [[ "$current" == "$nonce" ]] || exit 0
+                [[ "$current" == "$expected_state" ]] || exit 0
+                state=$("$pi_bin" state "$@" 2>/dev/null) || exit 0
+                if [[ -n "$expected_session" ]]; then
+                  actual_session=$(jq -r '.state.sessionId // .state.session_id // .data.sessionId // .data.session_id // .sessionId // .session_id // ""' <<< "$state" 2>/dev/null)
+                  [[ "$actual_session" == "$expected_session" ]] || exit 0
+                fi
+                if [[ -n "$expected_socket" ]]; then
+                  actual_socket=$(jq -r '.state.socket // .state.socketPath // .data.socket // .data.socketPath // .socket // .socketPath // ""' <<< "$state" 2>/dev/null)
+                  [[ -z "$actual_socket" || "$actual_socket" == "$expected_socket" ]] || exit 0
+                fi
                 "$pi_bin" send "$@" --steer "API rate limit was detected. Try to continue from where you left off." >/dev/null 2>&1
-              ' bash "$rl_delay_sec" "$rate_limit_retry_state_file" "$rate_limit_retry_nonce" "$parent_pid" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
-            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s\n' \
-              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" \
+              ' bash "$rl_delay_sec" "$rate_limit_retry_state_file" "$rl_expected_state" "$parent_pid" "$pi_pid" "$expected_pi_session_id" "$pi_socket" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
+            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s expected_session=%s pi_pid=%s socket=%s\n' \
+              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" "$expected_pi_session_id" "$pi_pid" "$pi_socket" \
               >> "$sub_log" 2>/dev/null || true
             continue
           elif [[ "$rl_kind" == "exhausted" ]]; then
@@ -896,6 +911,7 @@ pi_subscriber_loop() {
         fi
       fi
     done
+  pi_rate_limit_clear_retry "subscriber-stream-end"
 }
 
 cx_subscriber_loop() {
@@ -960,10 +976,13 @@ cx_subscriber_loop() {
 # Each subscriber dispatch is enclosed in `setsid` so the subscriber
 # + its pipeline children share one pgroup we can kill atomically.
 start_watchdog() {
-  local parent_pid="$1" sub_pgid="$2" pane_log="$3"
+  local parent_pid="$1" sub_pgid="$2" pane_log="$3" cleanup_file="${4:-}"
   (
     while kill -0 "$sub_pgid" 2>/dev/null; do
       if ! kill -0 "$parent_pid" 2>/dev/null; then
+        if [[ -n "$cleanup_file" ]]; then
+          rm -f "$cleanup_file" 2>/dev/null || true
+        fi
         printf '%s [parent-gone] killing subscriber pgroup %s\n' \
           "$(date -Iseconds)" "$sub_pgid" >> "$pane_log" 2>/dev/null || true
         kill -TERM "-$sub_pgid" 2>/dev/null || true
@@ -1000,11 +1019,15 @@ case "${1:-}" in
   pi)
     shift
     pane_log="${LOG}.pi-sub-$(pi_pane_id_safe "$1")"
-    start_watchdog "$4" "$my_pgid" "$pane_log"
+    pane_retry_state_file=$(pi_rate_limit_retry_state_file_for_pane "$1")
+    start_watchdog "$4" "$my_pgid" "$pane_log" "$pane_retry_state_file"
     parent_pid="$4"
     while kill -0 "$parent_pid" 2>/dev/null; do
       pi_subscriber_loop "$@"
-      kill -0 "$parent_pid" 2>/dev/null || exit 0
+      if ! kill -0 "$parent_pid" 2>/dev/null; then
+        rm -f "$pane_retry_state_file" 2>/dev/null || true
+        exit 0
+      fi
       printf '%s [pi-sub-restart] pane=%s stream exited; reconnecting in 1s\n' \
         "$(date -Iseconds)" "$1" >> "$pane_log" 2>/dev/null || true
       sleep 1
