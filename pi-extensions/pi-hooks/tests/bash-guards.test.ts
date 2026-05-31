@@ -59,10 +59,14 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -S'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("/usr/bin/env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S 'git -C . commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env --split-string 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env --split-string='git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git -c alias.ci=commit ci -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git $'commit' -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -154,6 +158,8 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd(`bash +o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`bash -c $'git commit -m project'`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`bash -c 'git "$@"' _ commit -m project`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash -c 'git ${"${@}"}' _ commit -m project`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash -c 'git ${"${1}"} -m project' _ commit`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`zsh -fc "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`/bin/bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`/usr/bin/git commit -m project`, project, 1000)).toBe(resolve(project));

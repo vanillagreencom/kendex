@@ -192,6 +192,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 				const handler = installToolCallHandler();
 				for (const command of [
 					"env -S 'git commit -m test'",
+					"env -S'git commit -m test'",
+					"/usr/bin/env -S 'git commit -m test'",
 					"env -S 'git -C . commit -m test'",
 					"env --split-string 'git commit -m test'",
 					"env --split-string='git commit -m test'",
@@ -222,8 +224,12 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`bash +o pipefail -c "git commit -m project"`,
 					`bash -c $'git commit -m project'`,
 					`bash -c 'git "$@"' _ commit -m project`,
+					`bash -c 'git ${"${@}"}' _ commit -m project`,
+					`bash -c 'git ${"${1}"} -m project' _ commit`,
 					`/usr/bin/git commit -m project`,
 					`command /usr/bin/git commit -m project`,
+					`git -c alias.ci=commit ci -m project`,
+					`git $'commit' -m project`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
