@@ -176,6 +176,20 @@ describe("pi-hooks pre-commit tool_call", () => {
 		});
 	});
 
+	test("checks env -S wrapped git commits", async () => {
+		await withFakeCargo(async () => {
+			const project = initRustRepo("pi-hooks-project-");
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				const result = await handler({ toolName: "bash", input: { command: "env -S 'git commit -m test'" } }, { cwd: project });
+				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	});
+
 	test("allows other-repo commits without running cargo", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");

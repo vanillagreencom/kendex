@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -58,7 +58,17 @@ describe("git commit target detection", () => {
 		try {
 			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("does not let env assignments override shell variables used by git -C", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			expect(await projectGitCommitCwd("repo=.; env repo=$(mktemp -d) git -C $repo commit -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -78,11 +88,32 @@ describe("git commit target detection", () => {
 	test("detects commits after failed or scoped cd forms as project commits", async () => {
 		const project = initRepo("pi-hooks-project-");
 		const other = initRepo("pi-hooks-other-");
+		const noExec = join(project, "noexec");
 		try {
+			mkdirSync(noExec);
+			chmodSync(noExec, 0o000);
 			expect(await projectGitCommitCwd(`(cd ${q(other)} && true); git commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`(cd ${q(other)} && git commit -m other); git commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("cd /path/that/does/not/exist; git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("cd /path/that/does/not/exist || git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("cd /path/that/does/not/exist && true; git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("false && cd /tmp; git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("if false; then cd /tmp; fi; git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`cd ${q(noExec)}; git commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`true | cd ${q(other)}; git commit -m test`, project, 1000)).toBe(resolve(project));
+		} finally {
+			chmodSync(noExec, 0o700);
+			rmSync(project, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	test("treats project git-dir with external cwd/work-tree as project commit", async () => {
+		const project = initRepo("pi-hooks-project-");
+		const other = initRepo("pi-hooks-other-");
+		try {
+			expect(await projectGitCommitCwd(`git --git-dir=${q(join(project, ".git"))} --work-tree=${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(project, ".git"))} git -C ${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });

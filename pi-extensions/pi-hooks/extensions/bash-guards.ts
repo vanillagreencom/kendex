@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
 
@@ -24,13 +24,15 @@ export function isBareCd(command: string): boolean {
  * `git commit-tree` or `gitfoo commit`.
  */
 const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
+const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)['"]?git\s+commit(?=$|[\s;&|){}'"])/;
 
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
 }
 
 export function isGitCommit(command: string): boolean {
-	return GIT_COMMIT.test(normalizeShell(command));
+	const normalized = normalizeShell(command);
+	return GIT_COMMIT.test(normalized) || ENV_SPLIT_GIT_COMMIT.test(normalized);
 }
 
 const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
@@ -216,6 +218,8 @@ interface PendingCommand {
 	kind: "cd" | "other";
 	before: ShellContext;
 	after?: ShellContext;
+	conditional: boolean;
+	scoped: boolean;
 }
 
 function isShellOperatorStart(command: string, index: number): string | null {
@@ -341,7 +345,9 @@ function cloneContext(ctx: ShellContext): ShellContext {
 
 function directoryExists(path: string): boolean {
 	try {
-		return existsSync(path) && statSync(path).isDirectory();
+		if (!existsSync(path) || !statSync(path).isDirectory()) return false;
+		accessSync(path, constants.X_OK);
+		return true;
 	} catch {
 		return false;
 	}
@@ -407,10 +413,14 @@ function parseGitTarget(
 	let currentCwd = shellCwd;
 	let external = shellExternal;
 	let unknown = shellUnknown;
-	let hasGitDir = false;
-	let gitDir: string | null = null;
-	let hasWorkTree = false;
-	let workTree: string | null = null;
+	const gitDirRef = variables.get("GIT_DIR");
+	const workTreeRef = variables.get("GIT_WORK_TREE");
+	let hasGitDir = Boolean(gitDirRef);
+	let gitDir: string | null = gitDirRef?.path ?? null;
+	let hasWorkTree = Boolean(workTreeRef);
+	let workTree: string | null = workTreeRef?.path ?? null;
+	external ||= Boolean(gitDirRef?.external || workTreeRef?.external);
+	unknown ||= Boolean(gitDirRef?.unknown || workTreeRef?.unknown);
 	let j = gitIndex + 1;
 
 	while (j < tokens.length) {
@@ -494,17 +504,23 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 	let ctx: ShellContext = { cwd: resolve(cwd), external: false, unknown: false };
 	let pending: PendingCommand | null = null;
 	let commandStart = true;
+	let nextCommandConditional = false;
+	let nextCommandScoped = false;
 	const controlBoundaries = new Set(["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"]);
 	const envValueOptions = new Set(["-u", "--unset", "-S", "--ignore-signal", "--block-signal", "--default-signal", "--argv0"]);
 
 	const finishPending = (operator: string) => {
 		if (!pending) return;
 		if (pending.kind === "cd" && pending.after) {
-			if (operator === "&&") {
-				ctx = cloneContext(pending.after);
+			if (pending.conditional || pending.scoped) {
+				ctx = cloneContext(pending.before);
+			} else if (operator === "&&") {
+				ctx = pending.after.cwd && directoryExists(pending.after.cwd) ? cloneContext(pending.after) : cloneContext(pending.before);
 			} else if (operator === "||" || operator === ")" || operator === "|") {
 				ctx = cloneContext(pending.before);
-			} else if (pending.after.external || pending.after.unknown || (pending.after.cwd && directoryExists(pending.after.cwd))) {
+			} else if ((pending.after.external || pending.after.unknown) && !pending.after.cwd) {
+				ctx = cloneContext(pending.before);
+			} else if (pending.after.cwd && directoryExists(pending.after.cwd)) {
 				ctx = cloneContext(pending.after);
 			} else {
 				ctx = cloneContext(pending.before);
@@ -513,9 +529,23 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 		pending = null;
 	};
 
-	const parseEnvWrapper = (index: number): { parsed: ReturnType<typeof parseGitTarget> | null; envIndex: number } => {
+	const pendingCommand = (kind: PendingCommand["kind"], before: ShellContext, after?: ShellContext): PendingCommand => ({
+		kind,
+		before,
+		after,
+		conditional: nextCommandConditional,
+		scoped: nextCommandScoped,
+	});
+
+	const markCommandConsumed = () => {
+		nextCommandConditional = false;
+		nextCommandScoped = false;
+	};
+
+	const parseEnvWrapper = (index: number): { targets: GitCommitTarget[] | null; parsed: ReturnType<typeof parseGitTarget> | null; envIndex: number } => {
 		let envIndex = index + 1;
 		let envCtx = cloneContext(ctx);
+		const envVariables: ShellVariables = new Map(variables);
 		while (isWord(tokens[envIndex])) {
 			const envWord = tokens[envIndex] as ShellWord;
 			if (envWord.text === "--") {
@@ -534,6 +564,25 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				envIndex += 1;
 				continue;
 			}
+			if (envWord.text === "-S" || envWord.text === "--split-string") {
+				const consumed = nextWord(tokens, envIndex + 1);
+				if (!consumed.token) return { targets: null, parsed: null, envIndex: envIndex + 1 };
+				const base = envCtx.cwd ?? cwd;
+				const splitTargets = gitCommitTargets(consumed.token.text, base).map((target) => ({
+					...target,
+					external: target.external || envCtx.external,
+					unknown: target.unknown || envCtx.unknown,
+				}));
+				return { targets: splitTargets, parsed: null, envIndex: consumed.index + 1 };
+			}
+			if (envWord.text.startsWith("--split-string=")) {
+				const splitTargets = gitCommitTargets(envWord.text.slice("--split-string=".length), envCtx.cwd ?? cwd).map((target) => ({
+					...target,
+					external: target.external || envCtx.external,
+					unknown: target.unknown || envCtx.unknown,
+				}));
+				return { targets: splitTargets, parsed: null, envIndex: envIndex + 1 };
+			}
 			if (envValueOptions.has(envWord.text)) {
 				const consumed = nextWord(tokens, envIndex + 1);
 				envIndex = consumed.token ? consumed.index + 1 : envIndex + 1;
@@ -544,7 +593,9 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				continue;
 			}
 			if (isAssignment(envWord.text)) {
-				recordAssignment(envWord, envCtx.cwd, variables);
+				if (envWord.text.startsWith("GIT_DIR=") || envWord.text.startsWith("GIT_WORK_TREE=")) {
+					recordAssignment(envWord, envCtx.cwd, envVariables);
+				}
 				envIndex += 1;
 				continue;
 			}
@@ -555,9 +606,9 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			break;
 		}
 		if (isWord(tokens[envIndex]) && (tokens[envIndex] as ShellWord).text === "git") {
-			return { parsed: parseGitTarget(tokens, envIndex, envCtx.cwd, envCtx.external, envCtx.unknown, variables), envIndex };
+			return { targets: null, parsed: parseGitTarget(tokens, envIndex, envCtx.cwd, envCtx.external, envCtx.unknown, envVariables), envIndex };
 		}
-		return { parsed: null, envIndex };
+		return { targets: null, parsed: null, envIndex };
 	};
 
 	for (let i = 0; i < tokens.length; i += 1) {
@@ -567,27 +618,36 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				scopeStack.push(cloneContext(ctx));
 				pending = null;
 				commandStart = true;
+				nextCommandConditional = false;
+				nextCommandScoped = false;
 				continue;
 			}
 			if (token.text === ")") {
 				finishPending(")");
 				ctx = scopeStack.pop() ?? ctx;
 				commandStart = true;
+				nextCommandConditional = false;
+				nextCommandScoped = false;
 				continue;
 			}
 			if (token.text === "{") {
 				pending = null;
 				commandStart = true;
+				nextCommandConditional = false;
+				nextCommandScoped = false;
 				continue;
 			}
 			finishPending(token.text);
 			commandStart = true;
+			nextCommandConditional = token.text === "&&" || token.text === "||";
+			nextCommandScoped = token.text === "|";
 			continue;
 		}
 
 		if (commandStart && (controlBoundaries.has(token.text) || token.text === "!")) {
 			pending = null;
 			commandStart = true;
+			nextCommandConditional = token.text !== "fi" && token.text !== "done" && token.text !== "esac";
 			continue;
 		}
 
@@ -602,9 +662,10 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			if (isWord(tokens[targetIndex]) && (tokens[targetIndex] as ShellWord).text === "--") targetIndex += 1;
 			const before = cloneContext(ctx);
 			const ref = resolveShellPath(ctx.cwd, isWord(tokens[targetIndex]) ? tokens[targetIndex] : undefined, variables);
-			pending = { kind: "cd", before, after: shellContext(ref) };
+			pending = pendingCommand("cd", before, shellContext(ref));
 			i = targetIndex;
 			commandStart = false;
+			markCommandConsumed();
 			continue;
 		}
 
@@ -615,19 +676,29 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, variables);
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
-				pending = { kind: "other", before: cloneContext(ctx) };
+				pending = pendingCommand("other", cloneContext(ctx));
 				commandStart = false;
+				markCommandConsumed();
 				continue;
 			}
 		}
 
 		if (commandStart && token.text === "env") {
-			const { parsed, envIndex } = parseEnvWrapper(i);
+			const { targets: envTargets, parsed, envIndex } = parseEnvWrapper(i);
+			if (envTargets) {
+				targets.push(...envTargets);
+				i = Math.max(i, envIndex - 1);
+				pending = pendingCommand("other", cloneContext(ctx));
+				commandStart = false;
+				markCommandConsumed();
+				continue;
+			}
 			if (parsed) {
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
-				pending = { kind: "other", before: cloneContext(ctx) };
+				pending = pendingCommand("other", cloneContext(ctx));
 				commandStart = false;
+				markCommandConsumed();
 				continue;
 			}
 			i = Math.max(i, envIndex - 1);
@@ -637,13 +708,15 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, variables);
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
-			pending = { kind: "other", before: cloneContext(ctx) };
+			pending = pendingCommand("other", cloneContext(ctx));
 			commandStart = false;
+			markCommandConsumed();
 			continue;
 		}
 
-		pending = { kind: "other", before: cloneContext(ctx) };
+		pending = pendingCommand("other", cloneContext(ctx));
 		commandStart = false;
+		markCommandConsumed();
 	}
 
 	return targets;
@@ -696,7 +769,14 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit target with shell expansion; use a literal project path or disable preCommitCheck for this command.";
 			continue;
 		}
-		if (target.hasGitDir && (!target.gitDir || !pathContains(project.root, target.gitDir))) continue;
+		if (target.hasGitDir) {
+			if (!target.gitDir) {
+				unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit --git-dir target.";
+				continue;
+			}
+			if (pathContains(project.root, target.gitDir)) return { kind: "project", cwd: resolve(cwd), root: project.root };
+			continue;
+		}
 		const candidate = target.hasWorkTree ? target.workTree : target.cwd;
 		if (!candidate) {
 			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit working tree.";
