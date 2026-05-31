@@ -236,6 +236,7 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		resolveSnapshot(usageSnapshot);
 		await pendingSnapshot;
 		await Promise.resolve();
+		await Promise.resolve();
 
 		expect(oldTimer.cancelled).toBe(true);
 		expect(ctx.scheduled).toHaveLength(2);
@@ -243,6 +244,29 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.activity.map((entry) => entry.payload.reset_source)).toEqual(["prose-fallback", "usage-endpoint"]);
 		oldTimer.fn();
 		expect(ctx.steerCalls).toEqual([]);
+	});
+
+	test("usage source failure logs sanitized warning and keeps degraded fallback", () => {
+		const token = "sk-ant-oauth-secret-token-warning-123456789";
+		const ctx = makeDeps({
+			getUsageSnapshot: () => ({
+				provider: "claude",
+				reason: `http-401 bearer ${token}`,
+				resetSource: "usage-endpoint",
+				source: "quota-source-error",
+				status: 401,
+			}),
+		});
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = SESSION_LIMIT_NOW;
+
+		const outcome = watchdog.onMessageEnd(CLAUDE_SESSION_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		if (outcome.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(outcome.resetSource).toBe("prose-fallback");
+		expect(ctx.warnings).toHaveLength(1);
+		expect(ctx.warnings[0]).toContain("http-401");
+		expect(ctx.warnings[0]).not.toContain(token);
 	});
 
 	test("healthy assistant turn before a pending retry cancels the timer and resolves", () => {

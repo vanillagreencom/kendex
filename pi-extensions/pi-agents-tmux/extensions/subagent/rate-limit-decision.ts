@@ -55,6 +55,17 @@ export interface QuotaSnapshot {
 
 export type RateLimitUsageEndpointSnapshot = QuotaSnapshot;
 
+export interface QuotaSourceFailure {
+	source: "quota-source-error";
+	provider: string;
+	resetSource: "usage-endpoint" | "cli-rpc";
+	reason: string;
+	status?: number;
+	endpoint?: string;
+}
+
+export type QuotaSourceResult = QuotaSnapshot | QuotaSourceFailure | null;
+
 export type RateLimitSkipReason = "non-assistant" | "no-stopreason" | "stopreason-mismatch" | "no-prose";
 
 export type RateLimitEventClassification =
@@ -127,7 +138,7 @@ type FetchLike = (input: string, init?: Record<string, unknown>) => Promise<{
 export async function fetchClaudeUsageSnapshotFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
 	fetchImpl: FetchLike | undefined = (globalThis as unknown as { fetch?: FetchLike }).fetch,
-): Promise<QuotaSnapshot | null> {
+): Promise<QuotaSourceResult> {
 	const inline = rateLimitUsageSnapshotFromEnv(env);
 	if (inline) return inline;
 	if (!fetchImpl) return null;
@@ -159,7 +170,7 @@ export async function fetchClaudeUsageSnapshotFromEnv(
 export async function fetchCodexUsageSnapshotFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
 	fetchImpl: FetchLike | undefined = (globalThis as unknown as { fetch?: FetchLike }).fetch,
-): Promise<QuotaSnapshot | null> {
+): Promise<QuotaSourceResult> {
 	const inline = rateLimitUsageSnapshotFromEnv(env);
 	if (inline) return inline;
 	if (!fetchImpl) return null;
@@ -183,7 +194,7 @@ export async function fetchProviderQuotaSnapshotFromEnv(
 	event: unknown,
 	env: NodeJS.ProcessEnv = process.env,
 	fetchImpl: FetchLike | undefined = (globalThis as unknown as { fetch?: FetchLike }).fetch,
-): Promise<QuotaSnapshot | null> {
+): Promise<QuotaSourceResult> {
 	const inline = rateLimitUsageSnapshotFromEnv(env);
 	if (inline) return inline;
 	const provider = providerFromRateLimitEvent(event);
@@ -372,12 +383,13 @@ export function selectQuotaSnapshotReset(
 	if (candidates.length === 0) return null;
 	const typeHint = normalizeQuotaHint(extractRateLimitType(event));
 	const modelHint = normalizeQuotaHint(readAssistantMessage(event)?.model);
-	const matching = candidates.filter((candidate) => quotaCandidateMatches(candidate, typeHint, modelHint));
-	const eligible = matching.length > 0
-		? matching
-		: isSessionOrUsageCapEvent(event)
-			? candidates
-			: candidates.filter((candidate) => quotaCandidateSaturated(candidate));
+	const typeMatching = candidates.filter((candidate) => quotaCandidateMatchesType(candidate, typeHint));
+	const modelMatching = candidates.filter((candidate) => quotaCandidateMatchesModel(candidate, modelHint));
+	const eligible = isSessionOrUsageCapEvent(event)
+		? (typeMatching.length > 0 ? typeMatching : modelMatching.length > 0 ? modelMatching : candidates)
+		: typeMatching.length > 0
+			? typeMatching
+			: (modelMatching.length > 0 ? modelMatching : candidates).filter((candidate) => quotaCandidateSaturated(candidate));
 	if (eligible.length === 0) return null;
 	const selected = chooseUsageResetCandidate(eligible);
 	return selected ? { resetAtMs: selected.resetAtMs, resetSource: quota.source } : null;
@@ -403,8 +415,11 @@ function normalizeQuotaSnapshotFromUnknown(
 ): QuotaSnapshot | null {
 	if (snapshot === null || snapshot === undefined) return null;
 	if (isRecord(snapshot) && Array.isArray(snapshot.windows)) {
-		const source = snapshot.source === "cli-rpc" ? "cli-rpc" : "usage-endpoint";
+		const hasTrustedSource = snapshot.source === "cli-rpc" || snapshot.source === "usage-endpoint";
 		const provider = typeof snapshot.provider === "string" && snapshot.provider ? snapshot.provider : fallbackProvider;
+		const hasTrustedProvider = provider !== "unknown";
+		if (!hasTrustedSource && !hasTrustedProvider) return null;
+		const source = snapshot.source === "cli-rpc" ? "cli-rpc" : snapshot.source === "usage-endpoint" ? "usage-endpoint" : fallbackSource;
 		return {
 			fetchedAtMs: coerceFiniteNumber(snapshot.fetchedAtMs) ?? now,
 			provider,
@@ -448,11 +463,9 @@ function quotaWindowHasContext(
 	limitReached: boolean | null | undefined,
 	windowSeconds: number | undefined,
 ): boolean {
-	const label = normalizeQuotaHint(`${id} ${title}`) ?? "";
 	return usedPercent !== null
 		|| limitReached !== null && limitReached !== undefined
-		|| windowSeconds !== undefined
-		|| /quota|usage|ratelimit|fivehour|sevenday|primary|secondary|codex|opus|sonnet/.test(label);
+		|| windowSeconds !== undefined;
 }
 
 function collectProviderQuotaWindows(provider: string, snapshot: unknown, now: number): QuotaWindow[] {
@@ -600,11 +613,16 @@ function isSessionOrUsageCapEvent(event: unknown): boolean {
 	return typeHint === "session" || typeHint === "usage" || typeHint?.includes("session") === true || typeHint?.includes("usage") === true;
 }
 
-function quotaCandidateMatches(candidate: UsageResetCandidate, typeHint: string | null, modelHint: string | null): boolean {
+function quotaCandidateMatchesType(candidate: UsageResetCandidate, typeHint: string | null): boolean {
 	const path = normalizeQuotaHint(`${candidate.path} ${candidate.title}`) ?? "";
 	if (typeHint && path.includes(typeHint)) return true;
 	if (typeHint === "fivehour" && (path.includes("5hour") || path.includes("5h"))) return true;
 	if (typeHint === "sevenday" && (path.includes("7day") || path.includes("7d"))) return true;
+	return false;
+}
+
+function quotaCandidateMatchesModel(candidate: UsageResetCandidate, modelHint: string | null): boolean {
+	const path = normalizeQuotaHint(`${candidate.path} ${candidate.title}`) ?? "";
 	if (modelHint && path.includes(modelHint)) return true;
 	return false;
 }
@@ -719,17 +737,17 @@ function firstNonEmptyEnv(env: NodeJS.ProcessEnv, keys: readonly string[]): stri
 	return null;
 }
 
-const quotaSnapshotCache = new Map<string, { expiresAt: number; promise: Promise<QuotaSnapshot | null> }>();
+const quotaSnapshotCache = new Map<string, { expiresAt: number; promise: Promise<QuotaSourceResult> }>();
 
 function cachedQuotaSnapshot(
 	key: string,
 	cacheMs: number,
-	fetcher: () => Promise<QuotaSnapshot | null>,
-): Promise<QuotaSnapshot | null> {
+	fetcher: () => Promise<QuotaSourceResult>,
+): Promise<QuotaSourceResult> {
 	const now = Date.now();
 	const cached = quotaSnapshotCache.get(key);
 	if (cached && cached.expiresAt > now) return cached.promise;
-	const promise = fetcher().catch(() => null);
+	const promise = fetcher().catch((error) => quotaSourceFailure("unknown", "usage-endpoint", "exception", undefined, undefined, error));
 	quotaSnapshotCache.set(key, { expiresAt: now + Math.max(0, cacheMs), promise });
 	return promise;
 }
@@ -803,7 +821,7 @@ async function fetchUsageEndpoint(
 	endpoint: string,
 	headers: Record<string, string>,
 	timeoutMs: number,
-): Promise<QuotaSnapshot | null> {
+): Promise<QuotaSourceResult> {
 	const abortController = typeof AbortController !== "undefined" ? new AbortController() : null;
 	const timer = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
 	try {
@@ -812,14 +830,52 @@ async function fetchUsageEndpoint(
 			method: "GET",
 			...(abortController ? { signal: abortController.signal } : {}),
 		});
-		if (!response.ok) return null;
-		const snapshot = normalizeQuotaSnapshot(provider, "usage-endpoint", await response.json(), Date.now(), endpoint);
-		return snapshot.windows.length > 0 ? snapshot : null;
-	} catch {
-		return null;
+		if (!response.ok) return quotaSourceFailure(provider, "usage-endpoint", `http-${response.status}`, response.status, endpoint);
+		let body: unknown;
+		try {
+			body = await response.json();
+		} catch (error) {
+			return quotaSourceFailure(provider, "usage-endpoint", "invalid-json", undefined, endpoint, error);
+		}
+		const snapshot = normalizeQuotaSnapshot(provider, "usage-endpoint", body, Date.now(), endpoint);
+		return snapshot.windows.length > 0 ? snapshot : quotaSourceFailure(provider, "usage-endpoint", "unrecognized-schema", undefined, endpoint);
+	} catch (error) {
+		return quotaSourceFailure(provider, "usage-endpoint", "fetch-failed", undefined, endpoint, error);
 	} finally {
 		if (timer) clearTimeout(timer);
 	}
+}
+
+function quotaSourceFailure(
+	provider: string,
+	resetSource: "usage-endpoint" | "cli-rpc",
+	reason: string,
+	status?: number,
+	endpoint?: string,
+	_error?: unknown,
+): QuotaSourceFailure {
+	return {
+		...(endpoint ? { endpoint } : {}),
+		provider,
+		reason: sanitizeQuotaFailureReason(reason),
+		resetSource,
+		source: "quota-source-error",
+		...(status !== undefined ? { status } : {}),
+	};
+}
+
+function sanitizeQuotaFailureReason(reason: string): string {
+	return reason.replace(/bearer\s+[A-Za-z0-9._~+/-]+/gi, "bearer [redacted]").replace(/[A-Za-z0-9._~+/-]{24,}/g, "[redacted]");
+}
+
+export function quotaSourceFailureSummary(value: unknown): string | null {
+	if (!isRecord(value) || value.source !== "quota-source-error") return null;
+	const provider = typeof value.provider === "string" ? value.provider : "unknown";
+	const resetSource = typeof value.resetSource === "string" ? value.resetSource : "unknown";
+	const reason = typeof value.reason === "string" ? sanitizeQuotaFailureReason(value.reason) : "unknown";
+	const status = typeof value.status === "number" ? ` status=${value.status}` : "";
+	const endpoint = typeof value.endpoint === "string" ? ` endpoint=${value.endpoint}` : "";
+	return `provider=${provider} source=${resetSource} reason=${reason}${status}${endpoint}`;
 }
 
 const RESET_AT_MS_KEYS = new Set(["resetAtMs", "reset_at_ms", "resetsAtMs", "resets_at_ms"]);

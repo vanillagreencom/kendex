@@ -120,6 +120,7 @@ const CLAUDE_USAGE_RESPONSE = {
 const LOW_UTILIZATION_CLAUDE_USAGE_RESPONSE = {
 	five_hour: { utilization: 0.1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT).toISOString() },
 	seven_day: { utilization: 0.2, resets_at: new Date(STRUCTURED_USAGE_RESET_AT + 86_400_000).toISOString() },
+	seven_day_opus: { utilization: 0.2, resets_at: new Date(STRUCTURED_USAGE_RESET_AT + 2 * 86_400_000).toISOString() },
 };
 
 const CODEX_WHAM_USAGE = {
@@ -336,6 +337,30 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		}
 	});
 
+	test("transient not-your-usage-limit events ignore low-utilization model-matching windows", () => {
+		const event = {
+			...CANONICAL_RATE_LIMIT_EVENT,
+			message: { ...CANONICAL_RATE_LIMIT_EVENT.message, model: "claude-opus-4-8" },
+		};
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%41",
+					usageSnapshot: module.normalizeQuotaSnapshot("claude", "usage-endpoint", LOW_UTILIZATION_CLAUDE_USAGE_RESPONSE, 1_000),
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(2_000);
+			expect(decision.resetSource).toBe("backoff-only");
+		}
+	});
+
 	test("malformed usage-shaped payloads are not authoritative quota windows", () => {
 		for (const { module, name } of DECISION_MODULES) {
 			const decision = module.decideRateLimitRetry(
@@ -346,6 +371,26 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 					now: 1_000,
 					paneId: "%41",
 					usageSnapshot: { not_usage: { reset_at: "2099-01-01T00:00:00Z" } },
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(2_000);
+			expect(decision.resetSource).toBe("backoff-only");
+		}
+	});
+
+	test("top-level windows without trusted source or real quota fields are ignored", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: CLAUDE_USAGE_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%41",
+					usageSnapshot: { windows: [{ id: "not_usage", reset_at: "2099-01-01T00:00:00Z" }] },
 				},
 				{ backoffLadderSec: [1], maxAttempts: 3 },
 			);
@@ -719,8 +764,10 @@ describe("structured quota fetchers", () => {
 			{ VSTACK_ANTHROPIC_OAUTH_ACCESS_TOKEN: token, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
 			fakeFetch({ body: { error: "unauthorized" }, ok: false, status: 401 }, calls),
 		);
-		expect(result).toBeNull();
+		expect(result).toMatchObject({ provider: "claude", reason: "http-401", source: "quota-source-error", status: 401 });
+		expect(canonicalDecision.quotaSourceFailureSummary(result)).toContain("http-401");
 		expect(JSON.stringify(result)).not.toContain(token);
+		expect(canonicalDecision.quotaSourceFailureSummary(result)).not.toContain(token);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.input).toBe("https://api.anthropic.com/api/oauth/usage");
 		expect(JSON.stringify(calls[0]!.init)).toContain("Bearer");
@@ -732,7 +779,18 @@ describe("structured quota fetchers", () => {
 			{ VSTACK_ANTHROPIC_OAUTH_ACCESS_TOKEN: token, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
 			fakeFetch({ jsonError: new Error(`bad json ${token}`), ok: true, status: 200 }),
 		);
-		expect(result).toBeNull();
+		expect(result).toMatchObject({ provider: "claude", reason: "invalid-json", source: "quota-source-error" });
+		expect(JSON.stringify(result)).not.toContain(token);
+		expect(canonicalDecision.quotaSourceFailureSummary(result)).not.toContain(token);
+	});
+
+	test("unrecognized quota schema reports sanitized failure and falls back", async () => {
+		const token = "sk-ant-oauth-secret-token-schema123456";
+		const result = await canonicalDecision.fetchClaudeUsageSnapshotFromEnv(
+			{ VSTACK_ANTHROPIC_OAUTH_ACCESS_TOKEN: token, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
+			fakeFetch({ body: { not_usage: { reset_at: "2099-01-01T00:00:00Z" } }, ok: true, status: 200 }),
+		);
+		expect(result).toMatchObject({ provider: "claude", reason: "unrecognized-schema", source: "quota-source-error" });
 		expect(JSON.stringify(result)).not.toContain(token);
 	});
 

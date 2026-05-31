@@ -42,6 +42,7 @@ import {
 	decideRateLimitRetry,
 	fetchProviderQuotaSnapshotFromEnv,
 	isAssistantMessageEvent,
+	quotaSourceFailureSummary,
 	rateLimitBackoffLadderFromEnv,
 	rateLimitMaxAttemptsFromEnv,
 	rateLimitWatchdogEnabledFromEnv,
@@ -185,7 +186,19 @@ export function createSubagentRateLimitWatchdog(
 				return { promise: Promise.resolve(provided).catch((error) => {
 					deps.logWarn(`rate-limit-watchdog: usage endpoint lookup failed (${(error as Error)?.message ?? error})`);
 					return null;
+				}).then((snapshot) => {
+					const failure = quotaSourceFailureSummary(snapshot);
+					if (failure) {
+						deps.logWarn(`rate-limit-watchdog: usage endpoint lookup failed (${failure})`);
+						return null;
+					}
+					return snapshot;
 				}) };
+			}
+			const failure = quotaSourceFailureSummary(provided);
+			if (failure) {
+				deps.logWarn(`rate-limit-watchdog: usage endpoint lookup failed (${failure})`);
+				return {};
 			}
 			return { snapshot: provided };
 		} catch (error) {
