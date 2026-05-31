@@ -130,7 +130,8 @@ export function rateLimitUsageSnapshotFromEnv(env: NodeJS.ProcessEnv = process.e
 	const raw = env.VSTACK_RATE_LIMIT_USAGE_JSON?.trim();
 	if (!raw) return null;
 	try {
-		return normalizeQuotaSnapshot("unknown", "usage-endpoint", JSON.parse(raw), Date.now(), "env-json");
+		const snapshot = normalizeQuotaSnapshot("unknown", "usage-endpoint", JSON.parse(raw), Date.now(), "env-json");
+		return snapshot.windows.length > 0 ? snapshot : null;
 	} catch {
 		return null;
 	}
@@ -391,7 +392,13 @@ export function selectQuotaSnapshotReset(
 	const typeHint = normalizeQuotaHint(extractRateLimitType(event));
 	const modelHint = normalizeQuotaHint(readAssistantMessage(event)?.model);
 	const matching = candidates.filter((candidate) => quotaCandidateMatches(candidate, typeHint, modelHint));
-	const selected = chooseUsageResetCandidate(matching.length > 0 ? matching : candidates);
+	const eligible = matching.length > 0
+		? matching
+		: isSessionOrUsageCapEvent(event)
+			? candidates
+			: candidates.filter((candidate) => quotaCandidateSaturated(candidate));
+	if (eligible.length === 0) return null;
+	const selected = chooseUsageResetCandidate(eligible);
 	return selected ? { resetAtMs: selected.resetAtMs, resetSource: quota.source } : null;
 }
 
@@ -400,11 +407,11 @@ export function normalizeQuotaSnapshot(
 	source: "usage-endpoint" | "cli-rpc",
 	raw: unknown,
 	fetchedAtMs: number = Date.now(),
-	rawShapeVersion = "generic-recursive-v1",
+	rawShapeVersion = "provider-quota-v1",
 ): QuotaSnapshot {
 	const existing = normalizeQuotaSnapshotFromUnknown(raw, fetchedAtMs, source, provider);
 	if (existing) return existing;
-	return { fetchedAtMs, provider, rawShapeVersion, source, windows: collectQuotaWindows(raw, fetchedAtMs) };
+	return { fetchedAtMs, provider, rawShapeVersion, source, windows: collectProviderQuotaWindows(provider, raw, fetchedAtMs) };
 }
 
 function normalizeQuotaSnapshotFromUnknown(
@@ -429,7 +436,10 @@ function normalizeQuotaSnapshotFromUnknown(
 		const provider = typeof snapshot.provider === "string" ? snapshot.provider : fallbackProvider;
 		return normalizeQuotaSnapshot(provider, snapshot.source, snapshot.data, coerceFiniteNumber(snapshot.fetchedAtMs) ?? now);
 	}
-	return { fetchedAtMs: now, provider: fallbackProvider, rawShapeVersion: "generic-recursive-v1", source: fallbackSource, windows: collectQuotaWindows(snapshot, now) };
+	const windows = collectProviderQuotaWindows(fallbackProvider, snapshot, now);
+	return windows.length > 0
+		? { fetchedAtMs: now, provider: fallbackProvider, rawShapeVersion: "provider-quota-v1", source: fallbackSource, windows }
+		: null;
 }
 
 function normalizeQuotaWindow(window: unknown, index: number): QuotaWindow[] {
@@ -446,7 +456,106 @@ function normalizeQuotaWindow(window: unknown, index: number): QuotaWindow[] {
 	const title = typeof window.title === "string" && window.title ? window.title : id;
 	const windowSeconds = coerceFiniteNumber(window.windowSeconds ?? window.window_seconds ?? window.limit_window_seconds) ?? undefined;
 	const limitReached = readLimitReached(window);
+	if (resetAtMs === null || !quotaWindowHasContext(id, title, usedPercent, limitReached, windowSeconds)) return [];
 	return [{ id, limitReached: limitReached ?? undefined, resetAtMs, title, usedPercent, ...(windowSeconds ? { windowSeconds } : {}) }];
+}
+
+function quotaWindowHasContext(
+	id: string,
+	title: string,
+	usedPercent: number | null,
+	limitReached: boolean | null | undefined,
+	windowSeconds: number | undefined,
+): boolean {
+	const label = normalizeQuotaHint(`${id} ${title}`) ?? "";
+	return usedPercent !== null
+		|| limitReached !== null && limitReached !== undefined
+		|| windowSeconds !== undefined
+		|| /quota|usage|ratelimit|fivehour|sevenday|primary|secondary|codex|opus|sonnet/.test(label);
+}
+
+function collectProviderQuotaWindows(provider: string, snapshot: unknown, now: number): QuotaWindow[] {
+	const normalized = provider.toLowerCase();
+	if (normalized.includes("claude") || normalized.includes("anthropic")) return collectClaudeQuotaWindows(snapshot, now);
+	if (normalized.includes("codex") || normalized.includes("openai")) return collectCodexQuotaWindows(snapshot, now);
+	return [];
+}
+
+function collectClaudeQuotaWindows(snapshot: unknown, now: number): QuotaWindow[] {
+	const out: QuotaWindow[] = [];
+	const seen = new Set<unknown>();
+	const stack: Array<{ node: unknown; path: string }> = [{ node: snapshot, path: "" }];
+	while (stack.length > 0) {
+		const { node, path } = stack.pop()!;
+		if (!isRecord(node) || seen.has(node)) continue;
+		seen.add(node);
+		if (isClaudeQuotaWindowPath(path)) {
+			const resetAtMs = readResetTimestampFromRecord(node, now);
+			const utilization = readUsageUtilization(node);
+			if (resetAtMs !== null && utilization !== null) {
+				out.push({
+					id: path,
+					limitReached: readLimitReached(node) ?? utilization >= 1,
+					resetAtMs,
+					title: path.replace(/[._-]+/g, " "),
+					usedPercent: utilization * 100,
+				});
+			}
+		}
+		for (const [key, value] of Object.entries(node)) {
+			if (value && typeof value === "object") stack.push({ node: value, path: path ? `${path}.${key}` : key });
+		}
+	}
+	return out;
+}
+
+function isClaudeQuotaWindowPath(path: string): boolean {
+	const normalized = path.split(".").pop()?.toLowerCase() ?? path.toLowerCase();
+	return /^five_hour(?:_|$)|^seven_day(?:_|$)/.test(normalized);
+}
+
+function collectCodexQuotaWindows(snapshot: unknown, now: number): QuotaWindow[] {
+	if (!isRecord(snapshot)) return [];
+	const out: QuotaWindow[] = [];
+	const rootRateLimit = snapshot.rate_limit;
+	if (isRecord(rootRateLimit)) out.push(...codexRateLimitWindows("rate_limit", "Codex", rootRateLimit, now));
+	const additional = snapshot.additional_rate_limits;
+	if (Array.isArray(additional)) {
+		for (const [index, item] of additional.entries()) {
+			if (!isRecord(item)) continue;
+			const nested = item.rate_limit;
+			if (!isRecord(nested)) continue;
+			const label = [item.limit_name, item.metered_feature]
+				.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+				.join(" ") || `additional ${index}`;
+			out.push(...codexRateLimitWindows(`additional_rate_limits.${index}.rate_limit`, label, nested, now));
+		}
+	}
+	return out;
+}
+
+function codexRateLimitWindows(prefix: string, titlePrefix: string, rateLimit: Record<string, unknown>, now: number): QuotaWindow[] {
+	const out: QuotaWindow[] = [];
+	const parentLimitReached = readLimitReached(rateLimit);
+	for (const key of ["primary_window", "secondary_window"] as const) {
+		const window = rateLimit[key];
+		if (!isRecord(window)) continue;
+		const resetAtMs = readResetTimestampFromRecord(window, now);
+		if (resetAtMs === null) continue;
+		const utilization = readUsageUtilization(window);
+		const limitReached = readLimitReached(window) ?? parentLimitReached ?? undefined;
+		out.push({
+			id: `${prefix}.${key}`,
+			limitReached,
+			resetAtMs,
+			title: `${titlePrefix} ${key.replace("_", " ")}`,
+			usedPercent: utilization === null ? null : utilization * 100,
+			...(firstFiniteRecordNumber(window, ["windowSeconds", "window_seconds", "limit_window_seconds"]) !== null
+				? { windowSeconds: firstFiniteRecordNumber(window, ["windowSeconds", "window_seconds", "limit_window_seconds"])! }
+				: {}),
+		});
+	}
+	return out;
 }
 
 function collectQuotaWindows(snapshot: unknown, now: number): QuotaWindow[] {
@@ -493,6 +602,21 @@ function chooseUsageResetCandidate(candidates: UsageResetCandidate[]): UsageRese
 		if (Math.abs(byUtilization) > 0.000001) return byUtilization;
 		return b.resetAtMs - a.resetAtMs;
 	})[0] ?? null;
+}
+
+function quotaCandidateSaturated(candidate: UsageResetCandidate): boolean {
+	return candidate.limitReached || candidate.utilization >= 0.95;
+}
+
+function isSessionOrUsageCapEvent(event: unknown): boolean {
+	const message = readAssistantMessage(event);
+	const text = message ? extractAssistantErrorText(message).toLowerCase() : "";
+	const withoutNegatedUsage = text.replace(/\bnot\s+(?:your\s+)?(?:session|usage)\s+limit\b/g, "");
+	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?session\s+limit\b/.test(withoutNegatedUsage)) return true;
+	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?usage\s+limit\b/.test(withoutNegatedUsage)) return true;
+	if (/\bextra\s+usage\b|\busage\s+cap\b|\bsession\s+cap\b/.test(withoutNegatedUsage)) return true;
+	const typeHint = normalizeQuotaHint(extractRateLimitType(event));
+	return typeHint === "session" || typeHint === "usage" || typeHint?.includes("session") === true || typeHint?.includes("usage") === true;
 }
 
 function quotaCandidateMatches(candidate: UsageResetCandidate, typeHint: string | null, modelHint: string | null): boolean {
@@ -708,7 +832,8 @@ async function fetchUsageEndpoint(
 			...(abortController ? { signal: abortController.signal } : {}),
 		});
 		if (!response.ok) return null;
-		return normalizeQuotaSnapshot(provider, "usage-endpoint", await response.json(), Date.now(), endpoint);
+		const snapshot = normalizeQuotaSnapshot(provider, "usage-endpoint", await response.json(), Date.now(), endpoint);
+		return snapshot.windows.length > 0 ? snapshot : null;
 	} catch {
 		return null;
 	} finally {

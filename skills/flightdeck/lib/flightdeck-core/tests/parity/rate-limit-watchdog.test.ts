@@ -5,6 +5,9 @@
 // inputs.
 
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as canonicalDecision from "../../src/daemon/rate-limit-watchdog.ts";
 import * as vendoredDecision from "../../../../../../pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-decision.ts";
@@ -30,6 +33,20 @@ const DECISION_MODULES: Array<{ name: string; module: typeof canonicalDecision }
 	{ module: canonicalDecision, name: "flightdeck-core canonical" },
 	{ module: vendoredDecision, name: "pi-agents-tmux vendored" },
 ];
+
+function fakeFetch(response: { ok: boolean; status: number; body?: unknown; jsonError?: Error }, calls: Array<{ input: string; init?: Record<string, unknown> }> = []) {
+	return async (input: string, init?: Record<string, unknown>) => {
+		calls.push({ input, init });
+		return {
+			ok: response.ok,
+			status: response.status,
+			json: async () => {
+				if (response.jsonError) throw response.jsonError;
+				return response.body;
+			},
+		};
+	};
+}
 
 // Canonical message_end-style envelope produced by pi-coding-agent for a
 // rate-limited assistant turn. Snapshot taken from a real session under
@@ -97,6 +114,11 @@ const MIDNIGHT_BOUNDARY_RESET_AT = Date.UTC(2026, 4, 31, 6, 59, 0);
 
 const CLAUDE_USAGE_RESPONSE = {
 	five_hour: { utilization: 1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT).toISOString() },
+	seven_day: { utilization: 0.2, resets_at: new Date(STRUCTURED_USAGE_RESET_AT + 86_400_000).toISOString() },
+};
+
+const LOW_UTILIZATION_CLAUDE_USAGE_RESPONSE = {
+	five_hour: { utilization: 0.1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT).toISOString() },
 	seven_day: { utilization: 0.2, resets_at: new Date(STRUCTURED_USAGE_RESET_AT + 86_400_000).toISOString() },
 };
 
@@ -290,6 +312,47 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 			expect(decision.at).toBe(STRUCTURED_USAGE_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
 			expect(decision.resetSource).toBe("usage-endpoint");
 			expect(decision.degradedResetSource).toBe(false);
+		}
+	});
+
+	test("transient not-your-usage-limit events ignore low-utilization usage windows", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: CANONICAL_RATE_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%41",
+					usageSnapshot: module.normalizeQuotaSnapshot("claude", "usage-endpoint", LOW_UTILIZATION_CLAUDE_USAGE_RESPONSE, 1_000),
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(2_000);
+			expect(decision.resetSource).toBe("backoff-only");
+			expect(decision.degradedResetSource).toBe(true);
+		}
+	});
+
+	test("malformed usage-shaped payloads are not authoritative quota windows", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: CLAUDE_USAGE_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%41",
+					usageSnapshot: { not_usage: { reset_at: "2099-01-01T00:00:00Z" } },
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(2_000);
+			expect(decision.resetSource).toBe("backoff-only");
 		}
 	});
 
@@ -634,6 +697,63 @@ describe("extractResetAtMs — Claude session cap reset parsing", () => {
 
 	test("returns null when no reset hint is present", () => {
 		expect(extractResetAtMs(CLAUDE_USAGE_LIMIT_EVENT, SESSION_LIMIT_NOW)).toBeNull();
+	});
+});
+
+describe("structured quota fetchers", () => {
+	test("provider quota fetch returns null when auth is unavailable", async () => {
+		const calls: Array<{ input: string; init?: Record<string, unknown> }> = [];
+		const result = await canonicalDecision.fetchProviderQuotaSnapshotFromEnv(
+			CLAUDE_SESSION_LIMIT_EVENT,
+			{} as NodeJS.ProcessEnv,
+			fakeFetch({ body: CLAUDE_USAGE_RESPONSE, ok: true, status: 200 }, calls),
+		);
+		expect(result).toBeNull();
+		expect(calls).toHaveLength(0);
+	});
+
+	test("Claude usage fetch handles 401 without leaking bearer token", async () => {
+		const token = "sk-ant-oauth-secret-token-1234567890";
+		const calls: Array<{ input: string; init?: Record<string, unknown> }> = [];
+		const result = await canonicalDecision.fetchClaudeUsageSnapshotFromEnv(
+			{ VSTACK_ANTHROPIC_OAUTH_ACCESS_TOKEN: token, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
+			fakeFetch({ body: { error: "unauthorized" }, ok: false, status: 401 }, calls),
+		);
+		expect(result).toBeNull();
+		expect(JSON.stringify(result)).not.toContain(token);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.input).toBe("https://api.anthropic.com/api/oauth/usage");
+		expect(JSON.stringify(calls[0]!.init)).toContain("Bearer");
+	});
+
+	test("malformed Claude usage response falls back without token leakage", async () => {
+		const token = "sk-ant-oauth-secret-token-abcdefghi";
+		const result = await canonicalDecision.fetchClaudeUsageSnapshotFromEnv(
+			{ VSTACK_ANTHROPIC_OAUTH_ACCESS_TOKEN: token, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
+			fakeFetch({ jsonError: new Error(`bad json ${token}`), ok: true, status: 200 }),
+		);
+		expect(result).toBeNull();
+		expect(JSON.stringify(result)).not.toContain(token);
+	});
+
+	test("Codex auth.json token enables wham usage fetch without persisting token in snapshot", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "fd-codex-auth-"));
+		const token = "codex-secret-token-123456789012345";
+		try {
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "auth.json"), JSON.stringify({ tokens: { access_token: token }, plan_type: "prolite" }));
+			const calls: Array<{ input: string; init?: Record<string, unknown> }> = [];
+			const result = await canonicalDecision.fetchCodexUsageSnapshotFromEnv(
+				{ CODEX_HOME: dir, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
+				fakeFetch({ body: CODEX_WHAM_USAGE, ok: true, status: 200 }, calls),
+			);
+			expect(result?.provider).toBe("codex");
+			expect(result?.windows.length).toBeGreaterThan(0);
+			expect(calls[0]!.input).toBe("https://chatgpt.com/backend-api/wham/usage");
+			expect(JSON.stringify(result)).not.toContain(token);
+		} finally {
+			rmSync(dir, { force: true, recursive: true });
+		}
 	});
 });
 

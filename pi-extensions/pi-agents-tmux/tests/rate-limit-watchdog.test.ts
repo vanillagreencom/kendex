@@ -216,6 +216,35 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.activity[0]?.payload.degraded_reset_source).toBe(false);
 	});
 
+	test("async usage snapshot reschedules degraded prose timer before it can steer", async () => {
+		const usageSnapshot = normalizeQuotaSnapshot("claude", "usage-endpoint", {
+			five_hour: { utilization: 1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT - RATE_LIMIT_RESET_MARGIN_MS).toISOString() },
+		}, SESSION_LIMIT_NOW);
+		let resolveSnapshot!: (value: unknown) => void;
+		const pendingSnapshot = new Promise<unknown>((resolve) => { resolveSnapshot = resolve; });
+		const ctx = makeDeps({ getUsageSnapshot: () => pendingSnapshot });
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = SESSION_LIMIT_NOW;
+
+		const outcome = watchdog.onMessageEnd(CLAUDE_SESSION_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		if (outcome.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(outcome.resetSource).toBe("prose-fallback");
+		expect(ctx.scheduled).toHaveLength(1);
+		const oldTimer = ctx.scheduled[0]!;
+
+		resolveSnapshot(usageSnapshot);
+		await pendingSnapshot;
+		await Promise.resolve();
+
+		expect(oldTimer.cancelled).toBe(true);
+		expect(ctx.scheduled).toHaveLength(2);
+		expect(ctx.scheduled[1]!.delayMs).toBe(STRUCTURED_USAGE_RESET_AT - SESSION_LIMIT_NOW);
+		expect(ctx.activity.map((entry) => entry.payload.reset_source)).toEqual(["prose-fallback", "usage-endpoint"]);
+		oldTimer.fn();
+		expect(ctx.steerCalls).toEqual([]);
+	});
+
 	test("healthy assistant turn before a pending retry cancels the timer and resolves", () => {
 		const ctx = makeDeps();
 		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
