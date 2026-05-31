@@ -59,6 +59,9 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -S 'git -C . commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env --split-string 'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env --split-string='git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -69,6 +72,7 @@ describe("git commit target detection", () => {
 		const project = initRepo("pi-hooks-project-");
 		try {
 			expect(await projectGitCommitCwd("repo=.; env repo=$(mktemp -d) git -C $repo commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("GIT_DIR=/tmp /bin/true; git commit -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -113,7 +117,9 @@ describe("git commit target detection", () => {
 		const other = initRepo("pi-hooks-other-");
 		try {
 			expect(await projectGitCommitCwd(`git --git-dir=${q(join(project, ".git"))} --work-tree=${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`git --git-dir=${q(join(other, ".git"))} --work-tree=${q(project)} commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(project, ".git"))} git -C ${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(other, ".git"))} GIT_WORK_TREE=${q(project)} git commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });

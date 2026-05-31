@@ -24,7 +24,7 @@ export function isBareCd(command: string): boolean {
  * `git commit-tree` or `gitfoo commit`.
  */
 const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
-const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)['"]?git\s+commit(?=$|[\s;&|){}'"])/;
+const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
 
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
@@ -36,9 +36,11 @@ export function isGitCommit(command: string): boolean {
 }
 
 const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
+const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
 
 function commandMayStageFiles(command: string): boolean {
-	return GIT_ADD.test(normalizeShell(command));
+	const normalized = normalizeShell(command);
+	return GIT_ADD.test(normalized) || ENV_SPLIT_GIT_ADD.test(normalized);
 }
 
 interface CommandResult {
@@ -500,6 +502,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 	const tokens = tokenizeShell(command);
 	const targets: GitCommitTarget[] = [];
 	const variables: ShellVariables = new Map();
+	const prefixGitVariables: ShellVariables = new Map();
 	const scopeStack: ShellContext[] = [];
 	let ctx: ShellContext = { cwd: resolve(cwd), external: false, unknown: false };
 	let pending: PendingCommand | null = null;
@@ -540,12 +543,15 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 	const markCommandConsumed = () => {
 		nextCommandConditional = false;
 		nextCommandScoped = false;
+		prefixGitVariables.clear();
 	};
+
+	const gitCommandVariables = (): ShellVariables => new Map([...variables, ...prefixGitVariables]);
 
 	const parseEnvWrapper = (index: number): { targets: GitCommitTarget[] | null; parsed: ReturnType<typeof parseGitTarget> | null; envIndex: number } => {
 		let envIndex = index + 1;
 		let envCtx = cloneContext(ctx);
-		const envVariables: ShellVariables = new Map(variables);
+		const envVariables: ShellVariables = gitCommandVariables();
 		while (isWord(tokens[envIndex])) {
 			const envWord = tokens[envIndex] as ShellWord;
 			if (envWord.text === "--") {
@@ -614,6 +620,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 	for (let i = 0; i < tokens.length; i += 1) {
 		const token = tokens[i];
 		if (token.kind === "op") {
+			if (commandStart) prefixGitVariables.clear();
 			if (token.text === "(") {
 				scopeStack.push(cloneContext(ctx));
 				pending = null;
@@ -652,7 +659,11 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 		}
 
 		if (commandStart && isAssignment(token.text)) {
-			recordAssignment(token, ctx.cwd, variables);
+			if (token.text.startsWith("GIT_DIR=") || token.text.startsWith("GIT_WORK_TREE=")) {
+				recordAssignment(token, ctx.cwd, prefixGitVariables);
+			} else {
+				recordAssignment(token, ctx.cwd, variables);
+			}
 			continue;
 		}
 
@@ -673,7 +684,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			let commandIndex = i + 1;
 			while (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text.startsWith("-")) commandIndex += 1;
 			if (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text === "git") {
-				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, variables);
+				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables());
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
 				pending = pendingCommand("other", cloneContext(ctx));
@@ -705,7 +716,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 		}
 
 		if (commandStart && token.text === "git") {
-			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, variables);
+			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables());
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
 			pending = pendingCommand("other", cloneContext(ctx));
@@ -750,15 +761,15 @@ async function gitRoot(cwd: string, timeoutMs: number): Promise<GitRootResult> {
 }
 
 export async function resolveProjectGitCommit(command: string, cwd: string, timeoutMs = 5000): Promise<ProjectGitCommitProbe> {
+	const targets = gitCommitTargets(command, cwd);
+	if (targets.length === 0 && !isGitCommit(command)) return { kind: "skip", reason: "no-git-commit" };
+
 	const project = await gitRoot(cwd, timeoutMs);
 	if (project.kind === "error") return project;
 	if (project.kind === "none") return { kind: "error", reason: `pi-hooks pre-commit: cannot identify project git root for ${cwd}: ${project.reason}` };
 
-	const targets = gitCommitTargets(command, cwd);
 	if (targets.length === 0) {
-		return isGitCommit(command)
-			? { kind: "project", cwd: resolve(cwd), root: project.root }
-			: { kind: "skip", reason: "no-git-commit" };
+		return { kind: "project", cwd: resolve(cwd), root: project.root };
 	}
 
 	let unresolvedReason: string | null = null;
@@ -773,6 +784,9 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 			if (!target.gitDir) {
 				unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit --git-dir target.";
 				continue;
+			}
+			if (target.hasWorkTree && target.workTree && pathContains(project.root, target.workTree)) {
+				return { kind: "project", cwd: target.workTree, root: project.root };
 			}
 			if (pathContains(project.root, target.gitDir)) return { kind: "project", cwd: resolve(cwd), root: project.root };
 			continue;

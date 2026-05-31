@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
-import { isBareCd, isGitCommit, runPreCommitCheck } from "./bash-guards.js";
+import { isBareCd, runPreCommitCheck } from "./bash-guards.js";
 import { invalidateClippyCache } from "./cargo.js";
 import { getBool, getNumber, readConfig } from "./config.js";
 import { clippyIssuesForFile, workspaceClippyErrors } from "./lint-hooks.js";
@@ -46,7 +46,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			};
 		}
 
-		if (getBool(cfg, "preCommitCheck") && isGitCommit(command)) {
+		if (getBool(cfg, "preCommitCheck")) {
 			const timeoutMs = getNumber(cfg, "clippyTimeoutMs");
 			const fail = await runPreCommitCheck(ctx.cwd, timeoutMs, command);
 			if (fail) {
