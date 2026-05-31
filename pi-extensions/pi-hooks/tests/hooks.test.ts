@@ -173,9 +173,16 @@ describe("pi-hooks pre-commit tool_call", () => {
 			writeFileSync(join(project, "src", "new.rs"), "pub fn new_answer() -> i32 { 7 }\n");
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
+				runGit(["config", "alias.a", "add"], project);
 				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "git add src/new.rs\ngit commit -m test" } }, { cwd: project });
-				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+				for (const command of [
+					"git add src/new.rs\ngit commit -m test",
+					"git -c alias.a=add a src/new.rs && git commit -m test",
+					"git a src/new.rs && git commit -m test",
+				]) {
+					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
+					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+				}
 			} finally {
 				rmSync(project, { recursive: true, force: true });
 			}
@@ -218,6 +225,9 @@ describe("pi-hooks pre-commit tool_call", () => {
 			runGit(["init", "-q"], other);
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
+				runGit(["config", "alias.ca", "commit -a"], project);
+				runGit(["config", "alias.co", "-c user.name=pi-hooks commit"], project);
+				runGit(["config", "alias.sh", "!git commit"], project);
 				const handler = installToolCallHandler();
 				for (const command of [
 					`git -C ${JSON.stringify(other)} commit -m fixture; bash -c "git commit -m project"`,
@@ -232,8 +242,13 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`command /usr/bin/git commit -m project`,
 					`git -c alias.ci=commit ci -m project`,
 					`git -c 'alias.ci=commit -m project' ci`,
+					`ALIAS=commit git --config-env=alias.ce=ALIAS ce -m project`,
+					`git ca -m project`,
+					`git co -m project`,
+					`git sh -m project`,
 					`git $'commit' -m project`,
 					`git $'co\\x6dmit' -m project`,
+					`git $'co\\155mit' -m project`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });

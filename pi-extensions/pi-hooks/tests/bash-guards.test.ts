@@ -70,9 +70,18 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("git -c alias.ci=commit ci -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git -c 'alias.ci=commit -m test' ci", project, 1000)).toBe(resolve(project));
 			runGit(["config", "alias.ci", "commit"], project);
+			runGit(["config", "alias.ca", "commit -a"], project);
+			runGit(["config", "alias.co", "-c user.name=pi-hooks commit"], project);
+			runGit(["config", "alias.sh", "!git commit"], project);
 			expect(await projectGitCommitCwd("git ci -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git ca -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git co -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git sh -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("ALIAS=commit git --config-env=alias.ce=ALIAS ce -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env ALIAS=commit git --config-env=alias.ee=ALIAS ee -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git $'commit' -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git $'co\\x6dmit' -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git $'co\\155mit' -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -244,6 +253,8 @@ git commit -m test`, project, 1000)).toBe(resolve(project));
 		try {
 			const result = await resolveProjectGitCommit('git -C "$repo" commit -m base', project, 1000);
 			expect(result.kind).toBe("error");
+			const dynamicSubcommand = await resolveProjectGitCommit('git "$cmd" -m base', project, 1000);
+			expect(dynamicSubcommand.kind).toBe("error");
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
