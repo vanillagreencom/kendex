@@ -9,7 +9,7 @@ First-class Pi port of the vstack safety hooks. Each hook is independently toggl
 | Hook | Pi event | Behavior |
 | --- | --- | --- |
 | Block bare `cd` | `tool_call` (bash) | Blocks bare `cd /path` commands with no subshell or chaining. Use `(cd /path && command)` instead. |
-| Pre-commit fmt + clippy | `tool_call` (bash) | When `git commit` targets the active project repo, runs `cargo fmt --check` then `cargo clippy` in async child processes so Pi stays responsive. Blocks on failure. Skips commits targeting other repos and only fires when `.rs` files are staged or modified. |
+| Pre-commit fmt + clippy | `tool_call` (bash) | When `git commit` targets the active project repo, runs `cargo fmt --check` then `cargo clippy` in async child processes so Pi stays responsive. Blocks on failure. Skips commits targeting other repos and only fires when `.rs` files are staged, modified, or untracked and staged by the same bash command. |
 | Post-edit clippy | `tool_result` (edit/write of `.rs`) | Runs workspace clippy after `.rs` edits and appends issues mentioning the edited file. Advisory only — doesn't undo the edit. |
 | End-of-turn clippy | `turn_end` | If `.rs` files were touched during the turn, runs workspace clippy and surfaces errors via UI notification. Advisory only. |
 

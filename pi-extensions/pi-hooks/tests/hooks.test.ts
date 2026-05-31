@@ -161,6 +161,21 @@ describe("pi-hooks pre-commit tool_call", () => {
 		});
 	});
 
+	test("checks untracked Rust files staged by the same bash command", async () => {
+		await withFakeCargo(async () => {
+			const project = initRustRepo("pi-hooks-project-");
+			writeFileSync(join(project, "src", "new.rs"), "pub fn new_answer() -> i32 { 7 }\n");
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				const result = await handler({ toolName: "bash", input: { command: "git add src/new.rs\ngit commit -m test" } }, { cwd: project });
+				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	});
+
 	test("allows other-repo commits without running cargo", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");

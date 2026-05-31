@@ -44,7 +44,7 @@
         {
           "key": "preCommitCheck",
           "label": "Pre-commit fmt + clippy",
-          "description": "When the agent runs `git commit` in the project repo, run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` first using async child processes. Block the commit if either fails. Skips commits targeting other repos and only fires when staged or modified .rs files exist. Cost: only paid at commit time.",
+          "description": "When the agent runs `git commit` in the project repo, run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` first using async child processes. Block the commit if either fails. Skips commits targeting other repos and only fires when staged, modified, or same-command-staged untracked .rs files exist. Cost: only paid at commit time.",
           "type": "boolean",
           "default": true,
           "category": "Bash",

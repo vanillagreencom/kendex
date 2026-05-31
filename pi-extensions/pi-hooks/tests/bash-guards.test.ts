@@ -57,7 +57,43 @@ describe("git commit target detection", () => {
 		const project = initRepo("pi-hooks-project-");
 		try {
 			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("detects control-flow and scoped project commits", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			expect(await projectGitCommitCwd("if true; then git commit -m test; fi", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("! git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("{ git commit -m test; }", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("detects commits after failed or scoped cd forms as project commits", async () => {
+		const project = initRepo("pi-hooks-project-");
+		const other = initRepo("pi-hooks-other-");
+		try {
+			expect(await projectGitCommitCwd(`(cd ${q(other)} && true); git commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`(cd ${q(other)} && git commit -m other); git commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("cd /path/that/does/not/exist; git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("cd /path/that/does/not/exist || git commit -m test", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	test("detects backslash-newline wrapped git commits", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			expect(await projectGitCommitCwd(`git add src/lib.rs && \\
+git commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}

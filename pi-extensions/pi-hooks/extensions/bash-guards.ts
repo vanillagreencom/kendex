@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
 
@@ -22,10 +23,20 @@ export function isBareCd(command: string): boolean {
  * `git -C path commit` and `git commit -m "..."`. Does not match
  * `git commit-tree` or `gitfoo commit`.
  */
-const GIT_COMMIT = /(^|\s)git(\s+[^\s]+)*\s+commit(\s|$)/;
+const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
+
+function normalizeShell(command: string): string {
+	return command.replace(/\\\r?\n/g, " ");
+}
 
 export function isGitCommit(command: string): boolean {
-	return GIT_COMMIT.test(command);
+	return GIT_COMMIT.test(normalizeShell(command));
+}
+
+const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
+
+function commandMayStageFiles(command: string): boolean {
+	return GIT_ADD.test(normalizeShell(command));
 }
 
 interface CommandResult {
@@ -139,18 +150,22 @@ async function gitListRustFiles(cwd: string, args: string[]): Promise<RustFilesR
  * `git add x.rs && git commit -m '…'` in a single chained command, `git diff
  * --cached --name-only` still reports an empty staged set at this point. To
  * avoid silently letting that through, also count unstaged-but-modified `.rs`
- * files. If either set is non-empty, the commit is treated as relevant.
+ * files. When the same command contains `git add`, also include untracked `.rs`
+ * files that may be staged before the commit runs. If any set is non-empty, the
+ * commit is treated as relevant.
  *
  * Returns the union, deduped.
  */
-async function rustFilesRelevantToCommit(cwd: string): Promise<RustFilesResult> {
-	const [staged, unstaged] = await Promise.all([
+async function rustFilesRelevantToCommit(cwd: string, includeUntracked: boolean): Promise<RustFilesResult> {
+	const [staged, unstaged, untracked] = await Promise.all([
 		gitListRustFiles(cwd, ["diff", "--cached", "--name-only"]),
 		gitListRustFiles(cwd, ["diff", "--name-only"]),
+		includeUntracked ? gitListRustFiles(cwd, ["ls-files", "--others", "--exclude-standard"]) : Promise.resolve({ kind: "ok" as const, files: [] }),
 	]);
 	if (staged.kind === "error") return staged;
 	if (unstaged.kind === "error") return unstaged;
-	return { kind: "ok", files: [...new Set([...staged.files, ...unstaged.files])] };
+	if (untracked.kind === "error") return untracked;
+	return { kind: "ok", files: [...new Set([...staged.files, ...unstaged.files, ...untracked.files])] };
 }
 
 interface ShellWord {
@@ -191,15 +206,28 @@ interface ShellPathRef {
 
 type ShellVariables = Map<string, ShellPathRef>;
 
+interface ShellContext {
+	cwd: string | null;
+	external: boolean;
+	unknown: boolean;
+}
+
+interface PendingCommand {
+	kind: "cd" | "other";
+	before: ShellContext;
+	after?: ShellContext;
+}
+
 function isShellOperatorStart(command: string, index: number): string | null {
 	const two = command.slice(index, index + 2);
 	if (two === "&&" || two === "||") return two;
 	const one = command[index];
-	if (one === ";" || one === "|" || one === "(" || one === ")" || one === "\n") return one;
+	if (one === ";" || one === "|" || one === "(" || one === ")" || one === "{" || one === "}" || one === "\n") return one;
 	return null;
 }
 
 function tokenizeShell(command: string): ShellToken[] {
+	command = normalizeShell(command);
 	const tokens: ShellToken[] = [];
 	let i = 0;
 	while (i < command.length) {
@@ -301,6 +329,22 @@ function externalPath(): ShellPathRef {
 function literalPath(base: string | null, text: string): ShellPathRef {
 	if (!base || !text) return unknownPath();
 	return { path: isAbsolute(text) ? resolve(text) : resolve(base, text), external: false, unknown: false };
+}
+
+function shellContext(ref: ShellPathRef): ShellContext {
+	return { cwd: ref.path, external: ref.external, unknown: ref.unknown };
+}
+
+function cloneContext(ctx: ShellContext): ShellContext {
+	return { cwd: ctx.cwd, external: ctx.external, unknown: ctx.unknown };
+}
+
+function directoryExists(path: string): boolean {
+	try {
+		return existsSync(path) && statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
 }
 
 function variableRef(text: string): string | null {
@@ -446,30 +490,119 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 	const tokens = tokenizeShell(command);
 	const targets: GitCommitTarget[] = [];
 	const variables: ShellVariables = new Map();
-	let shellCwd: string | null = resolve(cwd);
-	let shellExternal = false;
-	let shellUnknown = false;
+	const scopeStack: ShellContext[] = [];
+	let ctx: ShellContext = { cwd: resolve(cwd), external: false, unknown: false };
+	let pending: PendingCommand | null = null;
 	let commandStart = true;
+	const controlBoundaries = new Set(["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"]);
+	const envValueOptions = new Set(["-u", "--unset", "-S", "--ignore-signal", "--block-signal", "--default-signal", "--argv0"]);
+
+	const finishPending = (operator: string) => {
+		if (!pending) return;
+		if (pending.kind === "cd" && pending.after) {
+			if (operator === "&&") {
+				ctx = cloneContext(pending.after);
+			} else if (operator === "||" || operator === ")" || operator === "|") {
+				ctx = cloneContext(pending.before);
+			} else if (pending.after.external || pending.after.unknown || (pending.after.cwd && directoryExists(pending.after.cwd))) {
+				ctx = cloneContext(pending.after);
+			} else {
+				ctx = cloneContext(pending.before);
+			}
+		}
+		pending = null;
+	};
+
+	const parseEnvWrapper = (index: number): { parsed: ReturnType<typeof parseGitTarget> | null; envIndex: number } => {
+		let envIndex = index + 1;
+		let envCtx = cloneContext(ctx);
+		while (isWord(tokens[envIndex])) {
+			const envWord = tokens[envIndex] as ShellWord;
+			if (envWord.text === "--") {
+				envIndex += 1;
+				break;
+			}
+			if (envWord.text === "-C" || envWord.text === "--chdir") {
+				const consumed = consumePathOption(tokens, envIndex + 1, envCtx.cwd, variables);
+				envCtx = shellContext(consumed.ref);
+				envIndex = consumed.next;
+				continue;
+			}
+			if (envWord.text.startsWith("--chdir=")) {
+				const ref = resolveShellPath(envCtx.cwd, { kind: "word", text: envWord.text.slice("--chdir=".length), dynamic: envWord.dynamic }, variables);
+				envCtx = shellContext(ref);
+				envIndex += 1;
+				continue;
+			}
+			if (envValueOptions.has(envWord.text)) {
+				const consumed = nextWord(tokens, envIndex + 1);
+				envIndex = consumed.token ? consumed.index + 1 : envIndex + 1;
+				continue;
+			}
+			if (envWord.text.startsWith("--unset=") || envWord.text.startsWith("--ignore-signal=") || envWord.text.startsWith("--block-signal=") || envWord.text.startsWith("--default-signal=") || envWord.text.startsWith("--argv0=")) {
+				envIndex += 1;
+				continue;
+			}
+			if (isAssignment(envWord.text)) {
+				recordAssignment(envWord, envCtx.cwd, variables);
+				envIndex += 1;
+				continue;
+			}
+			if (envWord.text.startsWith("-")) {
+				envIndex += 1;
+				continue;
+			}
+			break;
+		}
+		if (isWord(tokens[envIndex]) && (tokens[envIndex] as ShellWord).text === "git") {
+			return { parsed: parseGitTarget(tokens, envIndex, envCtx.cwd, envCtx.external, envCtx.unknown, variables), envIndex };
+		}
+		return { parsed: null, envIndex };
+	};
 
 	for (let i = 0; i < tokens.length; i += 1) {
 		const token = tokens[i];
 		if (token.kind === "op") {
-			if (token.text !== ")") commandStart = true;
+			if (token.text === "(") {
+				scopeStack.push(cloneContext(ctx));
+				pending = null;
+				commandStart = true;
+				continue;
+			}
+			if (token.text === ")") {
+				finishPending(")");
+				ctx = scopeStack.pop() ?? ctx;
+				commandStart = true;
+				continue;
+			}
+			if (token.text === "{") {
+				pending = null;
+				commandStart = true;
+				continue;
+			}
+			finishPending(token.text);
+			commandStart = true;
+			continue;
+		}
+
+		if (commandStart && (controlBoundaries.has(token.text) || token.text === "!")) {
+			pending = null;
+			commandStart = true;
 			continue;
 		}
 
 		if (commandStart && isAssignment(token.text)) {
-			recordAssignment(token, shellCwd, variables);
+			recordAssignment(token, ctx.cwd, variables);
 			continue;
 		}
 
 		if (commandStart && token.text === "cd") {
 			let targetIndex = i + 1;
-			while (isWord(tokens[targetIndex]) && (tokens[targetIndex] as ShellWord).text.startsWith("-")) targetIndex += 1;
-			const ref = resolveShellPath(shellCwd, isWord(tokens[targetIndex]) ? tokens[targetIndex] : undefined, variables);
-			shellCwd = ref.path;
-			shellExternal = ref.external;
-			shellUnknown = ref.unknown;
+			while (isWord(tokens[targetIndex]) && (tokens[targetIndex] as ShellWord).text.startsWith("-") && (tokens[targetIndex] as ShellWord).text !== "--") targetIndex += 1;
+			if (isWord(tokens[targetIndex]) && (tokens[targetIndex] as ShellWord).text === "--") targetIndex += 1;
+			const before = cloneContext(ctx);
+			const ref = resolveShellPath(ctx.cwd, isWord(tokens[targetIndex]) ? tokens[targetIndex] : undefined, variables);
+			pending = { kind: "cd", before, after: shellContext(ref) };
 			i = targetIndex;
 			commandStart = false;
 			continue;
@@ -479,69 +612,37 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			let commandIndex = i + 1;
 			while (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text.startsWith("-")) commandIndex += 1;
 			if (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text === "git") {
-				const parsed = parseGitTarget(tokens, commandIndex, shellCwd, shellExternal, shellUnknown, variables);
+				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, variables);
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
+				pending = { kind: "other", before: cloneContext(ctx) };
 				commandStart = false;
 				continue;
 			}
 		}
 
 		if (commandStart && token.text === "env") {
-			let envIndex = i + 1;
-			let envCwd = shellCwd;
-			let envExternal = shellExternal;
-			let envUnknown = shellUnknown;
-			while (isWord(tokens[envIndex])) {
-				const envWord = tokens[envIndex] as ShellWord;
-				if (envWord.text === "--") {
-					envIndex += 1;
-					break;
-				}
-				if (envWord.text === "-C" || envWord.text === "--chdir") {
-					const consumed = consumePathOption(tokens, envIndex + 1, envCwd, variables);
-					envCwd = consumed.ref.path;
-					envExternal = consumed.ref.external;
-					envUnknown = consumed.ref.unknown;
-					envIndex = consumed.next;
-					continue;
-				}
-				if (envWord.text.startsWith("--chdir=")) {
-					const ref = resolveShellPath(envCwd, { kind: "word", text: envWord.text.slice("--chdir=".length), dynamic: envWord.dynamic }, variables);
-					envCwd = ref.path;
-					envExternal = ref.external;
-					envUnknown = ref.unknown;
-					envIndex += 1;
-					continue;
-				}
-				if (isAssignment(envWord.text)) {
-					recordAssignment(envWord, envCwd, variables);
-					envIndex += 1;
-					continue;
-				}
-				if (envWord.text.startsWith("-")) {
-					envIndex += 1;
-					continue;
-				}
-				break;
-			}
-			if (isWord(tokens[envIndex]) && (tokens[envIndex] as ShellWord).text === "git") {
-				const parsed = parseGitTarget(tokens, envIndex, envCwd, envExternal, envUnknown, variables);
+			const { parsed, envIndex } = parseEnvWrapper(i);
+			if (parsed) {
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
+				pending = { kind: "other", before: cloneContext(ctx) };
 				commandStart = false;
 				continue;
 			}
+			i = Math.max(i, envIndex - 1);
 		}
 
 		if (commandStart && token.text === "git") {
-			const parsed = parseGitTarget(tokens, i, shellCwd, shellExternal, shellUnknown, variables);
+			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, variables);
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
+			pending = { kind: "other", before: cloneContext(ctx) };
 			commandStart = false;
 			continue;
 		}
 
+		pending = { kind: "other", before: cloneContext(ctx) };
 		commandStart = false;
 	}
 
@@ -581,7 +682,11 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 	if (project.kind === "none") return { kind: "error", reason: `pi-hooks pre-commit: cannot identify project git root for ${cwd}: ${project.reason}` };
 
 	const targets = gitCommitTargets(command, cwd);
-	if (targets.length === 0) return { kind: "skip", reason: "no-git-commit" };
+	if (targets.length === 0) {
+		return isGitCommit(command)
+			? { kind: "project", cwd: resolve(cwd), root: project.root }
+			: { kind: "skip", reason: "no-git-commit" };
+	}
 
 	let unresolvedReason: string | null = null;
 
@@ -626,8 +731,9 @@ export interface BlockReason {
  * --all-targets -- -D warnings` via async child processes so Pi's event loop
  * stays responsive while the check runs. Returns a block reason on failure, or
  * `undefined` to let the commit proceed. No-ops when the command targets a
- * different repository, or when there are no staged/modified `.rs` files (so
- * unrelated and non-Rust commits aren't slowed down).
+ * different repository, or when there are no relevant `.rs` files (staged,
+ * modified, or untracked files that a same-command `git add` may stage), so
+ * unrelated and non-Rust commits aren't slowed down.
  *
  * Budget split: metadata gets a small share, then fmt and clippy each get the
  * configured lint budget. Git target probes use short async timeouts and do not
@@ -639,7 +745,7 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 	if (commit.kind === "skip") return undefined;
 	if (commit.kind === "error") return { reason: commit.reason };
 
-	const rustFiles = await rustFilesRelevantToCommit(commit.cwd);
+	const rustFiles = await rustFilesRelevantToCommit(commit.cwd, commandMayStageFiles(command));
 	if (rustFiles.kind === "error") return { reason: `pi-hooks pre-commit: ${rustFiles.reason}` };
 	if (rustFiles.files.length === 0) return undefined;
 
