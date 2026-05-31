@@ -635,32 +635,38 @@ pi_subscriber_loop() {
             # recovered or repurposed pane hours later.
             local rl_delay_sec=$(( rl_delay_ms / 1000 ))
             (( rl_delay_sec < 1 )) && rl_delay_sec=1
-            local rl_state_tmp rl_expected_state
+            local rl_state_tmp rl_expected_state rl_subscriber_pid
             rate_limit_retry_nonce=$(printf '%s|rate-limit-retry|%s|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,24)}')
-            rl_expected_state=$(printf '%s\t%s\t%s\t%s\t%s' "$rate_limit_retry_nonce" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$pane_id")
+            rl_subscriber_pid="${BASHPID:-$$}"
+            rl_expected_state=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$rate_limit_retry_nonce" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$pane_id" "$rl_subscriber_pid")
             rl_state_tmp="${rate_limit_retry_state_file}.${BASHPID:-$$}.tmp"
             printf '%s\n' "$rl_expected_state" > "$rl_state_tmp" 2>/dev/null && mv -f "$rl_state_tmp" "$rate_limit_retry_state_file" 2>/dev/null || true
             rm -f "$rl_state_tmp" 2>/dev/null || true
             ( nohup bash -c '
-                delay="$1"; state_file="$2"; expected_state="$3"; parent_pid="$4"; expected_pi_pid="$5"; expected_session="$6"; expected_socket="$7"; pi_bin="$8"; shift 8
+                delay="$1"; state_file="$2"; expected_state="$3"; parent_pid="$4"; expected_pi_pid="$5"; expected_session="$6"; expected_socket="$7"; expected_subscriber_pid="$8"; pi_bin="$9"; shift 9
                 sleep "$delay"
                 kill -0 "$parent_pid" 2>/dev/null || exit 0
                 [[ -z "$expected_pi_pid" ]] || kill -0 "$expected_pi_pid" 2>/dev/null || exit 0
+                [[ -z "$expected_subscriber_pid" ]] || kill -0 "$expected_subscriber_pid" 2>/dev/null || exit 0
                 current=$(cat "$state_file" 2>/dev/null || true)
                 [[ "$current" == "$expected_state" ]] || exit 0
                 state=$("$pi_bin" state "$@" 2>/dev/null) || exit 0
+                if [[ -n "$expected_pi_pid" ]]; then
+                  actual_pid=$(jq -r '.state.pid // .state.processPid // .data.pid // .data.processPid // .pid // .processPid // ""' <<< "$state" 2>/dev/null)
+                  [[ "$actual_pid" == "$expected_pi_pid" ]] || exit 0
+                fi
                 if [[ -n "$expected_session" ]]; then
                   actual_session=$(jq -r '.state.sessionId // .state.session_id // .data.sessionId // .data.session_id // .sessionId // .session_id // ""' <<< "$state" 2>/dev/null)
                   [[ "$actual_session" == "$expected_session" ]] || exit 0
                 fi
                 if [[ -n "$expected_socket" ]]; then
                   actual_socket=$(jq -r '.state.socket // .state.socketPath // .data.socket // .data.socketPath // .socket // .socketPath // ""' <<< "$state" 2>/dev/null)
-                  [[ -z "$actual_socket" || "$actual_socket" == "$expected_socket" ]] || exit 0
+                  [[ "$actual_socket" == "$expected_socket" ]] || exit 0
                 fi
                 "$pi_bin" send "$@" --steer "API rate limit was detected. Try to continue from where you left off." >/dev/null 2>&1
-              ' bash "$rl_delay_sec" "$rate_limit_retry_state_file" "$rl_expected_state" "$parent_pid" "$pi_pid" "$expected_pi_session_id" "$pi_socket" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
-            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s expected_session=%s pi_pid=%s socket=%s\n' \
-              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" "$expected_pi_session_id" "$pi_pid" "$pi_socket" \
+              ' bash "$rl_delay_sec" "$rate_limit_retry_state_file" "$rl_expected_state" "$parent_pid" "$pi_pid" "$expected_pi_session_id" "$pi_socket" "$rl_subscriber_pid" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
+            printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s expected_session=%s pi_pid=%s socket=%s subscriber_pid=%s\n' \
+              "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$rl_subscriber_pid" \
               >> "$sub_log" 2>/dev/null || true
             continue
           elif [[ "$rl_kind" == "exhausted" ]]; then

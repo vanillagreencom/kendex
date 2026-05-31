@@ -21,8 +21,10 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
 const DECIDER_TS = resolve(HERE, "../../src/daemon/rate-limit-watchdog.ts");
+const LOOP_TS = resolve(HERE, "../../src/daemon/loop.ts");
 
 const bashSrc = readFileSync(SUBSCRIBERS_BASH, "utf8");
+const loopSrc = readFileSync(LOOP_TS, "utf8");
 
 const CANONICAL_DATA = {
 	message: {
@@ -127,13 +129,24 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		expect(bashSrc).toContain("expected_pi_pid");
 		expect(bashSrc).toContain("expected_session");
 		expect(bashSrc).toContain("expected_socket");
+		expect(bashSrc).toContain("expected_subscriber_pid");
 		expect(bashSrc).toContain('current=$(cat "$state_file" 2>/dev/null || true)');
 		expect(bashSrc).toContain('[[ "$current" == "$expected_state" ]] || exit 0');
 		expect(bashSrc).toContain('state=$("$pi_bin" state "$@" 2>/dev/null) || exit 0');
+		expect(bashSrc).toContain('[[ "$actual_pid" == "$expected_pi_pid" ]] || exit 0');
 		expect(bashSrc).toContain('[[ "$actual_session" == "$expected_session" ]] || exit 0');
+		expect(bashSrc).toContain('[[ "$actual_socket" == "$expected_socket" ]] || exit 0');
 		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subagent-completion"');
 		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subscriber-stream-end"');
 		expect(bashSrc).toContain('rm -f "$cleanup_file"');
+	});
+
+	test("daemon reap/dead paths clear Pi rate-limit retry state files", () => {
+		expect(loopSrc).toContain("piRateLimitRetryStateFile");
+		expect(loopSrc).toContain("pi-rate-limit-retry-");
+		expect(loopSrc).toContain("clearPiRateLimitRetryState");
+		expect(loopSrc).toContain('if (h === "pi") clearPiRateLimitRetryState(paneId, reason);');
+		expect(loopSrc).toContain('if (subHarness === "pi") clearPiRateLimitRetryState(innerId, "subscriber-dead");');
 	});
 
 	test("bash references the canonical TS module name for parity", () => {

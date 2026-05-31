@@ -21,6 +21,7 @@
 //        clear_bell_for_window on success
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -105,6 +106,11 @@ import { OC_LAST_ASSISTANT_JQ } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ } from "../paths/pi.ts";
 import { CX_LAST_ASSISTANT_JQ } from "../paths/codex.ts";
+
+export function piRateLimitRetryStateFile(stateDir: string, paneId: string): string {
+	const hash = createHash("sha256").update(paneId).digest("hex").slice(0, 16);
+	return join(stateDir, `pi-rate-limit-retry-${hash}.state`);
+}
 
 export interface RunLoopOpts {
 	stateDir: string;
@@ -544,8 +550,20 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		}
 	}
 
+	function clearPiRateLimitRetryState(paneId: string, reason: string): void {
+		const file = piRateLimitRetryStateFile(opts.stateDir, paneId);
+		try {
+			unlinkSync(file);
+			log("pi-rate-limit-retry-state-cleared", `pane=${paneId} reason=${reason} file=${file}`);
+		} catch {
+			// Missing or concurrently-removed state is fine; detached sleepers
+			// validate this file and exit when it is absent.
+		}
+	}
+
 	function reapSubscriberForPane(paneId: string, reason: string): void {
 		const h = paneHarness.get(paneId) ?? "";
+		if (h === "pi") clearPiRateLimitRetryState(paneId, reason);
 		const pidFile = subscriberPidFor(h, paneId);
 		const pid = subscriberPid.get(paneId) ?? null;
 		reapSubscriber(
@@ -896,6 +914,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				}
 				const deadPid = subscriberPid.get(innerId);
 				log("subscriber-dead", `pane=${innerId} harness=${subHarness}; clearing OC_SUBSCRIBED and falling back to capture-pane`);
+				if (subHarness === "pi") clearPiRateLimitRetryState(innerId, "subscriber-dead");
 				emitSubscriberDead(activity, subHarness, innerId, deadPid);
 				ocSubscribed.delete(innerId);
 				subscriberPid.delete(innerId);
