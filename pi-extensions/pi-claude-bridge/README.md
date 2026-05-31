@@ -11,6 +11,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 - `claude-bridge/claude-opus-4-8`, Opus 4-7, Sonnet, and Haiku in `/model`.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
+- Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
 - Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
 - Thinking-level forwarding with summarized Opus thinking display.
 - Optional Claude effort overrides (`xhigh` → `max` for Opus 4.8).
@@ -98,5 +99,7 @@ When Claude Code emits rate-limit reset metadata, the bridge shows one red ASCII
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
+
+If a Claude Code SDK stream yields a completed assistant tool-use message before a `message_stop` stream event, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately and Claude Code's MCP handlers stay blocked until the matching Pi tool results are delivered, preventing empty inline tool results or one-render-cycle-late result batches in subagent panes.
 
 Before starting Claude Code, the bridge preflights the resolved executable and working directory. Failures include the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type so spawn issues point at the real failing path instead of the Claude Agent SDK's generic native-binary message. If Node still emits a spawn error after preflight, the bridge wraps that error with the same context before handing it back to the SDK.
