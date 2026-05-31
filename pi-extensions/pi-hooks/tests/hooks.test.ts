@@ -180,6 +180,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 					"git -c alias.a=add a src/new.rs && git commit -m test",
 					"git a src/new.rs && git commit -m test",
 					"git${IFS}add src/new.rs && git commit -m test",
+					"git${IFS} add src/new.rs && git commit -m test",
+					"G=git; ${G} add src/new.rs && git commit -m test",
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
 					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
@@ -246,8 +248,13 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`ALIAS=commit git --config-env=alias.ce=ALIAS ce -m project`,
 					`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
 					`cmd=git; $cmd commit -am project`,
+					`G=git; ${"${G}"} commit -am project`,
 					`eval "git commit -am project"`,
+					`eval 'git \`echo commit\` -am project'`,
 					`bash <<<"git commit -am project"`,
+					`bash -c -- 'git commit -am project'`,
+					`cmd=git bash -c '$cmd commit -am project'`,
+					`bash -c 'git $(echo commit) -am project'`,
 					`printf 'git commit -am project\\n' | bash`,
 					`git ca -m project`,
 					`git co -m project`,
@@ -262,8 +269,11 @@ describe("pi-hooks pre-commit tool_call", () => {
 				}
 				for (const command of [
 					`git${"${IFS}"}commit -am project`,
+					`git${"${IFS}"} commit -am project`,
 					`x=zz; ALIAS=commit git --config-env=alias.$x=ALIAS zz -m project`,
+					`n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
 					`git -c include.path=/tmp/pi-hooks-aliases zzz276 -am project`,
+					`git -c includeIf.gitdir:${project}/.git.path=/tmp/pi-hooks-aliases zzz276 -am project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project }) as { block?: boolean } | undefined;
 					expect(result?.block).toBe(true);

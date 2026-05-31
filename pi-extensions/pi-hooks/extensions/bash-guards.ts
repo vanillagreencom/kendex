@@ -395,7 +395,11 @@ function shellExecutableName(word: string): string {
 
 function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "add" | "commit"): boolean {
 	if (!commandWord) return false;
-	let text = commandWord.text;
+	const rawText = commandWord.text;
+	const variableCommand = new RegExp(`(?:^|[\\s;&|({!])\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\{[A-Za-z_][A-Za-z0-9_]*\\})\\s+${verb}(?=$|[\\s;&|){}])`);
+	if (variableCommand.test(rawText)) return true;
+	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(rawText) && /(?:\$\(|`|\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{(?:@|\*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\}))/.test(rawText)) return true;
+	let text = rawText;
 	if (text.startsWith("$")) text = text.slice(1);
 	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(text) && /\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{(?:@|\*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\})/.test(text)) return true;
 	if (commandWord.dynamic && !/(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+(?:add|commit)(?=$|\s|[;&|){}])/.test(text)) return true;
@@ -407,13 +411,16 @@ function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "
 
 function dynamicGitVerbSyntax(command: string, verb: "add" | "commit"): boolean {
 	const normalized = normalizeShell(command);
-	const fieldSplit = new RegExp(`(?:^|[\\s;&|({!])git(?:\\$IFS|\\$\\{IFS\\})${verb}(?=$|[\\s;&|){}])`);
-	return fieldSplit.test(normalized);
+	const fieldSplitGit = new RegExp(`(?:^|[\\s;&|({!])git(?:\\$IFS|\\$\\{IFS\\})(?:\\s+)?${verb}(?=$|[\\s;&|){}])`);
+	const variableGit = new RegExp(`(?:^|[\\s;&|({!])\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\{[A-Za-z_][A-Za-z0-9_]*\\})\\s+${verb}(?=$|[\\s;&|){}])`);
+	return fieldSplitGit.test(normalized) || variableGit.test(normalized);
 }
 
 function countShellDispatchVerb(command: string, verb: "add" | "commit"): number {
 	const normalized = normalizeShell(command);
-	const quotedPayload = `(?:\\$?['"][^'"]*git(?:\\s+[^'"]+)*\\s+${verb}(?=$|['"\\s;&|){}])[^'"]*['"])`;
+	const literalPayload = `git(?:\\s+[^'"]+)*\\s+${verb}(?=$|['"\\s;&|){}])`;
+	const dynamicPayload = `(?:git[^'"]*(?:\\$|\`)|(?:\\$[A-Za-z_][A-Za-z0-9_]*|\\$\\{[A-Za-z_][A-Za-z0-9_]*\\})\\s+${verb}(?=$|['"\\s;&|){}]))`;
+	const quotedPayload = `(?:\\$?['"][^'"]*(?:${literalPayload}|${dynamicPayload})[^'"]*['"])`;
 	const evalPattern = new RegExp(`(?:^|[\\s;&|({!])eval\\s+${quotedPayload}`, "g");
 	const hereStringPattern = new RegExp(`(?:^|[\\s;&|({!])(?:[^\\s;&|(){}]+\\/)?(?:sh|bash|zsh|dash)(?:\\s+[^;&|(){}<>]+)*\\s*<<<\\s*${quotedPayload}`, "g");
 	const pipePattern = new RegExp(`(?:^|[\\s;&|({!])(?:printf|echo)\\s+${quotedPayload}(?:\\s+[^|]*)?\\|\\s*(?:[^\\s;&|(){}]+\\/)?(?:sh|bash|zsh|dash)(?=$|[\\s;&|){}])`, "g");
@@ -437,7 +444,8 @@ function countShellCVerb(command: string, verb: "add" | "commit"): number {
 			}
 			if (!option.text.startsWith("-") && !option.text.startsWith("+")) break;
 			if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option.text)) {
-				if (shellCommandContainsGitVerb(isWord(tokens[j + 1]) ? tokens[j + 1] : undefined, verb)) count += 1;
+				const payloadIndex = isWord(tokens[j + 1]) && (tokens[j + 1] as ShellWord).text === "--" ? j + 2 : j + 1;
+				if (shellCommandContainsGitVerb(isWord(tokens[payloadIndex]) ? tokens[payloadIndex] : undefined, verb)) count += 1;
 				break;
 			}
 			if (option.text === "-o" || option.text === "-O" || option.text === "+o" || option.text === "+O" || option.text === "--rcfile" || option.text === "--init-file") {
@@ -619,8 +627,12 @@ function recordTextAssignment(word: ShellWord, variables: ShellTextVariables): v
 	const name = word.text.slice(0, separator);
 	const value = word.text.slice(separator + 1);
 	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return;
-	if (word.dynamic) variables.delete(name);
-	else variables.set(name, value);
+	if (word.dynamic) {
+		if (name.startsWith("GIT_CONFIG_")) variables.set("__GIT_CONFIG_UNKNOWN", "1");
+		variables.delete(name);
+	} else {
+		variables.set(name, value);
+	}
 }
 
 function resolvedCommandText(word: ShellWord, variables: ShellTextVariables): string | null {
@@ -680,6 +692,7 @@ function recordInlineAlias(config: string, aliases: Map<string, string | null>, 
 }
 
 function collectEnvConfigAliases(textVariables: ShellTextVariables, aliases: Map<string, string | null>): boolean {
+	if (textVariables.get("__GIT_CONFIG_UNKNOWN") === "1") return true;
 	const countText = textVariables.get("GIT_CONFIG_COUNT");
 	if (!countText) return false;
 	const count = Number.parseInt(countText, 10);
@@ -692,7 +705,7 @@ function collectEnvConfigAliases(textVariables: ShellTextVariables, aliases: Map
 			unknown = true;
 			continue;
 		}
-		if (key === "include.path") unknown = true;
+		if (/^include(?:If\..*)?\.path$/.test(key)) unknown = true;
 		const alias = /^alias\.([^=]+)$/.exec(key);
 		if (alias) aliases.set(alias[1], value);
 	}
@@ -722,8 +735,8 @@ function parseGitTarget(
 	const aliases = new Map<string, string | null>();
 	let aliasConfigMayDefineUnknown = collectEnvConfigAliases(textVariables, aliases);
 	const recordConfig = (config: ShellWord, fromConfigEnv = false) => {
-		if (config.dynamic && /(?:^|\s)(?:alias\.|include\.path)/.test(config.text)) aliasConfigMayDefineUnknown = true;
-		if (/^include\.path(?:=|$)/.test(config.text)) aliasConfigMayDefineUnknown = true;
+		if (config.dynamic && config.text.includes("=")) aliasConfigMayDefineUnknown = true;
+		if (/^include(?:If\..*)?\.path(?:=|$)/.test(config.text)) aliasConfigMayDefineUnknown = true;
 		recordInlineAlias(config.text, aliases, textVariables, fromConfigEnv);
 	};
 	let j = gitIndex + 1;

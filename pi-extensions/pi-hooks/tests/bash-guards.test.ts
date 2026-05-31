@@ -81,9 +81,15 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("env ALIAS=commit git --config-env=alias.ee=ALIAS ee -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("cmd=git; $cmd commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("G=git; ${G} commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git${IFS}commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git${IFS} commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("eval \"git commit -m test\"", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("eval 'git `echo commit` -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("bash <<<\"git commit -m test\"", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("bash -c -- 'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("cmd=git bash -c '$cmd commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("bash -c 'git $(echo commit) -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("printf 'git commit -m test\\n' | bash", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git $'commit' -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git $'co\\x6dmit' -m test", project, 1000)).toBe(resolve(project));
@@ -265,6 +271,10 @@ git commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(dynamicAlias.kind).toBe("error");
 			const includeAlias = await resolveProjectGitCommit("git -c include.path=/tmp/aliases zzz276 -m base", project, 1000);
 			expect(includeAlias.kind).toBe("error");
+			const includeIfAlias = await resolveProjectGitCommit(`git -c includeIf.gitdir:${project}/.git.path=/tmp/aliases zzz276 -m base`, project, 1000);
+			expect(includeIfAlias.kind).toBe("error");
+			const dynamicCount = await resolveProjectGitCommit("n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit git zzz -m base", project, 1000);
+			expect(dynamicCount.kind).toBe("error");
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
