@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { findCargoWorkspaceRootAsync, runCargoAsync, runWorkspaceClippyAsync } from "./cargo.js";
+import { findCargoWorkspaceRootResultAsync, runCargoAsync, runWorkspaceClippyAsync } from "./cargo.js";
 
 /**
  * Match a bash command that is exactly `cd <target>` with no shell operators
@@ -52,11 +52,15 @@ function runCommand(command: string, args: string[], cwd: string, timeoutMs: num
 		const maxBuffer = 4 * 1024 * 1024;
 		let timedOut = false;
 		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		const detached = process.platform !== "win32";
 
 		let child: ReturnType<typeof spawn>;
 		try {
 			child = spawn(command, args, {
 				cwd,
+				detached,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 		} catch (error) {
@@ -67,7 +71,8 @@ function runCommand(command: string, args: string[], cwd: string, timeoutMs: num
 		const finish = (exitCode: number, extraStderr = "") => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			if (timer) clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
 			if (extraStderr) appendChunk(stderr, extraStderr, stderrBytes, maxBuffer);
 			resolveResult({
 				exitCode,
@@ -77,9 +82,29 @@ function runCommand(command: string, args: string[], cwd: string, timeoutMs: num
 			});
 		};
 
-		const timer = setTimeout(() => {
+		const killChild = (signal: NodeJS.Signals) => {
+			try {
+				if (detached && child.pid) {
+					process.kill(-child.pid, signal);
+					return;
+				}
+			} catch {
+				// Fall through to direct child kill below.
+			}
+			try {
+				child.kill(signal);
+			} catch {
+				// Process already exited or cannot be signaled; close/error will settle.
+			}
+		};
+
+		timer = setTimeout(() => {
 			timedOut = true;
-			child.kill("SIGTERM");
+			killChild("SIGTERM");
+			killTimer = setTimeout(() => {
+				killChild("SIGKILL");
+				finish(-1, `\n${command} ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
+			}, 1000);
 		}, Math.max(1, timeoutMs));
 
 		child.stdout?.on("data", (chunk) => appendChunk(stdout, chunk, stdoutBytes, maxBuffer));
@@ -93,13 +118,18 @@ function runGit(args: string[], cwd: string, timeoutMs: number): Promise<Command
 	return runCommand("git", args, cwd, timeoutMs);
 }
 
-async function gitListRustFiles(cwd: string, args: string[]): Promise<string[]> {
+type RustFilesResult = { kind: "ok"; files: string[] } | { kind: "error"; reason: string };
+
+async function gitListRustFiles(cwd: string, args: string[]): Promise<RustFilesResult> {
 	const result = await runGit(args, cwd, 5000);
-	if (result.exitCode !== 0) return [];
-	return result.stdout
+	if (result.timedOut) return { kind: "error", reason: `git ${args.join(" ")} timed out after 5000ms.` };
+	if (result.exitCode !== 0) {
+		return { kind: "error", reason: (result.stderr || result.stdout).trim() || `git ${args.join(" ")} failed.` };
+	}
+	return { kind: "ok", files: result.stdout
 		.split("\n")
 		.map((line) => line.trim())
-		.filter((line) => line.endsWith(".rs"));
+		.filter((line) => line.endsWith(".rs")) };
 }
 
 /**
@@ -113,12 +143,14 @@ async function gitListRustFiles(cwd: string, args: string[]): Promise<string[]> 
  *
  * Returns the union, deduped.
  */
-async function rustFilesRelevantToCommit(cwd: string): Promise<string[]> {
+async function rustFilesRelevantToCommit(cwd: string): Promise<RustFilesResult> {
 	const [staged, unstaged] = await Promise.all([
 		gitListRustFiles(cwd, ["diff", "--cached", "--name-only"]),
 		gitListRustFiles(cwd, ["diff", "--name-only"]),
 	]);
-	return [...new Set([...staged, ...unstaged])];
+	if (staged.kind === "error") return staged;
+	if (unstaged.kind === "error") return unstaged;
+	return { kind: "ok", files: [...new Set([...staged.files, ...unstaged.files])] };
 }
 
 interface ShellWord {
@@ -137,6 +169,10 @@ type ShellToken = ShellWord | ShellOperator;
 export interface GitCommitTarget {
 	/** Worktree directory in effect when `git commit` runs, or null when shell expansion hides it. */
 	cwd: string | null;
+	/** True when the target is known to be a temp/external path without needing filesystem probes. */
+	external: boolean;
+	/** True when shell expansion prevents resolving the target safely. */
+	unknown: boolean;
 	/** Whether the invocation included `--git-dir`. */
 	hasGitDir: boolean;
 	/** Explicit `--git-dir` when present, resolved when statically knowable. */
@@ -146,6 +182,14 @@ export interface GitCommitTarget {
 	/** Explicit `--work-tree` when present, resolved when statically knowable. */
 	workTree: string | null;
 }
+
+interface ShellPathRef {
+	path: string | null;
+	external: boolean;
+	unknown: boolean;
+}
+
+type ShellVariables = Map<string, ShellPathRef>;
 
 function isShellOperatorStart(command: string, index: number): string | null {
 	const two = command.slice(index, index + 2);
@@ -160,15 +204,14 @@ function tokenizeShell(command: string): ShellToken[] {
 	let i = 0;
 	while (i < command.length) {
 		const ch = command[i];
-		if (/\s/.test(ch)) {
-			i += 1;
-			continue;
-		}
-
 		const op = isShellOperatorStart(command, i);
 		if (op) {
 			tokens.push({ kind: "op", text: op });
 			i += op.length;
+			continue;
+		}
+		if (/\s/.test(ch)) {
+			i += 1;
 			continue;
 		}
 
@@ -211,6 +254,24 @@ function tokenizeShell(command: string): ShellToken[] {
 				continue;
 			}
 
+			if (current === "$" && command[i + 1] === "(") {
+				const start = i;
+				i += 2;
+				let depth = 1;
+				while (i < command.length && depth > 0) {
+					if (command[i] === "\\" && i + 1 < command.length) {
+						i += 2;
+						continue;
+					}
+					if (command[i] === "(") depth += 1;
+					else if (command[i] === ")") depth -= 1;
+					i += 1;
+				}
+				text += command.slice(start, i);
+				dynamic = true;
+				continue;
+			}
+
 			if (current === "$" || current === "`" || current === "~" || current === "*" || current === "?") dynamic = true;
 			text += current;
 			i += 1;
@@ -229,10 +290,50 @@ function isAssignment(word: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
 }
 
-function resolveShellPath(base: string | null, word: ShellWord | undefined): string | null {
-	if (!word || word.dynamic || !base) return null;
-	if (!word.text) return null;
-	return isAbsolute(word.text) ? resolve(word.text) : resolve(base, word.text);
+function unknownPath(): ShellPathRef {
+	return { path: null, external: false, unknown: true };
+}
+
+function externalPath(): ShellPathRef {
+	return { path: null, external: true, unknown: false };
+}
+
+function literalPath(base: string | null, text: string): ShellPathRef {
+	if (!base || !text) return unknownPath();
+	return { path: isAbsolute(text) ? resolve(text) : resolve(base, text), external: false, unknown: false };
+}
+
+function variableRef(text: string): string | null {
+	const bare = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(text);
+	if (bare) return bare[1];
+	const braced = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(text);
+	return braced ? braced[1] : null;
+}
+
+function resolveShellPath(base: string | null, word: ShellWord | undefined, variables: ShellVariables): ShellPathRef {
+	if (!word) return unknownPath();
+	if (!word.dynamic) return literalPath(base, word.text);
+	const ref = variableRef(word.text);
+	if (ref && variables.has(ref)) return variables.get(ref)!;
+	return unknownPath();
+}
+
+function recordAssignment(word: ShellWord, base: string | null, variables: ShellVariables): void {
+	const separator = word.text.indexOf("=");
+	if (separator <= 0) return;
+	const name = word.text.slice(0, separator);
+	const value = word.text.slice(separator + 1);
+	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return;
+	if (/^\$\(\s*mktemp(\s|\))/.test(value) || /^`\s*mktemp(\s|`)/.test(value)) {
+		variables.set(name, externalPath());
+		return;
+	}
+	if (!word.dynamic) {
+		variables.set(name, literalPath(base, value));
+		return;
+	}
+	const ref = variableRef(value);
+	variables.set(name, ref && variables.has(ref) ? variables.get(ref)! : unknownPath());
 }
 
 function nextWord(tokens: ShellToken[], start: number): { token: ShellWord | undefined; index: number } {
@@ -241,13 +342,27 @@ function nextWord(tokens: ShellToken[], start: number): { token: ShellWord | und
 	return { token: isWord(tokens[index]) ? tokens[index] : undefined, index };
 }
 
-function consumePathOption(tokens: ShellToken[], index: number, currentCwd: string | null): { path: string | null; next: number } {
+function consumePathOption(
+	tokens: ShellToken[],
+	index: number,
+	currentCwd: string | null,
+	variables: ShellVariables,
+): { ref: ShellPathRef; next: number } {
 	const { token, index: valueIndex } = nextWord(tokens, index);
-	return { path: resolveShellPath(currentCwd, token), next: token ? valueIndex + 1 : index + 1 };
+	return { ref: resolveShellPath(currentCwd, token, variables), next: token ? valueIndex + 1 : index + 1 };
 }
 
-function parseGitTarget(tokens: ShellToken[], gitIndex: number, shellCwd: string | null): { target: GitCommitTarget | null; next: number } {
+function parseGitTarget(
+	tokens: ShellToken[],
+	gitIndex: number,
+	shellCwd: string | null,
+	shellExternal: boolean,
+	shellUnknown: boolean,
+	variables: ShellVariables,
+): { target: GitCommitTarget | null; next: number } {
 	let currentCwd = shellCwd;
+	let external = shellExternal;
+	let unknown = shellUnknown;
 	let hasGitDir = false;
 	let gitDir: string | null = null;
 	let hasWorkTree = false;
@@ -260,39 +375,54 @@ function parseGitTarget(tokens: ShellToken[], gitIndex: number, shellCwd: string
 		const word = token.text;
 
 		if (word === "-C") {
-			const consumed = consumePathOption(tokens, j + 1, currentCwd);
-			currentCwd = consumed.path;
+			const consumed = consumePathOption(tokens, j + 1, currentCwd, variables);
+			currentCwd = consumed.ref.path;
+			external ||= consumed.ref.external;
+			unknown ||= consumed.ref.unknown;
 			j = consumed.next;
 			continue;
 		}
 		if (word.startsWith("-C") && word.length > 2) {
-			currentCwd = resolveShellPath(currentCwd, { kind: "word", text: word.slice(2), dynamic: token.dynamic });
+			const ref = resolveShellPath(currentCwd, { kind: "word", text: word.slice(2), dynamic: token.dynamic }, variables);
+			currentCwd = ref.path;
+			external ||= ref.external;
+			unknown ||= ref.unknown;
 			j += 1;
 			continue;
 		}
 		if (word === "--git-dir") {
-			const consumed = consumePathOption(tokens, j + 1, currentCwd);
+			const consumed = consumePathOption(tokens, j + 1, currentCwd, variables);
 			hasGitDir = true;
-			gitDir = consumed.path;
+			gitDir = consumed.ref.path;
+			external ||= consumed.ref.external;
+			unknown ||= consumed.ref.unknown;
 			j = consumed.next;
 			continue;
 		}
 		if (word.startsWith("--git-dir=")) {
 			hasGitDir = true;
-			gitDir = resolveShellPath(currentCwd, { kind: "word", text: word.slice("--git-dir=".length), dynamic: token.dynamic });
+			const ref = resolveShellPath(currentCwd, { kind: "word", text: word.slice("--git-dir=".length), dynamic: token.dynamic }, variables);
+			gitDir = ref.path;
+			external ||= ref.external;
+			unknown ||= ref.unknown;
 			j += 1;
 			continue;
 		}
 		if (word === "--work-tree") {
-			const consumed = consumePathOption(tokens, j + 1, currentCwd);
+			const consumed = consumePathOption(tokens, j + 1, currentCwd, variables);
 			hasWorkTree = true;
-			workTree = consumed.path;
+			workTree = consumed.ref.path;
+			external ||= consumed.ref.external;
+			unknown ||= consumed.ref.unknown;
 			j = consumed.next;
 			continue;
 		}
 		if (word.startsWith("--work-tree=")) {
 			hasWorkTree = true;
-			workTree = resolveShellPath(currentCwd, { kind: "word", text: word.slice("--work-tree=".length), dynamic: token.dynamic });
+			const ref = resolveShellPath(currentCwd, { kind: "word", text: word.slice("--work-tree=".length), dynamic: token.dynamic }, variables);
+			workTree = ref.path;
+			external ||= ref.external;
+			unknown ||= ref.unknown;
 			j += 1;
 			continue;
 		}
@@ -306,7 +436,7 @@ function parseGitTarget(tokens: ShellToken[], gitIndex: number, shellCwd: string
 			continue;
 		}
 
-		return { target: word === "commit" ? { cwd: currentCwd, hasGitDir, gitDir, hasWorkTree, workTree } : null, next: j + 1 };
+		return { target: word === "commit" ? { cwd: currentCwd, external, unknown, hasGitDir, gitDir, hasWorkTree, workTree } : null, next: j + 1 };
 	}
 
 	return { target: null, next: j };
@@ -315,7 +445,10 @@ function parseGitTarget(tokens: ShellToken[], gitIndex: number, shellCwd: string
 export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[] {
 	const tokens = tokenizeShell(command);
 	const targets: GitCommitTarget[] = [];
+	const variables: ShellVariables = new Map();
 	let shellCwd: string | null = resolve(cwd);
+	let shellExternal = false;
+	let shellUnknown = false;
 	let commandStart = true;
 
 	for (let i = 0; i < tokens.length; i += 1) {
@@ -325,19 +458,84 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 			continue;
 		}
 
-		if (commandStart && isAssignment(token.text)) continue;
+		if (commandStart && isAssignment(token.text)) {
+			recordAssignment(token, shellCwd, variables);
+			continue;
+		}
 
 		if (commandStart && token.text === "cd") {
 			let targetIndex = i + 1;
 			while (isWord(tokens[targetIndex]) && (tokens[targetIndex] as ShellWord).text.startsWith("-")) targetIndex += 1;
-			shellCwd = resolveShellPath(shellCwd, isWord(tokens[targetIndex]) ? tokens[targetIndex] : undefined);
+			const ref = resolveShellPath(shellCwd, isWord(tokens[targetIndex]) ? tokens[targetIndex] : undefined, variables);
+			shellCwd = ref.path;
+			shellExternal = ref.external;
+			shellUnknown = ref.unknown;
 			i = targetIndex;
 			commandStart = false;
 			continue;
 		}
 
+		if (commandStart && token.text === "command") {
+			let commandIndex = i + 1;
+			while (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text.startsWith("-")) commandIndex += 1;
+			if (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text === "git") {
+				const parsed = parseGitTarget(tokens, commandIndex, shellCwd, shellExternal, shellUnknown, variables);
+				if (parsed.target) targets.push(parsed.target);
+				i = Math.max(i, parsed.next - 1);
+				commandStart = false;
+				continue;
+			}
+		}
+
+		if (commandStart && token.text === "env") {
+			let envIndex = i + 1;
+			let envCwd = shellCwd;
+			let envExternal = shellExternal;
+			let envUnknown = shellUnknown;
+			while (isWord(tokens[envIndex])) {
+				const envWord = tokens[envIndex] as ShellWord;
+				if (envWord.text === "--") {
+					envIndex += 1;
+					break;
+				}
+				if (envWord.text === "-C" || envWord.text === "--chdir") {
+					const consumed = consumePathOption(tokens, envIndex + 1, envCwd, variables);
+					envCwd = consumed.ref.path;
+					envExternal = consumed.ref.external;
+					envUnknown = consumed.ref.unknown;
+					envIndex = consumed.next;
+					continue;
+				}
+				if (envWord.text.startsWith("--chdir=")) {
+					const ref = resolveShellPath(envCwd, { kind: "word", text: envWord.text.slice("--chdir=".length), dynamic: envWord.dynamic }, variables);
+					envCwd = ref.path;
+					envExternal = ref.external;
+					envUnknown = ref.unknown;
+					envIndex += 1;
+					continue;
+				}
+				if (isAssignment(envWord.text)) {
+					recordAssignment(envWord, envCwd, variables);
+					envIndex += 1;
+					continue;
+				}
+				if (envWord.text.startsWith("-")) {
+					envIndex += 1;
+					continue;
+				}
+				break;
+			}
+			if (isWord(tokens[envIndex]) && (tokens[envIndex] as ShellWord).text === "git") {
+				const parsed = parseGitTarget(tokens, envIndex, envCwd, envExternal, envUnknown, variables);
+				if (parsed.target) targets.push(parsed.target);
+				i = Math.max(i, parsed.next - 1);
+				commandStart = false;
+				continue;
+			}
+		}
+
 		if (commandStart && token.text === "git") {
-			const parsed = parseGitTarget(tokens, i, shellCwd);
+			const parsed = parseGitTarget(tokens, i, shellCwd, shellExternal, shellUnknown, variables);
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
 			commandStart = false;
@@ -355,28 +553,68 @@ function pathContains(parent: string, child: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-async function gitRoot(cwd: string, timeoutMs: number): Promise<string | null> {
+type GitRootResult =
+	| { kind: "ok"; root: string }
+	| { kind: "none"; reason: string }
+	| { kind: "error"; reason: string };
+
+export type ProjectGitCommitProbe =
+	| { kind: "project"; cwd: string; root: string }
+	| { kind: "skip"; reason: "outside-repo" | "no-git-commit" }
+	| { kind: "error"; reason: string };
+
+async function gitRoot(cwd: string, timeoutMs: number): Promise<GitRootResult> {
 	const result = await runGit(["rev-parse", "--show-toplevel"], cwd, timeoutMs);
-	if (result.exitCode !== 0) return null;
+	if (result.timedOut) return { kind: "error", reason: `git rev-parse timed out after ${Math.max(1, timeoutMs)}ms for ${cwd}.` };
+	if (result.exitCode !== 0) {
+		const detail = (result.stderr || result.stdout).trim();
+		if (/not a git repository/i.test(detail)) return { kind: "none", reason: detail || `${cwd} is not a git repository` };
+		return { kind: "error", reason: detail || `git rev-parse failed for ${cwd}.` };
+	}
 	const root = result.stdout.trim();
-	return root ? resolve(root) : null;
+	return root ? { kind: "ok", root: resolve(root) } : { kind: "error", reason: `git rev-parse returned no root for ${cwd}.` };
+}
+
+export async function resolveProjectGitCommit(command: string, cwd: string, timeoutMs = 5000): Promise<ProjectGitCommitProbe> {
+	const project = await gitRoot(cwd, timeoutMs);
+	if (project.kind === "error") return project;
+	if (project.kind === "none") return { kind: "error", reason: `pi-hooks pre-commit: cannot identify project git root for ${cwd}: ${project.reason}` };
+
+	const targets = gitCommitTargets(command, cwd);
+	if (targets.length === 0) return { kind: "skip", reason: "no-git-commit" };
+
+	let unresolvedReason: string | null = null;
+
+	for (const target of targets) {
+		if (target.external) continue;
+		if (target.unknown) {
+			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit target with shell expansion; use a literal project path or disable preCommitCheck for this command.";
+			continue;
+		}
+		if (target.hasGitDir && (!target.gitDir || !pathContains(project.root, target.gitDir))) continue;
+		const candidate = target.hasWorkTree ? target.workTree : target.cwd;
+		if (!candidate) {
+			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit working tree.";
+			continue;
+		}
+		if (!pathContains(project.root, candidate)) continue;
+
+		const targetRoot = await gitRoot(candidate, timeoutMs);
+		if (targetRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${targetRoot.reason}` };
+		if (targetRoot.kind === "none") {
+			unresolvedReason = `pi-hooks pre-commit: ${candidate} is inside the project but not a git worktree: ${targetRoot.reason}`;
+			continue;
+		}
+		if (targetRoot.root === project.root) return { kind: "project", cwd: candidate, root: project.root };
+	}
+
+	if (unresolvedReason) return { kind: "error", reason: unresolvedReason };
+	return { kind: "skip", reason: "outside-repo" };
 }
 
 export async function projectGitCommitCwd(command: string, cwd: string, timeoutMs = 5000): Promise<string | null> {
-	const projectRoot = await gitRoot(cwd, timeoutMs);
-	if (!projectRoot) return null;
-
-	for (const target of gitCommitTargets(command, cwd)) {
-		if (target.hasGitDir && (!target.gitDir || !pathContains(projectRoot, target.gitDir))) continue;
-		const candidate = target.hasWorkTree ? target.workTree : target.cwd;
-		if (!candidate) continue;
-		if (!pathContains(projectRoot, candidate)) continue;
-
-		const targetRoot = await gitRoot(candidate, timeoutMs);
-		if (targetRoot === projectRoot) return candidate;
-	}
-
-	return null;
+	const result = await resolveProjectGitCommit(command, cwd, timeoutMs);
+	return result.kind === "project" ? result.cwd : null;
 }
 
 export interface BlockReason {
@@ -397,20 +635,25 @@ export interface BlockReason {
  */
 export async function runPreCommitCheck(cwd: string, timeoutMs: number, command: string): Promise<BlockReason | undefined> {
 	const metadataBudget = Math.min(5000, Math.floor(timeoutMs / 4));
-	const commitCwd = await projectGitCommitCwd(command, cwd, metadataBudget);
-	if (!commitCwd) return undefined;
+	const commit = await resolveProjectGitCommit(command, cwd, metadataBudget);
+	if (commit.kind === "skip") return undefined;
+	if (commit.kind === "error") return { reason: commit.reason };
 
-	const root = await findCargoWorkspaceRootAsync(commitCwd, metadataBudget);
-	if (!root) return undefined;
+	const rustFiles = await rustFilesRelevantToCommit(commit.cwd);
+	if (rustFiles.kind === "error") return { reason: `pi-hooks pre-commit: ${rustFiles.reason}` };
+	if (rustFiles.files.length === 0) return undefined;
 
-	const rustFiles = await rustFilesRelevantToCommit(commitCwd);
-	if (rustFiles.length === 0) return undefined;
+	const workspace = await findCargoWorkspaceRootResultAsync(commit.cwd, metadataBudget);
+	if (workspace.kind === "error") return { reason: `pi-hooks pre-commit: ${workspace.reason}` };
+	if (workspace.kind === "none") {
+		return { reason: `pi-hooks pre-commit: found Rust files but could not identify a Cargo workspace: ${workspace.reason}` };
+	}
 
 	const remaining = Math.max(1, timeoutMs - metadataBudget);
 	const fmtBudget = Math.max(1, Math.floor(remaining / 3));
 	const clippyBudget = Math.max(1, remaining - fmtBudget);
 
-	const fmt = await runCargoAsync(["fmt", "--check"], root, fmtBudget);
+	const fmt = await runCargoAsync(["fmt", "--check"], workspace.root, fmtBudget);
 	if (fmt.timedOut) {
 		return { reason: `pi-hooks pre-commit: cargo fmt --check timed out after ${fmtBudget}ms.` };
 	}
@@ -418,7 +661,7 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 		return { reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." };
 	}
 
-	const clippy = await runWorkspaceClippyAsync(root, clippyBudget);
+	const clippy = await runWorkspaceClippyAsync(workspace.root, clippyBudget);
 	if (clippy.timedOut) {
 		return { reason: `pi-hooks pre-commit: cargo clippy timed out after ${clippyBudget}ms.` };
 	}

@@ -7,6 +7,11 @@ export interface CargoResult {
 	timedOut: boolean;
 }
 
+export type WorkspaceRootResult =
+	| { kind: "ok"; root: string }
+	| { kind: "none"; reason: string }
+	| { kind: "error"; reason: string };
+
 export function runCargo(args: string[], cwd: string, timeoutMs: number): CargoResult {
 	const result = spawnSync("cargo", args, {
 		cwd,
@@ -39,11 +44,15 @@ export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): P
 		const maxBuffer = 16 * 1024 * 1024;
 		let timedOut = false;
 		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		const detached = process.platform !== "win32";
 
 		let child: ReturnType<typeof spawn>;
 		try {
 			child = spawn("cargo", args, {
 				cwd,
+				detached,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 		} catch (error) {
@@ -54,7 +63,8 @@ export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): P
 		const finish = (exitCode: number, extraStderr = "") => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			if (timer) clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
 			if (extraStderr) appendChunk(stderr, extraStderr, stderrBytes, maxBuffer);
 			resolve({
 				exitCode,
@@ -64,9 +74,29 @@ export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): P
 			});
 		};
 
-		const timer = setTimeout(() => {
+		const killChild = (signal: NodeJS.Signals) => {
+			try {
+				if (detached && child.pid) {
+					process.kill(-child.pid, signal);
+					return;
+				}
+			} catch {
+				// Fall through to direct child kill below.
+			}
+			try {
+				child.kill(signal);
+			} catch {
+				// Process already exited or cannot be signaled; close/error will settle.
+			}
+		};
+
+		timer = setTimeout(() => {
 			timedOut = true;
-			child.kill("SIGTERM");
+			killChild("SIGTERM");
+			killTimer = setTimeout(() => {
+				killChild("SIGKILL");
+				finish(-1, `\ncargo ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
+			}, 1000);
 		}, Math.max(1, timeoutMs));
 
 		child.stdout?.on("data", (chunk) => appendChunk(stdout, chunk, stdoutBytes, maxBuffer));
@@ -103,21 +133,37 @@ export function findCargoWorkspaceRoot(cwd: string, timeoutMs: number): string |
 }
 
 export async function findCargoWorkspaceRootAsync(cwd: string, timeoutMs: number): Promise<string | null> {
-	if (workspaceRootCache.has(cwd)) return workspaceRootCache.get(cwd) ?? null;
+	const result = await findCargoWorkspaceRootResultAsync(cwd, timeoutMs);
+	return result.kind === "ok" ? result.root : null;
+}
+
+export async function findCargoWorkspaceRootResultAsync(cwd: string, timeoutMs: number): Promise<WorkspaceRootResult> {
+	if (workspaceRootCache.has(cwd)) {
+		const cached = workspaceRootCache.get(cwd) ?? null;
+		return cached ? { kind: "ok", root: cached } : { kind: "none", reason: "no cargo workspace found" };
+	}
 	const r = await runCargoAsync(["metadata", "--format-version", "1", "--no-deps"], cwd, timeoutMs);
+	if (r.timedOut) {
+		return { kind: "error", reason: `cargo metadata timed out after ${Math.max(1, timeoutMs)}ms.` };
+	}
 	if (r.exitCode !== 0) {
 		workspaceRootCache.set(cwd, null);
-		return null;
+		const detail = (r.stderr || r.stdout).trim();
+		return { kind: "none", reason: detail || "cargo metadata did not find a workspace" };
 	}
 	let root: string | null = null;
 	try {
 		const meta = JSON.parse(r.stdout);
 		if (typeof meta?.workspace_root === "string") root = meta.workspace_root;
 	} catch {
-		root = null;
+		return { kind: "error", reason: "cargo metadata returned invalid JSON." };
+	}
+	if (!root) {
+		workspaceRootCache.set(cwd, null);
+		return { kind: "none", reason: "cargo metadata output did not include workspace_root" };
 	}
 	workspaceRootCache.set(cwd, root);
-	return root;
+	return { kind: "ok", root };
 }
 
 /**

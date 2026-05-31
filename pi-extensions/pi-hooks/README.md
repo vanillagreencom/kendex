@@ -13,7 +13,7 @@ First-class Pi port of the vstack safety hooks. Each hook is independently toggl
 | Post-edit clippy | `tool_result` (edit/write of `.rs`) | Runs workspace clippy after `.rs` edits and appends issues mentioning the edited file. Advisory only — doesn't undo the edit. |
 | End-of-turn clippy | `turn_end` | If `.rs` files were touched during the turn, runs workspace clippy and surfaces errors via UI notification. Advisory only. |
 
-These mirror the bash hooks in `vstack/hooks/`. Any change to a hook script must land alongside the matching change in `pi-hooks` — see [AGENTS.md](../../AGENTS.md).
+These implement the same safety goals as the bash hooks in `vstack/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling. In particular, the Pi pre-commit hook runs cargo checks via async child processes and first proves the commit targets the active project repo so unrelated fixture commits do not freeze the session. Any change to a hook script must land alongside the matching change in `pi-hooks` — see [AGENTS.md](../../AGENTS.md).
 
 ## Install
 

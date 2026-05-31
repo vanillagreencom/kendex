@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { gitCommitTargets, projectGitCommitCwd } from "../extensions/bash-guards.ts";
+import { gitCommitTargets, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
 
 function runGit(args: string[], cwd: string): void {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -44,6 +44,25 @@ describe("git commit target detection", () => {
 		}
 	});
 
+	test("detects multiline git commit commands", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			expect(await projectGitCommitCwd("git add src/lib.rs\ngit commit -m test", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("detects env and command wrappers", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	test("skips git -C commits targeting another repo", async () => {
 		const project = initRepo("pi-hooks-project-");
 		const other = initRepo("pi-hooks-other-");
@@ -66,14 +85,24 @@ describe("git commit target detection", () => {
 		}
 	});
 
-	test("skips dynamic -C targets that cannot be proven to be the project", async () => {
+	test("skips mktemp -C targets that are provably outside the project", async () => {
 		const project = initRepo("pi-hooks-project-");
 		try {
 			const command = 'seed=$(mktemp -d); git -C "$seed" commit -m base';
 			expect(gitCommitTargets(command, project)).toEqual([
-				{ cwd: null, hasGitDir: false, gitDir: null, hasWorkTree: false, workTree: null },
+				expect.objectContaining({ cwd: null, external: true, unknown: false, hasGitDir: false, gitDir: null, hasWorkTree: false, workTree: null }),
 			]);
 			expect(await projectGitCommitCwd(command, project, 1000)).toBeNull();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("blocks unresolved dynamic targets instead of silently skipping", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			const result = await resolveProjectGitCommit('git -C "$repo" commit -m base', project, 1000);
+			expect(result.kind).toBe("error");
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
