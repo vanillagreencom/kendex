@@ -25,13 +25,17 @@ Structural lint for code organization.
 
 ## Before Reviewing
 
-Read architecture docs relevant to your role: file size thresholds (generic and per-file-role), module organization rules, test location patterns, TODO conventions, code quality standards. Role-based targets override generic thresholds; only fall back to generic thresholds for files with no role-based target.
+Read architecture docs relevant to your role: file size thresholds (generic and per-file-role), module organization rules, test location patterns, TODO conventions, code quality standards. Role-based targets override generic thresholds; use fallback thresholds only when project docs are silent.
 
 ## Guidelines
 
 - Fast structural lint, not comprehensive architecture review
 - Recommend specific fixes: which types/functions/tests to extract and where
-- Derive all thresholds and patterns from architecture docs — never invent numbers
+- Derive thresholds and patterns from architecture docs. Do not invent project-specific numbers; when docs are silent, use the reviewer skill's fallback standards.
+- Fallback file-size rule: if the diff pushes a file from below 1000 lines to above 1000 lines, treat it as a blocker unless there is a compelling structural reason and the resulting file remains clearly organized.
+- In codebase-review workflows without a diff, treat files over 1000 lines as blockers only when a concrete split is visible and project docs do not justify the size.
+- In diff/PR workflows, if the file was already above 1000 lines, report only when the diff materially worsens structure and a concrete extraction target is visible.
+- Own raw threshold and organization findings. Leave deeper abstraction/simplification judgment to `reviewer-quality` unless the same issue is also a structural threshold violation.
 
 ## Output
 

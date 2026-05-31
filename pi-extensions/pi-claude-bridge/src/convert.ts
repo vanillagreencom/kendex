@@ -80,6 +80,34 @@ function assistantProvenancePrefix(msg: PiMessage): string | undefined {
 	return `[Prior Pi assistant response from ${provider ?? api ?? "unknown-provider"}${model ? `/${model}` : ""}]\n`;
 }
 
+function userMessageToAnthropic(msg: PiMessage): SessionMessage {
+	if (typeof msg.content === "string") return { role: "user", content: msg.content || "[empty]" };
+	if (Array.isArray(msg.content)) {
+		const parts = [];
+		for (const block of msg.content) {
+			if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
+			else if (block.type === "image" && block.data && block.mimeType) parts.push(imageBlockToAnthropic(block));
+		}
+		const kept = parts.filter(Boolean) as ContentBlock[];
+		return { role: "user", content: kept.length ? kept : "[image]" };
+	}
+	return { role: "user", content: "[empty]" };
+}
+
+function toolResultToAnthropicBlock(msg: PiMessage, sanitizedIds: Map<string, string>): ContentBlock {
+	const content = toolResultContentToAnthropic(msg.content as string | Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
+	return {
+		type: "tool_result",
+		tool_use_id: sanitizeToolId((msg as { toolCallId: string }).toolCallId, sanitizedIds),
+		content: content || "",
+		is_error: (msg as { isError?: boolean }).isError,
+	} as ContentBlock;
+}
+
+function hasToolUse(msg: PiMessage): boolean {
+	return msg.role === "assistant" && Array.isArray(msg.content) && msg.content.some((block) => block.type === "toolCall");
+}
+
 /** Convert pi message array to Anthropic API format. */
 export function convertPiMessages(
 	messages: PiMessage[],
@@ -88,22 +116,26 @@ export function convertPiMessages(
 	const anthropicMessages = [];
 	const sanitizedIds = new Map();
 
-	for (const msg of messages) {
+	const pushToolResultGroup = (toolMessages: PiMessage[]): void => {
+		if (toolMessages.length === 0) return;
+		anthropicMessages.push({
+			role: "user",
+			content: toolMessages.map((toolMsg) => {
+				const content = toolResultContentToAnthropic(toolMsg.content as string | Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
+				return {
+					type: "tool_result",
+					tool_use_id: sanitizeToolId((toolMsg as { toolCallId: string }).toolCallId, sanitizedIds),
+					content: content || "",
+					is_error: (toolMsg as { isError?: boolean }).isError,
+				};
+			}),
+		});
+	};
+
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
 		if (msg.role === "user") {
-			if (typeof msg.content === "string") {
-				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
-			} else if (Array.isArray(msg.content)) {
-				const parts = [];
-				for (const block of msg.content) {
-					if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
-					else if (block.type === "image" && block.data && block.mimeType) {
-						parts.push(imageBlockToAnthropic(block));
-					}
-				}
-				anthropicMessages.push({ role: "user", content: parts.filter(Boolean).length ? parts.filter(Boolean) as ContentBlock[] : "[image]" });
-			} else {
-				anthropicMessages.push({ role: "user", content: "[empty]" });
-			}
+			anthropicMessages.push(userMessageToAnthropic(msg));
 		} else if (msg.role === "assistant") {
 			const content = Array.isArray(msg.content) ? msg.content : [];
 			const blocks = [];
@@ -125,12 +157,37 @@ export function convertPiMessages(
 			}
 			if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
 			anthropicMessages.push({ role: "assistant", content: blocks });
+
+			// Pi may inject steer/followUp user messages between parallel tool
+			// results, while runtime extraction treats every toolResult after the
+			// assistant (until the next assistant) as one turn. Claude history must
+			// put all tool_result blocks immediately after the tool_use assistant;
+			// replay interleaved user text only after that grouped result message.
+			if (hasToolUse(msg)) {
+				const toolMessages: PiMessage[] = [];
+				const interleavedUsers: PiMessage[] = [];
+				let j = i + 1;
+				for (; j < messages.length; j++) {
+					const next = messages[j];
+					if (next.role === "assistant") break;
+					if (next.role === "toolResult") toolMessages.push(next);
+					else if (next.role === "user") interleavedUsers.push(next);
+					else break;
+				}
+				if (toolMessages.length > 0) {
+					pushToolResultGroup(toolMessages);
+					for (const userMsg of interleavedUsers) anthropicMessages.push(userMessageToAnthropic(userMsg));
+					i = j - 1;
+				}
+			}
 		} else if (msg.role === "toolResult") {
-			const content = toolResultContentToAnthropic(msg.content);
-			anthropicMessages.push({
-				role: "user",
-				content: [{ type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: content || "", is_error: msg.isError }],
-			});
+			const blocks: ContentBlock[] = [];
+			for (; i < messages.length; i++) {
+				const toolMsg = messages[i];
+				if (toolMsg.role !== "toolResult") { i--; break; }
+				blocks.push(toolResultToAnthropicBlock(toolMsg, sanitizedIds));
+			}
+			anthropicMessages.push({ role: "user", content: blocks });
 		}
 	}
 

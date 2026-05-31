@@ -45,7 +45,7 @@ Consult these Rust safety references when auditing unsafe code, lock-free struct
 ## Guidelines
 
 - **Report-only** — returns findings; does NOT modify code
-- Derive safety verification requirements and conventions from architecture docs — never prescribe language-specific tooling
+- Derive safety verification requirements and conventions from architecture docs. Do not invent project-specific safety policy; when docs are silent, use language safety rules and the reviewer skill's fallback standards.
 
 ## Output
 

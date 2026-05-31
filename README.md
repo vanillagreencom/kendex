@@ -151,9 +151,11 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | `scout` | analyst | Fast reconnaissance for unfamiliar code before planning or implementation; may write requested report artifacts. |
 | `tpm` | manager | Technical program management and roadmap analysis agent. |
 | `reviewer-arch` | reviewer | Reviews boundaries, abstractions, and architectural drift. |
+| `reviewer-correctness` | reviewer | Reviews behavior regressions, compatibility, devex breaks, feature-gate leaks, and state/migration correctness. |
 | `reviewer-doc` | reviewer | Reviews documentation accuracy and stale docs. |
 | `reviewer-error` | reviewer | Reviews error handling, silent failures, and propagation. |
 | `reviewer-perf` | reviewer | Reviews latency, benchmarks, and performance regressions. |
+| `reviewer-quality` | reviewer | Reviews maintainability, simplification, abstraction value, type boundaries, and spaghetti-growth risk. |
 | `reviewer-safety` | reviewer | Reviews unsafe Rust, memory safety, and concurrency correctness. |
 | `reviewer-security` | reviewer | Reviews auth, input handling, and security risks. |
 | `reviewer-structure` | reviewer | Reviews modularity, file size, and code organization. |
@@ -189,7 +191,7 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 | [`linear`](skills/linear/)* | Bash CLI over Linear's GraphQL API with local cache, mutation syncing, and structured output (issues, cycles, milestones, projects). |
 | [`linear-orch`](skills/linear-orch/)* | Primary-agent orchestrator for the per-issue Linear lifecycle (dev → review → submit → merge); spawns specialist sub-agents and review pipelines from inside a worktree. Sub-agents do NOT load this directly. |
 | [`project-management`](skills/project-management/)* | TPM-driven planning, audits, roadmaps, and research-backed decomposition. |
-| [`reviewer`](skills/reviewer/)* | Code-review and QA-review workflows + the canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
+| [`reviewer`](skills/reviewer/)* | Strict code-review, whole-codebase review, and QA-review ethos, scope boundaries, workflows, and canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
 | [`second-opinion`](skills/second-opinion/) | Cross-model review via the opposite AI CLI (Claude ↔ Codex). |
 | [`worktree`](skills/worktree/)* | Git worktree create/list/remove with env/config symlinks and per-worktree bot identity. |
 

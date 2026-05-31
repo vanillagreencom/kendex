@@ -30,7 +30,7 @@ Read architecture docs relevant to your role: layer hierarchy and dependency rul
 ## Guidelines
 
 - **Report-only** — returns findings with locations and recommendations; does not modify code
-- Derive compliance criteria from architecture docs — never invent design rules
+- Derive compliance criteria from architecture docs. Do not invent project-specific design rules; when docs are silent, use the reviewer skill's fallback standards and explain the rationale.
 - Distinguish between blockers (must fix) and suggestions (nice to have)
 
 ## Output

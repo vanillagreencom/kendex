@@ -17,7 +17,7 @@ Validate performance, detect regressions, run benchmarks.
 
 ## Focus Areas
 
-1. **Benchmark Execution** — Run relevant benchmarks for changed code
+1. **Benchmark Execution** — Run relevant benchmarks for scoped code
 2. **Regression Detection** — Compare against baselines with defined thresholds
 3. **Budget Validation** — Verify performance meets defined budgets
 4. **Path Classification** — Categorize regressions by path criticality (hot-path vs cold-path)
@@ -29,7 +29,7 @@ Read architecture docs relevant to your role: regression thresholds (per-percent
 ## Guidelines
 
 - **Report-only** — returns findings; does NOT implement fixes
-- Derive regression thresholds and path classification from architecture docs — never invent numbers
+- Derive regression thresholds and path classification from architecture docs. Do not invent project-specific numbers; when docs are silent, use the reviewer skill's fallback standards and evidence-based risk classification instead of fabricated budgets.
 - Classify every regression — silent omission is forbidden
 
 ## Performance Review Heuristics

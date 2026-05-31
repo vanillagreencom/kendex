@@ -1,6 +1,6 @@
 # Code Review Lifecycle
 
-**The workflow for review agents — project-configured review specialists (e.g., security-review, test-review, doc-review).**
+**The workflow for review agents — project-configured review specialists (e.g., correctness-review, quality-review, security-review, test-review, doc-review).**
 
 Review agents are code reviewers. They run in parallel, each reviewing the same changes from their specialist perspective.
 
@@ -31,6 +31,8 @@ fi
 ```
 
 Review for noteworthy findings only — skip minor style issues. Exclude research documents.
+Apply the reviewer skill's General Review Ethos and Reviewer Scope Boundaries. Stay within this agent's domain; do not duplicate another specialist unless your domain adds distinct evidence, impact, or remediation.
+Read changed files and directly affected call paths from the worktree as needed before reporting non-trivial findings; the delegating agent does not need to inline full file contents.
 If a changed path was deleted, inspect it from the git diff or git history; do not try to `Read` the deleted working-tree path directly.
 
 ### 1.2 Read Decisions

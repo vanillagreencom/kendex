@@ -139,19 +139,19 @@ Read agent JSONs, check for items where `category == "fix"` or `category == "iss
 
 | # | Agent | Location | Description | Pri |
 |---|-------|----------|-------------|-----|
-| 1 | [agent] | [file:line] | [description] | 🔴 |
+| 1 | [agent] | [location] | [description] | 🔴 |
 
 **Fix Suggestions**
 
 | # | Agent | Location | Description | Pri | Est |
 |---|-------|----------|-------------|-----|-----|
-| 1 | [agent] | [file:line] | [description] | 🟤 | 1 |
+| 1 | [agent] | [location] | [description] | 🟤 | 1 |
 
 **Issue Suggestions**
 
 | # | Agent | Location | Description | Pri | Est |
 |---|-------|----------|-------------|-----|-----|
-| 1 | [agent] | [file:line] | [description] | 🟡 | 3 |
+| 1 | [agent] | [location] | [description] | 🟡 | 3 |
 
 Pri: 🔴 P1  🟠 P2  🟡 P3  🟤 P4
 Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)

@@ -12,7 +12,7 @@ Pre-submission code review with fix handling, QA checks, and issue audit.
 
 **Caller context parameters** (via `⤵`):
 - `worktree`: worktree path
-- `agents` (optional): list of review agent names. Default: every `reviewer-*` agent discovered in the active harness registry (typically all installed `reviewer-*` from `vstack.toml` `[agent-skills]`, e.g. `reviewer-arch`, `reviewer-doc`, `reviewer-error`, `reviewer-perf`, `reviewer-safety`, `reviewer-security`, `reviewer-structure`, `reviewer-test`). Do not hardcode a count — enumerate from the registry.
+- `agents` (optional): list of review agent names. Default: every `reviewer-*` agent discovered in the active harness registry (typically all installed `reviewer-*` from `vstack.toml` `[agent-skills]`, e.g. `reviewer-arch`, `reviewer-correctness`, `reviewer-doc`, `reviewer-error`, `reviewer-perf`, `reviewer-quality`, `reviewer-safety`, `reviewer-security`, `reviewer-structure`, `reviewer-test`). Do not hardcode a count — enumerate from the registry.
 - `lifecycle` (optional): `"managed"` (return to caller at § 11) | `"self"` (default, standalone).
 - `dev_agent` (optional): name of alive dev agent for fix delegation. If absent, fixes use sub-agent tasks.
 - `issue_id` (optional): issue tracker ID. If absent, extracted from branch.
@@ -261,13 +261,13 @@ Read agent JSONs, check for items where `category == "fix"`.
 
 | # | Agent | Location | Description | Pri |
 |---|-------|----------|-------------|-----|
-| 1 | [agent] | [file:line] | [description] | 🔴 |
+| 1 | [agent] | [location] | [description] | 🔴 |
 
 **Fix Suggestions**
 
 | # | Agent | Location | Description | Pri | Est |
 |---|-------|----------|-------------|-----|-----|
-| 1 | [agent] | [file:line] | [description] | 🟤 | 1 |
+| 1 | [agent] | [location] | [description] | 🟤 | 1 |
 
 </output_format>
 
@@ -465,13 +465,13 @@ Follow § 4 pattern (collect → present → ask user → delegate via `workflow
 
 | # | Source | Location | Description | Commit |
 |---|--------|----------|-------------|--------|
-| 1 | [agent] | [file:line] | [description] | [sha] |
+| 1 | [agent] | [location] | [description] | [sha] |
 
 ### ⚠️ ESCALATED BLOCKERS
 
 | # | Source | Location | Description | Pri |
 |---|--------|----------|-------------|-----|
-| 1 | [agent] | [file:line] | [description] | 🟠 |
+| 1 | [agent] | [location] | [description] | 🟠 |
 
 ### 📊 QA METRICS
 

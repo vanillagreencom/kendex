@@ -31,7 +31,7 @@ Read architecture docs relevant to your role: coverage targets (per-path or per-
 
 - **Report-only** — returns findings; does NOT modify code
 - Focus on tests that catch real bugs
-- Derive coverage targets and test type requirements from architecture docs — never invent thresholds
+- Derive coverage targets and test type requirements from architecture docs. Do not invent project-specific coverage percentages; when docs are silent, use the reviewer skill's fallback standards and focus on meaningful untested behavior.
 
 ## Output
 

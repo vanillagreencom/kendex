@@ -1,12 +1,14 @@
 import { expect, mock, test } from "bun:test";
+import "./preload.ts";
 
-import {
+import type { ScheduleClock } from "../extensions/qol/schedule.ts";
+
+const {
 	createScheduleController,
 	parseDurationMs,
 	parseScheduleCommandArgs,
 	SCHEDULE_ENTRY_TYPE,
-	type ScheduleClock,
-} from "../extensions/qol/schedule.ts";
+} = await import("../extensions/qol/schedule.ts");
 
 interface FakeTimer {
 	callback: () => void;
@@ -67,9 +69,24 @@ test("parseDurationMs supports default minutes and explicit units", () => {
 	expect(parseDurationMs("20")).toBe(20 * 60 * 1000);
 	expect(parseDurationMs("20m")).toBe(20 * 60 * 1000);
 	expect(parseDurationMs("90s")).toBe(90 * 1000);
+	expect(parseDurationMs("500ms")).toBe(500);
 	expect(parseDurationMs("1.5h")).toBe(90 * 60 * 1000);
 	expect(parseDurationMs("0m")).toBeUndefined();
 	expect(parseDurationMs("forever")).toBeUndefined();
+});
+
+test("parseDurationMs supports compact composite durations", () => {
+	expect(parseDurationMs("1h45m")).toBe(105 * 60 * 1000);
+	expect(parseDurationMs("1h30s")).toBe(3_630_000);
+	expect(parseDurationMs("45m10s")).toBe(2_710_000);
+	expect(parseDurationMs("1h45m30s")).toBe((105 * 60 + 30) * 1000);
+	expect(parseDurationMs("2d3h4m5s6ms")).toBe(2 * 24 * 60 * 60 * 1000 + 3 * 60 * 60 * 1000 + 4 * 60 * 1000 + 5 * 1000 + 6);
+
+	expect(parseDurationMs("1h2h")).toBeUndefined();
+	expect(parseDurationMs("30s1h")).toBeUndefined();
+	expect(parseDurationMs("1h30")).toBeUndefined();
+	expect(parseDurationMs("1h30xs")).toBeUndefined();
+	expect(parseDurationMs("31d")).toBeUndefined();
 });
 
 test("parseScheduleCommandArgs extracts delay and message", () => {
@@ -77,6 +94,21 @@ test("parseScheduleCommandArgs extracts delay and message", () => {
 		delayMs: 20 * 60 * 1000,
 		kind: "schedule",
 		message: "this is my message",
+	});
+	expect(parseScheduleCommandArgs("1h45m do thing later")).toEqual({
+		delayMs: 105 * 60 * 1000,
+		kind: "schedule",
+		message: "do thing later",
+	});
+	expect(parseScheduleCommandArgs("1h30s do thing later")).toEqual({
+		delayMs: 3_630_000,
+		kind: "schedule",
+		message: "do thing later",
+	});
+	expect(parseScheduleCommandArgs("45m10s do thing later")).toEqual({
+		delayMs: 2_710_000,
+		kind: "schedule",
+		message: "do thing later",
 	});
 	expect(parseScheduleCommandArgs("list")).toEqual({ kind: "list" });
 	expect(parseScheduleCommandArgs("cancel all")).toEqual({ all: true, kind: "cancel" });

@@ -42,7 +42,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if current dir is a worktree
 2. **Format each fix item**:
    ```
    ---
-   #[N] | [conversation] | [file:line or "TBD"]
+   #[N] | [conversation] | [location or "TBD"]
    Description: "[WHAT IS WRONG]"
    Recommendation: "[HOW TO FIX]"
    ---
@@ -56,7 +56,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if current dir is a worktree
 
    | # | Location | Description | Recommendation |
    |---|----------|-------------|----------------|
-   | 1 | [file:line] | [description] | [recommendation] |
+   | 1 | [location] | [description] | [recommendation] |
 
    </output_format>
 

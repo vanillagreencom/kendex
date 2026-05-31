@@ -65,7 +65,7 @@ All review/QA agents output JSON to `[worktree-path]/tmp/review-{agent}-YYYYMMDD
 |-------|----------|-------------|
 | `id` | Yes | Sequential number within array |
 | `title` | Yes | Concise issue title (5-10 words) — used if item becomes a tracked issue |
-| `location` | Yes | File path with function/struct names for precision (no line numbers — they go stale) |
+| `location` | Yes | Stable file path with function/struct names for precision (no line numbers — they go stale). If line or diff-hunk evidence is useful, include it in `description`. |
 | `description` | Yes | Problem statement |
 | `recommendation` | Yes | Actionable fix/improvement steps |
 | `priority` | Yes | 1-4 (P1=Urgent, P2=High, P3=Normal, P4=Low) |

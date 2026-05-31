@@ -4,6 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { sanitizeToolId, convertPiMessages } from "../src/convert.js";
+import { findUnpairedToolUses } from "../src/tool-pairing-audit.js";
 
 /** Shorthand: convert pi messages and return just the anthropic messages. */
 function convert(messages, customToolNameToSdk) {
@@ -207,13 +208,46 @@ describe("message structure", () => {
 			{ role: "toolResult", toolCallId: "t2", content: "content b" },
 		];
 		const result = convert(msgs);
-		assert.equal(result.length, 3);
+		assert.equal(result.length, 2);
 		assert.equal(result[0].role, "assistant");
 		assert.equal(result[0].content.length, 2);
 		assert.equal(result[1].role, "user");
 		assert.equal(result[1].content[0].tool_use_id, "t1");
+		assert.equal(result[1].content[1].tool_use_id, "t2");
+	});
+
+	it("grouped parallel tool results satisfy pairing audit", () => {
+		const msgs = [
+			{ role: "assistant", content: [
+				{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.txt" } },
+				{ type: "toolCall", id: "t2", name: "read", arguments: { path: "b.txt" } },
+			] },
+			{ role: "toolResult", toolCallId: "t1", content: "content a" },
+			{ role: "toolResult", toolCallId: "t2", content: "content b" },
+		];
+		const result = convert(msgs);
+		assert.equal(result[1].content.length, 2);
+		assert.deepEqual(result[1].content.map((block) => block.tool_use_id), ["t1", "t2"]);
+		assert.deepEqual(findUnpairedToolUses(result), []);
+	});
+
+	it("interleaved user prompts after a tool-use assistant are replayed after grouped tool results", () => {
+		const msgs = [
+			{ role: "assistant", content: [
+				{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.txt" } },
+				{ type: "toolCall", id: "t2", name: "read", arguments: { path: "b.txt" } },
+			] },
+			{ role: "toolResult", toolCallId: "t1", content: "content a" },
+			{ role: "user", content: "please continue after tools" },
+			{ role: "toolResult", toolCallId: "t2", content: "content b" },
+		];
+
+		const result = convert(msgs);
+		assert.equal(result.length, 3);
+		assert.deepEqual(result[1].content.map((block) => block.tool_use_id), ["t1", "t2"]);
 		assert.equal(result[2].role, "user");
-		assert.equal(result[2].content[0].tool_use_id, "t2");
+		assert.equal(result[2].content, "please continue after tools");
+		assert.deepEqual(findUnpairedToolUses(result), []);
 	});
 
 	it("mixed conversation: user → assistant(tool) → toolResult → assistant(text)", () => {

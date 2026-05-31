@@ -59,7 +59,7 @@ Load these on demand; keep this file as the operational quick path.
 | Full scripts table, script arguments, Pi bg-task exit, Pi activity broker, activity sidecar, `daemon-exited` details | [`SCRIPTS.md`](./SCRIPTS.md) |
 | Full `prompt-classify` tag catalog, including daemon/event-only tags | [`PROMPT-TAGS.md`](./PROMPT-TAGS.md) |
 | Env var tables: master loop, watchdog gates, daemon hygiene, dashboard, adapter tuning | [`ENV.md`](./ENV.md) |
-| Watchdog behavior: agent-end, idle-stall, edit-loop, rate-limit | [`WATCHDOGS.md`](./WATCHDOGS.md) |
+| Watchdog behavior: agent-end, idle-stall, edit-loop, rate-limit, busy-stall | [`WATCHDOGS.md`](./WATCHDOGS.md) |
 | Development workflow, parity tests, daemon internals | [`DEVELOPMENT.md`](./DEVELOPMENT.md) |
 
 ## Commands
@@ -213,7 +213,7 @@ Full script table and event details live in [`SCRIPTS.md`](./SCRIPTS.md). Requir
 ## Schema, watchdogs, and configuration
 
 - Master state + activity sidecar contract lives in [`SCHEMA.md`](./SCHEMA.md). `readTrackedEntries(state)` is the canonical reader; `writeTrackedEntry(state, id, entry)` is the canonical writer and rejects malformed domain combinations.
-- Reliability watchdog details live in [`WATCHDOGS.md`](./WATCHDOGS.md).
+- Reliability watchdog details live in [`WATCHDOGS.md`](./WATCHDOGS.md), including Pi `pi-busy-stall` detection for CPU-bound bridge-unresponsive panes.
 - Env var tables live in [`ENV.md`](./ENV.md). Operator-facing gates include `FLIGHTDECK_AUTO_MERGE`, `FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, `FLIGHTDECK_AUTO_REBASE`, `FLIGHTDECK_PRE_PR_REVIEW`, `FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS`, `FLIGHTDECK_PRE_PR_REVIEWERS`, dashboard controls, and the `VSTACK_*` watchdog toggles.
 
 ## Workflows

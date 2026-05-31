@@ -22,6 +22,7 @@
 import { spawnSync } from "node:child_process";
 
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
+import { BUSY_STALL_CLASSIFIER_TAG } from "./busy-stall-watchdog.ts";
 import { EDIT_LOOP_CLASSIFIER_TAG } from "./edit-loop-detector.ts";
 
 export interface AppendEventOpts {
@@ -142,6 +143,7 @@ const CANONICAL_TAGS = new Set<string>([
 	"pi-subagent-completion",
 	BG_TASK_EXIT_CLASSIFIER_TAG,
 	EDIT_LOOP_CLASSIFIER_TAG,
+	BUSY_STALL_CLASSIFIER_TAG,
 	"daemon-exited",
 	"domain-mismatch",
 ]);

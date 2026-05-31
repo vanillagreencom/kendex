@@ -96,7 +96,7 @@ POLL_INPUT=$(jq '[.[]
    - `descope-related`
    - `multi-select-tabbed`
 3. **Domain guard** — if an issue-only tag appears on `kind=adhoc` or any non-issue entry, `prompt-classify --entry-kind` / `pane-poll` reports `domain-mismatch`. Log a warning, do not run issue handlers, and surface a master question through `paused_for_user`.
-4. **Generic tags on issue entries** — `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, and `pi-bg-task-exit` first route through `session-handle-prompt.md`. After it returns, resume this issue loop with domain state intact.
+4. **Generic tags on issue entries** — `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, `pi-bg-task-exit`, and `pi-busy-stall` first route through `session-handle-prompt.md`. After it returns, resume this issue loop with domain state intact.
 
 `terminal-state-reached` on an issue entry invokes `⤵ workflows/linear/close-issue.md <ISSUE_ID>` after the generic completion signal. `close-issue.md` performs the two-signal verification, records the issue outcome, and tears down the window when safe.
 

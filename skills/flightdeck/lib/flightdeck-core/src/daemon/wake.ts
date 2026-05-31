@@ -13,7 +13,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { piResolveBridgeBin } from "../paths/pi.ts";
+import { piBridgeSpawnSync, piResolveBridgeBin } from "../paths/pi.ts";
 import { withInprocFlock } from "../shared/inproc-flock.ts";
 import { emitWakeDeliveryFailure, type DaemonActivityContext } from "./activity.ts";
 import { wakePayloadForHarness } from "./wake-payload.ts";
@@ -21,7 +21,7 @@ import { wakePayloadForHarness } from "./wake-payload.ts";
 type SpawnSyncLike = (
 	command: string,
 	args: string[],
-	options?: { encoding?: BufferEncoding | "buffer"; timeout?: number; input?: string },
+	options?: { encoding?: BufferEncoding | "buffer"; timeout?: number; input?: string; killSignal?: NodeJS.Signals | number },
 ) => { status: number | null; stdout?: unknown; stderr?: unknown; signal?: NodeJS.Signals | null; output?: unknown[] | null };
 
 // Walk pgrep -P recursively. Used to map a pane's shell pid to the
@@ -67,7 +67,7 @@ interface BridgeEntry { pid?: number; cwd?: string; startedAt?: string; started_
 export function resolvePiMasterPid(masterId: string): number | null {
 	const bin = piResolveBridgeBin();
 	if (!bin) return null;
-	const listR = spawnSync(bin, ["list", "--json"], { encoding: "utf8" });
+	const listR = piBridgeSpawnSync(bin, ["list", "--json"]);
 	if (listR.status !== 0 || !listR.stdout || listR.stdout.trim() === "null") return null;
 	let entries: BridgeEntry[];
 	try { entries = JSON.parse(listR.stdout) as BridgeEntry[]; }
@@ -269,7 +269,7 @@ export function wakeMaster(opts: WakeMasterOpts): boolean {
 			? opts.resolvePiMasterPidOverride()
 			: resolvePiMasterPid(masterId);
 		if (bin && masterPid) {
-			const r = run(bin, ["send", "--pid", String(masterPid), payload], { encoding: "utf8", timeout: 10_000 });
+			const r = run(bin, ["send", "--pid", String(masterPid), payload], { encoding: "utf8", killSignal: "SIGKILL", timeout: 10_000 });
 			if (r.status === 0) {
 				log("wake", `master=${masterId} harness=pi via=pi-bridge pid=${masterPid} reasons=${combined}`);
 				return true;

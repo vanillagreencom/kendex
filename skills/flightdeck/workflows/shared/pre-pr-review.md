@@ -41,7 +41,7 @@ This workflow is the sole owner of `domain.<KEY>.review_rounds`. Lane handlers m
 
 ## § 3: Select reviewers
 
-Default reviewer list: `reviewer-arch`, `reviewer-error`, `reviewer-safety`, `reviewer-security`, `reviewer-structure`, `reviewer-test`, `reviewer-doc`, `reviewer-perf`. Override with `FLIGHTDECK_PRE_PR_REVIEWERS` (CSV).
+Default reviewer list: `reviewer-arch`, `reviewer-correctness`, `reviewer-error`, `reviewer-quality`, `reviewer-safety`, `reviewer-security`, `reviewer-structure`, `reviewer-test`, `reviewer-doc`, `reviewer-perf`. Override with `FLIGHTDECK_PRE_PR_REVIEWERS` (CSV).
 
 Filter the default list by changed paths:
 
@@ -51,7 +51,7 @@ Filter the default list by changed paths:
 | No tests touched and no test-bearing dirs added | `reviewer-test` (only if no production code changed either) |
 | Only `*.md` / docs | keep `reviewer-doc`, `reviewer-arch`; drop the rest |
 
-Never drop `reviewer-arch`, `reviewer-error`, `reviewer-security` for code changes.
+Never drop `reviewer-arch`, `reviewer-correctness`, `reviewer-error`, `reviewer-quality`, or `reviewer-security` for code changes.
 
 If the resulting reviewer list is empty (env override set to empty, or every default reviewer dropped by the filter) set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"no reviewers selected for round <N>; check FLIGHTDECK_PRE_PR_REVIEWERS and § 3 filter"}` and return. Never approve a round with zero reviewer returns.
 
@@ -68,13 +68,13 @@ Diff range: `<DIFF_RANGE>`
 Round: <ROUND_N>
 Prior rounds report dir: `<WT_ABS>/tmp/pre-pr-review/`
 
-Read changed files in the worktree, evaluate against your review domain only, and return JSON in `<output_format>` tags:
+Read changed files in the worktree, apply the reviewer skill's General Review Ethos and Reviewer Scope Boundaries, evaluate against your review domain only, and return JSON in `<output_format>` tags:
 
 <output_format>
 {
   "verdict": "pass" | "action_required",
   "items": [
-    { "category": "fix" | "issue", "priority": "P1" | "P2" | "P3" | "P4", "location": "<file>:<line>", "description": "<one line>", "recommendation": "<one line>" }
+    { "category": "fix" | "issue", "priority": "P1" | "P2" | "P3" | "P4", "location": "<stable file path plus symbol/name; no line number>", "description": "<one line; include line or diff-hunk evidence here when useful>", "recommendation": "<one line>" }
   ]
 }
 </output_format>

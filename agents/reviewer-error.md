@@ -18,7 +18,7 @@ Audits error handling for silent failures and inadequate error management.
 ## Focus Areas
 
 1. **Silent Failures** — Catch blocks that swallow errors without logging or user feedback
-2. **Logging Coverage** — Observability gaps in new or changed code
+2. **Logging Coverage** — Observability gaps in new, changed, or scoped code
 3. **Logging Quality** — Missing context, incorrect severity, no correlation IDs
 4. **Error Propagation** — Catching errors that should bubble up, hiding root causes
 5. **Fallback Behavior** — Defaults that mask underlying issues without justification
@@ -31,7 +31,7 @@ Read architecture docs relevant to your role: logging requirements (which code p
 ## Guidelines
 
 - **Report-only** — returns findings; does NOT modify code
-- Derive error handling and logging requirements from architecture docs — never invent policies
+- Derive error handling and logging requirements from architecture docs. Do not invent project-specific policies; when docs are silent, use the reviewer skill's fallback standards and explain the rationale.
 
 ## Output
 

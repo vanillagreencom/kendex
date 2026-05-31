@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "../../../../scripts/pane-respond");
 const PANE_REGISTRY_SCRIPT = resolve(HERE, "../../../../scripts/pane-registry");
+const FLIGHTDECK_STATE = resolve(HERE, "../../../../scripts/flightdeck-state");
 const SHIM_DIR = resolve(HERE, "./tmux-shim");
 
 if (!process.env.TMUX) {
@@ -119,6 +120,73 @@ describe("pane-respond parity (validation)", () => {
 		const b = run(["s:w.0", "hi", "--bogus-flag"]);
 		expect(b.status).toBe(a.status);
 		expect(a.status).toBe(2);
+	});
+
+	test("pi-bridge send timeout reports diagnostics", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-send-timeout-"));
+		const bridge = join(stateDir, "pi-bridge");
+		const socket = join(stateDir, "pi.sock");
+		writeFileSync(bridge, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  state)
+    printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"pi-send-diag","socketPath":${JSON.stringify(socket)}}}'
+    ;;
+  send|answer|reject)
+    sleep 5
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`);
+		chmodSync(bridge, 0o755);
+		const net = require("node:net") as typeof import("node:net");
+		const server = net.createServer();
+		await new Promise<void>((resolveListen, rejectListen) => {
+			server.once("error", rejectListen);
+			server.listen(socket, () => {
+				server.off("error", rejectListen);
+				resolveListen();
+			});
+		});
+		try {
+			const paneId = process.env.TMUX_PANE ?? "";
+			expect(paneId).toMatch(/^%/);
+			const target = (spawnSync("tmux", ["display-message", "-p", "-t", paneId, "#{session_name}:#{window_index}.#{pane_index}"], { encoding: "utf8" }).stdout ?? "").trim();
+			expect(target).toContain(".");
+			const env: Record<string, string> = {
+				...(process.env as Record<string, string>),
+				FD_PI_BRIDGE_READ_TIMEOUT_SEC: "0.1",
+				FLIGHTDECK_RUN_STORE_ROOT: stateDir,
+				FLIGHTDECK_STATE_DIR: stateDir,
+				PI_BRIDGE_BIN: bridge,
+			};
+			expect(spawnSync(FLIGHTDECK_STATE, ["init"], { encoding: "utf8", env }).status).toBe(0);
+			const reg = spawnSync(PANE_REGISTRY_SCRIPT, [
+				"init-entry", "PI-SEND-DIAG",
+				"--title", "Pi send diag",
+				"--kind", "adhoc",
+				"--cwd", process.cwd(),
+				"--window", "1",
+				"--harness", "pi",
+				"--pane-id", paneId,
+				"--pane-target", target,
+				"--pi-bridge-pid", String(process.pid),
+				"--pi-bridge-socket", socket,
+				"--pi-session-id", "pi-send-diag",
+			], { encoding: "utf8", env });
+			expect(reg.status).toBe(0);
+			const r = spawnSync(SCRIPT, [target, "hello", "--harness", "pi"], { encoding: "utf8", env });
+			expect(r.status).toBe(5);
+			expect(r.stderr).toContain("Error: pi-bridge send failed:");
+			expect(r.stderr).toContain("status=null");
+			expect(r.stderr).toContain("error_code=ETIMEDOUT");
+			expect(r.stderr).toContain("error_message=");
+		} finally {
+			await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+			rmSync(stateDir, { force: true, recursive: true });
+		}
 	});
 
 	// Issue #37(A) + round-1 reviewer-error major: pane_id resolution

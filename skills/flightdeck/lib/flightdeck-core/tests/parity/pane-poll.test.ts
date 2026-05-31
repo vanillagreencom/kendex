@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -228,6 +229,84 @@ esac
 				expect(row.tag).toBe("terminal-state-reached");
 				expect(row.detected_pr_number).toBe(172);
 				expect(row.detected_pr_url).toBe("https://github.com/vanillagreencom/vstack/pull/172");
+			} finally {
+				await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+			}
+		} finally {
+			rmSync(dir, { force: true, recursive: true });
+		}
+	});
+
+	test("pi history timeout falls through to tmux fallback hash", async () => {
+		const { chmodSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+		const net = require("node:net") as typeof import("node:net");
+		const { tmpdir } = require("node:os") as typeof import("node:os");
+		const { join } = require("node:path") as typeof import("node:path");
+		const dir = mkdtempSync(join(tmpdir(), "fd-pi-history-timeout-"));
+		const bridgeDir = join(dir, "bin");
+		const statePath = join(dir, "tmux-state.json");
+		const sockPath = join(dir, "pi.sock");
+		const fallbackCapture = "❯ tmux fallback after pi history timeout";
+		try {
+			writeFileSync(statePath, JSON.stringify({
+				panes: {
+					"%213": { capture: fallbackCapture, pane_index: 0, path: dir, window_id: "@23", window_index: 23, window_name: "Pi history timeout" },
+				},
+				session: "test-session",
+				windows: { "@23": { index: 23, name: "Pi history timeout" } },
+			}, null, 2));
+			const { mkdirSync } = require("node:fs") as typeof import("node:fs");
+			mkdirSync(bridgeDir, { recursive: true });
+			const bridge = join(bridgeDir, "pi-bridge");
+			writeFileSync(bridge, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  state)
+    printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1"}}'
+    ;;
+  history)
+    sleep 5
+    ;;
+  *)
+    echo "unexpected pi-bridge command: $*" >&2
+    exit 2
+    ;;
+esac
+`);
+			chmodSync(bridge, 0o755);
+			const server = net.createServer();
+			await new Promise<void>((resolveListen, rejectListen) => {
+				server.once("error", rejectListen);
+				server.listen(sockPath, () => {
+					server.off("error", rejectListen);
+					resolveListen();
+				});
+			});
+			try {
+				const env: Record<string, string> = {
+					...(process.env as Record<string, string>),
+					FD_PI_BRIDGE_READ_TIMEOUT_SEC: "0.1",
+					PATH: `${bridgeDir}:${SHIM_DIR}:${process.env.PATH ?? ""}`,
+					PI_BRIDGE_BIN: bridge,
+					TMUX: "/tmp/tmux-test",
+					TMUX_SHIM_STATE: statePath,
+				};
+				const batch = JSON.stringify([{
+					harness: "pi",
+					issue: "PI-HISTORY-TIMEOUT",
+					kind: "issue",
+					pane_id: "%213",
+					pi_bridge_pid: process.pid,
+					pi_bridge_socket: sockPath,
+				}]);
+				const started = Date.now();
+				const r = spawnSync(SCRIPT, ["--batch", "-"], { encoding: "utf8", env, input: batch });
+				expect(Date.now() - started).toBeLessThan(1500);
+				expect(r.status).toBe(0);
+				const row = JSON.parse(r.stdout.trim());
+				const expectedHash = `sha256:${createHash("sha256").update(`${fallbackCapture}\n`).digest("hex")}`;
+				expect(row.capture_hash).toBe(expectedHash);
+				expect(row.fingerprint_match).toBe(true);
 			} finally {
 				await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 			}

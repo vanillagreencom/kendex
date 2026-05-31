@@ -32,7 +32,7 @@ The workflow for dev agents receiving review fix delegations. Each review item i
 | Dependency | Purpose | Variable |
 |------------|---------|----------|
 | Issue tracker CLI (e.g., `linear` skill) | Issue CRUD, cache, comments, labels | `.agents/skills/linear/scripts/linear.sh` |
-| Reviewer skill | Code-review + QA-review workflows and finding schema | Referenced by name |
+| Reviewer skill | Code-review + QA-review ethos, scope boundaries, workflows, and finding schema | Referenced by name |
 | linear-orch skill | Recommendation-bias patterns | Referenced by name |
 | Decider skill | Decision templates, search CLI, creation workflows | `.agents/skills/decider/scripts/decisions` |
 | Benchmarking | Run benchmarks if a benchmarking skill is installed | Optional |
@@ -42,7 +42,7 @@ The workflow for dev agents receiving review fix delegations. Each review item i
 ### Agent types
 
 - **Dev agents**: `[AGENT_TYPE]` — specialist agents receiving implementation delegations
-- **Review agents**: `[REVIEW_AGENT]` — agents that review specific aspects (security, testing, docs, errors, structure)
+- **Review agents**: `[REVIEW_AGENT]` — agents that review specific aspects (correctness, quality, security, testing, docs, errors, structure)
 - **QA agents**: `[QA_AGENT]` — agents for safety, performance, and architecture review
 
 ### Commit format

@@ -53,6 +53,10 @@ iced = ["iced-rs"]
 
 reviewer-arch = ["reviewer"]
 
+reviewer-correctness = ["reviewer"]
+
+reviewer-quality = ["reviewer"]
+
 reviewer-perf = ["reviewer"]
 
 reviewer-safety = ["reviewer"]

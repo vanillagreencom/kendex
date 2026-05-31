@@ -21802,14 +21802,14 @@ var Session = class {
   /** Add an assistant message with the given content blocks. Returns its uuid. */
   addAssistantMessage(content, opts) {
     const base = this.baseFields();
-    const hasToolUse = content.some((b2) => b2.type === "tool_use");
+    const hasToolUse2 = content.some((b2) => b2.type === "tool_use");
     const payload = {
       id: syntheticMessageId(),
       type: "message",
       role: "assistant",
       model: opts?.model ?? this._model,
       content,
-      stop_reason: opts?.stopReason ?? (hasToolUse ? "tool_use" : "end_turn"),
+      stop_reason: opts?.stopReason ?? (hasToolUse2 ? "tool_use" : "end_turn"),
       stop_sequence: null,
       usage: { input_tokens: 0, output_tokens: 0 }
     };
@@ -21976,7 +21976,7 @@ function readSession(jsonlPath, projectPath) {
 // src/index.ts
 import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync as appendFileSync3, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
+import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
 import { resolve as pathResolve } from "path";
 import { homedir as homedir5 } from "os";
 import { delimiter, dirname as dirname5, join as join5 } from "path";
@@ -22135,25 +22135,53 @@ function assistantProvenancePrefix(msg) {
   return `[Prior Pi assistant response from ${provider ?? api ?? "unknown-provider"}${model ? `/${model}` : ""}]
 `;
 }
+function userMessageToAnthropic(msg) {
+  if (typeof msg.content === "string") return { role: "user", content: msg.content || "[empty]" };
+  if (Array.isArray(msg.content)) {
+    const parts = [];
+    for (const block of msg.content) {
+      if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
+      else if (block.type === "image" && block.data && block.mimeType) parts.push(imageBlockToAnthropic(block));
+    }
+    const kept = parts.filter(Boolean);
+    return { role: "user", content: kept.length ? kept : "[image]" };
+  }
+  return { role: "user", content: "[empty]" };
+}
+function toolResultToAnthropicBlock(msg, sanitizedIds) {
+  const content = toolResultContentToAnthropic(msg.content);
+  return {
+    type: "tool_result",
+    tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds),
+    content: content || "",
+    is_error: msg.isError
+  };
+}
+function hasToolUse(msg) {
+  return msg.role === "assistant" && Array.isArray(msg.content) && msg.content.some((block) => block.type === "toolCall");
+}
 function convertPiMessages(messages, customToolNameToSdk) {
   const anthropicMessages = [];
   const sanitizedIds = /* @__PURE__ */ new Map();
-  for (const msg of messages) {
+  const pushToolResultGroup = (toolMessages) => {
+    if (toolMessages.length === 0) return;
+    anthropicMessages.push({
+      role: "user",
+      content: toolMessages.map((toolMsg) => {
+        const content = toolResultContentToAnthropic(toolMsg.content);
+        return {
+          type: "tool_result",
+          tool_use_id: sanitizeToolId(toolMsg.toolCallId, sanitizedIds),
+          content: content || "",
+          is_error: toolMsg.isError
+        };
+      })
+    });
+  };
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
     if (msg.role === "user") {
-      if (typeof msg.content === "string") {
-        anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
-      } else if (Array.isArray(msg.content)) {
-        const parts = [];
-        for (const block of msg.content) {
-          if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
-          else if (block.type === "image" && block.data && block.mimeType) {
-            parts.push(imageBlockToAnthropic(block));
-          }
-        }
-        anthropicMessages.push({ role: "user", content: parts.filter(Boolean).length ? parts.filter(Boolean) : "[image]" });
-      } else {
-        anthropicMessages.push({ role: "user", content: "[empty]" });
-      }
+      anthropicMessages.push(userMessageToAnthropic(msg));
     } else if (msg.role === "assistant") {
       const content = Array.isArray(msg.content) ? msg.content : [];
       const blocks = [];
@@ -22175,12 +22203,34 @@ function convertPiMessages(messages, customToolNameToSdk) {
       }
       if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
       anthropicMessages.push({ role: "assistant", content: blocks });
+      if (hasToolUse(msg)) {
+        const toolMessages = [];
+        const interleavedUsers = [];
+        let j = i + 1;
+        for (; j < messages.length; j++) {
+          const next = messages[j];
+          if (next.role === "assistant") break;
+          if (next.role === "toolResult") toolMessages.push(next);
+          else if (next.role === "user") interleavedUsers.push(next);
+          else break;
+        }
+        if (toolMessages.length > 0) {
+          pushToolResultGroup(toolMessages);
+          for (const userMsg of interleavedUsers) anthropicMessages.push(userMessageToAnthropic(userMsg));
+          i = j - 1;
+        }
+      }
     } else if (msg.role === "toolResult") {
-      const content = toolResultContentToAnthropic(msg.content);
-      anthropicMessages.push({
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: content || "", is_error: msg.isError }]
-      });
+      const blocks = [];
+      for (; i < messages.length; i++) {
+        const toolMsg = messages[i];
+        if (toolMsg.role !== "toolResult") {
+          i--;
+          break;
+        }
+        blocks.push(toolResultToAnthropicBlock(toolMsg, sanitizedIds));
+      }
+      anthropicMessages.push({ role: "user", content: blocks });
     }
   }
   return { anthropicMessages, sanitizedIds };
@@ -22283,6 +22333,34 @@ function extractAllToolResults(messages) {
 }
 
 // src/query-state.ts
+function normalizeForCompare(value) {
+  if (Array.isArray(value)) return value.map(normalizeForCompare);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      const child = value[key];
+      if (child !== void 0) out[key] = normalizeForCompare(child);
+    }
+    return out;
+  }
+  return value;
+}
+function argsKey(value) {
+  return JSON.stringify(normalizeForCompare(value ?? {}));
+}
+function sameArgs(left, right) {
+  return argsKey(left) === argsKey(right);
+}
+function unique(values) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
 var QueryContext = class {
   // Query-scoped (fully isolated per query)
   activeQuery = null;
@@ -22291,7 +22369,11 @@ var QueryContext = class {
   pendingToolCalls = /* @__PURE__ */ new Map();
   pendingResults = /* @__PURE__ */ new Map();
   turnToolCallIds = [];
-  nextHandlerIdx = 0;
+  turnToolCalls = [];
+  claimedToolCallIds = /* @__PURE__ */ new Set();
+  deliveredToolResultIds = /* @__PURE__ */ new Set();
+  resolvedToolResultIds = /* @__PURE__ */ new Set();
+  reportedToolResultMismatch = false;
   deferredUserMessages = [];
   handledTerminalError = false;
   // Per-turn (reset together)
@@ -22326,6 +22408,95 @@ var QueryContext = class {
     this.turnSawToolCall = false;
     this.handledTerminalError = false;
   }
+  resetToolTracking() {
+    this.turnToolCallIds = [];
+    this.turnToolCalls = [];
+    this.claimedToolCallIds.clear();
+    this.deliveredToolResultIds.clear();
+    this.resolvedToolResultIds.clear();
+    this.reportedToolResultMismatch = false;
+  }
+  recordToolCall(id, toolName, args = {}) {
+    if (!id) return;
+    if (!this.turnToolCallIds.includes(id)) this.turnToolCallIds.push(id);
+    const existing = this.turnToolCalls.find((call) => call.id === id);
+    if (existing) {
+      existing.toolName = toolName;
+      existing.arguments = args;
+      return;
+    }
+    this.turnToolCalls.push({ id, toolName, arguments: args });
+  }
+  updateToolCallArgs(id, args) {
+    if (!id) return;
+    const existing = this.turnToolCalls.find((call) => call.id === id);
+    if (existing) existing.arguments = args;
+  }
+  claimToolCall(toolName, args = {}) {
+    const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
+    const byName = unclaimed.filter((call) => call.toolName === toolName);
+    const exact = byName.filter((call) => sameArgs(call.arguments, args));
+    let chosen;
+    let match = "none";
+    let ambiguous = false;
+    if (exact.length > 0) {
+      chosen = exact[0];
+      match = "tool-args";
+      ambiguous = exact.length > 1;
+    } else if (byName.length === 1) {
+      chosen = byName[0];
+      match = "tool-name";
+    } else {
+      const fallbackId = this.turnToolCallIds.find((id) => !this.claimedToolCallIds.has(id));
+      if (fallbackId) {
+        chosen = this.turnToolCalls.find((call) => call.id === fallbackId) ?? { id: fallbackId, toolName: "unknown", arguments: {} };
+        match = "unclaimed-id";
+        ambiguous = byName.length > 1 || unclaimed.length > 1;
+      }
+    }
+    if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
+    this.claimedToolCallIds.add(chosen.id);
+    return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length };
+  }
+  markToolResultDelivered(id) {
+    if (id) this.deliveredToolResultIds.add(id);
+  }
+  markToolResultResolved(id) {
+    if (id) this.resolvedToolResultIds.add(id);
+  }
+  toolResultProgress() {
+    const expectedIds = unique([
+      ...this.turnToolCalls.map((call) => call.id),
+      ...this.turnToolCallIds
+    ]);
+    const deliveredIds = unique(this.deliveredToolResultIds);
+    const resolvedIds = unique(this.resolvedToolResultIds);
+    const waitingIds = unique(this.pendingToolCalls.keys());
+    const queuedIds = unique(this.pendingResults.keys());
+    const missingDeliveredIds = expectedIds.filter((id) => !this.deliveredToolResultIds.has(id));
+    const unresolvedIds = expectedIds.filter((id) => !this.resolvedToolResultIds.has(id));
+    const affectedIds = /* @__PURE__ */ new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds]);
+    const counts = /* @__PURE__ */ new Map();
+    for (const call of this.turnToolCalls) {
+      if (affectedIds.size > 0 && !affectedIds.has(call.id)) continue;
+      counts.set(call.toolName, (counts.get(call.toolName) ?? 0) + 1);
+    }
+    return {
+      expectedIds,
+      deliveredIds,
+      resolvedIds,
+      waitingIds,
+      queuedIds,
+      missingDeliveredIds,
+      unresolvedIds,
+      toolNames: [...counts.entries()].sort((a, b2) => b2[1] - a[1] || a[0].localeCompare(b2[0])).map(([name, count]) => ({ name, count })),
+      expectedCount: expectedIds.length,
+      deliveredCount: deliveredIds.length,
+      resolvedCount: resolvedIds.length,
+      waitingCount: waitingIds.length,
+      queuedCount: queuedIds.length
+    };
+  }
 };
 var _ctx = new QueryContext();
 var contextStack = [];
@@ -22345,6 +22516,44 @@ function popContext() {
   const parent = contextStack[contextStack.length - 1];
   parent.deferredUserMessages.push(..._ctx.deferredUserMessages);
   _ctx = contextStack.pop();
+}
+
+// src/tool-pairing-audit.ts
+function contentBlocks(content) {
+  return Array.isArray(content) ? content.filter((block) => Boolean(block && typeof block === "object")) : [];
+}
+function toolUses(content) {
+  return contentBlocks(content).filter((block) => block.type === "tool_use" && typeof block.id === "string").map((block) => ({ id: block.id, name: typeof block.name === "string" && block.name ? block.name : "unknown" }));
+}
+function toolResultIds(content) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const block of contentBlocks(content)) {
+    if (block.type === "tool_result" && typeof block.tool_use_id === "string") ids.add(block.tool_use_id);
+  }
+  return ids;
+}
+function findUnpairedToolUses(messages) {
+  const missing = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant") continue;
+    const uses = toolUses(msg.content);
+    if (uses.length === 0) continue;
+    const next = messages[i + 1];
+    const nextUserIndex = next?.role === "user" ? i + 1 : null;
+    const resultIds = nextUserIndex == null ? /* @__PURE__ */ new Set() : toolResultIds(next.content);
+    for (const use of uses) {
+      if (!resultIds.has(use.id)) {
+        missing.push({ id: use.id, toolName: use.name, assistantIndex: i, userIndex: nextUserIndex });
+      }
+    }
+  }
+  return missing;
+}
+function summarizeMissingToolNames(missing) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const item of missing) counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b2) => b2[1] - a[1] || a[0].localeCompare(b2[0])).map(([name, count]) => ({ name, count }));
 }
 
 // src/config.ts
@@ -37246,11 +37455,14 @@ var _piAi = piAi;
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join5(homedir5(), ".pi", "agent", "claude-bridge.log");
-var DIAG_LOG_PATH = join5(homedir5(), ".pi", "agent", "claude-bridge-diag.log");
+var DEFAULT_DIAG_LOG_PATH = join5(homedir5(), ".pi", "agent", "claude-bridge-diag.log");
+function diagLogPath() {
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+}
 if (DEBUG) {
   try {
     mkdirSync3(dirname5(DEBUG_LOG_PATH), { recursive: true });
-    mkdirSync3(dirname5(DIAG_LOG_PATH), { recursive: true });
+    mkdirSync3(dirname5(diagLogPath()), { recursive: true, mode: 448 });
   } catch {
   }
 }
@@ -37264,8 +37476,11 @@ function debug(...args) {
     return JSON.stringify(a);
   };
   const msg = args.map(fmt).join(" ");
-  appendFileSync3(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}
+  try {
+    appendFileSync3(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}
 `);
+  } catch {
+  }
 }
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
@@ -37500,10 +37715,102 @@ function makeCliDebugOptions(tag) {
   };
 }
 function diagDump(label, data) {
-  const ts = (/* @__PURE__ */ new Date()).toISOString();
-  const entry = { ts, moduleInstanceId, label, ...data };
-  appendFileSync3(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
-  debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+  try {
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    const entry = { ts, moduleInstanceId, label, ...data };
+    const path = diagLogPath();
+    try {
+      mkdirSync3(dirname5(path), { recursive: true, mode: 448 });
+    } catch {
+    }
+    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
+    try {
+      chmodSync(path, 384);
+    } catch {
+    }
+    debug(`DIAG: ${label} (see ${path})`);
+  } catch (error51) {
+    debug(`DIAG FAILED: ${label}`, error51);
+  }
+}
+function safeNotify(message, level = "warning") {
+  try {
+    piUI?.notify(message, level);
+  } catch (error51) {
+    debug("notify failed:", error51);
+  }
+}
+function argKeys(args) {
+  return Object.keys(args ?? {}).sort();
+}
+function safeToolCallSummary(calls) {
+  return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
+}
+function compactToolNameSummary(names, limit = 12) {
+  const shown = names.slice(0, limit).map(({ name, count }) => count > 1 ? `${name}\xD7${count}` : name);
+  if (names.length > limit) shown.push(`+${names.length - limit} more`);
+  return shown;
+}
+function reportSyntheticToolResultRepair(missing, context) {
+  try {
+    if (missing.length === 0) return;
+    const toolNames = summarizeMissingToolNames(missing);
+    const toolNameSummary = compactToolNameSummary(toolNames);
+    const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
+    diagDump("repair_tool_pairing_synthetic_results", {
+      count: missing.length,
+      toolNames,
+      sampledToolCallIds,
+      missing: missing.slice(0, 50),
+      ...context
+    });
+    safeNotify(
+      `Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+      "error"
+    );
+  } catch (error51) {
+    debug("reportSyntheticToolResultRepair failed:", error51);
+  }
+}
+function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
+  try {
+    if (queryCtx.reportedToolResultMismatch) return false;
+    const progress = queryCtx.toolResultProgress();
+    const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0;
+    if (!hasMismatch) return false;
+    queryCtx.reportedToolResultMismatch = true;
+    if (sharedSession) {
+      sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+    }
+    const toolNameSummary = compactToolNameSummary(progress.toolNames);
+    diagDump("tool_result_delivery_mismatch", {
+      reason,
+      cwd,
+      progress,
+      activeQueryExists: queryCtx.activeQuery !== null,
+      sharedSession: sharedSession ? {
+        sessionId: sharedSession.sessionId.slice(0, 8),
+        cursor: sharedSession.cursor,
+        needsRebuild: sharedSession.needsRebuild === true,
+        forceRotate: sharedSession.forceRotate === true
+      } : null
+    });
+    safeNotify(
+      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+      "error"
+    );
+    return true;
+  } catch (error51) {
+    debug("reportToolResultMismatch failed:", error51);
+    return false;
+  }
+}
+function __testSetBridgeIntegrityState(state) {
+  if ("ui" in state) piUI = state.ui;
+  if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+}
+function __testGetBridgeIntegrityState() {
+  return { sharedSession };
 }
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
@@ -37763,7 +38070,7 @@ function schedulePersistSharedSession(ctxLike) {
   }, 0);
   timer.unref?.();
 }
-function convertAndImportMessages(session, messages, customToolNameToSdk) {
+function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
   const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
   debug(`convertAndImportMessages: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
   debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m4, i) => {
@@ -37778,7 +38085,17 @@ function convertAndImportMessages(session, messages, customToolNameToSdk) {
       [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
     );
   }
+  const missingToolResults = findUnpairedToolUses(anthropicMessages);
   const repaired = repairToolPairing(anthropicMessages);
+  if (missingToolResults.length > 0) {
+    reportSyntheticToolResultRepair(missingToolResults, {
+      cwd,
+      messageCount: messages.length,
+      anthropicMessageCount: anthropicMessages.length,
+      sessionId: session.sessionId,
+      jsonlPath: session.jsonlPath
+    });
+  }
   if (repaired.length !== anthropicMessages.length) {
     debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} \u2192 ${repaired.length} msgs`);
   }
@@ -37905,7 +38222,7 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
     ...preserveId ? { sessionId: previousSessionId } : {},
     ...modelId ? { model: modelId } : {}
   });
-  convertAndImportMessages(session, priorMessages, customToolNameToSdk);
+  convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
   session.save();
   verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd);
   sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
@@ -37979,18 +38296,40 @@ function buildMcpServers(tools, queryCtx) {
     name: tool.name,
     description: tool.description,
     inputSchema: jsonSchemaToZodShape(tool.parameters),
-    handler: async () => {
-      const toolCallId = queryCtx.turnToolCallIds[queryCtx.nextHandlerIdx++];
-      if (!toolCallId) debug(`WARNING: mcp handler ${tool.name} has no toolCallId (idx=${queryCtx.nextHandlerIdx - 1}, available=${queryCtx.turnToolCallIds.length})`);
+    handler: async (args) => {
+      const mappedArgs = mapToolArgs(tool.name, args);
+      const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
+      const toolCallId = claim.toolCallId;
+      if (!toolCallId) {
+        debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
+        diagDump("tool_handler_unmatched", {
+          toolName: tool.name,
+          argKeys: argKeys(mappedArgs),
+          available: claim.available,
+          turnToolCallIds: queryCtx.turnToolCallIds,
+          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
+        });
+        return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
+      }
+      if (claim.match !== "tool-args" || claim.ambiguous) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
+      }
       if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
         const result = queryCtx.pendingResults.get(toolCallId);
         queryCtx.pendingResults.delete(toolCallId);
+        queryCtx.markToolResultResolved(toolCallId);
         debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
         return result;
       }
       debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
       return new Promise((resolve4) => {
-        queryCtx.pendingToolCalls.set(toolCallId, { toolName: tool.name, resolve: resolve4 });
+        queryCtx.pendingToolCalls.set(toolCallId, {
+          toolName: tool.name,
+          resolve: (result) => {
+            queryCtx.markToolResultResolved(toolCallId);
+            resolve4(result);
+          }
+        });
       });
     }
   }));
@@ -38069,8 +38408,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
   c2.turnSawStreamEvent = true;
   const event = message.event;
   if (event?.type === "message_start") {
-    c2.turnToolCallIds = [];
-    c2.nextHandlerIdx = 0;
+    c2.resetToolTracking();
     if (event.message?.usage) updateUsage(c2.turnOutput, event.message.usage, model);
     return;
   }
@@ -38084,11 +38422,12 @@ function processStreamEvent(message, customToolNameToPi, model) {
       c2.currentPiStream.push({ type: "thinking_start", contentIndex: c2.turnBlocks.length - 1, partial: c2.turnOutput });
     } else if (event.content_block?.type === "tool_use") {
       c2.turnSawToolCall = true;
-      c2.turnToolCallIds.push(event.content_block.id);
+      const mappedName = mapToolName(event.content_block.name, customToolNameToPi);
+      c2.recordToolCall(event.content_block.id, mappedName, {});
       c2.turnBlocks.push({
         type: "toolCall",
         id: event.content_block.id,
-        name: mapToolName(event.content_block.name, customToolNameToPi),
+        name: mappedName,
         arguments: event.content_block.input ?? {},
         partialJson: "",
         index: event.index
@@ -38135,6 +38474,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
         block.name,
         parsePartialJson(block.partialJson, block.arguments)
       );
+      c2.updateToolCallArgs(block.id, block.arguments);
       delete block.partialJson;
       c2.currentPiStream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: c2.turnOutput });
     }
@@ -38161,8 +38501,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   if (c2.turnSawStreamEvent) return;
   const assistantMsg = message.message;
   if (!assistantMsg?.content) return;
-  c2.turnToolCallIds = [];
-  c2.nextHandlerIdx = 0;
+  c2.resetToolTracking();
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b2) => b2.type).join(",")}`);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
@@ -38182,12 +38521,13 @@ function processAssistantMessage(message, model, customToolNameToPi) {
     } else if (block.type === "tool_use") {
       ensureTurnStarted();
       c2.turnSawToolCall = true;
-      c2.turnToolCallIds.push(block.id);
-      const mappedArgs = mapToolArgs(mapToolName(block.name, customToolNameToPi), block.input);
+      const mappedName = mapToolName(block.name, customToolNameToPi);
+      const mappedArgs = mapToolArgs(mappedName, block.input);
+      c2.recordToolCall(block.id, mappedName, mappedArgs);
       c2.turnBlocks.push({
         type: "toolCall",
         id: block.id,
-        name: mapToolName(block.name, customToolNameToPi),
+        name: mappedName,
         arguments: mappedArgs
       });
       const idx = c2.turnBlocks.length - 1;
@@ -38284,30 +38624,32 @@ function streamClaudeAgentSdk(model, context, options) {
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
   debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
   if (ctx().activeQuery) {
-    ctx().currentPiStream = stream;
-    ctx().resetTurnState(model);
+    const queryCtx = ctx();
+    queryCtx.currentPiStream = stream;
+    queryCtx.resetTurnState(model);
     const allResults = extractAllToolResults2(context);
-    debug(`provider: tool results, ${allResults.length} results, ${ctx().pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
+    debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
     for (const result of allResults) {
       const id = result.toolCallId;
-      if (id && ctx().pendingToolCalls.has(id)) {
-        const pending = ctx().pendingToolCalls.get(id);
-        ctx().pendingToolCalls.delete(id);
+      queryCtx.markToolResultDelivered(id);
+      if (id && queryCtx.pendingToolCalls.has(id)) {
+        const pending = queryCtx.pendingToolCalls.get(id);
+        queryCtx.pendingToolCalls.delete(id);
         debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, JSON.stringify(result.content).slice(0, 200));
         pending.resolve(result);
       } else if (id) {
-        ctx().pendingResults.set(id, result);
-        debug(`provider: queued result [${id}] (${ctx().pendingResults.size} pending)`);
+        queryCtx.pendingResults.set(id, result);
+        debug(`provider: queued result [${id}] (${queryCtx.pendingResults.size} pending)`);
       } else {
         debug(`WARNING: tool result without toolCallId, cannot match`);
       }
-      if (ctx().pendingToolCalls.size > 0 && ctx().pendingResults.size > 0) {
-        debug(`BUG: both maps non-empty! handlers=${ctx().pendingToolCalls.size} results=${ctx().pendingResults.size}`);
+      if (queryCtx.pendingToolCalls.size > 0 && queryCtx.pendingResults.size > 0) {
+        debug(`BUG: both maps non-empty! handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
       }
     }
-    if (ctx().pendingToolCalls.size > 0) {
-      debug(`WARNING: ${ctx().pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
-      piUI?.notify(`Claude bridge: ${ctx().pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
+    if (queryCtx.pendingToolCalls.size > 0) {
+      debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
+      piUI?.notify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
     }
     if (lastMsgRole === "user") {
       const userPrompt = extractUserPrompt(context.messages);
@@ -38317,7 +38659,7 @@ function streamClaudeAgentSdk(model, context, options) {
       }
     }
     if (sharedSession) sharedSession.cursor = context.messages.length;
-    ctx().latestCursor = Math.max(ctx().latestCursor, context.messages.length);
+    queryCtx.latestCursor = Math.max(queryCtx.latestCursor, context.messages.length);
     return stream;
   }
   const lastMsg = context.messages[context.messages.length - 1];
@@ -38340,6 +38682,7 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().pendingResults.clear();
   ctx().deferredUserMessages = [];
   ctx().resetTurnState(model);
+  ctx().resetToolTracking();
   ctx().latestCursor = 0;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
   const cwd = options?.cwd ?? process.cwd();
@@ -38422,6 +38765,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const onAbort = () => {
     wasAborted = true;
     abortCtx.deferredUserMessages = [];
+    reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
     for (const pending of abortCtx.pendingToolCalls.values()) {
       pending.resolve({ content: [{ type: "text", text: "Operation aborted" }] });
     }
@@ -38459,6 +38803,7 @@ function streamClaudeAgentSdk(model, context, options) {
         const steerPrompt = ctx().deferredUserMessages.shift();
         debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
         ctx().resetTurnState(model);
+        ctx().resetToolTracking();
         const resumeId = sharedSession?.sessionId;
         if (!resumeId) {
           debug(`WARNING: no session to resume for deferred message, dropping`);
@@ -38509,6 +38854,7 @@ function streamClaudeAgentSdk(model, context, options) {
   }).finally(() => {
     if (options?.signal) options.signal.removeEventListener("abort", onAbort);
     if (ctx().activeQuery === sdkQuery) {
+      reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: wasAborted || options?.signal?.aborted });
       for (const pending of ctx().pendingToolCalls.values()) {
         pending.resolve({ content: [{ type: "text", text: "Query ended" }] });
       }
@@ -38615,6 +38961,9 @@ function index_default(pi) {
     if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx2);
   });
   const markRebuild = (event) => {
+    if (ctx().activeQuery) {
+      reportToolResultMismatch(ctx(), event, sharedSession?.cwd ?? process.cwd());
+    }
     if (sharedSession) {
       debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
       sharedSession = { ...sharedSession, needsRebuild: true };
@@ -38640,12 +38989,15 @@ function index_default(pi) {
 export {
   CLAUDE_BRIDGE_TOOL_ISOLATION,
   DISALLOWED_BUILTIN_TOOLS,
+  __testGetBridgeIntegrityState,
+  __testSetBridgeIntegrityState,
   classifyClaudeExecutableBytes,
   index_default as default,
   formatResetTimestamp,
   isExtraUsageRequiredMessage,
   mapToolName,
   preflightClaudeExecutable,
+  reportToolResultMismatch,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,
