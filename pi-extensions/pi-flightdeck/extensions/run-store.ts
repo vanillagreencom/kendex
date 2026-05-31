@@ -127,7 +127,10 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
 			continue;
 		}
-		const key = stripped.slice(0, eq).trim();
+		const rawKey = stripped.slice(0, eq);
+		const rawValue = stripped.slice(eq + 1);
+		const key = rawKey.trim();
+		const hasAssignmentWhitespace = rawKey !== key || /^\s/.test(rawValue);
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
 			continue;
@@ -135,9 +138,16 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		if (key !== "FLIGHTDECK_RUN_STORE_ROOT" && hasRunStoreAssignment) {
 			throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
 		}
-		const rawValue = stripped.slice(eq + 1).trim();
+		if (hasAssignmentWhitespace) {
+			const reason = `unsupported whitespace around assignment at ${path}:${lineNumber}`;
+			values.delete(key);
+			unsupported.set(key, reason);
+			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw new Error(reason);
+			continue;
+		}
+		const valueText = rawValue.trim();
 		try {
-			const value = parseDotEnvValue(rawValue, (ref) => {
+			const value = parseDotEnvValue(valueText, (ref) => {
 				const unsupportedReason = unsupported.get(ref);
 				if (unsupportedReason) throw new Error(`unsupported variable reference ${ref}: ${unsupportedReason}`);
 				return values.get(ref) ?? process.env[ref];
