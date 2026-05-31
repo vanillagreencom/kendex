@@ -96,16 +96,17 @@ Set `agentScope: "project"`. Reviewers carry `deny-tools: subagent,…` and are 
 For each reviewer in the selected list, exactly one task must return. For each return:
 
 1. Parse the `<output_format>` JSON.
-   - On parse failure or empty output, synthesize `{verdict:"action_required", items:[{category:"fix", priority:"P2", location:"-", description:"reviewer <NAME> returned unparseable output", recommendation:"rerun reviewer"}]}` and continue.
-2. If the launcher reports a launch failure (non-zero exit, missing return, harness error), synthesize `{verdict:"action_required", items:[{category:"fix", priority:"P1", location:"-", description:"reviewer <NAME> launch failed: <stderr>", recommendation:"investigate launcher"}]}`. Do NOT silently treat a missing reviewer as `pass`.
-3. Persist raw output (or synthesized object) to `<WT_ABS>/tmp/pre-pr-review/round-<N>-<REVIEWER>.json`. If the write fails, set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"failed to persist round-<N>-<REVIEWER>.json: <stderr>"}` and return.
+   - On parse failure or empty output, retry that reviewer once with the same task and a one-line reminder to return valid `<output_format>` JSON.
+   - If the retry also fails, set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"reviewer <NAME> returned unparseable output after retry"}`, log activity `pre-pr-review-error round=<N> step=collect reviewer=<NAME>`, and return. Do NOT synthesize reviewer infrastructure failures as `category:"fix"` code blockers and do not send them to the child fix path.
+2. If the launcher reports a launch failure (non-zero exit, missing return, harness error), retry that reviewer once. If the retry also fails, set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"reviewer <NAME> launch failed: <stderr>"}`, log activity `pre-pr-review-error round=<N> step=delegate reviewer=<NAME>`, and return. Do NOT silently treat a missing reviewer as `pass`, and do NOT route launcher failures to the child as code blockers.
+3. Persist raw validated reviewer output to `<WT_ABS>/tmp/pre-pr-review/round-<N>-<REVIEWER>.json`. If the write fails, set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-error", prompt_text:"failed to persist round-<N>-<REVIEWER>.json: <stderr>"}` and return.
 4. Append to `entry.domain.<KEY>.review_reports[]`: `{round:<N>, reviewer:<NAME>, verdict:<V>, path:<JSON_PATH>, item_count:<C>}`.
 
 Aggregate verdict:
 
 - `pass` when no item with `category == "fix"` exists across reviewers, regardless of per-reviewer verdict. A reviewer that returned `action_required` but produced only `category == "issue"` items is non-blocking; the items are recorded as non-blocking suggestions in the approval marker.
 - `action_required` before or at the soft cap when any item has `category == "fix"`. Reviewers that return non-pass verdicts without any items are also treated as blocking (their items list is empty, but the verdict signals a failure mode the reviewer could not enumerate).
-- Repeated-loop severity mode (`<N> > MAX`): `action_required` only when a `category == "fix"` item has `priority == "P1"`, `priority == "P2"`, or explicit safety-critical language in `description` / `recommendation` (`safety-critical`, `security`, `data loss`, `data corruption`, `race`, `deadlock`, `panic`, `crash`, `auth bypass`, `secret leak`). Treat `P3` / `P4` fixes as non-blocking suggestions and include them in the approval marker; they do not prevent `pre-pr-approved` or opening a PR.
+- Repeated-loop severity mode (`<N> > MAX`): `action_required` only when a `category == "fix"` item has `priority == "P1"`, `priority == "P2"`, or explicit safety-critical language in `description` / `recommendation` (`safety-critical`, `security`, `data loss`, `data corruption`, `race`, `deadlock`, `panic`, `crash`, `auth bypass`, `secret leak`). Convert downgraded `P3` / `P4` fix items into aggregate `category:"issue"` entries with `original_category:"fix"`, original priority, reviewer, location, description, and recommendation preserved. Include them in the approval marker; they do not prevent `pre-pr-approved` or opening a PR.
 
 ---
 

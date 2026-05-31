@@ -55,6 +55,7 @@ The generic state enum is canonical. Issue-mode entries may carry one of the iss
 | `prompting` | `prompting` | `substate=<tag>` |
 | `submitting` | `submitting` | linear-orch in progress |
 | `merge-ready` | `ready` | `domain.issue.phase = "merge-ready"` |
+| `merge-blocked-permission` | `ready` | `domain.issue.phase = "merge-blocked-permission"`, `merge_blocked_permission` recorded; keep monitoring authoritative GitHub state |
 | `merged` | `complete` | `domain.issue.outcome = "merged"` |
 | `aborted` | `cancelled` | `domain.issue.outcome = "aborted"` |
 | `dead` | `dead` | pane/window lost |
@@ -89,6 +90,7 @@ POLL_INPUT=$(jq '[.[]
    - `audit-relation-prompt`
    - `merge-now`
    - `merge-ready-but-unknown`
+   - `merge-permission-blocked`
    - `force-merge-confirm`
    - `external-fix-suggestions`
    - `cycle-fix-suggestions`
@@ -99,6 +101,18 @@ POLL_INPUT=$(jq '[.[]
 4. **Generic tags on issue entries** — `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, and `pi-bg-task-exit` first route through `session-handle-prompt.md`. After it returns, resume this issue loop with domain state intact.
 
 `terminal-state-reached` on an issue entry invokes `⤵ workflows/linear/close-issue.md <ISSUE_ID>` after the generic completion signal. `close-issue.md` performs the two-signal verification, records the issue outcome, and tears down the window when safe.
+
+Merge-permission monitoring: every watch cycle, before yielding on a `state="ready"` entry whose `domain.issue.phase == "merge-blocked-permission"` or `domain.issue.merge_blocked_permission` is set, run:
+
+```bash
+gh pr view <PR> --json state,mergeStateStatus,reviewDecision,statusCheckRollup,mergeCommit
+```
+
+- `state === "MERGED"` and `mergeCommit !== null` → invoke `workflows/linear/close-issue.md <ISSUE_ID>`; do not wait for another pane prompt.
+- Still `CLEAN` / `APPROVED` / required checks `SUCCESS|SKIPPED` → update `merge_blocked_permission.last_checked_at`, keep `state="ready"`, and leave it eligible for § 5 monitoring/merge retry. Do not set `paused_for_user`.
+- Token/permission changed and direct merge can now proceed → clear `domain.issue.merge_blocked_permission`, set `state="merge-ready"` and `domain.issue.phase="merge-ready"`, then route to `merge-plan.md`.
+- PR becomes `UNKNOWN`, `DIRTY`, `BEHIND`, check-failed, or review-blocked → clear or update the marker and route to the existing deterministic handler. Pause only if that handler reaches a novel/destructive condition.
+- `gh` failure follows the GitHub CLI failure policy; no merge, close, or cleanup proceeds on unavailable GitHub state.
 
 ---
 
@@ -124,7 +138,7 @@ The issue handler surface is limited to PR/Linear/worktree workflow logic: clean
 
 ## § 5: Merge planning
 
-When at least one issue reaches `merge-ready` (`state = "merge-ready"` plus `domain.issue.phase = "merge-ready"`):
+When at least one issue reaches `merge-ready` (`state = "merge-ready"` plus `domain.issue.phase = "merge-ready"`) or is `state="ready"` with `domain.issue.phase="merge-blocked-permission"`:
 
 1. Invoke `⤵ workflows/linear/merge-plan.md`.
 2. Build/rebuild `pr-conflict-graph` from live PR file lists.

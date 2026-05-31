@@ -45,6 +45,15 @@ export const PRE_FOOTER_RULES: Rule[] = [
 		matched: "post-cancel idle",
 		pattern: /Awaiting user (direction|input)|User declined to answer questions|standing by for further instructions|awaiting your response\b/,
 	},
+	{
+		tag: "merge-permission-blocked",
+		matched: "merge permission denied",
+		// Wrapper failure blocks have a stable two-line shape and usually no
+		// TUI footer. Match before the footer gate, but require the block to be
+		// at the end of the assistant buffer so quoted issue-body examples do
+		// not trigger the handler.
+		pattern: /(?:^|\r?\n)BLOCKED PR #\d+[^\r\n]*gh pr merge failed\r?\n[ \t]*[^\r\n]*(MergePullRequest|does not have the correct permissions|permission denied|Resource not accessible by integration)\s*$/i,
+	},
 ];
 
 // Footer-gate detection. When the gate is enabled (default), the buffer
@@ -71,11 +80,6 @@ export const POST_FOOTER_RULES: Rule[] = [
 		tag: "bash-permission-prompt",
 		matched: "permission prompt",
 		pattern: /Bash command requires permission|Allow command\?|Run this command\?|requires permission to run/,
-	},
-	{
-		tag: "merge-permission-blocked",
-		matched: "merge permission denied",
-		pattern: /(?:BLOCKED PR #\d+[\s\S]{0,160})?gh pr merge failed[\s\S]{0,500}(MergePullRequest|does not have the correct permissions|permission denied|Resource not accessible by integration)/i,
 	},
 	{
 		tag: "terminal-state-reached",

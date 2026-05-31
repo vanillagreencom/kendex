@@ -129,7 +129,7 @@ export function classifyBuffer(buf: string, opts: ClassifyOpts = {}): string {
 	// Built-in stub. Order matters for parity with bash daemon classifier
 	// fallback (line 422 onwards).
 	if (/merged.*please end|terminal.state|please end the session/i.test(buf)) return "terminal-state-reached";
-	if (/(?:BLOCKED PR #\d+[\s\S]{0,160})?gh pr merge failed[\s\S]{0,500}(MergePullRequest|does not have the correct permissions|permission denied|Resource not accessible by integration)/i.test(buf)) return "merge-permission-blocked";
+	if (/(?:^|\r?\n)BLOCKED PR #\d+[^\r\n]*gh pr merge failed\r?\n[ \t]*[^\r\n]*(MergePullRequest|does not have the correct permissions|permission denied|Resource not accessible by integration)\s*$/i.test(buf)) return "merge-permission-blocked";
 	if (/force.?push|--force-with-lease/i.test(buf)) return "force-push-prompt";
 	if (/merge now|merge.?ready|ready to merge/i.test(buf)) return "merge-now";
 	if (/cleanup|delete worktree|keep worktree/i.test(buf)) return "cleanup-prompt";

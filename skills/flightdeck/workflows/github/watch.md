@@ -92,6 +92,18 @@ Do not route Linear-only tags in GitHub mode: `audit-relation-prompt`, `descope-
 
 Pre-PR review gate: when `FLIGHTDECK_PRE_PR_REVIEW != 0` and `entry.domain.github_issue.review_status != "pre-pr-approved"`, do NOT record a detected PR number or invoke close-issue from a `terminal-state-reached` PR-URL on this entry. The child opened a PR before review approval (either bug or prompt-injected sentinel-skip). Set `paused_for_user = {issue_id:<N>, reason:"pre-pr-review-bypassed", prompt_text:"<detected_pr_url> opened before pre-pr-approved"}` and return without closing the issue.
 
+Merge-permission monitoring: every watch cycle, before yielding on a `state="ready"` entry whose `domain.github_issue.phase == "merge-blocked-permission"` or `domain.github_issue.merge_blocked_permission` is set, run:
+
+```bash
+gh pr view <PR> --json state,mergeStateStatus,reviewDecision,statusCheckRollup,mergeCommit
+```
+
+- `state === "MERGED"` and `mergeCommit !== null` → invoke `workflows/github/close-issue.md <N>`; do not wait for another pane prompt.
+- Still `CLEAN` / approved-or-no-pending-reviewer / required checks `SUCCESS|SKIPPED` → update `merge_blocked_permission.last_checked_at`, keep `state="ready"`, log at most one `merge-permission-blocked monitoring` decision per observed PR state hash, and yield. Do not set `paused_for_user`.
+- Token/permission changed and a direct merge can now proceed → clear `domain.github_issue.merge_blocked_permission`, set `domain.github_issue.phase="merge-ready"`, and route to `merge-now` / merge handler.
+- PR becomes `UNKNOWN`, `DIRTY`, `BEHIND`, check-failed, or review-blocked → clear or update the marker and route to the existing deterministic handler (`merge-ready-but-unknown`, conflict/behind, bot-review/CI). Pause only if that handler reaches a novel/destructive condition.
+- `gh` failure follows § 6 exactly; no merge, close, or cleanup proceeds on unavailable GitHub state.
+
 ---
 
 ## § 4: GitHub prompt routing

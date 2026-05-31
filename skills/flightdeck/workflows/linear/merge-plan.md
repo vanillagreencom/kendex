@@ -1,12 +1,12 @@
 # Workflow: `linear merge-plan` — Conflict Graph + Merge Order
 
-Compute the file-intersection conflict graph for all `merge-ready` PRs, sort by smallest-scope-first, execute the next safe merge.
+Compute the file-intersection conflict graph for all `merge-ready` PRs plus permission-blocked ready PRs, sort by smallest-scope-first, execute or monitor the next safe merge.
 
 Issue-mode workflow only. It is invoked by `workflows/linear/watch.md` after the generic `workflows/shared/session-watch.md` loop has reconciled entries and routed domain-neutral prompts through `workflows/shared/session-handle-prompt.md`.
 
-**Inputs**: master state (read-only at entry); the implicit list of `merge-ready` issues.
+**Inputs**: master state (read-only at entry); the implicit list of `merge-ready` issues plus `state="ready"` entries whose `domain.issue.phase == "merge-blocked-permission"`.
 
-**Pre-conditions**: `watch.md` § 4 detected ≥1 issue in `merge-ready` state.
+**Pre-conditions**: `watch.md` § 4 detected ≥1 issue in `merge-ready` state or permission-blocked monitoring state.
 
 **Post-condition**: at most one merge executed per invocation; the merged issue transitions to `merged`; conflict graph and merge queue updated for the remaining set.
 
@@ -14,9 +14,9 @@ Issue-mode workflow only. It is invoked by `workflows/linear/watch.md` after the
 
 ## § 1: Build Conflict Graph
 
-1. Collect PR numbers for all issues currently in `merge-ready`:
+1. Collect PR numbers for all issues currently merge-plannable (`state == "merge-ready"` or `state == "ready"` with `domain.issue.phase == "merge-blocked-permission"`):
    ```
-   pane-registry list | jq '.[] | select(.state == "merge-ready") | .pr_number' | sort -u
+   pane-registry list | jq '.[] | select(.state == "merge-ready" or (.state == "ready" and .domain.issue.phase == "merge-blocked-permission")) | .pr_number' | sort -u
    ```
 2. Build the graph:
    ```
@@ -97,7 +97,7 @@ Polls `state` and `mergeStateStatus` correctly (never `mergeable`, which stays `
 After each merge:
 
 1. Remove the merged issue from `merge_queue`.
-2. Recompute the graph against the remaining `merge-ready` issues — main has moved; some PRs may now be `BEHIND` and need rebase before becoming truly merge-ready again.
+2. Recompute the graph against the remaining merge-plannable issues (`merge-ready` and `merge-blocked-permission`) — main has moved; some PRs may now be `BEHIND` and need rebase before becoming truly merge-ready again.
 3. If any PR's state flipped to `BEHIND` post-merge, transition that issue back to `submitting` (its agent will detect the conflict on next sync and prompt for rebase, which the `rebase-multi-choice` handler covers).
 4. Return to § 1 if more issues remain in the queue.
 
@@ -105,13 +105,13 @@ After each merge:
 
 ## § 5: Empty Queue
 
-When `merge_queue` is empty after a merge or no `merge-ready` issues remain at entry, return to `watch.md` § 5. The watch loop continues polling for new merge-ready transitions.
+When `merge_queue` is empty after a merge or no merge-plannable issues remain at entry, return to `watch.md` § 5. The watch loop continues polling for new merge-ready transitions and permission-blocked markers.
 
 ---
 
 ## Skip-If
 
-- No issue is currently in `merge-ready` state at entry → return immediately.
+- No issue is currently in `merge-ready` or `merge-blocked-permission` monitoring state at entry → return immediately.
 
 ## Returns
 

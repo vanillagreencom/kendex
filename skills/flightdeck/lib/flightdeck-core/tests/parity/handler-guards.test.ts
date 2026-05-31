@@ -16,6 +16,7 @@ const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue
 const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
 const LINEAR_CLOSE_DOC = resolve(HERE, "../../../../workflows/linear/close-issue.md");
 const LINEAR_MERGE_DOC = resolve(HERE, "../../../../workflows/linear/merge-plan.md");
+const LINEAR_WATCH_DOC = resolve(HERE, "../../../../workflows/linear/watch.md");
 const PLAN_START_DOC = resolve(HERE, "../../../../workflows/plan/start.md");
 const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.md");
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
@@ -24,8 +25,6 @@ const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.m
 const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
 const SCHEMA_DOC = resolve(HERE, "../../../../SCHEMA.md");
 const PLAN_FILE_FIXTURES = resolve(HERE, "../fixtures/plan-files");
-const ACTUAL_PHASE_STYLE_PLAN = resolve(HERE, "../../../../../../docs/plans/flightdeck-app-run-history-and-pi-status-plan.md");
-
 const GENERIC_PROMPT = `Choose the next action.
 
 1. Continue
@@ -373,6 +372,13 @@ function expectTag(input: string, args: string[], expected: string): ReturnType<
 	return result;
 }
 
+function lateLoopBlocks(item: { category: string; priority: string; description?: string; recommendation?: string }): boolean {
+	if (item.category !== "fix") return false;
+	if (item.priority === "P1" || item.priority === "P2") return true;
+	return /safety-critical|security|data loss|data corruption|race|deadlock|panic|crash|auth bypass|secret leak/i
+		.test(`${item.description ?? ""}\n${item.recommendation ?? ""}`);
+}
+
 describe("handler domain guards", () => {
 	for (const { tag, fixture: fixtureName, extraArgs } of ISSUE_ONLY_CASES) {
 		test(`${tag} on adhoc escalates, on issue routes normally`, () => {
@@ -433,16 +439,43 @@ describe("handler domain guards", () => {
 		expect(doc).toContain('category == "fix"');
 		expect(doc).toContain('priority ∈ {"P1","P2"}');
 		expect(doc).toContain("explicit safety-critical language");
-		expect(doc).toContain("Treat `P3` / `P4` fixes as non-blocking suggestions");
+		expect(doc).toContain("Convert downgraded `P3` / `P4` fix items into aggregate `category:\"issue\"` entries");
 		expect(doc).toContain("Downgraded late-loop suggestions");
+		expect(doc).toContain('original_category:"fix"');
+		expect(doc).toContain("Do NOT synthesize reviewer infrastructure failures as `category:\"fix\"` code blockers");
 		expect(doc).toContain("focused-blocker-round-<N>.md");
 		expect(doc).not.toContain('reason:"pre-pr-review-loop-stalled"');
 	});
 
+	test("pre-pr late-loop severity matrix downgrades low-priority nits", () => {
+		const cases = [
+			{ item: { category: "fix", priority: "P1", description: "broken invariant" }, blocks: true },
+			{ item: { category: "fix", priority: "P2", description: "missing monitoring branch" }, blocks: true },
+			{ item: { category: "fix", priority: "P3", description: "naming nit" }, blocks: false },
+			{ item: { category: "fix", priority: "P4", description: "doc wording" }, blocks: false },
+			{ item: { category: "fix", priority: "P4", description: "security: secret leak possible" }, blocks: true },
+			{ item: { category: "issue", priority: "P1", description: "follow-up" }, blocks: false },
+		];
+		for (const { item, blocks } of cases) expect(lateLoopBlocks(item)).toBe(blocks);
+		const doc = readFileSync(PRE_PR_REVIEW_DOC, "utf8");
+		expect(doc).toContain('priority ∈ {"P1","P2"}');
+		expect(doc).toContain("Convert downgraded `P3` / `P4` fix items into aggregate `category:\"issue\"` entries");
+	});
+
+	test("merge permission block wakes without footer gate and avoids quoted body-only text", () => {
+		const blocked = fixture("31a-no-footer-merge-permission-blocked.buffer");
+		expectTag(blocked, ["--entry-kind", "issue"], "merge-permission-blocked");
+		expectTag(blocked, [], "domain-mismatch");
+		expectTag(fixture("31b-no-footer-merge-permission-body-only.buffer"), ["--entry-kind", "issue"], "rendering");
+	});
+
 	test("merge permission denial records monitoring state instead of pausing", () => {
 		const github = readFileSync(GITHUB_HANDLE_DOC, "utf8");
+		const githubWatch = readFileSync(GITHUB_WATCH_DOC, "utf8");
 		const plan = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		const planWatch = readFileSync(PLAN_WATCH_DOC, "utf8");
 		const linear = readFileSync(LINEAR_MERGE_DOC, "utf8");
+		const linearWatch = readFileSync(LINEAR_WATCH_DOC, "utf8");
 		for (const doc of [github, plan, linear]) {
 			expect(doc).toContain("merge-permission-blocked");
 			expect(doc).toContain("MergePullRequest");
@@ -450,10 +483,22 @@ describe("handler domain guards", () => {
 			expect(doc).toContain('state === "MERGED"');
 			expect(doc).toContain("mergeCommit !== null");
 		}
+		for (const watch of [githubWatch, planWatch, linearWatch]) {
+			expect(watch).toContain("merge-permission-blocked");
+			expect(watch).toContain("merge_blocked_permission");
+			expect(watch).toContain('state === "MERGED"');
+			expect(watch).toContain("mergeCommit !== null");
+			expect(watch).toContain("Merge-permission monitoring");
+			expect(watch).toContain("every watch cycle");
+			expect(watch).toContain("Do not set `paused_for_user`");
+		}
 		expect(github).toContain("do not set `paused_for_user`");
-		expect(github).toContain("pane-registry set-state <N> ready");
+		expect(github).toContain("flightdeck-state write-entry <N>");
+		expect(github).toContain("merge-permission-blocked-persist-failed");
 		expect(plan).toContain('set entry `state="ready"`');
+		expect(plan).toContain("checked `flightdeck-state write-entry` persistence");
 		expect(linear).toContain("do not set `paused_for_user`");
+		expect(linear).toContain("permission-blocked ready PRs");
 	});
 
 	test("github close-issue requires authoritative merged PR and merge commit", () => {
@@ -653,18 +698,22 @@ describe("handler domain guards", () => {
 		expect(planFile).toContain("It should not stop just because `## Phases` or `## Documentation follow-ups` are not on a fixed allowlist");
 	});
 
-	test("actual app/run-history plan remains valid explicit decomposition", () => {
-		const parsed = parsePlanContract(readFileSync(ACTUAL_PHASE_STYLE_PLAN, "utf8"));
+	test("tracked phase-style fixture remains valid explicit decomposition", () => {
+		const parsed = parsePlanContract(planFixture("phase-style-valid.md"));
 		expect(parsed.mode).toBe("explicit-items");
 		expect(parsed.reason).toBeUndefined();
-		expect(parsed.items.map((item) => item.title)).toContain("Phase 1 — Design and compatibility layer");
-		expect(parsed.items.some((item) => item.title.startsWith("Phase 6.7 — App focus/open helper, icon title, and launch order"))).toBe(true);
-		expect(parsed.items.map((item) => item.title)).toContain("Phase 12 — No-op confirmations for upstream-only fixes");
-		for (const requiredSafeH2 of ["pi-extension-scope-after-the-rus", "cli-script-changes", "data-model-additions"]) {
+		expect(parsed.items.map((item) => item.title)).toEqual([
+			"Phase 1 — Run identity",
+			"Phase 2 — State command support",
+			"Phase 8 — Codex provider shim",
+			"Phase 9 — Responsive skills rows",
+		]);
+		for (const requiredSafeH2 of ["problem", "goals", "lifecycle-changes"]) {
 			expect(parsed.allH2Ids).toContain(requiredSafeH2);
 			expect(parsed.items.map((item) => item.id)).not.toContain(requiredSafeH2);
 		}
-		expect(parsed.items.length).toBe(15);
+		expect(parsed.omittedOrchestrationContext).toContain("Pre-execution context (updated 2026-05-19)");
+		expect(parsed.items.length).toBe(4);
 	});
 
 	test("explicit fixture parses exact phase items and excludes context-only H2s", () => {
