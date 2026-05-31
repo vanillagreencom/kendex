@@ -693,6 +693,44 @@ test("project .env run-store assignment with whitespace around equals fails clos
 	}
 });
 
+test("project .env unsupported run-store assignment forms fail closed", () => {
+	const cases = [
+		"FLIGHTDECK_RUN_STORE_ROOT+=/tmp/unsupported\n",
+		"FLIGHTDECK_RUN_STORE_ROOT[0]=/tmp/unsupported\n",
+	];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const envText of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), envText, "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported FLIGHTDECK_RUN_STORE_ROOT assignment/, envText.trim());
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
+			} finally {
+				resetRunStoreCacheForTests();
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
 test("project .env run-store expansion uses sequential assignment order", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;

@@ -121,7 +121,7 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) continue;
 		const stripped = line.replace(/^export\s+/, "").trim();
-		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT\s*=/.test(stripped);
+		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT(?:\s*(?:\[|\+?=)|\S*=)/.test(stripped);
 		const eq = stripped.indexOf("=");
 		if (eq <= 0) {
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
