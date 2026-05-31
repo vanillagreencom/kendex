@@ -656,11 +656,12 @@ test("project .env shell override wins over inherited stale FLIGHTDECK_RUN_STORE
 	}
 });
 
-test("source directives in project .env fail closed without legacy fallback", () => {
+test("unrelated source directives are ignored while project run-store override still loads", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-source-"));
 	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
-	writeFileSync(join(projectRoot, ".env.local"), "source ./flightdeck.env\n", "utf8");
+	writeFileSync(join(projectRoot, ".env.local"), `source ./flightdeck.env\nCUSTOM_ROOT=${runStoreRoot}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n`, "utf8");
 	writeFileSync(join(projectRoot, "flightdeck.env"), "FLIGHTDECK_RUN_STORE_ROOT=/tmp/should-not-be-sourced\n", "utf8");
 	resetRunStoreCacheForTests();
 	try {
@@ -671,17 +672,23 @@ test("source directives in project .env fail closed without legacy fallback", ()
 			paused_for_user: null,
 			terminated: false,
 		});
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
 
 		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
 
-		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
-		assert.match(snapshot.masterError ?? "", /\.env load failed/);
-		assert.match(snapshot.masterError ?? "", /unsupported shell syntax/);
+		assert.equal(snapshot.masterStatePath, activeStatePath);
 		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
 	} finally {
 		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
 		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
 		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
 		cleanup();
 	}
 });

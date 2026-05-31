@@ -112,8 +112,13 @@ function nonEmpty(value: unknown): string | undefined {
 	return trimmed ? trimmed : undefined;
 }
 
+interface DotEnvAssignment {
+	rawValue: string;
+	lineNumber: number;
+}
+
 function parseDotEnvNonExecuting(text: string, path: string): Map<string, string> {
-	const values = new Map<string, string>();
+	const assignments = new Map<string, DotEnvAssignment>();
 	let lineNumber = 0;
 	for (const rawLine of text.split(/\r?\n/)) {
 		lineNumber += 1;
@@ -121,16 +126,36 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		if (!line || line.startsWith("#")) continue;
 		const stripped = line.replace(/^export\s+/, "").trim();
 		const eq = stripped.indexOf("=");
-		if (eq <= 0) throw new Error(`unsupported shell syntax at ${path}:${lineNumber}`);
+		if (eq <= 0) continue;
 		const key = stripped.slice(0, eq).trim();
-		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid assignment key at ${path}:${lineNumber}`);
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
 		const rawValue = stripped.slice(eq + 1).trim();
-		values.set(key, parseDotEnvValue(rawValue, values, path, lineNumber));
+		assignments.set(key, { lineNumber, rawValue });
+	}
+	const values = new Map<string, string>();
+	const resolving = new Set<string>();
+	const resolveKey = (key: string): string | undefined => {
+		if (values.has(key)) return values.get(key);
+		const assignment = assignments.get(key);
+		if (!assignment) return process.env[key];
+		if (resolving.has(key)) throw new Error(`circular variable reference ${key} at ${path}:${assignment.lineNumber}`);
+		resolving.add(key);
+		try {
+			const value = parseDotEnvValue(assignment.rawValue, resolveKey, path, assignment.lineNumber);
+			values.set(key, value);
+			return value;
+		} finally {
+			resolving.delete(key);
+		}
+	};
+	if (assignments.has("FLIGHTDECK_RUN_STORE_ROOT")) {
+		const value = resolveKey("FLIGHTDECK_RUN_STORE_ROOT");
+		values.set("FLIGHTDECK_RUN_STORE_ROOT", value ?? "");
 	}
 	return values;
 }
 
-function parseDotEnvValue(raw: string, values: Map<string, string>, path: string, lineNumber: number): string {
+function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
 	if (raw === "") return "";
 	let text = raw;
 	let expand = true;
@@ -155,13 +180,13 @@ function parseDotEnvValue(raw: string, values: Map<string, string>, path: string
 		}
 	}
 	if (!expand) return text;
-	return expandEnvValue(text, values, path, lineNumber);
+	return expandEnvValue(text, lookup, path, lineNumber);
 }
 
-function expandEnvValue(text: string, values: Map<string, string>, path: string, lineNumber: number): string {
+function expandEnvValue(text: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
 	return text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced: string | undefined, bare: string | undefined) => {
 		const key = braced ?? bare ?? "";
-		const value = values.get(key) ?? process.env[key];
+		const value = lookup(key);
 		if (value === undefined) throw new Error(`undefined variable ${key} at ${path}:${lineNumber}`);
 		return value;
 	});
