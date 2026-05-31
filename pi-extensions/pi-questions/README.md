@@ -2,11 +2,11 @@
 
 ![Questions workflow](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-questions/assets/questions-workflow.gif)
 
-Structured inline questions for Pi. Multi-tab categories, free-form answers, and bridge-driven replies.
+Structured inline questions for Pi. Multi-tab categories, built-in free-text fallback answers, and bridge-driven replies.
 
 ## Highlights
 
-- `question` tool for multiple-choice question tabs with optional free-form answers.
+- `question` tool for multiple-choice question tabs with a bottom `Something else` free-text fallback row by default.
 - Editor-area UI by default; optional floating overlay.
 - OpenCode-style question UI: tab hints and highlighted active rows.
 - Compact answered tool output lists every category answer and expands inline to show each question with the selected choice marked.
@@ -47,8 +47,7 @@ Restart Pi after installation.
         { "label": "Stop here", "description": "Wait for operator guidance." }
       ],
       "multiple": false,
-      "allowCustom": true,
-      "customLabel": "Type issue ID"
+      "customLabel": "Something else"
     }
   ]
 }
@@ -66,7 +65,13 @@ Cancelled:
 { "requestId": "que_example", "cancelled": true }
 ```
 
-Set `allowCustom: true` to add a free-type row. Optional fields: `customLabel`, `customPlaceholder`.
+Every tab includes a bottom free-text fallback row by default, labelled `Something else` unless `customLabel` overrides it. Agents no longer need to set `allowCustom` for a basic escape hatch; the legacy flag is still accepted for compatibility, and `allowCustom: false` does not disable the fallback. `customPlaceholder` customizes the input hint.
+
+When the user types fallback text, the result uses the same answer shape as fixed options:
+
+```json
+{ "requestId": "que_example", "answers": [["Use issue ABC-123 instead"]] }
+```
 
 Do not include a final `Confirm`, `Submit`, `Review`, or `Done` question tab in the payload; the UI adds its own submit tab when needed.
 
