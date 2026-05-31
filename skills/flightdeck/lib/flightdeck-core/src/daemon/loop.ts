@@ -728,13 +728,22 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		const entryPid = entry?.adapterMeta?.piPid;
 		const entrySocket = entry?.adapterMeta?.piSocket;
 		const entrySessionId = entry?.adapterMeta?.piSessionId;
-		const rawPid = entryPid && entryPid !== "null" ? entryPid : cached?.pid ?? "";
-		const socket = entrySocket && entrySocket !== "null" ? entrySocket : cached?.socket ?? "";
-		const sessionId = entrySessionId && entrySessionId !== "null" ? entrySessionId : cached?.sessionId;
+		// Once subscriber binding succeeds, its validated pid/socket/session tuple
+		// is authoritative for busy-stall probes. Registry metadata can be stale
+		// after rebind/discovery and may point at a responsive sibling Pi pane.
+		const rawPid = cached?.pid ?? (entryPid && entryPid !== "null" ? entryPid : "");
+		const socket = cached?.socket ?? (entrySocket && entrySocket !== "null" ? entrySocket : "");
+		const sessionId = cached?.sessionId ?? (entrySessionId && entrySessionId !== "null" ? entrySessionId : undefined);
 		const pid = Number(rawPid);
 		if (!Number.isFinite(pid) || pid <= 0) return { reason: "missing-pi-bridge-pid", responsive: false, sessionId, socketPath: socket || undefined };
 		const probe = piBridgeStateProbe(pid, socket);
-		if (probe.ok) return { reason: "ok", responsive: true, sessionId: probe.sessionId ?? sessionId, socketPath: (probe.socketPath ?? socket) || undefined };
+		if (probe.ok) {
+			const actualSessionId = probe.sessionId ?? "";
+			if (sessionId && actualSessionId !== sessionId) {
+				return { reason: "session-mismatch", responsive: false, sessionId: actualSessionId, socketPath: (probe.socketPath ?? socket) || undefined };
+			}
+			return { reason: "ok", responsive: true, sessionId: probe.sessionId ?? sessionId, socketPath: (probe.socketPath ?? socket) || undefined };
+		}
 		return { reason: probe.reason, responsive: false, sessionId, socketPath: socket || undefined };
 	}
 

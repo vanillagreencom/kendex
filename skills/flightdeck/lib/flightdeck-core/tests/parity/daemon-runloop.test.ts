@@ -927,15 +927,52 @@ exit 1
 		const activityPath = join(stateDir, "activity-busy-stall.jsonl");
 		const fakeDir = join(stateDir, "fake-busy-stall");
 		mkdirSync(fakeDir, { recursive: true });
+		const net = require("node:net") as typeof import("node:net");
+		const realSocket = join(stateDir, "pi-real.sock");
+		const staleSocket = join(stateDir, "pi-stale.sock");
+		const stateCountFile = join(stateDir, "pi-real-state-count");
+		const realServer = net.createServer();
+		const staleServer = net.createServer();
+		await new Promise<void>((resolveListen, rejectListen) => {
+			let ready = 0;
+			const done = () => { ready += 1; if (ready === 2) resolveListen(); };
+			realServer.once("error", rejectListen);
+			staleServer.once("error", rejectListen);
+			realServer.listen(realSocket, () => { realServer.off("error", rejectListen); done(); });
+			staleServer.listen(staleSocket, () => { staleServer.off("error", rejectListen); done(); });
+		});
 		const bridgeBin = join(fakeDir, "pi-bridge");
 		writeFileSync(bridgeBin, `#!/usr/bin/env bash
 set -euo pipefail
+real_socket=${JSON.stringify(realSocket)}
+stale_socket=${JSON.stringify(staleSocket)}
+count_file=${JSON.stringify(stateCountFile)}
 case "\${1:-}" in
   list)
-    printf '%s\n' '[]'
+    printf '%s\n' '[{"pid":${process.pid},"cwd":${JSON.stringify(process.cwd())},"sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}]'
     ;;
   state)
+    args=" $* "
+    if [[ "$args" == *"$stale_socket"* ]]; then
+      printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"stale-session","socketPath":${JSON.stringify(staleSocket)}}}'
+      exit 0
+    fi
+    count=0
+    [[ -f "$count_file" ]] && count=$(cat "$count_file")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$count_file"
+    if (( count == 1 )); then
+      printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}}'
+      exit 0
+    fi
     sleep 5
+    ;;
+  questions)
+    printf '{"success":true,"data":{"questions":[]}}\n'
+    ;;
+  stream)
+    printf '%s\n' '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"busy-session","socketPath":${JSON.stringify(realSocket)}}}'
+    sleep 30
     ;;
   *)
     exit 2
@@ -951,7 +988,7 @@ esac
 		expect(innerPaneId).toMatch(/^%/);
 		await sleep(500);
 		const registryBin = join(fakeDir, "pane-registry");
-		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_session_id: "busy-session" }]);
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_bridge_socket: staleSocket, pi_session_id: "busy-session" }]);
 		writeFileSync(registryBin, `#!/usr/bin/env bash
 case "\${1:-}" in
   list)
@@ -961,7 +998,7 @@ case "\${1:-}" in
     printf '{"id":"busy-entry","kind":"workflow"}\n'
     ;;
   pi-bridge-args)
-    printf -- '--pid %s\n' ${process.pid}
+    printf -- '--pid %s --socket %s\n' ${process.pid} ${JSON.stringify(staleSocket)}
     ;;
   refresh-window-names)
     printf '{"updated":[],"cleared":[],"warnings":[]}\n'
@@ -1031,10 +1068,16 @@ esac
 					&& wakeText.includes('"tag":"pi-busy-stall"');
 			}, 8000);
 			expect(sawBusyStall).toBe(true);
+			const busyRows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+			const busyRow = busyRows.find((row) => row.tag === "pi-busy-stall");
+			expect(busyRow?.details?.pi_socket).toBe(realSocket);
+			expect(busyRow?.details?.pi_socket).not.toBe(staleSocket);
 		} finally {
 			tmuxKillPaneFor(masterPane);
 			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
 			expect(loopExited).toBe(true);
+			await new Promise<void>((resolveClose) => realServer.close(() => resolveClose()));
+			await new Promise<void>((resolveClose) => staleServer.close(() => resolveClose()));
 			for (const [key, value] of Object.entries({
 				FD_BUSY_STALL_CPU_PCT: saved.busyCpu,
 				FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC: saved.busyGit,
