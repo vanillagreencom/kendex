@@ -396,9 +396,13 @@ function shellExecutableName(word: string): string {
 function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "add" | "commit"): boolean {
 	if (!commandWord) return false;
 	const rawText = commandWord.text;
-	const variableCommand = new RegExp(`(?:^|[\\s;&|({!])\\$(?:[0-9]+|[A-Za-z_][A-Za-z0-9_]*|\\{(?:[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\\})\\s+${verb}(?=$|[\\s;&|){}])`);
+	const variableCommand = new RegExp(`(?:^|[\\s;&|({!])\\$(?:[0-9]+|[A-Za-z_][A-Za-z0-9_]*|\\{[^}]+\\})\\s+(?:${verb}|\\$\\{[^}]*${verb}[^}]*\\})(?=$|[\\s;&|){}])`);
 	if (variableCommand.test(rawText)) return true;
-	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(rawText) && /(?:\$\(|`|\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{(?:@|\*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\}))/.test(rawText)) return true;
+	if (/shopt\s+-s\s+expand_aliases/.test(rawText)) {
+		const alias = /alias\s+([A-Za-z_][A-Za-z0-9_]*)=git/.exec(rawText);
+		if (alias && new RegExp(`(?:^|[\\s;&|({!])${alias[1]}\\s+${verb}(?=$|[\\s;&|){}])`).test(rawText)) return true;
+	}
+	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(rawText) && /(?:\$\(|`|\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\}))/.test(rawText)) return true;
 	let text = rawText;
 	if (text.startsWith("$")) text = text.slice(1);
 	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(text) && /\$(?:@|\*|[0-9]|[A-Za-z_][A-Za-z0-9_]*|\{(?:@|\*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)\})/.test(text)) return true;
@@ -414,9 +418,10 @@ function dynamicGitVerbSyntax(command: string, verb: "add" | "commit"): boolean 
 	const boundary = `(?:^|[\\s;&|({!])`;
 	const end = `(?=$|[\\s;&|){}])`;
 	const fieldSplitGit = new RegExp(`${boundary}git(?:\\$IFS|\\$\\{IFS\\})(?:\\s+)?(?:${verb}|\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\{[A-Za-z_][A-Za-z0-9_]*\\}))${end}`);
-	const variableGit = new RegExp(`${boundary}\\$(?:[0-9]+|[A-Za-z_][A-Za-z0-9_]*|\\{[^}]+\\})\\s+${verb}${end}`);
-	const commandSubGit = new RegExp(`${boundary}(?:\\$\\([^)]*git[^)]*\\)|\`[^\`]*git[^\`]*\`)\\s+${verb}${end}`);
-	return fieldSplitGit.test(normalized) || variableGit.test(normalized) || commandSubGit.test(normalized);
+	const variableGit = new RegExp(`${boundary}\\$(?:[0-9]+|[A-Za-z_][A-Za-z0-9_]*|\\{[^}]+\\})\\s+(?:${verb}|\\$\\{[^}]*${verb}[^}]*\\}|\\$[A-Za-z_][A-Za-z0-9_]*)${end}`);
+	const commandSubGit = new RegExp(`${boundary}(?:\\$\\([^)]*git[^)]*\\)|\`[^\`]*git[^\`]*\`)(?:\\$IFS|\\$\\{IFS\\}|\\s+)${verb}${end}`);
+	const commandSubFull = new RegExp(`${boundary}(?:\\$\\([^)]*git[^)]*${verb}[^)]*\\)|\`[^\`]*git[^\`]*${verb}[^\`]*\`)(?:\\s+[^;&|(){}]+)*${end}`);
+	return fieldSplitGit.test(normalized) || variableGit.test(normalized) || commandSubGit.test(normalized) || commandSubFull.test(normalized);
 }
 
 function countShellDispatchVerb(command: string, verb: "add" | "commit"): number {
@@ -655,9 +660,13 @@ function resolvedCommandText(word: ShellWord, variables: ShellTextVariables): st
 function dynamicCommandStartGitVerb(word: ShellWord, next: ShellWord | undefined, verb: "add" | "commit", variables: ShellTextVariables): boolean {
 	if (!word.dynamic) return false;
 	if (new RegExp(`^git(?:\\$IFS|\\$\\{IFS\\})(?:${verb}|\\s+${verb})$`).test(word.text)) return true;
+	const commandSub = /^(?:\$\([^)]*git[^)]*\)|`[^`]*git[^`]*`)/.test(word.text);
+	if (commandSub && (word.text.includes(verb) || new RegExp(`(?:\\$IFS|\\$\\{IFS\\})${verb}$`).test(word.text) || next?.text === verb || next?.dynamic)) return true;
 	const fieldSplitVar = /^git(?:\$IFS|\$\{IFS\})(?:\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\})$/.exec(word.text);
 	if (fieldSplitVar) return (variables.get(fieldSplitVar[1] ?? fieldSplitVar[2]) ?? verb) === verb;
-	if (next?.text === verb && /^(?:\$\(|`|\$[A-Za-z_][A-Za-z0-9_]*$|\$\{[^}]+\}$)/.test(word.text)) return true;
+	if (next && (next.text === verb || next.dynamic)) {
+		if (/^(?:\$\(|`|\$[A-Za-z_][A-Za-z0-9_]*$|\$\{[^}]+\}$)/.test(word.text)) return true;
+	}
 	return false;
 }
 
@@ -752,14 +761,37 @@ function recordGitConfigMutation(tokens: ShellToken[], gitIndex: number, textVar
 	}
 	if (!isWord(tokens[index]) || (tokens[index] as ShellWord).text.toLowerCase() !== "config") return { recorded: false, next: index };
 	index += 1;
-	while (isWord(tokens[index]) && (tokens[index] as ShellWord).text.startsWith("-")) index += 1;
+	while (isWord(tokens[index])) {
+		const option = tokens[index] as ShellWord;
+		if (["--file", "-f", "--global", "--system", "--local", "--worktree", "--blob", "--type", "--get", "--get-all"].includes(option.text)) {
+			const takesValue = ["--file", "-f", "--blob", "--type"].includes(option.text);
+			index += takesValue && isWord(tokens[index + 1]) ? 2 : 1;
+			continue;
+		}
+		if (option.text.startsWith("--file=") || option.text.startsWith("--blob=") || option.text.startsWith("--type=")) {
+			index += 1;
+			continue;
+		}
+		if (option.text.startsWith("-") && option.text !== "--") {
+			index += 1;
+			continue;
+		}
+		break;
+	}
 	if (!isWord(tokens[index])) return { recorded: false, next: index };
-	const key = (tokens[index] as ShellWord).text;
-	const alias = /^alias\.([^=]+)$/i.exec(key);
+	const keyToken = tokens[index] as ShellWord;
+	const key = resolvedCommandText(keyToken, textVariables) ?? keyToken.text;
+	if (keyToken.dynamic && !resolvedCommandText(keyToken, textVariables)) textVariables.set("__GIT_CONFIG_UNKNOWN", "1");
+	const keyLower = key.toLowerCase();
+	if (/^include(?:if\..*)?\.path$/.test(keyLower)) {
+		textVariables.set("__GIT_CONFIG_UNKNOWN", "1");
+		return { recorded: true, next: index + 1 };
+	}
+	const alias = /^alias\.([^=]+)$/.exec(keyLower);
 	if (!alias) return { recorded: false, next: index + 1 };
 	const value = isWord(tokens[index + 1]) ? (tokens[index + 1] as ShellWord).text : null;
 	if (value === null || (tokens[index + 1] as ShellWord).dynamic) textVariables.set("__GIT_CONFIG_UNKNOWN", "1");
-	else textVariables.set(`__GIT_ALIAS_${alias[1].toLowerCase()}`, value);
+	else textVariables.set(`__GIT_ALIAS_${alias[1]}`, value);
 	return { recorded: true, next: value === null ? index + 1 : index + 2 };
 }
 
@@ -786,10 +818,13 @@ function parseGitTarget(
 	const aliases = new Map<string, string | null>();
 	let aliasConfigMayDefineUnknown = collectEnvConfigAliases(textVariables, aliases);
 	const recordConfig = (config: ShellWord, fromConfigEnv = false) => {
-		const configLower = config.text.toLowerCase();
-		if (config.dynamic && config.text.includes("=")) aliasConfigMayDefineUnknown = true;
+		const resolved = resolvedCommandText(config, textVariables);
+		if (config.dynamic && !resolved) aliasConfigMayDefineUnknown = true;
+		const configText = resolved ?? config.text;
+		const configLower = configText.toLowerCase();
+		if (config.dynamic && configText.includes("=")) aliasConfigMayDefineUnknown = true;
 		if (/^include(?:if\..*)?\.path(?:=|$)/.test(configLower)) aliasConfigMayDefineUnknown = true;
-		recordInlineAlias(config.text, aliases, textVariables, fromConfigEnv);
+		recordInlineAlias(configText, aliases, textVariables, fromConfigEnv);
 	};
 	let j = gitIndex + 1;
 
@@ -1089,6 +1124,27 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			} else {
 				recordAssignment(token, ctx.cwd, variables);
 			}
+			continue;
+		}
+
+		if (commandStart && token.text === "export") {
+			let j = i + 1;
+			while (isWord(tokens[j])) {
+				const exported = tokens[j] as ShellWord;
+				if (exported.text.startsWith("-")) {
+					j += 1;
+					continue;
+				}
+				if (isAssignment(exported.text)) {
+					recordTextAssignment(exported, textVariables);
+					if (exported.text.startsWith("GIT_DIR=") || exported.text.startsWith("GIT_WORK_TREE=")) recordAssignment(exported, ctx.cwd, variables);
+				}
+				j += 1;
+			}
+			i = Math.max(i, j - 1);
+			pending = pendingCommand("other", cloneContext(ctx));
+			commandStart = false;
+			markCommandConsumed();
 			continue;
 		}
 
