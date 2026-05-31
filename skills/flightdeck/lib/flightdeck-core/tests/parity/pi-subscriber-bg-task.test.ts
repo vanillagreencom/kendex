@@ -32,9 +32,10 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
-const PROMPT_CLASSIFY = resolve(HERE, "../../../../scripts/prompt-classify");
+const PROMPT_CLASSIFY = resolve(HERE, "../../src/bin/prompt-classify.ts");
 
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
+function shQuote(value: string): string { return `'${value.replace(/'/g, `'\\''`)}'`; }
 
 // Build a subscriber env that:
 //   - explicitly removes PI_BRIDGE_BIN (pi_resolve_bridge_bin in the
@@ -405,13 +406,18 @@ esac
 `;
 			writeFileSync(bridgeBin, bridgeScript);
 			chmodSync(bridgeBin, 0o755);
+			const classifierBin = join(bridgeDir, "prompt-classify-wrapper");
+			writeFileSync(classifierBin, `#!/usr/bin/env bash
+exec ${shQuote(process.execPath)} ${shQuote(PROMPT_CLASSIFY)} "$@"
+`);
+			chmodSync(classifierBin, 0o755);
 
 			const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
 			const parentPid = fakeParent.pid!;
 			let subPid = 0;
 			try {
 				const env = subscriberEnv(bridgeDir, stateDir, {
-					CLASSIFIER: PROMPT_CLASSIFY,
+					CLASSIFIER: classifierBin,
 					FD_ENTRY_HARNESS: "pi",
 					FD_ENTRY_KIND: entryKind,
 				});
@@ -444,6 +450,8 @@ esac
 				expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
 				const subLog = readFileSync(join(stateDir, `daemon.log.pi-sub-${safePane}`), "utf8");
 				expect(subLog).toContain(`entry_kind=${entryKind}`);
+				expect(subLog).not.toContain("[classifier-error]");
+				if (entryKind === "adhoc") expect(subLog).toContain("[classifier-warn]");
 				return ev;
 			} finally {
 				if (subPid) {
@@ -463,6 +471,75 @@ esac
 		test("non-issue agent_end marker remains domain-mismatch", async () => {
 			const ev = await runMarkerCase("adhoc", "%283");
 			expect(ev.classifier_tag).toBe("domain-mismatch");
+		});
+
+		test("classifier failures log context and degrade to rendering", async () => {
+			const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-classifier-error-"));
+			stateDirs.push(stateDir);
+			const wakeLog = join(stateDir, "wake-events.log");
+			const bridgeDir = join(stateDir, "bin");
+			mkdirSync(bridgeDir, { recursive: true });
+			const bridgeBin = join(bridgeDir, "pi-bridge");
+			writeFileSync(bridgeBin, `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions) echo '{"success":true,"data":{"questions":[]}}' ;;
+  stream)
+    echo '{"type":"event","event":"agent_end","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"done"}]}}}'
+    sleep 30
+    ;;
+esac
+`);
+			chmodSync(bridgeBin, 0o755);
+			const classifierBin = join(bridgeDir, "bad-classifier");
+			writeFileSync(classifierBin, `#!/usr/bin/env bash
+echo 'classifier exploded' >&2
+exit 7
+`);
+			chmodSync(classifierBin, 0o755);
+
+			const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+			const parentPid = fakeParent.pid!;
+			let subPid = 0;
+			try {
+				const env = subscriberEnv(bridgeDir, stateDir, {
+					CLASSIFIER: classifierBin,
+					FD_ENTRY_HARNESS: "pi",
+					FD_ENTRY_KIND: "issue",
+				});
+				const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%284", "1184283", "", String(parentPid)], {
+					env,
+					stdio: "ignore",
+					detached: true,
+				});
+				subPid = sub.pid!;
+
+				const deadline = Date.now() + 8000;
+				let rows: any[] = [];
+				while (Date.now() < deadline) {
+					if (existsSync(wakeLog)) {
+						rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+						if (rows.some((row) => row.last_assistant_text === "done")) break;
+					}
+					await sleep(100);
+				}
+
+				const ev = rows.find((row) => row.last_assistant_text === "done");
+				expect(ev).toBeTruthy();
+				expect(ev.classifier_tag).toBe("rendering");
+				const subLog = readFileSync(join(stateDir, "daemon.log.pi-sub-284"), "utf8");
+				expect(subLog).toContain("[classifier-error]");
+				expect(subLog).toContain("pane=%284");
+				expect(subLog).toContain("rc=7");
+				expect(subLog).toContain("entry_kind=issue");
+				expect(subLog).toContain("classifier exploded");
+			} finally {
+				if (subPid) {
+					try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+					try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+				}
+				try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+				await sleep(50);
+			}
 		});
 	});
 

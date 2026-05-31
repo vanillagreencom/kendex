@@ -44,13 +44,33 @@ OC_BACKOFF_MAX_SEC="${OC_BACKOFF_MAX_SEC:-16}"
 CLASSIFIER="${CLASSIFIER:-}"
 
 classify_adapter_text() {
-  local text="$1" tag
+  local text="$1" pane_id="${2:-}" sub_log="${3:-/dev/null}" tag
   if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
     local classifier_args=(--no-footer-gate)
     [[ -n "${FD_ENTRY_KIND:-}" ]] && classifier_args+=(--entry-kind "$FD_ENTRY_KIND")
     [[ -n "${FD_ENTRY_HARNESS:-}" ]] && classifier_args+=(--entry-harness "$FD_ENTRY_HARNESS")
-    tag=$(printf '%s' "$text" | "$CLASSIFIER" "${classifier_args[@]}" 2>/dev/null)
-    [[ -z "$tag" ]] && tag="rendering"
+    local classifier_err_file classifier_rc classifier_stderr
+    classifier_err_file=$(mktemp -t fd-classifier-err.XXXXXX)
+    tag=$(printf '%s' "$text" | "$CLASSIFIER" "${classifier_args[@]}" 2>"$classifier_err_file")
+    classifier_rc=$?
+    classifier_stderr=$(tr '\n' ' ' < "$classifier_err_file" 2>/dev/null | tail -c 400)
+    rm -f "$classifier_err_file" 2>/dev/null || true
+    if (( classifier_rc != 0 )); then
+      printf '%s [classifier-error] pane=%s rc=%s tag=%s entry_kind=%s entry_harness=%s stderr=%s\n' \
+        "$(date -Iseconds)" "${pane_id:-unknown}" "$classifier_rc" "${tag:-}" "${FD_ENTRY_KIND:-}" "${FD_ENTRY_HARNESS:-}" "${classifier_stderr:-<empty>}" \
+        >> "$sub_log" 2>/dev/null || true
+      tag="rendering"
+    elif [[ -n "$classifier_stderr" ]]; then
+      printf '%s [classifier-warn] pane=%s tag=%s entry_kind=%s entry_harness=%s stderr=%s\n' \
+        "$(date -Iseconds)" "${pane_id:-unknown}" "${tag:-}" "${FD_ENTRY_KIND:-}" "${FD_ENTRY_HARNESS:-}" "$classifier_stderr" \
+        >> "$sub_log" 2>/dev/null || true
+    fi
+    if [[ -z "$tag" ]]; then
+      printf '%s [classifier-empty] pane=%s entry_kind=%s entry_harness=%s\n' \
+        "$(date -Iseconds)" "${pane_id:-unknown}" "${FD_ENTRY_KIND:-}" "${FD_ENTRY_HARNESS:-}" \
+        >> "$sub_log" 2>/dev/null || true
+      tag="rendering"
+    fi
   else
     tag="rendering"
   fi
@@ -137,7 +157,7 @@ oc_subscriber_loop() {
         hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
         if [[ "$hash" != "$last_hash" ]]; then
           response_changed=1
-          tag=$(classify_adapter_text "$last_text")
+          tag=$(classify_adapter_text "$last_text" "$pane_id" "$sub_log")
           text_excerpt=$(printf '%s' "$last_text" | awk 'BEGIN{RS=""} {print substr($0,1,1024); exit}')
           printf '%s [oc-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
             "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "${#last_text}" \
@@ -228,7 +248,7 @@ cc_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      tag=$(classify_adapter_text "$last_text")
+      tag=$(classify_adapter_text "$last_text" "$pane_id" "$sub_log")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [cc-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
@@ -790,7 +810,7 @@ pi_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      tag=$(classify_adapter_text "$last_text")
+      tag=$(classify_adapter_text "$last_text" "$pane_id" "$sub_log")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [pi-sub-emit] pane=%s hash=%s tag=%s text_len=%s entry_kind=%s\n' \
@@ -895,7 +915,7 @@ cx_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      tag=$(classify_adapter_text "$last_text")
+      tag=$(classify_adapter_text "$last_text" "$pane_id" "$sub_log")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [cx-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
