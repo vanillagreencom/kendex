@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
+const PROMPT_CLASSIFY = resolve(HERE, "../../../../scripts/prompt-classify");
 
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
 
@@ -373,6 +374,96 @@ sleep 30
 			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
 			await sleep(50);
 		}
+	});
+
+	describe("pre-PR sentinel adapter classification (vstack#282)", () => {
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+
+		async function runMarkerCase(entryKind: string, paneId: string): Promise<Record<string, any>> {
+			const safePane = paneId.replace(/[^A-Za-z0-9_-]/g, "");
+			const stateDir = mkdtempSync(join(tmpdir(), `fd-pi-pre-pr-${entryKind}-`));
+			stateDirs.push(stateDir);
+			const wakeLog = join(stateDir, "wake-events.log");
+			const bridgeDir = join(stateDir, "bin");
+			mkdirSync(bridgeDir, { recursive: true });
+			const bridgeBin = join(bridgeDir, "pi-bridge");
+			const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  state)
+    echo '{"data":{"isIdle":false,"hasPendingMessages":false}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"agent_end","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+			writeFileSync(bridgeBin, bridgeScript);
+			chmodSync(bridgeBin, 0o755);
+
+			const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+			const parentPid = fakeParent.pid!;
+			let subPid = 0;
+			try {
+				const env = subscriberEnv(bridgeDir, stateDir, {
+					CLASSIFIER: PROMPT_CLASSIFY,
+					FD_ENTRY_HARNESS: "pi",
+					FD_ENTRY_KIND: entryKind,
+				});
+				const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", paneId, "1184282", "", String(parentPid)], {
+					env,
+					stdio: "ignore",
+					detached: true,
+				});
+				subPid = sub.pid!;
+
+				const deadline = Date.now() + 8000;
+				let rows: any[] = [];
+				while (Date.now() < deadline) {
+					if (existsSync(wakeLog)) {
+						rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+						if (rows.some((row) => row.last_assistant_text === marker)) break;
+					}
+					await sleep(100);
+				}
+
+				try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+				try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+				const ev = rows.find((row) => row.last_assistant_text === marker);
+				expect(ev).toBeTruthy();
+				expect(ev.pane_id).toBe(paneId);
+				expect(ev.harness).toBe("pi");
+				expect(ev.entry_kind).toBe(entryKind);
+				expect(ev.entry_harness).toBe("pi");
+				expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+				const subLog = readFileSync(join(stateDir, `daemon.log.pi-sub-${safePane}`), "utf8");
+				expect(subLog).toContain(`entry_kind=${entryKind}`);
+				return ev;
+			} finally {
+				if (subPid) {
+					try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+					try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+				}
+				try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+				await sleep(50);
+			}
+		}
+
+		test("issue agent_end marker routes to pre-pr-ready-for-review", async () => {
+			const ev = await runMarkerCase("issue", "%282");
+			expect(ev.classifier_tag).toBe("pre-pr-ready-for-review");
+		});
+
+		test("non-issue agent_end marker remains domain-mismatch", async () => {
+			const ev = await runMarkerCase("adhoc", "%283");
+			expect(ev.classifier_tag).toBe("domain-mismatch");
+		});
 	});
 
 
