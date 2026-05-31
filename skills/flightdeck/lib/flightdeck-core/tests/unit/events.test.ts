@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { appendEvent, isCanonicalTag } from "../../src/daemon/events.ts";
+import { appendEvent, eventDedupKey, isCanonicalTag } from "../../src/daemon/events.ts";
 
 let dir = "";
 function path(n: string): string { return join(dir, n); }
@@ -47,6 +47,24 @@ describe("appendEvent", () => {
 		expect(lines.length).toBe(1);
 	});
 
+	test("event identity allows repeated identical text hashes from distinct adapter events", () => {
+		const ef = path("events.jsonl");
+		const wp = path("wake.pending");
+		const sl = path("session.lock");
+		const seen = new Map<string, true>();
+		const common = { paneId: "%287", hash: "07be2c0e1920", tag: "pre-pr-ready-for-review", reason: "adapter-event", sessionLock: sl, eventsFile: ef, wakePending: wp, lastEventKey: seen };
+
+		expect(appendEvent({ ...common, eventIdentity: "agent_end|2026-05-31T04:24:33.000Z" })).toBe(true);
+		expect(appendEvent({ ...common, eventIdentity: "agent_end|2026-05-31T04:24:33.000Z" })).toBe(false);
+		expect(appendEvent({ ...common, eventIdentity: "agent_end|2026-05-31T04:28:22.000Z" })).toBe(true);
+
+		const lines = readFileSync(ef, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+		expect(lines).toHaveLength(2);
+		expect(lines.map((row) => row.hash)).toEqual(["07be2c0e1920", "07be2c0e1920"]);
+		expect(lines.map((row) => row.event_identity)).toEqual(["agent_end|2026-05-31T04:24:33.000Z", "agent_end|2026-05-31T04:28:22.000Z"]);
+		expect(seen.has(eventDedupKey("%287", "07be2c0e1920", "pre-pr-ready-for-review", "agent_end|2026-05-31T04:28:22.000Z"))).toBe(true);
+	});
+
 	test("different (pane,hash,tag) tuples are distinct", () => {
 		const ef = path("events.jsonl");
 		const sl = path("session.lock");
@@ -71,6 +89,23 @@ describe("appendEvent", () => {
 		const wpObj = JSON.parse(readFileSync(wp, "utf8"));
 		expect(wpObj.in_flight.length).toBe(2);
 		expect(wpObj.in_flight[1]).toEqual({ pane_id: "%101", hash: "h1", tag: "bell", is_bell: true });
+	});
+
+	test("extends in_flight with event dedup key when eventIdentity exists", () => {
+		const ef = path("events.jsonl");
+		const wp = path("wake.pending");
+		const sl = path("session.lock");
+		writeFileSync(wp, JSON.stringify({ delivered_at_epoch: 1000, in_flight: [] }));
+		appendEvent({ paneId: "%287", hash: "07be2c0e1920", tag: "pre-pr-ready-for-review", reason: "adapter-event", isBell: false,
+			eventIdentity: "agent_end|2026-05-31T04:28:22.000Z", sessionLock: sl, eventsFile: ef, wakePending: wp, lastEventKey: new Map() });
+		const wpObj = JSON.parse(readFileSync(wp, "utf8"));
+		expect(wpObj.in_flight[0]).toEqual({
+			pane_id: "%287",
+			hash: "07be2c0e1920",
+			tag: "pre-pr-ready-for-review",
+			is_bell: false,
+			dedup_key: eventDedupKey("%287", "07be2c0e1920", "pre-pr-ready-for-review", "agent_end|2026-05-31T04:28:22.000Z"),
+		});
 	});
 
 	test("extraJson payload becomes .details", () => {

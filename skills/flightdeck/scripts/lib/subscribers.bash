@@ -274,6 +274,7 @@ pi_subscriber_loop() {
   exec 200<&- 2>/dev/null || true
   local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}" expected_pi_session_id="${5:-}"
   local last_hash=""
+  local last_assistant_event_identity=""
   local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
@@ -427,6 +428,19 @@ pi_subscriber_loop() {
     )
   }
 
+  pi_subscriber_event_identity() {
+    jq -r '
+      (.event // "") as $event
+      | [
+          (.timestamp // .data.timestamp // .data.eventAt // .data.event_at // empty),
+          (.rawEventRef // .raw_event_ref // .data.rawEventRef // .data.raw_event_ref // empty),
+          (.sequence // .data.sequence // .data.message.sequence // .data.message.details.sequence // empty)
+        ]
+        | map(select(. != null and (tostring | length) > 0) | tostring) as $parts
+        | if ($event != "" and ($parts | length) > 0) then ([$event] + $parts | join("|")) else "" end
+    ' 2>/dev/null
+  }
+
   "$pi_bin" stream "${pi_target_args[@]}" 2>/dev/null \
     | jq --unbuffered -c 'select(
         (.type == "bridge_hello")
@@ -438,6 +452,8 @@ pi_subscriber_loop() {
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "vstack-background-tasks:event"))
+        or
+        (.type == "event" and .event == "agent_end")
         or
         (.type == "event" and .event == "tool_execution_end" and ((.data.toolName // "") == "edit") and (.data.isError == true))
         or
@@ -769,24 +785,49 @@ pi_subscriber_loop() {
         continue
       fi
 
-      if [[ -z "$custom_type" ]]; then
+      if [[ -z "$custom_type" && "$event_name" != "agent_end" ]]; then
         local downstream_role
         downstream_role=$(jq -r '.data.message.role // ""' <<< "$line" 2>/dev/null)
         [[ "$downstream_role" != "assistant" ]] && continue
       fi
 
       local last_text
-      last_text=$(jq -r '
-        ( .data.message.content // [] )
-        | (if type == "array" then map(select(.type == "text") | .text // "") | join("") else . end)
-      ' <<< "$line" 2>/dev/null)
+      if [[ "$event_name" == "agent_end" ]]; then
+        last_text=$(jq -r '
+          def content_text:
+            if type == "array" then map(if type == "object" then (.text // "") elif type == "string" then . else "" end) | join("")
+            elif type == "string" then .
+            else "" end;
+          if ((.data.finalTextTruncated // .data.final_text_truncated // false) == true) then ""
+          else
+            (.data.finalText // .data.final_text // .data.finalTextPreview // .data.final_text_preview // .data.text // "") as $direct
+            | if (($direct | type) == "string" and ($direct | length) > 0) then $direct
+              else ((.data.content // "") | content_text)
+              end
+          end
+        ' <<< "$line" 2>/dev/null)
+      else
+        last_text=$(jq -r '
+          ( .data.message.content // [] )
+          | (if type == "array" then map(select(.type == "text") | .text // "") | join("") else . end)
+        ' <<< "$line" 2>/dev/null)
+      fi
       [[ -z "$last_text" ]] && continue
       local hash
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
-      [[ "$hash" == "$last_hash" ]] && continue
+      local event_identity
+      event_identity=$(pi_subscriber_event_identity <<< "$line")
+      if [[ -n "$event_identity" ]]; then
+        [[ "$event_identity" == "$last_assistant_event_identity" ]] && continue
+      else
+        [[ "$hash" == "$last_hash" ]] && continue
+      fi
       local tag
       if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
-        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
+        local -a classifier_args=(--no-footer-gate)
+        [[ -n "${FD_ENTRY_KIND:-}" ]] && classifier_args+=(--entry-kind "$FD_ENTRY_KIND")
+        [[ -n "${FD_ENTRY_HARNESS:-}" ]] && classifier_args+=(--entry-harness "$FD_ENTRY_HARNESS")
+        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" "${classifier_args[@]}" 2>/dev/null)
         [[ -z "$tag" ]] && tag="rendering"
       else
         tag="rendering"
@@ -804,10 +845,13 @@ pi_subscriber_loop() {
                --arg text "$text_excerpt" \
                --arg tag "$tag" \
                --arg h "$hash" \
-               '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}' \
+               --arg event_identity "$event_identity" \
+               '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
+                + (if $event_identity == "" then {} else {event_identity:$event_identity} end)' \
                >> "$WAKE_EVENTS_LOG"
       )
       last_hash="$hash"
+      [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
 
       # vstack#61/#117: generic Pi panes (adhoc/workflow) have no
       # issue-mode prompt tags master can read; emit terminal-state-reached
