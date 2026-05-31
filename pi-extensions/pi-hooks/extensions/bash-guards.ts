@@ -25,7 +25,7 @@ export function isBareCd(command: string): boolean {
  */
 const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
-const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
+const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
 
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
@@ -37,7 +37,7 @@ export function isGitCommit(command: string): boolean {
 
 const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
-const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
+const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
 
 function countRegexMatches(pattern: RegExp, text: string): number {
 	return [...text.matchAll(new RegExp(pattern.source, "g"))].length;
@@ -47,12 +47,12 @@ function gitCommitSyntaxCount(command: string): number {
 	const normalized = normalizeShell(command);
 	return countRegexMatches(GIT_COMMIT, normalized)
 		+ countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
-		+ countRegexMatches(SHELL_C_GIT_COMMIT, normalized);
+		+ countShellCVerb(command, "commit");
 }
 
 function commandMayStageFiles(command: string): boolean {
 	const normalized = normalizeShell(command);
-	return GIT_ADD.test(normalized) || ENV_SPLIT_GIT_ADD.test(normalized) || SHELL_C_GIT_ADD.test(normalized);
+	return GIT_ADD.test(normalized) || ENV_SPLIT_GIT_ADD.test(normalized) || countShellCVerb(command, "add") > 0;
 }
 
 interface CommandResult {
@@ -332,6 +332,52 @@ function isWord(token: ShellToken | undefined): token is ShellWord {
 	return token?.kind === "word";
 }
 
+function shellExecutableName(word: string): string {
+	const slash = word.lastIndexOf("/");
+	return slash >= 0 ? word.slice(slash + 1) : word;
+}
+
+function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "add" | "commit"): boolean {
+	if (!commandWord) return false;
+	let text = commandWord.text;
+	if (text.startsWith("$")) text = text.slice(1);
+	if (commandWord.dynamic && !/git(?:\s+[^\s;&|(){}]+)*\s+(?:add|commit)(?=$|\s|[;&|){}])/.test(text)) return true;
+	const verbPattern = verb === "add"
+		? /(^|[\s;&|({!])git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/
+		: /(^|[\s;&|({!])git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
+	return verbPattern.test(text);
+}
+
+function countShellCVerb(command: string, verb: "add" | "commit"): number {
+	const tokens = tokenizeShell(command);
+	let count = 0;
+	for (let i = 0; i < tokens.length; i += 1) {
+		const token = tokens[i];
+		if (!isWord(token)) continue;
+		if (!["sh", "bash", "zsh", "dash"].includes(shellExecutableName(token.text))) continue;
+
+		let j = i + 1;
+		while (isWord(tokens[j])) {
+			const option = tokens[j] as ShellWord;
+			if (option.text === "--") {
+				j += 1;
+				continue;
+			}
+			if (!option.text.startsWith("-")) break;
+			if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option.text)) {
+				if (shellCommandContainsGitVerb(isWord(tokens[j + 1]) ? tokens[j + 1] : undefined, verb)) count += 1;
+				break;
+			}
+			if (option.text === "-o" || option.text === "-O" || option.text === "--rcfile" || option.text === "--init-file") {
+				j += isWord(tokens[j + 1]) ? 2 : 1;
+				continue;
+			}
+			j += 1;
+		}
+	}
+	return count;
+}
+
 function isAssignment(word: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
 }
@@ -346,6 +392,8 @@ function externalPath(): ShellPathRef {
 
 function literalPath(base: string | null, text: string): ShellPathRef {
 	if (!base || !text) return unknownPath();
+	if (text === "/proc/self/cwd") return { path: resolve(base), external: false, unknown: false };
+	if (text.startsWith("/proc/self/cwd/")) return { path: resolve(base, text.slice("/proc/self/cwd/".length)), external: false, unknown: false };
 	return { path: isAbsolute(text) ? resolve(text) : resolve(base, text), external: false, unknown: false };
 }
 
@@ -815,10 +863,18 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 				unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit --git-dir target.";
 				continue;
 			}
-			if (target.hasWorkTree && target.workTree && pathContains(project.root, target.workTree)) {
-				return { kind: "project", cwd: target.workTree, root: project.root, includeUntracked: false };
-			}
 			if (pathContains(project.root, target.gitDir)) return { kind: "project", cwd: resolve(cwd), root: project.root, includeUntracked: false };
+			if (target.hasWorkTree && target.workTree) {
+				const workTreeInside = pathContains(project.root, target.workTree);
+				const workTreeRoot = await gitRoot(target.workTree, timeoutMs);
+				if (workTreeRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${workTreeRoot.reason}` };
+				if (workTreeRoot.kind === "none") {
+					if (workTreeInside) unresolvedReason = `pi-hooks pre-commit: ${target.workTree} is inside the project but not a git worktree: ${workTreeRoot.reason}`;
+					continue;
+				}
+				if (workTreeRoot.root === project.root) return { kind: "project", cwd: target.workTree, root: project.root, includeUntracked: false };
+				continue;
+			}
 			if (isLinkedWorktreeGitDir(target.gitDir)) {
 				const gitDirRoot = await gitRootFromGitDir(target.gitDir, cwd, timeoutMs);
 				if (gitDirRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${gitDirRoot.reason}` };
@@ -833,12 +889,11 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit working tree.";
 			continue;
 		}
-		if (!pathContains(project.root, candidate)) continue;
-
+		const candidateInside = pathContains(project.root, candidate);
 		const targetRoot = await gitRoot(candidate, timeoutMs);
 		if (targetRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${targetRoot.reason}` };
 		if (targetRoot.kind === "none") {
-			unresolvedReason = `pi-hooks pre-commit: ${candidate} is inside the project but not a git worktree: ${targetRoot.reason}`;
+			if (candidateInside) unresolvedReason = `pi-hooks pre-commit: ${candidate} is inside the project but not a git worktree: ${targetRoot.reason}`;
 			continue;
 		}
 		if (targetRoot.root === project.root) return { kind: "project", cwd: candidate, root: project.root, includeUntracked: false };

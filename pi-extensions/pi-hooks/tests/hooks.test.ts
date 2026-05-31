@@ -218,6 +218,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 				for (const command of [
 					`git -C ${JSON.stringify(other)} commit -m fixture; bash -c "git commit -m project"`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; bash -lc "git commit -m project"`,
+					`bash -o pipefail -c "git commit -m project"`,
+					`bash -c $'git commit -m project'`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });

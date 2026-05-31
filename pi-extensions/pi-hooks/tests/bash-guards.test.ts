@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -150,12 +150,28 @@ describe("git commit target detection", () => {
 		try {
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -lc "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash -o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash -c $'git commit -m project'`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`zsh -fc "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`/bin/bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; git --exec-path ${q("/usr/lib/git-core")} commit -m project`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	test("detects canonical project paths that look outside lexically", async () => {
+		const project = initRepo("pi-hooks-project-");
+		const parent = mkdtempSync(join(tmpdir(), "pi-hooks-links-"));
+		const link = join(parent, "project-link");
+		try {
+			symlinkSync(project, link, "dir");
+			expect(await projectGitCommitCwd("git -C /proc/self/cwd commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`git -C ${q(link)} commit -m test`, project, 1000)).toBe(resolve(link));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(parent, { recursive: true, force: true });
 		}
 	});
 
