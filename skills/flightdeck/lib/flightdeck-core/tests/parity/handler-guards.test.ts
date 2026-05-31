@@ -525,7 +525,7 @@ describe("handler domain guards", () => {
 		const subscribers = readFileSync(SUBSCRIBERS_BASH, "utf8");
 		const spawn = readFileSync(SUBSCRIBER_SPAWN_SRC, "utf8");
 		const loop = readFileSync(resolve(HERE, "../../src/daemon/loop.ts"), "utf8");
-		expect(subscribers).toContain("subscriber_classify_text");
+		expect(subscribers).toContain("classify_adapter_text");
 		expect(subscribers).toContain('--entry-kind "$FD_ENTRY_KIND"');
 		expect(subscribers).toContain("--entry-kind-unknown");
 		expect(subscribers).toContain("entry_kind=%s");

@@ -6,7 +6,7 @@ import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthro
 import { createSession, deleteSession, openSession, repairToolPairing } from "cc-session-io";
 import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { accessSync, appendFileSync, chmodSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { homedir } from "os";
 import { delimiter, dirname, join } from "path";
@@ -16,6 +16,7 @@ import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.j
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, stackDepth, pushContext, popContext } from "./query-state.js";
+import { findUnpairedToolUses, summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
 import { loadConfig, normalizeEffortLevel, type Config } from "./config.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
@@ -33,13 +34,17 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 
 const DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 const DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join(homedir(), ".pi", "agent", "claude-bridge.log");
-const DIAG_LOG_PATH = join(homedir(), ".pi", "agent", "claude-bridge-diag.log");
+const DEFAULT_DIAG_LOG_PATH = join(homedir(), ".pi", "agent", "claude-bridge-diag.log");
+
+function diagLogPath(): string {
+	return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+}
 
 // Ensure log directories exist when debug is enabled
 if (DEBUG) {
 	try {
 		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true });
-		mkdirSync(dirname(DIAG_LOG_PATH), { recursive: true });
+		mkdirSync(dirname(diagLogPath()), { recursive: true, mode: 0o700 });
 	} catch {
 		// If directory creation fails, debug functions will throw on first use
 	}
@@ -57,7 +62,7 @@ function debug(...args: unknown[]) {
 		return JSON.stringify(a);
 	};
 	const msg = args.map(fmt).join(" ");
-	appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`);
+	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`); } catch { /* debug is best effort */ }
 }
 
 function executableFromPath(name: string): string | undefined {
@@ -342,10 +347,109 @@ function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?: string
 
 /** Unconditional diagnostic dump — for "should never happen" paths */
 function diagDump(label: string, data: Record<string, unknown>) {
-	const ts = new Date().toISOString();
-	const entry = { ts, moduleInstanceId, label, ...data };
-	appendFileSync(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
-	debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+	try {
+		const ts = new Date().toISOString();
+		const entry = { ts, moduleInstanceId, label, ...data };
+		const path = diagLogPath();
+		try { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); } catch { /* best effort */ }
+		appendFileSync(path, JSON.stringify(entry) + "\n", { mode: 0o600 });
+		try { chmodSync(path, 0o600); } catch { /* best effort */ }
+		debug(`DIAG: ${label} (see ${path})`);
+	} catch (error) {
+		debug(`DIAG FAILED: ${label}`, error);
+	}
+}
+
+function safeNotify(message: string, level: "info" | "warning" | "error" = "warning"): void {
+	try { piUI?.notify(message, level); }
+	catch (error) { debug("notify failed:", error); }
+}
+
+function argKeys(args: Record<string, unknown> | undefined): string[] {
+	return Object.keys(args ?? {}).sort();
+}
+
+function safeToolCallSummary(calls: Array<{ id: string; toolName: string; arguments?: Record<string, unknown> }>): Array<{ id: string; toolName: string; argKeys: string[] }> {
+	return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
+}
+
+function compactToolNameSummary(names: Array<{ name: string; count: number }>, limit = 12): string[] {
+	const shown = names.slice(0, limit).map(({ name, count }) => count > 1 ? `${name}×${count}` : name);
+	if (names.length > limit) shown.push(`+${names.length - limit} more`);
+	return shown;
+}
+
+function reportSyntheticToolResultRepair(missing: MissingToolResult[], context: Record<string, unknown>): void {
+	try {
+		if (missing.length === 0) return;
+		const toolNames = summarizeMissingToolNames(missing);
+		const toolNameSummary = compactToolNameSummary(toolNames);
+		const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
+		diagDump("repair_tool_pairing_synthetic_results", {
+			count: missing.length,
+			toolNames,
+			sampledToolCallIds,
+			missing: missing.slice(0, 50),
+			...context,
+		});
+		safeNotify(
+			`Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"` +
+			`${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. ` +
+			`Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+			"error",
+		);
+	} catch (error) {
+		debug("reportSyntheticToolResultRepair failed:", error);
+	}
+}
+
+export function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
+	try {
+		if (queryCtx.reportedToolResultMismatch) return false;
+		const progress = queryCtx.toolResultProgress();
+		const hasMismatch = progress.expectedCount > 0
+			? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0
+			: progress.waitingCount > 0 || progress.queuedCount > 0;
+		if (!hasMismatch) return false;
+		queryCtx.reportedToolResultMismatch = true;
+		if (sharedSession) {
+			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+		}
+		const toolNameSummary = compactToolNameSummary(progress.toolNames);
+		diagDump("tool_result_delivery_mismatch", {
+			reason,
+			cwd,
+			progress,
+			activeQueryExists: queryCtx.activeQuery !== null,
+			sharedSession: sharedSession ? {
+				sessionId: sharedSession.sessionId.slice(0, 8),
+				cursor: sharedSession.cursor,
+				needsRebuild: sharedSession.needsRebuild === true,
+				forceRotate: sharedSession.forceRotate === true,
+			} : null,
+		});
+		safeNotify(
+			`Claude bridge: tool result delivery interrupted during ${reason}; ` +
+			`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
+			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}` +
+			`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
+			`Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+			"error",
+		);
+		return true;
+	} catch (error) {
+		debug("reportToolResultMismatch failed:", error);
+		return false;
+	}
+}
+
+export function __testSetBridgeIntegrityState(state: { ui?: Pick<ExtensionUIContext, "notify"> | null; sharedSession?: SessionState | null }): void {
+	if ("ui" in state) piUI = state.ui as ExtensionUIContext | undefined;
+	if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+}
+
+export function __testGetBridgeIntegrityState(): { sharedSession: SessionState | null } {
+	return { sharedSession };
 }
 
 // --- Constants ---
@@ -678,6 +782,7 @@ function convertAndImportMessages(
 	session: ReturnType<typeof createSession>,
 	messages: Context["messages"],
 	customToolNameToSdk?: Map<string, string>,
+	cwd?: string,
 ): void {
 	const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
 
@@ -693,7 +798,17 @@ function convertAndImportMessages(
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
 	// Pre-repair for debug logging; importMessages also repairs internally (idempotent).
+	const missingToolResults = findUnpairedToolUses(anthropicMessages);
 	const repaired = repairToolPairing(anthropicMessages);
+	if (missingToolResults.length > 0) {
+		reportSyntheticToolResultRepair(missingToolResults, {
+			cwd,
+			messageCount: messages.length,
+			anthropicMessageCount: anthropicMessages.length,
+			sessionId: session.sessionId,
+			jsonlPath: session.jsonlPath,
+		});
+	}
 	if (repaired.length !== anthropicMessages.length) {
 		debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} → ${repaired.length} msgs`);
 	}
@@ -891,7 +1006,7 @@ function syncSharedSession(
 		...(preserveId ? { sessionId: previousSessionId } : {}),
 		...(modelId ? { model: modelId } : {}),
 	});
-	convertAndImportMessages(session, priorMessages, customToolNameToSdk);
+	convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
 	session.save();
 	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd);
 	sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
@@ -991,28 +1106,50 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
 // blocks on a Promise until pi delivers the tool result via streamSimple.
-// Handlers are assigned toolCallIds from turnToolCallIds (populated when the SDK
-// emits tool_use blocks). Results are matched by ID, not position.
-// Handlers close over the captured `queryCtx`, ensuring they operate on the
-// correct query's state even across pushContext/popContext calls.
+// Handlers claim their tool_call id by matching the actual MCP call
+// (tool name + arguments) against the recorded tool_use blocks, then results
+// are matched by ID. Handlers close over the captured `queryCtx`, ensuring they
+// operate on the correct query's state even across pushContext/popContext calls.
 function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, ReturnType<typeof createSdkMcpServer>> | undefined {
 	if (!tools.length) return undefined;
 	const mcpTools = tools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
 		inputSchema: jsonSchemaToZodShape(tool.parameters),
-		handler: async () => {
-			const toolCallId = queryCtx.turnToolCallIds[queryCtx.nextHandlerIdx++];
-			if (!toolCallId) debug(`WARNING: mcp handler ${tool.name} has no toolCallId (idx=${queryCtx.nextHandlerIdx - 1}, available=${queryCtx.turnToolCallIds.length})`);
+		handler: async (args?: Record<string, unknown>) => {
+			const mappedArgs = mapToolArgs(tool.name, args);
+			const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
+			const toolCallId = claim.toolCallId;
+			if (!toolCallId) {
+				debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
+				diagDump("tool_handler_unmatched", {
+					toolName: tool.name,
+					argKeys: argKeys(mappedArgs),
+					available: claim.available,
+					turnToolCallIds: queryCtx.turnToolCallIds,
+					turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls),
+				});
+				return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true } satisfies McpResult;
+			}
+			if (claim.match !== "tool-args" || claim.ambiguous) {
+				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
+			}
 			if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
 				const result = queryCtx.pendingResults.get(toolCallId)!;
 				queryCtx.pendingResults.delete(toolCallId);
+				queryCtx.markToolResultResolved(toolCallId);
 				debug(`mcp handler: ${tool.name} [${toolCallId}] → resolved from queue (${queryCtx.pendingResults.size} remaining)`);
 				return result;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
 			return new Promise<McpResult>((resolve) => {
-				queryCtx.pendingToolCalls.set(toolCallId, { toolName: tool.name, resolve });
+				queryCtx.pendingToolCalls.set(toolCallId, {
+					toolName: tool.name,
+					resolve: (result) => {
+						queryCtx.markToolResultResolved(toolCallId);
+						resolve(result);
+					},
+				});
 			});
 		},
 	}));
@@ -1122,8 +1259,7 @@ function processStreamEvent(
 	const event = (message as SDKMessage & { event: any }).event;
 
 	if (event?.type === "message_start") {
-		c.turnToolCallIds = [];
-		c.nextHandlerIdx = 0;
+		c.resetToolTracking();
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
 		return;
 	}
@@ -1138,10 +1274,11 @@ function processStreamEvent(
 			c.currentPiStream!.push({ type: "thinking_start", contentIndex: c.turnBlocks.length - 1, partial: c.turnOutput });
 		} else if (event.content_block?.type === "tool_use") {
 			c.turnSawToolCall = true;
-			c.turnToolCallIds.push(event.content_block.id);
+			const mappedName = mapToolName(event.content_block.name, customToolNameToPi);
+			c.recordToolCall(event.content_block.id, mappedName, {});
 			c.turnBlocks.push({
 				type: "toolCall", id: event.content_block.id,
-				name: mapToolName(event.content_block.name, customToolNameToPi),
+				name: mappedName,
 				arguments: (event.content_block.input as Record<string, unknown>) ?? {},
 				partialJson: "", index: event.index,
 			});
@@ -1188,6 +1325,7 @@ function processStreamEvent(
 			block.arguments = mapToolArgs(
 				block.name, parsePartialJson(block.partialJson, block.arguments),
 			);
+			c.updateToolCallArgs(block.id, block.arguments);
 			delete block.partialJson;
 			c.currentPiStream!.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: c.turnOutput });
 		}
@@ -1231,8 +1369,7 @@ function processAssistantMessage(message: SDKMessage, model: Model<any>, customT
 	if (c.turnSawStreamEvent) return;
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
-	c.turnToolCallIds = [];
-	c.nextHandlerIdx = 0;
+	c.resetToolTracking();
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
@@ -1252,11 +1389,12 @@ function processAssistantMessage(message: SDKMessage, model: Model<any>, customT
 		} else if (block.type === "tool_use") {
 			ensureTurnStarted();
 			c.turnSawToolCall = true;
-			c.turnToolCallIds.push(block.id);
-			const mappedArgs = mapToolArgs(mapToolName(block.name, customToolNameToPi), block.input);
+			const mappedName = mapToolName(block.name, customToolNameToPi);
+			const mappedArgs = mapToolArgs(mappedName, block.input);
+			c.recordToolCall(block.id, mappedName, mappedArgs);
 			c.turnBlocks.push({
 				type: "toolCall", id: block.id,
-				name: mapToolName(block.name, customToolNameToPi),
+				name: mappedName,
 				arguments: mappedArgs,
 			});
 			const idx = c.turnBlocks.length - 1;
@@ -1382,30 +1520,32 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// (everything after the last assistant message) and match against waiting MCP
 	// handlers. Results that arrive before their handler get queued in pendingResults.
 	if (ctx().activeQuery) {
-		ctx().currentPiStream = stream;
-		ctx().resetTurnState(model);
+		const queryCtx = ctx();
+		queryCtx.currentPiStream = stream;
+		queryCtx.resetTurnState(model);
 		const allResults = extractAllToolResults(context);
-		debug(`provider: tool results, ${allResults.length} results, ${ctx().pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
+		debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
 		for (const result of allResults) {
 			const id = result.toolCallId;
-			if (id && ctx().pendingToolCalls.has(id)) {
-				const pending = ctx().pendingToolCalls.get(id)!;
-				ctx().pendingToolCalls.delete(id);
+			queryCtx.markToolResultDelivered(id);
+			if (id && queryCtx.pendingToolCalls.has(id)) {
+				const pending = queryCtx.pendingToolCalls.get(id)!;
+				queryCtx.pendingToolCalls.delete(id);
 				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, JSON.stringify(result.content).slice(0, 200));
 				pending.resolve(result);
 			} else if (id) {
-				ctx().pendingResults.set(id, result);
-				debug(`provider: queued result [${id}] (${ctx().pendingResults.size} pending)`);
+				queryCtx.pendingResults.set(id, result);
+				debug(`provider: queued result [${id}] (${queryCtx.pendingResults.size} pending)`);
 			} else {
 				debug(`WARNING: tool result without toolCallId, cannot match`);
 			}
-			if (ctx().pendingToolCalls.size > 0 && ctx().pendingResults.size > 0) {
-				debug(`BUG: both maps non-empty! handlers=${ctx().pendingToolCalls.size} results=${ctx().pendingResults.size}`);
+			if (queryCtx.pendingToolCalls.size > 0 && queryCtx.pendingResults.size > 0) {
+				debug(`BUG: both maps non-empty! handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
 			}
 		}
-		if (ctx().pendingToolCalls.size > 0) {
-			debug(`WARNING: ${ctx().pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
-			piUI?.notify(`Claude bridge: ${ctx().pendingToolCalls.size} tool handler(s) still waiting — provider may be stuck`, "warning");
+		if (queryCtx.pendingToolCalls.size > 0) {
+			debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
+			piUI?.notify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting — provider may be stuck`, "warning");
 		}
 
 		// Detect user messages (steer/followUp) that pi injected into context
@@ -1425,7 +1565,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		}
 
 		if (sharedSession) sharedSession.cursor = context.messages.length;
-		ctx().latestCursor = Math.max(ctx().latestCursor, context.messages.length);
+		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, context.messages.length);
 		return stream;
 	}
 
@@ -1459,6 +1599,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	ctx().pendingResults.clear();
 	ctx().deferredUserMessages = [];
 	ctx().resetTurnState(model);
+	ctx().resetToolTracking();
 	ctx().latestCursor = 0;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
@@ -1579,6 +1720,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		wasAborted = true;
 		// Prevent stale deferred messages from being replayed by parent on pop
 		abortCtx.deferredUserMessages = [];
+		reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
 		for (const pending of abortCtx.pendingToolCalls.values()) { pending.resolve({ content: [{ type: "text", text: "Operation aborted" }] }); }
 		abortCtx.pendingToolCalls.clear();
 		abortCtx.pendingResults.clear();
@@ -1625,6 +1767,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					const steerPrompt = ctx().deferredUserMessages.shift()!;
 					debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
 					ctx().resetTurnState(model);
+					ctx().resetToolTracking();
 
 					const resumeId = sharedSession?.sessionId;
 					if (!resumeId) {
@@ -1683,6 +1826,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		.finally(() => {
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
 			if (ctx().activeQuery === sdkQuery) {
+				reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: wasAborted || options?.signal?.aborted });
 				// Drain pending handlers for this query
 				for (const pending of ctx().pendingToolCalls.values()) { pending.resolve({ content: [{ type: "text", text: "Query ended" }] }); }
 				ctx().pendingToolCalls.clear();
@@ -1818,6 +1962,9 @@ export default function (pi: ExtensionAPI) {
 	// triggers CC's autocompact-thrashing guard (issue #8). Force the next
 	// call down the REBUILD path so CC sees the current history.
 	const markRebuild = (event: string) => {
+		if (ctx().activeQuery) {
+			reportToolResultMismatch(ctx(), event, sharedSession?.cwd ?? process.cwd());
+		}
 		if (sharedSession) {
 			debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
 			sharedSession = { ...sharedSession, needsRebuild: true };

@@ -210,6 +210,21 @@ describe("subscriber wake row activity mapping", () => {
 		expect(rows[0]).toMatchObject({ importance: "important", pane_id: "%24", severity: "warning", type: "daemon.warning" });
 	});
 
+	test("pi busy-stall maps to agent.busy_stalled activity", () => {
+		emitActivityForWakeRow(ctx(), {
+			classifier_tag: "pi-busy-stall",
+			details: { bridge_reason: "bridge-timeout", cpu_pct: 99.5, no_progress_sec: 301, process_state: "123:R" },
+			event_type: "busy_stall",
+			harness: "pi",
+			hash: "busy-hash",
+			pane_id: "%25",
+		});
+		const rows = activityRows();
+		expect(rows[0]).toMatchObject({ harness: "pi", importance: "important", pane_id: "%25", severity: "error", type: "agent.busy_stalled" });
+		expect(rows[0]?.summary).toContain("cpu=99.5%");
+		expect(rows[0]?.details).toMatchObject({ bridge_reason: "bridge-timeout", event_type: "pi-busy-stall" });
+	});
+
 	test.each([
 		["pi-rate-limit-skipped", "rate_limit_skipped", "agent.rate_limit_skipped", "debug", "noisy", "rate-limit skipped: no-stopreason"],
 		["pi-rate-limit-retry", "rate_limit_retry", "agent.rate_limit_retry", "info", "important", "rate-limit retry scheduled: attempt 2"],

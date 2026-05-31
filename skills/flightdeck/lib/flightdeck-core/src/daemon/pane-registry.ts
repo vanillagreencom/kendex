@@ -4,9 +4,22 @@
 // it past 800 lines for no reason — the helpers don't reference any loop
 // state, so they belong in their own file.
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 import type { ReconcileAdapterMeta, ReconcileEntry } from "./reconcile.ts";
+
+const PANE_REGISTRY_READ_TIMEOUT_DEFAULT_SEC = 5;
+
+export function paneRegistryReadTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.FD_PANE_REGISTRY_READ_TIMEOUT_SEC ?? String(PANE_REGISTRY_READ_TIMEOUT_DEFAULT_SEC);
+	const parsed = Number.parseFloat(raw);
+	if (!Number.isFinite(parsed) || parsed <= 0) return PANE_REGISTRY_READ_TIMEOUT_DEFAULT_SEC * 1000;
+	return Math.ceil(parsed * 1000);
+}
+
+function runPaneRegistry(bin: string, args: string[]): SpawnSyncReturns<string> {
+	return spawnSync(bin, args, { encoding: "utf8", killSignal: "SIGKILL", timeout: paneRegistryReadTimeoutMs() });
+}
 
 export interface RefreshWindowNameWarning {
 	id?: string;
@@ -19,13 +32,13 @@ export type RefreshTrackedWindowNamesResult =
 	| { ok: false; reason: string; message: string };
 
 export function paneRegistryArgs(bin: string, action: string, issue: string): string {
-	const r = spawnSync(bin, [action, issue], { encoding: "utf8" });
+	const r = runPaneRegistry(bin, [action, issue]);
 	if (r.status !== 0) return "";
 	return (r.stdout ?? "").trim();
 }
 
 export function paneRegistryIssueForPane(bin: string, paneTarget: string): string {
-	const r = spawnSync(bin, ["find-by-pane", paneTarget], { encoding: "utf8" });
+	const r = runPaneRegistry(bin, ["find-by-pane", paneTarget]);
 	if (r.status !== 0) return "";
 	const raw = (r.stdout ?? "").trim();
 	if (!raw.startsWith("{")) return raw;
@@ -53,7 +66,7 @@ export function resolveMeta(bin: string, action: string, paneTarget: string): st
 
 export function paneRegistryRows(bin: string): Record<string, unknown>[] {
 	if (!bin) return [];
-	const r = spawnSync(bin, ["list", "--format", "json"], { encoding: "utf8" });
+	const r = runPaneRegistry(bin, ["list", "--format", "json"]);
 	if (r.status !== 0) return [];
 	try {
 		const rows = JSON.parse(r.stdout ?? "[]") as unknown;
@@ -88,7 +101,7 @@ function normalizeFallback(fallback: FallbackInnerArgs): FallbackInnerArgs {
 
 function paneRegistryLiveInnerRows(bin: string): { ok: true; rows: LiveInnerRow[] } | { ok: false; error: string } {
 	if (!bin) return { ok: false, error: "pane-registry binary missing" };
-	const r = spawnSync(bin, ["list", "--format", "inner-live-json"], { encoding: "utf8" });
+	const r = runPaneRegistry(bin, ["list", "--format", "inner-live-json"]);
 	if (r.status !== 0 || r.error) {
 		const stderr = (r.stderr ?? "").trim();
 		const error = r.error ? r.error.message : `exit ${r.status ?? "unknown"}${stderr ? `: ${stderr}` : ""}`;
@@ -141,7 +154,7 @@ function spawnErrorMessage(r: ReturnType<typeof spawnSync>): string {
 
 export function refreshTrackedWindowNames(bin: string): RefreshTrackedWindowNamesResult {
 	if (!bin) return { ok: false, reason: "missing-command", message: "pane-registry command path is empty" };
-	const r = spawnSync(bin, ["refresh-window-names"], { encoding: "utf8" });
+	const r = runPaneRegistry(bin, ["refresh-window-names"]);
 	if (r.error) return { ok: false, reason: "spawn-failed", message: `pane-registry refresh-window-names spawn failed: ${r.error.message}` };
 	if (r.status !== 0) return { ok: false, reason: "command-failed", message: `pane-registry refresh-window-names failed (status=${r.status}): ${spawnErrorMessage(r)}` };
 	try {
@@ -179,12 +192,13 @@ export function entryKindForPane(bin: string, paneId: string): string {
 
 export function listTrackedEntriesForReconcile(bin: string, defaultHarness: string): ReconcileEntry[] {
 	if (!bin) return [];
-	const r = spawnSync(bin, ["list", "--format", "json"], { encoding: "utf8" });
-	if (r.status !== 0) return [];
+	const r = runPaneRegistry(bin, ["list", "--format", "json"]);
+	if (r.error) throw new Error(`pane-registry list spawn failed: ${r.error.message}`);
+	if (r.status !== 0) throw new Error(`pane-registry list failed (status=${r.status ?? "unknown"}): ${(r.stderr ?? "").trim() || "no stderr"}`);
 	let rows: unknown;
 	try { rows = JSON.parse(r.stdout ?? "[]"); }
-	catch { return []; }
-	if (!Array.isArray(rows)) return [];
+	catch (err) { throw new Error(`pane-registry list returned invalid JSON: ${(err as Error)?.message ?? err}`); }
+	if (!Array.isArray(rows)) throw new Error("pane-registry list returned non-array JSON");
 	const entries: ReconcileEntry[] = [];
 	for (const row of rows) {
 		if (!row || typeof row !== "object") continue;

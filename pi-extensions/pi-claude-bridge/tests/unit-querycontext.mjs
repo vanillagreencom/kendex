@@ -28,13 +28,78 @@ describe("QueryContext class", () => {
 		assert.strictEqual(ctx().turnBlocks, ctx().turnOutput.content);
 	});
 
-	it("resetTurnState preserves turnToolCallIds and nextHandlerIdx", () => {
+	it("resetTurnState preserves active tool tracking across result-delivery callbacks", () => {
 		ctx().turnToolCallIds = ["id1", "id2"];
-		ctx().nextHandlerIdx = 5;
+		ctx().recordToolCall("id1", "read", { path: "a" });
+		ctx().markToolResultDelivered("id1");
 		ctx().resetTurnState(fakeModel);
 
 		assert.deepStrictEqual(ctx().turnToolCallIds, ["id1", "id2"]);
-		assert.strictEqual(ctx().nextHandlerIdx, 5);
+		assert.deepStrictEqual(ctx().turnToolCalls.map((call) => call.id), ["id1"]);
+		assert.ok(ctx().deliveredToolResultIds.has("id1"));
+	});
+
+	it("resetToolTracking clears tool-call matching state for a new assistant message", () => {
+		ctx().recordToolCall("id1", "read", { path: "a" });
+		ctx().markToolResultDelivered("id1");
+		ctx().markToolResultResolved("id1");
+		ctx().resetToolTracking();
+
+		assert.deepStrictEqual(ctx().turnToolCallIds, []);
+		assert.deepStrictEqual(ctx().turnToolCalls, []);
+		assert.strictEqual(ctx().deliveredToolResultIds.size, 0);
+		assert.strictEqual(ctx().resolvedToolResultIds.size, 0);
+	});
+
+	it("claimToolCall matches handler invocation by tool name and args, not stream position", () => {
+		ctx().recordToolCall("call-read", "read", { path: "a.txt" });
+		ctx().recordToolCall("call-grep", "grep", { pattern: "needle", path: "src" });
+
+		const second = ctx().claimToolCall("grep", { path: "src", pattern: "needle" });
+		assert.equal(second.toolCallId, "call-grep");
+		assert.equal(second.match, "tool-args");
+
+		const first = ctx().claimToolCall("read", { path: "a.txt" });
+		assert.equal(first.toolCallId, "call-read");
+		assert.equal(first.match, "tool-args");
+	});
+
+	it("claimToolCall handles same-tool parallel calls invoked out of stream order", () => {
+		ctx().recordToolCall("read-a", "read", { path: "a.txt" });
+		ctx().recordToolCall("read-b", "read", { path: "b.txt" });
+		ctx().recordToolCall("grep-src", "grep", { path: "src", pattern: "needle" });
+		ctx().recordToolCall("grep-tests", "grep", { path: "tests", pattern: "needle" });
+
+		const readSecond = ctx().claimToolCall("read", { path: "b.txt" });
+		const grepSecond = ctx().claimToolCall("grep", { pattern: "needle", path: "tests" });
+		const readFirst = ctx().claimToolCall("read", { path: "a.txt" });
+		const grepFirst = ctx().claimToolCall("grep", { path: "src", pattern: "needle" });
+
+		assert.equal(readSecond.toolCallId, "read-b");
+		assert.equal(grepSecond.toolCallId, "grep-tests");
+		assert.equal(readFirst.toolCallId, "read-a");
+		assert.equal(grepFirst.toolCallId, "grep-src");
+		for (const claim of [readSecond, grepSecond, readFirst, grepFirst]) {
+			assert.equal(claim.match, "tool-args");
+			assert.equal(claim.ambiguous, false);
+		}
+	});
+
+	it("toolResultProgress reports teardown mismatch counts", () => {
+		ctx().recordToolCall("t0", "read", { path: "a" });
+		ctx().recordToolCall("t1", "grep", { pattern: "x" });
+		ctx().markToolResultDelivered("t0");
+		ctx().markToolResultResolved("t0");
+		ctx().pendingResults.set("t1", { toolCallId: "t1", content: [{ type: "text", text: "queued" }] });
+		ctx().markToolResultDelivered("t1");
+
+		const progress = ctx().toolResultProgress();
+		assert.equal(progress.expectedCount, 2);
+		assert.equal(progress.deliveredCount, 2);
+		assert.equal(progress.resolvedCount, 1);
+		assert.deepStrictEqual(progress.queuedIds, ["t1"]);
+		assert.deepStrictEqual(progress.unresolvedIds, ["t1"]);
+		assert.deepStrictEqual(progress.toolNames, [{ name: "grep", count: 1 }]);
 	});
 });
 
@@ -154,5 +219,27 @@ describe("context pinning (MCP handler closure pattern)", () => {
 		// Pop restores parent as current
 		popContext();
 		assert.strictEqual(ctx(), capturedCtx);
+	});
+
+	it("captured parent context tracks a parent result while child query is current", () => {
+		ctx().activeQuery = { id: "parent" };
+		ctx().recordToolCall("parent-tool", "read", { path: "parent.txt" });
+		const capturedParent = ctx();
+
+		pushContext();
+		ctx().activeQuery = { id: "child" };
+		ctx().recordToolCall("child-tool", "read", { path: "child.txt" });
+
+		capturedParent.markToolResultDelivered("parent-tool");
+		capturedParent.markToolResultResolved("parent-tool");
+		const parentProgress = capturedParent.toolResultProgress();
+		const childProgress = ctx().toolResultProgress();
+
+		assert.equal(parentProgress.resolvedCount, 1);
+		assert.equal(childProgress.resolvedCount, 0);
+		assert.deepStrictEqual(childProgress.missingDeliveredIds, ["child-tool"]);
+
+		popContext();
+		assert.strictEqual(ctx(), capturedParent);
 	});
 });

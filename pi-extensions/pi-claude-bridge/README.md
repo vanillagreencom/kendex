@@ -99,4 +99,6 @@ When Claude Code emits rate-limit reset metadata, the bridge shows one red ASCII
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
 
+Tool-result integrity failures are surfaced even when debug logging is off. If the bridge has to repair missing Claude Code `tool_use` / Pi `toolResult` pairs with `[no tool result recorded]`, Pi shows an error notification and writes a JSON diagnostic to `~/.pi/agent/claude-bridge-diag.log` with counts, affected tool names, and sampled tool-call IDs so the lost output is visible. If a query tears down while parallel tool results are still queued or unresolved, the bridge writes the same kind of diagnostic, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn instead of silently resuming a corrupted session.
+
 Before starting Claude Code, the bridge preflights the resolved executable and working directory. Failures include the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type so spawn issues point at the real failing path instead of the Claude Agent SDK's generic native-binary message. If Node still emits a spawn error after preflight, the bridge wraps that error with the same context before handing it back to the SDK.

@@ -7,6 +7,7 @@ import { activityPathFromStatePath, resolveActivityPath } from "../activity/path
 import { readActiveRun } from "../state/run-store.ts";
 import type { ActivityEventInput, ActivitySeverity } from "../activity/types.ts";
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
+import { BUSY_STALL_ACTIVITY_TYPE, BUSY_STALL_CLASSIFIER_TAG } from "./busy-stall-watchdog.ts";
 
 export interface DaemonActivityContext {
 	activityPath?: string | null;
@@ -214,6 +215,7 @@ export function activityInputsForWakeRow(row: WakeEventRow): ActivityEventInput[
 	if (tag.startsWith("pi-rate-limit-")) return rateLimitActivities(row, tag);
 	if (tag === "domain-mismatch") return [domainMismatchActivity(row)];
 	if (tag === "daemon-exited") return [daemonExitedActivity(row)];
+	if (tag === BUSY_STALL_CLASSIFIER_TAG) return [busyStallActivity(row)];
 	if (isPromptTag(tag)) return [promptActivity(row, tag)];
 	return [];
 }
@@ -483,6 +485,26 @@ function daemonExitedActivity(row: WakeEventRow): ActivityEventInput {
 		summary: `flightdeck daemon stopped: ${reason}`,
 		ts: str(row.ts),
 		type: "daemon.stopped",
+	};
+}
+
+function busyStallActivity(row: WakeEventRow): ActivityEventInput {
+	const paneId = str(row.pane_id);
+	const details = record(row.details) ?? {};
+	const dedup = `${paneId}:${BUSY_STALL_ACTIVITY_TYPE}:${str(row.hash) || str(row.ts) || Date.now()}`;
+	const cpu = typeof details.cpu_pct === "number" ? ` cpu=${details.cpu_pct}%` : "";
+	const noProgress = typeof details.no_progress_sec === "number" ? ` no_progress=${details.no_progress_sec}s` : "";
+	return {
+		details: { ...details, dedup_key: dedup, event_type: BUSY_STALL_CLASSIFIER_TAG, hash: str(row.hash) || null },
+		harness: str(row.harness) || "pi",
+		importance: "important",
+		natural_key: dedup,
+		pane_id: paneId,
+		severity: "error",
+		source: "daemon",
+		summary: `Pi pane busy-stalled: ${paneId || "pane"}${cpu}${noProgress}`,
+		ts: str(row.ts),
+		type: BUSY_STALL_ACTIVITY_TYPE,
 	};
 }
 

@@ -131,6 +131,7 @@ For each tracked entry:
 1. Prefer structured pending events from `PENDING` when present:
    - `oc-question` / `pi-question`: set `state=prompting`, `substate=<tag>`, and pass `details.request_id`, `details.question`, and `details.harness` to `session-handle-prompt.md`.
    - `pi-bg-task-exit`: set `state=prompting`, `substate=pi-bg-task-exit`, and pass `details.task` to `session-handle-prompt.md`.
+   - `pi-busy-stall`: set `state=prompting`, `substate=pi-busy-stall`, and pass `details` to `session-handle-prompt.md` for operator recovery.
    - `daemon-exited`: treat as a daemon lifecycle event, not an inner-pane prompt. Record the reason, verify `flightdeck-daemon status --session <S>`, and follow the respawn contract in § 1 / § 6 before yielding.
 2. Otherwise read the entry's row from `POLL_JSONL` by stable `pane_id`/`pane_target` and update:
 
@@ -146,6 +147,7 @@ For each tracked entry:
    | `oc-question` | `prompting` | structured question handler |
    | `pi-question` | `prompting` | structured question handler |
    | `pi-bg-task-exit` | `prompting` | background-task exit handler |
+   | `pi-busy-stall` | `prompting` | busy-stall recovery pause |
    | `daemon-exited` | unchanged | daemon lifecycle respawn path (§ 1 / § 6), no pane handler |
    | `domain-mismatch` | `prompting` | guard escalation, no destructive action |
 
@@ -172,7 +174,7 @@ Process `state == "prompting"` entries sequentially. Do not answer panes in para
 ⤵ workflows/shared/session-handle-prompt.md <ENTRY_ID> <SUBSTATE_TAG>
 ```
 
-Pass structured event details for `oc-question`, `pi-question`, and `pi-bg-task-exit`. Pass the captured buffer for text-classified prompts.
+Pass structured event details for `oc-question`, `pi-question`, `pi-bg-task-exit`, and `pi-busy-stall`. Pass the captured buffer for text-classified prompts.
 
 After a successful response:
 
