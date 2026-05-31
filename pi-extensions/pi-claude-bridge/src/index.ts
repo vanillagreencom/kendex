@@ -6,7 +6,7 @@ import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthro
 import { createSession, deleteSession, openSession, repairToolPairing } from "cc-session-io";
 import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { accessSync, appendFileSync, chmodSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { resolve as pathResolve } from "path";
 import { homedir } from "os";
 import { delimiter, dirname, join } from "path";
@@ -34,13 +34,17 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 
 const DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 const DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join(homedir(), ".pi", "agent", "claude-bridge.log");
-const DIAG_LOG_PATH = join(homedir(), ".pi", "agent", "claude-bridge-diag.log");
+const DEFAULT_DIAG_LOG_PATH = join(homedir(), ".pi", "agent", "claude-bridge-diag.log");
+
+function diagLogPath(): string {
+	return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+}
 
 // Ensure log directories exist when debug is enabled
 if (DEBUG) {
 	try {
 		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true });
-		mkdirSync(dirname(DIAG_LOG_PATH), { recursive: true });
+		mkdirSync(dirname(diagLogPath()), { recursive: true, mode: 0o700 });
 	} catch {
 		// If directory creation fails, debug functions will throw on first use
 	}
@@ -58,7 +62,7 @@ function debug(...args: unknown[]) {
 		return JSON.stringify(a);
 	};
 	const msg = args.map(fmt).join(" ");
-	appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`);
+	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`); } catch { /* debug is best effort */ }
 }
 
 function executableFromPath(name: string): string | undefined {
@@ -343,11 +347,30 @@ function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?: string
 
 /** Unconditional diagnostic dump — for "should never happen" paths */
 function diagDump(label: string, data: Record<string, unknown>) {
-	const ts = new Date().toISOString();
-	const entry = { ts, moduleInstanceId, label, ...data };
-	try { mkdirSync(dirname(DIAG_LOG_PATH), { recursive: true }); } catch { /* best effort */ }
-	appendFileSync(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
-	debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+	try {
+		const ts = new Date().toISOString();
+		const entry = { ts, moduleInstanceId, label, ...data };
+		const path = diagLogPath();
+		try { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); } catch { /* best effort */ }
+		appendFileSync(path, JSON.stringify(entry) + "\n", { mode: 0o600 });
+		try { chmodSync(path, 0o600); } catch { /* best effort */ }
+		debug(`DIAG: ${label} (see ${path})`);
+	} catch (error) {
+		debug(`DIAG FAILED: ${label}`, error);
+	}
+}
+
+function safeNotify(message: string, level: "info" | "warning" | "error" = "warning"): void {
+	try { piUI?.notify(message, level); }
+	catch (error) { debug("notify failed:", error); }
+}
+
+function argKeys(args: Record<string, unknown> | undefined): string[] {
+	return Object.keys(args ?? {}).sort();
+}
+
+function safeToolCallSummary(calls: Array<{ id: string; toolName: string; arguments?: Record<string, unknown> }>): Array<{ id: string; toolName: string; argKeys: string[] }> {
+	return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
 }
 
 function compactToolNameSummary(names: Array<{ name: string; count: number }>, limit = 12): string[] {
@@ -357,58 +380,76 @@ function compactToolNameSummary(names: Array<{ name: string; count: number }>, l
 }
 
 function reportSyntheticToolResultRepair(missing: MissingToolResult[], context: Record<string, unknown>): void {
-	if (missing.length === 0) return;
-	const toolNames = summarizeMissingToolNames(missing);
-	const toolNameSummary = compactToolNameSummary(toolNames);
-	const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
-	diagDump("repair_tool_pairing_synthetic_results", {
-		count: missing.length,
-		toolNames,
-		sampledToolCallIds,
-		missing: missing.slice(0, 50),
-		...context,
-	});
-	piUI?.notify(
-		`Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"` +
-		`${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. ` +
-		`Real tool output was lost before Claude session import; see ${DIAG_LOG_PATH}.`,
-		"error",
-	);
+	try {
+		if (missing.length === 0) return;
+		const toolNames = summarizeMissingToolNames(missing);
+		const toolNameSummary = compactToolNameSummary(toolNames);
+		const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
+		diagDump("repair_tool_pairing_synthetic_results", {
+			count: missing.length,
+			toolNames,
+			sampledToolCallIds,
+			missing: missing.slice(0, 50),
+			...context,
+		});
+		safeNotify(
+			`Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"` +
+			`${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. ` +
+			`Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+			"error",
+		);
+	} catch (error) {
+		debug("reportSyntheticToolResultRepair failed:", error);
+	}
 }
 
-function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
-	if (queryCtx.reportedToolResultMismatch) return false;
-	const progress = queryCtx.toolResultProgress();
-	const hasMismatch = progress.expectedCount > 0
-		? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0
-		: progress.waitingCount > 0 || progress.queuedCount > 0;
-	if (!hasMismatch) return false;
-	queryCtx.reportedToolResultMismatch = true;
-	const toolNameSummary = compactToolNameSummary(progress.toolNames);
-	diagDump("tool_result_delivery_mismatch", {
-		reason,
-		cwd,
-		progress,
-		activeQueryExists: queryCtx.activeQuery !== null,
-		sharedSession: sharedSession ? {
-			sessionId: sharedSession.sessionId.slice(0, 8),
-			cursor: sharedSession.cursor,
-			needsRebuild: sharedSession.needsRebuild === true,
-			forceRotate: sharedSession.forceRotate === true,
-		} : null,
-	});
-	if (sharedSession) {
-		sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+export function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
+	try {
+		if (queryCtx.reportedToolResultMismatch) return false;
+		const progress = queryCtx.toolResultProgress();
+		const hasMismatch = progress.expectedCount > 0
+			? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0
+			: progress.waitingCount > 0 || progress.queuedCount > 0;
+		if (!hasMismatch) return false;
+		queryCtx.reportedToolResultMismatch = true;
+		if (sharedSession) {
+			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+		}
+		const toolNameSummary = compactToolNameSummary(progress.toolNames);
+		diagDump("tool_result_delivery_mismatch", {
+			reason,
+			cwd,
+			progress,
+			activeQueryExists: queryCtx.activeQuery !== null,
+			sharedSession: sharedSession ? {
+				sessionId: sharedSession.sessionId.slice(0, 8),
+				cursor: sharedSession.cursor,
+				needsRebuild: sharedSession.needsRebuild === true,
+				forceRotate: sharedSession.forceRotate === true,
+			} : null,
+		});
+		safeNotify(
+			`Claude bridge: tool result delivery interrupted during ${reason}; ` +
+			`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
+			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}` +
+			`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
+			`Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+			"error",
+		);
+		return true;
+	} catch (error) {
+		debug("reportToolResultMismatch failed:", error);
+		return false;
 	}
-	piUI?.notify(
-		`Claude bridge: tool result delivery interrupted during ${reason}; ` +
-		`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
-		`waiting=${progress.waitingCount}, queued=${progress.queuedCount}` +
-		`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
-		`Claude session will rebuild before the next turn; see ${DIAG_LOG_PATH}.`,
-		"error",
-	);
-	return true;
+}
+
+export function __testSetBridgeIntegrityState(state: { ui?: Pick<ExtensionUIContext, "notify"> | null; sharedSession?: SessionState | null }): void {
+	if ("ui" in state) piUI = state.ui as ExtensionUIContext | undefined;
+	if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+}
+
+export function __testGetBridgeIntegrityState(): { sharedSession: SessionState | null } {
+	return { sharedSession };
 }
 
 // --- Constants ---
@@ -1083,10 +1124,10 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 				debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
 				diagDump("tool_handler_unmatched", {
 					toolName: tool.name,
-					args: mappedArgs,
+					argKeys: argKeys(mappedArgs),
 					available: claim.available,
 					turnToolCallIds: queryCtx.turnToolCallIds,
-					turnToolCalls: queryCtx.turnToolCalls,
+					turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls),
 				});
 				return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true } satisfies McpResult;
 			}

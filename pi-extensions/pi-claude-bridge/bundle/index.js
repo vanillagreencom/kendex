@@ -21802,14 +21802,14 @@ var Session = class {
   /** Add an assistant message with the given content blocks. Returns its uuid. */
   addAssistantMessage(content, opts) {
     const base = this.baseFields();
-    const hasToolUse = content.some((b2) => b2.type === "tool_use");
+    const hasToolUse2 = content.some((b2) => b2.type === "tool_use");
     const payload = {
       id: syntheticMessageId(),
       type: "message",
       role: "assistant",
       model: opts?.model ?? this._model,
       content,
-      stop_reason: opts?.stopReason ?? (hasToolUse ? "tool_use" : "end_turn"),
+      stop_reason: opts?.stopReason ?? (hasToolUse2 ? "tool_use" : "end_turn"),
       stop_sequence: null,
       usage: { input_tokens: 0, output_tokens: 0 }
     };
@@ -21976,7 +21976,7 @@ function readSession(jsonlPath, projectPath) {
 // src/index.ts
 import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync as appendFileSync3, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
+import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
 import { resolve as pathResolve } from "path";
 import { homedir as homedir5 } from "os";
 import { delimiter, dirname as dirname5, join as join5 } from "path";
@@ -22135,26 +22135,53 @@ function assistantProvenancePrefix(msg) {
   return `[Prior Pi assistant response from ${provider ?? api ?? "unknown-provider"}${model ? `/${model}` : ""}]
 `;
 }
+function userMessageToAnthropic(msg) {
+  if (typeof msg.content === "string") return { role: "user", content: msg.content || "[empty]" };
+  if (Array.isArray(msg.content)) {
+    const parts = [];
+    for (const block of msg.content) {
+      if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
+      else if (block.type === "image" && block.data && block.mimeType) parts.push(imageBlockToAnthropic(block));
+    }
+    const kept = parts.filter(Boolean);
+    return { role: "user", content: kept.length ? kept : "[image]" };
+  }
+  return { role: "user", content: "[empty]" };
+}
+function toolResultToAnthropicBlock(msg, sanitizedIds) {
+  const content = toolResultContentToAnthropic(msg.content);
+  return {
+    type: "tool_result",
+    tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds),
+    content: content || "",
+    is_error: msg.isError
+  };
+}
+function hasToolUse(msg) {
+  return msg.role === "assistant" && Array.isArray(msg.content) && msg.content.some((block) => block.type === "toolCall");
+}
 function convertPiMessages(messages, customToolNameToSdk) {
   const anthropicMessages = [];
   const sanitizedIds = /* @__PURE__ */ new Map();
+  const pushToolResultGroup = (toolMessages) => {
+    if (toolMessages.length === 0) return;
+    anthropicMessages.push({
+      role: "user",
+      content: toolMessages.map((toolMsg) => {
+        const content = toolResultContentToAnthropic(toolMsg.content);
+        return {
+          type: "tool_result",
+          tool_use_id: sanitizeToolId(toolMsg.toolCallId, sanitizedIds),
+          content: content || "",
+          is_error: toolMsg.isError
+        };
+      })
+    });
+  };
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role === "user") {
-      if (typeof msg.content === "string") {
-        anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
-      } else if (Array.isArray(msg.content)) {
-        const parts = [];
-        for (const block of msg.content) {
-          if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
-          else if (block.type === "image" && block.data && block.mimeType) {
-            parts.push(imageBlockToAnthropic(block));
-          }
-        }
-        anthropicMessages.push({ role: "user", content: parts.filter(Boolean).length ? parts.filter(Boolean) : "[image]" });
-      } else {
-        anthropicMessages.push({ role: "user", content: "[empty]" });
-      }
+      anthropicMessages.push(userMessageToAnthropic(msg));
     } else if (msg.role === "assistant") {
       const content = Array.isArray(msg.content) ? msg.content : [];
       const blocks = [];
@@ -22176,6 +22203,23 @@ function convertPiMessages(messages, customToolNameToSdk) {
       }
       if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
       anthropicMessages.push({ role: "assistant", content: blocks });
+      if (hasToolUse(msg)) {
+        const toolMessages = [];
+        const interleavedUsers = [];
+        let j = i + 1;
+        for (; j < messages.length; j++) {
+          const next = messages[j];
+          if (next.role === "assistant") break;
+          if (next.role === "toolResult") toolMessages.push(next);
+          else if (next.role === "user") interleavedUsers.push(next);
+          else break;
+        }
+        if (toolMessages.length > 0) {
+          pushToolResultGroup(toolMessages);
+          for (const userMsg of interleavedUsers) anthropicMessages.push(userMessageToAnthropic(userMsg));
+          i = j - 1;
+        }
+      }
     } else if (msg.role === "toolResult") {
       const blocks = [];
       for (; i < messages.length; i++) {
@@ -22184,13 +22228,7 @@ function convertPiMessages(messages, customToolNameToSdk) {
           i--;
           break;
         }
-        const content = toolResultContentToAnthropic(toolMsg.content);
-        blocks.push({
-          type: "tool_result",
-          tool_use_id: sanitizeToolId(toolMsg.toolCallId, sanitizedIds),
-          content: content || "",
-          is_error: toolMsg.isError
-        });
+        blocks.push(toolResultToAnthropicBlock(toolMsg, sanitizedIds));
       }
       anthropicMessages.push({ role: "user", content: blocks });
     }
@@ -37417,11 +37455,14 @@ var _piAi = piAi;
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join5(homedir5(), ".pi", "agent", "claude-bridge.log");
-var DIAG_LOG_PATH = join5(homedir5(), ".pi", "agent", "claude-bridge-diag.log");
+var DEFAULT_DIAG_LOG_PATH = join5(homedir5(), ".pi", "agent", "claude-bridge-diag.log");
+function diagLogPath() {
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+}
 if (DEBUG) {
   try {
     mkdirSync3(dirname5(DEBUG_LOG_PATH), { recursive: true });
-    mkdirSync3(dirname5(DIAG_LOG_PATH), { recursive: true });
+    mkdirSync3(dirname5(diagLogPath()), { recursive: true, mode: 448 });
   } catch {
   }
 }
@@ -37435,8 +37476,11 @@ function debug(...args) {
     return JSON.stringify(a);
   };
   const msg = args.map(fmt).join(" ");
-  appendFileSync3(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}
+  try {
+    appendFileSync3(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}
 `);
+  } catch {
+  }
 }
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
@@ -37671,14 +37715,36 @@ function makeCliDebugOptions(tag) {
   };
 }
 function diagDump(label, data) {
-  const ts = (/* @__PURE__ */ new Date()).toISOString();
-  const entry = { ts, moduleInstanceId, label, ...data };
   try {
-    mkdirSync3(dirname5(DIAG_LOG_PATH), { recursive: true });
-  } catch {
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    const entry = { ts, moduleInstanceId, label, ...data };
+    const path = diagLogPath();
+    try {
+      mkdirSync3(dirname5(path), { recursive: true, mode: 448 });
+    } catch {
+    }
+    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
+    try {
+      chmodSync(path, 384);
+    } catch {
+    }
+    debug(`DIAG: ${label} (see ${path})`);
+  } catch (error51) {
+    debug(`DIAG FAILED: ${label}`, error51);
   }
-  appendFileSync3(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
-  debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+}
+function safeNotify(message, level = "warning") {
+  try {
+    piUI?.notify(message, level);
+  } catch (error51) {
+    debug("notify failed:", error51);
+  }
+}
+function argKeys(args) {
+  return Object.keys(args ?? {}).sort();
+}
+function safeToolCallSummary(calls) {
+  return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
 }
 function compactToolNameSummary(names, limit = 12) {
   const shown = names.slice(0, limit).map(({ name, count }) => count > 1 ? `${name}\xD7${count}` : name);
@@ -37686,49 +37752,65 @@ function compactToolNameSummary(names, limit = 12) {
   return shown;
 }
 function reportSyntheticToolResultRepair(missing, context) {
-  if (missing.length === 0) return;
-  const toolNames = summarizeMissingToolNames(missing);
-  const toolNameSummary = compactToolNameSummary(toolNames);
-  const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
-  diagDump("repair_tool_pairing_synthetic_results", {
-    count: missing.length,
-    toolNames,
-    sampledToolCallIds,
-    missing: missing.slice(0, 50),
-    ...context
-  });
-  piUI?.notify(
-    `Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${DIAG_LOG_PATH}.`,
-    "error"
-  );
+  try {
+    if (missing.length === 0) return;
+    const toolNames = summarizeMissingToolNames(missing);
+    const toolNameSummary = compactToolNameSummary(toolNames);
+    const sampledToolCallIds = missing.slice(0, 50).map((item) => item.id);
+    diagDump("repair_tool_pairing_synthetic_results", {
+      count: missing.length,
+      toolNames,
+      sampledToolCallIds,
+      missing: missing.slice(0, 50),
+      ...context
+    });
+    safeNotify(
+      `Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+      "error"
+    );
+  } catch (error51) {
+    debug("reportSyntheticToolResultRepair failed:", error51);
+  }
 }
 function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
-  if (queryCtx.reportedToolResultMismatch) return false;
-  const progress = queryCtx.toolResultProgress();
-  const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0;
-  if (!hasMismatch) return false;
-  queryCtx.reportedToolResultMismatch = true;
-  const toolNameSummary = compactToolNameSummary(progress.toolNames);
-  diagDump("tool_result_delivery_mismatch", {
-    reason,
-    cwd,
-    progress,
-    activeQueryExists: queryCtx.activeQuery !== null,
-    sharedSession: sharedSession ? {
-      sessionId: sharedSession.sessionId.slice(0, 8),
-      cursor: sharedSession.cursor,
-      needsRebuild: sharedSession.needsRebuild === true,
-      forceRotate: sharedSession.forceRotate === true
-    } : null
-  });
-  if (sharedSession) {
-    sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+  try {
+    if (queryCtx.reportedToolResultMismatch) return false;
+    const progress = queryCtx.toolResultProgress();
+    const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0;
+    if (!hasMismatch) return false;
+    queryCtx.reportedToolResultMismatch = true;
+    if (sharedSession) {
+      sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+    }
+    const toolNameSummary = compactToolNameSummary(progress.toolNames);
+    diagDump("tool_result_delivery_mismatch", {
+      reason,
+      cwd,
+      progress,
+      activeQueryExists: queryCtx.activeQuery !== null,
+      sharedSession: sharedSession ? {
+        sessionId: sharedSession.sessionId.slice(0, 8),
+        cursor: sharedSession.cursor,
+        needsRebuild: sharedSession.needsRebuild === true,
+        forceRotate: sharedSession.forceRotate === true
+      } : null
+    });
+    safeNotify(
+      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+      "error"
+    );
+    return true;
+  } catch (error51) {
+    debug("reportToolResultMismatch failed:", error51);
+    return false;
   }
-  piUI?.notify(
-    `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${DIAG_LOG_PATH}.`,
-    "error"
-  );
-  return true;
+}
+function __testSetBridgeIntegrityState(state) {
+  if ("ui" in state) piUI = state.ui;
+  if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+}
+function __testGetBridgeIntegrityState() {
+  return { sharedSession };
 }
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
@@ -38222,10 +38304,10 @@ function buildMcpServers(tools, queryCtx) {
         debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
         diagDump("tool_handler_unmatched", {
           toolName: tool.name,
-          args: mappedArgs,
+          argKeys: argKeys(mappedArgs),
           available: claim.available,
           turnToolCallIds: queryCtx.turnToolCallIds,
-          turnToolCalls: queryCtx.turnToolCalls
+          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
         });
         return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
       }
@@ -38907,12 +38989,15 @@ function index_default(pi) {
 export {
   CLAUDE_BRIDGE_TOOL_ISOLATION,
   DISALLOWED_BUILTIN_TOOLS,
+  __testGetBridgeIntegrityState,
+  __testSetBridgeIntegrityState,
   classifyClaudeExecutableBytes,
   index_default as default,
   formatResetTimestamp,
   isExtraUsageRequiredMessage,
   mapToolName,
   preflightClaudeExecutable,
+  reportToolResultMismatch,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,

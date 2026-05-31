@@ -64,6 +64,27 @@ describe("QueryContext class", () => {
 		assert.equal(first.match, "tool-args");
 	});
 
+	it("claimToolCall handles same-tool parallel calls invoked out of stream order", () => {
+		ctx().recordToolCall("read-a", "read", { path: "a.txt" });
+		ctx().recordToolCall("read-b", "read", { path: "b.txt" });
+		ctx().recordToolCall("grep-src", "grep", { path: "src", pattern: "needle" });
+		ctx().recordToolCall("grep-tests", "grep", { path: "tests", pattern: "needle" });
+
+		const readSecond = ctx().claimToolCall("read", { path: "b.txt" });
+		const grepSecond = ctx().claimToolCall("grep", { pattern: "needle", path: "tests" });
+		const readFirst = ctx().claimToolCall("read", { path: "a.txt" });
+		const grepFirst = ctx().claimToolCall("grep", { path: "src", pattern: "needle" });
+
+		assert.equal(readSecond.toolCallId, "read-b");
+		assert.equal(grepSecond.toolCallId, "grep-tests");
+		assert.equal(readFirst.toolCallId, "read-a");
+		assert.equal(grepFirst.toolCallId, "grep-src");
+		for (const claim of [readSecond, grepSecond, readFirst, grepFirst]) {
+			assert.equal(claim.match, "tool-args");
+			assert.equal(claim.ambiguous, false);
+		}
+	});
+
 	it("toolResultProgress reports teardown mismatch counts", () => {
 		ctx().recordToolCall("t0", "read", { path: "a" });
 		ctx().recordToolCall("t1", "grep", { pattern: "x" });
