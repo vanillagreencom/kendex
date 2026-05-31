@@ -194,6 +194,27 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.activity[0]?.payload.next_retry_at).toBe(SESSION_LIMIT_RESET_AT);
 	});
 
+	test("healthy assistant turn before a pending retry cancels the timer and resolves", () => {
+		const ctx = makeDeps();
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(watchdog.isAwaitingRetry("rust")).toBe(true);
+
+		const outcome = watchdog.onMessageEnd(HEALTHY_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("resolved");
+		if (outcome.kind !== "resolved") throw new Error("expected resolved");
+		expect(outcome.previousAttempt).toBe(1);
+		expect(ctx.scheduled[0]!.cancelled).toBe(true);
+		expect(watchdog.isAwaitingRetry("rust")).toBe(false);
+		expect(watchdog.fireRetryNow("rust")).toBe(false);
+		expect(ctx.steerCalls).toEqual([]);
+		expect(ctx.activity.map((entry) => entry.event)).toEqual([
+			"subagents:rate_limited",
+			"subagents:rate_limit_skipped",
+			"subagents:rate_limit_resolved",
+		]);
+	});
+
 	test("scheduled steer fires the canonical recovery prose", () => {
 		const ctx = makeDeps();
 		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);

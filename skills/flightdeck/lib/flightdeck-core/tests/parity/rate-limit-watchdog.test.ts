@@ -12,6 +12,7 @@ import * as vendoredDecision from "../../../../../../pi-extensions/pi-agents-tmu
 const {
 	RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC,
 	RATE_LIMIT_DEFAULT_MAX_ATTEMPTS,
+	RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS,
 	RATE_LIMIT_ERROR_REGEX,
 	RATE_LIMIT_RESET_MARGIN_MS,
 	RATE_LIMIT_STEER_MESSAGE,
@@ -77,6 +78,7 @@ const CLAUDE_USAGE_LIMIT_EVENT = {
 
 const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
 const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0);
+const SESSION_LIMIT_JUST_AFTER_RESET = SESSION_LIMIT_RESET_AT + 1_000;
 
 describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 	test("returns not-rate-limited for an unrelated assistant turn", () => {
@@ -207,6 +209,28 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.kind).toBe("retry-at");
 		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
 		expect(decision.at).toBe(SESSION_LIMIT_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
+	});
+
+	test("clock-only reset prose just after reset stays in the current reset window", () => {
+		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, SESSION_LIMIT_JUST_AFTER_RESET)).toBe(SESSION_LIMIT_RESET_AT);
+		const decision = decideRateLimitRetry(
+			{
+				attempt: 0,
+				event: CLAUDE_SESSION_LIMIT_EVENT,
+				lastRetryAt: null,
+				now: SESSION_LIMIT_JUST_AFTER_RESET,
+				paneId: "%41",
+			},
+			{ backoffLadderSec: [1], maxAttempts: 3 },
+		);
+		expect(decision.kind).toBe("retry-at");
+		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
+		expect(decision.at).toBe(SESSION_LIMIT_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
+	});
+
+	test("clock-only reset prose beyond the past tolerance rolls to the next day", () => {
+		const now = SESSION_LIMIT_RESET_AT + RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS + 1;
+		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, now)).toBe(SESSION_LIMIT_RESET_AT + 86_400_000);
 	});
 
 	test("structured reset timestamps win over the backoff ladder when later", () => {

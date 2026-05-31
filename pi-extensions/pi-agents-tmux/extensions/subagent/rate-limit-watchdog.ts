@@ -164,8 +164,9 @@ export function createSubagentRateLimitWatchdog(
 				// steer) are ignored so they cannot retrigger or falsely resolve the
 				// retry ladder.
 				if (!isAssistantMessageEvent(event)) return { kind: "not-rate-limited", reason: decision.reason };
-				if (state.pendingRetry === null && state.attempt > 0) {
+				if (decision.reason === "stopreason-mismatch" && state.attempt > 0) {
 					const previousAttempt = state.attempt;
+					clearPending(state);
 					state.attempt = 0;
 					emit("subagents:rate_limit_resolved", {
 						agent: state.agentName,

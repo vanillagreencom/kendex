@@ -1139,6 +1139,7 @@ export default function (pi: ExtensionAPI) {
 			};
 			await fs.promises.mkdir(path.dirname(outboxFile), { recursive: true, mode: 0o700 });
 			await fs.promises.writeFile(outboxFile, JSON.stringify(completion, null, 2), { encoding: "utf-8", mode: 0o600 });
+			rateLimitWatchdog.cancel(childAgentName);
 			pendingChildCompletion = { agent: childAgentName, taskId, status: params.status, outboxFile };
 			return {
 				content: [{ type: "text", text: `Completed ${childAgentName} task ${taskId} (${params.status}).` }],
@@ -1366,7 +1367,7 @@ export default function (pi: ExtensionAPI) {
 		// vstack#108: when the rate-limit watchdog has a retry scheduled for
 		// this pane, skip the agent-end-watchdog's needs_completion path so
 		// the steer can race the synthetic outbox.
-		const rateLimitAwaitingRetry = rateLimitWatchdog.isAwaitingRetry(childAgentName);
+		let rateLimitAwaitingRetry = rateLimitWatchdog.isAwaitingRetry(childAgentName);
 		if (childCurrentTaskFile) {
 			const runtimeRoot = runtimeDirForContext(ctx);
 			const activeTaskFile = childCurrentTaskFile;
@@ -1414,6 +1415,11 @@ export default function (pi: ExtensionAPI) {
 				// silently piling up additional partial tasks. pendingChildCompletion is
 				// also left as-is; later completions are matched by taskId equality.
 				return;
+			}
+
+			if ((pendingMatches || manualCompletionOk) && rateLimitAwaitingRetry) {
+				rateLimitWatchdog.cancel(childAgentName);
+				rateLimitAwaitingRetry = false;
 			}
 
 			const doneFile = path.join(doneDir(runtimeRoot, childAgentName), path.basename(activeTaskFile));

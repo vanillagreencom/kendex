@@ -16,6 +16,7 @@ export const RATE_LIMIT_STEER_MESSAGE =
 export const RATE_LIMIT_DEFAULT_MAX_ATTEMPTS = 5;
 export const RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC = [60, 120, 300, 600, 1800] as const;
 export const RATE_LIMIT_RESET_MARGIN_MS = 5_000;
+export const RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS = 10 * 60_000;
 
 export const RATE_LIMIT_ERROR_REGEX =
 	/(temporarily limiting requests|rate[\s_-]?limit(?:ed)?|429|too many requests|(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+(?:session|usage)\s+limit)|\b(?:session|usage)\s+limit\b|[·•]\s*resets\b|\bresets?\s+(?:at\s+)?\d{1,2}(?::\d{2}){0,2}\s*(?:am|pm)?)/i;
@@ -261,7 +262,11 @@ function nextClockOccurrenceInLocalTime(
 ): number {
 	const candidate = new Date(now);
 	candidate.setHours(clock.hour, clock.minute, clock.second, 0);
-	while (candidate.getTime() <= now) candidate.setDate(candidate.getDate() + 1);
+	if (candidate.getTime() <= now) {
+		const elapsedMs = now - candidate.getTime();
+		if (elapsedMs <= RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS) return candidate.getTime();
+		candidate.setDate(candidate.getDate() + 1);
+	}
 	return candidate.getTime();
 }
 
@@ -283,7 +288,9 @@ function nextClockOccurrenceInTimeZone(
 			clock.second,
 			timeZone,
 		);
-		if (candidate !== null && candidate > now) return candidate;
+		if (candidate === null) continue;
+		if (candidate > now) return candidate;
+		if (now - candidate <= RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS) return candidate;
 	}
 	return null;
 }
