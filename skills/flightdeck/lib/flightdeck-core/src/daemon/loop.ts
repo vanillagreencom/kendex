@@ -40,7 +40,7 @@ import {
 	ocSubscriberPidFile,
 } from "../paths/oc.ts";
 import { ccSubscriberPidFile } from "../paths/cc.ts";
-import { piSubscriberPidFile } from "../paths/pi.ts";
+import { piBridgeStateProbe, piSubscriberPidFile } from "../paths/pi.ts";
 import { cxSubscriberPidFile } from "../paths/codex.ts";
 import { isCanonicalTag, appendEvent } from "./events.ts";
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
@@ -101,6 +101,14 @@ import {
 	ownerMemHeartbeatFields,
 	probeOwnerCgroupMem,
 } from "./owner-cgroup-mem.ts";
+import {
+	BUSY_STALL_CLASSIFIER_TAG,
+	BusyStallWatchdog,
+	busyStallConfigFromEnv,
+	readGitHead,
+	sampleProcessTree,
+	type BridgeProbeResult,
+} from "./busy-stall-watchdog.ts";
 import { OC_LAST_ASSISTANT_JQ } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ } from "../paths/pi.ts";
@@ -294,8 +302,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	};
 
 	function trackedEntryForPane(paneId: string): ReconcileEntry | undefined {
-		return listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness)
-			.find((entry) => entry.paneId === paneId);
+		try {
+			return listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness)
+				.find((entry) => entry.paneId === paneId);
+		} catch (err) {
+			warn("registry-read-error", `pane=${paneId} ${((err as Error)?.message ?? err)}`);
+			return undefined;
+		}
 	}
 
 	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string, trackedEntry?: ReconcileEntry, spawnOpts: { forceSpawn?: boolean } = {}): boolean {
@@ -463,6 +476,12 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	// failure so non-Linux / no-cgroup-v2 hosts keep the existing line.
 	const ownerCgroupProbeOn = ownerCgroupProbeEnabled();
 
+	// vstack#277: detect Pi panes that are busy-but-stuck: userspace CPU
+	// spin, frozen bridge, and no output/commit progress for the threshold.
+	const busyStallConfig = busyStallConfigFromEnv();
+	const busyStallWatchdog = new BusyStallWatchdog(busyStallConfig);
+	const gitProgressCache = new Map<string, { cwd: string; head: string; atMs: number }>();
+
 	// vstack#59: reconcile tracked entries every FD_RECONCILE_INTERVAL_SEC
 	// so the daemon picks up panes added mid-session without restart.
 	const reconcileIntervalSec = Math.max(1, Math.floor(reconcileIntervalFromEnv()));
@@ -479,7 +498,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		if (nameRefresh.ok && (nameRefresh.updated.length > 0 || nameRefresh.cleared.length > 0)) {
 			log("window-name-refresh", `updated=${nameRefresh.updated.length} cleared=${nameRefresh.cleared.length} updated_ids=${nameRefresh.updated.join(",") || "-"} cleared_ids=${nameRefresh.cleared.join(",") || "-"} reason=${reason}`);
 		}
-		const entries = listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness);
+		let entries: ReconcileEntry[] = [];
+		try {
+			entries = listTrackedEntriesForReconcile(opts.paneRegistryBin, opts.defaultHarness);
+		} catch (err) {
+			warn("reconcile-registry-error", `${(err as Error)?.message ?? err} reason=${reason}; skipping reconcile tick`);
+			return;
+		}
 		const result = reconcileTrackedEntries({
 			listTrackedEntries: () => entries,
 			activePaneIds: () => innerIds.values(),
@@ -568,6 +593,8 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		notifiedHash.delete(paneId);
 		lastBellHash.delete(paneId);
 		firstSeen.delete(paneId);
+		busyStallWatchdog.forget(paneId);
+		gitProgressCache.delete(paneId);
 		// Drop bind-skip state for any harness this pane has been observed
 		// under so a reused pane id starts the throttle fresh.
 		for (const harness of ["claude", "opencode", "codex", "pi"] as const) {
@@ -682,6 +709,42 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		const marker = ocBellMarkerFile(paneId);
 		try { writeFileSync(marker, `${Date.now() * 1000000}\n`); }
 		catch { /* */ }
+	}
+
+	function gitHeadForPane(paneId: string, entry: ReconcileEntry | undefined, nowMs: number): string {
+		const cwd = entry?.cwd ?? "";
+		if (!cwd) return "";
+		const cached = gitProgressCache.get(paneId);
+		if (cached && cached.cwd === cwd && nowMs - cached.atMs < busyStallConfig.gitProbeIntervalSec * 1000) return cached.head;
+		const head = readGitHead(cwd);
+		gitProgressCache.set(paneId, { atMs: nowMs, cwd, head });
+		return head;
+	}
+
+	function bridgeProbeForEntry(entry: ReconcileEntry | undefined): BridgeProbeResult {
+		const rawPid = entry?.adapterMeta?.piPid ?? "";
+		const pid = Number(rawPid);
+		if (!Number.isFinite(pid) || pid <= 0) return { reason: "missing-pi-bridge-pid", responsive: true };
+		const probe = piBridgeStateProbe(pid, entry?.adapterMeta?.piSocket ?? "");
+		if (probe.ok) return { reason: "ok", responsive: true, sessionId: probe.sessionId, socketPath: probe.socketPath };
+		return { reason: probe.reason, responsive: false };
+	}
+
+	function observeBusyStall(innerId: string, harness: string, target: string, progressHash: string, nowMs: number) {
+		if (!busyStallConfig.enabled || harness !== "pi") return null;
+		const panePid = paneCache.panePid(innerId);
+		const entry = trackedEntryForPane(innerId);
+		const gitHead = gitHeadForPane(innerId, entry, nowMs);
+		const candidate = busyStallWatchdog.observeLocal({
+			harness,
+			nowMs,
+			paneId: innerId,
+			panePid: panePid || null,
+			processSample: sampleProcessTree(panePid || null),
+			progressKey: `${progressHash}|git:${gitHead}`,
+		});
+		if (!candidate) return null;
+		return busyStallWatchdog.confirmBridge(candidate, bridgeProbeForEntry(entry), nowMs);
 	}
 
 	while (true) {
@@ -880,13 +943,45 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					log("pane-gone", `${innerId} no longer exists; skipping`);
 					lastGoneLog.set(innerId, now);
 				}
+				busyStallWatchdog.forget(innerId);
+				gitProgressCache.delete(innerId);
 				continue;
 			}
+
+			const target = paneCache.target(innerId);
+			if (!target) continue;
 
 			if (ocSubscribed.has(innerId)) {
 				const subHarness = paneHarness.get(innerId) ?? opts.defaultHarness;
 				const pidFile = subscriberPidFor(subHarness, innerId);
 				if (subscriberAlive(innerId, pidFile)) {
+					if (subHarness === "pi") {
+						const stallBuf = capturePane(target, opts.captureLines);
+						const stallDecision = observeBusyStall(innerId, subHarness, target, captureHash12(stallBuf), now * 1000);
+						if (stallDecision) {
+							const extraJson = JSON.stringify({ event_type: "busy_stall", ...stallDecision.details });
+							const appended = appendEvent({
+								ageSec: Number(stallDecision.details.no_progress_sec ?? 0),
+								extraJson,
+								hash: stallDecision.hash,
+								isBell: false,
+								paneId: innerId,
+								reason: "busy-stall",
+								sessionLock,
+								tag: BUSY_STALL_CLASSIFIER_TAG,
+								eventsFile,
+								wakePending,
+								lastEventKey,
+							});
+							if (appended) {
+								busyStallWatchdog.markReported(stallDecision);
+								log("busy-stall", `pane=${innerId} hash=${stallDecision.hash} details=${extraJson}`);
+								tickActivity.push({ classifier_tag: BUSY_STALL_CLASSIFIER_TAG, details: stallDecision.details, event_type: "busy_stall", harness: subHarness, hash: stallDecision.hash, pane_id: innerId });
+								tickReasons.push(`watchdog:${innerId}:${BUSY_STALL_CLASSIFIER_TAG}`);
+								tickPending.push({ paneId: innerId, hash: stallDecision.hash, tag: BUSY_STALL_CLASSIFIER_TAG, isBell: false });
+							}
+						}
+					}
 					if (subHarness === "opencode" && paneCache.bell(innerId) === 1) {
 						touchOcBellMarker(innerId);
 						const winId = paneCache.windowId(innerId);
@@ -907,8 +1002,6 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const paneAge = now - (firstSeen.get(innerId) ?? now);
 			const inGrace = paneAge < opts.graceSec;
 
-			const target = paneCache.target(innerId);
-			if (!target) continue;
 			const winId = paneCache.windowId(innerId);
 			if (subscriberRespawnNeeded.has(innerId)) {
 				const entry = trackedEntryForPane(innerId);
@@ -941,6 +1034,30 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			lastActivityFlag.set(innerId, paneActivity);
 			const buf = canSkipCapture ? "" : capturePane(target, opts.captureLines);
 			const hash = canSkipCapture ? prevHashEntry! : captureHash12(buf);
+			const stallDecision = observeBusyStall(innerId, harness, target, hash, now * 1000);
+			if (stallDecision) {
+				const extraJson = JSON.stringify({ event_type: "busy_stall", ...stallDecision.details });
+				const appended = appendEvent({
+					ageSec: Number(stallDecision.details.no_progress_sec ?? 0),
+					extraJson,
+					hash: stallDecision.hash,
+					isBell: false,
+					paneId: innerId,
+					reason: "busy-stall",
+					sessionLock,
+					tag: BUSY_STALL_CLASSIFIER_TAG,
+					eventsFile,
+					wakePending,
+					lastEventKey,
+				});
+				if (appended) {
+					busyStallWatchdog.markReported(stallDecision);
+					log("busy-stall", `pane=${innerId} hash=${stallDecision.hash} details=${extraJson}`);
+					tickActivity.push({ classifier_tag: BUSY_STALL_CLASSIFIER_TAG, details: stallDecision.details, event_type: "busy_stall", harness, hash: stallDecision.hash, pane_id: innerId });
+					tickReasons.push(`watchdog:${innerId}:${BUSY_STALL_CLASSIFIER_TAG}`);
+					tickPending.push({ paneId: innerId, hash: stallDecision.hash, tag: BUSY_STALL_CLASSIFIER_TAG, isBell: false });
+				}
+			}
 			const stab = stabilityForHarness(harness, opts.stabilitySec);
 
 			if (opts.debugPane && opts.debugPane === innerId) {

@@ -125,6 +125,18 @@ Issue mode may inspect the same event after this generic handling to recover PR/
 
 ---
 
+## § 8: Handler — `pi-busy-stall`
+
+The daemon detected a Pi pane that is CPU-bound, bridge-unresponsive, and not making output/commit progress.
+
+1. Read watchdog `details` from the daemon event: `cpu_pct`, `process_state`, `no_progress_sec`, `hot_for_sec`, `bridge_reason`, `pane_pid`, and `recovery_hint` when present.
+2. Log `pi-busy-stall` with those details in the entry decision log.
+3. Do **not** send text into the wedged pane and do **not** auto-kill it from the generic handler.
+4. Set `paused_for_user = {entry_id, reason: "pi-busy-stall", prompt_text: <watchdog summary>}` so the operator can choose recovery (stop + respawn, switch harness, or inspect manually).
+5. Return to `session-watch.md`; the loop yields.
+
+---
+
 ## Returns
 
 To `session-watch.md` § 3. When invoked from issue mode, return to `watch.md` so issue-specific merge planning and summaries can continue.

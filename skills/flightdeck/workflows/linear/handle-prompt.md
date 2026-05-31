@@ -1,6 +1,6 @@
 # Workflow: `handle-prompt` — Issue Prompt Handler
 
-Routes issue-specific prompt tags for a `kind="issue"` entry. Generic prompt/event tags live in `workflows/shared/session-handle-prompt.md`; issue `watch.md` calls that file first for `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, `pi-bg-task-exit`, and `domain-mismatch` guard handling.
+Routes issue-specific prompt tags for a `kind="issue"` entry. Generic prompt/event tags live in `workflows/shared/session-handle-prompt.md`; issue `watch.md` calls that file first for `oc-question`, `pi-question`, `bash-permission-prompt`, `awaiting-direction`, safe `generic-multi-choice`, `terminal-state-reached`, `pi-bg-task-exit`, `pi-busy-stall`, and `domain-mismatch` guard handling.
 
 **Inputs**: `<ISSUE_ID>`, `<TAG>` (issue-only substate from `prompt-classify` or computed by the issue workflow), captured buffer or structured event details.
 
