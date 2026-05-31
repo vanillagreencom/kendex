@@ -161,10 +161,12 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	if (raw.startsWith("'")) {
 		if (!raw.endsWith("'") || raw.length < 2) throw new Error(`unterminated single-quoted value at ${path}:${lineNumber}`);
 		text = raw.slice(1, -1);
+		if (text.includes("'")) throw new Error(`unsupported trailing tokens after quoted value at ${path}:${lineNumber}`);
 		expand = false;
 	} else if (raw.startsWith('"')) {
 		if (!raw.endsWith('"') || raw.length < 2) throw new Error(`unterminated double-quoted value at ${path}:${lineNumber}`);
 		text = raw.slice(1, -1);
+		if (text.includes('"')) throw new Error(`unsupported trailing tokens after quoted value at ${path}:${lineNumber}`);
 	} else if (/[`;&|<>$]/.test(raw)) {
 		if (!raw.includes("$(") && !/[`;&|<>]/.test(raw) && /\s/.test(raw)) {
 			throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
