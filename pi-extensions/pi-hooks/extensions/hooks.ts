@@ -48,7 +48,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 		if (getBool(cfg, "preCommitCheck") && isGitCommit(command)) {
 			const timeoutMs = getNumber(cfg, "clippyTimeoutMs");
-			const fail = runPreCommitCheck(ctx.cwd, timeoutMs);
+			const fail = await runPreCommitCheck(ctx.cwd, timeoutMs, command);
 			if (fail) {
 				return { block: true, reason: fail.reason };
 			}
