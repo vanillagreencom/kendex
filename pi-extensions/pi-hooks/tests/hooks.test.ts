@@ -255,6 +255,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`git config alias.zzz276 commit; git zzz276 -am project`,
 					`git config --file .git/config alias.zzz277 commit; git zzz277 -am project`,
 					`shopt -s expand_aliases; alias g=git; g commit -am project`,
+					`shopt -s expand_aliases\nalias gc="git commit"\ngc -am project`,
 					`eval "git commit -am project"`,
 					`eval 'git \`echo commit\` -am project'`,
 					`eval 'git "$(echo commit)" -am project'`,
@@ -294,6 +295,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`CFG=alias.zzz276=commit; git -c $CFG zzz276 -am project`,
 					`git config ${"${K:-alias.zzz276}"} commit; git zzz276 -am project`,
 					`GIT_CONFIG_GLOBAL=/tmp/pi-hooks-aliases git zzz276 -am project`,
+					`HOME=$h git zzz276 -am project`,
 					`export GIT_CONFIG_GLOBAL=/tmp/pi-hooks-aliases; git zzz276 -am project`,
 					`git -c include.path=/tmp/pi-hooks-aliases zzz276 -am project`,
 					`git -c includeIf.gitdir:${project}/.git.path=/tmp/pi-hooks-aliases zzz276 -am project`,
@@ -355,6 +357,23 @@ describe("pi-hooks pre-commit tool_call", () => {
 				const handler = installToolCallHandler();
 				const result = await handler({ toolName: "bash", input: { command: "git add ../src/nested_new.rs && git commit -m test" } }, { cwd: nested });
 				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	});
+
+	test("allows non-executed git commit text without running cargo", async () => {
+		await withFakeCargo(async ({ log }) => {
+			const project = initRustRepo("pi-hooks-project-");
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				for (const command of ["echo git commit", "# git commit", "printf 'git commit'"]) {
+					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
+					expect(result).toBeUndefined();
+				}
+				expect(readFileSync(log, { encoding: "utf8", flag: "a+" })).toBe("");
 			} finally {
 				rmSync(project, { recursive: true, force: true });
 			}

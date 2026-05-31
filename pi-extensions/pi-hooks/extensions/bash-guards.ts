@@ -47,8 +47,7 @@ function countRegexMatches(pattern: RegExp, text: string): number {
 
 function gitCommitSyntaxCount(command: string): number {
 	const normalized = normalizeShell(command);
-	return countRegexMatches(GIT_COMMIT, normalized)
-		+ countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
+	return countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
 		+ countRegexMatches(ENV_SHORT_SPLIT_GIT_COMMIT, normalized)
 		+ countShellCVerb(command, "commit")
 		+ countShellDispatchVerb(command, "commit")
@@ -57,8 +56,7 @@ function gitCommitSyntaxCount(command: string): number {
 
 function commandMayStageFiles(command: string): boolean {
 	const normalized = normalizeShell(command);
-	return GIT_ADD.test(normalized)
-		|| ENV_SPLIT_GIT_ADD.test(normalized)
+	return ENV_SPLIT_GIT_ADD.test(normalized)
 		|| ENV_SHORT_SPLIT_GIT_ADD.test(normalized)
 		|| countShellCVerb(command, "add") > 0
 		|| countShellDispatchVerb(command, "add") > 0
@@ -644,7 +642,7 @@ function recordTextAssignment(word: ShellWord, variables: ShellTextVariables): v
 	const value = word.text.slice(separator + 1);
 	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return;
 	if (word.dynamic) {
-		if (name.startsWith("GIT_CONFIG_")) variables.set("__GIT_CONFIG_UNKNOWN", "1");
+		if (name.startsWith("GIT_CONFIG_") || name === "HOME" || name === "XDG_CONFIG_HOME") variables.set("__GIT_CONFIG_UNKNOWN", "1");
 		variables.delete(name);
 	} else {
 		variables.set(name, value);
@@ -991,6 +989,13 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 		prefixTextVariables.clear();
 	};
 
+	const promotePrefixAssignments = () => {
+		for (const [name, ref] of prefixGitVariables) variables.set(name, ref);
+		for (const [name, value] of prefixTextVariables) textVariables.set(name, value);
+		prefixGitVariables.clear();
+		prefixTextVariables.clear();
+	};
+
 	const gitCommandVariables = (): ShellVariables => new Map([...variables, ...prefixGitVariables]);
 	const gitTextVariables = (): ShellTextVariables => new Map([...textVariables, ...prefixTextVariables]);
 	const resolvedExecutable = (word: ShellWord): string => shellAliases.get(word.text) ?? resolvedCommandText(word, gitTextVariables()) ?? word.text;
@@ -1075,10 +1080,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 	for (let i = 0; i < tokens.length; i += 1) {
 		const token = tokens[i];
 		if (token.kind === "op") {
-			if (commandStart) {
-				prefixGitVariables.clear();
-				prefixTextVariables.clear();
-			}
+			if (commandStart) promotePrefixAssignments();
 			if (token.text === "(") {
 				scopeStack.push(cloneContext(ctx));
 				pending = null;
@@ -1118,12 +1120,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 
 		if (commandStart && isAssignment(token.text)) {
 			recordTextAssignment(token, prefixTextVariables);
-			recordTextAssignment(token, textVariables);
-			if (token.text.startsWith("GIT_DIR=") || token.text.startsWith("GIT_WORK_TREE=")) {
-				recordAssignment(token, ctx.cwd, prefixGitVariables);
-			} else {
-				recordAssignment(token, ctx.cwd, variables);
-			}
+			recordAssignment(token, ctx.cwd, prefixGitVariables);
 			continue;
 		}
 
@@ -1239,6 +1236,23 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			continue;
 		}
 
+		if (commandStart && shellAliases.has(token.text)) {
+			const aliasValue = shellAliases.get(token.text) ?? "";
+			const aliasTargets = gitCommitTargets(aliasValue, ctx.cwd ?? cwd, gitCommandVariables(), gitTextVariables()).map((target) => ({
+				...target,
+				external: target.external || ctx.external,
+				unknown: target.unknown || ctx.unknown,
+			}));
+			if (aliasTargets.length > 0) targets.push(...aliasTargets);
+			else if (/\s/.test(aliasValue) || /\$|`/.test(aliasValue)) targets.push({ cwd: ctx.cwd, external: ctx.external, unknown: true, hasGitDir: false, gitDir: null, hasWorkTree: false, workTree: null });
+			if (aliasTargets.length > 0 || /\s/.test(aliasValue) || /\$|`/.test(aliasValue)) {
+				pending = pendingCommand("other", cloneContext(ctx));
+				commandStart = false;
+				markCommandConsumed();
+				continue;
+			}
+		}
+
 		if (commandStart && isGitExecutable(resolvedExecutable(token))) {
 			const configMutation = recordGitConfigMutation(tokens, i, textVariables);
 			if (configMutation.recorded) {
@@ -1324,10 +1338,10 @@ async function gitAliasCommitDecision(cwd: string, aliasName: string, timeoutMs:
 
 export async function resolveProjectGitCommit(command: string, cwd: string, timeoutMs = 5000): Promise<ProjectGitCommitProbe> {
 	const targets = gitCommitTargets(command, cwd);
-	const commitSyntaxCount = gitCommitSyntaxCount(command);
-	const hasCommit = commitSyntaxCount > 0;
-	const hasUnparsedCommit = commitSyntaxCount > targets.length;
-	if (targets.length === 0 && !hasCommit) return { kind: "skip", reason: "no-git-commit" };
+	const unparsedCommitCount = gitCommitSyntaxCount(command);
+	const hasCommit = targets.length > 0 || unparsedCommitCount > 0;
+	const hasUnparsedCommit = unparsedCommitCount > 0;
+	if (!hasCommit) return { kind: "skip", reason: "no-git-commit" };
 
 	const project = await gitRoot(cwd, timeoutMs);
 	if (project.kind === "error") return project;

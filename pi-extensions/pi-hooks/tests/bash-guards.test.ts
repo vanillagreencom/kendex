@@ -85,6 +85,7 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("git config alias.zzz276 commit; git zzz276 -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git config --file .git/config alias.zzz277 commit; git zzz277 -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("shopt -s expand_aliases; alias g=git; g commit -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("shopt -s expand_aliases\nalias gc=\"git commit\"\ngc -m test", project, 1000)).toBe(resolve(project));
 			expect((await resolveProjectGitCommit("cmd=git; $cmd commit -m test", project, 1000)).kind).toBe("error");
 			expect(await projectGitCommitCwd("G=git; ${G} commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("${G:-git} commit -m test", project, 1000)).toBe(resolve(project));
@@ -298,8 +299,36 @@ git commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(globalAlias.kind).toBe("error");
 			const exportedGlobalAlias = await resolveProjectGitCommit("export GIT_CONFIG_GLOBAL=/tmp/aliases; git zzz276 -m base", project, 1000);
 			expect(exportedGlobalAlias.kind).toBe("error");
+			const dynamicHomeAlias = await resolveProjectGitCommit("HOME=$h git zzz276 -m base", project, 1000);
+			expect(dynamicHomeAlias.kind).toBe("error");
 			const dynamicCount = await resolveProjectGitCommit("n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit git zzz -m base", project, 1000);
 			expect(dynamicCount.kind).toBe("error");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("skips non-executed git commit text", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			for (const command of ["echo git commit", "# git commit", "printf 'git commit'", "cat <<<'git commit'"]) {
+				const result = await resolveProjectGitCommit(command, project, 1000);
+				expect(result).toEqual({ kind: "skip", reason: "no-git-commit" });
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("does not leak one-shot git config prefix assignments", async () => {
+		const project = initRepo("pi-hooks-project-");
+		try {
+			for (const command of [
+				"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit /bin/true; git zzz -m base",
+				"GIT_CONFIG_GLOBAL=/tmp/aliases /bin/true; git zzz276 -m base",
+			]) {
+				expect(await projectGitCommitCwd(command, project, 1000)).toBeNull();
+			}
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
