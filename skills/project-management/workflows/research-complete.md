@@ -38,6 +38,8 @@ Load issue-label inventory and project taxonomy before inspecting or updating la
 
 Use issue labels only. Domain/stack labels, `agent:*`, and workflow/classification labels must be validated against [labels.md](../references/labels.md) before any update.
 
+Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+
 **Two distinct concepts**:
 
 | Concept | Purpose | Example |

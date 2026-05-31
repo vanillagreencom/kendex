@@ -301,6 +301,7 @@ For bundle parents: use parent-issue-template format (`is_bundle_parent: true`, 
 - If `labels[]` is missing but legacy `agent`/`agent_label` exists, complete `labels[]` from project taxonomy and issue context before mutation.
 - Validate every `labels[]` set against § 6.0 inventory/taxonomy before writing the audit file.
 - Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt the workflow and ask the user. Do not let the Linear CLI warn-and-skip invalid labels.
+- Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
 
 **Top-level metadata**:
 

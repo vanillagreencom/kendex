@@ -492,6 +492,8 @@ Before any approved mutation that creates an issue or changes labels:
 4. **Halt before mutation** on unknown labels, parent/group labels, missing required categories, or exclusivity violations. Report the failing label set and ask the user. If a required taxonomy label is missing from Linear, request explicit authorization before creating it; never create labels automatically.
 5. **Use only validated final labels** in `issues create --labels` or `issues update --labels`.
 
+Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+
 Do not run `issues update --labels "agent:new"` or any other partial label replacement unless the validated final label set really contains only that label.
 
 For each approved change:

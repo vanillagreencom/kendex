@@ -43,14 +43,20 @@ If no planner handoff is provided, set `PLANNER_HANDOFF` = null. Do not run `pla
 
 ### 1.3 Search Existing Research
 
-1. **Search for research**:
+1. **Resolve research issue label**:
+   - Load issue-label inventory: `.agents/skills/linear/scripts/linear.sh cache labels list --format=safe`.
+   - Load project taxonomy/application rules.
+   - Resolve `RESEARCH_WORKFLOW_LABEL` to the project-configured issue label for completed research artifacts.
+   - If no unambiguous assignable issue label exists, skip existing-research lookup and continue to § 2 (do not query a hard-coded fallback label).
+
+2. **Search for research**:
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --label "research" --state "Done" --max
+   .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
    ```
 
-2. **Filter results** for `FEATURE` keywords in title/description.
+3. **Filter results** for `FEATURE` keywords in title/description.
 
-3. **Route based on results**:
+4. **Route based on results**:
 
    | Result | Action |
    |--------|--------|
