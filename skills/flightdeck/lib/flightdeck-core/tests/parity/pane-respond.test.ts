@@ -155,8 +155,9 @@ describe("pane-respond parity (validation)", () => {
 		const FLIGHTDECK_STATE = resolve(HERE, "../../../../scripts/flightdeck-state");
 		const fakePaneId = "%999998";
 		const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "fd-pr-drift-"));
+		const runStoreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fd-pr-drift-runs-"));
 		try {
-			const envBase: Record<string, string> = { ...(process.env as Record<string, string>), FLIGHTDECK_STATE_DIR: stateDir };
+			const envBase: Record<string, string> = { ...(process.env as Record<string, string>), FLIGHTDECK_RUN_STORE_ROOT: runStoreRoot, FLIGHTDECK_STATE_DIR: stateDir };
 			spawnSync(FLIGHTDECK_STATE, ["init"], { encoding: "utf8", env: envBase });
 			spawnSync(PANE_REGISTRY, ["init-entry", "DRIFT-PT", "--title", "T", "--kind", "adhoc", "--cwd", "/tmp", "--window", "1", "--harness", "pi", "--pane-id", fakePaneId], { encoding: "utf8", env: envBase });
 			spawnSync(PANE_REGISTRY, ["set", "DRIFT-PT", "pane_target", "null"], { encoding: "utf8", env: envBase });
@@ -167,6 +168,7 @@ describe("pane-respond parity (validation)", () => {
 			expect((r.stderr ?? "")).not.toContain("target must include explicit pane index");
 		} finally {
 			fs.rmSync(stateDir, { recursive: true, force: true });
+			fs.rmSync(runStoreRoot, { recursive: true, force: true });
 		}
 	});
 

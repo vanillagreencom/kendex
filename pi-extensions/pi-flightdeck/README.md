@@ -10,16 +10,16 @@ The Flightdeck skill and Rust dashboard work without this extension.
 ## Highlights
 
 - **Pause banner** — yellow frame above the editor when Flightdeck master pauses for the user. Clears on resume, and respects user-hidden widget state.
-- **Persistent mini-dashboard widget** — compact tree of active tracked sessions with state, kind, harness, last decision, age, and per-pane cost/turns/tokens. Once hidden by the user, state-file ticks and settings events do not reopen it until explicit toggle-in.
+- **Persistent mini-dashboard widget** — compact tree of tracked sessions from the current durable active run, with state, kind, harness, last decision, age, and per-pane cost/turns/tokens. Once hidden by the user, state-file ticks and settings events do not reopen it until explicit toggle-in.
 - **`/flightdeck` app focus/open** — delegates to `flightdeck-dashboard focus-or-launch --json`, focusing an existing app window or launching it in tmux.
 - **Owner-scoped by default** — dashboard renders only in the Flightdeck owner pane. Child panes remain suppressed. Visibility is configurable. State/archive read errors still render a diagnostic banner so corrupted state is visible even when owner metadata cannot be read.
-- **Stale-pane guard** — standby/watch hints ignore state files whose tracked entries only point at tmux pane ids that no longer exist.
+- **Stale-pane guard** — rows whose tmux pane id no longer exists render as dim stale rows (no active status/spinner), and standby/watch hints ignore state files whose tracked entries only point at missing panes.
 - Optional terminal bell when master pauses.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 
 ## Read-only by design
 
-The Flightdeck skill owns state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck only renders active status from on-disk state and delegates full inspection/control to the Rust app.
+The Flightdeck skill owns state mutation; the daemon owns wake delivery; `pane-respond` owns sending input to inner panes. pi-flightdeck only renders active status from on-disk state and delegates full inspection/control to the Rust app. It reads the durable run-store active pointer first, then falls back to legacy project-local state/archive files only when no active run exists.
 
 Terminated archives are not shown as active mini-dashboard state. Use the Rust app for active dashboard context and supported archive/session inspection commands; a dedicated History UI is not part of this status-shell extension.
 
@@ -82,7 +82,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | --- | --- |
 | Refresh interval | Poll rate for state files (ms). |
 | Daemon state dir override | Override `FD_STATE_DIR` resolution. Leave empty for the default. |
-| Master state dir (project-relative) | Directory inside the project root holding the master state file. Matches `FLIGHTDECK_STATE_DIR` (default `tmp`). |
+| Master state dir (project-relative) | Legacy fallback directory inside the project root for master state/archive files. Matches `FLIGHTDECK_STATE_DIR` (default `tmp`) when no durable active-run pointer exists. |
 
 If your project uses a non-default `FLIGHTDECK_STATE_DIR` or `FD_STATE_DIR`, set the matching extension setting so the mini-dashboard reads the right files. Daemon tuning env vars are owned by the Flightdeck skill — see its README.
 

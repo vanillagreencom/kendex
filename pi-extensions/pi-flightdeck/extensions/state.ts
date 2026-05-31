@@ -7,9 +7,10 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
 import { normalizeConflictGraph, normalizeDecisionsLog, normalizeOwner } from "./state-normalizers.js";
 
@@ -310,6 +311,156 @@ export function resolveStateDir(settings?: SettingsLike): string {
 	if (xdg) return join(xdg, "flightdeck");
 	const uid = typeof process.getuid === "function" ? process.getuid() : 0;
 	return `/tmp/flightdeck-${uid}`;
+}
+
+interface RunStoreProjectIndexLike {
+	project_id?: string;
+	root_path?: string;
+}
+
+interface ActiveRunPointerLike {
+	project_id?: string;
+	run_id?: string;
+	state_path?: string;
+	tmux_session?: string;
+}
+
+interface ActiveRunStateResolution {
+	statePath?: string;
+	diagnosticPath?: string;
+	error?: string;
+}
+
+const RUN_STORE_PROJECT_ID_CACHE = new Map<string, string>();
+
+export function resetRunStoreCacheForTests(): void {
+	RUN_STORE_PROJECT_ID_CACHE.clear();
+}
+
+function sha256(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
+}
+
+function safeSegment(value: string, fallback = "project"): string {
+	const cleaned = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+	return cleaned || fallback;
+}
+
+function gitRemoteUrl(projectRoot: string): string | null {
+	const origin = spawnSync("git", ["-C", projectRoot, "config", "--get", "remote.origin.url"], { encoding: "utf8", timeout: 1500 });
+	if (origin.status === 0 && origin.stdout.trim()) return origin.stdout.trim();
+	const first = spawnSync("git", ["-C", projectRoot, "remote"], { encoding: "utf8", timeout: 1500 });
+	const remote = (first.stdout ?? "").split("\n").map((line) => line.trim()).find(Boolean);
+	if (!remote) return null;
+	const value = spawnSync("git", ["-C", projectRoot, "config", "--get", `remote.${remote}.url`], { encoding: "utf8", timeout: 1500 });
+	return value.status === 0 && value.stdout.trim() ? value.stdout.trim() : null;
+}
+
+function remoteRepoName(remoteUrl: string): string {
+	const stripped = remoteUrl.trim().replace(/[?#].*$/, "").replace(/\.git$/, "");
+	const parts = stripped.split(/[/:]/).filter(Boolean);
+	return parts[parts.length - 1] || "project";
+}
+
+function runStoreProjectId(projectRoot: string): string {
+	const root = resolve(projectRoot);
+	const cached = RUN_STORE_PROJECT_ID_CACHE.get(root);
+	if (cached) return cached;
+	const remoteUrl = gitRemoteUrl(root);
+	const rootHash = sha256(root);
+	const name = remoteUrl ? remoteRepoName(remoteUrl) : basename(root) || "project";
+	const identityMaterial = remoteUrl ? `${remoteUrl}\n${rootHash}` : rootHash;
+	const projectId = `${safeSegment(name)}-${sha256(identityMaterial).slice(0, 16)}`;
+	RUN_STORE_PROJECT_ID_CACHE.set(root, projectId);
+	return projectId;
+}
+
+function flightdeckRunStoreRoot(): string {
+	const override = nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
+	if (override) return resolve(expandHome(override));
+	return join(homedir(), ".vstack", "flightdeck");
+}
+
+function isSafeBasename(value: string | undefined): value is string {
+	return !!value && value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\");
+}
+
+function isSafeRunId(value: string | undefined): value is string {
+	return !!value && /^[A-Za-z0-9._-]+$/.test(value) && value !== "." && value !== "..";
+}
+
+function readRecord(path: string): Record<string, unknown> | undefined {
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		return isRecord(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function projectIndexMatchesProject(path: string, projectRoot: string): boolean {
+	const raw = readRecord(path) as RunStoreProjectIndexLike | undefined;
+	if (!raw || typeof raw.root_path !== "string") return false;
+	return resolve(raw.root_path) === resolve(projectRoot);
+}
+
+function runStoreProjectDirs(projectRoot: string): string[] {
+	const root = flightdeckRunStoreRoot();
+	const projectsDir = join(root, "projects");
+	const out: string[] = [];
+	const direct = join(projectsDir, runStoreProjectId(projectRoot));
+	if (projectIndexMatchesProject(join(direct, "project.json"), projectRoot)) out.push(direct);
+	let entries: string[];
+	try {
+		entries = readdirSync(projectsDir);
+	} catch {
+		return out;
+	}
+	for (const entry of entries) {
+		if (!isSafeBasename(entry)) continue;
+		const dir = join(projectsDir, entry);
+		if (dir === direct || out.includes(dir)) continue;
+		if (projectIndexMatchesProject(join(dir, "project.json"), projectRoot)) out.push(dir);
+	}
+	return out;
+}
+
+function pathInside(parent: string, child: string): boolean {
+	const parentAbs = resolve(parent);
+	const childAbs = resolve(child);
+	const rel = relative(parentAbs, childAbs);
+	return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function readActiveRunPointer(path: string): { pointer?: ActiveRunPointerLike; error?: string } {
+	if (!existsSync(path)) return {};
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (!isRecord(parsed)) return { error: "active run pointer JSON is not an object" };
+		return { pointer: parsed as ActiveRunPointerLike };
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+function resolveActiveRunStatePath(projectRoot: string, tmuxSession: string): ActiveRunStateResolution {
+	if (!isSafeBasename(tmuxSession)) return {};
+	for (const projectDir of runStoreProjectDirs(projectRoot)) {
+		const projectId = basename(projectDir);
+		const pointerPath = join(projectDir, "active-runs", `${tmuxSession}.json`);
+		const { pointer, error } = readActiveRunPointer(pointerPath);
+		if (error) return { diagnosticPath: pointerPath, error: `active run pointer unreadable: ${error}` };
+		if (!pointer) continue;
+		if (pointer.project_id !== projectId) return { diagnosticPath: pointerPath, error: `active run pointer project_id mismatch: ${String(pointer.project_id)} != ${projectId}` };
+		if (pointer.tmux_session !== tmuxSession) return { diagnosticPath: pointerPath, error: `active run pointer tmux_session mismatch: ${String(pointer.tmux_session)} != ${tmuxSession}` };
+		if (!isSafeRunId(pointer.run_id)) return { diagnosticPath: pointerPath, error: "active run pointer has invalid run_id" };
+		if (typeof pointer.state_path !== "string" || !pointer.state_path.trim()) return { diagnosticPath: pointerPath, error: "active run pointer missing state_path" };
+		const runDir = join(projectDir, "runs", pointer.run_id);
+		const statePath = resolve(pointer.state_path);
+		if (!pathInside(runDir, statePath)) return { diagnosticPath: pointerPath, error: `active run state_path escapes run directory: ${statePath}` };
+		return { diagnosticPath: pointerPath, statePath };
+	}
+	return {};
 }
 
 // Per-cwd project root cache. Cwd changes infrequently (only on cd /
@@ -792,7 +943,8 @@ export function readOwnerVisibilityProbe(cwd: string, settings: SettingsLike): O
 	const tmux = resolveTmuxContext();
 	if (!tmux) return undefined;
 	const projectRoot = resolveProjectRoot(cwd);
-	const path = masterStatePath(projectRoot, settings, tmux.sessionName);
+	const active = resolveActiveRunStatePath(projectRoot, tmux.sessionName);
+	const path = active.statePath ?? masterStatePath(projectRoot, settings, tmux.sessionName);
 	const { state } = readMasterState(path);
 	return { ownerPaneId: state?.owner?.pane_id, tmux };
 }
@@ -834,10 +986,16 @@ export function readAwaitingWatchTrackedEntries(snapshot: FlightdeckSnapshot | u
 
 export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot {
 	const { projectRoot, stateDir, tmux } = inputs;
-	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
+	const active = resolveActiveRunStatePath(projectRoot, tmux.sessionName);
+	const liveStatePath = active.statePath ?? masterStatePath(projectRoot, settings, tmux.sessionName);
 	let resolvedStatePath = liveStatePath;
 	let archiveError = false;
-	let { state, error } = readMasterState(liveStatePath);
+	let { state, error } = active.error ? { state: undefined, error: active.error } : readMasterState(liveStatePath);
+	if (active.error && active.diagnosticPath) resolvedStatePath = active.diagnosticPath;
+	if (active.statePath && !state && !error && !existsSync(active.statePath)) {
+		error = `active run state missing: ${active.statePath}`;
+		resolvedStatePath = active.statePath;
+	}
 	// Archive fallback (issue #17 BLOCKER #1, refined in rounds 3 and 4).
 	// When the live file is missing, walk the master-state directory's
 	// terminated archives newest-first and serve the first VALID
@@ -847,8 +1005,11 @@ export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: S
 	// A non-ENOENT readdir error (permission denied / IO) also surfaces
 	// as a diagnostic so the user sees "state was lost" instead of
 	// silently falling back to inactive. Live state always wins when
-	// present, so the fallback never shadows an in-flight session.
-	if (!state && !error) {
+	// present, so the fallback never shadows an in-flight session. The
+	// durable active-run pointer also wins when present, even if its
+	// current state is empty; archived runs are history, not live widget
+	// input.
+	if (!state && !error && !active.statePath) {
 		const dir = masterStateDir(projectRoot, settings);
 		const listing = listTerminatedArchives(dir, tmux.sessionName);
 		const failures: Array<{ path: string; reason: string }> = [];

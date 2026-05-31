@@ -162,7 +162,7 @@
         {
           "key": "flightdeckStateDir",
           "label": "Master state dir (project-relative)",
-          "description": "Directory inside the project root that holds the flightdeck master state file. Matches FLIGHTDECK_STATE_DIR (default tmp).",
+          "description": "Legacy fallback directory inside the project root that holds flightdeck master state/archive files when no durable active-run pointer exists. Matches FLIGHTDECK_STATE_DIR (default tmp).",
           "type": "string",
           "default": "tmp",
           "category": "Refresh",

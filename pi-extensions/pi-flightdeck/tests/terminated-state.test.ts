@@ -36,6 +36,7 @@ import {
 	mergedIssueHistory,
 	readMasterState,
 	readTrackedEntries,
+	resetRunStoreCacheForTests,
 	type SettingsLike,
 	type TmuxContext,
 } from "../extensions/state.js";
@@ -73,6 +74,38 @@ function simulateTerminateArchive(stateDir: string, sessionName: string, payload
 	const archive = join(stateDir, `flightdeck-state-${sessionName}-${safe}.json.archive`);
 	renameSync(live, archive);
 	return { archive, live };
+}
+
+function writeDurableActiveRunState(runStoreRoot: string, projectRoot: string, sessionName: string, payload: Record<string, unknown>, runId = "run-current"): string {
+	const projectId = "manual-project";
+	const projectDir = join(runStoreRoot, "projects", projectId);
+	const runDir = join(projectDir, "runs", runId);
+	mkdirSync(join(projectDir, "active-runs"), { recursive: true });
+	mkdirSync(runDir, { recursive: true });
+	const now = "2026-05-13T00:30:00Z";
+	writeFileSync(join(projectDir, "project.json"), JSON.stringify({
+		created_at: now,
+		id_source: "root",
+		last_seen_at: now,
+		name: "manual",
+		project_id: projectId,
+		remote_url: null,
+		root_hash: "test-root-hash",
+		root_path: projectRoot,
+		schema_version: 1,
+	}), "utf8");
+	const statePath = join(runDir, "state.json");
+	writeFileSync(statePath, JSON.stringify(payload), "utf8");
+	writeFileSync(join(projectDir, "active-runs", `${sessionName}.json`), JSON.stringify({
+		activity_path: join(runDir, "activity.jsonl"),
+		project_id: projectId,
+		run_id: runId,
+		schema_version: 1,
+		state_path: statePath,
+		tmux_session: sessionName,
+		updated_at: now,
+	}), "utf8");
+	return statePath;
 }
 
 interface MergedRecordOverrides {
@@ -327,6 +360,41 @@ test("buildSnapshotFromInputs prefers live file over archive when both exist (no
 		assert.notEqual(flightdeckSessionStatus(snapshot), "terminated");
 		assert.notEqual(flightdeckSessionStatus(snapshot), "inactive");
 	} finally {
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs prefers durable active run over legacy terminated archive", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		simulateTerminateArchive(tmpDir, "HT", terminatedPayload({
+			"OLD-1": makeMergedIssueRecord("OLD-1"),
+		}));
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-13T00:30:00Z",
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(snapshot.master?.terminated, false);
+		assert.equal(readTrackedEntries(snapshot.master).length, 0);
+		assert.equal(snapshot.master?.issues["OLD-1"], undefined, "archived entries must not leak into a fresh empty active run");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
 		cleanup();
 	}
 });

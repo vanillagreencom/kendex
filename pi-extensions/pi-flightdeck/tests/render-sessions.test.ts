@@ -206,9 +206,21 @@ test("compact dashboard renders 'pane gone' chip when entry pane is missing from
 	const entry = adhoc({ pane_id: "%999" });
 	const snap = snapshot([entry], { livePaneIds: new Set(["%1", "%2"]) });
 	const text = joinRendered(renderDashboardLines(snap, plainTheme() as never, 140, "compact", ENV_CWD, new Map()));
+	assert.match(text, /stale/);
 	assert.match(text, /pane gone/);
 	assert.match(text, /\/flightdeck/);
+	assert.doesNotMatch(text, /ready/);
 	assert.doesNotMatch(text, /prune/);
+});
+
+test("compact dashboard renders missing-pane active states as dim stale rows", () => {
+	const entry = workflow({ pane_id: "%999", state: "waiting", substate: "pr-open" });
+	const snap = snapshot([entry], { livePaneIds: new Set(["%1", "%2"]) });
+	const text = joinRendered(renderDashboardLines(snap, plainTheme() as never, 140, "compact", ENV_CWD, new Map()));
+	assert.match(text, /stale/);
+	assert.match(text, /pane gone/);
+	assert.doesNotMatch(text, /waiting/);
+	assert.doesNotMatch(text, /pr-open/);
 });
 
 test("compact dashboard does NOT mark entry as gone when pane is alive", () => {

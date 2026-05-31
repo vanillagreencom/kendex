@@ -176,6 +176,11 @@ function usageForSession(session: TrackedSession, paneMap: Map<string, string>, 
 	return bridge.getByPaneId(paneId);
 }
 
+function displaySessionForPaneLiveness(session: TrackedSession, paneGone: boolean): TrackedSession {
+	if (!paneGone) return session;
+	return { ...session, state: "stale", substate: null };
+}
+
 function defaultDashboardState(cwd?: string): DashboardState { return normalizeDashboardState(settingString("dashboardDefaultState", "compact", cwd), "compact"); }
 
 function dashboardVisibility(cwd?: string): DashboardVisibility { return normalizeDashboardVisibility(settingString("dashboardVisibility", "owner", cwd)); }
@@ -262,6 +267,10 @@ export function renderAwaitingWatchHintLine(snapshot: FlightdeckSnapshot, theme:
 export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width: number, state: DashboardState, cwd: string, paneMap: Map<string, string>): string[] {
 	if (state === "hidden") return [];
 	const sessions = readTrackedEntries(snapshot.master);
+	const sessionRows = sessions.map((session) => {
+		const paneGone = isPaneGone(session, snapshot);
+		return { display: displaySessionForPaneLiveness(session, paneGone), paneGone, session };
+	});
 	const max = Math.max(1, Math.floor(settingNumber("dashboardMaxItems", 8, cwd)));
 	const treeStyle = glyphStyle(cwd) as TreeStyle;
 	const terminated = !!snapshot.master?.terminated;
@@ -274,7 +283,7 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 	const toggleHint = toggleShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(toggleShortcut)} ${terminated ? "dismiss" : "toggle"}`);
 	const appHint = theme.fg("dim", " · /flightdeck app");
 	const hints = `${toggleHint}${appHint}`;
-	const summary = formatStateBreakdown(theme, sessions);
+	const summary = formatStateBreakdown(theme, sessionRows.map((row) => row.display));
 	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${formatSessionTotals(theme, sessions)}${summary ? ` ${theme.fg("muted", "·")} ${summary}` : ""}${queueBadge}${hints}`;
 	const header = `${headerLeft}  ${theme.fg("dim", "·")}  ${headerRight}`;
 	const bridge = getAgentsBridge();
@@ -284,14 +293,13 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 			lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", "No tracked sessions yet")}`);
 			return framePanel(lines, width, theme);
 		}
-		const visible = sessions.slice(0, max);
+		const visible = sessionRows.slice(0, max);
 		let anyGone = false;
-		for (const [index, session] of visible.entries()) {
+		for (const [index, row] of visible.entries()) {
 			const isLast = index === visible.length - 1 && sessions.length === visible.length;
-			const stats = usageForSession(session, paneMap, bridge);
-			const paneGone = isPaneGone(session, snapshot);
-			if (paneGone) anyGone = true;
-			lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(session, theme, stats, paneGone)}`);
+			const stats = usageForSession(row.session, paneMap, bridge);
+			if (row.paneGone) anyGone = true;
+			lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(row.display, theme, stats, row.paneGone)}`);
 		}
 		const hidden = Math.max(0, sessions.length - visible.length);
 		if (hidden > 0) lines.push(`${panelBranch(theme, "└", treeStyle)}${theme.fg("muted", `${glyphs(cwd).ellipsis} ${hidden} more`)}`);
@@ -307,13 +315,12 @@ export function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme,
 		return framePanel(lines, width, theme);
 	}
 	let anyGoneExpanded = false;
-	for (const [index, session] of sessions.entries()) {
+	for (const [index, row] of sessionRows.entries()) {
 		const isLast = index === sessions.length - 1;
-		const stats = usageForSession(session, paneMap, bridge);
-		const paneGone = isPaneGone(session, snapshot);
-		if (paneGone) anyGoneExpanded = true;
-		lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(session, theme, stats, paneGone)}`);
-		const detailRows = renderSessionDetailLines(session, theme, stats);
+		const stats = usageForSession(row.session, paneMap, bridge);
+		if (row.paneGone) anyGoneExpanded = true;
+		lines.push(`${panelBranch(theme, isLast ? "└" : "├", treeStyle)}${renderSessionLine(row.display, theme, stats, row.paneGone)}`);
+		const detailRows = renderSessionDetailLines(row.display, theme, stats);
 		for (const [detailIndex, row] of detailRows.entries()) {
 			lines.push(`${dashboardChildBranch(theme, treeStyle, isLast, detailIndex === detailRows.length - 1)}${row}`);
 		}
