@@ -193,6 +193,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 				for (const command of [
 					"env -S 'git commit -m test'",
 					"env -S'git commit -m test'",
+					"env -iS'git commit -m test'",
+					"env -S 'bash -c \"git commit -m test\"'",
 					"/usr/bin/env -S 'git commit -m test'",
 					"env -S 'git -C . commit -m test'",
 					"env --split-string 'git commit -m test'",
@@ -229,7 +231,9 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`/usr/bin/git commit -m project`,
 					`command /usr/bin/git commit -m project`,
 					`git -c alias.ci=commit ci -m project`,
+					`git -c 'alias.ci=commit -m project' ci`,
 					`git $'commit' -m project`,
+					`git $'co\\x6dmit' -m project`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });

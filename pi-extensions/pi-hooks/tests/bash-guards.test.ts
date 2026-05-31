@@ -60,13 +60,19 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -iS'git commit -m test'", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("env -S 'bash -c \"git commit -m test\"'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("/usr/bin/env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env -S 'git -C . commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env --split-string 'git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("env --split-string='git commit -m test'", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git -c alias.ci=commit ci -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git -c 'alias.ci=commit -m test' ci", project, 1000)).toBe(resolve(project));
+			runGit(["config", "alias.ci", "commit"], project);
+			expect(await projectGitCommitCwd("git ci -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd("git $'commit' -m test", project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd("git $'co\\x6dmit' -m test", project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
