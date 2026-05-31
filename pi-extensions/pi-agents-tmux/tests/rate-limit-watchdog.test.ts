@@ -10,6 +10,7 @@ import {
 	type RateLimitOutcome,
 	type SubagentRateLimitWatchdogDeps,
 } from "../extensions/subagent/rate-limit-watchdog.js";
+import { RATE_LIMIT_RESET_MARGIN_MS } from "../extensions/subagent/rate-limit-decision.js";
 import { buildSubagentActivity } from "../extensions/subagent/activity.js";
 
 const CANONICAL_RATE_LIMIT_MESSAGE_END = {
@@ -37,6 +38,20 @@ const HEALTHY_MESSAGE_END = {
 	},
 	type: "message_end",
 };
+
+const CLAUDE_SESSION_LIMIT_MESSAGE_END = {
+	message: {
+		api: "claude-bridge",
+		errorMessage:
+			"Claude Code returned an error result: You've hit your session limit · resets 7:50pm (America/Los_Angeles)",
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message_end",
+};
+
+const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
+const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0) + RATE_LIMIT_RESET_MARGIN_MS;
 
 const USER_STEER_ECHO_MESSAGE_END = {
 	message: {
@@ -161,6 +176,22 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.activity[0]?.event).toBe("subagents:rate_limited");
 		expect(ctx.activity[0]?.payload.attempt).toBe(1);
 		expect(ctx.activity[0]?.payload.next_retry_at).toBe(2_000);
+	});
+
+	test("Claude session-limit prose schedules at reset time instead of ladder delay", () => {
+		const ctx = makeDeps();
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = SESSION_LIMIT_NOW;
+
+		const outcome = watchdog.onMessageEnd(CLAUDE_SESSION_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		if (outcome.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(outcome.attempt).toBe(1);
+		expect(outcome.at).toBe(SESSION_LIMIT_RESET_AT);
+		expect(ctx.scheduled).toHaveLength(1);
+		expect(ctx.scheduled[0]!.delayMs).toBe(SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW);
+		expect(ctx.activity[0]?.event).toBe("subagents:rate_limited");
+		expect(ctx.activity[0]?.payload.next_retry_at).toBe(SESSION_LIMIT_RESET_AT);
 	});
 
 	test("scheduled steer fires the canonical recovery prose", () => {

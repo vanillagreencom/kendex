@@ -134,6 +134,12 @@ Implementation: `extensions/subagent/agent-end-watchdog.ts` exposes `createAgent
 
 Race safety: the default writer uses `fs.open(path, "wx")` so a real `complete_subagent` that races the watchdog always wins. Successive `agent_end` events for the same task are deduped by an in-process `fired` set; pending grace timers are deduped by a `pending` map. Failures are warn-logged, never thrown. Disable entirely with `VSTACK_AGENT_END_WATCHDOG=0`.
 
+## Rate-limit watchdog (vstack#108 / #285)
+
+Persistent pane children run `extensions/subagent/rate-limit-watchdog.ts` on assistant `message_end` events. Classification is deliberately narrow: the event must be an assistant message with `stopReason: "error"`, and only assistant `errorMessage` / text blocks are scanned. Accepted prose includes transient provider messages (`temporarily limiting requests`, `rate limited`, `429`, `too many requests`) and Claude Code session/usage caps (`You've hit your session limit`, `You've hit your usage limit`, `session limit`, `usage limit`, `· resets ...`). Non-assistant tool/user echoes and assistant success turns still emit `subagents:rate_limit_skipped` rather than scheduling recovery.
+
+Retry timing starts from the env backoff ladder (`VSTACK_RATE_LIMIT_BACKOFF_LADDER`, default `60,120,300,600,1800`) and any recursive `retry_after*` duration in the event. Claude Code session caps usually have no duration; they expose either structured `resetAt` / `resetsAt` values or prose like `resets 7:50pm (America/Los_Angeles)`. `rate-limit-decision.ts` parses those reset instants and schedules no earlier than reset + `RATE_LIMIT_RESET_MARGIN_MS` so panes do not churn every 30 minutes before a multi-hour session cap clears.
+
 ## Dashboard widget internals
 
 `alt+a` cycles the widget hidden → compact → expanded. `alt+shift+a` / `f3` opens the full `/agents` popup.

@@ -3,12 +3,14 @@
  *
  * Rides on `pi.on("message_end")` inside a persistent subagent pane.
  * When the canonical rate-limit signature appears (assistant message_end
- * with `stopReason==="error"` and a Claude-side "temporarily limiting
- * requests" / "Rate limited" / 429 error payload), this watchdog:
+ * with `stopReason==="error"` and a Claude-side transient rate-limit or
+ * session/usage-limit error payload), this watchdog:
  *
  *   1. Picks a retry-at delay from the shared decideRateLimitRetry
  *      decision module in flightdeck-core (so the bash subscriber and
  *      this layer share the same backoff ladder + canonical detection).
+ *      Claude session caps with `resets <time>` schedule at the reset
+ *      instant plus a small safety margin instead of the short ladder.
  *   2. Schedules a `pi.sendUserMessage(STEER_MESSAGE, { deliverAs })` for that retry
  *      time. The fixed steer prose is mandated by the issue body so the
  *      child agent has a deterministic recovery signal.

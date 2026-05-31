@@ -13,9 +13,11 @@ const {
 	RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC,
 	RATE_LIMIT_DEFAULT_MAX_ATTEMPTS,
 	RATE_LIMIT_ERROR_REGEX,
+	RATE_LIMIT_RESET_MARGIN_MS,
 	RATE_LIMIT_STEER_MESSAGE,
 	classifyRateLimitEvent,
 	decideRateLimitRetry,
+	extractResetAtMs,
 	extractRetryAfterMs,
 	isRateLimitEvent,
 	rateLimitBackoffLadderFromEnv,
@@ -50,6 +52,31 @@ const CANONICAL_RATE_LIMIT_EVENT = {
 	},
 	type: "message",
 };
+
+const CLAUDE_SESSION_LIMIT_EVENT = {
+	message: {
+		api: "claude-bridge",
+		errorMessage:
+			"Claude Code returned an error result: You've hit your session limit · resets 7:50pm (America/Los_Angeles)",
+		model: "claude-opus-4-8",
+		provider: "claude-bridge",
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message",
+};
+
+const CLAUDE_USAGE_LIMIT_EVENT = {
+	message: {
+		errorMessage: "You've hit your usage limit",
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message",
+};
+
+const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
+const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0);
 
 describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 	test("returns not-rate-limited for an unrelated assistant turn", () => {
@@ -165,6 +192,42 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		});
 		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
 		expect(decision.at).toBe(180_000);
+	});
+
+	test("Claude session-limit prose schedules at the reset instant plus margin", () => {
+		expect(classifyRateLimitEvent(CLAUDE_SESSION_LIMIT_EVENT)).toEqual({ isRateLimitEvent: true });
+		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, SESSION_LIMIT_NOW)).toBe(SESSION_LIMIT_RESET_AT);
+		const decision = decideRateLimitRetry({
+			attempt: 0,
+			event: CLAUDE_SESSION_LIMIT_EVENT,
+			lastRetryAt: null,
+			now: SESSION_LIMIT_NOW,
+			paneId: "%41",
+		});
+		expect(decision.kind).toBe("retry-at");
+		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
+		expect(decision.at).toBe(SESSION_LIMIT_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
+	});
+
+	test("structured reset timestamps win over the backoff ladder when later", () => {
+		const resetAtMs = 200_000;
+		const withStructuredReset = {
+			...CLAUDE_USAGE_LIMIT_EVENT,
+			message: { ...CLAUDE_USAGE_LIMIT_EVENT.message, rate_limit_info: { resetsAt: new Date(resetAtMs).toISOString() } },
+		};
+		const decision = decideRateLimitRetry(
+			{
+				attempt: 0,
+				event: withStructuredReset,
+				lastRetryAt: null,
+				now: 0,
+				paneId: "%41",
+			},
+			{ backoffLadderSec: [1], maxAttempts: 3 },
+		);
+		expect(decision.kind).toBe("retry-at");
+		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
+		expect(decision.at).toBe(resetAtMs + RATE_LIMIT_RESET_MARGIN_MS);
 	});
 
 	test("ladder still wins when explicit retry_after is smaller (don't retry too early)", () => {
@@ -318,8 +381,10 @@ describe("rate-limit decision parity — false-positive regression coverage (vst
 		for (const { event } of [
 			...rejectionReasonEvents,
 			{ event: CANONICAL_RATE_LIMIT_EVENT, name: "canonical rate-limit event" },
+			{ event: CLAUDE_SESSION_LIMIT_EVENT, name: "Claude session-limit event" },
+			{ event: CLAUDE_USAGE_LIMIT_EVENT, name: "Claude usage-limit event" },
 		]) {
-			const input = { attempt: 0, event, lastRetryAt: null, now: 10_000, paneId: "%41" };
+			const input = { attempt: 0, event, lastRetryAt: null, now: SESSION_LIMIT_NOW, paneId: "%41" };
 			expect(vendoredDecision.decideRateLimitRetry(input)).toEqual(canonicalDecision.decideRateLimitRetry(input));
 		}
 	});
@@ -346,6 +411,11 @@ describe("isRateLimitEvent — defensive shape matching", () => {
 			"Rate limited (try again later)",
 			"HTTP 429 too many requests",
 			"rate_limit_exceeded",
+			"Claude Code returned an error result: You've hit your session limit · resets 7:50pm (America/Los_Angeles)",
+			"You've hit your usage limit",
+			"session limit",
+			"usage limit",
+			"· resets 7:50pm",
 		]) {
 			expect(RATE_LIMIT_ERROR_REGEX.test(text)).toBe(true);
 		}
@@ -374,6 +444,29 @@ describe("extractRetryAfterMs — recursive payload walk", () => {
 
 	test("finds retryAfterMs at top level", () => {
 		expect(extractRetryAfterMs({ retryAfterMs: 12_345 })).toBe(12_345);
+	});
+});
+
+describe("extractResetAtMs — Claude session cap reset parsing", () => {
+	test("parses Claude Code session-limit prose with IANA timezone", () => {
+		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, SESSION_LIMIT_NOW)).toBe(SESSION_LIMIT_RESET_AT);
+	});
+
+	test("parses nested resetsAt ISO values", () => {
+		expect(
+			extractResetAtMs({
+				message: {
+					rate_limit_info: { resetsAt: "2026-05-31T02:50:00.000Z" },
+					role: "assistant",
+					stopReason: "error",
+				},
+				type: "message",
+			}),
+		).toBe(SESSION_LIMIT_RESET_AT);
+	});
+
+	test("returns null when no reset hint is present", () => {
+		expect(extractResetAtMs(CLAUDE_USAGE_LIMIT_EVENT, SESSION_LIMIT_NOW)).toBeNull();
 	});
 });
 

@@ -23,6 +23,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`. Bg completions are captured from the child process's final assistant output; `complete_subagent` is reserved for persistent pane/follow-up tasks and is withheld from bg children.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
 - Large parallel calls run through a flat worker pool capped at `maxConcurrency`; callers do not need to split requests. Pane idle waits use `wait_for_subagent_idle`.
+- Persistent panes auto-resume after detected provider rate limits. Claude Code session/usage-limit messages that include `resets <time>` schedule the recovery steer at the reset instant instead of repeatedly retrying on the short backoff ladder.
 - Periodic pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
 
 ## Install
