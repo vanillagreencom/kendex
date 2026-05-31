@@ -137,15 +137,20 @@ export function rateLimitBackoffLadderFromEnv(env: NodeJS.ProcessEnv = process.e
 	return parts.length > 0 ? parts : [...RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC];
 }
 
-export function rateLimitUsageSnapshotFromEnv(env: NodeJS.ProcessEnv = process.env): QuotaSnapshot | null {
+export function rateLimitUsageSnapshotFromEnv(env: NodeJS.ProcessEnv = process.env): QuotaSourceResult {
 	const raw = env.VSTACK_RATE_LIMIT_USAGE_JSON?.trim();
 	if (!raw) return null;
+	let parsed: unknown;
 	try {
-		const snapshot = normalizeQuotaSnapshot("unknown", "usage-endpoint", JSON.parse(raw), Date.now(), "env-json");
-		return snapshot.windows.length > 0 ? snapshot : null;
-	} catch {
-		return null;
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		return quotaSourceFailure("unknown", "usage-endpoint", "invalid-env-json", undefined, "VSTACK_RATE_LIMIT_USAGE_JSON", error);
 	}
+	if (quotaSourceFailureSummary(parsed)) return parsed as QuotaSourceFailure;
+	const snapshot = normalizeQuotaSnapshot("unknown", "usage-endpoint", parsed, Date.now(), "env-json");
+	return snapshot.windows.length > 0
+		? snapshot
+		: quotaSourceFailure("unknown", "usage-endpoint", "unrecognized-env-schema", undefined, "VSTACK_RATE_LIMIT_USAGE_JSON");
 }
 
 type FetchLike = (input: string, init?: Record<string, unknown>) => Promise<{
@@ -404,11 +409,10 @@ export function selectQuotaSnapshotReset(
 	const modelHint = normalizeQuotaHint(readAssistantMessage(event)?.model);
 	const typeMatching = candidates.filter((candidate) => quotaCandidateMatchesType(candidate, typeHint));
 	const modelMatching = candidates.filter((candidate) => quotaCandidateMatchesModel(candidate, modelHint));
-	const eligible = isSessionOrUsageCapEvent(event)
-		? (typeMatching.length > 0 ? typeMatching : modelMatching.length > 0 ? modelMatching : candidates)
-		: typeMatching.length > 0
-			? typeMatching
-			: (modelMatching.length > 0 ? modelMatching : candidates).filter((candidate) => quotaCandidateSaturated(candidate));
+	const matched = typeMatching.length > 0 ? typeMatching : modelMatching.length > 0 ? modelMatching : candidates;
+	const eligible = isSessionOrUsageCapEvent(event) && !hasNegatedSessionOrUsageLimit(event)
+		? matched
+		: matched.filter((candidate) => quotaCandidateSaturated(candidate));
 	if (eligible.length === 0) return null;
 	const selected = chooseUsageResetCandidate(eligible);
 	return selected ? { resetAtMs: selected.resetAtMs, resetSource: quota.source } : null;
@@ -622,14 +626,20 @@ function quotaCandidateSaturated(candidate: UsageResetCandidate): boolean {
 }
 
 function isSessionOrUsageCapEvent(event: unknown): boolean {
+	if (hasNegatedSessionOrUsageLimit(event)) return false;
 	const message = readAssistantMessage(event);
 	const text = message ? extractAssistantErrorText(message).toLowerCase() : "";
-	const withoutNegatedUsage = text.replace(/\bnot\s+(?:your\s+)?(?:session|usage)\s+limit\b/g, "");
-	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?session\s+limit\b/.test(withoutNegatedUsage)) return true;
-	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?usage\s+limit\b/.test(withoutNegatedUsage)) return true;
-	if (/\bextra\s+usage\b|\busage\s+cap\b|\bsession\s+cap\b/.test(withoutNegatedUsage)) return true;
+	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?session\s+limit\b/.test(text)) return true;
+	if (/\b(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+)?usage\s+limit\b/.test(text)) return true;
+	if (/\bextra\s+usage\b|\busage\s+cap\b|\bsession\s+cap\b/.test(text)) return true;
 	const typeHint = normalizeQuotaHint(extractRateLimitType(event));
 	return typeHint === "session" || typeHint === "usage" || typeHint?.includes("session") === true || typeHint?.includes("usage") === true;
+}
+
+function hasNegatedSessionOrUsageLimit(event: unknown): boolean {
+	const message = readAssistantMessage(event);
+	const text = message ? extractAssistantErrorText(message).toLowerCase() : "";
+	return /\bnot\s+(?:your\s+)?(?:session|usage)\s+limit\b/.test(text);
 }
 
 function quotaCandidateMatchesType(candidate: UsageResetCandidate, typeHint: string | null): boolean {
@@ -1182,7 +1192,11 @@ if (import.meta.main) {
 	const usageSnapshot = classifyRateLimitEvent(event).isRateLimitEvent
 		? await fetchProviderQuotaSnapshotFromEnv(event).catch(() => null)
 		: null;
+	const quotaFailureSummary = quotaSourceFailureSummary(usageSnapshot);
+	if (quotaFailureSummary) {
+		process.stderr.write(`quota-source-error ${quotaFailureSummary}\n`);
+	}
 	const decision = decideRateLimitRetry({ attempt, event, lastRetryAt: null, now, paneId, usageSnapshot });
-	process.stdout.write(`${JSON.stringify(decision)}\n`);
+	process.stdout.write(`${JSON.stringify(quotaFailureSummary ? { ...decision, quotaSourceFailureSummary: quotaFailureSummary } : decision)}\n`);
 	process.exit(0);
 }

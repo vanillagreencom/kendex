@@ -361,6 +361,29 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		}
 	});
 
+	test("transient not-your-usage-limit events ignore low-utilization type-hint windows", () => {
+		for (const rateLimitType of ["five_hour", "usage"] as const) {
+			const event = { ...CANONICAL_RATE_LIMIT_EVENT, rateLimitType };
+			for (const { module, name } of DECISION_MODULES) {
+				const decision = module.decideRateLimitRetry(
+					{
+						attempt: 0,
+						event,
+						lastRetryAt: null,
+						now: 1_000,
+						paneId: "%41",
+						usageSnapshot: module.normalizeQuotaSnapshot("claude", "usage-endpoint", LOW_UTILIZATION_CLAUDE_USAGE_RESPONSE, 1_000),
+					},
+					{ backoffLadderSec: [1], maxAttempts: 3 },
+				);
+				expect(decision.kind).toBe("retry-at");
+				if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name} ${rateLimitType}`);
+				expect(decision.at).toBe(2_000);
+				expect(decision.resetSource).toBe("backoff-only");
+			}
+		}
+	});
+
 	test("malformed usage-shaped payloads are not authoritative quota windows", () => {
 		for (const { module, name } of DECISION_MODULES) {
 			const decision = module.decideRateLimitRetry(

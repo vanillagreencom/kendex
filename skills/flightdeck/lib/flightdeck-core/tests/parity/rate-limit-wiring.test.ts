@@ -53,7 +53,7 @@ const HEALTHY_DATA = {
 	},
 };
 
-function runDecider(event: unknown, attempt: number, paneId = "%41", now = 0): { kind: string; raw: any } {
+function runDecider(event: unknown, attempt: number, paneId = "%41", now = 0, env: NodeJS.ProcessEnv = {}): { kind: string; raw: any; stderr: string } {
 	const r = spawnSync(
 		"bun",
 		[
@@ -66,11 +66,11 @@ function runDecider(event: unknown, attempt: number, paneId = "%41", now = 0): {
 			"--now",
 			String(now),
 		],
-		{ encoding: "utf8", input: JSON.stringify(event) },
+		{ encoding: "utf8", env: { ...process.env, ...env }, input: JSON.stringify(event) },
 	);
 	if (r.status !== 0) throw new Error(`decider CLI exit ${r.status}: ${r.stderr}`);
 	const parsed = JSON.parse(r.stdout);
-	return { kind: parsed.kind, raw: parsed };
+	return { kind: parsed.kind, raw: parsed, stderr: r.stderr };
 }
 
 function writeFakePiBridge(dir: string, stateJson: string, sendLog: string, removeBeforeStateReturns?: string): string {
@@ -158,6 +158,14 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		expect(bashSrc).toContain('pi_rate_limit_emit_event "pi-rate-limit-skipped"');
 		expect(bashSrc).toContain('pi_rate_limit_emit_event "pi-rate-limit-resolved"');
 		expect(bashSrc).toContain('pi_rate_limit_emit_event "pi-rate-limit-decider-error"');
+	});
+
+	test("bash emits sanitized quota-source diagnostics before retry fallback", () => {
+		expect(bashSrc).toContain("quotaSourceFailureSummary");
+		expect(bashSrc).toContain("pi-rate-limit-quota-source-error");
+		expect(bashSrc).toContain("rate_limit_quota_source_error");
+		expect(bashSrc).toContain("quota_source_failure");
+		expect(bashSrc).toContain('pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry"');
 	});
 
 	test("bash pipes event JSON to the decider instead of passing it via argv", () => {
@@ -303,6 +311,30 @@ describe("rate-limit decider CLI (vstack#108)", () => {
 		expect(kind).toBe("retry-at");
 		expect(raw.attempt).toBe(1);
 		expect(raw.at).toBeGreaterThan(0);
+	});
+
+	test("quota-source diagnostics round-trip through CLI without leaking tokens", () => {
+		const token = "sk-ant-oauth-secret-token-cli-123456789";
+		const failure = {
+			provider: "claude",
+			reason: `http-401 bearer ${token}`,
+			resetSource: "usage-endpoint",
+			source: "quota-source-error",
+			status: 401,
+		};
+		const { kind, raw, stderr } = runDecider(
+			{ data: CANONICAL_DATA, event: "message_end", type: "event" },
+			0,
+			"%41",
+			0,
+			{ VSTACK_RATE_LIMIT_USAGE_JSON: JSON.stringify(failure) },
+		);
+		expect(kind).toBe("retry-at");
+		expect(raw.quotaSourceFailureSummary).toContain("http-401");
+		expect(raw.quotaSourceFailureSummary).toContain("status=401");
+		expect(raw.quotaSourceFailureSummary).not.toContain(token);
+		expect(stderr).toContain("quota-source-error");
+		expect(stderr).not.toContain(token);
 	});
 
 	test("canonical event + attempt at max returns exhausted", () => {

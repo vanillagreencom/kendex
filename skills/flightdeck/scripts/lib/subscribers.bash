@@ -482,7 +482,7 @@ pi_subscriber_loop() {
   }
 
   pi_rate_limit_emit_event() {
-    local tag="$1" event_type="$2" hash="$3" reason="${4:-}" attempt="${5:-}" next_retry_at="${6:-}" error="${7:-}" rc="${8:-}" reset_source="${9:-}" degraded_reset_source="${10:-}"
+    local tag="$1" event_type="$2" hash="$3" reason="${4:-}" attempt="${5:-}" next_retry_at="${6:-}" error="${7:-}" rc="${8:-}" reset_source="${9:-}" degraded_reset_source="${10:-}" quota_source_failure="${11:-}"
     local attempt_json="null" next_retry_at_json="null" rc_json="null" degraded_json="null"
     [[ "$attempt" =~ ^[0-9]+$ ]] && attempt_json="$attempt"
     [[ "$next_retry_at" =~ ^[0-9]+$ ]] && next_retry_at_json="$next_retry_at"
@@ -499,6 +499,7 @@ pi_subscriber_loop() {
              --arg reason "$reason" \
              --arg error "$error" \
              --arg reset_source "$reset_source" \
+             --arg quota_source_failure "$quota_source_failure" \
              --argjson attempt "$attempt_json" \
              --argjson next_retry_at "$next_retry_at_json" \
              --argjson degraded_reset_source "$degraded_json" \
@@ -507,6 +508,7 @@ pi_subscriber_loop() {
               + (if $reason == "" then {} else {reason:$reason} end)
               + (if $error == "" then {} else {error:$error} end)
               + (if $reset_source == "" then {} else {reset_source:$reset_source} end)
+              + (if $quota_source_failure == "" then {} else {quota_source_failure:$quota_source_failure} end)
               + (if $attempt == null then {} else {attempt:$attempt} end)
               + (if $next_retry_at == null then {} else {next_retry_at:$next_retry_at} end)
               + (if $degraded_reset_source == null then {} else {degraded_reset_source:$degraded_reset_source} end)
@@ -693,16 +695,25 @@ pi_subscriber_loop() {
           if [[ "$rl_kind" == "retry-at" ]]; then
             rl_at=$(jq -r '.at // 0' <<< "$rl_decision" 2>/dev/null)
             rl_attempt_next=$(jq -r '.attempt // 0' <<< "$rl_decision" 2>/dev/null)
-            local rl_reset_source rl_degraded_reset_source
+            local rl_reset_source rl_degraded_reset_source rl_quota_source_failure
             rl_reset_source=$(jq -r '.resetSource // ""' <<< "$rl_decision" 2>/dev/null)
             rl_degraded_reset_source=$(jq -r '.degradedResetSource // empty' <<< "$rl_decision" 2>/dev/null)
+            rl_quota_source_failure=$(jq -r '.quotaSourceFailureSummary // ""' <<< "$rl_decision" 2>/dev/null)
+            if [[ -n "$rl_quota_source_failure" && "$rl_quota_source_failure" != "null" ]]; then
+              local rl_quota_hash
+              rl_quota_hash=$(printf '%s|rate-limit-quota-source-error|%s|%s' "$pane_id" "$rl_quota_source_failure" "$(date +%s%3N)" | sha256sum | awk '{print substr($1,1,12)}')
+              pi_rate_limit_emit_event "pi-rate-limit-quota-source-error" "rate_limit_quota_source_error" "$rl_quota_hash" "$rl_quota_source_failure"
+              printf '%s [pi-rate-limit-quota-source-error] pane=%s reason=%s hash=%s\n' \
+                "$(date -Iseconds)" "$pane_id" "$rl_quota_source_failure" "$rl_quota_hash" \
+                >> "$sub_log" 2>/dev/null || true
+            fi
             rate_limit_attempt="$rl_attempt_next"
             local rl_hash rl_now_ms rl_delay_ms
             rl_now_ms=$(date +%s%3N)
             rl_delay_ms=$(( rl_at - rl_now_ms ))
             (( rl_delay_ms < 0 )) && rl_delay_ms=0
             rl_hash=$(printf '%s|rate-limit|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" | sha256sum | awk '{print substr($1,1,12)}')
-            pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry" "$rl_hash" "" "$rl_attempt_next" "$rl_at" "" "" "$rl_reset_source" "$rl_degraded_reset_source"
+            pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry" "$rl_hash" "" "$rl_attempt_next" "$rl_at" "" "" "$rl_reset_source" "$rl_degraded_reset_source" "$rl_quota_source_failure"
             # Detached steer dispatcher: sleep, then validate a nonce file
             # before delivering via pi-bridge. Healthy/completed turns remove
             # the nonce, so long session-limit reset timers cannot steer a
