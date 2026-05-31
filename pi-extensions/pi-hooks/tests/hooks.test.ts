@@ -219,7 +219,11 @@ describe("pi-hooks pre-commit tool_call", () => {
 					`git -C ${JSON.stringify(other)} commit -m fixture; bash -c "git commit -m project"`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; bash -lc "git commit -m project"`,
 					`bash -o pipefail -c "git commit -m project"`,
+					`bash +o pipefail -c "git commit -m project"`,
 					`bash -c $'git commit -m project'`,
+					`bash -c 'git "$@"' _ commit -m project`,
+					`/usr/bin/git commit -m project`,
+					`command /usr/bin/git commit -m project`,
 					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
@@ -261,6 +265,23 @@ describe("pi-hooks pre-commit tool_call", () => {
 			try {
 				const handler = installToolCallHandler();
 				const result = await handler({ toolName: "bash", input: { command: "sh -c 'git add src/shell_new.rs && git commit -m test'" } }, { cwd: project });
+				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	});
+
+	test("checks same-command untracked Rust from nested cwd", async () => {
+		await withFakeCargo(async () => {
+			const project = initCleanRustRepo("pi-hooks-project-");
+			const nested = join(project, "nested");
+			mkdirSync(nested);
+			writeFileSync(join(project, "src", "nested_new.rs"), "pub fn nested_new() -> i32 { 13 }\n");
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				const result = await handler({ toolName: "bash", input: { command: "git add ../src/nested_new.rs && git commit -m test" } }, { cwd: nested });
 				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
 			} finally {
 				rmSync(project, { recursive: true, force: true });

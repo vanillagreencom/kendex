@@ -23,7 +23,7 @@ export function isBareCd(command: string): boolean {
  * `git -C path commit` and `git commit -m "..."`. Does not match
  * `git commit-tree` or `gitfoo commit`.
  */
-const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
+const GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
 const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
 
@@ -35,7 +35,7 @@ export function isGitCommit(command: string): boolean {
 	return gitCommitSyntaxCount(command) > 0;
 }
 
-const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
+const GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
 const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
 
@@ -172,11 +172,12 @@ async function gitListRustFiles(cwd: string, args: string[]): Promise<RustFilesR
  *
  * Returns the union, deduped.
  */
-async function rustFilesRelevantToCommit(cwd: string, includeUntracked: boolean): Promise<RustFilesResult> {
+async function rustFilesRelevantToCommit(cwd: string, repoRoot: string, includeUntracked: boolean): Promise<RustFilesResult> {
+	const listCwd = repoRoot || cwd;
 	const [staged, unstaged, untracked] = await Promise.all([
-		gitListRustFiles(cwd, ["diff", "--cached", "--name-only"]),
-		gitListRustFiles(cwd, ["diff", "--name-only"]),
-		includeUntracked ? gitListRustFiles(cwd, ["ls-files", "--others", "--exclude-standard"]) : Promise.resolve({ kind: "ok" as const, files: [] }),
+		gitListRustFiles(listCwd, ["diff", "--cached", "--name-only"]),
+		gitListRustFiles(listCwd, ["diff", "--name-only"]),
+		includeUntracked ? gitListRustFiles(listCwd, ["ls-files", "--others", "--exclude-standard"]) : Promise.resolve({ kind: "ok" as const, files: [] }),
 	]);
 	if (staged.kind === "error") return staged;
 	if (unstaged.kind === "error") return unstaged;
@@ -332,19 +333,28 @@ function isWord(token: ShellToken | undefined): token is ShellWord {
 	return token?.kind === "word";
 }
 
-function shellExecutableName(word: string): string {
+function executableName(word: string): string {
 	const slash = word.lastIndexOf("/");
 	return slash >= 0 ? word.slice(slash + 1) : word;
+}
+
+function isGitExecutable(word: string): boolean {
+	return executableName(word) === "git";
+}
+
+function shellExecutableName(word: string): string {
+	return executableName(word);
 }
 
 function shellCommandContainsGitVerb(commandWord: ShellWord | undefined, verb: "add" | "commit"): boolean {
 	if (!commandWord) return false;
 	let text = commandWord.text;
 	if (text.startsWith("$")) text = text.slice(1);
-	if (commandWord.dynamic && !/git(?:\s+[^\s;&|(){}]+)*\s+(?:add|commit)(?=$|\s|[;&|){}])/.test(text)) return true;
+	if (/(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git\b/.test(text) && /\$(?:@|\*|[0-9])/.test(text)) return true;
+	if (commandWord.dynamic && !/(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+(?:add|commit)(?=$|\s|[;&|){}])/.test(text)) return true;
 	const verbPattern = verb === "add"
-		? /(^|[\s;&|({!])git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/
-		: /(^|[\s;&|({!])git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
+		? /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/
+		: /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 	return verbPattern.test(text);
 }
 
@@ -363,12 +373,12 @@ function countShellCVerb(command: string, verb: "add" | "commit"): number {
 				j += 1;
 				continue;
 			}
-			if (!option.text.startsWith("-")) break;
+			if (!option.text.startsWith("-") && !option.text.startsWith("+")) break;
 			if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option.text)) {
 				if (shellCommandContainsGitVerb(isWord(tokens[j + 1]) ? tokens[j + 1] : undefined, verb)) count += 1;
 				break;
 			}
-			if (option.text === "-o" || option.text === "-O" || option.text === "--rcfile" || option.text === "--init-file") {
+			if (option.text === "-o" || option.text === "-O" || option.text === "+o" || option.text === "+O" || option.text === "--rcfile" || option.text === "--init-file") {
 				j += isWord(tokens[j + 1]) ? 2 : 1;
 				continue;
 			}
@@ -671,7 +681,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			}
 			break;
 		}
-		if (isWord(tokens[envIndex]) && (tokens[envIndex] as ShellWord).text === "git") {
+		if (isWord(tokens[envIndex]) && isGitExecutable((tokens[envIndex] as ShellWord).text)) {
 			return { targets: null, parsed: parseGitTarget(tokens, envIndex, envCtx.cwd, envCtx.external, envCtx.unknown, envVariables), envIndex };
 		}
 		return { targets: null, parsed: null, envIndex };
@@ -743,7 +753,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 		if (commandStart && token.text === "command") {
 			let commandIndex = i + 1;
 			while (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text.startsWith("-")) commandIndex += 1;
-			if (isWord(tokens[commandIndex]) && (tokens[commandIndex] as ShellWord).text === "git") {
+			if (isWord(tokens[commandIndex]) && isGitExecutable((tokens[commandIndex] as ShellWord).text)) {
 				const parsed = parseGitTarget(tokens, commandIndex, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables());
 				if (parsed.target) targets.push(parsed.target);
 				i = Math.max(i, parsed.next - 1);
@@ -775,7 +785,7 @@ export function gitCommitTargets(command: string, cwd: string, initialVariables?
 			i = Math.max(i, envIndex - 1);
 		}
 
-		if (commandStart && token.text === "git") {
+		if (commandStart && isGitExecutable(token.text)) {
 			const parsed = parseGitTarget(tokens, i, ctx.cwd, ctx.external, ctx.unknown, gitCommandVariables());
 			if (parsed.target) targets.push(parsed.target);
 			i = Math.max(i, parsed.next - 1);
@@ -889,6 +899,11 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 			unresolvedReason = "pi-hooks pre-commit: cannot resolve git commit working tree.";
 			continue;
 		}
+		if (target.hasWorkTree && !target.hasGitDir) {
+			const cwdRoot = target.cwd ? await gitRoot(target.cwd, timeoutMs) : { kind: "none" as const, reason: "no git cwd" };
+			if (cwdRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${cwdRoot.reason}` };
+			if (cwdRoot.kind === "ok" && cwdRoot.root === project.root) return { kind: "project", cwd: target.cwd ?? resolve(cwd), root: project.root, includeUntracked: false };
+		}
 		const candidateInside = pathContains(project.root, candidate);
 		const targetRoot = await gitRoot(candidate, timeoutMs);
 		if (targetRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${targetRoot.reason}` };
@@ -932,7 +947,7 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 	if (commit.kind === "skip") return undefined;
 	if (commit.kind === "error") return { reason: commit.reason };
 
-	const rustFiles = await rustFilesRelevantToCommit(commit.cwd, commit.includeUntracked || commandMayStageFiles(command));
+	const rustFiles = await rustFilesRelevantToCommit(commit.cwd, commit.root, commit.includeUntracked || commandMayStageFiles(command));
 	if (rustFiles.kind === "error") return { reason: `pi-hooks pre-commit: ${rustFiles.reason}` };
 	if (rustFiles.files.length === 0) return undefined;
 

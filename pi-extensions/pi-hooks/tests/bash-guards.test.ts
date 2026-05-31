@@ -151,9 +151,13 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -lc "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`bash -o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash +o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`bash -c $'git commit -m project'`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`bash -c 'git "$@"' _ commit -m project`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`zsh -fc "git commit -m project"`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`/bin/bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`/usr/bin/git commit -m project`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`command /usr/bin/git commit -m project`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; git --exec-path ${q("/usr/lib/git-core")} commit -m project`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -165,10 +169,13 @@ describe("git commit target detection", () => {
 		const project = initRepo("pi-hooks-project-");
 		const parent = mkdtempSync(join(tmpdir(), "pi-hooks-links-"));
 		const link = join(parent, "project-link");
+		const otherWorkTree = join(parent, "other-work-tree");
 		try {
 			symlinkSync(project, link, "dir");
+			mkdirSync(otherWorkTree);
 			expect(await projectGitCommitCwd("git -C /proc/self/cwd commit -m test", project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`git -C ${q(link)} commit -m test`, project, 1000)).toBe(resolve(link));
+			expect(await projectGitCommitCwd(`git --work-tree=${q(otherWorkTree)} commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(parent, { recursive: true, force: true });
