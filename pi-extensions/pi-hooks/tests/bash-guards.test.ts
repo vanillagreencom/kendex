@@ -149,6 +149,10 @@ describe("git commit target detection", () => {
 		const other = initRepo("pi-hooks-other-");
 		try {
 			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -lc "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`zsh -fc "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`/bin/bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; git --exec-path ${q("/usr/lib/git-core")} commit -m project`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });

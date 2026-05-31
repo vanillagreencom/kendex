@@ -25,20 +25,30 @@ export function isBareCd(command: string): boolean {
  */
 const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
-const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:sh|bash|zsh|dash)\s+(?:[^\s;&|(){}]+\s+)*-c\s+['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
+const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
 
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
 }
 
 export function isGitCommit(command: string): boolean {
-	const normalized = normalizeShell(command);
-	return GIT_COMMIT.test(normalized) || ENV_SPLIT_GIT_COMMIT.test(normalized) || SHELL_C_GIT_COMMIT.test(normalized);
+	return gitCommitSyntaxCount(command) > 0;
 }
 
 const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
-const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:sh|bash|zsh|dash)\s+(?:[^\s;&|(){}]+\s+)*-c\s+['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
+const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
+
+function countRegexMatches(pattern: RegExp, text: string): number {
+	return [...text.matchAll(new RegExp(pattern.source, "g"))].length;
+}
+
+function gitCommitSyntaxCount(command: string): number {
+	const normalized = normalizeShell(command);
+	return countRegexMatches(GIT_COMMIT, normalized)
+		+ countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
+		+ countRegexMatches(SHELL_C_GIT_COMMIT, normalized);
+}
 
 function commandMayStageFiles(command: string): boolean {
 	const normalized = normalizeShell(command);
@@ -779,9 +789,9 @@ async function gitRootFromGitDir(gitDir: string, cwd: string, timeoutMs: number)
 
 export async function resolveProjectGitCommit(command: string, cwd: string, timeoutMs = 5000): Promise<ProjectGitCommitProbe> {
 	const targets = gitCommitTargets(command, cwd);
-	const normalized = normalizeShell(command);
-	const hasCommit = isGitCommit(command);
-	const hasUnparsedCommit = targets.length === 0 ? hasCommit : SHELL_C_GIT_COMMIT.test(normalized);
+	const commitSyntaxCount = gitCommitSyntaxCount(command);
+	const hasCommit = commitSyntaxCount > 0;
+	const hasUnparsedCommit = commitSyntaxCount > targets.length;
 	if (targets.length === 0 && !hasCommit) return { kind: "skip", reason: "no-git-commit" };
 
 	const project = await gitRoot(cwd, timeoutMs);
