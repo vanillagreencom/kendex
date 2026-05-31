@@ -307,6 +307,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	}
 
 	function trySpawnSubscriberForPane(paneId: string, target: string, harness: string, trackedEntry?: ReconcileEntry, spawnOpts: { forceSpawn?: boolean } = {}): boolean {
+		const knownEntryKind = trackedEntry?.kind || entryKindForPane(opts.paneRegistryBin, paneId) || "";
 		switch (harness) {
 			case "opencode": {
 				const meta = resolveMeta(opts.paneRegistryBin, "oc-attach-args", target);
@@ -320,7 +321,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					return false;
 				}
 				clearSubscriberBindSkip(paneId, "opencode");
-				const { pid, reattached } = spawnOcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, ocUrl: url, sessionId: sid, ocLastAssistantJq: OC_LAST_ASSISTANT_JQ, log });
+				const { pid, reattached } = spawnOcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, ocUrl: url, sessionId: sid, ocLastAssistantJq: OC_LAST_ASSISTANT_JQ, entryKind: knownEntryKind, entryHarness: "opencode", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
 				emitSubscriberLifecycle(activity, reattached, "opencode", paneId, pid);
@@ -334,7 +335,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					return false;
 				}
 				clearSubscriberBindSkip(paneId, "claude");
-				const { pid, reattached } = spawnCcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, transcript, ccLastAssistantJq: CC_LAST_ASSISTANT_JQ, log });
+				const { pid, reattached } = spawnCcSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, transcript, ccLastAssistantJq: CC_LAST_ASSISTANT_JQ, entryKind: knownEntryKind, entryHarness: "claude", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
 				emitSubscriberLifecycle(activity, reattached, "claude", paneId, pid);
@@ -383,7 +384,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					piSocket = binding.socket;
 					piExpectedSession.set(paneId, binding.sessionId);
 				}
-				const entryKind = entryKindForPane(opts.paneRegistryBin, paneId);
+				const entryKind = entry?.kind || knownEntryKind;
 				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, expectedSessionId: piExpectedSession.get(paneId) ?? expectedSessionId, forceSpawn: spawnOpts.forceSpawn, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
@@ -402,7 +403,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					return false;
 				}
 				clearSubscriberBindSkip(paneId, "codex");
-				const { pid, reattached } = spawnCxSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, cxUrl, threadId, cxLastAssistantJq: CX_LAST_ASSISTANT_JQ, log });
+				const { pid, reattached } = spawnCxSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, cxUrl, threadId, cxLastAssistantJq: CX_LAST_ASSISTANT_JQ, entryKind: knownEntryKind, entryHarness: "codex", log });
 				ocSubscribed.set(paneId, true);
 				subscriberPid.set(paneId, pid);
 				emitSubscriberLifecycle(activity, reattached, "codex", paneId, pid);

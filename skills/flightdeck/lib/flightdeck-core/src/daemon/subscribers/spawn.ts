@@ -52,6 +52,8 @@ interface BaseSpawnEnv {
 	logFile: string;
 	classifier: string;
 	parentPid: number;
+	entryKind?: string;
+	entryHarness?: string;
 }
 
 function baseEnv(opts: BaseSpawnEnv): NodeJS.ProcessEnv {
@@ -62,6 +64,8 @@ function baseEnv(opts: BaseSpawnEnv): NodeJS.ProcessEnv {
 		WAKE_EVENTS_LOG: opts.wakeEventsLog,
 		LOG: opts.logFile,
 		CLASSIFIER: opts.classifier,
+		FD_ENTRY_KIND: opts.entryKind ?? "",
+		FD_ENTRY_HARNESS: opts.entryHarness ?? "",
 	};
 }
 

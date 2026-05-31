@@ -14,6 +14,7 @@
 #   FD_STATE_DIR, SESSION_LOCK, WAKE_EVENTS_LOG, LOG
 #   OC_POLL_SEC, OC_BACKOFF_MAX_SEC (oc only)
 #   CLASSIFIER                  (path to prompt-classify binary; may be empty)
+#   FD_ENTRY_KIND               (.entries[].kind; passed to prompt-classify, empty => --entry-kind-unknown)
 #   OC_LAST_ASSISTANT_JQ        (jq filter for oc adapter text extract)
 #   CC_LAST_ASSISTANT_JQ        (jq filter for cc adapter text extract)
 #   PI_LAST_ASSISTANT_JQ        (jq filter for pi adapter text extract)
@@ -41,6 +42,19 @@ source "$_lib_dir/daemon-bg-task-events.sh"
 OC_POLL_SEC="${OC_POLL_SEC:-2}"
 OC_BACKOFF_MAX_SEC="${OC_BACKOFF_MAX_SEC:-16}"
 CLASSIFIER="${CLASSIFIER:-}"
+
+subscriber_classify_text() {
+  local text="$1" tag
+  if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
+    if [[ -n "${FD_ENTRY_KIND:-}" ]]; then
+      tag=$(printf '%s' "$text" | "$CLASSIFIER" --no-footer-gate --entry-kind "$FD_ENTRY_KIND" 2>/dev/null)
+    else
+      tag=$(printf '%s' "$text" | "$CLASSIFIER" --no-footer-gate --entry-kind-unknown 2>/dev/null)
+    fi
+    [[ -n "$tag" ]] && { printf '%s' "$tag"; return; }
+  fi
+  printf '%s' "rendering"
+}
 
 # Bell-marker helpers (used by oc subscriber to interrupt backoff when
 # the daemon sees a tmux bell on the pane).
@@ -74,8 +88,8 @@ oc_subscriber_loop() {
   last_bell_mtime=$(bell_marker_mtime "$bell_marker")
   local seen_qids=","
   local sub_log; sub_log="${LOG}.oc-sub-$(oc_pane_id_safe "$pane_id")"
-  printf '%s [oc-sub-start] pane=%s url=%s session=%s parent=%s\n' \
-    "$(date -Iseconds)" "$pane_id" "$oc_url" "$session_id" "$parent_pid" \
+  printf '%s [oc-sub-start] pane=%s url=%s session=%s parent=%s entry_kind=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$oc_url" "$session_id" "$parent_pid" "${FD_ENTRY_KIND:-unknown}" \
     >> "$sub_log" 2>/dev/null || true
   while true; do
     if ! kill -0 "$parent_pid" 2>/dev/null; then
@@ -122,12 +136,7 @@ oc_subscriber_loop() {
         hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
         if [[ "$hash" != "$last_hash" ]]; then
           response_changed=1
-          if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
-            tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
-            [[ -z "$tag" ]] && tag="rendering"
-          else
-            tag="rendering"
-          fi
+          tag=$(subscriber_classify_text "$last_text")
           text_excerpt=$(printf '%s' "$last_text" | awk 'BEGIN{RS=""} {print substr($0,1,1024); exit}')
           printf '%s [oc-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
             "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "${#last_text}" \
@@ -194,8 +203,8 @@ cc_subscriber_loop() {
   local pane_id="$1" transcript="$2" parent_pid="$3"
   local last_hash=""
   local sub_log; sub_log="${LOG}.cc-sub-$(cc_pane_id_safe "$pane_id")"
-  printf '%s [cc-sub-start] pane=%s transcript=%s parent=%s\n' \
-    "$(date -Iseconds)" "$pane_id" "$transcript" "$parent_pid" \
+  printf '%s [cc-sub-start] pane=%s transcript=%s parent=%s entry_kind=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$transcript" "$parent_pid" "${FD_ENTRY_KIND:-unknown}" \
     >> "$sub_log" 2>/dev/null || true
 
   while [[ ! -f "$transcript" ]]; do
@@ -218,12 +227,7 @@ cc_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
-        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
-        [[ -z "$tag" ]] && tag="rendering"
-      else
-        tag="rendering"
-      fi
+      tag=$(subscriber_classify_text "$last_text")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [cc-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
@@ -277,8 +281,8 @@ pi_subscriber_loop() {
   local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
-  printf '%s [pi-sub-start] pane=%s pi_pid=%s socket=%s parent=%s expected_session=%s\n' \
-    "$(date -Iseconds)" "$pane_id" "$pi_pid" "$pi_socket" "$parent_pid" "$expected_pi_session_id" \
+  printf '%s [pi-sub-start] pane=%s pi_pid=%s socket=%s parent=%s expected_session=%s entry_kind=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$pi_pid" "$pi_socket" "$parent_pid" "$expected_pi_session_id" "${FD_ENTRY_KIND:-unknown}" \
     >> "$sub_log" 2>/dev/null || true
 
   local pi_bin; pi_bin=$(pi_resolve_bridge_bin) || {
@@ -785,12 +789,7 @@ pi_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
-        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
-        [[ -z "$tag" ]] && tag="rendering"
-      else
-        tag="rendering"
-      fi
+      tag=$(subscriber_classify_text "$last_text")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [pi-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
@@ -872,8 +871,8 @@ cx_subscriber_loop() {
   local pane_id="$1" cx_url="$2" thread_id="$3" parent_pid="$4"
   local last_hash=""
   local sub_log; sub_log="${LOG}.cx-sub-$(cx_pane_id_safe "$pane_id")"
-  printf '%s [cx-sub-start] pane=%s url=%s thread=%s parent=%s\n' \
-    "$(date -Iseconds)" "$pane_id" "$cx_url" "$thread_id" "$parent_pid" \
+  printf '%s [cx-sub-start] pane=%s url=%s thread=%s parent=%s entry_kind=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$cx_url" "$thread_id" "$parent_pid" "${FD_ENTRY_KIND:-unknown}" \
     >> "$sub_log" 2>/dev/null || true
 
   cx_bridge_run stream --url "$cx_url" 2>>"$sub_log" \
@@ -891,12 +890,7 @@ cx_subscriber_loop() {
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
       [[ "$hash" == "$last_hash" ]] && continue
       local tag
-      if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
-        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
-        [[ -z "$tag" ]] && tag="rendering"
-      else
-        tag="rendering"
-      fi
+      tag=$(subscriber_classify_text "$last_text")
       local text_excerpt
       text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
       printf '%s [cx-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \

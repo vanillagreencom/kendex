@@ -920,6 +920,87 @@ exit 1
 		await sleep(200);
 	});
 
+	test("merge-permission monitor emits scheduled canonical wake from active state", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-merge-perm-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-mergeperm-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-merge-perm.jsonl");
+		const logFile = join(stateDir, `fd-daemon-${testSessionKey}.log`);
+		const eventsFile = join(stateDir, `fd-daemon-events-${testSessionKey}.jsonl`);
+		const wakePending = join(stateDir, `fd-wake-pending-${testSessionKey}`);
+
+		const savedStateDir = process.env.FD_STATE_DIR;
+		const savedRunStore = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.FLIGHTDECK_RUN_STORE_ROOT = stateDir;
+
+		const init = runRegistry([
+			"init-entry", "288",
+			"--title", "gh-288",
+			"--kind", "issue",
+			"--tracker", "github",
+			"--cwd", process.cwd(),
+			"--window", "1",
+			"--harness", "shell",
+			"--pane-id", innerPaneId,
+			"--worktree", process.cwd(),
+			"--github-url", "https://github.com/vanillagreencom/vstack/issues/288",
+			"--pr", "288",
+		], { FLIGHTDECK_RUN_STORE_ROOT: stateDir });
+		expect(init.status).toBe(0);
+		expect(runRegistry(["set-state", "288", "ready"], { FLIGHTDECK_RUN_STORE_ROOT: stateDir }).status).toBe(0);
+		expect(runRegistry(["set", "288", "domain.github_issue.phase", JSON.stringify("merge-blocked-permission")], { FLIGHTDECK_RUN_STORE_ROOT: stateDir }).status).toBe(0);
+		expect(runRegistry(["set", "288", "merge_blocked_permission", JSON.stringify({ last_checked_at: "2026-05-31T00:00:00.000Z", pr: 288, ready: true, reason: "MergePullRequest permission denied" })], { FLIGHTDECK_RUN_STORE_ROOT: stateDir }).status).toBe(0);
+
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "merge-perm-monitor-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "shell",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 600,
+			innerHarnesses: ["shell"],
+			innerTargets: [innerPaneId],
+			masterHarness: "claude",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: PANE_REGISTRY,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const sawEvent = await waitFor(() => existsSync(eventsFile) && readFileSync(eventsFile, "utf8").includes('"reason":"merge-permission-monitor"'), 5000);
+			expect(sawEvent).toBe(true);
+			const eventsText = readFileSync(eventsFile, "utf8");
+			expect(eventsText).toContain('"tag":"merge-permission-blocked"');
+			expect(eventsText).toContain('"entry_id":"288"');
+			const sawWakePending = await waitFor(() => existsSync(wakePending), 5000);
+			expect(sawWakePending).toBe(true);
+			const pending = JSON.parse(readFileSync(wakePending, "utf8"));
+			expect(pending.in_flight.some((row: { tag?: string; pane_id?: string }) => row.tag === "merge-permission-blocked" && row.pane_id === innerPaneId)).toBe(true);
+			expect(readFileSync(logFile, "utf8")).toContain("merge-permission-monitor entry=288 pr=288 tag=merge-permission-blocked");
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			if (savedStateDir === undefined) delete process.env.FD_STATE_DIR;
+			else process.env.FD_STATE_DIR = savedStateDir;
+			if (savedRunStore === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+			else process.env.FLIGHTDECK_RUN_STORE_ROOT = savedRunStore;
+		}
+	}, 15000);
+
 	// vstack#180: when the tracked entry lacks pi adapter metadata the
 	// daemon used to emit one [pi-subscriber-bind-skip] per pane per tick
 	// (default 5s), flooding the log to hundreds of lines per pane in 20

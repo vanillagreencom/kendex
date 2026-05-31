@@ -27,6 +27,8 @@ const README_DOC = resolve(HERE, "../../../../README.md");
 const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
 const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
 const SCHEMA_DOC = resolve(HERE, "../../../../SCHEMA.md");
+const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
+const SUBSCRIBER_SPAWN_SRC = resolve(HERE, "../../src/daemon/subscribers/spawn.ts");
 const PLAN_FILE_FIXTURES = resolve(HERE, "../fixtures/plan-files");
 const GENERIC_PROMPT = `Choose the next action.
 
@@ -517,6 +519,22 @@ describe("handler domain guards", () => {
 		expect(development).toContain("src/daemon/merge-permission-monitor.ts");
 		expect(promptTags).toContain("synthetic `merge-permission-monitor` timer wake");
 		expect(readme).toContain("daemon-scheduled rechecks for permission-blocked PRs");
+	});
+
+	test("adapter subscribers classify with entry kind for issue-only merge permission tags", () => {
+		const subscribers = readFileSync(SUBSCRIBERS_BASH, "utf8");
+		const spawn = readFileSync(SUBSCRIBER_SPAWN_SRC, "utf8");
+		const loop = readFileSync(resolve(HERE, "../../src/daemon/loop.ts"), "utf8");
+		expect(subscribers).toContain("subscriber_classify_text");
+		expect(subscribers).toContain('--entry-kind "$FD_ENTRY_KIND"');
+		expect(subscribers).toContain("--entry-kind-unknown");
+		expect(subscribers).toContain("entry_kind=%s");
+		expect(subscribers).not.toContain('"$CLASSIFIER" --no-footer-gate 2>/dev/null');
+		expect(spawn).toContain("FD_ENTRY_KIND: opts.entryKind ?? \"\"");
+		expect(spawn).toContain("FD_ENTRY_HARNESS: opts.entryHarness ?? \"\"");
+		expect(loop).toContain('entryHarness: "opencode"');
+		expect(loop).toContain('entryHarness: "claude"');
+		expect(loop).toContain('entryHarness: "codex"');
 	});
 
 	test("github close-issue requires authoritative merged PR and merge commit", () => {
