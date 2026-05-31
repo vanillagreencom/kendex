@@ -157,7 +157,7 @@ The background daemon (`flightdeck-daemon`) is configurable but defaults are fin
 | `FD_MASTER_TURN_TTL` | `3600` | Maximum master turn duration before the busy lock is treated as stale. |
 | `FD_ADAPTER_FRESHNESS_TTL` | `5` | Adapter freshness probe cache. Set `0` to disable during debugging. |
 | `FD_ADAPTER_READ_TIMEOUT_SEC` | `2` | Per-adapter read subprocess timeout. Fractional seconds honored. |
-| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Per-`pi-bridge` list/state/history timeout; uses SIGKILL on timeout so stale bridge connects are reaped before fallback. |
+| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Per-`pi-bridge` list/state/history timeout for daemon and `pane-poll` probes; uses SIGKILL on timeout so stale bridge connects are reaped before fallback. Exceptions: fixed 500ms bridge binary PATH lookup, `flightdeck-state init` owner discovery via `FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS`, and Pi subscriber preflight via `FD_ADAPTER_READ_TIMEOUT_SEC`. |
 | `FD_PANE_REGISTRY_READ_TIMEOUT_SEC` | `5` | Daemon helper timeout for `pane-registry` reads used by reconcile/subscriber binding. |
 | `FD_BUSY_STALL_WATCHDOG` | `1` | Enable Pi busy-stall detection. |
 | `FD_BUSY_STALL_THRESHOLD_SEC` | `300` | Sustained CPU-bound/no-progress seconds before `pi-busy-stall` can fire. |

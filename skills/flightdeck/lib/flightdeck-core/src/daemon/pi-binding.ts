@@ -1,7 +1,7 @@
 import { readlinkSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { piBridgeSpawnSync, piResolveBridgeBin } from "../paths/pi.ts";
+import { piBridgeReadTimeoutMs, piBridgeSpawnSync, piResolveBridgeBin } from "../paths/pi.ts";
 
 export interface PiSubscriberBindingInput {
 	paneId: string;
@@ -164,7 +164,7 @@ function defaultReadProcCwd(pid: string): string | null {
 function defaultListBridgeRows(): PiBridgeListRow[] {
 	const bin = piResolveBridgeBin();
 	if (!bin) return [];
-	const r = piBridgeSpawnSync(bin, ["list", "--json"], { timeoutMs: 2_000 });
+	const r = piBridgeSpawnSync(bin, ["list", "--json"], { timeoutMs: piBridgeReadTimeoutMs() });
 	if (r.status !== 0) return [];
 	try {
 		const parsed = JSON.parse(r.stdout ?? "[]") as unknown;
@@ -182,7 +182,7 @@ function defaultBridgeState(pid: string, socket?: string): PiBridgeStateInfo | n
 	const bin = piResolveBridgeBin();
 	if (!bin) return null;
 	const target = socket ? ["--socket", socket] : ["--pid", pid];
-	const r = piBridgeSpawnSync(bin, ["state", ...target], { timeoutMs: 2_000 });
+	const r = piBridgeSpawnSync(bin, ["state", ...target], { timeoutMs: piBridgeReadTimeoutMs() });
 	if (r.status !== 0) return null;
 	try {
 		const parsed = JSON.parse(r.stdout ?? "{}") as unknown;

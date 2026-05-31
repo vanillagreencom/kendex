@@ -18,7 +18,7 @@ Flightdeck supervises AI agent sessions in tmux windows. It can track generic pa
 - Pause for humans on risky choices: scope creep, force-merge, issue aborts, domain mismatch, or novel prompt shapes.
 - Launch a terminal dashboard by default so sessions, prompts, PRs, activity, and costs stay visible.
 - Keep durable run history under `~/.vstack/flightdeck` so completed run state survives project `tmp/` cleanup.
-- Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, rate limits, and CPU-wedged Pi panes.
+- Recover from common stalls with watchdogs for missing child completions, idle panes, edit loops, rate limits, and CPU-wedged Pi panes on Linux/procfs hosts.
 
 ## Install
 

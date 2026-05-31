@@ -920,6 +920,136 @@ exit 1
 		await sleep(200);
 	});
 
+	test("pi busy-stall run-loop appends event, activity, and wake pending", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-busy-stall-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-busystall-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-busy-stall.jsonl");
+		const fakeDir = join(stateDir, "fake-busy-stall");
+		mkdirSync(fakeDir, { recursive: true });
+		const bridgeBin = join(fakeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  list)
+    printf '%s\n' '[]'
+    ;;
+  state)
+    sleep 5
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`);
+		chmodSync(bridgeBin, 0o755);
+		tmuxKillPaneFor(innerPaneId);
+		innerPaneId = (spawnSync("tmux", [
+			"new-window", "-d", "-t", SESSION, "-n", `fd-busy-stall-inner-${Date.now()}`,
+			"-P", "-F", "#{pane_id}", "bash -lc 'while :; do :; done'",
+		], { encoding: "utf8" }).stdout ?? "").trim();
+		expect(innerPaneId).toMatch(/^%/);
+		await sleep(500);
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_session_id: "busy-session" }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+case "\${1:-}" in
+  list)
+    printf '%s\n' ${JSON.stringify(rows)}
+    ;;
+  find-by-pane)
+    printf '{"id":"busy-entry","kind":"workflow"}\n'
+    ;;
+  pi-bridge-args)
+    printf -- '--pid %s\n' ${process.pid}
+    ;;
+  refresh-window-names)
+    printf '{"updated":[],"cleared":[],"warnings":[]}\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`);
+		chmodSync(registryBin, 0o755);
+
+		const saved = {
+			busyCpu: process.env.FD_BUSY_STALL_CPU_PCT,
+			busyGit: process.env.FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC,
+			busyProbe: process.env.FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC,
+			busyThreshold: process.env.FD_BUSY_STALL_THRESHOLD_SEC,
+			bridgeBin: process.env.PI_BRIDGE_BIN,
+			bridgeTimeout: process.env.FD_PI_BRIDGE_READ_TIMEOUT_SEC,
+			stateDir: process.env.FD_STATE_DIR,
+		};
+		process.env.FD_BUSY_STALL_CPU_PCT = "0.1";
+		process.env.FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC = "0.05";
+		process.env.FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC = "0.05";
+		process.env.FD_BUSY_STALL_THRESHOLD_SEC = "0.05";
+		process.env.FD_PI_BRIDGE_READ_TIMEOUT_SEC = "0.1";
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.PI_BRIDGE_BIN = bridgeBin;
+
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "busy-stall-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "pi",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["pi"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const eventsFile = join(stateDir, `fd-daemon-events-${testSessionKey}.jsonl`);
+			const wakePending = join(stateDir, `fd-wake-pending-${testSessionKey}`);
+			const sawBusyStall = await waitFor(() => {
+				if (!existsSync(eventsFile) || !existsSync(wakePending) || !existsSync(activityPath)) return false;
+				const eventsText = readFileSync(eventsFile, "utf8");
+				const activityText = readFileSync(activityPath, "utf8");
+				const wakeText = readFileSync(wakePending, "utf8");
+				return eventsText.includes('"tag":"pi-busy-stall"')
+					&& eventsText.includes('"bridge_reason":"bridge-timeout"')
+					&& activityText.includes('"type":"agent.busy_stalled"')
+					&& wakeText.includes('"tag":"pi-busy-stall"');
+			}, 8000);
+			expect(sawBusyStall).toBe(true);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			for (const [key, value] of Object.entries({
+				FD_BUSY_STALL_CPU_PCT: saved.busyCpu,
+				FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC: saved.busyGit,
+				FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC: saved.busyProbe,
+				FD_BUSY_STALL_THRESHOLD_SEC: saved.busyThreshold,
+				FD_PI_BRIDGE_READ_TIMEOUT_SEC: saved.bridgeTimeout,
+				FD_STATE_DIR: saved.stateDir,
+				PI_BRIDGE_BIN: saved.bridgeBin,
+			})) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	}, 12000);
+
 	// vstack#180: when the tracked entry lacks pi adapter metadata the
 	// daemon used to emit one [pi-subscriber-bind-skip] per pane per tick
 	// (default 5s), flooding the log to hundreds of lines per pane in 20

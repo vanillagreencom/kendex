@@ -102,13 +102,12 @@ import {
 	probeOwnerCgroupMem,
 } from "./owner-cgroup-mem.ts";
 import {
-	BUSY_STALL_CLASSIFIER_TAG,
 	BusyStallWatchdog,
 	busyStallConfigFromEnv,
 	readGitHead,
-	sampleProcessTree,
 	type BridgeProbeResult,
 } from "./busy-stall-watchdog.ts";
+import { emitBusyStallIfNeeded } from "./busy-stall-emitter.ts";
 import { OC_LAST_ASSISTANT_JQ } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ } from "../paths/pi.ts";
@@ -189,6 +188,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	// existsSync + readFileSync + parse on the pid file.
 	const subscriberPid = new Map<string, number>();
 	const piExpectedSession = new Map<string, string>();
+	const piBridgeBinding = new Map<string, { pid: string; socket: string; sessionId?: string }>();
 	const subscriberRespawnNeeded = new Set<string>();
 	const subscriberRespawnHarness = new Map<string, string>();
 	// vstack#180: throttle pi-subscriber-bind-skip log lines. Without this
@@ -388,6 +388,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					piSocket = binding.socket;
 					piExpectedSession.set(paneId, binding.sessionId);
 				}
+				if (piPid) piBridgeBinding.set(paneId, { pid: piPid, socket: piSocket, sessionId: piExpectedSession.get(paneId) ?? expectedSessionId });
 				const entryKind = entryKindForPane(opts.paneRegistryBin, paneId);
 				const { pid, reattached } = spawnPiSubscriber({ ...baseEnv, sessionKey: opts.sessionKey, paneId, piPid, piSocket, expectedSessionId: piExpectedSession.get(paneId) ?? expectedSessionId, forceSpawn: spawnOpts.forceSpawn, piLastAssistantJq: PI_LAST_ASSISTANT_JQ, entryKind, entryHarness: "pi", log });
 				ocSubscribed.set(paneId, true);
@@ -587,6 +588,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		ocSubscribed.delete(paneId);
 		subscriberPid.delete(paneId);
 		piExpectedSession.delete(paneId);
+		piBridgeBinding.delete(paneId);
 		lastActivityFlag.delete(paneId);
 		lastHash.delete(paneId);
 		hashSince.delete(paneId);
@@ -721,30 +723,19 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		return head;
 	}
 
-	function bridgeProbeForEntry(entry: ReconcileEntry | undefined): BridgeProbeResult {
-		const rawPid = entry?.adapterMeta?.piPid ?? "";
+	function bridgeProbeForEntry(paneId: string, entry: ReconcileEntry | undefined): BridgeProbeResult {
+		const cached = piBridgeBinding.get(paneId);
+		const entryPid = entry?.adapterMeta?.piPid;
+		const entrySocket = entry?.adapterMeta?.piSocket;
+		const entrySessionId = entry?.adapterMeta?.piSessionId;
+		const rawPid = entryPid && entryPid !== "null" ? entryPid : cached?.pid ?? "";
+		const socket = entrySocket && entrySocket !== "null" ? entrySocket : cached?.socket ?? "";
+		const sessionId = entrySessionId && entrySessionId !== "null" ? entrySessionId : cached?.sessionId;
 		const pid = Number(rawPid);
-		if (!Number.isFinite(pid) || pid <= 0) return { reason: "missing-pi-bridge-pid", responsive: true };
-		const probe = piBridgeStateProbe(pid, entry?.adapterMeta?.piSocket ?? "");
-		if (probe.ok) return { reason: "ok", responsive: true, sessionId: probe.sessionId, socketPath: probe.socketPath };
-		return { reason: probe.reason, responsive: false };
-	}
-
-	function observeBusyStall(innerId: string, harness: string, target: string, progressHash: string, nowMs: number) {
-		if (!busyStallConfig.enabled || harness !== "pi") return null;
-		const panePid = paneCache.panePid(innerId);
-		const entry = trackedEntryForPane(innerId);
-		const gitHead = gitHeadForPane(innerId, entry, nowMs);
-		const candidate = busyStallWatchdog.observeLocal({
-			harness,
-			nowMs,
-			paneId: innerId,
-			panePid: panePid || null,
-			processSample: sampleProcessTree(panePid || null),
-			progressKey: `${progressHash}|git:${gitHead}`,
-		});
-		if (!candidate) return null;
-		return busyStallWatchdog.confirmBridge(candidate, bridgeProbeForEntry(entry), nowMs);
+		if (!Number.isFinite(pid) || pid <= 0) return { reason: "missing-pi-bridge-pid", responsive: false, sessionId, socketPath: socket || undefined };
+		const probe = piBridgeStateProbe(pid, socket);
+		if (probe.ok) return { reason: "ok", responsive: true, sessionId: probe.sessionId ?? sessionId, socketPath: (probe.socketPath ?? socket) || undefined };
+		return { reason: probe.reason, responsive: false, sessionId, socketPath: socket || undefined };
 	}
 
 	while (true) {
@@ -944,6 +935,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					lastGoneLog.set(innerId, now);
 				}
 				busyStallWatchdog.forget(innerId);
+				piBridgeBinding.delete(innerId);
 				gitProgressCache.delete(innerId);
 				continue;
 			}
@@ -956,31 +948,26 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				const pidFile = subscriberPidFor(subHarness, innerId);
 				if (subscriberAlive(innerId, pidFile)) {
 					if (subHarness === "pi") {
-						const stallBuf = capturePane(target, opts.captureLines);
-						const stallDecision = observeBusyStall(innerId, subHarness, target, captureHash12(stallBuf), now * 1000);
-						if (stallDecision) {
-							const extraJson = JSON.stringify({ event_type: "busy_stall", ...stallDecision.details });
-							const appended = appendEvent({
-								ageSec: Number(stallDecision.details.no_progress_sec ?? 0),
-								extraJson,
-								hash: stallDecision.hash,
-								isBell: false,
-								paneId: innerId,
-								reason: "busy-stall",
-								sessionLock,
-								tag: BUSY_STALL_CLASSIFIER_TAG,
-								eventsFile,
-								wakePending,
-								lastEventKey,
-							});
-							if (appended) {
-								busyStallWatchdog.markReported(stallDecision);
-								log("busy-stall", `pane=${innerId} hash=${stallDecision.hash} details=${extraJson}`);
-								tickActivity.push({ classifier_tag: BUSY_STALL_CLASSIFIER_TAG, details: stallDecision.details, event_type: "busy_stall", harness: subHarness, hash: stallDecision.hash, pane_id: innerId });
-								tickReasons.push(`watchdog:${innerId}:${BUSY_STALL_CLASSIFIER_TAG}`);
-								tickPending.push({ paneId: innerId, hash: stallDecision.hash, tag: BUSY_STALL_CLASSIFIER_TAG, isBell: false });
-							}
-						}
+						const entry = trackedEntryForPane(innerId);
+						const nowMs = Date.now();
+						emitBusyStallIfNeeded({
+							bridgeProbe: () => bridgeProbeForEntry(innerId, entry),
+							eventsFile,
+							gitHead: gitHeadForPane(innerId, entry, nowMs),
+							harness: subHarness,
+							lastEventKey,
+							log,
+							nowMs,
+							paneId: innerId,
+							panePid: paneCache.panePid(innerId) || null,
+							progressHash: captureHash12(capturePane(target, opts.captureLines)),
+							sessionLock,
+							tickActivity,
+							tickPending,
+							tickReasons,
+							wakePending,
+							watchdog: busyStallWatchdog,
+						});
 					}
 					if (subHarness === "opencode" && paneCache.bell(innerId) === 1) {
 						touchOcBellMarker(innerId);
@@ -995,6 +982,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				ocSubscribed.delete(innerId);
 				subscriberPid.delete(innerId);
 				piExpectedSession.delete(innerId);
+				piBridgeBinding.delete(innerId);
 				try { unlinkSync(pidFile); } catch { /* */ }
 			}
 
@@ -1034,29 +1022,27 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			lastActivityFlag.set(innerId, paneActivity);
 			const buf = canSkipCapture ? "" : capturePane(target, opts.captureLines);
 			const hash = canSkipCapture ? prevHashEntry! : captureHash12(buf);
-			const stallDecision = observeBusyStall(innerId, harness, target, hash, now * 1000);
-			if (stallDecision) {
-				const extraJson = JSON.stringify({ event_type: "busy_stall", ...stallDecision.details });
-				const appended = appendEvent({
-					ageSec: Number(stallDecision.details.no_progress_sec ?? 0),
-					extraJson,
-					hash: stallDecision.hash,
-					isBell: false,
-					paneId: innerId,
-					reason: "busy-stall",
-					sessionLock,
-					tag: BUSY_STALL_CLASSIFIER_TAG,
+			if (harness === "pi") {
+				const entry = trackedEntryForPane(innerId);
+				const nowMs = Date.now();
+				emitBusyStallIfNeeded({
+					bridgeProbe: () => bridgeProbeForEntry(innerId, entry),
 					eventsFile,
-					wakePending,
+					gitHead: gitHeadForPane(innerId, entry, nowMs),
+					harness,
 					lastEventKey,
+					log,
+					nowMs,
+					paneId: innerId,
+					panePid: paneCache.panePid(innerId) || null,
+					progressHash: hash,
+					sessionLock,
+					tickActivity,
+					tickPending,
+					tickReasons,
+					wakePending,
+					watchdog: busyStallWatchdog,
 				});
-				if (appended) {
-					busyStallWatchdog.markReported(stallDecision);
-					log("busy-stall", `pane=${innerId} hash=${stallDecision.hash} details=${extraJson}`);
-					tickActivity.push({ classifier_tag: BUSY_STALL_CLASSIFIER_TAG, details: stallDecision.details, event_type: "busy_stall", harness, hash: stallDecision.hash, pane_id: innerId });
-					tickReasons.push(`watchdog:${innerId}:${BUSY_STALL_CLASSIFIER_TAG}`);
-					tickPending.push({ paneId: innerId, hash: stallDecision.hash, tag: BUSY_STALL_CLASSIFIER_TAG, isBell: false });
-				}
 			}
 			const stab = stabilityForHarness(harness, opts.stabilitySec);
 

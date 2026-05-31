@@ -117,16 +117,21 @@ consulted on the master poll path through the TS `pane-poll`:
 `FD_ADAPTER_READ_TIMEOUT_SEC` (default `2`, fractional values honored)
 caps each adapter read subprocess so one stale adapter cannot dominate
 a tick, `FD_PI_BRIDGE_READ_TIMEOUT_SEC` (default: same as
-`FD_ADAPTER_READ_TIMEOUT_SEC`) bounds all `pi-bridge` list/state/history
-connect/read probes with SIGKILL on timeout, `FD_ADAPTER_MAX_BUFFER_MB`
-(default `16`) caps captured adapter stdout for large Pi histories, and
-`FD_ADAPTER_FRESHNESS_TTL` (default `5`) gates freshness probe caching.
+`FD_ADAPTER_READ_TIMEOUT_SEC`) bounds Flightdeck daemon/pane-poll
+`pi-bridge` list/state/history connect/read probes with SIGKILL on timeout,
+`FD_ADAPTER_MAX_BUFFER_MB` (default `16`) caps captured adapter stdout for
+large Pi histories, and `FD_ADAPTER_FRESHNESS_TTL` (default `5`) gates
+freshness probe caching. Exceptions: bridge binary PATH lookup uses a fixed
+500ms guard, owner metadata discovery during `flightdeck-state init` uses
+`FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS` (milliseconds, default `1000`),
+and the Pi subscriber preflight keeps its legacy `FD_ADAPTER_READ_TIMEOUT_SEC`
+contract.
 
 Additional tuning:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FD_ADAPTER_READ_TIMEOUT_SEC` | `2` | Bounds per-adapter read subprocesses in `pane-poll` (fractional values honored). Stale adapters fall through to tmux capture rather than wedging the tick. |
-| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Bounds all Flightdeck `pi-bridge` list/state/history probes, including freshness checks before adapter reads. Uses SIGKILL on timeout so an unresponsive bridge child is reaped promptly. |
+| `FD_PI_BRIDGE_READ_TIMEOUT_SEC` | same as `FD_ADAPTER_READ_TIMEOUT_SEC` | Bounds Flightdeck daemon/pane-poll `pi-bridge` list/state/history probes, including freshness checks before adapter reads. Uses SIGKILL on timeout so an unresponsive bridge child is reaped promptly. Does not replace the fixed 500ms binary PATH lookup, `flightdeck-state init` owner discovery timeout (`FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS`), or Pi subscriber preflight timeout (`FD_ADAPTER_READ_TIMEOUT_SEC`). |
 | `FD_ADAPTER_MAX_BUFFER_MB` | `16` | Maximum stdout captured from adapter reads such as `pi-bridge history`; prevents Node's default 1 MiB buffer from forcing a tmux fallback on long Pi sessions. |
 | `FD_ADAPTER_FRESHNESS_TTL` | `5` | Freshness probe cache TTL in seconds for adapter reads; set `0` to disable cache reuse. |
