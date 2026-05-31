@@ -210,6 +210,7 @@ function unsupportedAssignmentVariable(key: string): string | undefined {
 
 function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
 	if (raw === "") return "";
+	if (raw.includes("\\")) throw new Error(`unsupported escape syntax at ${path}:${lineNumber}`);
 	let text = raw;
 	let expand = true;
 	if (raw.startsWith("'")) {
