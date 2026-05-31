@@ -121,10 +121,20 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) continue;
 		const stripped = line.replace(/^export\s+/, "").trim();
+		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT\s*=/.test(stripped);
 		const eq = stripped.indexOf("=");
-		if (eq <= 0) continue;
+		if (eq <= 0) {
+			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
+			continue;
+		}
 		const key = stripped.slice(0, eq).trim();
-		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
+			continue;
+		}
+		if (key !== "FLIGHTDECK_RUN_STORE_ROOT" && hasRunStoreAssignment) {
+			throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
+		}
 		const rawValue = stripped.slice(eq + 1).trim();
 		try {
 			const value = parseDotEnvValue(rawValue, (ref) => {
