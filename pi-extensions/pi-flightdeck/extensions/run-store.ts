@@ -133,6 +133,12 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const hasRunStoreAssignment = /(?:^|[;\s])(?:export\s+)?FLIGHTDECK_RUN_STORE_ROOT(?:\s*(?:\[|\+?=)|\S*=)/.test(stripped);
 		const eq = stripped.indexOf("=");
 		if (eq <= 0) {
+			for (const name of nonAssignmentVariableMentions(stripped)) {
+				const reason = `unsupported non-assignment directive for ${name} at ${path}:${lineNumber}`;
+				values.delete(name);
+				assignmentLines.delete(name);
+				unsupported.set(name, reason);
+			}
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
 			continue;
 		}
@@ -196,7 +202,13 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 }
 
 function hasEnvMutatingDirective(stripped: string): boolean {
-	return /(?:^|[;\s])(?:source|\.)\s+\S+/.test(stripped);
+	return /(?:^|[;\s])(?:source|\.)(?:\s+\S+|\$\{?IFS\}?\S*)/.test(stripped);
+}
+
+function nonAssignmentVariableMentions(stripped: string): string[] {
+	const names = new Set<string>();
+	for (const match of stripped.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) names.add(match[0]);
+	return Array.from(names);
 }
 
 function unsupportedAssignmentVariable(key: string): string | undefined {
