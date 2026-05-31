@@ -956,7 +956,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				const subHarness = paneHarness.get(innerId) ?? opts.defaultHarness;
 				const pidFile = subscriberPidFor(subHarness, innerId);
 				if (subscriberAlive(innerId, pidFile)) {
-					if (subHarness === "pi") {
+					if (subHarness === "pi" && busyStallConfig.enabled) {
 						const entry = trackedEntryForPane(innerId);
 						const nowMs = Date.now();
 						emitBusyStallIfNeeded({
@@ -1031,7 +1031,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			lastActivityFlag.set(innerId, paneActivity);
 			const buf = canSkipCapture ? "" : capturePane(target, opts.captureLines);
 			const hash = canSkipCapture ? prevHashEntry! : captureHash12(buf);
-			if (harness === "pi") {
+			if (harness === "pi" && busyStallConfig.enabled) {
 				const entry = trackedEntryForPane(innerId);
 				const nowMs = Date.now();
 				emitBusyStallIfNeeded({

@@ -1093,6 +1093,132 @@ esac
 		}
 	}, 12000);
 
+	test("FD_BUSY_STALL_WATCHDOG=0 skips busy-stall registry probes on subscribed Pi panes", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-busy-disabled-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-busydisabled-${Date.now()}`;
+		const activityPath = join(stateDir, "activity-busy-disabled.jsonl");
+		const fakeDir = join(stateDir, "fake-busy-disabled");
+		mkdirSync(fakeDir, { recursive: true });
+		const listCountFile = join(stateDir, "registry-list-count");
+		const fakeSocket = join(stateDir, "pi-disabled.sock");
+		const bridgeBin = join(fakeDir, "pi-bridge");
+		writeFileSync(bridgeBin, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  list)
+    printf '%s\n' '[{"pid":${process.pid},"cwd":${JSON.stringify(process.cwd())},"sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}]'
+    ;;
+  state)
+    printf '%s\n' '{"data":{"protocol":"pi-session-bridge.v1","sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}}'
+    ;;
+  questions)
+    printf '{"success":true,"data":{"questions":[]}}\n'
+    ;;
+  stream)
+    printf '%s\n' '{"type":"bridge_hello","protocol":"pi-session-bridge.v1","state":{"sessionId":"disabled-session","socketPath":${JSON.stringify(fakeSocket)}}}'
+    sleep 30
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`);
+		chmodSync(bridgeBin, 0o755);
+		const registryBin = join(fakeDir, "pane-registry");
+		const rows = JSON.stringify([{ pane_id: innerPaneId, pane_target: innerPaneId, harness: "pi", kind: "workflow", cwd: process.cwd(), pi_bridge_pid: process.pid, pi_bridge_socket: fakeSocket, pi_session_id: "disabled-session" }]);
+		writeFileSync(registryBin, `#!/usr/bin/env bash
+case "\${1:-}" in
+  list)
+    count=0
+    [[ -f ${JSON.stringify(listCountFile)} ]] && count=$(cat ${JSON.stringify(listCountFile)})
+    count=$((count + 1))
+    printf '%s\n' "$count" > ${JSON.stringify(listCountFile)}
+    printf '%s\n' ${JSON.stringify(rows)}
+    ;;
+  find-by-pane)
+    printf '{"id":"disabled-entry","kind":"workflow"}\n'
+    ;;
+  pi-bridge-args)
+    printf -- '--pid %s --socket %s\n' ${process.pid} ${JSON.stringify(fakeSocket)}
+    ;;
+  refresh-window-names)
+    printf '{"updated":[],"cleared":[],"warnings":[]}\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`);
+		chmodSync(registryBin, 0o755);
+
+		const saved = {
+			bridgeBin: process.env.PI_BRIDGE_BIN,
+			stateDir: process.env.FD_STATE_DIR,
+			watchdog: process.env.FD_BUSY_STALL_WATCHDOG,
+		};
+		process.env.FD_BUSY_STALL_WATCHDOG = "0";
+		process.env.FD_STATE_DIR = stateDir;
+		process.env.PI_BRIDGE_BIN = bridgeBin;
+
+		const loopPromise = runLoop({
+			activity: { activityPath, sessionId: "busy-disabled-test" },
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "pi",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["pi"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: registryBin,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: false,
+			wakePendingTtl: 60,
+		});
+		try {
+			const pidFile = join(stateDir, `fd-pi-subscriber-${testSessionKey}-${innerPaneId.replace(/^%/, "")}.pid`);
+			const spawned = await waitFor(() => existsSync(pidFile), 3000);
+			expect(spawned).toBe(true);
+			const initialCount = Number.parseInt(readFileSync(listCountFile, "utf8").trim() || "0", 10);
+			await sleep(700);
+			const laterCount = Number.parseInt(readFileSync(listCountFile, "utf8").trim() || "0", 10);
+			expect(laterCount).toBe(initialCount);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+			const pidFile = join(stateDir, `fd-pi-subscriber-${testSessionKey}-${innerPaneId.replace(/^%/, "")}.pid`);
+			if (existsSync(pidFile)) {
+				const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+				if (pid) {
+					try { process.kill(-pid, "SIGTERM"); } catch { /* */ }
+					try { process.kill(pid, "SIGTERM"); } catch { /* */ }
+				}
+			}
+			for (const [key, value] of Object.entries({
+				FD_BUSY_STALL_WATCHDOG: saved.watchdog,
+				FD_STATE_DIR: saved.stateDir,
+				PI_BRIDGE_BIN: saved.bridgeBin,
+			})) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	}, 12000);
+
 	// vstack#180: when the tracked entry lacks pi adapter metadata the
 	// daemon used to emit one [pi-subscriber-bind-skip] per pane per tick
 	// (default 5s), flooding the log to hundreds of lines per pane in 20
