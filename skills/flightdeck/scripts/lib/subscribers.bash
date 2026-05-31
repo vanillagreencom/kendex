@@ -303,6 +303,9 @@ pi_subscriber_loop() {
   exec 200<&- 2>/dev/null || true
   local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}" expected_pi_session_id="${5:-}"
   local last_hash=""
+  local last_assistant_event_identity=""
+  local last_assistant_event_name=""
+  local last_assistant_emit_epoch=0
   local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
@@ -456,6 +459,22 @@ pi_subscriber_loop() {
     )
   }
 
+  pi_subscriber_event_identity() {
+    jq -r '
+      (.data.turnId // .data.turn_id // .turnId // .turn_id // .data.message.turnId // .data.message.turn_id // null) as $turn
+      | if ($turn != null and ($turn | tostring | length) > 0) then ("turn:" + ($turn | tostring))
+        else
+          [
+            (.rawEventRef // .raw_event_ref // .data.rawEventRef // .data.raw_event_ref // empty),
+            (.sequence // .data.sequence // .data.message.sequence // .data.message.details.sequence // empty),
+            (.timestamp // .data.timestamp // .data.eventAt // .data.event_at // empty)
+          ]
+          | map(select(. != null and (tostring | length) > 0) | tostring) as $parts
+          | if (($parts | length) > 0) then ($parts | join("|")) else "" end
+        end
+    ' 2>/dev/null
+  }
+
   "$pi_bin" stream "${pi_target_args[@]}" 2>/dev/null \
     | jq --unbuffered -c 'select(
         (.type == "bridge_hello")
@@ -467,6 +486,8 @@ pi_subscriber_loop() {
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "vstack-background-tasks:event"))
+        or
+        (.type == "event" and .event == "agent_end")
         or
         (.type == "event" and .event == "tool_execution_end" and ((.data.toolName // "") == "edit") and (.data.isError == true))
         or
@@ -798,21 +819,54 @@ pi_subscriber_loop() {
         continue
       fi
 
-      if [[ -z "$custom_type" ]]; then
+      if [[ -z "$custom_type" && "$event_name" != "agent_end" ]]; then
         local downstream_role
         downstream_role=$(jq -r '.data.message.role // ""' <<< "$line" 2>/dev/null)
         [[ "$downstream_role" != "assistant" ]] && continue
       fi
 
       local last_text
-      last_text=$(jq -r '
-        ( .data.message.content // [] )
-        | (if type == "array" then map(select(.type == "text") | .text // "") | join("") else . end)
-      ' <<< "$line" 2>/dev/null)
+      if [[ "$event_name" == "agent_end" ]]; then
+        last_text=$(jq -r '
+          def content_text:
+            if type == "array" then map(if type == "object" then (.text // "") elif type == "string" then . else "" end) | join("")
+            elif type == "string" then .
+            else "" end;
+          if ((.data.finalTextTruncated // .data.final_text_truncated // false) == true) then ""
+          else
+            (.data.finalText // .data.final_text // .data.finalTextPreview // .data.final_text_preview // .data.text // "") as $direct
+            | if (($direct | type) == "string" and ($direct | length) > 0) then $direct
+              else ((.data.content // .data.message.content // "") | content_text)
+              end
+          end
+        ' <<< "$line" 2>/dev/null)
+      else
+        last_text=$(jq -r '
+          ( .data.message.content // [] )
+          | (if type == "array" then map(select(.type == "text") | .text // "") | join("") else . end)
+        ' <<< "$line" 2>/dev/null)
+      fi
       [[ -z "$last_text" ]] && continue
       local hash
       hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
-      [[ "$hash" == "$last_hash" ]] && continue
+      local event_identity
+      event_identity=$(pi_subscriber_event_identity <<< "$line")
+      if [[ -n "$event_identity" ]]; then
+        [[ "$event_identity" == "$last_assistant_event_identity" ]] && continue
+      else
+        [[ "$hash" == "$last_hash" ]] && continue
+      fi
+      local now_epoch
+      now_epoch=$(date +%s)
+      if [[ "$hash" == "$last_hash" && "$event_name" == "agent_end" && "$last_assistant_event_name" == "message_end" && "$event_identity" != turn:* && "$last_assistant_emit_epoch" =~ ^[0-9]+$ && $((now_epoch - last_assistant_emit_epoch)) -le 5 ]]; then
+        printf '%s [pi-sub-emit-dedup] pane=%s hash=%s event=%s previous_event=%s reason=same-final-turn\n' \
+          "$(date -Iseconds)" "$pane_id" "$hash" "$event_name" "$last_assistant_event_name" \
+          >> "$sub_log" 2>/dev/null || true
+        [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
+        last_assistant_event_name="$event_name"
+        last_assistant_emit_epoch="$now_epoch"
+        continue
+      fi
       local tag
       tag=$(classify_adapter_text "$last_text" "$pane_id" "$sub_log")
       local text_excerpt
@@ -820,22 +874,38 @@ pi_subscriber_loop() {
       printf '%s [pi-sub-emit] pane=%s hash=%s tag=%s text_len=%s entry_kind=%s\n' \
         "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "${#last_text}" "${FD_ENTRY_KIND:-}" \
         >> "$sub_log" 2>/dev/null || true
-      ( exec 218>"$SESSION_LOCK"
+      local append_error append_rc error_tail
+      append_rc=0
+      append_error=$( ( exec 218>"$SESSION_LOCK"
         flock 218
         jq -nc --arg ts "$(date -Iseconds)" \
                --arg pid "$pane_id" \
                --arg harness "pi" \
+               --arg event_type "$event_name" \
                --arg text "$text_excerpt" \
                --arg tag "$tag" \
                --arg h "$hash" \
+               --arg event_identity "$event_identity" \
                --arg entry_kind "${FD_ENTRY_KIND:-}" \
                --arg entry_harness "${FD_ENTRY_HARNESS:-}" \
-               '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
+               '{ts:$ts, pane_id:$pid, harness:$harness, event_type:$event_type, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
+                + (if $event_identity == "" then {} else {event_identity:$event_identity} end)
                 + (if $entry_kind == "" then {} else {entry_kind:$entry_kind} end)
                 + (if $entry_harness == "" then {} else {entry_harness:$entry_harness} end)' \
                >> "$WAKE_EVENTS_LOG"
-      )
-      last_hash="$hash"
+      ) 2>&1 ) || append_rc=$?
+      if [[ "$append_rc" -eq 0 ]]; then
+        last_hash="$hash"
+        last_assistant_event_name="$event_name"
+        last_assistant_emit_epoch="$now_epoch"
+        [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
+      else
+        error_tail=$(printf '%s' "$append_error" | tr '\n' ' ' | tail -c 400)
+        printf '%s [pi-sub-emit-error] pane=%s hash=%s tag=%s rc=%s error=%s\n' \
+          "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "$append_rc" "$error_tail" \
+          >> "$sub_log" 2>/dev/null || true
+        continue
+      fi
 
       # vstack#61/#117: generic Pi panes (adhoc/workflow) have no
       # issue-mode prompt tags master can read; emit terminal-state-reached

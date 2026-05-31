@@ -1024,6 +1024,128 @@ exit 1
 		}
 	}, 15000);
 
+	test("adapter pre-PR handshakes with same hash and distinct event_identity both wake", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-prepr-identity-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-prepr-${Date.now()}`;
+		const eventsFile = join(stateDir, `fd-daemon-events-${testSessionKey}.jsonl`);
+		const wakePending = join(stateDir, `fd-wake-pending-${testSessionKey}`);
+		const wakeEventsLog = join(stateDir, `fd-wake-events-${testSessionKey}.log`);
+		const prePrHash = "07be2c0e1920";
+		writeFileSync(wakeEventsLog, [
+			JSON.stringify({ ts: "2026-05-31T04:24:33.000Z", pane_id: innerPaneId, harness: "pi", event_type: "agent_end", classifier_tag: "pre-pr-ready-for-review", hash: prePrHash, event_identity: "turn:round-1" }),
+			JSON.stringify({ ts: "2026-05-31T04:28:22.000Z", pane_id: innerPaneId, harness: "pi", event_type: "agent_end", classifier_tag: "pre-pr-ready-for-review", hash: prePrHash, event_identity: "turn:round-2" }),
+		].join("\n") + "\n");
+
+		const loopPromise = runLoop({
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "shell",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["shell"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: PANE_REGISTRY,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: true,
+			wakePendingTtl: 60,
+		});
+		try {
+			const appendedBoth = await waitFor(() => {
+				if (!existsSync(eventsFile) || !existsSync(wakePending)) return false;
+				const rows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+				const pending = JSON.parse(readFileSync(wakePending, "utf8"));
+				return rows.filter((row) => row.tag === "pre-pr-ready-for-review").length === 2
+					&& pending.in_flight?.filter((row: any) => row.tag === "pre-pr-ready-for-review").length === 2;
+			}, 4000);
+			expect(appendedBoth).toBe(true);
+			const rows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+			expect(rows.map((row) => row.hash)).toEqual([prePrHash, prePrHash]);
+			expect(rows.map((row) => row.event_identity)).toEqual(["turn:round-1", "turn:round-2"]);
+			const pending = JSON.parse(readFileSync(wakePending, "utf8"));
+			expect(pending.in_flight.map((row: any) => row.dedup_key)).toEqual([
+				`${innerPaneId}|pre-pr-ready-for-review|event:turn:round-1`,
+				`${innerPaneId}|pre-pr-ready-for-review|event:turn:round-2`,
+			]);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+		}
+	});
+
+	test("pi bg-task exits with same sequence but different task ids do not collide", async () => {
+		const masterPane = tmuxNewWindow(SESSION, `fd-bg-seq-master-${Date.now()}`);
+		extraPaneIds.push(masterPane);
+		const testSessionKey = `${SESSION_KEY}-bgseq-${Date.now()}`;
+		const eventsFile = join(stateDir, `fd-daemon-events-${testSessionKey}.jsonl`);
+		const wakePending = join(stateDir, `fd-wake-pending-${testSessionKey}`);
+		const wakeEventsLog = join(stateDir, `fd-wake-events-${testSessionKey}.log`);
+		writeFileSync(wakeEventsLog, [
+			JSON.stringify({ ts: "2026-05-31T04:24:33.000Z", pane_id: innerPaneId, harness: "pi", event_type: "bg-task-exit", classifier_tag: "pi-bg-task-exit", hash: "bgexit000001", sequence: 1, task: { id: "bg-a", status: "failed", exitCode: 1, notifyOnExit: true } }),
+			JSON.stringify({ ts: "2026-05-31T04:24:34.000Z", pane_id: innerPaneId, harness: "pi", event_type: "bg-task-exit", classifier_tag: "pi-bg-task-exit", hash: "bgexit000002", sequence: 1, task: { id: "bg-b", status: "failed", exitCode: 1, notifyOnExit: true } }),
+		].join("\n") + "\n");
+
+		const loopPromise = runLoop({
+			captureLines: 20,
+			classifierBin: "",
+			debugPane: "",
+			defaultHarness: "shell",
+			fromHandoff: false,
+			graceSec: 0,
+			heartbeatTicks: 60,
+			innerHarnesses: ["shell"],
+			innerTargets: [innerPaneId],
+			masterHarness: "shell",
+			masterTarget: masterPane,
+			masterTurnTtl: 60,
+			maxLifetime: 0,
+			origArgs: [],
+			paneRegistryBin: PANE_REGISTRY,
+			pollSec: 0.1,
+			scriptPath: SCRIPT,
+			sessionId: SESSION,
+			sessionKey: testSessionKey,
+			sessionName: SESSION_NAME,
+			stabilitySec: 999,
+			stateDir,
+			verbose: true,
+			wakePendingTtl: 60,
+		});
+		try {
+			const appendedBoth = await waitFor(() => {
+				if (!existsSync(eventsFile) || !existsSync(wakePending)) return false;
+				const rows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+				const pending = JSON.parse(readFileSync(wakePending, "utf8"));
+				return rows.filter((row) => row.tag === "pi-bg-task-exit").length === 2
+					&& pending.in_flight?.filter((row: any) => row.tag === "pi-bg-task-exit").length === 2;
+			}, 4000);
+			expect(appendedBoth).toBe(true);
+			const rows = readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+			expect(rows.map((row) => row.hash)).toEqual(["bgexit000001", "bgexit000002"]);
+			expect(rows.map((row) => row.event_identity)).toEqual([undefined, undefined]);
+			const pending = JSON.parse(readFileSync(wakePending, "utf8"));
+			expect(pending.in_flight.map((row: any) => row.dedup_key)).toEqual([undefined, undefined]);
+		} finally {
+			tmuxKillPaneFor(masterPane);
+			const loopExited = await Promise.race([loopPromise.then(() => true), sleep(5000).then(() => false)]);
+			expect(loopExited).toBe(true);
+		}
+	});
+
 	test("pi busy-stall run-loop appends event, activity, and wake pending", async () => {
 		const masterPane = tmuxNewWindow(SESSION, `fd-busy-stall-master-${Date.now()}`);
 		extraPaneIds.push(masterPane);

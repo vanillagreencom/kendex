@@ -1248,15 +1248,19 @@ function finalizeCurrentStream(stopReason?: string): void {
 
 /** Maps Anthropic stream events to pi stream events (text, thinking, toolcall).
  *  On message_stop with tool_use: ends currentPiStream so pi can execute the tool. */
-function processStreamEvent(
+export function processStreamEvent(
 	message: SDKMessage,
 	customToolNameToPi: Map<string, string>,
 	model: Model<any>,
 ): void {
 	const c = ctx();
 	if (!c.currentPiStream || !c.turnOutput) return;
-	c.turnSawStreamEvent = true;
 	const event = (message as SDKMessage & { event: any }).event;
+	if (event?.type === "ping") return;
+	if (event?.type === "message_stop" && !c.turnSawToolCall) {
+		debug("processStreamEvent: ignoring bare message_stop with no streamed content/tool call");
+		return;
+	}
 
 	if (event?.type === "message_start") {
 		c.resetToolTracking();
@@ -1265,6 +1269,7 @@ function processStreamEvent(
 	}
 
 	if (event?.type === "content_block_start") {
+		c.turnSawStreamEvent = true;
 		ensureTurnStarted();
 		if (event.content_block?.type === "text") {
 			c.turnBlocks.push({ type: "text", text: "", index: event.index });
@@ -1292,7 +1297,11 @@ function processStreamEvent(
 	if (event?.type === "content_block_delta") {
 		const index = c.turnBlocks.findIndex((b: any) => b.index === event.index);
 		const block = c.turnBlocks[index];
-		if (!block) return;
+		if (!block) {
+			debug("processStreamEvent: ignoring unmatched content_block_delta", event.index);
+			return;
+		}
+		c.turnSawStreamEvent = true;
 		if (event.delta?.type === "text_delta" && block.type === "text") {
 			block.text += event.delta.text;
 			c.currentPiStream!.push({ type: "text_delta", contentIndex: index, delta: event.delta.text, partial: c.turnOutput });
@@ -1314,7 +1323,11 @@ function processStreamEvent(
 	if (event?.type === "content_block_stop") {
 		const index = c.turnBlocks.findIndex((b: any) => b.index === event.index);
 		const block = c.turnBlocks[index];
-		if (!block) return;
+		if (!block) {
+			debug("processStreamEvent: ignoring unmatched content_block_stop", event.index);
+			return;
+		}
+		c.turnSawStreamEvent = true;
 		delete block.index;
 		if (block.type === "text") {
 			c.currentPiStream!.push({ type: "text_end", contentIndex: index, content: block.text, partial: c.turnOutput });
@@ -1364,11 +1377,72 @@ function processStreamEvent(
 // arrives before any stream_events, this is the primary content path. Must maintain
 // the same stream lifecycle as processStreamEvent — including ending the stream on
 // tool_use to prevent deadlock with the MCP handler.
-function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>): void {
+function appendMissingToolUsesFromAssistant(
+	assistantMsg: { content?: Array<any>; usage?: Record<string, number | undefined> },
+	model: Model<any>,
+	customToolNameToPi: Map<string, string>,
+): boolean {
 	const c = ctx();
-	if (c.turnSawStreamEvent) return;
+	if (!assistantMsg?.content) return false;
+	let sawToolUse = false;
+	for (const block of assistantMsg.content) {
+		if (block.type !== "tool_use") continue;
+		sawToolUse = true;
+		const existingIdx = c.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === block.id);
+		const name = mapToolName(block.name, customToolNameToPi);
+		const mappedArgs = mapToolArgs(name, block.input);
+		c.recordToolCall(block.id, name, mappedArgs);
+		if (existingIdx >= 0) {
+			const existing = c.turnBlocks[existingIdx] as any;
+			existing.name = name;
+			existing.arguments = mappedArgs;
+			c.updateToolCallArgs(block.id, mappedArgs);
+			if ("partialJson" in existing) {
+				delete existing.partialJson;
+				delete existing.index;
+				c.currentPiStream?.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c.turnOutput });
+			}
+			continue;
+		}
+
+		ensureTurnStarted();
+		c.turnBlocks.push({
+			type: "toolCall", id: block.id,
+			name,
+			arguments: mappedArgs,
+		});
+		const idx = c.turnBlocks.length - 1;
+		const toolBlock = c.turnBlocks[idx];
+		c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
+		c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+	}
+	if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
+	return sawToolUse;
+}
+
+export function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>): void {
+	const c = ctx();
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
+	if (c.turnSawStreamEvent) {
+		// Claude Agent SDK can yield the completed assistant message before (or
+		// instead of) a stream_event message_stop for a tool-use turn. Treat that
+		// assistant message as a hard turn boundary so Pi executes the tool calls
+		// and the MCP handlers stay blocked until real tool results are delivered.
+		// Without this fallback, Claude Code can continue internally with empty MCP
+		// results and Pi only sees the real outputs one render cycle later.
+		if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
+			c.turnSawToolCall = true;
+			if (c.currentPiStream && c.turnOutput) {
+				c.turnOutput.stopReason = "toolUse";
+				c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
+				c.currentPiStream.end();
+				c.currentPiStream = null;
+				debug("processAssistantMessage boundary: ended streamed tool_use turn from assistant message");
+			}
+		}
+		return;
+	}
 	c.resetToolTracking();
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
 	for (const block of assistantMsg.content) {

@@ -42,7 +42,7 @@ import {
 import { ccSubscriberPidFile } from "../paths/cc.ts";
 import { piBridgeStateProbe, piSubscriberPidFile } from "../paths/pi.ts";
 import { cxSubscriberPidFile } from "../paths/codex.ts";
-import { isCanonicalTag, appendEvent } from "./events.ts";
+import { isCanonicalTag, appendEvent, eventDedupKey } from "./events.ts";
 import { BG_TASK_EXIT_CLASSIFIER_TAG } from "../events/bg-task-exit.ts";
 import {
 	emitActivityForWakeRow,
@@ -153,12 +153,30 @@ interface TickPending {
 	hash: string;
 	tag: string;
 	isBell: boolean;
+	dedupKey?: string;
 }
 
 function fatalStartupError(message: string, code = 2): never {
 	setDaemonExitReason("startup-error", { error: message, exit_code: code });
 	process.stderr.write(`${message}\n`);
 	process.exit(code);
+}
+
+function wakeRowString(row: WakeEventRow, ...keys: string[]): string {
+	for (const key of keys) {
+		const value = (row as Record<string, unknown>)[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	}
+	return "";
+}
+
+function wakeRowEventIdentity(row: WakeEventRow): string {
+	const explicit = wakeRowString(row, "event_identity", "rawEventRef", "raw_event_ref");
+	if (explicit) return explicit;
+	const eventType = wakeRowString(row, "event_type");
+	if (eventType === "message_end" || eventType === "agent_end") return wakeRowString(row, "sequence");
+	return "";
 }
 
 // pane-registry helpers were moved to ./pane-registry.ts (W5 reviewer
@@ -871,6 +889,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			const evPid = typeof ev.pane_id === "string" ? ev.pane_id : "";
 			const evHash = typeof ev.hash === "string" ? ev.hash : "";
 			const evTag = typeof ev.classifier_tag === "string" ? ev.classifier_tag : "rendering";
+			const evIdentity = wakeRowEventIdentity(ev);
 			if (!evPid || !evHash) continue;
 			if (!paneCache.alive(evPid)) continue;
 			if (!firstSeen.has(evPid)) firstSeen.set(evPid, now);
@@ -883,7 +902,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				notifiedHash.set(evPid, evHash);
 				continue;
 			}
-			if (notifiedHash.get(evPid) === evHash) continue;
+			if (!evIdentity && notifiedHash.get(evPid) === evHash) continue;
 
 			let src = "adapter-event";
 			if (evTag === "oc-question") src = "oc-question-event";
@@ -918,14 +937,14 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				// matching event — master would ack and find nothing).
 				const appended = appendEvent({
 					paneId: evPid, hash: evHash, tag: evTag, reason: src,
-					ageSec: 0, isBell: false, extraJson,
+					ageSec: 0, isBell: false, extraJson, eventIdentity: evIdentity || undefined,
 					sessionLock, eventsFile, wakePending, lastEventKey,
 				});
 				if (appended) {
 					log("classify", `${evPid} ${src} tag=${evTag} (canonical)`);
 					tickActivity.push(ev);
 					tickReasons.push(`adapter:${evPid}:${evTag}`);
-					tickPending.push({ paneId: evPid, hash: evHash, tag: evTag, isBell: false });
+					tickPending.push({ paneId: evPid, hash: evHash, tag: evTag, isBell: false, dedupKey: evIdentity ? eventDedupKey(evPid, evHash, evTag, evIdentity) : undefined });
 				}
 			} else {
 				emitActivityForWakeRow(activity, ev);
@@ -1224,7 +1243,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		// 4) Wake delivery + post-success state updates.
 		if (tickReasons.length > 0) {
 			const combined = tickReasons.join("|");
-			const inFlightJson = JSON.stringify(tickPending.map((p) => ({ pane_id: p.paneId, hash: p.hash, tag: p.tag, is_bell: p.isBell })));
+			const inFlightJson = JSON.stringify(tickPending.map((p) => ({
+				pane_id: p.paneId,
+				hash: p.hash,
+				tag: p.tag,
+				is_bell: p.isBell,
+				...(p.dedupKey ? { dedup_key: p.dedupKey } : {}),
+			})));
 			const ok = wakeMaster({
 				activity,
 				masterId, masterHarness, sessionKey: opts.sessionKey,

@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUBSCRIBERS_BASH = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
-const PROMPT_CLASSIFY = resolve(HERE, "../../src/bin/prompt-classify.ts");
+const PROMPT_CLASSIFY = resolve(HERE, "../../../../scripts/prompt-classify");
 
 function sleep(ms: number): Promise<void> { return new Promise((res) => setTimeout(res, ms)); }
 function shQuote(value: string): string { return `'${value.replace(/'/g, `'\\''`)}'`; }
@@ -408,7 +408,7 @@ esac
 			chmodSync(bridgeBin, 0o755);
 			const classifierBin = join(bridgeDir, "prompt-classify-wrapper");
 			writeFileSync(classifierBin, `#!/usr/bin/env bash
-exec ${shQuote(process.execPath)} ${shQuote(PROMPT_CLASSIFY)} "$@"
+exec ${shQuote(PROMPT_CLASSIFY)} "$@"
 `);
 			chmodSync(classifierBin, 0o755);
 
@@ -599,6 +599,257 @@ esac
 			expect(ev.harness).toBe("pi");
 			expect(ev.last_assistant_text).toBe("");
 			expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("same-turn message_end plus agent_end pre-PR handshake emits once, later identical agent_end emits again", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-repeat-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"turnId":"round-1","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:34.000Z","data":{"turnId":"round-1","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"turnId":"round-2","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%287", "1184287", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review").length >= 2) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const prePrRows = rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review");
+			expect(prePrRows).toHaveLength(2);
+			expect(prePrRows.map((row) => row.last_assistant_text)).toEqual([marker, marker]);
+			expect(new Set(prePrRows.map((row) => row.hash)).size).toBe(1);
+			expect(prePrRows.map((row) => row.event_identity)).toEqual([
+				"turn:round-1",
+				"turn:round-2",
+			]);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("no-turnId repeated agent_end pre-PR handshakes use timestamp fallback identity", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-no-turn-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%289", "1184289", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review").length >= 2) break;
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const prePrRows = rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review");
+			expect(prePrRows).toHaveLength(2);
+			expect(prePrRows.map((row) => row.last_assistant_text)).toEqual([marker, marker]);
+			expect(new Set(prePrRows.map((row) => row.hash)).size).toBe(1);
+			expect(prePrRows.map((row) => row.event_identity)).toEqual([
+				"2026-05-31T04:24:33.000Z",
+				"2026-05-31T04:28:22.000Z",
+			]);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("no-turnId two-turn message_end plus agent_end pre-PR handshakes emit once per turn", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-no-turn-pair-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:34.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:35.000Z","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:36.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%290", "1184290", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review").length >= 2) {
+						await sleep(200);
+						rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+						break;
+					}
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const prePrRows = rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review");
+			expect(prePrRows).toHaveLength(2);
+			expect(prePrRows.map((row) => row.event_type)).toEqual(["message_end", "message_end"]);
+			expect(prePrRows.map((row) => row.last_assistant_text)).toEqual([marker, marker]);
+			expect(new Set(prePrRows.map((row) => row.hash)).size).toBe(1);
+			expect(prePrRows.map((row) => row.event_identity)).toEqual([
+				"2026-05-31T04:24:33.000Z",
+				"2026-05-31T04:24:35.000Z",
+			]);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("pi-sub-emit append failure logs error and does not suppress retry", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-append-err-"));
+		stateDirs.push(stateDir);
+		const badWakeLog = join(stateDir, "wake-events-dir");
+		mkdirSync(badWakeLog, { recursive: true });
+		const subLog = join(stateDir, "daemon.log.pi-sub-288");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" != "stream" ]]; then exit 0; fi
+cat <<'JSON'
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"turnId":"round-err-1","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"turnId":"round-err-2","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+sleep 30
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi", WAKE_EVENTS_LOG: badWakeLog });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%288", "1184288", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			let logBody = "";
+			while (Date.now() < deadline) {
+				if (existsSync(subLog)) {
+					logBody = readFileSync(subLog, "utf8");
+					const errors = logBody.match(/\[pi-sub-emit-error\]/g) ?? [];
+					if (errors.length >= 2) break;
+				}
+				await sleep(50);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const emits = logBody.match(/\[pi-sub-emit\]/g) ?? [];
+			const errors = logBody.match(/\[pi-sub-emit-error\]/g) ?? [];
+			expect(emits).toHaveLength(2);
+			expect(errors).toHaveLength(2);
+			expect(logBody).toContain("tag=pre-pr-ready-for-review");
+			expect(logBody).toContain("rc=");
 		} finally {
 			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
 			await sleep(50);

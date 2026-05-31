@@ -21,6 +21,9 @@ export interface WakeEventRow {
 	event_type?: unknown;
 	classifier_tag?: unknown;
 	hash?: unknown;
+	event_identity?: unknown;
+	rawEventRef?: unknown;
+	raw_event_ref?: unknown;
 	request_id?: unknown;
 	question?: unknown;
 	completion?: unknown;

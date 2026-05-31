@@ -137,6 +137,33 @@ describe("clearStaleWakePending", () => {
 		expect(logs.some(([t]) => t === "wake-pending-stale")).toBe(true);
 	});
 
+	test("master gone + TTL expired → removes event-identity dedup key", () => {
+		const wp = path("identity-stale.pending");
+		const dedupKey = "%287|pre-pr-ready-for-review|event:turn:round-4";
+		writeFileSync(wp, JSON.stringify({
+			delivered_at_epoch: Math.floor(Date.now() / 1000) - 600,
+			in_flight: [{ pane_id: "%287", hash: "07be2c0e1920", tag: "pre-pr-ready-for-review", is_bell: false, dedup_key: dedupKey }],
+		}));
+		const notified = new Map([["%287", "07be2c0e1920"]]);
+		const eventKey = new Map([[dedupKey, true as const], ["%287|07be2c0e1920|pre-pr-ready-for-review", true as const]]);
+		clearStaleWakePending({
+			masterId: "%999-no-such",
+			sessionLock: path("session.lock"),
+			wakePending: wp,
+			busyFile: path("missing.busy"),
+			masterTurnTtl: 3600,
+			wakePendingTtl: 300,
+			notifiedHash: notified,
+			lastEventKey: eventKey,
+			lastBellHash: new Map(),
+			log: () => {},
+		});
+		expect(existsSync(wp)).toBe(false);
+		expect(notified.has("%287")).toBe(false);
+		expect(eventKey.has(dedupKey)).toBe(false);
+		expect(eventKey.has("%287|07be2c0e1920|pre-pr-ready-for-review")).toBe(true);
+	});
+
 	test("master gone but TTL not expired → no-op", () => {
 		const wp = path("recent.pending");
 		writeFileSync(wp, JSON.stringify({

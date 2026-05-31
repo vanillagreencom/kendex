@@ -11,6 +11,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 - `claude-bridge/claude-opus-4-8`, Opus 4-7, Sonnet, and Haiku in `/model`.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
+- Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
 - Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
 - Thinking-level forwarding with summarized Opus thinking display.
 - Optional Claude effort overrides (`xhigh` → `max` for Opus 4.8).
@@ -98,6 +99,8 @@ When Claude Code emits rate-limit reset metadata, the bridge shows one red ASCII
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
+
+If a Claude Code SDK stream yields a completed assistant tool-use message before a `message_stop` stream event, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately and Claude Code's MCP handlers stay blocked until the matching Pi tool results are delivered, preventing empty inline tool results or one-render-cycle-late result batches in subagent panes.
 
 Tool-result integrity failures are surfaced even when debug logging is off. If the bridge has to repair missing Claude Code `tool_use` / Pi `toolResult` pairs with `[no tool result recorded]`, Pi shows an error notification and writes a JSON diagnostic to `~/.pi/agent/claude-bridge-diag.log` with counts, affected tool names, and sampled tool-call IDs so the lost output is visible. If a query tears down while parallel tool results are still queued or unresolved, the bridge writes the same kind of diagnostic, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn instead of silently resuming a corrupted session.
 

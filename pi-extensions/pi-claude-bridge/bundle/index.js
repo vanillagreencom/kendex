@@ -38405,14 +38405,19 @@ function finalizeCurrentStream(stopReason) {
 function processStreamEvent(message, customToolNameToPi, model) {
   const c2 = ctx();
   if (!c2.currentPiStream || !c2.turnOutput) return;
-  c2.turnSawStreamEvent = true;
   const event = message.event;
+  if (event?.type === "ping") return;
+  if (event?.type === "message_stop" && !c2.turnSawToolCall) {
+    debug("processStreamEvent: ignoring bare message_stop with no streamed content/tool call");
+    return;
+  }
   if (event?.type === "message_start") {
     c2.resetToolTracking();
     if (event.message?.usage) updateUsage(c2.turnOutput, event.message.usage, model);
     return;
   }
   if (event?.type === "content_block_start") {
+    c2.turnSawStreamEvent = true;
     ensureTurnStarted();
     if (event.content_block?.type === "text") {
       c2.turnBlocks.push({ type: "text", text: "", index: event.index });
@@ -38441,7 +38446,11 @@ function processStreamEvent(message, customToolNameToPi, model) {
   if (event?.type === "content_block_delta") {
     const index = c2.turnBlocks.findIndex((b2) => b2.index === event.index);
     const block = c2.turnBlocks[index];
-    if (!block) return;
+    if (!block) {
+      debug("processStreamEvent: ignoring unmatched content_block_delta", event.index);
+      return;
+    }
+    c2.turnSawStreamEvent = true;
     if (event.delta?.type === "text_delta" && block.type === "text") {
       block.text += event.delta.text;
       c2.currentPiStream.push({ type: "text_delta", contentIndex: index, delta: event.delta.text, partial: c2.turnOutput });
@@ -38462,7 +38471,11 @@ function processStreamEvent(message, customToolNameToPi, model) {
   if (event?.type === "content_block_stop") {
     const index = c2.turnBlocks.findIndex((b2) => b2.index === event.index);
     const block = c2.turnBlocks[index];
-    if (!block) return;
+    if (!block) {
+      debug("processStreamEvent: ignoring unmatched content_block_stop", event.index);
+      return;
+    }
+    c2.turnSawStreamEvent = true;
     delete block.index;
     if (block.type === "text") {
       c2.currentPiStream.push({ type: "text_end", contentIndex: index, content: block.text, partial: c2.turnOutput });
@@ -38496,11 +38509,61 @@ function processStreamEvent(message, customToolNameToPi, model) {
     debug("processStreamEvent: unhandled event type", event?.type);
   }
 }
+function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi) {
+  const c2 = ctx();
+  if (!assistantMsg?.content) return false;
+  let sawToolUse = false;
+  for (const block of assistantMsg.content) {
+    if (block.type !== "tool_use") continue;
+    sawToolUse = true;
+    const existingIdx = c2.turnBlocks.findIndex((b2) => b2.type === "toolCall" && b2.id === block.id);
+    const name = mapToolName(block.name, customToolNameToPi);
+    const mappedArgs = mapToolArgs(name, block.input);
+    c2.recordToolCall(block.id, name, mappedArgs);
+    if (existingIdx >= 0) {
+      const existing = c2.turnBlocks[existingIdx];
+      existing.name = name;
+      existing.arguments = mappedArgs;
+      c2.updateToolCallArgs(block.id, mappedArgs);
+      if ("partialJson" in existing) {
+        delete existing.partialJson;
+        delete existing.index;
+        c2.currentPiStream?.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c2.turnOutput });
+      }
+      continue;
+    }
+    ensureTurnStarted();
+    c2.turnBlocks.push({
+      type: "toolCall",
+      id: block.id,
+      name,
+      arguments: mappedArgs
+    });
+    const idx = c2.turnBlocks.length - 1;
+    const toolBlock = c2.turnBlocks[idx];
+    c2.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c2.turnOutput });
+    c2.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c2.turnOutput });
+  }
+  if (assistantMsg.usage && c2.turnOutput) updateUsage(c2.turnOutput, assistantMsg.usage, model);
+  return sawToolUse;
+}
 function processAssistantMessage(message, model, customToolNameToPi) {
   const c2 = ctx();
-  if (c2.turnSawStreamEvent) return;
   const assistantMsg = message.message;
   if (!assistantMsg?.content) return;
+  if (c2.turnSawStreamEvent) {
+    if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
+      c2.turnSawToolCall = true;
+      if (c2.currentPiStream && c2.turnOutput) {
+        c2.turnOutput.stopReason = "toolUse";
+        c2.currentPiStream.push({ type: "done", reason: "toolUse", message: c2.turnOutput });
+        c2.currentPiStream.end();
+        c2.currentPiStream = null;
+        debug("processAssistantMessage boundary: ended streamed tool_use turn from assistant message");
+      }
+    }
+    return;
+  }
   c2.resetToolTracking();
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b2) => b2.type).join(",")}`);
   for (const block of assistantMsg.content) {
@@ -38997,6 +39060,8 @@ export {
   isExtraUsageRequiredMessage,
   mapToolName,
   preflightClaudeExecutable,
+  processAssistantMessage,
+  processStreamEvent,
   reportToolResultMismatch,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,

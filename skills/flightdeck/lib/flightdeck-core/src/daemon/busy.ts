@@ -113,12 +113,12 @@ export function clearStaleWakePending(opts: ClearStaleOpts): void {
 	// master turn that started between our read and our rm. Native
 	// in-process flock(2) keeps this synchronous + zero subprocess.
 	let shouldClear = false;
-	let revertEntries: Array<{ p: string; h: string; t: string; isBell: string }> = [];
+	let revertEntries: Array<{ p: string; h: string; t: string; isBell: string; dedupKey: string }> = [];
 	let age = 0;
 
 	withInprocFlock(sessionLock, () => {
 		if (!existsSync(wakePending)) return;
-		let payload: { delivered_at_epoch?: number; in_flight?: Array<{ pane_id?: string; hash?: string; tag?: string; is_bell?: boolean }> };
+		let payload: { delivered_at_epoch?: number; in_flight?: Array<{ pane_id?: string; hash?: string; tag?: string; is_bell?: boolean; dedup_key?: string }> };
 		try { payload = JSON.parse(readFileSync(wakePending, "utf8")); }
 		catch { return; }
 		const delivered = typeof payload.delivered_at_epoch === "number" ? payload.delivered_at_epoch : 0;
@@ -131,8 +131,9 @@ export function clearStaleWakePending(opts: ClearStaleOpts): void {
 			const h = row.hash ?? "";
 			const t = row.tag ?? "";
 			const isBell = row.is_bell === true ? "true" : "false";
+			const dedupKey = typeof row.dedup_key === "string" ? row.dedup_key : "";
 			if (!p) continue;
-			revertEntries.push({ p, h, t, isBell });
+			revertEntries.push({ p, h, t, isBell, dedupKey });
 		}
 		try { unlinkSync(wakePending); shouldClear = true; }
 		catch { /* race: gone already */ }
@@ -140,9 +141,9 @@ export function clearStaleWakePending(opts: ClearStaleOpts): void {
 
 	if (!shouldClear) return;
 
-	for (const { p, h, t, isBell } of revertEntries) {
+	for (const { p, h, t, isBell, dedupKey } of revertEntries) {
 		if (notifiedHash.get(p) === h) notifiedHash.delete(p);
-		const ek = `${p}|${h}|${t}`;
+		const ek = dedupKey || `${p}|${h}|${t}`;
 		if (lastEventKey.has(ek)) lastEventKey.delete(ek);
 		if (isBell === "true" && lastBellHash.get(p) === h) lastBellHash.delete(p);
 		log("wake-pending-revert", `reverted state for ${p} hash=${h} tag=${t} bell=${isBell}`);
