@@ -112,6 +112,44 @@ export function piRateLimitRetryStateFile(stateDir: string, paneId: string): str
 	return join(stateDir, `pi-rate-limit-retry-${hash}.state`);
 }
 
+export interface ClearPiRateLimitRetryStateResult {
+	file: string;
+	disarmed: boolean;
+	removed: boolean;
+	tombstoned: boolean;
+	error?: string;
+}
+
+export function clearPiRateLimitRetryStateFile(
+	stateDir: string,
+	paneId: string,
+	reason: string,
+	logError?: (message: string) => void,
+): ClearPiRateLimitRetryStateResult {
+	const file = piRateLimitRetryStateFile(stateDir, paneId);
+	if (!existsSync(file)) return { disarmed: true, file, removed: true, tombstoned: false };
+	let tombstoned = false;
+	let error = "";
+	try {
+		writeFileSync(file, `cancelled\t${reason}\t${Date.now()}\n`, { encoding: "utf8", mode: 0o600 });
+		tombstoned = true;
+	} catch (err) {
+		error = `tombstone-failed:${(err as Error)?.message ?? err}`;
+	}
+	try {
+		unlinkSync(file);
+		return { disarmed: true, file, removed: true, tombstoned, ...(error ? { error } : {}) };
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException)?.code;
+		if (code === "ENOENT") return { disarmed: true, file, removed: true, tombstoned, ...(error ? { error } : {}) };
+		error = `${error ? `${error},` : ""}unlink-failed:${(err as Error)?.message ?? err}`;
+	}
+	const disarmed = tombstoned;
+	if (!disarmed && error) logError?.(`pane=${paneId} reason=${reason} file=${file} error=${error}`);
+	else if (error) logError?.(`pane=${paneId} reason=${reason} file=${file} warning=${error}`);
+	return { disarmed, error: error || undefined, file, removed: false, tombstoned };
+}
+
 export interface RunLoopOpts {
 	stateDir: string;
 	sessionId: string;
@@ -551,13 +589,13 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	}
 
 	function clearPiRateLimitRetryState(paneId: string, reason: string): void {
-		const file = piRateLimitRetryStateFile(opts.stateDir, paneId);
-		try {
-			unlinkSync(file);
-			log("pi-rate-limit-retry-state-cleared", `pane=${paneId} reason=${reason} file=${file}`);
-		} catch {
-			// Missing or concurrently-removed state is fine; detached sleepers
-			// validate this file and exit when it is absent.
+		const result = clearPiRateLimitRetryStateFile(opts.stateDir, paneId, reason, (message) => {
+			warn("pi-rate-limit-retry-state-clear-error", message);
+		});
+		if (result.disarmed) {
+			log("pi-rate-limit-retry-state-cleared", `pane=${paneId} reason=${reason} file=${result.file} removed=${result.removed ? "yes" : "no"} tombstoned=${result.tombstoned ? "yes" : "no"}`);
+		} else {
+			warn("pi-rate-limit-retry-state-still-armed", `pane=${paneId} reason=${reason} file=${result.file} error=${result.error ?? "unknown"}`);
 		}
 	}
 
