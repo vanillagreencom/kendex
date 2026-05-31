@@ -64,6 +64,29 @@ cat > "$tmp/.cache/linear/issues.json" <<'JSON'
 ]
 JSON
 
+cat > "$tmp/.cache/linear/labels.json" <<'JSON'
+[
+  {
+    "id": "label-group-1",
+    "name": "Agent",
+    "color": "#9C27B0",
+    "description": "Agent group",
+    "isGroup": true,
+    "team": {"name": "Claude"},
+    "parent": null
+  },
+  {
+    "id": "label-child-1",
+    "name": "agent:test",
+    "color": "#9C27B0",
+    "description": "Test agent",
+    "isGroup": false,
+    "team": {"name": "Claude"},
+    "parent": {"name": "Agent"}
+  }
+]
+JSON
+
 err="$tmp/stderr.txt"
 RUN_OUT=""
 
@@ -106,6 +129,17 @@ run_cache_read "cache issues list" cache issues list --state "Backlog,Todo,In Pr
 issues_out="$RUN_OUT"
 if ! echo "$issues_out" | jq -e '.[0].id == "AUTH-1"' >/dev/null; then
   echo "FAIL cache issues list returned unexpected output: $issues_out"
+  exit 1
+fi
+
+run_cache_read "cache labels list" cache labels list --format=safe
+labels_out="$RUN_OUT"
+if ! echo "$labels_out" | jq -e '.[] | select(.name == "Agent" and .is_group == true)' >/dev/null; then
+  echo "FAIL cache labels list did not expose is_group=true: $labels_out"
+  exit 1
+fi
+if ! echo "$labels_out" | jq -e '.[] | select(.name == "agent:test" and .parent == "Agent" and .is_group == false)' >/dev/null; then
+  echo "FAIL cache labels list returned unexpected child label output: $labels_out"
   exit 1
 fi
 

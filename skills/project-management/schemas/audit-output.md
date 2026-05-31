@@ -14,6 +14,15 @@ Output path: `tmp/audit-project-YYYYMMDD-HHMMSS.json` or `tmp/audit-issues-YYYYM
 }
 ```
 
+## Label Contract
+
+Any output that can create an issue or update issue labels must carry full label intent:
+
+- New issues: `create_fields.labels[]` is the complete issue-label set to pass to `issues create --labels` after preflight.
+- Existing issue updates: label findings specify intended operation (`add`, `replace_category`, or explicit full replacement) so callers preserve unrelated labels.
+- `agent_label` and `agent` are derived/backward-compatible fields only; they are not sufficient for mutation.
+- All labels refer to **issue labels**, never project labels.
+
 ## PROJECT Mode Finding Arrays
 
 Located at `findings.*`:
@@ -23,8 +32,8 @@ Located at `findings.*`:
 | `add_relations[]` | `from`, `rel`, `to`, `reason` |
 | `remove_relations[]` | `from`, `rel`, `to`, `uuid`, `reason` |
 | `priority_misalignment[]` | `id`, `title`, `current`, `should_be`, `reason` |
-| `agent_mismatch[]` | `id`, `title`, `current`, `should_be`, `reason`, `signals[]` |
-| `label_cooccurrence[]` | `id`, `title`, `present`, `missing`, `reason` |
+| `agent_mismatch[]` | `id`, `title`, `current`, `should_be`, `reason`, `signals[]` (`replace_category: agent` implied) |
+| `label_cooccurrence[]` | `id`, `title`, `present`, `missing`, `reason` (`add` missing label implied) |
 | `duplicates[]` | `keep`, `remove`, `reason` |
 | `obsolete[]` | `issue`, `reason`, `evidence{}`, `confidence` |
 | `wrong_project[]` | `issue`, `title`, `from`, `to`, `to_id`, `reason` |
@@ -103,9 +112,11 @@ Located at `findings.*`:
     "rationale": "string",
     "requires_reopen": false
   },
-  "recommended_issue": {"title": "...", "agent": "...", "priority": "1-4", "estimate": "1-5", "blocks": [], "labels": []}
+  "recommended_issue": {"title": "...", "agent": "...", "priority": "1-4", "estimate": "1-5", "blocks": [], "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]"]}
 }
 ```
+
+`recommended_issue.labels[]` must be the full issue-label set for the gap issue, not only an agent label.
 
 **`project_recommendations[]`**:
 
@@ -149,7 +160,21 @@ Located at `findings.*`:
       "priority_misalignment": {"current": 3, "should_be": 1, "reason": "..."},
       "agent_mismatch": {"current": "...", "should_be": "...", "signals": [], "reason": "..."},
       "label_cooccurrence": {"present": "[signals]", "missing": "design", "reason": "..."},
+      "label_updates": [
+        {"mode": "add", "category": "domain", "labels": ["design"], "reason": "..."}
+      ],
       "hierarchy": {"action": "none|make_child", "parent": "[ISSUE_ID]|#N|null"},
+      "create_fields": {
+        "description": "Issue body summary",
+        "recommendation": "* Requirements bullets",
+        "location": "path or component",
+        "estimate": 3,
+        "priority": 2,
+        "agent_label": "agent:[TYPE]",
+        "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
+        "is_bundle_parent": false,
+        "source_path": "docs/roadmaps/roadmap-feature.md"
+      },
       "supersedes": [
         {"identifier": "[ISSUE_ID]", "title": "Issue title", "reason": "Scope fully covered by this issue"}
       ],
@@ -159,6 +184,19 @@ Located at `findings.*`:
   ]
 }
 ```
+
+### ISSUE Mode Label Fields
+
+| Field | Meaning |
+|-------|---------|
+| `create_fields.labels[]` | Required for `action=create`; full validated issue-label set. |
+| `create_fields.agent_label` | Optional derived/backward-compatible agent label; do not use alone for create. |
+| `label_updates[].mode` | `add`, `replace_category`, or `replace_all`. |
+| `label_updates[].category` | Taxonomy category affected when `mode=replace_category` or category-aware add. |
+| `label_updates[].labels[]` | Labels being added/replaced. Caller computes final labels from current issue labels and preflights. |
+| `label_updates[].final_labels[]` | Optional explicit final full label set. Required when `mode=replace_all`. |
+
+When `label_cooccurrence.missing` is present without `label_updates[]`, callers treat it as `mode=add` for the taxonomy category that contains the missing label.
 
 ## Action Values
 

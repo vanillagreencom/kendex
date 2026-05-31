@@ -38,7 +38,17 @@ Parse arguments → set `MODE` (project | issues).
 - `RESEARCH_REF` from `research_ref` field (optional, research-complete only)
 - `DECISION_REF` from `decision_ref` field (optional, research-complete only)
 
-### 1.2 Fetch All Projects
+### 1.2 Load Issue Label Policy
+
+Load live issue-label inventory and project taxonomy/application rules before validating agent/domain/workflow labels or recommending label changes:
+
+```bash
+.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+```
+
+If the label cache is missing/stale, report that the caller must run `sync --reconcile` before mutation. TPM does not mutate labels, but all `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendations must be expressible against live issue labels and project taxonomy. Use issue labels only; project labels are separate.
+
+### 1.3 Fetch All Projects
 
 Query ALL project states:
 ```bash
@@ -51,7 +61,7 @@ Query ALL project states:
 
 Store project IDs and metadata for cross-project analysis.
 
-### 1.3 Fetch Input Issues
+### 1.4 Fetch Input Issues
 
 **PROJECT**: Fetch all issues in target project (all states):
 ```bash
@@ -64,9 +74,9 @@ Store project IDs and metadata for cross-project analysis.
 ```
 For proposed issues, use provided fields directly.
 
-### 1.4 Fetch Comparison Set
+### 1.5 Fetch Comparison Set
 
-Fetch issues from ALL projects (from 1.2) for duplicate/obsolete/fit checking:
+Fetch issues from ALL projects (from 1.3) for duplicate/obsolete/fit checking:
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
@@ -75,9 +85,9 @@ Run for each project. Store all issues for comparison in 6.
 
 **Why all projects**: Cross-project duplicate detection, obsolete checking against completed work, and project fit evaluation all require visibility into the full backlog.
 
-### 1.5 Extract Project Definitions
+### 1.6 Extract Project Definitions
 
-For EACH project from 1.2, extract from name + description + content:
+For EACH project from 1.3, extract from name + description + content:
 
 | Field | Question |
 |-------|----------|
@@ -118,7 +128,7 @@ For each INPUT issue, extract from title + description:
 
 ### 3.1 Validate Issue Fit
 
-For each issue, verify it matches the target project definition from 1.5.
+For each issue, verify it matches the target project definition from 1.6.
 
 | Mismatch | Example | Action |
 |----------|---------|--------|
@@ -174,7 +184,7 @@ Scan for Creates-Consumes matches across different targets:
 
 ### 4.3 Include Comparison Set Matches
 
-Compare input issues against comparison set (1.4) for:
+Compare input issues against comparison set (1.5) for:
 - Same target component
 - Same file path in location field — issues modifying the same file are always candidates
 - Creates-Consumes overlap
@@ -207,7 +217,7 @@ For input issues with existing relations, add to candidate pairs for verificatio
 1. **Cross-project blocking**:
    - If issue-level blocking aligns with project ordering (3.2) → skip (redundant specificity)
    - Otherwise → move one issue to the other's project
-   - **Check** 1.5 scope definitions to determine which issue to move
+   - **Check** 1.6 scope definitions to determine which issue to move
    - If issue is a child, it must move with its parent (or be detached first)
    - **Add** to `wrong_project[]` with target project and reason referencing the blocking relation
    - **Do NOT create project-level dependencies from individual issue relations** — project deps come from project-order audit scope analysis, not bottom-up from 1-2 issue crossings
@@ -282,7 +292,7 @@ For each blocking relationship (A blocks B) where both are active:
 
 **Skip** Done/Cancelled issues — their labels are historical.
 
-**Check** each active issue's `agent:X` label against its content.
+**Check** each active issue's taxonomy `agent` category label against its content. Validate recommended replacement labels against § 1.2 inventory/taxonomy before adding `agent_mismatch[]`; if the desired `agent:*` label does not exist or is a parent/group label, report the validation failure in `reason` and do not recommend a mutating fix without user/taxonomy action.
 
 **Code verification** (when target exists):
 ```bash
@@ -302,7 +312,9 @@ grep -rn "pub fn\|export function\|def " ${WORKTREE:-.}/src/[TARGET_MODULE]/
 
 **Skip** Done/Cancelled issues — their labels are historical.
 
-**Step 1 — Heuristic**: For each active issue, if it lacks a required label, check title/description against detection signals. If 2+ signals match → add finding with `present: "[signals]"`.
+**Step 1 — Heuristic**: For each active issue, if it lacks a required taxonomy label/category, check title/description against detection signals. If 2+ signals match → add finding with `present: "[signals]"`.
+
+Only recommend `missing` labels that exist in live issue-label inventory and are assignable issue labels. If taxonomy requires a label that is absent from Linear, record that the label is missing from inventory and requires explicit user authorization to create; do not silently substitute another label.
 
 **Add** to `label_cooccurrence[]`:
 ```json
@@ -315,7 +327,7 @@ grep -rn "pub fn\|export function\|def " ${WORKTREE:-.}/src/[TARGET_MODULE]/
 
 ### 6.1 Check for Duplicates
 
-**Compare** input issues against ALL issues from comparison set (1.4):
+**Compare** input issues against ALL issues from comparison set (1.5):
 
 **Same-project duplicates**:
 - Same problem + same approach = duplicate → add to `duplicates[]`
@@ -369,7 +381,7 @@ Detect issues that should be canceled because work is complete.
 
 ### 6.3 Check Project Fit
 
-For each input issue, compare against ALL project definitions from 1.5:
+For each input issue, compare against ALL project definitions from 1.6:
 
 | Check | Action |
 |-------|--------|
@@ -443,7 +455,7 @@ For each parent issue with children:
 
 2. **If parent has implementation scope** not mapped to children → add to `analysis[]`: "Parent [ISSUE_ID] has `## Requirements` not decomposed into sub-issues."
 
-3. **Check agent labels**: if children have 2+ distinct `agent:X` but parent lacks `agent:multi` → add to `agent_mismatch[]`
+3. **Check agent labels**: if children have 2+ distinct taxonomy `agent` labels but parent lacks the project-configured multi-agent label (for example `agent:multi` when present in inventory/taxonomy) → add to `agent_mismatch[]` only after validating that replacement label exists and is assignable.
 
 4. **Check `## Sub-Issues` list matches actual children**: Compare issue IDs listed in parent description vs actual `children[]` from API. If mismatched (missing or extra entries), add to `hierarchy[]` with action `update_parent_desc` and reason noting the stale entries.
 
@@ -510,7 +522,7 @@ Classify:
 
 For each architecture component:
 
-1. **Search ALL project backlogs** (from 1.4) for matching issues
+1. **Search ALL project backlogs** (from 1.5) for matching issues
 
 2. **Check implementation state** from 9.2
 
@@ -591,6 +603,8 @@ For each input issue, assign action based on analysis:
 
 **Research traceability**: If `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add `RESEARCH_ISSUE` to `add_relations.related[]` for all `create` actions. This ensures created issues link back to the research that spawned them.
 
+**Create fields**: For every `create` action, populate `create_fields` per [audit-output.md](../schemas/audit-output.md). Include full `create_fields.labels[]` from input `items[].labels[]` when present or complete it from § 1.2 taxonomy/inventory. If required labels cannot be determined or do not exist in live issue-label inventory, leave the action blocked with a clear `reason`; do not emit a create action that relies only on `agent`/`agent_label`.
+
 ---
 
 ## 11. Pre-Output Verification
@@ -605,6 +619,7 @@ For each input issue, assign action based on analysis:
 - [ ] 5.3: Priority alignment checked (skip if proposed without priority)
 - [ ] 5.4: Agent label verified
 - [ ] 5.5: Label co-occurrence checked
+- [ ] 10.2: Create actions include full `create_fields.labels[]`; label update recommendations have mode/category semantics
 - [ ] 6.1: Duplicates and supersession checked (same-project AND cross-project)
 - [ ] 6.2: Obsolete checked with deep verification
 - [ ] 6.3: Project fit evaluated against ALL projects

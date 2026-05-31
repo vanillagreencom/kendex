@@ -188,6 +188,7 @@ Output from TPM roadmap analysis, consumed by orchestrator for presentation and 
     "title": "Implement request router",
     "estimate": 3,
     "agent": "backend",
+    "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]"],
     "priority": 1,
     "action": "create",
     "target": null,
@@ -210,6 +211,7 @@ Output from TPM roadmap analysis, consumed by orchestrator for presentation and 
     "estimate": null,
     "agent": "multi",
     "agent_label": "agent:multi",
+    "labels": ["agent:multi", "[DOMAIN_LABEL]"],
     "priority": 2,
     "action": "create",
     "target": null,
@@ -230,6 +232,7 @@ Output from TPM roadmap analysis, consumed by orchestrator for presentation and 
     "title": "Implement JWT validation middleware",
     "estimate": 2,
     "agent": "backend",
+    "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]"],
     "priority": 2,
     "action": "create",
     "target": null,
@@ -284,7 +287,16 @@ Lower position = earlier in implementation order.
 - `is_bundle_parent: true` → aggregate issue, `estimate: null`
 - `parent_title` set → child of that bundle
 - Bundle when 2+ issues share: same agent + small estimates (1-2) + same work type
-- `agent_label`: If all children have same agent → parent gets that agent. If 2+ distinct agents → `agent:multi`
+- `labels[]`: Full issue-label set for creation. Required before `roadmap-create` mutates Linear.
+- `agent_label`: Backward-compatible derived field. If all children have same agent → parent gets that agent label. If 2+ distinct agents → parent gets the project-configured multi-agent label (for example `agent:multi` when present in taxonomy/inventory).
+
+### Label Rules
+
+- Labels are issue labels, not project labels.
+- `labels[]` must include all project-required categories for new issues.
+- Do not include parent/group labels.
+- If TPM cannot determine a required category, it should flag the gap in `reason` instead of inventing labels.
+- `agent`/`agent_label` are not enough for create; `roadmap-create` must preflight the full `labels[]` set against live inventory and project taxonomy.
 
 ### Action Assignment (from TPM 5.2)
 

@@ -125,12 +125,14 @@ sortOrder → sort_order  # Manual sort position
 | `--project` | Name or UUID | Fail with "not found" |
 | `--state` | Exact name (case-sensitive) | Fail, lists available states |
 | `--milestone` | Name or UUID | Fail with "not found" |
-| `--labels` | Comma-separated names | Warn + skip invalid, continue |
+| `--labels` | Comma-separated issue-label names | Warn + skip invalid, continue (workflow callers must preflight strictly) |
 | `--assignee` | Name or `me` | Silent fail |
 
 - State names are case-sensitive and team-specific — verify with `linear.sh statuses list`
 - Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled")
 - `agent:*` labels are mutually exclusive (only one per issue)
+- `--labels` replaces the full issue-label set on update. Workflow callers must fetch current labels, compute the final set, validate against `cache labels list --format=safe`, then call update with the full final set.
+- `cache labels list --format=safe` returns issue labels with `id`, `name`, `team`, `parent`, and `is_group` so workflows can reject parent/group labels before mutation.
 
 ## Troubleshooting
 

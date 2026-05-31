@@ -396,6 +396,7 @@ format_labels_list() {
         name: (.name // ""),
         color: (.color // ""),
         description: (.description // ""),
+        is_group: (.isGroup // false),
         team: (.team.name // ""),
         parent: (.parent.name // "")
     }]'

@@ -140,6 +140,18 @@ JSON contains full plan with `velocity`, `planned_work`, `not_included`, `action
 
 ## 4. Execute Actions
 
+### 4.0 Load Label Policy for Label Updates
+
+Before executing any `actions.set_labels[]` entry:
+
+1. Load issue-label inventory and project taxonomy per [labels.md](../references/labels.md):
+   ```bash
+   .agents/skills/linear/scripts/linear.sh sync --reconcile
+   .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+   ```
+2. For each target issue, fetch current labels, compute the full final label set, preserve unrelated labels, and replace only the intended taxonomy category unless the action explicitly says `replace_all_labels: true`.
+3. Preflight the final label set. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+
 ### 4.1 Create Cycle (if actions.create_cycle exists)
 
 **Skip if** `actions.create_cycle` is null.
@@ -161,7 +173,7 @@ JSON contains full plan with `velocity`, `planned_work`, `not_included`, `action
    | Assign to cycle | § Cycle Assignment | `actions.assign_to_cycle[]` (issue IDs) |
    | Set sort order | `.agents/skills/linear/scripts/linear.sh issues update [ID] --sort-order [VALUE]` | `actions.set_sort_order[]` (parent/standalone only, AFTER cycle assignment) |
    | Set estimates | § Estimate & Label Updates | `actions.set_estimates[]` |
-   | Set agent labels | § Estimate & Label Updates | `actions.set_labels[]` |
+   | Set labels | § Estimate & Label Updates | `actions.set_labels[]` with mode/category/final-label semantics from schema; run § 4.0 first |
    | Update initiative | § Initiative & Project Status | `actions.update_initiative` |
    | Update project | § Initiative & Project Status | `actions.update_project` |
 

@@ -330,7 +330,7 @@ sync_labels() {
         issueLabels(first: 250, after: $after) {
             pageInfo { hasNextPage endCursor }
             nodes {
-                id name color description
+                id name color description isGroup
                 team { name }
                 parent { name }
             }

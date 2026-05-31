@@ -107,12 +107,27 @@ scripts/linear.sh issues update [ISSUE_ID] --priority 1
 scripts/linear.sh comments create [ISSUE_ID] --body "Priority updated: [REASON]"
 ```
 
+## Label Preflight
+
+Before any issue create or label update from a workflow:
+
+1. Refresh/load issue-label inventory: `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
+2. Load project taxonomy/application rules from the calling project.
+3. Build the full final issue-label set.
+4. Reject unknown labels, parent/group labels (`is_group: true` or names used as parents), missing required categories, and exclusive-category conflicts.
+5. Ask for explicit user authorization before creating any missing issue label; never create labels automatically.
+
+Project labels are separate resources and must not be used for issue-label preflight.
+
 ## Agent Label Updates
 
-Agent labels are exclusive. Replace the old `agent:*` label with the new one; do not stack them.
+Agent labels are exclusive. Replace the old taxonomy `agent` category label with the new one, preserve all unrelated labels, and update with the full validated final set.
 
 ```bash
-scripts/linear.sh issues update [ISSUE_ID] --labels "agent:[NAME]"
+scripts/linear.sh cache issues get [ISSUE_ID]
+# FINAL_LABELS = current labels - current agent-category labels + agent:[NAME]
+# Preflight FINAL_LABELS against live issue-label inventory + project taxonomy.
+scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
 scripts/linear.sh comments create [ISSUE_ID] --body "Agent label updated: [REASON]"
 ```
 
@@ -120,11 +135,13 @@ scripts/linear.sh comments create [ISSUE_ID] --body "Agent label updated: [REASO
 
 ```bash
 scripts/linear.sh cache issues get [ISSUE_ID]
-scripts/linear.sh issues update [ISSUE_ID] --labels "[EXISTING_LABELS],[MISSING_LABEL]"
+# FINAL_LABELS = current labels + [MISSING_LABEL]
+# Preflight FINAL_LABELS against live issue-label inventory + project taxonomy.
+scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
 scripts/linear.sh comments create [ISSUE_ID] --body "Added [MISSING_LABEL]: [REASON]"
 ```
 
-Remember that `--labels` replaces the full label set.
+Remember that `--labels` replaces the full label set. Never pass only the changed label unless the intended final label set is exactly that one label.
 
 ## Cycle Assignment
 
@@ -153,7 +170,8 @@ scripts/linear.sh issues update [PARENT_ID] --state "[CHILD_STATE]" --cycle [CYC
 
 ```bash
 scripts/linear.sh issues update [ISSUE_ID] --estimate 3
-scripts/linear.sh issues update [ISSUE_ID] --labels "agent:[NAME],blocked"
+# For labels: compute FINAL_LABELS from current labels + intended add/replace, preflight, then update.
+scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
 ```
 
 ## Create Gap Issues
@@ -170,17 +188,21 @@ scripts/linear.sh issues create \
 
 Then add any blocking relations that the new gap issue should impose.
 
+`[LABELS]` must be the full validated issue-label set, not a partial agent label.
+
 ## Create Research Gap
 
 ```bash
 scripts/linear.sh issues create \
   --title "Research: [TOPIC]" \
   --project "[TARGET_PROJECT]" \
-  --labels "research" \
+  --labels "[VALIDATED_RESEARCH_LABELS]" \
   --priority 3 \
   --estimate 1 \
   --description "[RESEARCH_BRIEF]"
 ```
+
+`[VALIDATED_RESEARCH_LABELS]` must include the project-required agent/domain/workflow categories and must pass issue-label preflight.
 
 ## Project State Changes
 

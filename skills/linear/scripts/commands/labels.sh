@@ -83,6 +83,7 @@ list_labels() {
                 name
                 color
                 description
+                isGroup
                 team { name }
                 parent { name }
                 createdAt
@@ -184,6 +185,7 @@ create_label() {
                 id
                 name
                 color
+                isGroup
                 parent { name }
             }
         }
@@ -243,6 +245,8 @@ update_label() {
                 id
                 name
                 color
+                isGroup
+                parent { name }
             }
         }
     }'

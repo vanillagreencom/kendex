@@ -29,6 +29,15 @@ Link completed research to blocked issues, analyze impact, create follow-up work
 
 ## 2. Ensure Domain Labels
 
+Load issue-label inventory and project taxonomy before inspecting or updating labels:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+```
+
+Use issue labels only. Domain/stack labels, `agent:*`, and workflow/classification labels must be validated against [labels.md](../references/labels.md) before any update.
+
 **Two distinct concepts**:
 
 | Concept | Purpose | Example |
@@ -44,9 +53,9 @@ From § 1 response, check `.labels` array for domain/stack labels.
 
 1. **Analyze `findings.md`** content for domain indicators -- infer from component paths (project-configurable).
 
-2. **Update labels** (must include existing + new):
+2. **Update labels** (must include existing + new): compute `FINAL_LABELS = EXISTING_LABELS + INFERRED_LABELS`, preserve unrelated labels, preflight final labels, then update.
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[EXISTING_LABELS],[INFERRED_LABELS]"
+   .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
    ```
 
 3. **If unclear or multi-domain** → add all likely domains; routing handles escalation
@@ -131,7 +140,7 @@ Execute ONE flow based on § 3 unless meets escalation criteria as defined.
 
 3. **Check for escalation**
    - If cross-domain impact reported:
-     - Add domain labels from agent report: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[EXISTING_LABELS],[NEW_DOMAINS]"`
+     - Add domain labels from agent report: compute `FINAL_LABELS = EXISTING_LABELS + NEW_DOMAINS`, preflight against § 2 inventory/taxonomy, then `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`
      - Update issue description -- append `## Affected Domains` section with domains from agent report
      - **Switch to § 5.2**. Do not assess severity--let each affected domain analyze its own impact.
    - If initiative-level scope (10+ issues, needs phasing):
@@ -306,7 +315,7 @@ Count distinct domains across merged requirements from § 6.4. If 2+ domains, de
 
 1. **Group ALL requirements by domain** → one sub-issue per domain (including domains from original scope). Sub-issues must be in parent's project.
 2. **Title format**: `[Domain verb]: [scope] for [DECISION_ID]` (e.g., "Implement GBM tick generator for D012", "Add order panel view for D012")
-3. **Set labels**: `agent:[TYPE]` per domain, appropriate stack labels
+3. **Set labels**: full validated `labels[]` per sub-issue (`agent:[TYPE]` per domain plus required domain/stack/workflow/classification labels). Validate with § 2 inventory/taxonomy before writing the audit-input file.
 4. **Determine blocking order**: Read [agent-sequencing.md](../../linear-orch/workflows/agent-sequencing.md). Record as `blocks_items`/`blocked_by_items` for step 6.
 5. **Include supplementary findings** from agent reports as requirements in the appropriate domain sub-issue -- don't create separate issues for small supplementary items that belong to the same domain
 6. **Build audit-input file** with formatted titles:
@@ -318,6 +327,7 @@ Count distinct domains across merged requirements from § 6.4. If 2+ domains, de
    - `research_issue`: `[ISSUE_ID]` (the research issue being completed)
    - `research_ref`: `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`
    - `decision_ref`: `[DECISION_ID]`
+   - Each `items[]` entry includes `labels[]` with the full validated issue-label set.
 7. **Include refactors**: Add agent-reported refactors as additional items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`. TPM routes to appropriate project (typically Tech Debt) via § 6.3.
 8. **Write file**: `tmp/audit-research-YYYYMMDD-HHMMSS.json`
 9. **Run Workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.6`
@@ -339,10 +349,10 @@ Update each blocked issue (from § 1 `.blocks` array) to reflect research outcom
    - **Add `## Requirements`**: One bullet per deliverable from decision
    - **Add `## Context`**: Key constraints, cross-references
 
-4. **Set parent label** to `agent:multi` if children span 2+ distinct `agent:[TYPE]` domains (per project-level templates parent-issue-template)
+4. **Set parent label** to the project-configured multi-agent label (for example `agent:multi` when present) if children span 2+ distinct taxonomy `agent` domains. Compute final parent labels from current labels, replace only the `agent` category, preserve unrelated labels, preflight, then update.
 
 5. **Update metadata** if research changed scope:
-   - **Labels**: Add domain labels if cross-domain work discovered
+   - **Labels**: Add domain labels if cross-domain work discovered. Compute final labels from current labels + additions, preserve unrelated labels, preflight, then update.
    - **Estimate**: Adjust if research revealed significantly more/less work
 
 6. **Invalidate parallel groups**: Description rewrites change issue scope, invalidating cached parallel-check results.

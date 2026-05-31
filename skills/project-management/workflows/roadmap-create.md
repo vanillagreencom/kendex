@@ -39,6 +39,7 @@ Extract `PLAN_PATH` from `@[path]` argument.
 | `PROJECT_DESC` | Description field |
 | `PROJECT_RELATIONS[]` | "Project Relations" table |
 | `ISSUES[]` | "Issues" table |
+| `ISSUES[].labels[]` | "Labels" column, comma-separated (legacy plans may omit; must be completed before create) |
 | `GAPS[]` | "Architecture Gaps" table |
 | `BREAKING_CHANGES[]` | "Breaking Changes" table |
 
@@ -219,6 +220,19 @@ Project ordering handled when `workflows/audit-issues.md` runs with `project-ord
 
 ## 6. Create Issues
 
+### 6.0 Load Label Policy
+
+Before converting or creating any issue payload:
+
+1. **Load live issue-label inventory** per [labels.md](../references/labels.md):
+   ```bash
+   .agents/skills/linear/scripts/linear.sh sync --reconcile
+   .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+   ```
+2. **Load project taxonomy/application rules** from project configuration/docs (for example `vstack.toml` `[skill-instructions]`).
+3. **Use issue labels only**. Do not validate against project labels.
+4. **Halt before § 6.1** if taxonomy is missing and labels cannot be validated.
+
 ### 6.1 Create Issues via Audit
 
 **If `TPM_OUTPUT` is not null** → JSON conversion below (skip tpm-audit).
@@ -274,12 +288,19 @@ Bundle children always reference their bundle parent as `#N`.
   "estimate": 3,
   "priority": 1,
   "agent_label": "agent:[TYPE]",
+  "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
   "is_bundle_parent": false,
   "source_path": "docs/roadmaps/roadmap-[FEATURE].md"
 }
 ```
 
-For bundle parents: use parent-issue-template format (`is_bundle_parent: true`, no description/recommendation -- populated after children created via § Sync Parent Description).
+For bundle parents: use parent-issue-template format (`is_bundle_parent: true`, no description/recommendation -- populated after children created via § Sync Parent Description). Keep `agent_label` for backward compatibility, but `labels[]` is authoritative for create.
+
+**Label mapping and preflight**:
+- Source labels from `organized_issues[i].labels[]`.
+- If `labels[]` is missing but legacy `agent`/`agent_label` exists, complete `labels[]` from project taxonomy and issue context before mutation.
+- Validate every `labels[]` set against § 6.0 inventory/taxonomy before writing the audit file.
+- Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt the workflow and ask the user. Do not let the Linear CLI warn-and-skip invalid labels.
 
 **Top-level metadata**:
 
@@ -309,6 +330,7 @@ Build audit-input file from markdown plan per [audit-issues-input.md](../schemas
 | "From roadmap" | `recommendation` |
 | TPM-computed `priority` | `priority` (from `organized_issues[].priority` -- do NOT default to P2) |
 | Estimate | `estimate` |
+| Labels column | `labels[]` (full issue-label set; if absent, complete from taxonomy before create) |
 | `"issue"` | `category` |
 | `"tpm"` | `found_by` |
 | `"planned"` | `origin` |
@@ -326,6 +348,8 @@ Source: `"roadmap-create"` | Parent issue: from `hierarchy_recommendation` in ma
 **Dependency conversion**: Preserve TPM's parent-level relation assignments for bundled issues (per [agent-sequencing.md](../../linear-orch/workflows/agent-sequencing.md) rule 5). For non-bundled issues, convert plan's `#N` references to `blocked_by_items: [N]` and existing refs to `blocked_by_issues: ["[ISSUE_ID]"]`.
 
 **Source path**: Format as file path, not markdown link: `docs/roadmaps/roadmap-[FEATURE].md`
+
+**Label preflight**: For every fallback issue, build and validate full `labels[]` using § 6.0 before invoking `audit-issues`. Legacy plans without labels must be completed through project taxonomy; if required labels cannot be determined, halt and ask the user.
 
 1. **Write file** to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`.
 

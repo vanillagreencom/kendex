@@ -38,6 +38,12 @@ Analyze backlog, compute architecture order, and generate cycle plan recommendat
       ```
       </output_format>
 
+4. **Load label policy context** if any label recommendations may be produced:
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+   ```
+   Use project taxonomy/application rules to classify label categories. TPM does not mutate labels, but any `actions.set_labels[]` recommendation must specify the intended update mode/category and enough data for the caller to preflight a full final label set.
+
 ### 1.2 Calculate Velocity
 
 Uses cycle scope history (estimation points per day), not issue counts.
@@ -211,7 +217,7 @@ Architecture order determines new priority for cycle assignment:
      - `set_sort_order[]` — sort order from 1.4.4 position (`{id, sort_order}`, spacing of 100, parent/standalone only)
      - `assign_to_cycle[]` — issue IDs to assign
      - `set_estimates[]` — estimate updates if needed
-     - `set_labels[]` — label updates if needed
+     - `set_labels[]` — label updates if needed; each entry must specify `mode` (`add`, `replace_category`, or `replace_all`), `category` when applicable, `labels[]` being added/replaced, and either `preserve_existing: true` or explicit `final_labels[]`
      - `create_cycle` — cycle creation if needed (from 1.5)
 
 2. **Return the JSON** in your response (the calling agent writes the file):

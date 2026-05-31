@@ -47,9 +47,10 @@ Set MODE and TARGET from input:
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh session-status
+.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Extract `project` field for fallback resolution.
+Extract `project` field for fallback resolution. Store the issue-label inventory for all create/update preflights. Load project taxonomy/application rules from project configuration/docs (for example `vstack.toml` `[skill-instructions]`). Use issue labels only; never validate issue creates against project labels.
 
 ### 1.3 Route by Mode
 
@@ -370,9 +371,9 @@ Display findings table. Omit empty sections.
 
 ### ✨ CREATE
 
-| # | Title | Project | Agent | Relations | Structure | Reason |
-|---|-------|---------|-------|-----------|-----------|--------|
-| 1 | Add ring buffer tests | Phase 2.5 | [AGENT_TYPE] | — | — | New tests needed |
+| # | Title | Project | Labels | Relations | Structure | Reason |
+|---|-------|---------|--------|-----------|-----------|--------|
+| 1 | Add ring buffer tests | Phase 2.5 | agent:[TYPE], [domain] | — | — | New tests needed |
 
 ### 🔄 SUPERSEDE (via CREATE above)
 
@@ -473,6 +474,26 @@ Ask user with multi-select. Only show categories with findings.
 
 ## 7. Execute Approved Changes
 
+### 7.0 Strict Label Preflight
+
+Before any approved mutation that creates an issue or changes labels:
+
+1. **Build intended label operations** from approved findings:
+   - `create` and architecture/research gap issues: final `labels[]` from `create_fields.labels[]` or recommended issue labels.
+   - `agent_mismatch`: `replace_category` for taxonomy category `agent`.
+   - `label_cooccurrence`: `add` the missing label/category label.
+   - Any `set_labels[]`/metadata update: use its explicit mode (`add`, `replace_category`, or `replace_all`) and target category when present.
+2. **For existing issues**, fetch current labels and compute the full final set:
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+   ```
+   Preserve unrelated labels. Replace only labels in the target taxonomy category unless the action explicitly says `replace_all_labels: true`.
+3. **Validate final labels** with the inventory/taxonomy loaded in § 1.2 per [labels.md](../references/labels.md).
+4. **Halt before mutation** on unknown labels, parent/group labels, missing required categories, or exclusivity violations. Report the failing label set and ask the user. If a required taxonomy label is missing from Linear, request explicit authorization before creating it; never create labels automatically.
+5. **Use only validated final labels** in `issues create --labels` or `issues update --labels`.
+
+Do not run `issues update --labels "agent:new"` or any other partial label replacement unless the validated final label set really contains only that label.
+
 For each approved change:
 
 1. **Read the referenced section** from the issue tracker CLI's workflow-actions patterns.
@@ -514,9 +535,9 @@ Process `create` actions first -- use created IDs to resolve `#N` references in 
 | supersede, combine | workflow-actions § Cancel / Merge / Combine |
 | cancel | workflow-actions § Cancel Obsolete Issues |
 
-**Create template**: Use project-level templates issue-description-template for `--description`. For parent/bundle issues, use project-level templates parent-issue-template. Always heredoc, never inline strings.
+**Create template**: Use project-level templates issue-description-template for `--description`. For parent/bundle issues, use project-level templates parent-issue-template. Always heredoc, never inline strings. Every create command must include `--labels "[VALIDATED_FINAL_LABELS]"` from § 7.0.
 
-**Analyzed mode**: When MODE = analyzed, issue creation fields (description, recommendation, location, estimate, priority, agent_label, source_path) come from `issues[].create_fields`. Use `source_path` for `[ORIGIN_CONTEXT]` in issue-description-template. For bundle parents (`create_fields.is_bundle_parent: true`), use parent-issue-template. Top-level `parent_issue` and `research_ref` available for hierarchy fallback and description refs.
+**Analyzed mode**: When MODE = analyzed, issue creation fields (description, recommendation, location, estimate, priority, agent_label, labels, source_path) come from `issues[].create_fields`. `create_fields.labels[]` is authoritative and required for create; `agent_label` is derived/backward-compatible only. Use `source_path` for `[ORIGIN_CONTEXT]` in issue-description-template. For bundle parents (`create_fields.is_bundle_parent: true`), use parent-issue-template. Top-level `parent_issue` and `research_ref` available for hierarchy fallback and description refs.
 
 **Inherit parent refs**: When creating a child issue (`hierarchy.action: "make_child"`), check parent's description for `**Research**:` and `**Decision**:` lines. Include them at the top of the child's description (before `**Source**:`). This ensures sub-issues inherit research/decision context even when `research_ref`/`decision_ref` are not in the audit input.
 

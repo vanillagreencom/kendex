@@ -32,6 +32,8 @@ skills/linear/
 
 Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachments fetch`) use existing `.cache/linear` data and do not require API auth.
 
+`cache labels list --format=safe` returns issue-label metadata (`id`, `name`, `team`, `parent`, `is_group`) so workflow callers can preflight labels and reject parent/group labels before issue mutation.
+
 ## Configuration
 
 | Variable | Purpose | Default |

@@ -23,6 +23,7 @@ Input file for issue audit workflows — transforms review agent findings into t
       "recommendation": "* Bullet-list requirements, each actionable",
       "priority": 2,
       "estimate": 2,
+      "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
       "category": "issue",
       "found_by": "agent-name",
       "origin": "suggestion|escalated|planned|discovered",
@@ -58,6 +59,7 @@ Input file for issue audit workflows — transforms review agent findings into t
 | `recommendation` | Yes | Bullet-list requirements. Becomes requirements section. |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |
+| `labels` | No for legacy callers; required before create | Full issue-label set. Callers/workflows must complete and validate this against live issue-label inventory + project taxonomy before issue creation. |
 | `category` | Yes | Always `issue` (fix items don't reach audit) |
 | `found_by` | Yes | Agent that identified the item |
 | `origin` | Yes | `suggestion`, `escalated`, `planned`, or `discovered` |
@@ -77,6 +79,7 @@ suggestions[].description → description
 suggestions[].recommendation → recommendation
 suggestions[].priority → priority
 suggestions[].estimate → estimate
+suggestions[].labels → labels[] when provided; otherwise complete through project taxonomy before create
 category: "issue"
 found_by: agent (from parent JSON)
 origin: "suggestion"
@@ -99,6 +102,7 @@ From dev agent completion summaries:
 bullet text → title + description
 estimate: N → estimate (default 2 if absent)
 priority: infer from type (bug=2, tech-debt=3, enhancement=4)
+labels: infer from project taxonomy + source context before create
 origin: "discovered"
 ```
 

@@ -41,6 +41,21 @@ Confirm all required variables are set. If [TYPE] not provided, determine from [
 
 Strategic requires explicit caller designation (initiative-level scope).
 
+Load issue-label inventory and project taxonomy per [labels.md](../references/labels.md):
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+```
+
+Build `VALIDATED_LABELS = ["agent:researcher", "research", DOMAINS...]` using issue labels only. Validate that:
+- `agent:researcher` exists in live issue-label inventory and is not a parent/group label.
+- The project-configured research workflow/classification label exists.
+- Every `[DOMAINS]` entry exists as an issue label and satisfies the taxonomy domain/category rules.
+- Required categories and exclusivity rules pass.
+
+If any label is missing or invalid, halt before create. If a required taxonomy label is missing from Linear, report it and ask for explicit user authorization before creating it; do not create labels automatically.
+
 ### 1.3 Create Issue
 
 Create issue using input variables.
@@ -49,7 +64,7 @@ Create issue using input variables.
 .agents/skills/linear/scripts/linear.sh issues create \
   --title "Research: [TOPIC]" \
   --project "[PROJECT]" \
-  --labels "agent:researcher,research,[DOMAINS]" \
+  --labels "[VALIDATED_LABELS]" \
   --priority 2 \
   --estimate 1 \
   --description "[DESCRIPTION]"

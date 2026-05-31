@@ -106,13 +106,36 @@ Normal cycle planning output:
     "set_priorities": [{"id": "[ISSUE_ID]", "priority": 1}, {"id": "[OTHER_ISSUE_ID]", "priority": 2}],
     "set_sort_order": [{"id": "[ISSUE_ID]", "sort_order": 100}, {"id": "[OTHER_ISSUE_ID]", "sort_order": 200}],
     "set_estimates": [{"id": "[ISSUE_ID]", "estimate": 3}],
-    "set_labels": [{"id": "[ISSUE_ID]", "labels": ["agent:[TYPE]"]}],
+    "set_labels": [
+      {
+        "id": "[ISSUE_ID]",
+        "mode": "replace_category",
+        "category": "agent",
+        "labels": ["agent:[TYPE]"],
+        "preserve_existing": true
+      }
+    ],
     "update_initiative": {"id": "uuid", "status": "Active"},
     "update_project": {"id": "uuid", "state": "started"},
     "create_cycle": null
   }
 }
 ```
+
+### Label Update Actions
+
+`actions.set_labels[]` describes intent, not a partial replacement. The caller must fetch current issue labels, compute the full final label set, preserve unrelated labels unless `mode=replace_all`, preflight, and then call `issues update --labels` with the full final set.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Issue ID to update |
+| `mode` | Yes | `add`, `replace_category`, or `replace_all` |
+| `category` | When category-aware | Project taxonomy category affected (for example `agent`, `platform`, `domain`) |
+| `labels[]` | Yes | Labels to add or replace into the category |
+| `preserve_existing` | Yes unless `final_labels[]` present | Must be `true` for `add`/`replace_category` |
+| `final_labels[]` | Required for `replace_all` | Full final issue-label set |
+
+Unknown labels, parent/group labels, missing required categories, and exclusivity violations stop execution before mutation.
 
 ### Create Cycle Action
 

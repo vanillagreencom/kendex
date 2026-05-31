@@ -7,7 +7,7 @@
 | Field | Required | Format |
 |-------|----------|--------|
 | Title | Yes | `[Verb]: [outcome]` — e.g., "Implement: user authentication" |
-| Labels | Yes | Agent (one) + Stack (one+) + Workflow/Classification (if applicable) |
+| Labels | Yes | Full validated `labels[]`: required project categories (for example Agent + Domain/Stack) + Workflow/Classification when applicable |
 | Estimate | Yes | 1-5 points (1=hours, 3=day, 5=week) |
 | Project | Yes | Active project name or "Backlog" |
 | Description | Yes | Context, acceptance criteria, dependencies |
@@ -31,15 +31,21 @@ When finding potential duplicates, expand existing issues rather than creating o
 
 ## Labels
 
-See project label taxonomy for definitions. See project label application guide for when to apply.
+See the project's issue-label taxonomy for definitions and [labels.md](labels.md) for mandatory live-inventory preflight. Labels here are **issue labels**, not project labels.
 
 | Category | Exclusive? | Rule |
 |----------|------------|------|
-| Agent | YES | Exactly ONE per issue |
-| Platform | YES | ONE per issue |
-| Stack | NO | All that apply |
-| Workflow | NO | All applicable gates |
-| Classification | NO | Multiple allowed |
+| Agent | Project-configured | Usually exactly ONE per new issue |
+| Platform | Project-configured | Usually zero or one child label, never the parent/group label |
+| Domain/Stack | Project-configured | All that apply; required when taxonomy says so |
+| Workflow | Project-configured | All applicable gates |
+| Classification | Project-configured | Multiple allowed unless taxonomy says exclusive |
+
+Before create/update:
+1. Load issue-label inventory: `.agents/skills/linear/scripts/linear.sh cache labels list --format=safe` (refresh with `sync --reconcile` if missing/stale).
+2. Build the full final `labels[]` set.
+3. Validate against project taxonomy and live issue-label inventory.
+4. Halt on unknown, parent/group, missing required, or exclusivity violations. Ask for explicit authorization before creating any missing label.
 
 ## Estimates
 
@@ -105,10 +111,12 @@ Use `--parent [ISSUE_ID]` when:
 ## CLI Command
 
 ```bash
+LABELS="agent:[TYPE],[DOMAIN_LABEL],critical-path" # full validated issue-label set
+
 .agents/skills/linear/scripts/linear.sh issues create \
   --title "Implement user authentication service" \
   --project "Phase 1: Foundation" \
-  --labels "backend,agent:[TYPE],critical-path" \
+  --labels "$LABELS" \
   --estimate 3 \
   --description "## Summary
 Auth service for user login and session management.
@@ -144,8 +152,10 @@ See [prioritization.md](prioritization.md) for scoring formula and factor defini
 | Mistake | Fix |
 |---------|-----|
 | No project | Always add `--project` |
-| No/multiple agent labels | Exactly ONE `agent:*` |
-| Missing stack | Always add stack(s) |
+| Unknown label | Refresh issue-label inventory; do not rely on CLI warn-and-skip |
+| Parent/group label assigned | Use child label; never assign parent/group labels such as taxonomy group names |
+| No/multiple agent labels | Follow taxonomy; usually exactly ONE `agent:*` |
+| Missing domain/stack | Add required domain/stack labels from taxonomy |
 | Missing estimate | Always add `--estimate 1-5` |
 | Vague title | Use `[Verb] [outcome]` |
 | No acceptance criteria | Add testable outcomes |

@@ -22,7 +22,23 @@ Read input file with Read tool. Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSU
 
 If `PLANNER_HANDOFF` is present, treat it as high-signal technical context from the scout → planner chain, not as a project-management decision. Preserve its plan path, proposed phases/issues, and explicit TPM questions through analysis. Use it to inform project placement, issue grouping, dependency ordering, and roadmap-vs-child-issue recommendations, but still verify against current issue/project state.
 
-### 1.2 Analyze Origin Issue
+### 1.2 Load Issue Label Policy
+
+Load live issue-label inventory and project taxonomy/application rules before organizing issue output:
+
+```bash
+.agents/skills/linear/scripts/linear.sh cache labels list --format=safe
+```
+
+If label cache is missing/stale, ask the caller/orchestrator to refresh via `sync --reconcile` before mutation. TPM does not mutate labels, but it must output full `labels[]` sets that are valid against the loaded issue-label inventory and project taxonomy where possible. Use issue labels only; project labels are separate.
+
+For each proposed issue:
+- Preserve input `labels[]` when present.
+- If input has only `agent`, derive the agent label and complete other required labels from project taxonomy and issue context.
+- If required category labels cannot be determined, mark the issue as needing taxonomy/user input in `reason` and do not invent labels.
+- Reject parent/group labels from output.
+
+### 1.3 Analyze Origin Issue
 
 **Skip if** `origin_issue` is null in input.
 
@@ -42,7 +58,7 @@ If `PLANNER_HANDOFF` is present, treat it as high-signal technical context from 
 
 3. **Store** `hierarchy_recommendation` with `type`, `origin_issue`, and `rationale`.
 
-### 1.3 Fetch All Projects
+### 1.4 Fetch All Projects
 
 1. **Query ALL project states** for cross-project analysis:
    ```bash
@@ -54,16 +70,16 @@ If `PLANNER_HANDOFF` is present, treat it as high-signal technical context from 
 
 2. **Store** project metadata: `id`, `name`, `state`, `description`, `content`.
 
-### 1.4 Fetch All Issues
+### 1.5 Fetch All Issues
 
 1. **Fetch issues** for each project:
    ```bash
    .agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress,In Review,Done" --max
    ```
 
-2. **Store** for comparison: `id`, `title`, `description`, `project`, `state`, `agent`, `blocked_by[]`, `blocks[]`.
+2. **Store** for comparison: `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]`.
 
-### 1.5 Read Research Context
+### 1.6 Read Research Context
 
 **Skip if** `RESEARCH_PATH` is null.
 
@@ -191,7 +207,7 @@ Build dependency graph from `depends_on_proposed`:
 2. **For each bundle**:
    - Create parent title describing the deliverable
    - Mark component issues as children
-   - **Compute agent label**: If all children have same agent → parent gets that agent. If 2+ distinct agents → `agent:multi`. Store as `agent_label` on the bundle parent.
+   - **Compute labels**: If all children have same agent → parent gets that agent label. If 2+ distinct agents → parent gets the project-configured multi-agent label (for example `agent:multi`, if present in taxonomy/inventory). Store as `agent_label` for backward compatibility and include the full parent `labels[]` set. Parent labels must also pass label policy; do not assign parent/group labels.
 
 3. **Lift inter-bundle relations**: Move `blocks`/`blocked_by` between bundled issues up to their respective bundle parents. Children within a bundle retain no external blocking relations — only the parent carries cross-bundle dependencies.
 
@@ -231,7 +247,7 @@ Assign priority (1-4) to each issue based on layer and impact:
 
 ### 4.6 Build Organized List
 
-Store in `organized_issues[]` per schema. Sort by `position`. Include `priority` and `agent_label` (for bundle parents) per schema.
+Store in `organized_issues[]` per schema. Sort by `position`. Include `priority`, full `labels[]`, and `agent_label` (for bundle parents/backward compatibility) per schema.
 
 ---
 

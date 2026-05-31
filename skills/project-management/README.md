@@ -15,7 +15,7 @@ skills/project-management/
 │   ├── initiatives-projects.md             # Initiative/project lifecycle, naming, breakdown
 │   ├── dependencies.md                     # Blocking rules, relation types, remediation
 │   ├── prioritization.md                   # Scoring formula, factor definitions, trade-offs
-│   └── labels.md                           # Label taxonomy, exclusivity, creation, lifecycle
+│   └── labels.md                           # Issue-label inventory preflight, taxonomy contract, exclusivity, lifecycle
 ├── workflows/
 │   ├── tpm-cycle-plan.md                   # Analyze backlog, compute architecture order for cycle
 │   ├── tpm-roadmap-plan.md                 # Cross-project analysis, architecture gaps
@@ -42,4 +42,5 @@ This skill requires an issue tracker CLI for all read/write operations. Configur
 - **Prioritization**: Weighted scoring formula (Critical Path x3, Dependencies x2, Risk x2, Value x1, Estimate x-0.5)
 - **Same-project rule**: Blocking relations and parent-child relations must be within the same project
 - **Blocking level rule**: Blocking relations go on bundle parents, not children
+- **Label preflight**: Issue creates/label updates load live issue-label inventory + project taxonomy, validate full final `labels[]`, and preserve unrelated labels on updates
 - **Workflows return JSON only**: No direct modifications to the issue tracker — recommendations are executed by the caller

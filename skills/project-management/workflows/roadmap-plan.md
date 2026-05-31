@@ -105,15 +105,16 @@ List implementation issues for your domain:
 | Conflicts with | Existing code/patterns that would be replaced |
 | Breaking changes | APIs or contracts affected |
 | Skills/docs updates | Files needing updates |
+| Labels | Optional full issue-label set if known; include agent/domain/workflow labels from project taxonomy, otherwise leave blank for orchestrator/TPM completion |
 
 Reply with structured table. Include ONLY issues for your domain.
 </delegation_format>
 
 ### 3.2 Collect Responses
 
-1. **Store all proposed issues** with source agent label.
+1. **Store all proposed issues** with source agent label and any proposed `labels[]`.
 
-2. **Build initial `PROPOSED_ISSUES[]`** per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md).
+2. **Build initial `PROPOSED_ISSUES[]`** per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Keep `agent` as a derived/source field, but also carry `labels[]` when available so TPM can output a full validated label set.
 
 ---
 
@@ -287,7 +288,7 @@ Legend: Parent = bundle parent #, Deps = blocking dependencies, Pri = priority, 
 |-----------|-------------|
 | Remove issue | Set `action: "skip"`, recompute dependent priorities |
 | Change priority | Update `priority` field |
-| Change agent | Update `agent`, recompute bundle parent `agent_label` |
+| Change agent | Update `agent`, recompute bundle parent `agent_label`, recompute affected `labels[]` through taxonomy before creation |
 | Change estimate | Update `estimate` field |
 | Add issue | Re-run `roadmap plan` (cannot add without specialist input) |
 
@@ -342,11 +343,11 @@ Write markdown to `docs/roadmaps/roadmap-[FEATURE].md` and JSON to `docs/roadmap
 
 ### Issues
 
-| Title | Est | Agent | Pri | Parent | Dependencies | Critical |
-|-------|-----|-------|-----|--------|--------------|----------|
-| [Bundle: Name] | — | multi | P2 | — | — | — |
-| [Child issue] | 2 | [AGENT_TYPE] | P2 | [parent title] | — | — |
-| [Standalone] | 3 | [AGENT_TYPE] | P1 | — | [ISSUE_ID] | Y |
+| Title | Est | Agent | Labels | Pri | Parent | Dependencies | Critical |
+|-------|-----|-------|--------|-----|--------|--------------|----------|
+| [Bundle: Name] | — | multi | agent:multi,[domain] | P2 | — | — | — |
+| [Child issue] | 2 | [AGENT_TYPE] | agent:[TYPE],[domain] | P2 | [parent title] | — | — |
+| [Standalone] | 3 | [AGENT_TYPE] | agent:[TYPE],[domain] | P1 | — | [ISSUE_ID] | Y |
 
 ## Architecture Gaps
 
