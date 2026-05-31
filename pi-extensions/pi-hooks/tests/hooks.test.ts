@@ -46,6 +46,12 @@ function initRustRepo(prefix: string): string {
 	return dir;
 }
 
+function initCleanRustRepo(prefix: string): string {
+	const dir = initRustRepo(prefix);
+	runGit(["-c", "user.email=pi-hooks@example.com", "-c", "user.name=pi-hooks", "commit", "-q", "-m", "init"], dir);
+	return dir;
+}
+
 function fakeCargoBin(root: string): { bin: string; log: string } {
 	const bin = join(root, "bin");
 	mkdirSync(bin, { recursive: true });
@@ -163,7 +169,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 
 	test("checks untracked Rust files staged by the same bash command", async () => {
 		await withFakeCargo(async () => {
-			const project = initRustRepo("pi-hooks-project-");
+			const project = initCleanRustRepo("pi-hooks-project-");
 			writeFileSync(join(project, "src", "new.rs"), "pub fn new_answer() -> i32 { 7 }\n");
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
@@ -179,6 +185,8 @@ describe("pi-hooks pre-commit tool_call", () => {
 	test("checks env split-string wrapped git commits", async () => {
 		await withFakeCargo(async () => {
 			const project = initRustRepo("pi-hooks-project-");
+			const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
+			runGit(["init", "-q"], other);
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
 				const handler = installToolCallHandler();
@@ -187,6 +195,47 @@ describe("pi-hooks pre-commit tool_call", () => {
 					"env -S 'git -C . commit -m test'",
 					"env --split-string 'git commit -m test'",
 					"env --split-string='git commit -m test'",
+					`env GIT_WORK_TREE=${JSON.stringify(project)} -S "git --git-dir=${join(other, ".git")} commit -m test"`,
+				]) {
+					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
+					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+				}
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+				rmSync(other, { recursive: true, force: true });
+			}
+		});
+	});
+
+	test("checks later shell-c project commit after parsed outside commit", async () => {
+		await withFakeCargo(async () => {
+			const project = initRustRepo("pi-hooks-project-");
+			const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
+			runGit(["init", "-q"], other);
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				const command = `git -C ${JSON.stringify(other)} commit -m fixture; bash -c "git commit -m project"`;
+				const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
+				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+				rmSync(other, { recursive: true, force: true });
+			}
+		});
+	});
+
+	test("checks untracked Rust files staged inside env split-string", async () => {
+		await withFakeCargo(async () => {
+			const project = initCleanRustRepo("pi-hooks-project-");
+			writeFileSync(join(project, "src", "split_new.rs"), "pub fn split_new() -> i32 { 9 }\n");
+			process.env.FAKE_FMT_EXIT = "1";
+			try {
+				const handler = installToolCallHandler();
+				for (const command of [
+					"env -S 'git add src/split_new.rs && git commit -m test'",
+					"env --split-string 'git add src/split_new.rs && git commit -m test'",
+					"env --split-string='git add src/split_new.rs && git commit -m test'",
 				]) {
 					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
 					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
@@ -197,14 +246,14 @@ describe("pi-hooks pre-commit tool_call", () => {
 		});
 	});
 
-	test("checks untracked Rust files staged inside env split-string", async () => {
+	test("checks untracked Rust files staged inside shell -c fallback", async () => {
 		await withFakeCargo(async () => {
-			const project = initRustRepo("pi-hooks-project-");
-			writeFileSync(join(project, "src", "split_new.rs"), "pub fn split_new() -> i32 { 9 }\n");
+			const project = initCleanRustRepo("pi-hooks-project-");
+			writeFileSync(join(project, "src", "shell_new.rs"), "pub fn shell_new() -> i32 { 11 }\n");
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
 				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "env -S 'git add src/split_new.rs && git commit -m test'" } }, { cwd: project });
+				const result = await handler({ toolName: "bash", input: { command: "sh -c 'git add src/shell_new.rs && git commit -m test'" } }, { cwd: project });
 				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
 			} finally {
 				rmSync(project, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -120,6 +120,35 @@ describe("git commit target detection", () => {
 			expect(await projectGitCommitCwd(`git --git-dir=${q(join(other, ".git"))} --work-tree=${q(project)} commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(project, ".git"))} git -C ${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
 			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(other, ".git"))} GIT_WORK_TREE=${q(project)} git commit -m test`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`env GIT_WORK_TREE=${q(project)} -S "git --git-dir=${join(other, ".git")} commit -m test"`, project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	test("treats linked worktree git-dir as active project commit", async () => {
+		const main = initRepo("pi-hooks-main-");
+		const parent = mkdtempSync(join(tmpdir(), "pi-hooks-worktree-parent-"));
+		const worktree = join(parent, "wt");
+		try {
+			writeFileSync(join(main, "README.md"), "init\n");
+			runGit(["add", "README.md"], main);
+			runGit(["-c", "user.email=pi-hooks@example.com", "-c", "user.name=pi-hooks", "commit", "-q", "-m", "init"], main);
+			runGit(["worktree", "add", "-q", worktree, "HEAD"], main);
+			const gitDir = readFileSync(join(worktree, ".git"), "utf8").trim().replace(/^gitdir:\s*/, "");
+			expect(await projectGitCommitCwd(`git --git-dir=${q(gitDir)} commit -m test`, worktree, 1000)).toBe(resolve(worktree));
+		} finally {
+			rmSync(main, { recursive: true, force: true });
+			rmSync(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("falls back to project commit when later shell-c commit is not parsed", async () => {
+		const project = initRepo("pi-hooks-project-");
+		const other = initRepo("pi-hooks-other-");
+		try {
+			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });

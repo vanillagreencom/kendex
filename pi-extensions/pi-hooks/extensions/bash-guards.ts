@@ -25,6 +25,7 @@ export function isBareCd(command: string): boolean {
  */
 const GIT_COMMIT = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
+const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:sh|bash|zsh|dash)\s+(?:[^\s;&|(){}]+\s+)*-c\s+['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
 
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
@@ -32,15 +33,16 @@ function normalizeShell(command: string): string {
 
 export function isGitCommit(command: string): boolean {
 	const normalized = normalizeShell(command);
-	return GIT_COMMIT.test(normalized) || ENV_SPLIT_GIT_COMMIT.test(normalized);
+	return GIT_COMMIT.test(normalized) || ENV_SPLIT_GIT_COMMIT.test(normalized) || SHELL_C_GIT_COMMIT.test(normalized);
 }
 
 const GIT_ADD = /(^|[\s;&|({!])git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
 const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
+const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:sh|bash|zsh|dash)\s+(?:[^\s;&|(){}]+\s+)*-c\s+['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
 
 function commandMayStageFiles(command: string): boolean {
 	const normalized = normalizeShell(command);
-	return GIT_ADD.test(normalized) || ENV_SPLIT_GIT_ADD.test(normalized);
+	return GIT_ADD.test(normalized) || ENV_SPLIT_GIT_ADD.test(normalized) || SHELL_C_GIT_ADD.test(normalized);
 }
 
 interface CommandResult {
@@ -498,10 +500,10 @@ function parseGitTarget(
 	return { target: null, next: j };
 }
 
-export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[] {
+export function gitCommitTargets(command: string, cwd: string, initialVariables?: ShellVariables): GitCommitTarget[] {
 	const tokens = tokenizeShell(command);
 	const targets: GitCommitTarget[] = [];
-	const variables: ShellVariables = new Map();
+	const variables: ShellVariables = new Map(initialVariables ?? []);
 	const prefixGitVariables: ShellVariables = new Map();
 	const scopeStack: ShellContext[] = [];
 	let ctx: ShellContext = { cwd: resolve(cwd), external: false, unknown: false };
@@ -574,7 +576,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				const consumed = nextWord(tokens, envIndex + 1);
 				if (!consumed.token) return { targets: null, parsed: null, envIndex: envIndex + 1 };
 				const base = envCtx.cwd ?? cwd;
-				const splitTargets = gitCommitTargets(consumed.token.text, base).map((target) => ({
+				const splitTargets = gitCommitTargets(consumed.token.text, base, envVariables).map((target) => ({
 					...target,
 					external: target.external || envCtx.external,
 					unknown: target.unknown || envCtx.unknown,
@@ -582,7 +584,7 @@ export function gitCommitTargets(command: string, cwd: string): GitCommitTarget[
 				return { targets: splitTargets, parsed: null, envIndex: consumed.index + 1 };
 			}
 			if (envWord.text.startsWith("--split-string=")) {
-				const splitTargets = gitCommitTargets(envWord.text.slice("--split-string=".length), envCtx.cwd ?? cwd).map((target) => ({
+				const splitTargets = gitCommitTargets(envWord.text.slice("--split-string=".length), envCtx.cwd ?? cwd, envVariables).map((target) => ({
 					...target,
 					external: target.external || envCtx.external,
 					unknown: target.unknown || envCtx.unknown,
@@ -738,13 +740,17 @@ function pathContains(parent: string, child: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+function isLinkedWorktreeGitDir(gitDir: string): boolean {
+	return existsSync(resolve(gitDir, "gitdir"));
+}
+
 type GitRootResult =
 	| { kind: "ok"; root: string }
 	| { kind: "none"; reason: string }
 	| { kind: "error"; reason: string };
 
 export type ProjectGitCommitProbe =
-	| { kind: "project"; cwd: string; root: string }
+	| { kind: "project"; cwd: string; root: string; includeUntracked: boolean }
 	| { kind: "skip"; reason: "outside-repo" | "no-git-commit" }
 	| { kind: "error"; reason: string };
 
@@ -760,16 +766,30 @@ async function gitRoot(cwd: string, timeoutMs: number): Promise<GitRootResult> {
 	return root ? { kind: "ok", root: resolve(root) } : { kind: "error", reason: `git rev-parse returned no root for ${cwd}.` };
 }
 
+async function gitRootFromGitDir(gitDir: string, cwd: string, timeoutMs: number): Promise<GitRootResult> {
+	const result = await runGit(["--git-dir", gitDir, "rev-parse", "--show-toplevel"], cwd, timeoutMs);
+	if (result.timedOut) return { kind: "error", reason: `git --git-dir ${gitDir} rev-parse timed out after ${Math.max(1, timeoutMs)}ms.` };
+	if (result.exitCode !== 0) {
+		const detail = (result.stderr || result.stdout).trim();
+		return { kind: "none", reason: detail || `git --git-dir ${gitDir} rev-parse did not find a worktree` };
+	}
+	const root = result.stdout.trim();
+	return root ? { kind: "ok", root: resolve(root) } : { kind: "error", reason: `git --git-dir ${gitDir} rev-parse returned no root.` };
+}
+
 export async function resolveProjectGitCommit(command: string, cwd: string, timeoutMs = 5000): Promise<ProjectGitCommitProbe> {
 	const targets = gitCommitTargets(command, cwd);
-	if (targets.length === 0 && !isGitCommit(command)) return { kind: "skip", reason: "no-git-commit" };
+	const normalized = normalizeShell(command);
+	const hasCommit = isGitCommit(command);
+	const hasUnparsedCommit = targets.length === 0 ? hasCommit : SHELL_C_GIT_COMMIT.test(normalized);
+	if (targets.length === 0 && !hasCommit) return { kind: "skip", reason: "no-git-commit" };
 
 	const project = await gitRoot(cwd, timeoutMs);
 	if (project.kind === "error") return project;
 	if (project.kind === "none") return { kind: "error", reason: `pi-hooks pre-commit: cannot identify project git root for ${cwd}: ${project.reason}` };
 
 	if (targets.length === 0) {
-		return { kind: "project", cwd: resolve(cwd), root: project.root };
+		return { kind: "project", cwd: resolve(cwd), root: project.root, includeUntracked: true };
 	}
 
 	let unresolvedReason: string | null = null;
@@ -786,9 +806,16 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 				continue;
 			}
 			if (target.hasWorkTree && target.workTree && pathContains(project.root, target.workTree)) {
-				return { kind: "project", cwd: target.workTree, root: project.root };
+				return { kind: "project", cwd: target.workTree, root: project.root, includeUntracked: false };
 			}
-			if (pathContains(project.root, target.gitDir)) return { kind: "project", cwd: resolve(cwd), root: project.root };
+			if (pathContains(project.root, target.gitDir)) return { kind: "project", cwd: resolve(cwd), root: project.root, includeUntracked: false };
+			if (isLinkedWorktreeGitDir(target.gitDir)) {
+				const gitDirRoot = await gitRootFromGitDir(target.gitDir, cwd, timeoutMs);
+				if (gitDirRoot.kind === "error") return { kind: "error", reason: `pi-hooks pre-commit: ${gitDirRoot.reason}` };
+				if (gitDirRoot.kind === "ok" && gitDirRoot.root === project.root) {
+					return { kind: "project", cwd: project.root, root: project.root, includeUntracked: false };
+				}
+			}
 			continue;
 		}
 		const candidate = target.hasWorkTree ? target.workTree : target.cwd;
@@ -804,10 +831,11 @@ export async function resolveProjectGitCommit(command: string, cwd: string, time
 			unresolvedReason = `pi-hooks pre-commit: ${candidate} is inside the project but not a git worktree: ${targetRoot.reason}`;
 			continue;
 		}
-		if (targetRoot.root === project.root) return { kind: "project", cwd: candidate, root: project.root };
+		if (targetRoot.root === project.root) return { kind: "project", cwd: candidate, root: project.root, includeUntracked: false };
 	}
 
 	if (unresolvedReason) return { kind: "error", reason: unresolvedReason };
+	if (hasUnparsedCommit) return { kind: "project", cwd: resolve(cwd), root: project.root, includeUntracked: true };
 	return { kind: "skip", reason: "outside-repo" };
 }
 
@@ -839,7 +867,7 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 	if (commit.kind === "skip") return undefined;
 	if (commit.kind === "error") return { reason: commit.reason };
 
-	const rustFiles = await rustFilesRelevantToCommit(commit.cwd, commandMayStageFiles(command));
+	const rustFiles = await rustFilesRelevantToCommit(commit.cwd, commit.includeUntracked || commandMayStageFiles(command));
 	if (rustFiles.kind === "error") return { reason: `pi-hooks pre-commit: ${rustFiles.reason}` };
 	if (rustFiles.files.length === 0) return undefined;
 
