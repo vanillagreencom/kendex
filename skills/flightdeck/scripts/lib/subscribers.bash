@@ -275,6 +275,8 @@ pi_subscriber_loop() {
   local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}" expected_pi_session_id="${5:-}"
   local last_hash=""
   local last_assistant_event_identity=""
+  local last_assistant_event_name=""
+  local last_assistant_emit_epoch=0
   local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
@@ -430,14 +432,17 @@ pi_subscriber_loop() {
 
   pi_subscriber_event_identity() {
     jq -r '
-      (.event // "") as $event
-      | [
-          (.timestamp // .data.timestamp // .data.eventAt // .data.event_at // empty),
-          (.rawEventRef // .raw_event_ref // .data.rawEventRef // .data.raw_event_ref // empty),
-          (.sequence // .data.sequence // .data.message.sequence // .data.message.details.sequence // empty)
-        ]
-        | map(select(. != null and (tostring | length) > 0) | tostring) as $parts
-        | if ($event != "" and ($parts | length) > 0) then ([$event] + $parts | join("|")) else "" end
+      (.data.turnId // .data.turn_id // .turnId // .turn_id // .data.message.turnId // .data.message.turn_id // empty) as $turn
+      | if ($turn != null and ($turn | tostring | length) > 0) then ("turn:" + ($turn | tostring))
+        else
+          [
+            (.rawEventRef // .raw_event_ref // .data.rawEventRef // .data.raw_event_ref // empty),
+            (.sequence // .data.sequence // .data.message.sequence // .data.message.details.sequence // empty),
+            (.timestamp // .data.timestamp // .data.eventAt // .data.event_at // empty)
+          ]
+          | map(select(. != null and (tostring | length) > 0) | tostring) as $parts
+          | if (($parts | length) > 0) then ($parts | join("|")) else "" end
+        end
     ' 2>/dev/null
   }
 
@@ -822,6 +827,17 @@ pi_subscriber_loop() {
       else
         [[ "$hash" == "$last_hash" ]] && continue
       fi
+      local now_epoch
+      now_epoch=$(date +%s)
+      if [[ "$hash" == "$last_hash" && "$event_name" != "$last_assistant_event_name" && "$event_identity" != turn:* && "$last_assistant_emit_epoch" =~ ^[0-9]+$ && $((now_epoch - last_assistant_emit_epoch)) -le 5 ]]; then
+        printf '%s [pi-sub-emit-dedup] pane=%s hash=%s event=%s previous_event=%s reason=same-final-turn\n' \
+          "$(date -Iseconds)" "$pane_id" "$hash" "$event_name" "$last_assistant_event_name" \
+          >> "$sub_log" 2>/dev/null || true
+        [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
+        last_assistant_event_name="$event_name"
+        last_assistant_emit_epoch="$now_epoch"
+        continue
+      fi
       local tag
       if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
         local -a classifier_args=(--no-footer-gate)
@@ -837,7 +853,9 @@ pi_subscriber_loop() {
       printf '%s [pi-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
         "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "${#last_text}" \
         >> "$sub_log" 2>/dev/null || true
-      ( exec 218>"$SESSION_LOCK"
+      local append_error append_rc error_tail
+      append_rc=0
+      append_error=$( ( exec 218>"$SESSION_LOCK"
         flock 218
         jq -nc --arg ts "$(date -Iseconds)" \
                --arg pid "$pane_id" \
@@ -849,9 +867,19 @@ pi_subscriber_loop() {
                '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
                 + (if $event_identity == "" then {} else {event_identity:$event_identity} end)' \
                >> "$WAKE_EVENTS_LOG"
-      )
-      last_hash="$hash"
-      [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
+      ) 2>&1 ) || append_rc=$?
+      if [[ "$append_rc" -eq 0 ]]; then
+        last_hash="$hash"
+        last_assistant_event_name="$event_name"
+        last_assistant_emit_epoch="$now_epoch"
+        [[ -n "$event_identity" ]] && last_assistant_event_identity="$event_identity"
+      else
+        error_tail=$(printf '%s' "$append_error" | tr '\n' ' ' | tail -c 400)
+        printf '%s [pi-sub-emit-error] pane=%s hash=%s tag=%s rc=%s error=%s\n' \
+          "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "$append_rc" "$error_tail" \
+          >> "$sub_log" 2>/dev/null || true
+        continue
+      fi
 
       # vstack#61/#117: generic Pi panes (adhoc/workflow) have no
       # issue-mode prompt tags master can read; emit terminal-state-reached

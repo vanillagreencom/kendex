@@ -438,7 +438,7 @@ esac
 		}
 	});
 
-	test("repeated identical agent_end pre-PR handshakes emit once per bridge event identity", async () => {
+	test("same-turn message_end plus agent_end pre-PR handshake emits once, later identical agent_end emits again", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-repeat-"));
 		stateDirs.push(stateDir);
 		const wakeLog = join(stateDir, "wake-events.log");
@@ -453,9 +453,9 @@ case "\${1:-}" in
     ;;
   stream)
     cat <<'JSON'
-{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
-{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
-{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"turnId":"round-1","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:34.000Z","data":{"turnId":"round-1","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"turnId":"round-2","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
 JSON
     sleep 30
     ;;
@@ -492,9 +492,66 @@ esac
 			expect(prePrRows.map((row) => row.last_assistant_text)).toEqual([marker, marker]);
 			expect(new Set(prePrRows.map((row) => row.hash)).size).toBe(1);
 			expect(prePrRows.map((row) => row.event_identity)).toEqual([
-				"agent_end|2026-05-31T04:24:33.000Z",
-				"agent_end|2026-05-31T04:28:22.000Z",
+				"turn:round-1",
+				"turn:round-2",
 			]);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("pi-sub-emit append failure logs error and does not suppress retry", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-append-err-"));
+		stateDirs.push(stateDir);
+		const badWakeLog = join(stateDir, "wake-events-dir");
+		mkdirSync(badWakeLog, { recursive: true });
+		const subLog = join(stateDir, "daemon.log.pi-sub-288");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" != "stream" ]]; then exit 0; fi
+cat <<'JSON'
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"turnId":"round-err-1","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:28:22.000Z","data":{"turnId":"round-err-2","status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+sleep 30
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi", WAKE_EVENTS_LOG: badWakeLog });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%288", "1184288", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			let logBody = "";
+			while (Date.now() < deadline) {
+				if (existsSync(subLog)) {
+					logBody = readFileSync(subLog, "utf8");
+					const errors = logBody.match(/\[pi-sub-emit-error\]/g) ?? [];
+					if (errors.length >= 2) break;
+				}
+				await sleep(50);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const emits = logBody.match(/\[pi-sub-emit\]/g) ?? [];
+			const errors = logBody.match(/\[pi-sub-emit-error\]/g) ?? [];
+			expect(emits).toHaveLength(2);
+			expect(errors).toHaveLength(2);
+			expect(logBody).toContain("tag=pre-pr-ready-for-review");
+			expect(logBody).toContain("rc=");
 		} finally {
 			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
 			await sleep(50);

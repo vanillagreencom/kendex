@@ -5,11 +5,16 @@
 // runs inside lockedEventsDrain so orphan .draining.<pid> sweeps stay
 // under the same SESSION_LOCK.
 //
-// Dedup contract (bash daemon):
-//   key = "${pane_id}|${hash}|${tag}"
+// Dedup contract:
+//   key = event identity when present: "${pane_id}|${tag}|event:${identity}"
+//   fallback key = "${pane_id}|${hash}|${tag}"
 //   if LAST_EVENT_KEY[key] is set → no-op
 //   otherwise append + extend in-flight in WAKE_PENDING if present, all
 //   under SESSION_LOCK to serialize with drain_events / ack_and_drain.
+//
+// Pi agent_end handshakes can repeat the exact same final text across
+// review rounds; those rows must dedupe by raw event identity instead of
+// text hash. Stable-buffer/bell rows still use the legacy hash tuple.
 //
 // `reason` and `stable_age_sec` are payload fields but NOT part of the
 // dedup key — longer-stable updates don't re-fire (bash comment).
