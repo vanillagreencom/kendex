@@ -97,13 +97,15 @@ Everything after the frontmatter is the agent's system prompt.
 
 Pane tasks move through queued → running → completed | blocked | failed. On Linux, before reusing a live pane, `subagent` verifies the pane process cwd is still present and matches the requested task `cwd`; stale or mismatched panes return a structured `pane-cwd-stale` error, publish `agent.pane_cwd_stale`, and should be recovered with `stop_subagent` plus a retry using `forceSpawn: true`. Stop kills the tmux process; the session file is preserved so the next launch resumes memory.
 
+Persistent pane children own their tmux pane and set the pane title to `agent:<name>`. Background one-shot children keep the same agent identity for authorization but do not update the inherited parent pane title or poll pane inbox files.
+
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subagent`, `delegate_subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `wait_for_subagent_idle`) and activity broker mapping.
 
 ## Restricted delegation (`delegate_subagent`)
 
 vstack-installed engineer agents default to denying `subagent` so they cannot orchestrate fleets, but they still need to spend a fresh context window on reconnaissance work. `delegate_subagent` is the bridge:
 
-- Only visible to child Pi processes whose `PI_SUBAGENT_CHILD_AGENT` is set (panes export this automatically; the bg one-shot runner sets it for issue #228).
+- Only visible to child Pi processes whose `PI_SUBAGENT_CHILD_AGENT` is set (panes and bg one-shot children both export this for issue #228). Visible pane ownership is separate: only pane launchers export `PI_SUBAGENT_CHILD_PANE=1`.
 - Only the targets listed in the caller agent's `allowed-subagents:` frontmatter are accepted; missing or unlisted targets fail with an inventory error.
 - Single-dispatch only — no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, or `resumeSession` exposure.
 - Targets with `pane: true` are rejected — restricted delegation is bg-only.

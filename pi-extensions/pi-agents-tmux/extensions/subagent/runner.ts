@@ -17,6 +17,7 @@ import { getFinalOutput, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
 import {
 	getPiInvocation,
+	PI_SUBAGENT_CHILD_PANE_ENV,
 	writePromptToTempFile,
 } from "./pane.js";
 import {
@@ -584,11 +585,12 @@ async function runSingleAgentAttempt(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
-			// Child identity env mirrors the pane launcher's PI_SUBAGENT_*
-			// variables for bg one-shot lanes (issue #228). Restricted
-			// delegation reads PI_SUBAGENT_CHILD_AGENT to authorize the
-			// caller. Strip PI_BRIDGE_* and PI_SUBAGENT_PARENT_SESSION_ID
-			// so bg lanes never inherit pane-only session/bridge scope —
+			// Child identity env mirrors the pane launcher's agent identity
+			// for bg one-shot lanes (issue #228). Restricted delegation reads
+			// PI_SUBAGENT_CHILD_AGENT to authorize the caller. Strip pane-only
+			// ownership/session markers, including PI_SUBAGENT_CHILD_PANE, so
+			// bg lanes never mutate an inherited tmux pane or attach to pane
+			// session/bridge scope —
 			// without an explicit delete a parent process that already has
 			// those vars set (for example, this Pi running inside a pane
 			// itself) would leak them into the bg child and
@@ -597,6 +599,7 @@ async function runSingleAgentAttempt(
 			const childEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_CHILD_AGENT: agent.name };
 			if (agent.color) childEnv.PI_SUBAGENT_CHILD_COLOR = agent.color;
 			else delete childEnv.PI_SUBAGENT_CHILD_COLOR;
+			delete childEnv[PI_SUBAGENT_CHILD_PANE_ENV];
 			delete childEnv.PI_SUBAGENT_PARENT_SESSION_ID;
 			for (const key of Object.keys(childEnv)) {
 				if (key.startsWith("PI_BRIDGE_")) delete childEnv[key];

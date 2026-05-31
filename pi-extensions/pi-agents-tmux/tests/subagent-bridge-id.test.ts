@@ -39,6 +39,11 @@ test("writeLauncher template exports PI_BRIDGE_CHILD_ROLE=subagent", () => {
 	assert.match(src, /export \$\{PI_BRIDGE_CHILD_ROLE_ENV\}=\$\{shellQuote\(PI_BRIDGE_SUBAGENT_ROLE\)\}/);
 });
 
+test("writeLauncher marks persistent children as visible pane owners", () => {
+	const src = readFileSync(PANE_SRC, "utf8");
+	assert.match(src, /export \$\{PI_SUBAGENT_CHILD_PANE_ENV\}=1/);
+});
+
 test("PI_BRIDGE_* env vars are exported BEFORE the exec line so the child Pi inherits them", () => {
 	const src = readFileSync(PANE_SRC, "utf8");
 	const exportIdx = src.indexOf("PI_BRIDGE_PARENT_SESSION_ENV}=");

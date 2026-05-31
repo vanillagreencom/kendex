@@ -76,6 +76,7 @@ import {
 	createCachedPiBridgeResolver,
 	migrateLegacyPackageRuntime,
 	migrateLegacyProjectRuntime,
+	PI_SUBAGENT_CHILD_PANE_ENV,
 	paneExists,
 	queuePersistentPaneTask,
 	resetPersistentPaneSession,
@@ -229,6 +230,10 @@ function bridgeTargetArgs(metadata: { socket?: string; pid?: string }): string[]
 	if (metadata.socket) return ["--socket", metadata.socket];
 	if (metadata.pid) return ["--pid", metadata.pid];
 	return [];
+}
+
+function envFlag(value: string | undefined): boolean {
+	return /^(1|true|yes|on)$/i.test(value?.trim() ?? "");
 }
 
 function launchInventory(cwd: string, scope: AgentScope, allowed: AgentConfig[]): AgentInventory {
@@ -395,6 +400,7 @@ export default function (pi: ExtensionAPI) {
 	const resolveIdleProbeBridgeBin = createCachedPiBridgeResolver(resolvePiBridgeBin, logIdleStallDiagnostic);
 
 	const childAgentName = process.env.PI_SUBAGENT_CHILD_AGENT;
+	const childOwnsVisiblePane = envFlag(process.env[PI_SUBAGENT_CHILD_PANE_ENV]);
 	const statuslineBridge: SubagentStatuslineBridge = {
 		getCurrentSubagent(cwd?: string) {
 			return resolveSubagentStatuslineInfo(childAgentName, cwd);
@@ -1202,6 +1208,13 @@ export default function (pi: ExtensionAPI) {
 		const runtimeRoot = runtimeDirForContext(ctx);
 
 		if (childAgentName) {
+			if (!childOwnsVisiblePane) {
+				// Bg/one-shot agents set PI_SUBAGENT_CHILD_AGENT for
+				// delegate_subagent authorization and statusline context, but
+				// they are subprocesses inside the parent pane. Do not mutate the
+				// inherited TMUX_PANE title or poll the persistent-pane inbox.
+				return;
+			}
 			ctx.ui.setTitle(`pi agent - ${childAgentName}`);
 			setCurrentTmuxPaneTitle(`agent:${childAgentName}`);
 			childTitlePoller = setInterval(() => setCurrentTmuxPaneTitle(`agent:${childAgentName}`), 1000);

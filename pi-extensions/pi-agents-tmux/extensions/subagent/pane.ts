@@ -31,6 +31,7 @@ import { randomHex } from "./random.js";
 const PI_BRIDGE_PARENT_SESSION_ENV = "PI_BRIDGE_PARENT_SESSION_ID";
 const PI_BRIDGE_CHILD_ROLE_ENV = "PI_BRIDGE_CHILD_ROLE";
 const PI_BRIDGE_SUBAGENT_ROLE = "subagent";
+export const PI_SUBAGENT_CHILD_PANE_ENV = "PI_SUBAGENT_CHILD_PANE";
 import {
 	legacyPackageSessionRuntimeDir,
 	piUserDir,
@@ -82,9 +83,14 @@ async function defaultExecCapture(command: string, args: string[], options?: { c
 }
 
 let execCaptureImpl: ExecCaptureFn = defaultExecCapture;
+let paneTitleSpawn = spawn;
 
 export function setPaneExecCaptureForTests(capture?: ExecCaptureFn): void {
 	execCaptureImpl = capture ?? defaultExecCapture;
+}
+
+export function setTmuxPaneTitleSpawnForTests(spawner?: typeof spawn): void {
+	paneTitleSpawn = spawner ?? spawn;
 }
 
 export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
@@ -356,7 +362,7 @@ async function rebalanceColumns(registry: PaneRegistry, primaryPaneId: string): 
 export function setCurrentTmuxPaneTitle(title: string): void {
 	const paneId = process.env.TMUX_PANE;
 	if (!paneId) return;
-	const proc = spawn("tmux", ["select-pane", "-t", paneId, "-T", title], { stdio: "ignore" });
+	const proc = paneTitleSpawn("tmux", ["select-pane", "-t", paneId, "-T", title], { stdio: "ignore" });
 	proc.on("error", () => undefined);
 	proc.unref?.();
 }
@@ -566,6 +572,7 @@ set -euo pipefail
 cd ${shellQuote(cwd)}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
+export ${PI_SUBAGENT_CHILD_PANE_ENV}=1
 export PI_SUBAGENT_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
 # vstack#60 workaround: pi-session-bridge reads these on startup and
 # synthesizes a unique <parent>:c<pid> session id so 'pi-bridge state
