@@ -166,6 +166,9 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 		if (!raw.endsWith('"') || raw.length < 2) throw new Error(`unterminated double-quoted value at ${path}:${lineNumber}`);
 		text = raw.slice(1, -1);
 	} else if (/[`;&|<>$]/.test(raw)) {
+		if (!raw.includes("$(") && !/[`;&|<>]/.test(raw) && /\s/.test(raw)) {
+			throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
+		}
 		text = raw;
 	} else if (/\s/.test(raw)) {
 		throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
