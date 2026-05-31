@@ -238,8 +238,13 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 			throw new Error(`unsupported shell expansion at ${path}:${lineNumber}`);
 		}
 	}
-	if (!expand) return text;
-	return expandEnvValue(text, lookup, path, lineNumber);
+	if (!expand) {
+		if (text === "~" || text.startsWith("~/")) throw new Error(`unsupported tilde expansion at ${path}:${lineNumber}`);
+		return text;
+	}
+	const expanded = expandEnvValue(text, lookup, path, lineNumber);
+	if (expanded === "~" || expanded.startsWith("~/")) throw new Error(`unsupported tilde expansion at ${path}:${lineNumber}`);
+	return expanded;
 }
 
 function expandEnvValue(text: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
