@@ -829,7 +829,7 @@ pi_subscriber_loop() {
       fi
       local now_epoch
       now_epoch=$(date +%s)
-      if [[ "$hash" == "$last_hash" && "$event_name" != "$last_assistant_event_name" && "$event_identity" != turn:* && "$last_assistant_emit_epoch" =~ ^[0-9]+$ && $((now_epoch - last_assistant_emit_epoch)) -le 5 ]]; then
+      if [[ "$hash" == "$last_hash" && "$event_name" == "agent_end" && "$last_assistant_event_name" == "message_end" && "$event_identity" != turn:* && "$last_assistant_emit_epoch" =~ ^[0-9]+$ && $((now_epoch - last_assistant_emit_epoch)) -le 5 ]]; then
         printf '%s [pi-sub-emit-dedup] pane=%s hash=%s event=%s previous_event=%s reason=same-final-turn\n' \
           "$(date -Iseconds)" "$pane_id" "$hash" "$event_name" "$last_assistant_event_name" \
           >> "$sub_log" 2>/dev/null || true

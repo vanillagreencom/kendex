@@ -563,6 +563,75 @@ esac
 		}
 	});
 
+	test("no-turnId two-turn message_end plus agent_end pre-PR handshakes emit once per turn", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-no-turn-pair-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const marker = "PRE-PR-REVIEW-READY: tmp/ready-for-review.txt";
+		const bridgeScript = `#!/usr/bin/env bash
+case "\${1:-}" in
+  questions)
+    echo '{"success":true,"data":{"questions":[]}}'
+    ;;
+  stream)
+    cat <<'JSON'
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:33.000Z","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:34.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+{"type":"event","event":"message_end","timestamp":"2026-05-31T04:24:35.000Z","data":{"message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"${marker}"}]}}}
+{"type":"event","event":"agent_end","timestamp":"2026-05-31T04:24:36.000Z","data":{"status":"completed","finalTextPreview":"${marker}","finalTextLength":${marker.length},"finalTextBytes":${Buffer.byteLength(marker, "utf8")}}}
+JSON
+    sleep 30
+    ;;
+esac
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { CLASSIFIER: PROMPT_CLASSIFY, FD_ENTRY_KIND: "issue", FD_ENTRY_HARNESS: "pi" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%290", "1184290", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 8000;
+			let rows: any[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+					if (rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review").length >= 2) {
+						await sleep(200);
+						rows = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+						break;
+					}
+				}
+				await sleep(100);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const prePrRows = rows.filter((row) => row.classifier_tag === "pre-pr-ready-for-review");
+			expect(prePrRows).toHaveLength(2);
+			expect(prePrRows.map((row) => row.event_type)).toEqual(["message_end", "message_end"]);
+			expect(prePrRows.map((row) => row.last_assistant_text)).toEqual([marker, marker]);
+			expect(new Set(prePrRows.map((row) => row.hash)).size).toBe(1);
+			expect(prePrRows.map((row) => row.event_identity)).toEqual([
+				"2026-05-31T04:24:33.000Z",
+				"2026-05-31T04:24:35.000Z",
+			]);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
 	test("pi-sub-emit append failure logs error and does not suppress retry", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-pre-pr-append-err-"));
 		stateDirs.push(stateDir);
