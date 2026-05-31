@@ -51,7 +51,7 @@ Child has pushed commits and is waiting for the supervisor to gate PR creation. 
 1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, run the disabled-review approval steps with the same checked-write contract as `workflows/shared/pre-pr-review.md` § 6: atomic-write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0` (on failure set `paused_for_user.reason="pre-pr-review-error"` and return), `pane-respond` the approval instruction from § 6 step 2 with the PR body wording adjusted to reference the plan path + item id (on failure set `paused_for_user.reason="pre-pr-review-error"` and return), then set `domain.plan_item.review_status = "pre-pr-approved"`. Return.
 2. Otherwise initialize-only on first entry: if `domain.plan_item.review_status` is null/unset, set it to `"pre-pr-reviewing"` and `domain.plan_item.review_reports = []`. Do NOT touch `domain.plan_item.review_rounds`; the shared workflow owns it (`workflows/shared/pre-pr-review.md` § 1, § 7).
 3. Invoke `⤵ workflows/shared/pre-pr-review.md <ITEM_ID> plan_item`.
-4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-loop-stalled` / `pre-pr-review-error` / `pre-pr-review-empty-diff` and pane-responds accordingly. Do not duplicate that logic here.
+4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-error` / `pre-pr-review-empty-diff` for true workflow failures. Soft round caps are handled autonomously inside the shared workflow. Do not duplicate that logic here.
 5. Return to `plan/watch.md` § 4 without further action.
 
 ---
@@ -64,6 +64,7 @@ For these tags, follow the named section in `workflows/github/handle-prompt.md`,
 |-----|------------------------|-----------------|
 | `merge-now` | § 4 | Read/write `entry.domain.plan_item.pr_number`; require `mergeStateStatus === "CLEAN"` before answering Merge. |
 | `merge-ready-but-unknown` | § 5 | Preserve `entry.unknown_since`; gate wait, Merge, and force-merge transition with `FLIGHTDECK_AUTO_MERGE=0`. |
+| `merge-permission-blocked` | § 4.5 | Persist `domain.plan_item.phase="merge-blocked-permission"` and `domain.plan_item.merge_blocked_permission`, set entry `state="ready"`, and keep monitoring until authoritative `MERGED` + non-null `mergeCommit`; do not set `paused_for_user` for `MergePullRequest` permission denial. |
 | `force-merge-confirm` | § 6 | Re-run the strict force-merge predicate immediately before answering; `FLIGHTDECK_AUTO_MERGE=0` pauses instead of answering. |
 | `bot-review-wait-stuck` and issue `pi-bg-task-exit` | § 7 | Use plan PR number; never call Linear or project-management. |
 | `rebase-multi-choice` | § 8 | Same preserve / apply / verify triplet; plan item worktree is `domain.plan_item.worktree`. |
@@ -78,6 +79,7 @@ Load-bearing safety rules inherited from the GitHub handler:
 - `mergeStateStatus === "UNKNOWN"` routes to `merge-ready-but-unknown`; it is not merged directly.
 - `FLIGHTDECK_AUTO_MERGE=0` gates `merge-now`, `merge-ready-but-unknown`, and `force-merge-confirm`.
 - Strict force-merge predicate is `APPROVED ∧ all_checks_in {SUCCESS, SKIPPED} ∧ disjoint(PR_files, main_files_recently_changed) ∧ unknown_since > FLIGHTDECK_FORCE_MERGE_AFTER_SECS`.
+- `MergePullRequest` permission denial records a deterministic `merge-blocked-permission` monitoring marker; readiness stays separate from capability failure and never closes/tears down until authoritative `state === "MERGED"` and `mergeCommit !== null`.
 - GitHub CLI failure retries once after 2s, then pauses; no merge, close, rebase, spawn, or cleanup proceeds on unknown GitHub state.
 
 ---

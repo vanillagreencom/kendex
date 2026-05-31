@@ -19,6 +19,7 @@ Reference doc extracted from `SKILL.md`. See [`SKILL.md`](./SKILL.md) for the lo
 | `force-merge-confirm` | issue | Prompt asks whether to force-merge. Apply conflict/UNKNOWN gate first. |
 | `merge-ready-but-unknown` | issue | GitHub merge state is `UNKNOWN`; apply timer and force-merge predicate before acting. |
 | `merge-now` | issue | Prompt asks to merge now; verify authoritative PR state before answering. |
+| `merge-permission-blocked` | issue | `gh pr merge` failed because the actor lacks `MergePullRequest`; record ready-but-permission-blocked state and keep monitoring authoritative GitHub merge state without asking the user repeatedly. |
 | `bot-review-wait-stuck` | issue | Bot/reviewer gate appears stuck; verify check/review state before skip/wait/escalate. |
 | `rebase-multi-choice` | issue | Rebase/update branch prompt that needs preserve / apply / verify guidance in the same response. |
 | `force-push-prompt` | issue | Prompt asks whether force-push is allowed; escalate unless workflow rules explicitly allow it. |

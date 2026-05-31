@@ -833,6 +833,7 @@ const ISSUE_DOMAIN_FIELDS = new Set([
 	"pr_number",
 	"worktree",
 	"merge_commit",
+	"merge_blocked_permission",
 	"scope_files_declared",
 	"scope_files_actual",
 	"orchestration_started",

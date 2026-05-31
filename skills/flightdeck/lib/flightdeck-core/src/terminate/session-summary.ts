@@ -32,6 +32,7 @@ const ISSUE_SUBSTATES = new Set([
 	"force-merge-confirm",
 	"force-push-prompt",
 	"merge-now",
+	"merge-permission-blocked",
 	"merge-ready-but-unknown",
 	"rebase-multi-choice",
 	"scope-creep-detected",

@@ -42,6 +42,11 @@ describe("classifyBuffer built-in stub", () => {
 		expect(classifyBuffer("merge now")).toBe("merge-now");
 	});
 
+	test("merge-permission-blocked", () => {
+		expect(classifyBuffer("BLOCKED PR #286 — gh pr merge failed\nGraphQL: vg-claude does not have the correct permissions to execute MergePullRequest")).toBe("merge-permission-blocked");
+		expect(classifyBuffer("Issue context says gh pr merge fails because an actor lacks MergePullRequest.")).toBe("rendering");
+	});
+
 	test("cleanup-prompt", () => {
 		expect(classifyBuffer("delete worktree?")).toBe("cleanup-prompt");
 		expect(classifyBuffer("keep worktree?")).toBe("cleanup-prompt");

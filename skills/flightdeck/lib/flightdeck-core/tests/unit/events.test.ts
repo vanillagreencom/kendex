@@ -106,7 +106,7 @@ describe("appendEvent failure semantics (round-4 #6)", () => {
 
 describe("isCanonicalTag", () => {
 	test("known canonical tags return true", () => {
-		for (const t of ["merge-now", "rebase-multi-choice", "bell-not-canonical", "oc-question", "modal-prompt"]) {
+		for (const t of ["merge-now", "merge-permission-blocked", "rebase-multi-choice", "bell-not-canonical", "oc-question", "modal-prompt"]) {
 			const expected = t !== "bell-not-canonical";
 			expect(isCanonicalTag(t)).toBe(expected);
 		}
@@ -142,5 +142,12 @@ describe("isCanonicalTag", () => {
 	// fires wake, so the round-1 review-loop fix is silently undone.
 	test("pre-pr-ready-for-review is canonical", () => {
 		expect(isCanonicalTag("pre-pr-ready-for-review")).toBe(true);
+	});
+
+	// vstack#288: permission-denied merge attempts are deterministic
+	// monitoring states. They must wake the master exactly like merge-now so
+	// the handler can record readiness/capability split instead of prompting.
+	test("merge-permission-blocked is canonical", () => {
+		expect(isCanonicalTag("merge-permission-blocked")).toBe(true);
 	});
 });

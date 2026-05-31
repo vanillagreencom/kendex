@@ -1,0 +1,2 @@
+Issue context says gh pr merge fails because an actor lacks MergePullRequest.
+This is quoted background, not a merge attempt result.

@@ -96,6 +96,7 @@ const CANONICAL_TAGS = new Set<string>([
 	"terminal-state-reached",
 	"force-push-prompt",
 	"merge-now",
+	"merge-permission-blocked",
 	"cleanup-prompt",
 	"pre-pr-ready-for-review",
 	// Flightdeck cleanup-scope defensive tags (issue #18). Per-issue

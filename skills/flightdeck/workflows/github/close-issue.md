@@ -67,7 +67,7 @@ Two-signal rule for GitHub lane means: `domain.github_issue.pr_number` recorded 
 ## § 4: Determine outcome
 
 - `state === "MERGED"` and `mergeCommit !== null` → outcome `merged`.
-- PR missing or PR not merged → return to watch without teardown unless § 2 paused. The child may have printed completion before GitHub finished.
+- PR missing or PR not merged → return to watch without teardown unless § 2 paused. The child may have printed completion before GitHub finished; a `merge-blocked-permission` marker is also non-terminal and stays in watch/monitoring.
 - `state == "MERGED"` but `mergeCommit == null` → set `paused_for_user = {issue_id:<N>, reason:"gh-pr-merge-commit-missing", prompt_text:<gh pr view JSON>}` and do not close or tear down. This rare GitHub inconsistency needs operator visibility.
 - PR closed without merge → outcome `aborted` only if a separate explicit abort/cancel signal exists; otherwise pause for user.
 

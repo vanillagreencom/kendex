@@ -22,6 +22,7 @@ export const ISSUE_ONLY_TAGS = new Set<string>([
 	"force-merge-confirm",
 	"merge-ready-but-unknown",
 	"merge-now",
+	"merge-permission-blocked",
 	"bot-review-wait-stuck",
 	"rebase-multi-choice",
 	"force-push-prompt",
@@ -70,6 +71,11 @@ export const POST_FOOTER_RULES: Rule[] = [
 		tag: "bash-permission-prompt",
 		matched: "permission prompt",
 		pattern: /Bash command requires permission|Allow command\?|Run this command\?|requires permission to run/,
+	},
+	{
+		tag: "merge-permission-blocked",
+		matched: "merge permission denied",
+		pattern: /(?:BLOCKED PR #\d+[\s\S]{0,160})?gh pr merge failed[\s\S]{0,500}(MergePullRequest|does not have the correct permissions|permission denied|Resource not accessible by integration)/i,
 	},
 	{
 		tag: "terminal-state-reached",

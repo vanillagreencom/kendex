@@ -52,6 +52,7 @@ For each item id in the active plan graph:
 | `pre-pr-fixing` | `submitting` | `domain.plan_item.review_status = "pre-pr-fixing"`, child applying round-N findings |
 | `pre-pr-approved` | `submitting` | `domain.plan_item.review_status = "pre-pr-approved"`, child instructed to open PR |
 | `merge-ready` | `ready` | `domain.plan_item.phase = "merge-ready"` |
+| `merge-blocked-permission` | `ready` | `domain.plan_item.phase = "merge-blocked-permission"`, `merge_blocked_permission` recorded; keep monitoring authoritative GitHub state |
 | `merged` | `complete` | `domain.plan_item.phase = "merged"`, `merge_commit` set |
 | `aborted` | `cancelled` | `domain.plan_item.phase = "aborted"` |
 | `failed` | `failed` | `domain.plan_item.error = {phase, reason, stderr}` |
@@ -82,6 +83,7 @@ Plan PR tags shared with the GitHub lane:
 - `force-push-prompt`
 - `merge-now`
 - `merge-ready-but-unknown`
+- `merge-permission-blocked`
 - `force-merge-confirm`
 - `multi-select-tabbed`
 - `stale-no-pr-branch`
@@ -216,7 +218,7 @@ On re-entry:
 2. Re-read `entry.domain.plan_item` for item id, dependencies, PR, merge commit, worktree, and actual file count.
 3. Preserve `unknown_since` so the UNKNOWN timer does not reset.
 4. Re-read `entry.domain.plan_item.review_status` and `review_rounds`; if `review_status == "pre-pr-fixing"`, await the next `pre-pr-ready-for-review` signal instead of re-invoking the loop. If `review_status == "pre-pr-reviewing"`, the prior reviewer fan-out did not complete; rerun `workflows/shared/pre-pr-review.md` at the same round.
-5. Re-run `gh pr view` for open PRs unless `gh` is unavailable; unavailable follows § 6.
+5. Re-run `gh pr view` for open PRs unless `gh` is unavailable; unavailable follows § 6. If `domain.plan_item.merge_blocked_permission` is set, do not ask the user again; continue monitoring until authoritative `state === "MERGED"` and `mergeCommit !== null`, or route back to `merge-now` if the token/permission changed and the PR is still ready.
 6. Re-evaluate dependency edges and `paused_for_user`; if the user fixed the issue in the pane or via GitHub, reclassify and proceed.
 
 ## Returns

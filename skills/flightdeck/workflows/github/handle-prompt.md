@@ -51,7 +51,7 @@ Child has pushed commits and is waiting for the supervisor to gate PR creation. 
 1. If `FLIGHTDECK_PRE_PR_REVIEW=0`, run the disabled-review approval steps with the same checked-write contract as `workflows/shared/pre-pr-review.md` § 6: atomic-write `<WT>/tmp/pre-pr-approved.md` with body `Pre-PR review disabled by FLIGHTDECK_PRE_PR_REVIEW=0` (on failure set `paused_for_user.reason="pre-pr-review-error"` and return), `pane-respond` the approval instruction from § 6 step 2 (on failure set `paused_for_user.reason="pre-pr-review-error"` and return), then set `domain.github_issue.review_status = "pre-pr-approved"`. Return.
 2. Otherwise initialize-only on first entry: if `domain.github_issue.review_status` is null/unset, set it to `"pre-pr-reviewing"` and `domain.github_issue.review_reports = []`. Do NOT touch `domain.github_issue.review_rounds`; the shared workflow owns it (`workflows/shared/pre-pr-review.md` § 1, § 7).
 3. Invoke `⤵ workflows/shared/pre-pr-review.md <ISSUE_NUMBER> github_issue`.
-4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-loop-stalled` / `pre-pr-review-error` / `pre-pr-review-empty-diff` and pane-responds accordingly. Do not duplicate that logic here.
+4. The shared workflow sets `review_status` to `pre-pr-approved`, `pre-pr-fixing`, or sets `paused_for_user.reason` to `pre-pr-review-error` / `pre-pr-review-empty-diff` for true workflow failures. Soft round caps are handled autonomously inside the shared workflow. Do not duplicate that logic here.
 5. Return to `github/watch.md` § 4 without further action.
 
 ---
@@ -77,6 +77,27 @@ Child has pushed commits and is waiting for the supervisor to gate PR creation. 
 7. `mergeStateStatus === "DIRTY"` → set `paused_for_user = {issue_id:<N>, reason:"pr-merge-conflict", prompt_text:<state summary>}`.
 8. `mergeStateStatus === "BEHIND"` → answer Update Branch / auto-rebase only when `FLIGHTDECK_AUTO_REBASE=1`. Default for GitHub lane is `0`, so escalate with `reason="pr-behind"` unless explicitly enabled.
 9. `BLOCKED`, `HAS_HOOKS`, missing fields, or any other state → escalate. Do not answer Merge.
+
+---
+
+## § 4.5: Handler — `merge-permission-blocked`
+
+A child or wrapper attempted `gh pr merge` but GitHub rejected the capability (for example `GraphQL: <actor> does not have the correct permissions to execute MergePullRequest`). Treat this as readiness/capability split, not a user decision.
+
+1. Re-run authoritative state:
+   ```bash
+   gh pr view <PR> --json state,mergeStateStatus,reviewDecision,statusCheckRollup,mergeCommit
+   ```
+2. If `state === "MERGED"` and `mergeCommit !== null`, invoke `workflows/github/close-issue.md <N>` or return to watch so the terminal close path records the merge. Do not use the failed merge exit as proof.
+3. If the PR is still ready (`mergeStateStatus === "CLEAN"`, review approved or no pending reviewers, and required checks `SUCCESS` / `SKIPPED`), persist a monitoring marker and do not set `paused_for_user`:
+   ```bash
+   .agents/skills/flightdeck/scripts/pane-registry set-state <N> ready
+   .agents/skills/flightdeck/scripts/pane-registry set <N> domain.github_issue.phase '"merge-blocked-permission"'
+   .agents/skills/flightdeck/scripts/pane-registry set <N> domain.github_issue.merge_blocked_permission '{"reason":"MergePullRequest permission denied","pr":<PR>,"ready":true,"last_checked_at":"<ISO8601>"}'
+   .agents/skills/flightdeck/scripts/pane-registry log-decision <N> merge-permission-blocked "PR #<PR> ready; merge capability denied; monitoring for manual merge or permission/token change"
+   ```
+4. Keep monitoring GitHub authoritative state on later watch cycles. Close/teardown only after `gh pr view <PR> --json state,mergeStateStatus,mergeCommit` returns `state === "MERGED"` and `mergeCommit !== null`.
+5. If the readiness predicate is no longer true, route to the existing deterministic handler (`merge-ready-but-unknown`, conflict/behind, bot-review, or CI failure). Pause only for those handlers' novel/destructive conditions.
 
 ---
 

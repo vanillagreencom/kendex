@@ -1,6 +1,6 @@
 # Workflow: `pre-pr-review` — Master-Side Pre-PR Reviewer Fan-out
 
-Master-side review loop invoked from GitHub or Plan handle-prompt on the `pre-pr-ready-for-review` tag. The child has pushed commits and is waiting for approval before opening a PR. Master fans out `reviewer-*` agents against the diff, hands findings back to the child for fixes, and re-runs the loop until approval or round-cap.
+Master-side review loop invoked from GitHub or Plan handle-prompt on the `pre-pr-ready-for-review` tag. The child has pushed commits and is waiting for approval before opening a PR. Master fans out `reviewer-*` agents against the diff, hands findings back to the child for fixes, and re-runs the loop until approval. The configured round cap is an audit boundary, not a user questionnaire.
 
 **Inputs**: `<ENTRY_ID>`, `<DOMAIN_KEY>` (`github_issue` or `plan_item`).
 
@@ -11,17 +11,21 @@ Master-side review loop invoked from GitHub or Plan handle-prompt on the `pre-pr
 **Post-condition**: one of
 - `domain.<KEY>.review_status = "pre-pr-approved"` and child instructed to open PR; or
 - `domain.<KEY>.review_status = "pre-pr-fixing"` and child instructed to apply round-N findings; or
-- `paused_for_user.reason = "pre-pr-review-loop-stalled"` or `"pre-pr-review-error"` set and no pane response.
+- `paused_for_user.reason = "pre-pr-review-error"` / `"pre-pr-review-empty-diff"` set for actual workflow failure and no pane response.
 
 This workflow is the sole owner of `domain.<KEY>.review_rounds`. Lane handlers must not increment it.
 
 ---
 
-## § 1: Round setup and cap gate
+## § 1: Round setup and autonomy caps
 
 1. If `domain.<KEY>.review_rounds` is null/unset, set it to `1`.
-2. Read `MAX = FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS` (default `3`).
-3. If `review_rounds > MAX`, set `paused_for_user = {entry_id:<ID>, reason:"pre-pr-review-loop-stalled", prompt_text:"round <N> exceeded max <MAX>; see tmp/pre-pr-review/round-<N-1>.md"}`, log decision `pre-pr-review stalled round=<N> max=<MAX>`, and return without pane-respond. The current round number is referenced as `<N>` in subsequent steps.
+2. Read `MAX = FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS` (default `3`) and `HARD_CAP = FLIGHTDECK_PRE_PR_REVIEW_HARD_CAP` (default `MAX + 2`). Clamp `HARD_CAP >= MAX`.
+3. Do not set `paused_for_user` solely because `review_rounds > MAX`. A ready signal after the soft cap is deterministic:
+   - Log decision `pre-pr-review autonomous-override round=<N> max=<MAX> hard_cap=<HARD_CAP>`.
+   - Continue to § 2 and run another reviewer round so current evidence decides approve vs fix.
+4. When `review_rounds > HARD_CAP`, still do not ask the user if concrete evidence exists. Continue to § 2 for one more verification round, then § 7 routes a focused blocker/follow-up path instead of broad re-review churn. Only set `paused_for_user.reason="pre-pr-review-error"` if prior/current reports cannot be parsed or persisted and no deterministic fix/approve path can be derived.
+5. The current round number is referenced as `<N>` in subsequent steps.
 
 ---
 
@@ -120,11 +124,11 @@ When aggregate is `pass`:
    ```
    On `pane-respond` failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
 3. Only after both writes succeed, set `entry.domain.<KEY>.review_status = "pre-pr-approved"`. On state-write failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
-4. Log decision `pre-pr-review pass round=<N> reviewers=<CSV>`. Log failure is non-blocking; the next compaction recovery re-reads `review_status` from the persisted entry. Return to caller.
+4. Log decision `pre-pr-review pass round=<N> reviewers=<CSV>`. If `<N> > MAX`, include `autonomous-override-passed-soft-cap=true`. Log failure is non-blocking; the next compaction recovery re-reads `review_status` from the persisted entry. Return to caller.
 
 ---
 
-## § 7: Fix path
+## § 7: Fix path and hard-cap policy
 
 When aggregate is `action_required`:
 
@@ -141,14 +145,20 @@ When aggregate is `action_required`:
      - Recommendation: <recommendation>
    ```
    On write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; do not pane-respond.
-2. `pane-respond` to the child pane with the fix instruction:
+2. If `<N> > MAX`, log decision `pre-pr-review autonomous-override action-required round=<N> max=<MAX> blockers=<count>`. This audit row replaces the old routine user decision.
+3. If `<N> >= HARD_CAP` or the same normalized `category == "fix"` blocker repeats unchanged from the prior round, also write `<WT_ABS>/tmp/pre-pr-review/focused-blocker-round-<N>.md` with the single highest-priority repeated blocker and a `Follow-up issue suggestion` section for separable non-blocking `category == "issue"` items. Normalization key: `priority + location + lowercase(description without line numbers)`. This is deterministic routing, not approval.
+4. `pane-respond` to the child pane with the fix instruction:
    ```text
    Pre-PR review round <N> found blockers. Read `tmp/pre-pr-review/round-<N>.md`, apply the fix items (issue suggestions are non-blocking), push to `<BRANCH>`, then print `PRE-PR-REVIEW-READY: tmp/ready-for-review.txt` again as the LAST line.
    ```
+   If the focused blocker file exists, use this narrower instruction instead:
+   ```text
+   Pre-PR review reached the hard-cap/focused-blocker policy. Read `tmp/pre-pr-review/focused-blocker-round-<N>.md`, fix the focused blocker first, push to `<BRANCH>`, then print `PRE-PR-REVIEW-READY: tmp/ready-for-review.txt` again as the LAST line. Do not ask the user for routine approval.
+   ```
    On `pane-respond` failure set `paused_for_user.reason = "pre-pr-review-error"` and return.
-3. Only after both writes succeed, increment `entry.domain.<KEY>.review_rounds` and set `entry.domain.<KEY>.review_status = "pre-pr-fixing"`. On either state-write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; the next entry resumes the same round.
-4. Log decision `pre-pr-review action-required round=<N> blockers=<count>`. Log failure is non-blocking.
-5. Return to caller. The next `pre-pr-ready-for-review` from the child re-enters this workflow at round `<N+1>`, where § 1 evaluates the round-cap before fanning out again.
+5. Only after all required writes and the pane response succeed, increment `entry.domain.<KEY>.review_rounds` and set `entry.domain.<KEY>.review_status = "pre-pr-fixing"`. On either state-write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; the next entry resumes the same round.
+6. Log decision `pre-pr-review action-required round=<N> blockers=<count>` (plus `focused-blocker=true` when used). Log failure is non-blocking.
+7. Return to caller. The next `pre-pr-ready-for-review` from the child re-enters this workflow at round `<N+1>`; § 1 treats the soft cap as autonomous audit and § 7 applies focused routing at the hard cap.
 
 ## Returns
 

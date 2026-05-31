@@ -2248,6 +2248,8 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
             "FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_PAUSE_FILE",
             "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_RELEASE_FILE",
+            // Trampoline staleness escape hatch, not a runtime dashboard setting.
+            "FLIGHTDECK_DASHBOARD_NO_REBUILD",
             // vstack#227: test/sandbox-only run-store override; not
             // user-editable from the dashboard settings popup.
             "FLIGHTDECK_RUN_STORE_ROOT",
@@ -2272,6 +2274,7 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
             "FLIGHTDECK_PRE_PR_REVIEW",
             "FLIGHTDECK_PRE_PR_REVIEWERS",
             "FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS",
+            "FLIGHTDECK_PRE_PR_REVIEW_HARD_CAP",
             "NO_MOTION",
             "NO_COLOR",
             "BEHIND",

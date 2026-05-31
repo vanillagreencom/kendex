@@ -214,7 +214,7 @@ Full script table and event details live in [`SCRIPTS.md`](./SCRIPTS.md). Requir
 
 - Master state + activity sidecar contract lives in [`SCHEMA.md`](./SCHEMA.md). `readTrackedEntries(state)` is the canonical reader; `writeTrackedEntry(state, id, entry)` is the canonical writer and rejects malformed domain combinations.
 - Reliability watchdog details live in [`WATCHDOGS.md`](./WATCHDOGS.md).
-- Env var tables live in [`ENV.md`](./ENV.md). Operator-facing gates include `FLIGHTDECK_AUTO_MERGE`, `FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, `FLIGHTDECK_AUTO_REBASE`, `FLIGHTDECK_PRE_PR_REVIEW`, `FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS`, `FLIGHTDECK_PRE_PR_REVIEWERS`, dashboard controls, and the `VSTACK_*` watchdog toggles.
+- Env var tables live in [`ENV.md`](./ENV.md). Operator-facing gates include `FLIGHTDECK_AUTO_MERGE`, `FLIGHTDECK_FORCE_MERGE_AFTER_SECS`, `FLIGHTDECK_AUTO_REBASE`, `FLIGHTDECK_PRE_PR_REVIEW`, `FLIGHTDECK_PRE_PR_REVIEW_MAX_ROUNDS`, `FLIGHTDECK_PRE_PR_REVIEW_HARD_CAP`, `FLIGHTDECK_PRE_PR_REVIEWERS`, dashboard controls, and the `VSTACK_*` watchdog toggles.
 
 ## Workflows
 

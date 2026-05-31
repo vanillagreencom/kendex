@@ -10,6 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(HERE, "../fixtures/prompt-classify");
 const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
 const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-prompt.md");
+const PRE_PR_REVIEW_DOC = resolve(HERE, "../../../../workflows/shared/pre-pr-review.md");
 const GITHUB_HANDLE_DOC = resolve(HERE, "../../../../workflows/github/handle-prompt.md");
 const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue.md");
 const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
@@ -37,6 +38,7 @@ const ISSUE_ONLY_CASES: Array<{ tag: string; fixture: string; extraArgs?: string
 	{ tag: "force-merge-confirm", fixture: "12-force-merge-confirm.buffer" },
 	{ tag: "merge-ready-but-unknown", fixture: "13-merge-ready-but-unknown.buffer" },
 	{ tag: "merge-now", fixture: "14-merge-now.buffer" },
+	{ tag: "merge-permission-blocked", fixture: "31a-no-footer-merge-permission-blocked.buffer", extraArgs: ["--no-footer-gate"] },
 	{ tag: "bot-review-wait-stuck", fixture: "15-bot-review-stuck.buffer" },
 	{ tag: "rebase-multi-choice", fixture: "16-rebase-multi-choice.buffer" },
 	{ tag: "force-push-prompt", fixture: "17-force-push-prompt.buffer" },
@@ -401,6 +403,7 @@ describe("handler domain guards", () => {
 
 	test("computed issue-only tags are present in the guard set", () => {
 		expect(ISSUE_ONLY_TAGS.has("scope-creep-detected")).toBe(true);
+		expect(ISSUE_ONLY_TAGS.has("merge-permission-blocked")).toBe(true);
 	});
 
 	test("generic bash-permission allowlist is restricted to Flightdeck/read-only commands", () => {
@@ -420,6 +423,33 @@ describe("handler domain guards", () => {
 		expect(doc).toContain("Predicate true → answer `Merge`");
 		expect(doc).toContain('`mergeStateStatus === "UNKNOWN"`');
 		expect(doc).toContain("Do not auto-Merge");
+	});
+
+	test("pre-pr review soft cap stays autonomous", () => {
+		const doc = readFileSync(PRE_PR_REVIEW_DOC, "utf8");
+		expect(doc).toContain("Do not set `paused_for_user` solely because `review_rounds > MAX`");
+		expect(doc).toContain("pre-pr-review autonomous-override");
+		expect(doc).toContain("FLIGHTDECK_PRE_PR_REVIEW_HARD_CAP");
+		expect(doc).toContain('category == "fix"');
+		expect(doc).toContain("focused-blocker-round-<N>.md");
+		expect(doc).not.toContain('reason:"pre-pr-review-loop-stalled"');
+	});
+
+	test("merge permission denial records monitoring state instead of pausing", () => {
+		const github = readFileSync(GITHUB_HANDLE_DOC, "utf8");
+		const plan = readFileSync(PLAN_HANDLE_DOC, "utf8");
+		const linear = readFileSync(LINEAR_MERGE_DOC, "utf8");
+		for (const doc of [github, plan, linear]) {
+			expect(doc).toContain("merge-permission-blocked");
+			expect(doc).toContain("MergePullRequest");
+			expect(doc).toContain("merge_blocked_permission");
+			expect(doc).toContain('state === "MERGED"');
+			expect(doc).toContain("mergeCommit !== null");
+		}
+		expect(github).toContain("do not set `paused_for_user`");
+		expect(github).toContain("pane-registry set-state <N> ready");
+		expect(plan).toContain('set entry `state="ready"`');
+		expect(linear).toContain("do not set `paused_for_user`");
 	});
 
 	test("github close-issue requires authoritative merged PR and merge commit", () => {

@@ -190,6 +190,14 @@ write_nofooter 30-no-footer-merge-now merge-now \
 write_nofooter 31-no-footer-rebase rebase-multi-choice \
 	"This PR has merge conflicts. How should I resolve the conflicts?"
 
+write_nofooter 31a-no-footer-merge-permission-blocked merge-permission-blocked \
+	"BLOCKED PR #286 — gh pr merge failed
+  GraphQL: vg-claude does not have the correct permissions to execute MergePullRequest"
+
+write_nofooter 31b-no-footer-merge-permission-body-only idle \
+	"Issue context says gh pr merge fails because an actor lacks MergePullRequest.
+This is quoted background, not a merge attempt result."
+
 # Adapter-text path with no detectable prompt → idle.
 write_nofooter 32-no-footer-idle idle "All quiet."
 

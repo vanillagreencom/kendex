@@ -48,6 +48,7 @@ export interface TrackedIssueDomain {
 	scope_files_actual?: number | null;
 	orchestration_started?: boolean | null;
 	merge_commit?: string | null;
+	merge_blocked_permission?: Record<string, unknown> | null;
 	[key: string]: unknown;
 }
 
@@ -57,6 +58,7 @@ export interface GithubIssueDomain {
 	worktree: string;
 	pr_number: number | null;
 	merge_commit: string | null;
+	merge_blocked_permission?: Record<string, unknown> | null;
 	scope_files_actual?: number | null;
 	[key: string]: unknown;
 }
@@ -70,6 +72,7 @@ export interface PlanItemDomain {
 	worktree: string;
 	pr_number: number | null;
 	merge_commit: string | null;
+	merge_blocked_permission?: Record<string, unknown> | null;
 	/** Decomposition mode used to produce immutable item briefs. Canonical values: explicit-items, inferred-items, mixed-items. Legacy rows may use h2-items or phase-style. Field name kept as `parse_mode` for state-file backward compatibility. */
 	parse_mode?: "explicit-items" | "inferred-items" | "mixed-items" | "h2-items" | "phase-style" | string | null;
 	/** sha256:<hex> hash of the frozen source plan text used at plan start. */
