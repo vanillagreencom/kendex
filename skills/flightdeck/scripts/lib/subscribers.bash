@@ -432,7 +432,7 @@ pi_subscriber_loop() {
 
   pi_subscriber_event_identity() {
     jq -r '
-      (.data.turnId // .data.turn_id // .turnId // .turn_id // .data.message.turnId // .data.message.turn_id // empty) as $turn
+      (.data.turnId // .data.turn_id // .turnId // .turn_id // .data.message.turnId // .data.message.turn_id // null) as $turn
       | if ($turn != null and ($turn | tostring | length) > 0) then ("turn:" + ($turn | tostring))
         else
           [
