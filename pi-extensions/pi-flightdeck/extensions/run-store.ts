@@ -112,13 +112,9 @@ function nonEmpty(value: unknown): string | undefined {
 	return trimmed ? trimmed : undefined;
 }
 
-interface DotEnvAssignment {
-	rawValue: string;
-	lineNumber: number;
-}
-
 function parseDotEnvNonExecuting(text: string, path: string): Map<string, string> {
-	const assignments = new Map<string, DotEnvAssignment>();
+	const values = new Map<string, string>();
+	const unsupported = new Map<string, string>();
 	let lineNumber = 0;
 	for (const rawLine of text.split(/\r?\n/)) {
 		lineNumber += 1;
@@ -130,29 +126,22 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const key = stripped.slice(0, eq).trim();
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
 		const rawValue = stripped.slice(eq + 1).trim();
-		assignments.set(key, { lineNumber, rawValue });
-	}
-	const values = new Map<string, string>();
-	const resolving = new Set<string>();
-	const resolveKey = (key: string): string | undefined => {
-		if (values.has(key)) return values.get(key);
-		const assignment = assignments.get(key);
-		if (!assignment) return process.env[key];
-		if (resolving.has(key)) throw new Error(`circular variable reference ${key} at ${path}:${assignment.lineNumber}`);
-		resolving.add(key);
 		try {
-			const value = parseDotEnvValue(assignment.rawValue, resolveKey, path, assignment.lineNumber);
+			const value = parseDotEnvValue(rawValue, (ref) => {
+				const unsupportedReason = unsupported.get(ref);
+				if (unsupportedReason) throw new Error(`unsupported variable reference ${ref}: ${unsupportedReason}`);
+				return values.get(ref) ?? process.env[ref];
+			}, path, lineNumber);
 			values.set(key, value);
-			return value;
-		} finally {
-			resolving.delete(key);
+			unsupported.delete(key);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			values.delete(key);
+			unsupported.set(key, reason);
+			if (key === "FLIGHTDECK_RUN_STORE_ROOT") throw error;
 		}
-	};
-	if (assignments.has("FLIGHTDECK_RUN_STORE_ROOT")) {
-		const value = resolveKey("FLIGHTDECK_RUN_STORE_ROOT");
-		values.set("FLIGHTDECK_RUN_STORE_ROOT", value ?? "");
 	}
-	return values;
+	return values.has("FLIGHTDECK_RUN_STORE_ROOT") ? new Map([["FLIGHTDECK_RUN_STORE_ROOT", values.get("FLIGHTDECK_RUN_STORE_ROOT") ?? ""]]) : new Map();
 }
 
 function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
