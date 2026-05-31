@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { processAssistantMessage } from "../src/index.ts";
+import { processAssistantMessage, processStreamEvent } from "../src/index.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
@@ -86,5 +86,27 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.equal(c.turnBlocks[0].name, "read");
 		assert.equal(c.turnBlocks[0].arguments.path, "README.md");
 		assert.deepEqual(events.map((event) => event.type), ["start", "toolcall_start", "toolcall_end", "done", "stream_end"]);
+	});
+
+	it("ignores a late bare message_stop so the next assistant fallback still renders text", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent({ type: "stream_event", event: { type: "message_stop" } }, new Map(), model);
+
+		assert.equal(c.turnSawStreamEvent, false, "late stop-only event must not mask assistant fallback");
+		assert.equal(c.currentPiStream !== null, true);
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{ type: "text", text: "next turn text" }],
+			},
+		}, model, new Map());
+
+		assert.equal(c.turnBlocks.length, 1);
+		assert.equal(c.turnBlocks[0].type, "text");
+		assert.equal(c.turnBlocks[0].text, "next turn text");
 	});
 });

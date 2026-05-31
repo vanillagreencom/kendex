@@ -1111,15 +1111,22 @@ function finalizeCurrentStream(stopReason?: string): void {
 
 /** Maps Anthropic stream events to pi stream events (text, thinking, toolcall).
  *  On message_stop with tool_use: ends currentPiStream so pi can execute the tool. */
-function processStreamEvent(
+export function processStreamEvent(
 	message: SDKMessage,
 	customToolNameToPi: Map<string, string>,
 	model: Model<any>,
 ): void {
 	const c = ctx();
 	if (!c.currentPiStream || !c.turnOutput) return;
-	c.turnSawStreamEvent = true;
 	const event = (message as SDKMessage & { event: any }).event;
+	if (event?.type === "ping") return;
+	if (event?.type === "message_stop" && !c.turnSawToolCall) {
+		debug("processStreamEvent: ignoring bare message_stop with no streamed content/tool call");
+		return;
+	}
+	if (event?.type !== "message_start" && event?.type !== "message_delta") {
+		c.turnSawStreamEvent = true;
+	}
 
 	if (event?.type === "message_start") {
 		c.turnToolCallIds = [];

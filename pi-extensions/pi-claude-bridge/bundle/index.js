@@ -38066,8 +38066,15 @@ function finalizeCurrentStream(stopReason) {
 function processStreamEvent(message, customToolNameToPi, model) {
   const c2 = ctx();
   if (!c2.currentPiStream || !c2.turnOutput) return;
-  c2.turnSawStreamEvent = true;
   const event = message.event;
+  if (event?.type === "ping") return;
+  if (event?.type === "message_stop" && !c2.turnSawToolCall) {
+    debug("processStreamEvent: ignoring bare message_stop with no streamed content/tool call");
+    return;
+  }
+  if (event?.type !== "message_start" && event?.type !== "message_delta") {
+    c2.turnSawStreamEvent = true;
+  }
   if (event?.type === "message_start") {
     c2.turnToolCallIds = [];
     c2.nextHandlerIdx = 0;
@@ -38696,6 +38703,7 @@ export {
   mapToolName,
   preflightClaudeExecutable,
   processAssistantMessage,
+  processStreamEvent,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,
