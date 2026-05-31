@@ -76,11 +76,54 @@ const CLAUDE_USAGE_LIMIT_EVENT = {
 	type: "message",
 };
 
+const OPENAI_CODEX_RATE_LIMIT_EVENT = {
+	message: {
+		api: "openai-codex",
+		errorMessage: "Rate limited",
+		model: "GPT-5.3-Codex-Spark",
+		provider: "openai-codex",
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message",
+};
+
 const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
 const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0);
+const STRUCTURED_USAGE_RESET_AT = Date.UTC(2026, 4, 31, 3, 30, 0);
 const SESSION_LIMIT_JUST_AFTER_RESET = SESSION_LIMIT_RESET_AT + 1_000;
 const MIDNIGHT_BOUNDARY_NOW = Date.UTC(2026, 4, 31, 7, 0, 1);
 const MIDNIGHT_BOUNDARY_RESET_AT = Date.UTC(2026, 4, 31, 6, 59, 0);
+
+const CLAUDE_USAGE_RESPONSE = {
+	five_hour: { utilization: 1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT).toISOString() },
+	seven_day: { utilization: 0.2, resets_at: new Date(STRUCTURED_USAGE_RESET_AT + 86_400_000).toISOString() },
+};
+
+const CODEX_WHAM_USAGE = {
+	plan_type: "prolite",
+	rate_limit: {
+		allowed: false,
+		limit_reached: true,
+		primary_window: { limit_window_seconds: 18_000, reset_after_seconds: 120, used_percent: 85 },
+		secondary_window: { limit_window_seconds: 604_800, reset_after_seconds: 600, used_percent: 95 },
+	},
+};
+
+const CODEX_WHAM_MODEL_USAGE = {
+	...CODEX_WHAM_USAGE,
+	additional_rate_limits: [
+		{
+			limit_name: "GPT-5.3-Codex-Spark",
+			metered_feature: "gpt-5.3-codex-spark",
+			rate_limit: {
+				limit_reached: true,
+				primary_window: { reset_after_seconds: 900, used_percent: 100 },
+				secondary_window: { reset_after_seconds: 1_800, used_percent: 80 },
+			},
+		},
+	],
+};
 
 const CLAUDE_MIDNIGHT_BOUNDARY_SESSION_LIMIT_EVENT = {
 	message: {
@@ -140,6 +183,8 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.at).toBe(1_000_000 + 60_000);
 		expect(decision.steerMessage).toBe(RATE_LIMIT_STEER_MESSAGE);
 		expect(decision.hash).toContain("%41");
+		expect(decision.resetSource).toBe("backoff-only");
+		expect(decision.degradedResetSource).toBe(true);
 	});
 
 	test("ladder advances with the attempt counter", () => {
@@ -190,6 +235,8 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
 		// Ladder[0]=60s ⇒ 60_000ms; explicit=90_000ms ⇒ wins.
 		expect(decision.at).toBe(10_000 + 90_000);
+		expect(decision.resetSource).toBe("sdk-rate-limit-event");
+		expect(decision.degradedResetSource).toBe(false);
 	});
 
 	test("explicit retry_after in seconds wins over a smaller ladder step", () => {
@@ -208,7 +255,7 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.at).toBe(180_000);
 	});
 
-	test("Claude session-limit prose schedules at the reset instant plus margin", () => {
+	test("Claude session-limit prose schedules only as a degraded reset fallback", () => {
 		expect(classifyRateLimitEvent(CLAUDE_SESSION_LIMIT_EVENT)).toEqual({ isRateLimitEvent: true });
 		expect(extractResetAtMs(CLAUDE_SESSION_LIMIT_EVENT, SESSION_LIMIT_NOW)).toBe(SESSION_LIMIT_RESET_AT);
 		const decision = decideRateLimitRetry({
@@ -221,6 +268,69 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.kind).toBe("retry-at");
 		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
 		expect(decision.at).toBe(SESSION_LIMIT_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
+		expect(decision.resetSource).toBe("prose-fallback");
+		expect(decision.degradedResetSource).toBe(true);
+	});
+
+	test("Claude usage endpoint reset wins over localized prose reset", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: CLAUDE_SESSION_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: SESSION_LIMIT_NOW,
+					paneId: "%41",
+					usageSnapshot: module.normalizeQuotaSnapshot("claude", "usage-endpoint", CLAUDE_USAGE_RESPONSE, SESSION_LIMIT_NOW),
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(STRUCTURED_USAGE_RESET_AT + RATE_LIMIT_RESET_MARGIN_MS);
+			expect(decision.resetSource).toBe("usage-endpoint");
+			expect(decision.degradedResetSource).toBe(false);
+		}
+	});
+
+	test("Codex wham usage primary/secondary windows select highest utilization future reset", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: OPENAI_CODEX_RATE_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%99",
+					usageSnapshot: module.normalizeQuotaSnapshot("codex", "usage-endpoint", CODEX_WHAM_USAGE, 1_000),
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(1_000 + 600_000 + RATE_LIMIT_RESET_MARGIN_MS);
+			expect(decision.resetSource).toBe("usage-endpoint");
+		}
+	});
+
+	test("Codex additional_rate_limits model window wins when model matches", () => {
+		for (const { module, name } of DECISION_MODULES) {
+			const decision = module.decideRateLimitRetry(
+				{
+					attempt: 0,
+					event: OPENAI_CODEX_RATE_LIMIT_EVENT,
+					lastRetryAt: null,
+					now: 1_000,
+					paneId: "%99",
+					usageSnapshot: module.normalizeQuotaSnapshot("codex", "usage-endpoint", CODEX_WHAM_MODEL_USAGE, 1_000),
+				},
+				{ backoffLadderSec: [1], maxAttempts: 3 },
+			);
+			expect(decision.kind).toBe("retry-at");
+			if (decision.kind !== "retry-at") throw new Error(`expected retry-at for ${name}`);
+			expect(decision.at).toBe(1_000 + 900_000 + RATE_LIMIT_RESET_MARGIN_MS);
+			expect(decision.resetSource).toBe("usage-endpoint");
+		}
 	});
 
 	test("clock-only reset prose just after reset stays in the current reset window", () => {
@@ -283,6 +393,8 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.kind).toBe("retry-at");
 		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
 		expect(decision.at).toBe(resetAtMs + RATE_LIMIT_RESET_MARGIN_MS);
+		expect(decision.resetSource).toBe("sdk-rate-limit-event");
+		expect(decision.degradedResetSource).toBe(false);
 	});
 
 	test("ladder still wins when explicit retry_after is smaller (don't retry too early)", () => {

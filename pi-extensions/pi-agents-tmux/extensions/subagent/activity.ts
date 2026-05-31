@@ -144,7 +144,7 @@ function detailsFor(type: string, eventName: string, payload: Record<string, unk
 		reason: payload.reason,
 		status: payload.status,
 	};
-	for (const key of ["runtimeRoot", "transcriptPath", "completionPath", "sessionFile", "sessionKey", "sessionMode", "model", "effort", "error", "cwdPid", "expectedCwd", "actualCwd", "actualCwdRaw", "cwdReason"] as const) {
+	for (const key of ["runtimeRoot", "transcriptPath", "completionPath", "sessionFile", "sessionKey", "sessionMode", "model", "effort", "error", "cwdPid", "expectedCwd", "actualCwd", "actualCwdRaw", "cwdReason", "reset_source", "reset_at_ms", "degraded_reset_source"] as const) {
 		if (payload[key] !== undefined) details[key] = payload[key];
 	}
 	const cwdSnapshot = cwdSnapshotDetails(payload.cwdSnapshot);

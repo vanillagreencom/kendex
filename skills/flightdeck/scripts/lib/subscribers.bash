@@ -274,6 +274,38 @@ pi_rate_limit_retry_state_file_for_pane() {
   echo "${FD_STATE_DIR}/pi-rate-limit-retry-$(printf '%s' "$1" | sha256sum | awk '{print substr($1,1,16)}').state"
 }
 
+pi_rate_limit_tombstone_retry_file() {
+  local state_file="$1" pane_id="$2" reason="$3" pane_log="${4:-}" active_state="${5:-}" active_nonce="${6:-}"
+  local tombstone_tmp tombstone cleanup_error="" still_armed=0 current_after
+  tombstone=$(printf 'cancelled\t%s\t%s\t%s\n' "$reason" "$(date +%s%3N)" "$active_nonce")
+  if [[ -e "$state_file" ]]; then
+    tombstone_tmp="${state_file}.${BASHPID:-$$}.cancel"
+    if printf '%s' "$tombstone" > "$tombstone_tmp" 2>/dev/null && mv -f "$tombstone_tmp" "$state_file" 2>/dev/null; then
+      :
+    else
+      cleanup_error="tombstone-failed"
+      rm -f "$tombstone_tmp" 2>/dev/null || true
+    fi
+  fi
+  if ! rm -f "$state_file" 2>/dev/null; then
+    cleanup_error="${cleanup_error:+$cleanup_error,}unlink-failed"
+  fi
+  current_after=$(cat "$state_file" 2>/dev/null || true)
+  if [[ -n "$active_state" && "$current_after" == "$active_state" ]]; then
+    still_armed=1
+    cleanup_error="${cleanup_error:+$cleanup_error,}still-armed"
+  elif [[ -z "$active_state" && -n "$current_after" && "$current_after" != cancelled$'\t'* ]]; then
+    still_armed=1
+    cleanup_error="${cleanup_error:+$cleanup_error,}still-armed"
+  fi
+  if [[ -n "$cleanup_error" && -n "$pane_log" ]]; then
+    printf '%s [pi-rate-limit-retry-cleanup-error] pane=%s reason=%s error=%s state=%s nonce=%s\n' \
+      "$(date -Iseconds)" "$pane_id" "$reason" "$cleanup_error" "$state_file" "$active_nonce" \
+      >> "$pane_log" 2>/dev/null || true
+  fi
+  (( still_armed == 0 ))
+}
+
 pi_rate_limit_dispatch_after_delay() {
   local delay="$1" state_file="$2" expected_state="$3" parent_pid="$4" expected_pi_pid="$5" expected_session="$6" expected_socket="$7" expected_subscriber_pid="$8" pi_bin="$9"
   shift 9
@@ -297,6 +329,8 @@ pi_rate_limit_dispatch_after_delay() {
     actual_socket=$(jq -r '.state.socket // .state.socketPath // .data.socket // .data.socketPath // .socket // .socketPath // ""' <<< "$state" 2>/dev/null)
     [[ "$actual_socket" == "$expected_socket" ]] || exit 0
   fi
+  current=$(cat "$state_file" 2>/dev/null || true)
+  [[ "$current" == "$expected_state" ]] || exit 0
   "$pi_bin" send "$@" --steer "API rate limit was detected. Try to continue from where you left off." >/dev/null 2>&1
 }
 
@@ -434,30 +468,8 @@ pi_subscriber_loop() {
   pi_rate_limit_clear_retry() {
     local reason="${1:-cleared}"
     local active_nonce="$rate_limit_retry_nonce" active_state="$rate_limit_retry_expected_state"
-    local tombstone_tmp tombstone cleanup_error="" still_armed=0 current_after
-    tombstone=$(printf 'cancelled\t%s\t%s\t%s\n' "$reason" "$(date +%s%3N)" "$active_nonce")
-    if [[ -e "$rate_limit_retry_state_file" ]]; then
-      tombstone_tmp="${rate_limit_retry_state_file}.${BASHPID:-$$}.cancel"
-      if printf '%s' "$tombstone" > "$tombstone_tmp" 2>/dev/null && mv -f "$tombstone_tmp" "$rate_limit_retry_state_file" 2>/dev/null; then
-        :
-      else
-        cleanup_error="tombstone-failed"
-        rm -f "$tombstone_tmp" 2>/dev/null || true
-      fi
-    fi
-    if ! rm -f "$rate_limit_retry_state_file" 2>/dev/null; then
-      cleanup_error="${cleanup_error:+$cleanup_error,}unlink-failed"
-    fi
-    current_after=$(cat "$rate_limit_retry_state_file" 2>/dev/null || true)
-    if [[ -n "$active_state" && "$current_after" == "$active_state" ]]; then
-      still_armed=1
-      cleanup_error="${cleanup_error:+$cleanup_error,}still-armed"
-    fi
-    if [[ -n "$cleanup_error" ]]; then
-      printf '%s [pi-rate-limit-retry-cleanup-error] pane=%s reason=%s error=%s state=%s nonce=%s\n' \
-        "$(date -Iseconds)" "$pane_id" "$reason" "$cleanup_error" "$rate_limit_retry_state_file" "$active_nonce" \
-        >> "$sub_log" 2>/dev/null || true
-    fi
+    local still_armed=0
+    pi_rate_limit_tombstone_retry_file "$rate_limit_retry_state_file" "$pane_id" "$reason" "$sub_log" "$active_state" "$active_nonce" || still_armed=1
     if (( still_armed == 0 )) && [[ -n "$active_nonce" ]]; then
       printf '%s [pi-rate-limit-retry-cancelled] pane=%s reason=%s nonce=%s\n' \
         "$(date -Iseconds)" "$pane_id" "$reason" "$active_nonce" \
@@ -470,11 +482,12 @@ pi_subscriber_loop() {
   }
 
   pi_rate_limit_emit_event() {
-    local tag="$1" event_type="$2" hash="$3" reason="${4:-}" attempt="${5:-}" next_retry_at="${6:-}" error="${7:-}" rc="${8:-}"
-    local attempt_json="null" next_retry_at_json="null" rc_json="null"
+    local tag="$1" event_type="$2" hash="$3" reason="${4:-}" attempt="${5:-}" next_retry_at="${6:-}" error="${7:-}" rc="${8:-}" reset_source="${9:-}" degraded_reset_source="${10:-}"
+    local attempt_json="null" next_retry_at_json="null" rc_json="null" degraded_json="null"
     [[ "$attempt" =~ ^[0-9]+$ ]] && attempt_json="$attempt"
     [[ "$next_retry_at" =~ ^[0-9]+$ ]] && next_retry_at_json="$next_retry_at"
     [[ "$rc" =~ ^[0-9]+$ ]] && rc_json="$rc"
+    [[ "$degraded_reset_source" == "true" || "$degraded_reset_source" == "false" ]] && degraded_json="$degraded_reset_source"
     ( exec 219>"$SESSION_LOCK"
       flock 219
       jq -nc --arg ts "$(date -Iseconds)" \
@@ -485,14 +498,18 @@ pi_subscriber_loop() {
              --arg event_type "$event_type" \
              --arg reason "$reason" \
              --arg error "$error" \
+             --arg reset_source "$reset_source" \
              --argjson attempt "$attempt_json" \
              --argjson next_retry_at "$next_retry_at_json" \
+             --argjson degraded_reset_source "$degraded_json" \
              --argjson rc "$rc_json" \
              '{ts:$ts, pane_id:$pid, harness:$harness, event_type:$event_type, classifier_tag:$tag, hash:$h}
               + (if $reason == "" then {} else {reason:$reason} end)
               + (if $error == "" then {} else {error:$error} end)
+              + (if $reset_source == "" then {} else {reset_source:$reset_source} end)
               + (if $attempt == null then {} else {attempt:$attempt} end)
               + (if $next_retry_at == null then {} else {next_retry_at:$next_retry_at} end)
+              + (if $degraded_reset_source == null then {} else {degraded_reset_source:$degraded_reset_source} end)
               + (if $rc == null then {} else {exit_code:$rc} end)' \
              >> "$WAKE_EVENTS_LOG"
     )
@@ -676,13 +693,16 @@ pi_subscriber_loop() {
           if [[ "$rl_kind" == "retry-at" ]]; then
             rl_at=$(jq -r '.at // 0' <<< "$rl_decision" 2>/dev/null)
             rl_attempt_next=$(jq -r '.attempt // 0' <<< "$rl_decision" 2>/dev/null)
+            local rl_reset_source rl_degraded_reset_source
+            rl_reset_source=$(jq -r '.resetSource // ""' <<< "$rl_decision" 2>/dev/null)
+            rl_degraded_reset_source=$(jq -r '.degradedResetSource // empty' <<< "$rl_decision" 2>/dev/null)
             rate_limit_attempt="$rl_attempt_next"
             local rl_hash rl_now_ms rl_delay_ms
             rl_now_ms=$(date +%s%3N)
             rl_delay_ms=$(( rl_at - rl_now_ms ))
             (( rl_delay_ms < 0 )) && rl_delay_ms=0
             rl_hash=$(printf '%s|rate-limit|%s|%s' "$pane_id" "$rl_attempt_next" "$rl_at" | sha256sum | awk '{print substr($1,1,12)}')
-            pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry" "$rl_hash" "" "$rl_attempt_next" "$rl_at"
+            pi_rate_limit_emit_event "pi-rate-limit-retry" "rate_limit_retry" "$rl_hash" "" "$rl_attempt_next" "$rl_at" "" "" "$rl_reset_source" "$rl_degraded_reset_source"
             # Detached steer dispatcher: sleep, then validate a nonce file
             # before delivering via pi-bridge. Healthy/completed turns remove
             # the nonce, so long session-limit reset timers cannot steer a
@@ -697,8 +717,8 @@ pi_subscriber_loop() {
             rl_state_tmp="${rate_limit_retry_state_file}.${BASHPID:-$$}.tmp"
             if printf '%s\n' "$rl_expected_state" > "$rl_state_tmp" 2>/dev/null && mv -f "$rl_state_tmp" "$rate_limit_retry_state_file" 2>/dev/null; then
               ( nohup bash "${BASH_SOURCE[0]}" pi-rate-limit-dispatch "$rl_delay_sec" "$rate_limit_retry_state_file" "$rl_expected_state" "$parent_pid" "$pi_pid" "$expected_pi_session_id" "$pi_socket" "$rl_subscriber_pid" "$pi_bin" "${pi_target_args[@]}" >/dev/null 2>&1 & ) >/dev/null 2>&1
-              printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s expected_session=%s pi_pid=%s socket=%s subscriber_pid=%s\n' \
-                "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$rl_subscriber_pid" \
+              printf '%s [pi-rate-limit-scheduled] pane=%s attempt=%s delay_sec=%s nonce=%s state=%s expected_session=%s pi_pid=%s socket=%s subscriber_pid=%s reset_source=%s degraded=%s\n' \
+                "$(date -Iseconds)" "$pane_id" "$rl_attempt_next" "$rl_delay_sec" "$rate_limit_retry_nonce" "$rate_limit_retry_state_file" "$expected_pi_session_id" "$pi_pid" "$pi_socket" "$rl_subscriber_pid" "$rl_reset_source" "$rl_degraded_reset_source" \
                 >> "$sub_log" 2>/dev/null || true
             else
               rm -f "$rl_state_tmp" 2>/dev/null || true
@@ -1022,12 +1042,12 @@ cx_subscriber_loop() {
 # Each subscriber dispatch is enclosed in `setsid` so the subscriber
 # + its pipeline children share one pgroup we can kill atomically.
 start_watchdog() {
-  local parent_pid="$1" sub_pgid="$2" pane_log="$3" cleanup_file="${4:-}"
+  local parent_pid="$1" sub_pgid="$2" pane_log="$3" cleanup_file="${4:-}" cleanup_pane="${5:-$sub_pgid}"
   (
     while kill -0 "$sub_pgid" 2>/dev/null; do
       if ! kill -0 "$parent_pid" 2>/dev/null; then
         if [[ -n "$cleanup_file" ]]; then
-          rm -f "$cleanup_file" 2>/dev/null || true
+          pi_rate_limit_tombstone_retry_file "$cleanup_file" "$cleanup_pane" "parent-gone" "$pane_log" "" "" || true
         fi
         printf '%s [parent-gone] killing subscriber pgroup %s\n' \
           "$(date -Iseconds)" "$sub_pgid" >> "$pane_log" 2>/dev/null || true
@@ -1070,12 +1090,12 @@ case "${1:-}" in
     shift
     pane_log="${LOG}.pi-sub-$(pi_pane_id_safe "$1")"
     pane_retry_state_file=$(pi_rate_limit_retry_state_file_for_pane "$1")
-    start_watchdog "$4" "$my_pgid" "$pane_log" "$pane_retry_state_file"
+    start_watchdog "$4" "$my_pgid" "$pane_log" "$pane_retry_state_file" "$1"
     parent_pid="$4"
     while kill -0 "$parent_pid" 2>/dev/null; do
       pi_subscriber_loop "$@"
       if ! kill -0 "$parent_pid" 2>/dev/null; then
-        rm -f "$pane_retry_state_file" 2>/dev/null || true
+        pi_rate_limit_tombstone_retry_file "$pane_retry_state_file" "$1" "parent-gone" "$pane_log" "" "" || true
         exit 0
       fi
       printf '%s [pi-sub-restart] pane=%s stream exited; reconnecting in 1s\n' \

@@ -9,8 +9,9 @@
  *   1. Picks a retry-at delay from the shared decideRateLimitRetry
  *      decision module in flightdeck-core (so the bash subscriber and
  *      this layer share the same backoff ladder + canonical detection).
- *      Claude session caps with `resets <time>` schedule at the reset
- *      instant plus a small safety margin instead of the short ladder.
+ *      Claude session/usage prose only classifies the event; live usage
+ *      endpoint data wins scheduling when available, SDK reset/retry
+ *      fields win next, and prose reset parsing is marked degraded.
  *   2. Schedules a `pi.sendUserMessage(STEER_MESSAGE, { deliverAs })` for that retry
  *      time. The fixed steer prose is mandated by the issue body so the
  *      child agent has a deterministic recovery signal.
@@ -37,7 +38,9 @@
 
 import {
 	RATE_LIMIT_STEER_MESSAGE,
+	classifyRateLimitEvent,
 	decideRateLimitRetry,
+	fetchProviderQuotaSnapshotFromEnv,
 	isAssistantMessageEvent,
 	rateLimitBackoffLadderFromEnv,
 	rateLimitMaxAttemptsFromEnv,
@@ -45,7 +48,7 @@ import {
 } from "./rate-limit-decision.js";
 
 export type RateLimitOutcome =
-	| { kind: "scheduled-retry"; at: number; attempt: number }
+	| { kind: "scheduled-retry"; at: number; attempt: number; degradedResetSource?: boolean; resetSource?: string }
 	| { kind: "exhausted"; attempt: number; reason: string }
 	| { kind: "not-rate-limited"; reason: string }
 	| { kind: "resolved"; previousAttempt: number }
@@ -58,6 +61,7 @@ export interface SubagentRateLimitWatchdogDeps {
 	maxAttempts: () => number;
 	backoffLadderSec: () => readonly number[];
 	sendUserMessage: (message: string) => void | Promise<void>;
+	getUsageSnapshot?: (event: unknown, paneId: string) => unknown | Promise<unknown>;
 	emitActivity: (eventName: string, payload: Record<string, unknown>) => void;
 	onExhausted: (paneId: string, attempt: number, reason: string) => void;
 	logWarn: (message: string) => void;
@@ -133,6 +137,63 @@ export function createSubagentRateLimitWatchdog(
 		}
 	}
 
+	function scheduleRetry(
+		state: PaneState,
+		paneId: string,
+		decision: Extract<ReturnType<typeof decideRateLimitRetry>, { kind: "retry-at" }>,
+	): RateLimitOutcome {
+		clearPending(state);
+		const firstDetection = state.attempt === 0;
+		const delayMs = Math.max(0, decision.at - deps.now());
+		const eventName = firstDetection ? "subagents:rate_limited" : "subagents:rate_limit_retry";
+		emit(eventName, {
+			agent: state.agentName,
+			attempt: decision.attempt,
+			degraded_reset_source: decision.degradedResetSource,
+			next_retry_at: decision.at,
+			paneId,
+			reset_at_ms: decision.resetAtMs,
+			reset_source: decision.resetSource,
+			taskId: state.taskId,
+		});
+		state.attempt = decision.attempt;
+		const fire = () => {
+			const current = panes.get(paneId);
+			if (!current || current.pendingRetry?.at !== decision.at) return;
+			current.pendingTimer = null;
+			current.pendingRetry = null;
+			try {
+				const dispatch = deps.sendUserMessage(RATE_LIMIT_STEER_MESSAGE);
+				if (dispatch && typeof (dispatch as PromiseLike<void>).then === "function") {
+					void Promise.resolve(dispatch).catch((error) => {
+						deps.logWarn(`rate-limit-watchdog: steer dispatch failed (${(error as Error)?.message ?? error})`);
+					});
+				}
+			} catch (error) {
+				deps.logWarn(`rate-limit-watchdog: steer dispatch failed (${(error as Error)?.message ?? error})`);
+			}
+		};
+		state.pendingTimer = deps.scheduleAfter(delayMs, fire);
+		state.pendingRetry = { at: decision.at, attempt: decision.attempt, fire };
+		return { at: decision.at, attempt: decision.attempt, degradedResetSource: decision.degradedResetSource, kind: "scheduled-retry", resetSource: decision.resetSource };
+	}
+
+	function usageSnapshotFor(event: unknown, paneId: string): { snapshot?: unknown; promise?: Promise<unknown> } {
+		try {
+			const provided = (deps.getUsageSnapshot ?? ((e: unknown, _p: string) => fetchProviderQuotaSnapshotFromEnv(e)))(event, paneId);
+			if (provided && typeof (provided as PromiseLike<unknown>).then === "function") {
+				return { promise: Promise.resolve(provided).catch((error) => {
+					deps.logWarn(`rate-limit-watchdog: usage endpoint lookup failed (${(error as Error)?.message ?? error})`);
+					return null;
+				}) };
+			}
+			return { snapshot: provided };
+		} catch (error) {
+			deps.logWarn(`rate-limit-watchdog: usage endpoint lookup failed (${(error as Error)?.message ?? error})`);
+			return {};
+		}
+	}
+
 	return {
 		onMessageEnd(event, paneId, agentName, taskId): RateLimitOutcome {
 			if (!deps.isEnabled()) return { kind: "skipped-disabled" };
@@ -140,16 +201,22 @@ export function createSubagentRateLimitWatchdog(
 			if (agentName) state.agentName = agentName;
 			if (taskId) state.taskId = taskId;
 
-			const decision = decideRateLimitRetry(
-				{
-					attempt: state.attempt,
-					event,
-					lastRetryAt: state.pendingRetry?.at ?? null,
-					now: deps.now(),
-					paneId,
-				},
-				{ backoffLadderSec: deps.backoffLadderSec(), maxAttempts: deps.maxAttempts() },
-			);
+			const baseAttempt = state.attempt;
+			const classification = classifyRateLimitEvent(event);
+			const usage = classification.isRateLimitEvent ? usageSnapshotFor(event, paneId) : {};
+			const decision = classification.isRateLimitEvent
+				? decideRateLimitRetry(
+					{
+						attempt: baseAttempt,
+						event,
+						lastRetryAt: state.pendingRetry?.at ?? null,
+						now: deps.now(),
+						paneId,
+						usageSnapshot: usage.snapshot,
+					},
+					{ backoffLadderSec: deps.backoffLadderSec(), maxAttempts: deps.maxAttempts() },
+				)
+				: { kind: "not-rate-limited" as const, reason: classification.reason };
 
 			if (decision.kind === "not-rate-limited") {
 				emit("subagents:rate_limit_skipped", {
@@ -198,40 +265,36 @@ export function createSubagentRateLimitWatchdog(
 				return { kind: "exhausted", attempt: exhaustedAttempt, reason: decision.reason };
 			}
 
+
 			// retry-at: cancel any pre-existing timer for the same pane (a
 			// follow-up rate-limit before the first retry has fired) so the
-			// schedule reflects the latest decision, then arm the retry.
-			clearPending(state);
-			const firstDetection = state.attempt === 0;
-			const delayMs = Math.max(0, decision.at - deps.now());
-			const eventName = firstDetection ? "subagents:rate_limited" : "subagents:rate_limit_retry";
-			emit(eventName, {
-				agent: state.agentName,
-				attempt: decision.attempt,
-				next_retry_at: decision.at,
-				paneId,
-				taskId: state.taskId,
-			});
-			state.attempt = decision.attempt;
-			const fire = () => {
-				const current = panes.get(paneId);
-				if (!current || current.pendingRetry?.at !== decision.at) return;
-				current.pendingTimer = null;
-				current.pendingRetry = null;
-				try {
-					const dispatch = deps.sendUserMessage(RATE_LIMIT_STEER_MESSAGE);
-					if (dispatch && typeof (dispatch as PromiseLike<void>).then === "function") {
-						void Promise.resolve(dispatch).catch((error) => {
-							deps.logWarn(`rate-limit-watchdog: steer dispatch failed (${(error as Error)?.message ?? error})`);
-						});
-					}
-				} catch (error) {
-					deps.logWarn(`rate-limit-watchdog: steer dispatch failed (${(error as Error)?.message ?? error})`);
-				}
-			};
-			state.pendingTimer = deps.scheduleAfter(delayMs, fire);
-			state.pendingRetry = { at: decision.at, attempt: decision.attempt, fire };
-			return { kind: "scheduled-retry", at: decision.at, attempt: decision.attempt };
+			// schedule reflects the latest decision, then arm the retry. If a
+			// live usage endpoint lookup is still pending, keep this degraded
+			// fallback armed and reschedule only while it remains current.
+			const outcome = scheduleRetry(state, paneId, decision);
+			if (usage.promise && decision.resetSource !== "usage-endpoint") {
+				void usage.promise.then((snapshot) => {
+					if (!snapshot) return;
+					const current = panes.get(paneId);
+					if (!current || current.pendingRetry?.at !== decision.at || current.attempt !== decision.attempt) return;
+					const quotaDecision = decideRateLimitRetry(
+						{
+							attempt: baseAttempt,
+							event,
+							lastRetryAt: current.pendingRetry?.at ?? null,
+							now: deps.now(),
+							paneId,
+							usageSnapshot: snapshot,
+						},
+						{ backoffLadderSec: deps.backoffLadderSec(), maxAttempts: deps.maxAttempts() },
+					);
+					if (quotaDecision.kind !== "retry-at" || quotaDecision.resetSource !== "usage-endpoint") return;
+					scheduleRetry(current, paneId, quotaDecision);
+				}).catch((error) => {
+					deps.logWarn(`rate-limit-watchdog: usage endpoint reschedule failed (${(error as Error)?.message ?? error})`);
+				});
+			}
+			return outcome;
 		},
 		isAwaitingRetry(paneId: string): boolean {
 			return panes.get(paneId)?.pendingRetry !== null && panes.get(paneId)?.pendingRetry !== undefined;

@@ -73,13 +73,13 @@ function runDecider(event: unknown, attempt: number, paneId = "%41", now = 0): {
 	return { kind: parsed.kind, raw: parsed };
 }
 
-function writeFakePiBridge(dir: string, stateJson: string, sendLog: string): string {
+function writeFakePiBridge(dir: string, stateJson: string, sendLog: string, removeBeforeStateReturns?: string): string {
 	const bin = join(dir, "fake-pi-bridge");
 	writeFileSync(bin, [
 		"#!/usr/bin/env bash",
 		"cmd=\"$1\"; shift || true",
 		"case \"$cmd\" in",
-		`  state) cat ${JSON.stringify(stateJson)} ;;`,
+		`  state) ${removeBeforeStateReturns ? `rm -f ${JSON.stringify(removeBeforeStateReturns)}; ` : ""}cat ${JSON.stringify(stateJson)} ;;`,
 		`  send) printf '%s\\n' \"$*\" >> ${JSON.stringify(sendLog)} ;;`,
 		"  *) exit 2 ;;",
 		"esac",
@@ -90,21 +90,23 @@ function writeFakePiBridge(dir: string, stateJson: string, sendLog: string): str
 
 function runRetryDispatcher(args: {
 	retryState?: string;
+	expectedState?: string;
 	state: Record<string, unknown>;
 	expectedPid?: number | string;
 	expectedSession?: string;
 	expectedSocket?: string;
 	expectedSubscriberPid?: number | string;
+	removeRetryStateDuringState?: boolean;
 }): { sendLogText: string; status: number | null; stderr: string } {
 	const dir = mkdtempSync(join(tmpdir(), "fd-rate-limit-dispatch-"));
 	try {
 		const retryStateFile = join(dir, "retry.state");
-		const expectedState = args.retryState ?? "nonce\tsess\t123\tsock\t%41\tsub";
-		if (args.retryState !== undefined) writeFileSync(retryStateFile, expectedState);
+		const expectedState = args.expectedState ?? args.retryState ?? "nonce\tsess\t123\tsock\t%41\tsub";
+		if (args.retryState !== undefined) writeFileSync(retryStateFile, args.retryState);
 		const stateJson = join(dir, "state.json");
 		const sendLog = join(dir, "send.log");
 		writeFileSync(stateJson, JSON.stringify(args.state));
-		const fakePi = writeFakePiBridge(dir, stateJson, sendLog);
+		const fakePi = writeFakePiBridge(dir, stateJson, sendLog, args.removeRetryStateDuringState ? retryStateFile : undefined);
 		const r = spawnSync("bash", [
 			SUBSCRIBERS_BASH,
 			"pi-rate-limit-dispatch",
@@ -198,7 +200,8 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		expect(bashSrc).toContain('[[ "$actual_socket" == "$expected_socket" ]] || exit 0');
 		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subagent-completion"');
 		expect(bashSrc).toContain('pi_rate_limit_clear_retry "subscriber-stream-end"');
-		expect(bashSrc).toContain('rm -f "$cleanup_file"');
+		expect(bashSrc).toContain("pi_rate_limit_tombstone_retry_file");
+		expect(bashSrc).not.toContain('rm -f "$cleanup_file"');
 	});
 
 	test("daemon reap/dead paths clear Pi rate-limit retry state files", () => {
@@ -226,6 +229,24 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 		}
 	});
 
+	test("daemon cleanup disarms with tombstone when unlink cannot remove the file", () => {
+		const dir = mkdtempSync(join(tmpdir(), "fd-rate-limit-tombstone-"));
+		try {
+			const target = piRateLimitRetryStateFile(dir, "%41");
+			writeFileSync(target, "armed\n", { mode: 0o600 });
+			chmodSync(dir, 0o500);
+			const result = clearPiRateLimitRetryStateFile(dir, "%41", "test");
+			expect(result.disarmed).toBe(true);
+			expect(result.tombstoned).toBe(true);
+			expect(result.removed).toBe(false);
+			chmodSync(dir, 0o700);
+			expect(readFileSync(target, "utf8")).toContain("cancelled\ttest");
+		} finally {
+			try { chmodSync(dir, 0o700); } catch {}
+			rmSync(dir, { force: true, recursive: true });
+		}
+	});
+
 	test("retry dispatcher sends only when nonce, pid, session, socket, and subscriber match", () => {
 		const expectedState = `nonce\tsess\t${process.pid}\tsock\t%41\t${process.pid}`;
 		const ok = runRetryDispatcher({
@@ -241,6 +262,8 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 
 		for (const blocked of [
 			{ name: "missing retry state", retryState: undefined, state: { state: { pid: process.pid, sessionId: "sess", socket: "sock" } } },
+			{ name: "tombstoned retry state", expectedState, retryState: "cancelled\tresolved\t123\tnonce", state: { state: { pid: process.pid, sessionId: "sess", socket: "sock" } } },
+			{ name: "retry state removed during bridge state", retryState: expectedState, removeRetryStateDuringState: true, state: { state: { pid: process.pid, sessionId: "sess", socket: "sock" } } },
 			{ name: "pid mismatch", retryState: expectedState, state: { state: { pid: process.pid + 10_000, sessionId: "sess", socket: "sock" } } },
 			{ name: "session mismatch", retryState: expectedState, state: { state: { pid: process.pid, sessionId: "other", socket: "sock" } } },
 			{ name: "socket mismatch", retryState: expectedState, state: { state: { pid: process.pid, sessionId: "sess", socket: "other" } } },
@@ -251,11 +274,14 @@ describe("rate-limit wiring: bash subscriber mirror (vstack#108)", () => {
 				expectedSession: "sess",
 				expectedSocket: "sock",
 				expectedSubscriberPid: (blocked as { expectedSubscriberPid?: number }).expectedSubscriberPid ?? process.pid,
+				expectedState: (blocked as { expectedState?: string }).expectedState,
+				removeRetryStateDuringState: (blocked as { removeRetryStateDuringState?: boolean }).removeRetryStateDuringState,
 				retryState: blocked.retryState,
 				state: blocked.state,
 			});
-			expect(result.status).toBe(0);
-			expect(result.sendLogText).toBe("");
+			if (result.status !== 0 || result.sendLogText !== "") {
+				throw new Error(`${blocked.name}: status=${result.status} send=${JSON.stringify(result.sendLogText)} stderr=${JSON.stringify(result.stderr)}`);
+			}
 		}
 	});
 

@@ -10,7 +10,7 @@ import {
 	type RateLimitOutcome,
 	type SubagentRateLimitWatchdogDeps,
 } from "../extensions/subagent/rate-limit-watchdog.js";
-import { RATE_LIMIT_RESET_MARGIN_MS } from "../extensions/subagent/rate-limit-decision.js";
+import { RATE_LIMIT_RESET_MARGIN_MS, normalizeQuotaSnapshot } from "../extensions/subagent/rate-limit-decision.js";
 import { buildSubagentActivity } from "../extensions/subagent/activity.js";
 
 const CANONICAL_RATE_LIMIT_MESSAGE_END = {
@@ -52,6 +52,7 @@ const CLAUDE_SESSION_LIMIT_MESSAGE_END = {
 
 const SESSION_LIMIT_NOW = Date.UTC(2026, 4, 31, 1, 54, 56);
 const SESSION_LIMIT_RESET_AT = Date.UTC(2026, 4, 31, 2, 50, 0) + RATE_LIMIT_RESET_MARGIN_MS;
+const STRUCTURED_USAGE_RESET_AT = Date.UTC(2026, 4, 31, 3, 30, 0) + RATE_LIMIT_RESET_MARGIN_MS;
 
 const USER_STEER_ECHO_MESSAGE_END = {
 	message: {
@@ -178,7 +179,7 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.activity[0]?.payload.next_retry_at).toBe(2_000);
 	});
 
-	test("Claude session-limit prose schedules at reset time instead of ladder delay", () => {
+	test("Claude session-limit prose schedules as degraded fallback when usage source is unavailable", () => {
 		const ctx = makeDeps();
 		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
 		ctx.clockMs.value = SESSION_LIMIT_NOW;
@@ -192,6 +193,27 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		expect(ctx.scheduled[0]!.delayMs).toBe(SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW);
 		expect(ctx.activity[0]?.event).toBe("subagents:rate_limited");
 		expect(ctx.activity[0]?.payload.next_retry_at).toBe(SESSION_LIMIT_RESET_AT);
+		expect(ctx.activity[0]?.payload.reset_source).toBe("prose-fallback");
+		expect(ctx.activity[0]?.payload.degraded_reset_source).toBe(true);
+	});
+
+	test("Claude usage snapshot overrides prose reset and persists resetSource", () => {
+		const usageSnapshot = normalizeQuotaSnapshot("claude", "usage-endpoint", {
+			five_hour: { utilization: 1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT - RATE_LIMIT_RESET_MARGIN_MS).toISOString() },
+		}, SESSION_LIMIT_NOW);
+		const ctx = makeDeps({ getUsageSnapshot: () => usageSnapshot });
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = SESSION_LIMIT_NOW;
+
+		const outcome = watchdog.onMessageEnd(CLAUDE_SESSION_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		if (outcome.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(outcome.at).toBe(STRUCTURED_USAGE_RESET_AT);
+		expect(outcome.resetSource).toBe("usage-endpoint");
+		expect(outcome.degradedResetSource).toBe(false);
+		expect(ctx.scheduled[0]!.delayMs).toBe(STRUCTURED_USAGE_RESET_AT - SESSION_LIMIT_NOW);
+		expect(ctx.activity[0]?.payload.reset_source).toBe("usage-endpoint");
+		expect(ctx.activity[0]?.payload.degraded_reset_source).toBe(false);
 	});
 
 	test("healthy assistant turn before a pending retry cancels the timer and resolves", () => {
