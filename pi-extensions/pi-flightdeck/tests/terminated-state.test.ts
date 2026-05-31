@@ -731,6 +731,72 @@ test("project .env unsupported run-store assignment forms fail closed", () => {
 	}
 });
 
+test("project .env unsupported helper assignment referenced by run-store fails closed", () => {
+	const cases = [
+		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT+=-suffix\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT[0]=/tmp/unsupported\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+	];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const envText of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), envText, "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported variable reference CUSTOM_ROOT/, envText.trim());
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
+			} finally {
+				resetRunStoreCacheForTests();
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
+test("project .env array-style run-store value fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=(/tmp/unsupported)\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported shell expansion/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
 test("project .env run-store expansion uses sequential assignment order", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;

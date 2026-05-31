@@ -132,6 +132,12 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 		const key = rawKey.trim();
 		const hasAssignmentWhitespace = rawKey !== key || /^\s/.test(rawValue);
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+			const unsupportedKey = unsupportedAssignmentVariable(key);
+			if (unsupportedKey) {
+				const reason = `unsupported assignment for ${unsupportedKey} at ${path}:${lineNumber}`;
+				values.delete(unsupportedKey);
+				unsupported.set(unsupportedKey, reason);
+			}
 			if (hasRunStoreAssignment) throw new Error(`unsupported FLIGHTDECK_RUN_STORE_ROOT assignment at ${path}:${lineNumber}`);
 			continue;
 		}
@@ -164,6 +170,13 @@ function parseDotEnvNonExecuting(text: string, path: string): Map<string, string
 	return values.has("FLIGHTDECK_RUN_STORE_ROOT") ? new Map([["FLIGHTDECK_RUN_STORE_ROOT", values.get("FLIGHTDECK_RUN_STORE_ROOT") ?? ""]]) : new Map();
 }
 
+function unsupportedAssignmentVariable(key: string): string | undefined {
+	let match = /^([A-Za-z_][A-Za-z0-9_]*)\+$/.exec(key);
+	if (match) return match[1];
+	match = /^([A-Za-z_][A-Za-z0-9_]*)\[.*\]$/.exec(key);
+	return match?.[1];
+}
+
 function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
 	if (raw === "") return "";
 	let text = raw;
@@ -185,11 +198,11 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	} else if (/\s/.test(raw)) {
 		throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
 	}
-	if (/[`;&|<>]/.test(text) || text.includes("$")) {
+	if (/[`;&|<>()]/.test(text) || text.includes("$")) {
 		// Only non-executing variable expansion is supported. Command
 		// substitution, source directives, separators, pipes, and redirects
 		// are rejected rather than executed during dashboard polling.
-		if (!/^([^`;&|<>$]|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})*$/.test(text)) {
+		if (!/^([^`;&|<>$()]|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})*$/.test(text)) {
 			throw new Error(`unsupported shell expansion at ${path}:${lineNumber}`);
 		}
 	}
