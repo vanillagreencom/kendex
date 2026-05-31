@@ -431,6 +431,10 @@ describe("handler domain guards", () => {
 		expect(doc).toContain("pre-pr-review autonomous-override");
 		expect(doc).toContain("FLIGHTDECK_PRE_PR_REVIEW_HARD_CAP");
 		expect(doc).toContain('category == "fix"');
+		expect(doc).toContain('priority ∈ {"P1","P2"}');
+		expect(doc).toContain("explicit safety-critical language");
+		expect(doc).toContain("Treat `P3` / `P4` fixes as non-blocking suggestions");
+		expect(doc).toContain("Downgraded late-loop suggestions");
 		expect(doc).toContain("focused-blocker-round-<N>.md");
 		expect(doc).not.toContain('reason:"pre-pr-review-loop-stalled"');
 	});

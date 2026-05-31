@@ -24,8 +24,9 @@ This workflow is the sole owner of `domain.<KEY>.review_rounds`. Lane handlers m
 3. Do not set `paused_for_user` solely because `review_rounds > MAX`. A ready signal after the soft cap is deterministic:
    - Log decision `pre-pr-review autonomous-override round=<N> max=<MAX> hard_cap=<HARD_CAP>`.
    - Continue to § 2 and run another reviewer round so current evidence decides approve vs fix.
-4. When `review_rounds > HARD_CAP`, still do not ask the user if concrete evidence exists. Continue to § 2 for one more verification round, then § 7 routes a focused blocker/follow-up path instead of broad re-review churn. Only set `paused_for_user.reason="pre-pr-review-error"` if prior/current reports cannot be parsed or persisted and no deterministic fix/approve path can be derived.
-5. The current round number is referenced as `<N>` in subsequent steps.
+4. When `review_rounds > MAX`, enter repeated-loop severity mode: only `category == "fix"` items with `priority ∈ {"P1","P2"}` or explicit safety-critical language remain blocking. `P3` / `P4` fix items are downgraded to non-blocking suggestions for approval/audit purposes.
+5. When `review_rounds > HARD_CAP`, still do not ask the user if concrete high-priority evidence exists. Continue to § 2 for one more verification round, then § 7 routes a focused blocker/follow-up path instead of broad re-review churn. Only set `paused_for_user.reason="pre-pr-review-error"` if prior/current reports cannot be parsed or persisted and no deterministic fix/approve path can be derived.
+6. The current round number is referenced as `<N>` in subsequent steps.
 
 ---
 
@@ -103,7 +104,8 @@ For each reviewer in the selected list, exactly one task must return. For each r
 Aggregate verdict:
 
 - `pass` when no item with `category == "fix"` exists across reviewers, regardless of per-reviewer verdict. A reviewer that returned `action_required` but produced only `category == "issue"` items is non-blocking; the items are recorded as non-blocking suggestions in the approval marker.
-- `action_required` when any item has `category == "fix"`. Reviewers that return non-pass verdicts without any items are also treated as blocking (their items list is empty, but the verdict signals a failure mode the reviewer could not enumerate).
+- `action_required` before or at the soft cap when any item has `category == "fix"`. Reviewers that return non-pass verdicts without any items are also treated as blocking (their items list is empty, but the verdict signals a failure mode the reviewer could not enumerate).
+- Repeated-loop severity mode (`<N> > MAX`): `action_required` only when a `category == "fix"` item has `priority == "P1"`, `priority == "P2"`, or explicit safety-critical language in `description` / `recommendation` (`safety-critical`, `security`, `data loss`, `data corruption`, `race`, `deadlock`, `panic`, `crash`, `auth bypass`, `secret leak`). Treat `P3` / `P4` fixes as non-blocking suggestions and include them in the approval marker; they do not prevent `pre-pr-approved` or opening a PR.
 
 ---
 
@@ -116,6 +118,7 @@ When aggregate is `pass`:
    Pre-PR review passed at round <N> on <ISO8601>.
    Reviewers: <CSV>
    Issue suggestions (non-blocking): <C items in <WT_ABS>/tmp/pre-pr-review/round-<N>-*.json with category="issue">
+   Downgraded late-loop suggestions: <C P3/P4 fix items treated as non-blocking when <N> > MAX>
    ```
    On write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; do not pane-respond.
 2. `pane-respond` to the child pane with the approval instruction:
@@ -132,7 +135,7 @@ When aggregate is `pass`:
 
 When aggregate is `action_required`:
 
-1. Write `<WT_ABS>/tmp/pre-pr-review/round-<N>.md` (atomic write through a `.tmp` rename) concatenating all `category=="fix"` and `category=="issue"` items across reviewers:
+1. Write `<WT_ABS>/tmp/pre-pr-review/round-<N>.md` (atomic write through a `.tmp` rename) concatenating all blocking `category=="fix"` items and all non-blocking `category=="issue"` / downgraded late-loop `P3` / `P4` fix items across reviewers:
    ```markdown
    # Pre-PR review round <N>
 
@@ -140,13 +143,13 @@ When aggregate is `action_required`:
    - [<REVIEWER>] <location>: <description>
      - Recommendation: <recommendation>
 
-   ## Issue suggestions (non-blocking)
+   ## Issue suggestions / Downgraded late-loop nits (non-blocking)
    - [<REVIEWER>] <location>: <description>
      - Recommendation: <recommendation>
    ```
    On write failure set `paused_for_user.reason = "pre-pr-review-error"` and return; do not pane-respond.
 2. If `<N> > MAX`, log decision `pre-pr-review autonomous-override action-required round=<N> max=<MAX> blockers=<count>`. This audit row replaces the old routine user decision.
-3. If `<N> >= HARD_CAP` or the same normalized `category == "fix"` blocker repeats unchanged from the prior round, also write `<WT_ABS>/tmp/pre-pr-review/focused-blocker-round-<N>.md` with the single highest-priority repeated blocker and a `Follow-up issue suggestion` section for separable non-blocking `category == "issue"` items. Normalization key: `priority + location + lowercase(description without line numbers)`. This is deterministic routing, not approval.
+3. If `<N> >= HARD_CAP` or the same normalized blocking `category == "fix"` (`P1` / `P2` / safety-critical) blocker repeats unchanged from the prior round, also write `<WT_ABS>/tmp/pre-pr-review/focused-blocker-round-<N>.md` with the single highest-priority repeated blocker and a `Follow-up issue suggestion` section for separable non-blocking `category == "issue"` plus downgraded `P3` / `P4` late-loop nits. Normalization key: `priority + location + lowercase(description without line numbers)`. This is deterministic routing, not approval.
 4. `pane-respond` to the child pane with the fix instruction:
    ```text
    Pre-PR review round <N> found blockers. Read `tmp/pre-pr-review/round-<N>.md`, apply the fix items (issue suggestions are non-blocking), push to `<BRANCH>`, then print `PRE-PR-REVIEW-READY: tmp/ready-for-review.txt` again as the LAST line.
