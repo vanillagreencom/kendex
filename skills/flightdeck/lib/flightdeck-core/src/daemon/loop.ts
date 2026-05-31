@@ -101,6 +101,13 @@ import {
 	ownerMemHeartbeatFields,
 	probeOwnerCgroupMem,
 } from "./owner-cgroup-mem.ts";
+import { tryResolveStatePath } from "../state/master-state.ts";
+import {
+	collectMergePermissionWakeCandidatesFromFile,
+	MERGE_PERMISSION_BLOCKED_TAG,
+	MERGE_PERMISSION_MONITOR_INTERVAL_SEC,
+	MERGE_PERMISSION_MONITOR_REASON,
+} from "./merge-permission-monitor.ts";
 import { OC_LAST_ASSISTANT_JQ } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ } from "../paths/pi.ts";
@@ -207,6 +214,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const subBindSkipReason = new Map<string, string>();
 	const SUB_BIND_SKIP_LOG_INTERVAL_SEC = positiveEnvInt("FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC", 60);
 	const SUB_BIND_SKIP_STUCK_THRESHOLD = positiveEnvInt("FD_SUB_BIND_SKIP_STUCK_THRESHOLD", 12);
+	const lastMergePermissionMonitorWake = new Map<string, number>();
 
 	function recordSubscriberBindSkip(paneId: string, harness: string, reason: string, missing: string[]): void {
 		const nowSec = Math.floor(Date.now() / 1000);
@@ -860,6 +868,53 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				if (opts.verbose) log("classify", `${evPid} ${src} tag=${evTag} (non-canonical)`);
 				notifiedHash.set(evPid, evHash);
 			}
+		}
+
+		// 1b) Lane-owned deterministic poller for merge-permission markers.
+		// Permission-blocked PRs may sit in state="ready" with no pane
+		// activity after a MergePullRequest denial. Emit a synthetic
+		// canonical wake at a bounded cadence so GitHub/Plan/Linear watch
+		// layers re-run authoritative `gh pr view`, close on MERGED, or
+		// retry the merge path if capability changes.
+		try {
+			const statePath = tryResolveStatePath(opts.sessionName);
+			const candidates = collectMergePermissionWakeCandidatesFromFile({
+				statePath,
+				nowSec: now,
+				intervalSec: MERGE_PERMISSION_MONITOR_INTERVAL_SEC,
+				lastWakeByKey: lastMergePermissionMonitorWake,
+				warn: (message) => warn("merge-permission-monitor", message),
+			});
+			for (const candidate of candidates) {
+				const appended = appendEvent({
+					paneId: candidate.paneId,
+					hash: candidate.hash,
+					tag: MERGE_PERMISSION_BLOCKED_TAG,
+					reason: MERGE_PERMISSION_MONITOR_REASON,
+					ageSec: 0,
+					isBell: false,
+					extraJson: JSON.stringify(candidate.details),
+					sessionLock,
+					eventsFile,
+					wakePending,
+					lastEventKey,
+				});
+				if (!appended) continue;
+				lastMergePermissionMonitorWake.set(candidate.key, now);
+				log("classify", `${candidate.paneId} ${MERGE_PERMISSION_MONITOR_REASON} entry=${candidate.entryId} pr=${candidate.pr} tag=${MERGE_PERMISSION_BLOCKED_TAG} (canonical)`);
+				tickActivity.push({
+					classifier_tag: MERGE_PERMISSION_BLOCKED_TAG,
+					details: candidate.details,
+					event_type: MERGE_PERMISSION_MONITOR_REASON,
+					harness: "flightdeck",
+					hash: candidate.hash,
+					pane_id: candidate.paneId,
+				});
+				tickReasons.push(`scheduled:${candidate.entryId}:${MERGE_PERMISSION_BLOCKED_TAG}`);
+				tickPending.push({ paneId: candidate.paneId, hash: candidate.hash, tag: MERGE_PERMISSION_BLOCKED_TAG, isBell: false });
+			}
+		} catch (error) {
+			warn("merge-permission-monitor", (error as Error)?.message ?? String(error));
 		}
 
 		// 2) Per-inner-pane bell / hash-change / stable-age branches.

@@ -114,6 +114,8 @@ gh pr view <PR> --json state,mergeStateStatus,reviewDecision,statusCheckRollup,m
 - PR becomes `UNKNOWN`, `DIRTY`, `BEHIND`, check-failed, or review-blocked → clear or update the marker and route to the existing deterministic handler. Pause only if that handler reaches a novel/destructive condition.
 - `gh` failure follows the GitHub CLI failure policy; no merge, close, or cleanup proceeds on unavailable GitHub state.
 
+The daemon's `merge-permission-monitor` emits a synthetic `merge-permission-blocked` wake at least once per 60s while the marker persists, even if the pane is quiet. Treat that wake as a timer hint, not as a pane prompt: do not set `state="prompting"` from it and do not ask the user. On each scheduled wake, after the `gh pr view` readiness predicate passes, route the entry back through `merge-plan.md` so the same checked merge capability retry runs. If the retry still returns `MergePullRequest` / permission denied, update `merge_blocked_permission.last_checked_at` and `last_probe_at`, keep `state="ready"`, and yield for the next scheduled monitor wake. If it succeeds or queues auto-merge, verify authoritative `MERGED` + non-null `mergeCommit` before close/teardown; queued auto-merge keeps monitoring until actual `MERGED`.
+
 ---
 
 ## § 4: Issue decision routing

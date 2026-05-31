@@ -64,7 +64,7 @@ For these tags, follow the named section in `workflows/github/handle-prompt.md`,
 |-----|------------------------|-----------------|
 | `merge-now` | § 4 | Read/write `entry.domain.plan_item.pr_number`; require `mergeStateStatus === "CLEAN"` before answering Merge. |
 | `merge-ready-but-unknown` | § 5 | Preserve `entry.unknown_since`; gate wait, Merge, and force-merge transition with `FLIGHTDECK_AUTO_MERGE=0`. |
-| `merge-permission-blocked` | § 4.5 | With checked `flightdeck-state write-entry` persistence, persist `domain.plan_item.phase="merge-blocked-permission"` and `domain.plan_item.merge_blocked_permission`, set entry `state="ready"`, and keep monitoring until authoritative `MERGED` + non-null `mergeCommit`; do not set `paused_for_user` for `MergePullRequest` permission denial unless the durable marker write fails. |
+| `merge-permission-blocked` | § 4.5 | With checked `flightdeck-state write-entry` persistence, persist `domain.plan_item.phase="merge-blocked-permission"` and `domain.plan_item.merge_blocked_permission`, set entry `state="ready"`, and arm the daemon `merge-permission-monitor` scheduled wake (via the marker) so `plan/watch.md` rechecks at least once per 60s until authoritative `MERGED` + non-null `mergeCommit`; do not set `paused_for_user` for `MergePullRequest` permission denial unless the durable marker write fails. |
 | `force-merge-confirm` | § 6 | Re-run the strict force-merge predicate immediately before answering; `FLIGHTDECK_AUTO_MERGE=0` pauses instead of answering. |
 | `bot-review-wait-stuck` and issue `pi-bg-task-exit` | § 7 | Use plan PR number; never call Linear or project-management. |
 | `rebase-multi-choice` | § 8 | Same preserve / apply / verify triplet; plan item worktree is `domain.plan_item.worktree`. |

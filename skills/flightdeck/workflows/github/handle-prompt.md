@@ -89,13 +89,13 @@ A child or wrapper attempted `gh pr merge` but GitHub rejected the capability (f
    gh pr view <PR> --json state,mergeStateStatus,reviewDecision,statusCheckRollup,mergeCommit
    ```
 2. If `state === "MERGED"` and `mergeCommit !== null`, invoke `workflows/github/close-issue.md <N>` or return to watch so the terminal close path records the merge. Do not use the failed merge exit as proof.
-3. If the PR is still ready (`mergeStateStatus === "CLEAN"`, review approved or no pending reviewers, and required checks `SUCCESS` / `SKIPPED`), do not set `paused_for_user` for the permission denial itself. Persist the monitoring marker with checked persistence before returning:
+3. If the PR is still ready (`mergeStateStatus === "CLEAN"`, review approved or no pending reviewers, and required checks `SUCCESS` / `SKIPPED`), do not set `paused_for_user` for the permission denial itself. Persist the monitoring marker with checked persistence before returning; the daemon's `merge-permission-monitor` scheduled wake re-enters `github/watch.md` at least once per 60s while this marker remains:
    ```bash
    UPDATED_ENTRY_JSON=$(jq -c '.state="ready" | .domain.github_issue.phase="merge-blocked-permission" | .domain.github_issue.merge_blocked_permission={reason:"MergePullRequest permission denied", pr:<PR>, ready:true, last_checked_at:"<ISO8601>"}' <<< "$ENTRY_JSON")
    .agents/skills/flightdeck/scripts/flightdeck-state write-entry <N> "$UPDATED_ENTRY_JSON"
    .agents/skills/flightdeck/scripts/pane-registry log-decision <N> merge-permission-blocked "PR #<PR> ready; merge capability denied; monitoring for manual merge or permission/token change" || true
    ```
-   If the `write-entry` call fails, set `paused_for_user = {issue_id:<N>, reason:"merge-permission-blocked-persist-failed", prompt_text:<stderr>}` and return. The `log-decision` call is best-effort only after the durable marker write succeeds.
+   If the `write-entry` call fails, set `paused_for_user = {issue_id:<N>, reason:"merge-permission-blocked-persist-failed", prompt_text:<stderr>}` and return. The `log-decision` call is best-effort only after the durable marker write succeeds. Do not rely on the child pane emitting another prompt; the persisted marker is the poller arm.
 4. Keep monitoring GitHub authoritative state on later watch cycles. Close/teardown only after `gh pr view <PR> --json state,mergeStateStatus,mergeCommit` returns `state === "MERGED"` and `mergeCommit !== null`.
 5. If the readiness predicate is no longer true, route to the existing deterministic handler (`merge-ready-but-unknown`, conflict/behind, bot-review, or CI failure). Pause only for those handlers' novel/destructive conditions.
 

@@ -11,6 +11,7 @@ const FIXTURES = resolve(HERE, "../fixtures/prompt-classify");
 const TS_SCRIPT = resolve(HERE, "../../src/bin/prompt-classify.ts");
 const HANDLER_DOC = resolve(HERE, "../../../../workflows/shared/session-handle-prompt.md");
 const PRE_PR_REVIEW_DOC = resolve(HERE, "../../../../workflows/shared/pre-pr-review.md");
+const DEVELOPMENT_DOC = resolve(HERE, "../../../../DEVELOPMENT.md");
 const GITHUB_HANDLE_DOC = resolve(HERE, "../../../../workflows/github/handle-prompt.md");
 const GITHUB_CLOSE_DOC = resolve(HERE, "../../../../workflows/github/close-issue.md");
 const GITHUB_WATCH_DOC = resolve(HERE, "../../../../workflows/github/watch.md");
@@ -21,6 +22,8 @@ const PLAN_START_DOC = resolve(HERE, "../../../../workflows/plan/start.md");
 const PLAN_HANDLE_DOC = resolve(HERE, "../../../../workflows/plan/handle-prompt.md");
 const PLAN_CLOSE_DOC = resolve(HERE, "../../../../workflows/plan/close-item.md");
 const PLAN_WATCH_DOC = resolve(HERE, "../../../../workflows/plan/watch.md");
+const PROMPT_TAGS_DOC = resolve(HERE, "../../../../PROMPT-TAGS.md");
+const README_DOC = resolve(HERE, "../../../../README.md");
 const PLAN_TERMINATE_DOC = resolve(HERE, "../../../../workflows/plan/terminate.md");
 const PLAN_FILE_DOC = resolve(HERE, "../../../../PLAN-FILE.md");
 const SCHEMA_DOC = resolve(HERE, "../../../../SCHEMA.md");
@@ -476,6 +479,9 @@ describe("handler domain guards", () => {
 		const planWatch = readFileSync(PLAN_WATCH_DOC, "utf8");
 		const linear = readFileSync(LINEAR_MERGE_DOC, "utf8");
 		const linearWatch = readFileSync(LINEAR_WATCH_DOC, "utf8");
+		const development = readFileSync(DEVELOPMENT_DOC, "utf8");
+		const promptTags = readFileSync(PROMPT_TAGS_DOC, "utf8");
+		const readme = readFileSync(README_DOC, "utf8");
 		for (const doc of [github, plan, linear]) {
 			expect(doc).toContain("merge-permission-blocked");
 			expect(doc).toContain("MergePullRequest");
@@ -491,14 +497,26 @@ describe("handler domain guards", () => {
 			expect(watch).toContain("Merge-permission monitoring");
 			expect(watch).toContain("every watch cycle");
 			expect(watch).toContain("Do not set `paused_for_user`");
+			expect(watch).toContain("merge-permission-monitor");
+			expect(watch).toContain("at least once per 60s");
+			expect(watch).toContain("checked merge capability retry");
+			expect(watch).toContain("last_probe_at");
 		}
 		expect(github).toContain("do not set `paused_for_user`");
 		expect(github).toContain("flightdeck-state write-entry <N>");
 		expect(github).toContain("merge-permission-blocked-persist-failed");
+		expect(github).toContain("merge-permission-monitor");
 		expect(plan).toContain('set entry `state="ready"`');
 		expect(plan).toContain("checked `flightdeck-state write-entry` persistence");
+		expect(plan).toContain("merge-permission-monitor");
 		expect(linear).toContain("do not set `paused_for_user`");
 		expect(linear).toContain("permission-blocked ready PRs");
+		expect(linear).toContain("flightdeck-state write-entry <ISSUE_ID>");
+		expect(linear).toContain("merge-permission-blocked-persist-failed");
+		expect(linear).toContain("before logging or queue mutation");
+		expect(development).toContain("src/daemon/merge-permission-monitor.ts");
+		expect(promptTags).toContain("synthetic `merge-permission-monitor` timer wake");
+		expect(readme).toContain("daemon-scheduled rechecks for permission-blocked PRs");
 	});
 
 	test("github close-issue requires authoritative merged PR and merge commit", () => {
