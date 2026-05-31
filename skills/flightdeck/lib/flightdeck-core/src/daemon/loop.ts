@@ -158,7 +158,11 @@ function wakeRowString(row: WakeEventRow, ...keys: string[]): string {
 }
 
 function wakeRowEventIdentity(row: WakeEventRow): string {
-	return wakeRowString(row, "event_identity", "rawEventRef", "raw_event_ref", "sequence");
+	const explicit = wakeRowString(row, "event_identity", "rawEventRef", "raw_event_ref");
+	if (explicit) return explicit;
+	const eventType = wakeRowString(row, "event_type");
+	if (eventType === "message_end" || eventType === "agent_end") return wakeRowString(row, "sequence");
+	return "";
 }
 
 // pane-registry helpers were moved to ./pane-registry.ts (W5 reviewer

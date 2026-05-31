@@ -860,11 +860,12 @@ pi_subscriber_loop() {
         jq -nc --arg ts "$(date -Iseconds)" \
                --arg pid "$pane_id" \
                --arg harness "pi" \
+               --arg event_type "$event_name" \
                --arg text "$text_excerpt" \
                --arg tag "$tag" \
                --arg h "$hash" \
                --arg event_identity "$event_identity" \
-               '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
+               '{ts:$ts, pane_id:$pid, harness:$harness, event_type:$event_type, last_assistant_text:$text, classifier_tag:$tag, hash:$h}
                 + (if $event_identity == "" then {} else {event_identity:$event_identity} end)' \
                >> "$WAKE_EVENTS_LOG"
       ) 2>&1 ) || append_rc=$?
