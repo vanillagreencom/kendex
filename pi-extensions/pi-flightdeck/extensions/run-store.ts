@@ -83,9 +83,11 @@ export interface ActiveRunStateResolution {
 }
 
 const PROJECT_ID_CACHE = new Map<string, string>();
+const DOT_ENV_LOADED_FOR = new Set<string>();
 
 export function resetRunStoreCacheForTests(): void {
 	PROJECT_ID_CACHE.clear();
+	DOT_ENV_LOADED_FOR.clear();
 }
 
 function sha256(value: string): string {
@@ -110,7 +112,106 @@ function nonEmpty(value: unknown): string | undefined {
 	return trimmed ? trimmed : undefined;
 }
 
-function runStoreRoot(): string {
+function usesShellFeatures(text: string): boolean {
+	for (const rawLine of text.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		if (/[$`;|&<>(){}]/.test(line)) return true;
+		if (line.endsWith("\\")) return true;
+		if (line.includes("\\")) return true;
+		const stripped = line.replace(/^export\s+/, "");
+		if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(stripped)) return true;
+		const eq = stripped.indexOf("=");
+		const rhs = stripped.slice(eq + 1).trim();
+		const fullyQuoted = (rhs.startsWith('"') && rhs.endsWith('"') && rhs.length >= 2) ||
+			(rhs.startsWith("'") && rhs.endsWith("'") && rhs.length >= 2);
+		if (!fullyQuoted && /\s#/.test(rhs)) return true;
+		if (!fullyQuoted && /\s/.test(rhs)) return true;
+	}
+	return false;
+}
+
+function loadDotEnvNative(text: string): void {
+	for (const rawLine of text.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		const stripped = line.replace(/^export\s+/, "");
+		const eq = stripped.indexOf("=");
+		if (eq <= 0) continue;
+		const key = stripped.slice(0, eq).trim();
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+		let value = stripped.slice(eq + 1).trim();
+		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+		(process.env as Record<string, string>)[key] = value;
+	}
+}
+
+function loadProjectDotEnvIntoProcess(projectRoot: string): void {
+	const root = resolve(projectRoot);
+	if (DOT_ENV_LOADED_FOR.has(root)) return;
+	DOT_ENV_LOADED_FOR.add(root);
+	const envLocal = join(root, ".env.local");
+	const envBase = join(root, ".env");
+	const target = existsSync(envLocal) ? envLocal : existsSync(envBase) ? envBase : "";
+	if (!target) return;
+	let text = "";
+	try {
+		text = readFileSync(target, "utf8");
+	} catch (error) {
+		throw new Error(`.env read failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!usesShellFeatures(text)) {
+		loadDotEnvNative(text);
+		return;
+	}
+	const script = `
+		set -euo pipefail
+		set -a
+		source "$1"
+		set +a
+		env -0
+	`;
+	const r = spawnSync("bash", ["-c", script, "_", target], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
+	if (r.status !== 0) throw new Error(`.env load failed: ${r.stderr ?? ""}`);
+	const diffScript = `
+		set -euo pipefail
+		before=$(mktemp)
+		after=$(mktemp)
+		compgen -v | sort > "$before"
+		set -a
+		source "$1"
+		set +a
+		compgen -v | sort > "$after"
+		comm -13 "$before" "$after"
+		rm -f "$before" "$after"
+	`;
+	const diffR = spawnSync("bash", ["-c", diffScript, "_", target], { encoding: "utf8", env: process.env as NodeJS.ProcessEnv });
+	const declared = new Set<string>();
+	if (diffR.status === 0) {
+		for (const raw of (diffR.stdout ?? "").split("\n")) {
+			const key = raw.trim();
+			if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) declared.add(key);
+		}
+	} else {
+		for (const raw of text.split(/\r?\n/)) {
+			const line = raw.trim();
+			if (!line || line.startsWith("#")) continue;
+			const stripped = line.replace(/^export\s+/, "");
+			const eq = stripped.indexOf("=");
+			const key = eq > 0 ? stripped.slice(0, eq).trim() : "";
+			if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) declared.add(key);
+		}
+	}
+	for (const entry of (r.stdout ?? "").split("\0")) {
+		const eq = entry.indexOf("=");
+		if (eq <= 0) continue;
+		const key = entry.slice(0, eq);
+		if (declared.has(key)) (process.env as Record<string, string>)[key] = entry.slice(eq + 1);
+	}
+}
+
+function runStoreRoot(projectRoot: string): string {
+	loadProjectDotEnvIntoProcess(projectRoot);
 	const override = nonEmpty(process.env.FLIGHTDECK_RUN_STORE_ROOT);
 	if (override) return resolve(expandHome(override));
 	return join(homedir(), ".vstack", "flightdeck");
@@ -158,7 +259,7 @@ function projectIdentity(projectRoot: string): ProjectIdentity {
 }
 
 function projectRunPaths(identity: ProjectIdentity): ProjectRunPaths {
-	const root = runStoreRoot();
+	const root = runStoreRoot(identity.root_path);
 	const projectDir = join(root, "projects", identity.project_id);
 	return {
 		active_run_json: join(projectDir, "active-run.json"),
@@ -190,7 +291,10 @@ export function resolveActiveRunStatePath(projectRoot: string, tmuxSession: stri
 		if (!assertStorageDirectoryIfExists(join(paths.store_root, "projects"), "run-store projects dir", "ancestor")) return {};
 		if (!assertStorageDirectoryIfExists(paths.project_dir, "project directory")) return {};
 		const project = readProjectIndex(paths.project_json);
-		if (!project) return {};
+		if (!project) {
+			if (hasDurableProjectArtifacts(paths, session)) return { diagnosticPath: paths.project_json, error: `project index missing while durable run artifacts exist: ${paths.project_json}` };
+			return {};
+		}
 		validateProjectIndexIdentity(project, identity, paths.project_json);
 
 		const activeRead = readActivePointerForSession(paths, session);
@@ -211,6 +315,26 @@ export function resolveActiveRunStatePath(projectRoot: string, tmuxSession: stri
 		return { diagnosticPath: activeRead.path, statePath: activePaths.state_json };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+function hasDurableProjectArtifacts(paths: ProjectRunPaths, session: string): boolean {
+	if (assertStorageFileIfExists(paths.active_run_json, "active run pointer")) return true;
+	if (assertStorageDirectoryIfExists(paths.active_runs_dir, "active runs directory")) {
+		if (assertStorageFileIfExists(join(paths.active_runs_dir, `${session}.json`), "active run pointer")) return true;
+		if (safeDirectoryEntries(paths.active_runs_dir).some((entry) => isSafeBasename(entry))) return true;
+	}
+	if (assertStorageDirectoryIfExists(paths.runs_dir, "runs directory")) {
+		if (safeDirectoryEntries(paths.runs_dir).some((entry) => isSafeBasename(entry))) return true;
+	}
+	return false;
+}
+
+function safeDirectoryEntries(path: string): string[] {
+	try {
+		return readdirSync(path);
+	} catch (error) {
+		throw new Error(`failed to read directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 

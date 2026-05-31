@@ -486,6 +486,89 @@ test("buildSnapshotFromInputs prefers durable active run over stale legacy live 
 	}
 });
 
+test("buildSnapshotFromInputs honors FLIGHTDECK_RUN_STORE_ROOT from .env.local over stale legacy live file", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-env-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `FLIGHTDECK_RUN_STORE_ROOT=${runStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-12T00:00:00Z",
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-13T00:30:00Z",
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(readTrackedEntries(snapshot.master).length, 0);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, ".env run-store active run must not be shadowed by stale legacy state");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs fails closed when project index is missing but active pointer exists", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const identity = projectIdentityForTest(projectRoot);
+		const projectDir = join(runStoreRoot, "projects", identity.projectId);
+		const runDir = join(projectDir, "runs", "run-current");
+		mkdirSync(join(projectDir, "active-runs"), { recursive: true });
+		mkdirSync(runDir, { recursive: true });
+		writeJson0600(join(projectDir, "active-runs", "HT.json"), {
+			activity_path: join(runDir, "activity.jsonl"),
+			project_id: identity.projectId,
+			run_id: "run-current",
+			schema_version: 1,
+			state_path: join(runDir, "state.json"),
+			tmux_session: "HT",
+			updated_at: "2026-05-13T00:30:00Z",
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /project index missing while durable run artifacts exist/);
+		assert.ok(snapshot.masterStatePath?.endsWith("project.json"));
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
 test("buildSnapshotFromInputs fails closed when active run state file is missing", () => {
 	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
 	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
