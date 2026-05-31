@@ -56,6 +56,7 @@ const SCHEDULE_COMPLETIONS: AutocompleteItem[] = [
 	{ value: "list", label: "list", description: "Show pending scheduled messages" },
 	{ value: "cancel ", label: "cancel <id|all>", description: "Cancel one scheduled message or all pending messages" },
 	{ value: "20m ", label: "20m <message>", description: "Send a message after 20 minutes" },
+	{ value: "1h30m ", label: "1h30m <message>", description: "Send a message after 1 hour 30 minutes" },
 	{ value: "1h ", label: "1h <message>", description: "Send a message after 1 hour" },
 ];
 
@@ -66,23 +67,45 @@ export function getScheduleArgumentCompletions(prefix: string): AutocompleteItem
 }
 
 export function parseDurationMs(input: string): number | undefined {
-	const match = input.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)?$/);
-	if (!match) return undefined;
-	const amount = Number(match[1]);
-	if (!Number.isFinite(amount) || amount <= 0) return undefined;
-	const unit = match[2] ?? "m";
-	const multiplier = unit === "ms"
-		? 1
-		: ["s", "sec", "secs", "second", "seconds"].includes(unit)
-			? 1000
-			: ["h", "hr", "hrs", "hour", "hours"].includes(unit)
-				? 60 * 60 * 1000
-				: ["d", "day", "days"].includes(unit)
-					? 24 * 60 * 60 * 1000
-					: 60 * 1000;
-	const delayMs = Math.round(amount * multiplier);
+	const text = input.trim().toLowerCase();
+	if (!text) return undefined;
+	if (/^\d+(?:\.\d+)?$/.test(text)) return clampScheduleDelay(Number(text) * 60 * 1000);
+
+	let totalMs = 0;
+	let matched = false;
+	let previousRank = Number.POSITIVE_INFINITY;
+	const seenUnits = new Set<string>();
+	const re = /(\d+(?:\.\d+)?)(ms|seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|d)/gy;
+
+	while (re.lastIndex < text.length) {
+		const match = re.exec(text);
+		if (!match) return undefined;
+		const amount = Number(match[1]);
+		const unit = scheduleUnit(match[2]);
+		if (!Number.isFinite(amount) || amount < 0 || !unit) return undefined;
+		if (seenUnits.has(unit.name) || unit.rank >= previousRank) return undefined;
+		seenUnits.add(unit.name);
+		previousRank = unit.rank;
+		totalMs += amount * unit.multiplier;
+		matched = true;
+	}
+
+	const delayMs = Math.round(totalMs);
+	return matched ? clampScheduleDelay(delayMs) : undefined;
+}
+
+function clampScheduleDelay(delayMs: number): number | undefined {
 	if (!Number.isFinite(delayMs) || delayMs <= 0 || delayMs > MAX_SCHEDULE_DELAY_MS) return undefined;
 	return delayMs;
+}
+
+function scheduleUnit(unit: string): { multiplier: number; name: string; rank: number } | undefined {
+	if (unit === "ms") return { multiplier: 1, name: "ms", rank: 0 };
+	if (["s", "sec", "secs", "second", "seconds"].includes(unit)) return { multiplier: 1000, name: "s", rank: 1 };
+	if (["m", "min", "mins", "minute", "minutes"].includes(unit)) return { multiplier: 60 * 1000, name: "m", rank: 2 };
+	if (["h", "hr", "hrs", "hour", "hours"].includes(unit)) return { multiplier: 60 * 60 * 1000, name: "h", rank: 3 };
+	if (["d", "day", "days"].includes(unit)) return { multiplier: 24 * 60 * 60 * 1000, name: "d", rank: 4 };
+	return undefined;
 }
 
 export function parseScheduleCommandArgs(args: string): ParsedScheduleCommand {
@@ -131,7 +154,8 @@ function usageText(): string {
 	return [
 		"Usage: /schedule <duration> <message>",
 		"Examples: /schedule 20m retry the previous request",
-		"          /schedule 1h retry after the rate limit reset",
+		"          /schedule 1h30m retry after the rate limit reset",
+		"Durations: 20, 20m, 90s, 500ms, 1h45m30s (bare numbers mean minutes)",
 		"Manage: /schedule list, /schedule cancel <id|all>",
 	].join("\n");
 }
