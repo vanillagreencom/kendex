@@ -667,30 +667,52 @@ exit 1
 
 	test("tmux-window mode propagates env to the child window (round-4 #4)", async () => {
 		// Regression: tmux new-window dispatch must explicitly pass
-		// FD_STATE_DIR into the child env. tmux server doesn't inherit
+		// daemon env into the child env. tmux server doesn't inherit
 		// caller env; without the explicit env wiring the child wrote
 		// state to the default dir (not our isolated stateDir) and the
 		// caller's dispatch timed out after 10s waiting for a pid file.
-		const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId, "--in-tmux-window"]);
-		expect(r.status).toBe(0);
-		expect(r.stdout).toContain("mode=tmux-window");
-		// Child must have written its pid into OUR isolated stateDir,
-		// proving FD_STATE_DIR was propagated through the tmux dispatch.
-		const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
-		expect(existsSync(pidFile)).toBe(true);
-		const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-		expect(pidAlive(pid)).toBe(true);
-		const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
-		await sleep(500);
-		expect(existsSync(logFile)).toBe(true);
-		const foundWindow = runDaemon("find-window");
-		expect(foundWindow.status).toBe(0);
-		const windowName = spawnSync("tmux", ["display-message", "-p", "-t", foundWindow.stdout.trim(), "#{window_name}"], { encoding: "utf8" }).stdout.trim();
-		expect(windowName).toBe(`[fd] daemon-${SESSION_KEY}`);
-		runDaemon("stop");
-		await sleep(300);
-		// Kill the tmux daemon window if it's still around.
-		spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
+		// Round-5: timeout + busy-stall knobs must also ride this path.
+		const forwardedEnv = {
+			FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC: "7.01",
+			FD_BUSY_STALL_CLK_TCK: "1234",
+			FD_BUSY_STALL_CPU_PCT: "66.6",
+			FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC: "8.02",
+			FD_BUSY_STALL_THRESHOLD_SEC: "9.03",
+			FD_BUSY_STALL_WATCHDOG: "0",
+			FD_PANE_REGISTRY_READ_TIMEOUT_SEC: "1.23",
+			FD_PI_BRIDGE_READ_TIMEOUT_SEC: "0.42",
+		};
+		const saved = Object.fromEntries(Object.keys(forwardedEnv).map((key) => [key, process.env[key]]));
+		for (const [key, value] of Object.entries(forwardedEnv)) process.env[key] = value;
+		try {
+			const r = runDaemon("start", ["--master", MASTER_PANE, "--inner", innerPaneId, "--in-tmux-window"]);
+			expect(r.status).toBe(0);
+			expect(r.stdout).toContain("mode=tmux-window");
+			// Child must have written its pid into OUR isolated stateDir,
+			// proving FD_STATE_DIR was propagated through the tmux dispatch.
+			const pidFile = join(stateDir, `fd-daemon-${SESSION_KEY}.pid`);
+			expect(existsSync(pidFile)).toBe(true);
+			const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+			expect(pidAlive(pid)).toBe(true);
+			const childEnv = readFileSync(`/proc/${pid}/environ`, "utf8");
+			for (const [key, value] of Object.entries(forwardedEnv)) expect(childEnv).toContain(`${key}=${value}\0`);
+			const logFile = join(stateDir, `fd-daemon-${SESSION_KEY}.log`);
+			await sleep(500);
+			expect(existsSync(logFile)).toBe(true);
+			const foundWindow = runDaemon("find-window");
+			expect(foundWindow.status).toBe(0);
+			const windowName = spawnSync("tmux", ["display-message", "-p", "-t", foundWindow.stdout.trim(), "#{window_name}"], { encoding: "utf8" }).stdout.trim();
+			expect(windowName).toBe(`[fd] daemon-${SESSION_KEY}`);
+		} finally {
+			runDaemon("stop");
+			await sleep(300);
+			// Kill the tmux daemon window if it's still around.
+			spawnSync("tmux", ["kill-window", "-t", `[fd] daemon-${SESSION_KEY}`], { stdio: "ignore" });
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
 	}, 15000);
 
 	test("from-handoff startup warns and drops stale inner panes instead of exiting", async () => {
