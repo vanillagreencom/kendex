@@ -57,17 +57,23 @@ Ask any additional clarifying questions needed before proceeding, based on topic
 
 ### 2.2 Check Related Research
 
-1. **Search for related research**:
+1. **Resolve research issue label**:
+   - Load issue-label inventory: `.agents/skills/linear/scripts/linear.sh cache labels list --format=safe`.
+   - Load project taxonomy/application rules.
+   - Resolve `RESEARCH_WORKFLOW_LABEL` to the project-configured issue label for completed research artifacts.
+   - If no unambiguous assignable issue label exists, skip related-research lookup and continue to § 3 (do not query a hard-coded fallback label).
+
+2. **Search for related research**:
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --label research --max --search "[TOPIC_KEYWORDS]"
+   .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
    ```
 
-2. **If matches found**:
+3. **If matches found**:
    1. **Read the findings file** - project research docs `[ISSUE_ID]/findings.md`
    2. **Extract ALL key findings** - summary paragraph, bullet lists, Go/No-Go sections
    3. **Set [PRIOR_RESEARCH]** - extracted findings for handoff in § 3.3
 
-3. **Notify user**:
+4. **Notify user**:
    ```
    Prior Research: [ISSUE_ID] - [TITLE]
    ```

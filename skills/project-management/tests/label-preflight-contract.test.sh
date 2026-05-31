@@ -40,12 +40,16 @@ roadmap_plan="$SKILL_DIR/workflows/roadmap-plan.md"
 require_pattern "$roadmap_plan" 'RESEARCH_WORKFLOW_LABEL' 'taxonomy-derived research lookup label'
 require_pattern "$roadmap_plan" 'do not query a hard-coded fallback label' 'hard-coded research fallback guard'
 
+research_spike="$SKILL_DIR/workflows/research-spike.md"
+require_pattern "$research_spike" 'RESEARCH_WORKFLOW_LABEL' 'taxonomy-derived research spike lookup label'
+require_pattern "$research_spike" 'do not query a hard-coded fallback label' 'research spike hard-coded fallback guard'
+
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 require_pattern "$research_issue" 'RESEARCH_WORKFLOW_LABEL' 'taxonomy-derived research create label'
 require_pattern "$research_issue" 'do not assume the literal name `research` exists' 'literal research label guard'
 
-if grep -R --line-number --fixed-strings -- '--label "research"' "$SKILL_DIR/workflows"; then
-  fail 'hard-coded --label "research" remains in project-management workflows'
+if grep -R --line-number -E -- '--label(=|[[:space:]]+)"?research"?([[:space:]]|$)' "$SKILL_DIR/workflows"; then
+  fail 'hard-coded --label research remains in project-management workflows'
 fi
 
 if grep -R --line-number --fixed-strings -- '["agent:researcher", "research", DOMAINS...]' "$SKILL_DIR/workflows"; then
