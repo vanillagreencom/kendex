@@ -828,8 +828,11 @@ describe("structured quota fetchers", () => {
 				{ CODEX_HOME: dir, VSTACK_RATE_LIMIT_USAGE_CACHE_MS: "0" } as NodeJS.ProcessEnv,
 				fakeFetch({ body: CODEX_WHAM_USAGE, ok: true, status: 200 }, calls),
 			);
-			expect(result?.provider).toBe("codex");
-			expect(result?.windows.length).toBeGreaterThan(0);
+			if (!result || result.source === "quota-source-error") {
+				throw new Error(`expected codex quota snapshot, got ${JSON.stringify(result)}`);
+			}
+			expect(result.provider).toBe("codex");
+			expect(result.windows.length).toBeGreaterThan(0);
 			expect(calls[0]!.input).toBe("https://chatgpt.com/backend-api/wham/usage");
 			expect(JSON.stringify(result)).not.toContain(token);
 		} finally {

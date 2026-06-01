@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +13,17 @@ import { archiveState } from "../../src/state/master-state.ts";
 
 let dir = "";
 function path(name: string): string { return join(dir, name); }
+
+function fileMode(file: string): number { return statSync(file).mode & 0o777; }
+
+function withUmask<T>(mask: number, fn: () => T): T {
+	const previous = process.umask(mask);
+	try {
+		return fn();
+	} finally {
+		process.umask(previous);
+	}
+}
 
 async function waitForPath(file: string): Promise<void> {
 	const start = Date.now();
@@ -202,6 +213,57 @@ describe("activity append/read", () => {
 		expect(second.appended).toBe(false);
 		expect(readFileSync(file, "utf8").trim().split("\n")).toHaveLength(1);
 		expect(readActivityEvents(file)).toEqual([first.event]);
+	});
+
+	test("append creates activity and lock files with strict modes under permissive umask", () => {
+		const file = path("strict/activity.jsonl");
+		withUmask(0o022, () => appendActivityEvent(file, {
+			natural_key: "strict:create",
+			source: "flightdeck",
+			summary: "strict create",
+			type: "entry.registered",
+		}, { sessionId: "S1", now: () => new Date("2026-05-15T00:00:00Z") }));
+		expect(fileMode(file)).toBe(0o600);
+		expect(fileMode(`${file}.lock`)).toBe(0o600);
+	});
+
+	test("max-events truncation keeps the replacement activity file strict", () => {
+		const file = path("strict-events/activity.jsonl");
+		withUmask(0o022, () => {
+			for (let i = 0; i < 5; i += 1) {
+				appendActivityEvent(file, {
+					natural_key: `event-cap:${i}`,
+					source: "flightdeck",
+					summary: `event cap ${i}`,
+					type: "entry.state_changed",
+				}, { maxBytes: 100_000, maxEvents: 2, sessionId: "S1", now: () => new Date(`2026-05-15T00:00:0${i}Z`) });
+			}
+		});
+		const lines = readFileSync(file, "utf8").trim().split("\n");
+		expect(lines).toHaveLength(2);
+		expect(readFileSync(file, "utf8")).not.toContain("event cap 0");
+		expect(fileMode(file)).toBe(0o600);
+		expect(fileMode(`${file}.lock`)).toBe(0o600);
+	});
+
+	test("max-bytes truncation keeps the replacement activity file strict", () => {
+		const file = path("strict-bytes/activity.jsonl");
+		withUmask(0o022, () => {
+			for (let i = 0; i < 10; i += 1) {
+				appendActivityEvent(file, {
+					body: "x".repeat(220),
+					natural_key: `byte-cap:${i}`,
+					source: "flightdeck",
+					summary: `byte cap ${i}`,
+					type: "entry.state_changed",
+				}, { maxBytes: 1_200, maxEvents: 100, sessionId: "S1", now: () => new Date(`2026-05-15T00:00:${String(i).padStart(2, "0")}Z`) });
+			}
+		});
+		const raw = readFileSync(file, "utf8");
+		expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(1_200);
+		expect(raw).not.toContain("byte cap 0");
+		expect(fileMode(file)).toBe(0o600);
+		expect(fileMode(`${file}.lock`)).toBe(0o600);
 	});
 
 	test("append trims from the head until event and byte caps both pass", () => {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 
 import {
@@ -14,6 +14,7 @@ import {
 } from "./types.ts";
 
 const RECENT_ID_CACHE_LIMIT = 512;
+const SECURE_FILE_MODE = 0o600;
 const recentIds = new Map<string, true>();
 
 export interface AppendActivityOptions extends NormalizeActivityOptions {
@@ -138,12 +139,24 @@ interface LockedAppendOpts {
 
 type LockedAppendStatus = "appended" | "duplicate" | "archived" | { error?: string; reason: "lock-busy" | "timeout" | "error" };
 
+function ensureSecureLockFile(lockFile: string): void {
+	mkdirSync(dirname(lockFile), { mode: 0o700, recursive: true });
+	const fd = openSync(lockFile, "a", SECURE_FILE_MODE);
+	try {
+		chmodSync(lockFile, SECURE_FILE_MODE);
+	} finally {
+		closeSync(fd);
+	}
+}
+
 function lockedAppendJsonlDedup(opts: LockedAppendOpts): LockedAppendStatus {
-	mkdirSync(dirname(opts.file), { recursive: true });
+	mkdirSync(dirname(opts.file), { mode: 0o700, recursive: true });
 	const lockFile = `${opts.file}.lock`;
+	ensureSecureLockFile(lockFile);
 	const idNeedle = `"id":${JSON.stringify(opts.id)}`;
 	const script = `
 		set -euo pipefail
+		umask 0077
 		file="$1"; needle="$2"; max_events="$3"; max_bytes="$4"; known_duplicate="$5"
 		mkdir -p "$(dirname "$file")"
 		if [[ -e "$file.archived" ]]; then
@@ -154,16 +167,20 @@ function lockedAppendJsonlDedup(opts: LockedAppendOpts): LockedAppendStatus {
 			exit 10
 		fi
 		touch "$file"
+		chmod 0600 "$file"
 		if grep -Fq -- "$needle" "$file"; then
 			exit 10
 		fi
 		cat >> "$file"
+		chmod 0600 "$file"
 		bytes=$(wc -c < "$file" | tr -d ' ')
 		lines=$(wc -l < "$file" | tr -d ' ')
 		if (( lines > max_events )); then
 			tmp="$file.tmp.$$"
 			tail -n "$max_events" "$file" > "$tmp"
+			chmod 0600 "$tmp"
 			mv "$tmp" "$file"
+			chmod 0600 "$file"
 		fi
 		bytes=$(wc -c < "$file" | tr -d ' ')
 		if (( bytes > max_bytes )); then
@@ -184,7 +201,9 @@ function lockedAppendJsonlDedup(opts: LockedAppendOpts): LockedAppendStatus {
 					for (i = start; i <= NR; i++) print lines[i]
 				}
 			' "$file" > "$tmp"
+			chmod 0600 "$tmp"
 			mv "$tmp" "$file"
+			chmod 0600 "$file"
 		fi
 	`;
 	const flockArgs = opts.nonblocking ? ["-w", "1", lockFile] : ["-x", lockFile];
