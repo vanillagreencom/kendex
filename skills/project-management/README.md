@@ -16,6 +16,9 @@ skills/project-management/
 │   ├── dependencies.md                     # Blocking rules, relation types, remediation
 │   ├── prioritization.md                   # Scoring formula, factor definitions, trade-offs
 │   └── labels.md                           # Issue-label inventory preflight, taxonomy contract, exclusivity, lifecycle
+├── templates/
+│   ├── issue-description-template.md        # Standard issue body structure
+│   └── parent-issue-template.md             # Bundle/coordination parent issue structure
 ├── workflows/
 │   ├── tpm-cycle-plan.md                   # Analyze backlog, compute architecture order for cycle
 │   ├── tpm-roadmap-plan.md                 # Cross-project analysis, architecture gaps
@@ -35,6 +38,19 @@ This skill requires an issue tracker CLI for all read/write operations. Configur
 | Dependency | Purpose | Variable |
 |------------|---------|----------|
 | Issue tracker CLI (e.g., `linear` skill) | Issue CRUD, cache, comments, labels, relations | `.agents/skills/linear/scripts/linear.sh` |
+
+## Issue Tracker Setup Expectations
+
+Before using roadmap, audit, research, or cycle-planning workflows, configure the companion issue-tracker skill and sync its cache so issues, projects, relations, and issue labels are readable. The workflows depend on current issue-label inventory from the issue-tracker skill; they should not infer labels from stale docs alone.
+
+- **Issue labels vs project labels**: Issue creation uses issue labels. Project labels are separate issue-tracker resources and do not satisfy issue-label requirements. See [Label management](references/labels.md) and [Issue creation](references/issues.md).
+- **Agent routing**: If a project routes work by agent, define one exclusive Agent label group/category and document the allowed agent labels in the project's taxonomy. Multi-agent bundle or coordination parents may need a documented multi-agent routing convention, but the exact label/value is project-defined.
+- **Platform routing**: If a project tracks OS/platform-specific work, define an optional exclusive Platform category. Omit it when platform is irrelevant.
+- **Domain/stack coverage**: Define project-specific domain or stack labels used for implementation ownership, research routing, and audit coverage. These labels are project-defined and may be additive.
+- **Workflow/classification gates**: Treat workflow and classification labels as additive descriptors or gates, not exclusive ownership labels.
+- **Label creation**: Missing labels require explicit user authorization before creation. Workflows must not create labels automatically. See [When to create labels](references/labels.md#when-to-create-labels).
+- **Hierarchy and relations**: Preserve the expected hierarchy (`Initiative → Project → Milestone → Issue → Sub-Issue`), same-project parent/child and blocking relations, and bundle-parent blocking conventions. See [Issue creation](references/issues.md), [Initiatives & Projects](references/initiatives-projects.md), and [Dependency management](references/dependencies.md).
+- **Templates**: Use the issue templates for consistent descriptions and parent/bundle coordination: [issue-description-template](templates/issue-description-template.md) and [parent-issue-template](templates/parent-issue-template.md).
 
 ## Key Concepts
 
