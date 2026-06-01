@@ -234,7 +234,7 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 		// Only non-executing variable expansion is supported. Command
 		// substitution, source directives, separators, pipes, and redirects
 		// are rejected rather than executed during dashboard polling.
-		if (!/^([^`;&|<>$()]|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})*$/.test(text)) {
+		if (!isSupportedNonExecutingExpansion(text)) {
 			throw new Error(`unsupported shell expansion at ${path}:${lineNumber}`);
 		}
 	}
@@ -245,6 +245,46 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	const expanded = expandEnvValue(text, lookup, path, lineNumber);
 	if (expanded === "~" || expanded.startsWith("~/")) throw new Error(`unsupported tilde expansion at ${path}:${lineNumber}`);
 	return expanded;
+}
+
+function isSupportedNonExecutingExpansion(text: string): boolean {
+	let i = 0;
+	while (i < text.length) {
+		const char = text[i];
+		if (char === "`" || char === ";" || char === "&" || char === "|" || char === "<" || char === ">" || char === "(" || char === ")") return false;
+		if (char !== "$") {
+			i += 1;
+			continue;
+		}
+
+		const next = text[i + 1];
+		if (next === "{") {
+			let j = i + 2;
+			if (!isEnvNameStart(text[j] ?? "")) return false;
+			j += 1;
+			while (j < text.length && isEnvNameChar(text[j] ?? "")) j += 1;
+			if (text[j] !== "}") return false;
+			i = j + 1;
+			continue;
+		}
+
+		if (!isEnvNameStart(next ?? "")) return false;
+		i += 2;
+		while (i < text.length && isEnvNameChar(text[i] ?? "")) i += 1;
+	}
+	return true;
+}
+
+function isEnvNameStart(char: string): boolean {
+	if (!char) return false;
+	const code = char.charCodeAt(0);
+	return char === "_" || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isEnvNameChar(char: string): boolean {
+	if (!char) return false;
+	const code = char.charCodeAt(0);
+	return isEnvNameStart(char) || (code >= 48 && code <= 57);
 }
 
 function expandEnvValue(text: string, lookup: (key: string) => string | undefined, path: string, lineNumber: number): string {
