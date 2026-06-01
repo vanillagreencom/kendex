@@ -281,6 +281,8 @@ The delegation message (containing the `<delegation_format>` content) follows as
 4. **Do not paraphrase** — use the exact structure, headings, and field names from the tag
 5. **Placeholders hold structured data only** — fill only schema fields. Never embed workflow steps, commit/validate/push, or "let the orchestrator …" lines inside item records; the agent's `Follow workflow:` already owns process, and duplication triggers a second return on idle wake-up.
 
+If a user-visible tagged output/report block is immediately followed by `Ask user`, `AskUserQuestion`, or a question-tool step, present the filled block first as a normal assistant message. Then invoke the question tool separately with only a concise question and concise options. Do not copy the report into `question.question`, option labels, or option descriptions unless a short summary is explicitly requested; Pi renders those fields in the popup and should show only the next-step choice.
+
 #### Task Layers
 
 Work is organized in visually distinct layers: orchestrator workflow steps, nested sub-workflows, and agent tasks. Agents only act on their own assigned work — they never touch orchestrator or sub-workflow items.

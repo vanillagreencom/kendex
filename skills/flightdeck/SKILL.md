@@ -264,6 +264,8 @@ Nested workflows (marked with `⤵`) must be invoked through the harness's workf
 3. Add nothing else — no commentary, extra fields, rewording, or explanations before/after.
 4. Do not paraphrase — use exact structure, headings, and field names from the tag.
 
+If a user-visible tagged output/report block is followed by an `Ask user`, `AskUserQuestion`, or question-tool step, emit the filled output block first as a normal assistant message. Then call the question tool separately with only a concise question string and concise options. Keep report text out of `question.question`, option labels, and option descriptions unless the workflow explicitly asks for a short summary; this prevents Pi question popups from absorbing the preceding report.
+
 The user-visible output blocks at the end of `terminate.md` (`<generic_output_format>` / `<empty_output_format>` / `<issue_output_format>`) and `close-issue.md` (`<output_format>`) are tagged for this reason: emit them in full, not as summary lines.
 
 ## Implementation Constraints

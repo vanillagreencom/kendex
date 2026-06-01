@@ -85,6 +85,7 @@ TPM workflows return JSON recommendations only.
 
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
+- When a user-visible `<output_format>` report is followed by an `Ask user`, `AskUserQuestion`, or question-tool step, send the filled report as a normal assistant message first. Then invoke the question tool separately with only a concise question and concise options; do not paste the report into the question text, option labels, or option descriptions unless a short summary is explicitly requested. This keeps Pi question popups focused on the choice instead of the preceding report.
 - Before any issue create or label update, load the live issue-label inventory and project taxonomy, build the full final `labels[]` set, and run the label preflight in `references/labels.md`. Unknown labels, parent/group labels, missing required categories, or exclusivity violations stop the workflow before mutation.
 
 ## Hierarchy
