@@ -22,7 +22,7 @@ export interface TurnToolCallRecord {
 
 export interface ClaimedToolCall {
 	toolCallId?: string;
-	match: "tool-args" | "tool-name" | "unclaimed-id" | "none";
+	match: "tool-args" | "tool-name" | "none";
 	ambiguous: boolean;
 	available: number;
 }
@@ -33,6 +33,7 @@ export interface ToolResultProgress {
 	resolvedIds: string[];
 	waitingIds: string[];
 	queuedIds: string[];
+	unmatchedResultIds: string[];
 	missingDeliveredIds: string[];
 	unresolvedIds: string[];
 	toolNames: Array<{ name: string; count: number }>;
@@ -41,6 +42,7 @@ export interface ToolResultProgress {
 	resolvedCount: number;
 	waitingCount: number;
 	queuedCount: number;
+	unmatchedResultCount: number;
 }
 
 function normalizeForCompare(value: unknown): unknown {
@@ -62,6 +64,10 @@ function argsKey(value: unknown): string {
 
 function sameArgs(left: unknown, right: unknown): boolean {
 	return argsKey(left) === argsKey(right);
+}
+
+function hasRecordedArgs(args: Record<string, unknown> | undefined): boolean {
+	return Object.keys(args ?? {}).length > 0;
 }
 
 function unique(values: Iterable<string | undefined>): string[] {
@@ -87,6 +93,7 @@ export class QueryContext {
 	claimedToolCallIds = new Set<string>();
 	deliveredToolResultIds = new Set<string>();
 	resolvedToolResultIds = new Set<string>();
+	unmatchedToolResultIds = new Set<string>();
 	reportedToolResultMismatch = false;
 	deferredUserMessages: string[] = [];
 	handledTerminalError = false;
@@ -125,6 +132,7 @@ export class QueryContext {
 		this.claimedToolCallIds.clear();
 		this.deliveredToolResultIds.clear();
 		this.resolvedToolResultIds.clear();
+		this.unmatchedToolResultIds.clear();
 		this.reportedToolResultMismatch = false;
 	}
 
@@ -146,6 +154,10 @@ export class QueryContext {
 		if (existing) existing.arguments = args;
 	}
 
+	hasRecordedToolCall(id: string | undefined): boolean {
+		return Boolean(id && (this.turnToolCallIds.includes(id) || this.turnToolCalls.some((call) => call.id === id)));
+	}
+
 	claimToolCall(toolName: string, args: Record<string, unknown> = {}): ClaimedToolCall {
 		const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
 		const byName = unclaimed.filter((call) => call.toolName === toolName);
@@ -158,16 +170,13 @@ export class QueryContext {
 			chosen = exact[0];
 			match = "tool-args";
 			ambiguous = exact.length > 1;
-		} else if (byName.length === 1) {
+		} else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
+			// The SDK can invoke the MCP handler after content_block_start but
+			// before input_json_delta/content_block_stop finalizes arguments.
+			// Falling back to the sole same-name, argument-less call preserves that
+			// race without ever claiming a different tool type.
 			chosen = byName[0];
 			match = "tool-name";
-		} else {
-			const fallbackId = this.turnToolCallIds.find((id) => !this.claimedToolCallIds.has(id));
-			if (fallbackId) {
-				chosen = this.turnToolCalls.find((call) => call.id === fallbackId) ?? { id: fallbackId, toolName: "unknown", arguments: {} };
-				match = "unclaimed-id";
-				ambiguous = byName.length > 1 || unclaimed.length > 1;
-			}
 		}
 
 		if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
@@ -183,6 +192,10 @@ export class QueryContext {
 		if (id) this.resolvedToolResultIds.add(id);
 	}
 
+	markToolResultUnmatched(id: string | undefined): void {
+		if (id) this.unmatchedToolResultIds.add(id);
+	}
+
 	toolResultProgress(): ToolResultProgress {
 		const expectedIds = unique([
 			...this.turnToolCalls.map((call) => call.id),
@@ -192,9 +205,10 @@ export class QueryContext {
 		const resolvedIds = unique(this.resolvedToolResultIds);
 		const waitingIds = unique(this.pendingToolCalls.keys());
 		const queuedIds = unique(this.pendingResults.keys());
+		const unmatchedResultIds = unique(this.unmatchedToolResultIds);
 		const missingDeliveredIds = expectedIds.filter((id) => !this.deliveredToolResultIds.has(id));
 		const unresolvedIds = expectedIds.filter((id) => !this.resolvedToolResultIds.has(id));
-		const affectedIds = new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds]);
+		const affectedIds = new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds, ...unmatchedResultIds]);
 		const counts = new Map<string, number>();
 		for (const call of this.turnToolCalls) {
 			if (affectedIds.size > 0 && !affectedIds.has(call.id)) continue;
@@ -206,6 +220,7 @@ export class QueryContext {
 			resolvedIds,
 			waitingIds,
 			queuedIds,
+			unmatchedResultIds,
 			missingDeliveredIds,
 			unresolvedIds,
 			toolNames: [...counts.entries()]
@@ -216,6 +231,7 @@ export class QueryContext {
 			resolvedCount: resolvedIds.length,
 			waitingCount: waitingIds.length,
 			queuedCount: queuedIds.length,
+			unmatchedResultCount: unmatchedResultIds.length,
 		};
 	}
 }

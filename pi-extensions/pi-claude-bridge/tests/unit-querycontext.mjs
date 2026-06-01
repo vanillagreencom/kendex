@@ -85,6 +85,27 @@ describe("QueryContext class", () => {
 		}
 	});
 
+	it("claimToolCall refuses to fall back to a different tool type", () => {
+		ctx().recordToolCall("bash-1", "bash", { command: "echo ok", timeout: 120 });
+
+		const claim = ctx().claimToolCall("write", { path: "out.txt", content: "ok" });
+
+		assert.equal(claim.toolCallId, undefined);
+		assert.equal(claim.match, "none");
+		assert.equal(claim.available, 1);
+		assert.equal(ctx().claimedToolCallIds.has("bash-1"), false);
+	});
+
+	it("claimToolCall allows sole same-name call before arguments finalize", () => {
+		ctx().recordToolCall("read-pending", "read", {});
+
+		const claim = ctx().claimToolCall("read", { path: "README.md" });
+
+		assert.equal(claim.toolCallId, "read-pending");
+		assert.equal(claim.match, "tool-name");
+		assert.equal(claim.ambiguous, false);
+	});
+
 	it("toolResultProgress reports teardown mismatch counts", () => {
 		ctx().recordToolCall("t0", "read", { path: "a" });
 		ctx().recordToolCall("t1", "grep", { pattern: "x" });
@@ -100,6 +121,16 @@ describe("QueryContext class", () => {
 		assert.deepStrictEqual(progress.queuedIds, ["t1"]);
 		assert.deepStrictEqual(progress.unresolvedIds, ["t1"]);
 		assert.deepStrictEqual(progress.toolNames, [{ name: "grep", count: 1 }]);
+	});
+
+	it("toolResultProgress reports unmatched result ids", () => {
+		ctx().recordToolCall("t0", "read", { path: "a" });
+		ctx().markToolResultUnmatched("unknown-result");
+
+		const progress = ctx().toolResultProgress();
+
+		assert.deepStrictEqual(progress.unmatchedResultIds, ["unknown-result"]);
+		assert.equal(progress.unmatchedResultCount, 1);
 	});
 });
 

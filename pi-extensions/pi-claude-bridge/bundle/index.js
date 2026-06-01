@@ -22351,6 +22351,9 @@ function argsKey(value) {
 function sameArgs(left, right) {
   return argsKey(left) === argsKey(right);
 }
+function hasRecordedArgs(args) {
+  return Object.keys(args ?? {}).length > 0;
+}
 function unique(values) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -22373,6 +22376,7 @@ var QueryContext = class {
   claimedToolCallIds = /* @__PURE__ */ new Set();
   deliveredToolResultIds = /* @__PURE__ */ new Set();
   resolvedToolResultIds = /* @__PURE__ */ new Set();
+  unmatchedToolResultIds = /* @__PURE__ */ new Set();
   reportedToolResultMismatch = false;
   deferredUserMessages = [];
   handledTerminalError = false;
@@ -22414,6 +22418,7 @@ var QueryContext = class {
     this.claimedToolCallIds.clear();
     this.deliveredToolResultIds.clear();
     this.resolvedToolResultIds.clear();
+    this.unmatchedToolResultIds.clear();
     this.reportedToolResultMismatch = false;
   }
   recordToolCall(id, toolName, args = {}) {
@@ -22432,6 +22437,9 @@ var QueryContext = class {
     const existing = this.turnToolCalls.find((call) => call.id === id);
     if (existing) existing.arguments = args;
   }
+  hasRecordedToolCall(id) {
+    return Boolean(id && (this.turnToolCallIds.includes(id) || this.turnToolCalls.some((call) => call.id === id)));
+  }
   claimToolCall(toolName, args = {}) {
     const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
     const byName = unclaimed.filter((call) => call.toolName === toolName);
@@ -22443,16 +22451,9 @@ var QueryContext = class {
       chosen = exact[0];
       match = "tool-args";
       ambiguous = exact.length > 1;
-    } else if (byName.length === 1) {
+    } else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
       chosen = byName[0];
       match = "tool-name";
-    } else {
-      const fallbackId = this.turnToolCallIds.find((id) => !this.claimedToolCallIds.has(id));
-      if (fallbackId) {
-        chosen = this.turnToolCalls.find((call) => call.id === fallbackId) ?? { id: fallbackId, toolName: "unknown", arguments: {} };
-        match = "unclaimed-id";
-        ambiguous = byName.length > 1 || unclaimed.length > 1;
-      }
     }
     if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
     this.claimedToolCallIds.add(chosen.id);
@@ -22464,6 +22465,9 @@ var QueryContext = class {
   markToolResultResolved(id) {
     if (id) this.resolvedToolResultIds.add(id);
   }
+  markToolResultUnmatched(id) {
+    if (id) this.unmatchedToolResultIds.add(id);
+  }
   toolResultProgress() {
     const expectedIds = unique([
       ...this.turnToolCalls.map((call) => call.id),
@@ -22473,9 +22477,10 @@ var QueryContext = class {
     const resolvedIds = unique(this.resolvedToolResultIds);
     const waitingIds = unique(this.pendingToolCalls.keys());
     const queuedIds = unique(this.pendingResults.keys());
+    const unmatchedResultIds = unique(this.unmatchedToolResultIds);
     const missingDeliveredIds = expectedIds.filter((id) => !this.deliveredToolResultIds.has(id));
     const unresolvedIds = expectedIds.filter((id) => !this.resolvedToolResultIds.has(id));
-    const affectedIds = /* @__PURE__ */ new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds]);
+    const affectedIds = /* @__PURE__ */ new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds, ...unmatchedResultIds]);
     const counts = /* @__PURE__ */ new Map();
     for (const call of this.turnToolCalls) {
       if (affectedIds.size > 0 && !affectedIds.has(call.id)) continue;
@@ -22487,6 +22492,7 @@ var QueryContext = class {
       resolvedIds,
       waitingIds,
       queuedIds,
+      unmatchedResultIds,
       missingDeliveredIds,
       unresolvedIds,
       toolNames: [...counts.entries()].sort((a, b2) => b2[1] - a[1] || a[0].localeCompare(b2[0])).map(([name, count]) => ({ name, count })),
@@ -22494,7 +22500,8 @@ var QueryContext = class {
       deliveredCount: deliveredIds.length,
       resolvedCount: resolvedIds.length,
       waitingCount: waitingIds.length,
-      queuedCount: queuedIds.length
+      queuedCount: queuedIds.length,
+      unmatchedResultCount: unmatchedResultIds.length
     };
   }
 };
@@ -37776,7 +37783,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
   try {
     if (queryCtx.reportedToolResultMismatch) return false;
     const progress = queryCtx.toolResultProgress();
-    const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0;
+    const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
     if (!hasMismatch) return false;
     queryCtx.reportedToolResultMismatch = true;
     if (sharedSession) {
@@ -37796,7 +37803,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       } : null
     });
     safeNotify(
-      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
       "error"
     );
     return true;
@@ -38631,7 +38638,9 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
   let capturedSessionId;
   for await (const message of sdkQuery) {
     if (wasAborted()) break;
-    if (!ctx().currentPiStream || !ctx().turnOutput) continue;
+    const queryCtx = ctx();
+    if (!queryCtx.turnOutput) continue;
+    if (!queryCtx.currentPiStream && !(message.type === "assistant" && queryCtx.turnSawToolCall)) continue;
     switch (message.type) {
       case "stream_event":
         processStreamEvent(message, customToolNameToPi, model);
@@ -38705,6 +38714,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
 function streamClaudeAgentSdk(model, context, options) {
   const stream = newAssistantMessageEventStream();
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
+  const cwd = options?.cwd ?? process.cwd();
   debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
   if (ctx().activeQuery) {
     const queryCtx = ctx();
@@ -38712,8 +38722,15 @@ function streamClaudeAgentSdk(model, context, options) {
     queryCtx.resetTurnState(model);
     const allResults = extractAllToolResults2(context);
     debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
+    const unmatchedResultIds = [];
     for (const result of allResults) {
       const id = result.toolCallId;
+      if (id && !queryCtx.hasRecordedToolCall(id)) {
+        queryCtx.markToolResultUnmatched(id);
+        unmatchedResultIds.push(id);
+        debug(`ERROR: tool result [${id}] has no registered tool_call id; refusing to queue or deliver`);
+        continue;
+      }
       queryCtx.markToolResultDelivered(id);
       if (id && queryCtx.pendingToolCalls.has(id)) {
         const pending = queryCtx.pendingToolCalls.get(id);
@@ -38729,6 +38746,15 @@ function streamClaudeAgentSdk(model, context, options) {
       if (queryCtx.pendingToolCalls.size > 0 && queryCtx.pendingResults.size > 0) {
         debug(`BUG: both maps non-empty! handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
       }
+    }
+    if (unmatchedResultIds.length > 0) {
+      const errorResult = {
+        content: [{ type: "text", text: `Claude bridge internal error: ${unmatchedResultIds.length} tool result(s) did not match any registered tool_call id. The turn was stopped to avoid delivering tool output to the wrong call. Unmatched ids: ${unmatchedResultIds.slice(0, 8).join(", ")}${unmatchedResultIds.length > 8 ? ", ..." : ""}` }],
+        isError: true
+      };
+      for (const pending of queryCtx.pendingToolCalls.values()) pending.resolve(errorResult);
+      queryCtx.pendingToolCalls.clear();
+      reportToolResultMismatch(queryCtx, "unmatched tool result", cwd);
     }
     if (queryCtx.pendingToolCalls.size > 0) {
       debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
@@ -38768,7 +38794,6 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().resetToolTracking();
   ctx().latestCursor = 0;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-  const cwd = options?.cwd ?? process.cwd();
   const promptBlocks = extractUserPromptBlocks(context.messages);
   let promptText = extractUserPrompt(context.messages) ?? "";
   if (!promptText && !promptBlocks) {

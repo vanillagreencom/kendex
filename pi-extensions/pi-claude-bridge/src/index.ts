@@ -408,8 +408,8 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 		if (queryCtx.reportedToolResultMismatch) return false;
 		const progress = queryCtx.toolResultProgress();
 		const hasMismatch = progress.expectedCount > 0
-			? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0
-			: progress.waitingCount > 0 || progress.queuedCount > 0;
+			? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0
+			: progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
 		if (!hasMismatch) return false;
 		queryCtx.reportedToolResultMismatch = true;
 		if (sharedSession) {
@@ -431,7 +431,7 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 		safeNotify(
 			`Claude bridge: tool result delivery interrupted during ${reason}; ` +
 			`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
-			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}` +
+			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}` +
 			`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
 			`Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
 			"error",
@@ -1531,7 +1531,9 @@ async function consumeQuery(
 
 	for await (const message of sdkQuery) {
 		if (wasAborted()) break;
-		if (!ctx().currentPiStream || !ctx().turnOutput) continue;
+		const queryCtx = ctx();
+		if (!queryCtx.turnOutput) continue;
+		if (!queryCtx.currentPiStream && !(message.type === "assistant" && queryCtx.turnSawToolCall)) continue;
 
 		switch (message.type) {
 			case "stream_event":
@@ -1613,6 +1615,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 	// DEBUG: trace followUp message triggering
 	const lastMsgRole = context.messages[context.messages.length - 1]?.role;
+	const cwd = (options as { cwd?: string } | undefined)?.cwd ?? process.cwd();
 	debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
 
 	// --- Tool result delivery ---
@@ -1625,8 +1628,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		queryCtx.resetTurnState(model);
 		const allResults = extractAllToolResults(context);
 		debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
+		const unmatchedResultIds: string[] = [];
 		for (const result of allResults) {
 			const id = result.toolCallId;
+			if (id && !queryCtx.hasRecordedToolCall(id)) {
+				queryCtx.markToolResultUnmatched(id);
+				unmatchedResultIds.push(id);
+				debug(`ERROR: tool result [${id}] has no registered tool_call id; refusing to queue or deliver`);
+				continue;
+			}
 			queryCtx.markToolResultDelivered(id);
 			if (id && queryCtx.pendingToolCalls.has(id)) {
 				const pending = queryCtx.pendingToolCalls.get(id)!;
@@ -1642,6 +1652,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			if (queryCtx.pendingToolCalls.size > 0 && queryCtx.pendingResults.size > 0) {
 				debug(`BUG: both maps non-empty! handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
 			}
+		}
+		if (unmatchedResultIds.length > 0) {
+			const errorResult: McpResult = {
+				content: [{ type: "text", text: `Claude bridge internal error: ${unmatchedResultIds.length} tool result(s) did not match any registered tool_call id. The turn was stopped to avoid delivering tool output to the wrong call. Unmatched ids: ${unmatchedResultIds.slice(0, 8).join(", ")}${unmatchedResultIds.length > 8 ? ", ..." : ""}` }],
+				isError: true,
+			};
+			for (const pending of queryCtx.pendingToolCalls.values()) pending.resolve(errorResult);
+			queryCtx.pendingToolCalls.clear();
+			reportToolResultMismatch(queryCtx, "unmatched tool result", cwd);
 		}
 		if (queryCtx.pendingToolCalls.size > 0) {
 			debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
@@ -1703,7 +1722,6 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	ctx().latestCursor = 0;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-	const cwd = (options as { cwd?: string } | undefined)?.cwd ?? process.cwd();
 	const promptBlocks = extractUserPromptBlocks(context.messages);
 	let promptText = extractUserPrompt(context.messages) ?? "";
 

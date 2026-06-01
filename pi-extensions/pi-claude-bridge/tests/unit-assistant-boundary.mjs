@@ -88,6 +88,50 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.deepEqual(events.map((event) => event.type), ["start", "toolcall_start", "toolcall_end", "done", "stream_end"]);
 	});
 
+	it("records assistant tool-use ids even after the stream already ended", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		c.turnSawStreamEvent = true;
+		c.turnSawToolCall = true;
+		c.currentPiStream = null;
+		c.recordToolCall("toolu_streamed", "bash", { command: "echo first", timeout: 120 });
+		c.turnBlocks.push({
+			type: "toolCall",
+			id: "toolu_streamed",
+			name: "bash",
+			arguments: { command: "echo first", timeout: 120 },
+		});
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [
+					{
+						type: "tool_use",
+						id: "toolu_streamed",
+						name: "mcp__custom-tools__bash",
+						input: { command: "echo first" },
+					},
+					{
+						type: "tool_use",
+						id: "toolu_missing_after_stop",
+						name: "mcp__custom-tools__write",
+						input: { file_path: "out.txt", content: "ok" },
+					},
+				],
+			},
+		}, model, new Map([
+			["mcp__custom-tools__bash", "bash"],
+			["mcp__custom-tools__write", "write"],
+		]));
+
+		assert.equal(c.currentPiStream, null);
+		assert.deepEqual(c.turnToolCallIds, ["toolu_streamed", "toolu_missing_after_stop"]);
+		assert.equal(c.turnBlocks.length, 2);
+		assert.equal(c.turnBlocks[1].name, "write");
+		assert.equal(c.turnBlocks[1].arguments.path, "out.txt");
+	});
+
 	it("ignores a late bare message_stop so the next assistant fallback still renders text", () => {
 		const c = ctx();
 		c.resetTurnState(model);
