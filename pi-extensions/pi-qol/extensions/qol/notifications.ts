@@ -52,6 +52,19 @@ function tmuxPassthrough(sequence: string): string {
 	return `\x1bPtmux;${sequence.replace(/\x1b/g, "\x1b\x1b")}\x1b\\`;
 }
 
+export function terminalBellSequence(muteBellSound: boolean): string | undefined {
+	return muteBellSound ? undefined : "\x07";
+}
+
+export function osc777NotificationSequence(title: string, body: string, muteBellSound = false): string {
+	const terminator = muteBellSound ? "\x1b\\" : "\x07";
+	return `\x1b]777;notify;${title};${body}${terminator}`;
+}
+
+function notificationBellMuted(cwd?: string): boolean {
+	return settingBoolean("notification.muteBellSound", false, cwd);
+}
+
 function sourcePaneTty(): string | undefined {
 	try {
 		if (!process.env.TMUX_PANE) return undefined;
@@ -127,21 +140,22 @@ function writeTerminalSequence(sequence: string, cwd?: string): void {
 	if (process.env.TMUX && settingBoolean("notification.tmuxNativeClientTty", true, cwd)) {
 		// Inactive tmux windows do not forward arbitrary OSC output to the terminal.
 		// Send native terminal notifications straight to attached tmux client TTYs,
-		// while BEL still goes through the source pane so tmux marks the right tab.
+		// while the explicit terminal bell still goes through the source pane when unmuted.
 		if (writeRawToPaths(tmuxClientTtys(), sequence)) return;
 	}
 	const output = process.env.TMUX && settingBoolean("notification.tmuxPassthrough", true, cwd) ? tmuxPassthrough(sequence) : sequence;
 	writeToTerminal(output);
 }
 
-function writeTerminalBell(): void {
+function writeTerminalBell(cwd?: string): void {
 	// Match Claude-style hooks: resolve the source pane TTY and write raw BEL there.
 	// This lets tmux set window_bell_flag for the correct source window.
-	writeToTerminal("\x07");
+	const sequence = terminalBellSequence(notificationBellMuted(cwd));
+	if (sequence) writeToTerminal(sequence);
 }
 
 function notifyOSC777(title: string, body: string, cwd?: string): void {
-	writeTerminalSequence(`\x1b]777;notify;${title};${body}\x07`, cwd);
+	writeTerminalSequence(osc777NotificationSequence(title, body, notificationBellMuted(cwd)), cwd);
 }
 
 function notifyOSC99(title: string, body: string, cwd?: string): void {
@@ -242,7 +256,7 @@ export function sendQolNotification(ctx: ExtensionContext | undefined, kind: Qol
 	const title = sanitizeNotificationPart(settingString("notification.title", DEFAULT_NOTIFICATION_TITLE, cwd), 80) || DEFAULT_NOTIFICATION_TITLE;
 	const text = sanitizeNotificationPart(body, Math.max(40, Math.floor(settingNumber("notification.bodyMaxChars", DEFAULT_NOTIFICATION_BODY_MAX_CHARS, cwd))));
 	const tmuxWindowActive = sourceTmuxWindowActive();
-	if (settingBoolean("notification.bell", true, cwd) && (!tmuxWindowActive || settingBoolean("notification.bellWhenActive", false, cwd))) writeTerminalBell();
+	if (settingBoolean("notification.bell", true, cwd) && (!tmuxWindowActive || settingBoolean("notification.bellWhenActive", false, cwd))) writeTerminalBell(cwd);
 	if (settingBoolean("notification.native", true, cwd)) notifyNativeTerminal(title, text, cwd);
 	if (!tmuxWindowActive) markTmuxWindow(cwd);
 	if (settingBoolean("notification.tmux", false, cwd)) notifyTmux(title, text, cwd);

@@ -583,6 +583,15 @@
           "apply": "live"
         },
         {
+          "key": "notification.muteBellSound",
+          "label": "Mute bell sound",
+          "description": "Keep notifications enabled while suppressing QOL-emitted BEL bytes; OSC terminal notifications use ST terminators where supported.",
+          "type": "boolean",
+          "default": false,
+          "category": "Notifications Channels",
+          "apply": "live"
+        },
+        {
           "key": "notification.bellWhenActive",
           "label": "Bell when tmux window active",
           "description": "Also emit BEL when the source tmux window is already active. Disabled by default to avoid noisy bells while you are looking at the Pi window; native terminal notifications still run so Ghostty can decide based on app focus.",

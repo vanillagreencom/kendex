@@ -138,7 +138,7 @@ Master toggle: **Enable notifications**.
 
 Triggers (notify when): ready, direction needed, question popups, all tasks complete, critical/blocked.
 
-Channels: terminal bell, native terminal notifications (OSC 777/99 or Windows toast), tmux `display-message`, tmux window marking, OSC passthrough, and an optional in-Pi UI notice.
+Channels: terminal bell, **Mute bell sound**, native terminal notifications (OSC 777/99 or Windows toast), tmux `display-message`, tmux window marking, OSC passthrough, and an optional in-Pi UI notice.
 
 Tuning: cooldown seconds, title, ready message, body length, tmux durations.
 
@@ -146,9 +146,10 @@ Notes:
 
 - **Terminal notification protocol** picks between OSC 99 (Kitty) and OSC 777 automatically.
 - **Bell when tmux window active** is off so you don't get bells while looking at Pi.
+- **Mute bell sound** keeps notification routing enabled but suppresses QOL-emitted BEL bytes and uses ST terminators for OSC 777/99 where supported. Terminals or operating systems may still play their own sound for native notifications outside QOL control.
 - **tmux native via client TTY** sends OSC notifications to attached tmux clients so notifications still appear when the Pi window is inactive.
 
-Use `/qol notify-test` to verify your terminal/tmux setup.
+Use `/qol notify-test` to verify your terminal/tmux setup, including silent behavior with **Mute bell sound** enabled.
 
 ### Permission gate
 
