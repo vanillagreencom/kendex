@@ -78,6 +78,14 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Extra auto-background patterns | Newline-separated regexes for project-specific monitors. |
 | Shortcut arming window | Seconds the arm-next-bash shortcut / `/bg:next` stays armed. |
 | Force-kill grace | Milliseconds between SIGTERM and SIGKILL. |
+| Resource controls | Opt-in lower-priority execution for spawned background tasks. Off by default; when off, spawn/stop behavior is unchanged. |
+| Resource control mode | `auto` prefers `systemd-run --user --scope` on Linux, then `nice`/`ionice` fallback. `systemd-run`, `nice-ionice`, and `off` force one path. |
+| Apply controls to bg_task | Apply controls to explicit `bg_task` and `/bg:run` spawns. |
+| Apply controls to auto-backgrounded bash | Apply controls to bash commands diverted by auto-backgrounding, `/bg next`, or the arm-next-bash shortcut. |
+| CPU weight / I/O weight | `systemd-run` `CPUWeight=` / `IOWeight=` values (1-10000). Lower values yield resources. Defaults are 100. |
+| Nice value | `systemd-run` `Nice=` and `nice` fallback value (-20 to 19). Default 10 lowers CPU priority. |
+| ionice class / level | `systemd-run` `IOSchedulingClass=` / `IOSchedulingPriority=` and `ionice` fallback. Default best-effort level 7 lowers I/O priority. |
+| Warn on resource-control fallback | Show at most one warning/diagnostic when configured controls fall back or no-op because helpers are unavailable. |
 
 ### Wakeups
 
@@ -123,7 +131,7 @@ Routine wake/persistence diagnostics are written only when `PI_BG_TASK_DEBUG=1`,
 
 ## Notes
 
-Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory.
+Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory. Resource controls are disabled by default; when enabled, `systemd-run` tasks persist their transient scope unit so `/bg:stop`, timeouts, and shutdown stop the actual scope, not just the wrapper process.
 
 Exit wakeups are durable across session restarts and PID reuse — if a task ends while Pi is gone, the next session replays the missed wake. Output wakes scheduled before `stop` / `clear` are voided.
 

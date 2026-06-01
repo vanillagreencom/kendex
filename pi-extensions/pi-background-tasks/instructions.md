@@ -6,6 +6,8 @@ Use `bg_task action: "spawn"` for long-running processes that should outlive the
 
 `bg_status` actions: `list`, `log` (by pid/id), `stop` (SIGTERM to process group). `bg_task` adds `clear` to drop finished entries.
 
+Resource controls are available as an opt-in extension setting for heavy I/O workloads. Default is off. When enabled, background tasks can run through Linux user `systemd-run --scope` controls or a `nice`/`ionice` fallback while preserving log capture, wakeups, timeouts, and `/bg:stop` semantics.
+
 Spawn parameters worth knowing:
 - `notifyOnExit` (default true) wakes you when the task exits.
 - `notifyOnOutput` + `notifyPattern` wake on substring or `/regex/flags` matches in new output.

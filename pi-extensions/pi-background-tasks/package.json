@@ -127,6 +127,107 @@
           "apply": "live"
         },
         {
+          "key": "resourceControlEnabled",
+          "label": "Resource controls",
+          "description": "Opt in to lower-priority execution for background tasks. Disabled by default; when off, spawn and stop behavior is unchanged.",
+          "type": "boolean",
+          "default": false,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlMode",
+          "label": "Resource control mode",
+          "description": "auto prefers systemd-run --user --scope on Linux, then nice/ionice when available. off disables controls even if the master toggle is on.",
+          "type": "enum",
+          "enumValues": [
+            "auto",
+            "systemd-run",
+            "nice-ionice",
+            "off"
+          ],
+          "default": "auto",
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlApplyToBgTask",
+          "label": "Apply controls to bg_task",
+          "description": "Apply resource controls to explicit bg_task and /bg:run spawns.",
+          "type": "boolean",
+          "default": true,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlApplyToAutoBackground",
+          "label": "Apply controls to auto-backgrounded bash",
+          "description": "Apply resource controls to bash commands diverted by auto-backgrounding, /bg next, or the arm-next-bash shortcut.",
+          "type": "boolean",
+          "default": true,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlCpuWeight",
+          "label": "CPU weight",
+          "description": "systemd-run CPUWeight value (1-10000). Lower values yield CPU to other work. Default 100 matches systemd's normal weight.",
+          "type": "number",
+          "default": 100,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlIoWeight",
+          "label": "I/O weight",
+          "description": "systemd-run IOWeight value (1-10000). Lower values yield I/O bandwidth on cgroup-v2 systems. Default 100 matches systemd's normal weight.",
+          "type": "number",
+          "default": 100,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlNice",
+          "label": "Nice value",
+          "description": "CPU niceness for systemd-run Nice= and nice fallback (-20 to 19). Higher values are lower priority.",
+          "type": "number",
+          "default": 10,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlIoniceClass",
+          "label": "ionice class",
+          "description": "I/O scheduling class for systemd-run IOSchedulingClass= and ionice fallback.",
+          "type": "enum",
+          "enumValues": [
+            "realtime",
+            "best-effort",
+            "idle"
+          ],
+          "default": "best-effort",
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlIoniceLevel",
+          "label": "ionice level",
+          "description": "I/O scheduling priority for realtime/best-effort classes (0 highest, 7 lowest).",
+          "type": "number",
+          "default": 7,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "resourceControlWarnOnFallback",
+          "label": "Warn on resource-control fallback",
+          "description": "Show at most one warning/diagnostic when controls fall back or no-op because helpers are unavailable.",
+          "type": "boolean",
+          "default": true,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
           "key": "outputBufferMaxChars",
           "label": "In-memory output buffer",
           "description": "Maximum characters retained in memory per task; logs still keep full output.",

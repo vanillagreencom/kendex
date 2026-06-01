@@ -23,6 +23,18 @@ Spawn options:
 
 `notifyMode: "transition"` wakes only when the new output tail hash changes — polling loops can print state each pass without waking the agent on identical snapshots. `notifyMode: "first-match-only"` wakes once for `notifyPattern` then suppresses later output wakes.
 
+## Resource controls (vstack#300)
+
+Resource controls are opt-in through extension-manager settings. `resourceControlEnabled=false` preserves the old spawn path exactly: `getShellConfig()` plus the original command as a single shell argument, detached process group on POSIX, same stdout/stderr pipes, same timeout/stop/orphan handling.
+
+When enabled, `planResourceControlledSpawn()` chooses a wrapper per task:
+
+- `systemd-run --user --scope --wait --collect` on Linux when user systemd scopes are usable. The task snapshot stores `resourceControl.unitName`, and stop/timeout/session-shutdown paths call `systemctl --user stop|kill <unit>` before falling back to the tracked wrapper process group. Restore/orphan polling checks the unit first so a live transient scope is not falsely finalized because the wrapper pid changed.
+- `nice`/`ionice` fallback when configured or when `auto` cannot use systemd. This still execs the configured shell with the original command as one argv element, so shell metacharacters, heredocs, and quoting semantics stay owned by the user's shell.
+- No-op fallback with at most one warning/diagnostic when helpers are unavailable and `resourceControlWarnOnFallback=true`.
+
+Controls can be applied independently to explicit `bg_task`/`/bg:run` spawns and auto-backgrounded bash via `resourceControlApplyToBgTask` and `resourceControlApplyToAutoBackground`.
+
 ## Wake-event schema
 
 Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`, and a per-task monotonic `sequence` in the task snapshot. Output wakes scheduled before `stop` or `clear` are marked voided; if a queued callback still runs, the extension suppresses the send and writes a structured `voided-wake-fired` diagnostic via `logBackgroundDiagnostic()` so stale Pi-core delivery can be distinguished from an extension bug. Diagnostics are env-gated (`PI_BG_TASK_DEBUG`, `PI_BG_TASK_DIAGNOSTICS`, or `PI_BG_TASK_DIAGNOSTIC_LOG=/path`) and write to a log file (default `$TMPDIR/vstack-pi-bg/diagnostics.log`); they never go to stdout/stderr or the active TUI.

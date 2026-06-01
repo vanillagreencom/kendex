@@ -65,6 +65,7 @@ import { registerAll } from "./registrations.js";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
+import { defaultSystemdUnitActive, planResourceControlledSpawn, stopResourceControlledTask } from "./resource-control.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import { applyBgToolResultTasksWithBarrier } from "./tool-result-details.js";
 import {
@@ -168,6 +169,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		if (existing && existing.updatedAt >= snapshot.updatedAt) return;
 		const restored = restoredTaskFromSnapshot(snapshot, {
 			sessionId: activeSessionId ?? undefined,
+			unitActiveProbe: defaultSystemdUnitActive,
 		});
 		tasks.set(restored.id, restored);
 		taskCounter = Math.max(taskCounter, numericTaskId(restored.id));
@@ -499,6 +501,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		orphanWatcher = createOrphanWatcher({
 			getTasks: () => tasks.values(),
 			hooks: lifecycleHooks,
+			unitActiveProbe: defaultSystemdUnitActive,
 			onFinalize: (task, reason) => {
 				logBackgroundDiagnostic("orphan task finalized", { id: task.id, pid: task.pid, reason, status: task.status });
 			},
@@ -551,8 +554,21 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 	};
 
+	const resourceControlFallbackWarned = new Set<string>();
+	const warnResourceControlFallback = (message: string, cwd?: string) => {
+		if (!settingBoolean("resourceControlWarnOnFallback", true, cwd)) return;
+		if (resourceControlFallbackWarned.has(message)) return;
+		resourceControlFallbackWarned.add(message);
+		logBackgroundDiagnostic(message);
+		activeCtx?.ui.notify?.(message, "warning");
+	};
+
 	const killTaskProcess = (task: ManagedTask, signal: NodeJS.Signals): boolean => {
-		if (task.pid <= 0) return false;
+		const resourceStop = stopResourceControlledTask(task.resourceControl, signal);
+		if (resourceStop.attempted && !resourceStop.ok) {
+			appendLogLine(task, `\n[resource-control stop error] ${resourceStop.error ?? "systemctl failed"}\n`);
+		}
+		if (task.pid <= 0) return resourceStop.ok;
 		try {
 			if (process.platform === "win32") {
 				process.kill(task.pid, signal);
@@ -564,7 +580,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== "ESRCH") appendLogLine(task, `\n[kill error] ${String(error)}\n`);
-			return false;
+			return resourceStop.ok;
 		}
 	};
 
@@ -628,6 +644,16 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		writeFileSync(logFile, "");
 
 		const { shell, args } = getShellConfig();
+		const spawnPlan = planResourceControlledSpawn({
+			command,
+			cwd,
+			shell,
+			shellArgs: args,
+			taskId: id,
+			now,
+			origin: options.origin ?? "bg_task",
+		});
+		for (const warning of spawnPlan.warnings) warnResourceControlFallback(warning, cwd);
 		// vstack#97 hardening: spawn the child in its own session / process
 		// group via `detached: true` (Node calls setsid() on POSIX before
 		// exec). This addresses two of the issue's hypotheses:
@@ -650,7 +676,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		// child handle for stdout/stderr piping and close-event delivery;
 		// the detached flag only affects session/pgid membership, not
 		// whether the parent waits for the child during normal operation.
-		const child = spawn(shell, [...args, command], {
+		const child = spawn(spawnPlan.file, spawnPlan.args, {
 			cwd,
 			detached: process.platform !== "win32",
 			env: taskEnv(),
@@ -667,6 +693,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			exitCode: null,
 			exitNotified: false,
 			procIdent,
+			resourceControl: spawnPlan.metadata,
 			sessionId: activeSessionId ?? undefined,
 			expiresAt,
 			forceKillTimer: null,
@@ -866,6 +893,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const task = spawnTask({
 			command,
 			cwd: ctx.cwd,
+			origin: "auto-background",
 			notifyOnExit: decision.notifyOnExit,
 			notifyOnOutput: decision.notifyOnOutput,
 			notifyPattern: decision.notifyPattern,
@@ -888,6 +916,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const task = spawnTask({
 			command,
 			cwd: event?.cwd ?? ctx.cwd,
+			origin: "auto-background",
 			notifyOnExit: decision.notifyOnExit,
 			notifyOnOutput: decision.notifyOnOutput,
 			notifyPattern: decision.notifyPattern,

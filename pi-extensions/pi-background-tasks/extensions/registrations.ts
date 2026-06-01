@@ -138,12 +138,15 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 				const safeLog = truncateForTranscript(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
 				const safePattern = truncateForTranscript(task.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS);
 				const safeDedupe = truncateForTranscript(task.dedupeKey, WAKE_MANIFEST_FIELD_MAX_CHARS);
+				const resourceControl = task.resourceControl
+					? `\nResource controls: ${task.resourceControl.mode}${task.resourceControl.unitName ? ` (${task.resourceControl.unitName})` : ""}`
+					: "";
 				return makeToolResult(
 					`Started ${task.id} (pid ${task.pid}) in the background.\nCommand: ${safeCommand}\nCwd: ${safeCwd}\nLog: ${safeLog}\nExpiry: ${
 						task.expiresAt != null ? formatRelativeTime(task.expiresAt) : "none"
 					}\nWakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${
 						task.notifyOnOutput ? (safePattern ?? "yes") : "no"
-					}, mode=${task.notifyMode ?? "always"}${safeDedupe ? `, dedupeKey=${safeDedupe}` : ""}`,
+					}, mode=${task.notifyMode ?? "always"}${safeDedupe ? `, dedupeKey=${safeDedupe}` : ""}${resourceControl}`,
 					{ action: "spawn", task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)) },
 				);
 			}

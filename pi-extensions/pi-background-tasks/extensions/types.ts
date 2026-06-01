@@ -2,6 +2,16 @@ import type { ChildProcess } from "node:child_process";
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "timed_out";
 
+export type ResourceControlMode = "auto" | "systemd-run" | "nice-ionice" | "off";
+export type ResourceControlAppliedMode = "systemd-run" | "nice-ionice";
+
+export interface ResourceControlMetadata {
+	mode: ResourceControlAppliedMode;
+	requestedMode: ResourceControlMode;
+	unitName?: string;
+	warning?: string;
+}
+
 /**
  * Why a tracked task left the running state. Surfaced on `bg_status list`,
  * the wake-event payload, and persisted snapshots so callers can distinguish
@@ -165,6 +175,12 @@ export interface BackgroundTaskSnapshot {
 	// identity check degrades to PID-only for those.
 	procIdent?: ProcessIdentity;
 	/**
+	 * Optional metadata for opt-in resource controls (vstack#300). Systemd scope
+	 * tasks persist their transient unit name so stop/timeout/shutdown paths can
+	 * stop the actual workload instead of only signaling the systemd-run wrapper.
+	 */
+	resourceControl?: ResourceControlMetadata;
+	/**
 	 * Why this task left the running state. Optional so snapshots persisted
 	 * before vstack#97 still load (treated as undefined). Set on every
 	 * terminal transition through finalizeTaskLifecycle, the
@@ -229,6 +245,7 @@ export interface SpawnTaskOptions {
 	dedupeKey?: string;
 	timeoutSeconds?: number;
 	title?: string;
+	origin?: "bg_task" | "auto-background";
 }
 
 export interface BashBackgroundDecision {

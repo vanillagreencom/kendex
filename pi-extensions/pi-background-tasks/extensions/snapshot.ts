@@ -35,6 +35,7 @@ export function taskSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
 		outputWakeBudget: task.outputWakeBudget ? normalizeOutputWakeBudget(task.outputWakeBudget) : undefined,
 		pid: task.pid,
 		procIdent: task.procIdent,
+		resourceControl: task.resourceControl,
 		sessionId: task.sessionId,
 		startedAt: task.startedAt,
 		status: task.status,
@@ -167,6 +168,10 @@ export interface RestoreOptions {
 	// state) but are not eligible for missed-exit replay; replay is scoped
 	// to the session that originally spawned the task.
 	sessionId?: string;
+	// Optional systemd scope liveness probe for resource-controlled tasks.
+	// Returns true while the persisted transient scope/unit is active, false
+	// when it is known inactive, and null when the unit cannot be queried.
+	unitActiveProbe?: (unitName: string) => boolean | null;
 }
 
 // Rehydrate a persisted snapshot into a ManagedTask placeholder. The child
@@ -200,9 +205,15 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 	// with no procIdent degrade to PID-only liveness via identityMatches.
 	let pidStillAlive = false;
 	if (wasRunning && !foreignSession) {
-		const current = probe(snapshot.pid);
-		if (current !== null && identityMatches(snapshot.procIdent, current)) {
+		const unitName = snapshot.resourceControl?.mode === "systemd-run" ? snapshot.resourceControl.unitName : undefined;
+		const unitActive = unitName ? options.unitActiveProbe?.(unitName) : null;
+		if (unitActive === true) {
 			pidStillAlive = true;
+		} else if (unitActive !== false) {
+			const current = probe(snapshot.pid);
+			if (current !== null && identityMatches(snapshot.procIdent, current)) {
+				pidStillAlive = true;
+			}
 		}
 	}
 	const coercedFromRunning = wasRunning && !pidStillAlive;

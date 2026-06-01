@@ -401,6 +401,16 @@ function truncateField(value: string | undefined, maxChars: number): string | un
 	return truncateForTranscript(value, maxChars);
 }
 
+function compactResourceControl(snapshot: BackgroundTaskSnapshot): BackgroundTaskSnapshot["resourceControl"] {
+	if (!snapshot.resourceControl) return undefined;
+	return {
+		mode: snapshot.resourceControl.mode,
+		requestedMode: snapshot.resourceControl.requestedMode,
+		unitName: truncateField(snapshot.resourceControl.unitName, WAKE_MANIFEST_FIELD_MAX_CHARS),
+		warning: truncateField(snapshot.resourceControl.warning, WAKE_MANIFEST_FIELD_MAX_CHARS),
+	};
+}
+
 /**
  * Compact transcript-safe view of a `BackgroundTaskSnapshot` for inclusion in
  * wake messages and log/spawn/stop tool-result details. Keeps the lifecycle-
@@ -431,6 +441,7 @@ export function compactBackgroundTaskSnapshot(snapshot: BackgroundTaskSnapshot):
 		notifyPattern: truncateField(snapshot.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS),
 		outputBytes: snapshot.outputBytes,
 		pid: snapshot.pid,
+		resourceControl: compactResourceControl(snapshot),
 		sessionId: snapshot.sessionId,
 		startedAt: snapshot.startedAt,
 		status: snapshot.status,
