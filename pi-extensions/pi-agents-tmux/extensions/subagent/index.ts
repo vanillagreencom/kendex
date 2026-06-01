@@ -1618,6 +1618,7 @@ export default function (pi: ExtensionAPI) {
 		createFollowUpTask,
 		dashboardStatusFor,
 		emitSubagentEvent,
+		ensurePaneBridgeMetadata,
 		execCapture,
 		formatSteeringForChild,
 		formatTaskRecordResult,

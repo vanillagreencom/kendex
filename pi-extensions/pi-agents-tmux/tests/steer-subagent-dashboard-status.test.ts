@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { registerPaneSupportTools } from "../extensions/subagent/pane-support-tools.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const INDEX_SRC = resolve(HERE, "../extensions/subagent/index.ts");
 
 interface CapturedTool {
 	name: string;
@@ -95,6 +99,23 @@ function getSteerHandler(tools: CapturedTool[]): CapturedTool {
 	assert.ok(handler, "steer_subagent must be registered");
 	return handler;
 }
+
+function paneSupportRegistrationSource(): string {
+	const src = readFileSync(INDEX_SRC, "utf8");
+	const callStart = src.indexOf("registerPaneSupportTools({");
+	assert.notEqual(callStart, -1, "index.ts must register pane support tools");
+	const callEnd = src.indexOf("\n\t});", callStart);
+	assert.notEqual(callEnd, -1, "index.ts pane support registration must have a closing call");
+	return src.slice(callStart, callEnd);
+}
+
+test("index wires ensurePaneBridgeMetadata into pane support tools (regression vstack#314)", () => {
+	assert.match(
+		paneSupportRegistrationSource(),
+		/\bensurePaneBridgeMetadata,\n/,
+		"steer_subagent must receive ensurePaneBridgeMetadata from index.ts; missing wiring reproduces 'ensurePaneBridgeMetadata is not a function'",
+	);
+});
 
 test("steer_subagent delivers message when dashboardStatusFor is provided (regression vstack#62)", async () => {
 	const runtimeRoot = tempRuntime();

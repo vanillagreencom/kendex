@@ -16,7 +16,9 @@ import {
 } from "./tools.js";
 import {
 	ICONS,
+	type BridgeMetadata,
 	type GetSubagentResultDetails,
+	type PaneRegistryEntry,
 	type PaneTaskRecord,
 	type SteerSubagentDetails,
 	type WaitForSubagentIdleDetails,
@@ -24,6 +26,7 @@ import {
 
 interface PaneSupportToolDeps {
 	[key: string]: any;
+	ensurePaneBridgeMetadata: (runtimeRoot: string, entry: PaneRegistryEntry) => Promise<BridgeMetadata | undefined>;
 	pi: ExtensionAPI;
 }
 

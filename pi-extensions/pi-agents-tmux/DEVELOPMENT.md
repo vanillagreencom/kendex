@@ -117,6 +117,8 @@ stop_subagent { "agent": "iced" }
 
 `wait_for_subagent_idle` reports `idle-after-busy` only after observing the pane leave idle first; if it never becomes busy it returns `never-busy`.
 
+Pane support tools are registered from `extensions/subagent/index.ts` through explicit dependency injection into `registerPaneSupportTools()`. Keep steer-path helpers such as `ensurePaneBridgeMetadata` wired in that registration object instead of importing pane helpers from `pane-support-tools.ts`; this keeps the support-tool module out of the pane/task import graph and prevents missing-helper regressions like `ensurePaneBridgeMetadata is not a function`.
+
 ## Needs-completion cwd snapshots
 
 All `needs_completion` records try to include a `cwdSnapshot` when the worker cwd is known. Pane-mode marks use the pane registry cwd; bg compact-then-empty detection uses the bg worker cwd. Snapshot fields are `head` (validated 40-hex), `dirty` (from a filter-safe index/lstat snapshot), and `lastCommit.subject`.
