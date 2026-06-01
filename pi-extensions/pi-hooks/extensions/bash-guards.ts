@@ -18,16 +18,6 @@ export function isBareCd(command: string): boolean {
 	return BARE_CD.test(command.trim());
 }
 
-/**
- * Match `git commit` as a verb, allowing alias-style invocations like
- * `git -C path commit` and `git commit -m "..."`. Does not match
- * `git commit-tree` or `gitfoo commit`.
- */
-const GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}])/;
-const ENV_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)?(?:['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+commit(?=$|[\s;&|){}]))/;
-const ENV_SHORT_SPLIT_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?env(?:\s+[^\s;&|(){}]+)*\s+-[A-Za-z]*S(?:['"]?[^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]?)/;
-const SHELL_C_GIT_COMMIT = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+commit[^'"]*['"]/;
-
 function normalizeShell(command: string): string {
 	return command.replace(/\\\r?\n/g, " ");
 }
@@ -36,29 +26,18 @@ export function isGitCommit(command: string): boolean {
 	return gitCommitSyntaxCount(command) > 0;
 }
 
-const GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?git(\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}])/;
-const ENV_SPLIT_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?env(?:\s+[^\s;&|(){}]+)*\s+(?:-S|--split-string)(?:\s+|=)?(?:['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]|git(?:\s+[^\s;&|(){}]+)*\s+add(?=$|[\s;&|){}]))/;
-const ENV_SHORT_SPLIT_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?env(?:\s+[^\s;&|(){}]+)*\s+-[A-Za-z]*S(?:['"]?[^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]?)/;
-const SHELL_C_GIT_ADD = /(^|[\s;&|({!])(?:[^\s;&|(){}]+\/)?(?:sh|bash|zsh|dash)(?:\s+-[^\s;&|(){}]+)*\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+\$?['"][^'"]*git(?:\s+[^'"]+)*\s+add(?:\s|$)[^'"]*['"]/;
-
 function countRegexMatches(pattern: RegExp, text: string): number {
 	return [...text.matchAll(new RegExp(pattern.source, "g"))].length;
 }
 
 function gitCommitSyntaxCount(command: string): number {
-	const normalized = normalizeShell(command);
-	return countRegexMatches(ENV_SPLIT_GIT_COMMIT, normalized)
-		+ countRegexMatches(ENV_SHORT_SPLIT_GIT_COMMIT, normalized)
-		+ countShellCVerb(command, "commit")
+	return countShellCVerb(command, "commit")
 		+ countShellDispatchVerb(command, "commit")
 		+ (dynamicGitVerbSyntax(command, "commit") ? 1 : 0);
 }
 
 function commandMayStageFiles(command: string): boolean {
-	const normalized = normalizeShell(command);
-	return ENV_SPLIT_GIT_ADD.test(normalized)
-		|| ENV_SHORT_SPLIT_GIT_ADD.test(normalized)
-		|| countShellCVerb(command, "add") > 0
+	return countShellCVerb(command, "add") > 0
 		|| countShellDispatchVerb(command, "add") > 0
 		|| dynamicGitVerbSyntax(command, "add")
 		|| commandMayRunGitAddAlias(command);

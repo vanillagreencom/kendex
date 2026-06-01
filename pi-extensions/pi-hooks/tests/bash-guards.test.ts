@@ -116,6 +116,17 @@ describe("git commit target detection", () => {
 		}
 	});
 
+	test("handles long env and shell wrapper inputs without regex backtracking", async () => {
+		const project = initRepo("pi-hooks-project-");
+		const spaces = " ".repeat(1000);
+		try {
+			expect(await projectGitCommitCwd(`env -S 'git${spaces}commit -m test'`, project, 1000)).toBe(resolve(project));
+			expect(await projectGitCommitCwd(`sh -c "git${spaces}commit -m test"`, project, 1000)).toBe(resolve(project));
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	test("does not let env assignments override shell variables used by git -C", async () => {
 		const project = initRepo("pi-hooks-project-");
 		try {
