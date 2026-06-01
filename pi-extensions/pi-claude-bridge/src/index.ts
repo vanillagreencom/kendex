@@ -570,6 +570,30 @@ export function formatResetTimestamp(value: unknown): string {
 	});
 }
 
+export const ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD = 80;
+
+export function normalizeRateLimitUtilization(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+	if (value === 0) return 0;
+	// Claude SDK payloads have appeared as both fractions and percentages.
+	// Exact 1 is unit-ambiguous (1% vs 100%), so do not use it for allowed-warning copy.
+	if (value > 0 && value < 1) return value * 100;
+	if (value > 1 && value <= 100) return value;
+	return undefined;
+}
+
+function rateLimitTypeLabel(value: unknown): string {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text || "unknown";
+}
+
+export function formatAllowedRateLimitWarning(info: { status?: unknown; utilization?: unknown; rateLimitType?: unknown } | null | undefined): string | undefined {
+	if (info?.status !== "allowed_warning") return undefined;
+	const utilization = normalizeRateLimitUtilization(info.utilization);
+	if (utilization === undefined || utilization < ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD) return undefined;
+	return `Claude rate limit warning: nearing ${rateLimitTypeLabel(info.rateLimitType)} limit; check Claude Code /usage for exact utilization.`;
+}
+
 function emitRateLimitEvent(payload: Record<string, unknown>): void {
 	try {
 		extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
@@ -1564,7 +1588,9 @@ async function consumeQuery(
 					});
 					piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit — resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
 				} else if (info?.status === "allowed_warning") {
-					piUI?.notify(`Claude rate limit warning: ${Math.round(info.utilization ?? 0)}% used (${info.rateLimitType ?? ""})`, "warning");
+					const warning = formatAllowedRateLimitWarning(info);
+					if (warning) piUI?.notify(warning, "warning");
+					else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", JSON.stringify(info).slice(0, 300));
 				}
 				break;
 			}

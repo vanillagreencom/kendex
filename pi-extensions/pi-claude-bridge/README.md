@@ -96,6 +96,8 @@ Claude Code's `/extra-usage` local command works through the Claude Agent SDK. I
 
 When Claude Code emits rate-limit reset metadata, the bridge shows one red ASCII `[rate-limit]` Pi warning with the reset timestamp including timezone context, deduplicates repeated Claude Code error lines, and suppresses the SDK's follow-up `Claude Code returned an error result: ...` wrapper when the bridge already emitted the terminal error. The bridge also emits `vstack:rate-limit` on Pi's extension event bus so `pi-qol` can opt into reset-time auto-resume.
 
+Allowed-warning rate-limit events are filtered before user notification. The bridge normalizes unambiguous numeric utilization (`0 < value < 1` as fractional, `1 < value <= 100` as percent), suppresses low or unit-ambiguous values such as exact `1`, and only shows a neutral warning at 80%+ instead of claiming an unverified `% used` value. Check Claude Code `/usage` for exact allowed-warning utilization.
+
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.

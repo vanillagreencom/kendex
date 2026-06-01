@@ -37903,6 +37903,24 @@ function formatResetTimestamp(value) {
     year: "numeric"
   });
 }
+var ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD = 80;
+function normalizeRateLimitUtilization(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return void 0;
+  if (value === 0) return 0;
+  if (value > 0 && value < 1) return value * 100;
+  if (value > 1 && value <= 100) return value;
+  return void 0;
+}
+function rateLimitTypeLabel(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || "unknown";
+}
+function formatAllowedRateLimitWarning(info) {
+  if (info?.status !== "allowed_warning") return void 0;
+  const utilization = normalizeRateLimitUtilization(info.utilization);
+  if (utilization === void 0 || utilization < ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD) return void 0;
+  return `Claude rate limit warning: nearing ${rateLimitTypeLabel(info.rateLimitType)} limit; check Claude Code /usage for exact utilization.`;
+}
 function emitRateLimitEvent(payload) {
   try {
     extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
@@ -38670,7 +38688,9 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
           });
           piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit \u2014 resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
         } else if (info?.status === "allowed_warning") {
-          piUI?.notify(`Claude rate limit warning: ${Math.round(info.utilization ?? 0)}% used (${info.rateLimitType ?? ""})`, "warning");
+          const warning = formatAllowedRateLimitWarning(info);
+          if (warning) piUI?.notify(warning, "warning");
+          else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", JSON.stringify(info).slice(0, 300));
         }
         break;
       }
@@ -39050,15 +39070,18 @@ function index_default(pi) {
   }
 }
 export {
+  ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD,
   CLAUDE_BRIDGE_TOOL_ISOLATION,
   DISALLOWED_BUILTIN_TOOLS,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
   classifyClaudeExecutableBytes,
   index_default as default,
+  formatAllowedRateLimitWarning,
   formatResetTimestamp,
   isExtraUsageRequiredMessage,
   mapToolName,
+  normalizeRateLimitUtilization,
   preflightClaudeExecutable,
   processAssistantMessage,
   processStreamEvent,
