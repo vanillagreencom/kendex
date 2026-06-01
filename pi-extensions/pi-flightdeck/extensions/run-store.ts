@@ -213,15 +213,18 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	if (raw.includes("\\")) throw new Error(`unsupported escape syntax at ${path}:${lineNumber}`);
 	let text = raw;
 	let expand = true;
+	let quote: "none" | "single" | "double" = "none";
 	if (raw.startsWith("'")) {
 		if (!raw.endsWith("'") || raw.length < 2) throw new Error(`unterminated single-quoted value at ${path}:${lineNumber}`);
 		text = raw.slice(1, -1);
 		if (text.includes("'")) throw new Error(`unsupported trailing tokens after quoted value at ${path}:${lineNumber}`);
 		expand = false;
+		quote = "single";
 	} else if (raw.startsWith('"')) {
 		if (!raw.endsWith('"') || raw.length < 2) throw new Error(`unterminated double-quoted value at ${path}:${lineNumber}`);
 		text = raw.slice(1, -1);
 		if (text.includes('"')) throw new Error(`unsupported trailing tokens after quoted value at ${path}:${lineNumber}`);
+		quote = "double";
 	} else if (/[`;&|<>$]/.test(raw)) {
 		if (!raw.includes("$(") && !/[`;&|<>]/.test(raw) && /\s/.test(raw)) {
 			throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
@@ -230,11 +233,13 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	} else if (/\s/.test(raw)) {
 		throw new Error(`unsupported whitespace in value at ${path}:${lineNumber}`);
 	}
-	if (/[`;&|<>()]/.test(text) || text.includes("$")) {
+	if (quote !== "single" && (/[`;&|<>()]/.test(text) || text.includes("$"))) {
 		// Only non-executing variable expansion is supported. Command
-		// substitution, source directives, separators, pipes, and redirects
-		// are rejected rather than executed during dashboard polling.
-		if (!isSupportedNonExecutingExpansion(text)) {
+		// substitution, source directives, unquoted separators, pipes, and
+		// redirects are rejected rather than executed during dashboard polling.
+		// Inside quoted values, shell punctuation like parentheses is literal
+		// data; keep validating `$VAR` / `${VAR}` while allowing those literals.
+		if (!isSupportedNonExecutingExpansion(text, { allowLiteralShellChars: quote === "double" })) {
 			throw new Error(`unsupported shell expansion at ${path}:${lineNumber}`);
 		}
 	}
@@ -247,11 +252,17 @@ function parseDotEnvValue(raw: string, lookup: (key: string) => string | undefin
 	return expanded;
 }
 
-function isSupportedNonExecutingExpansion(text: string): boolean {
+function isSupportedNonExecutingExpansion(text: string, options: { allowLiteralShellChars?: boolean } = {}): boolean {
+	const allowLiteralShellChars = options.allowLiteralShellChars ?? false;
 	let i = 0;
 	while (i < text.length) {
 		const char = text[i];
-		if (char === "`" || char === ";" || char === "&" || char === "|" || char === "<" || char === ">" || char === "(" || char === ")") return false;
+		if (char === "`") return false;
+		if (char === ";" || char === "&" || char === "|" || char === "<" || char === ">" || char === "(" || char === ")") {
+			if (!allowLiteralShellChars) return false;
+			i += 1;
+			continue;
+		}
 		if (char !== "$") {
 			i += 1;
 			continue;
