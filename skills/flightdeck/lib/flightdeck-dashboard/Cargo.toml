@@ -6,6 +6,8 @@ rust-version = "1.75"
 license = "MIT"
 publish = false
 
+[workspace]
+
 [dependencies]
 chrono = { version = "0.4.42", features = ["serde", "clock"] }
 clap = { version = "4.5.51", features = ["derive"] }

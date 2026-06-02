@@ -794,7 +794,7 @@ fn recent_activity_for_entry<'a>(
         .iter()
         .filter(|event| event.entry_id.as_deref() == Some(entry_id))
         .collect();
-    events.sort_by(|left, right| right.ts.cmp(&left.ts));
+    events.sort_by_key(|event| std::cmp::Reverse(event.ts));
     events.truncate(limit);
     events
 }

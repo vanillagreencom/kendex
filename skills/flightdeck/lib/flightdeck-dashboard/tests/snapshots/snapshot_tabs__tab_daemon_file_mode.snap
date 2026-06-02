@@ -1,5 +1,6 @@
 ---
 source: tests/snapshot_tabs.rs
+assertion_line: 293
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
@@ -10,7 +11,7 @@ expression: rendered
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ state source ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│Status        live state file                                                                                                                                                                         │"
-"│State file     /mnt/Tertiary/dev/vstack/tmp/flightdeck-state-VS.json                                                                                                                             │"
+"│State file     /mnt/Tertiary/dev/vstack/tmp/flightdeck-state-VS.json                                                                                                                                  │"
 "│File mtime     2026-05-15T10:06:00Z (4m ago)                                                                                                                                                          │"
 "│Note           Dashboard is in normal state-file mode. Socket telemetry is optional and separate from the Flightdeck supervisor daemon that wakes the master.                                         │"
 "│                                                                                                                                                                                                      │"

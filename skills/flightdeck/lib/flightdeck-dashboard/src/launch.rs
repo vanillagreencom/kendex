@@ -24,6 +24,7 @@ const MOTION_ENV: &str = "FLIGHTDECK_DASHBOARD_MOTION";
 const THEME_ENV: &str = "FLIGHTDECK_DASHBOARD_THEME";
 const DAEMON_RUST_ENV: &str = "FLIGHTDECK_DAEMON_RUST";
 const SESSION_BIN_ENV: &str = "FLIGHTDECK_SESSION_BIN";
+const STATE_BIN_ENV: &str = "FLIGHTDECK_STATE_BIN";
 const SKILL_DIR_ENV: &str = "FLIGHTDECK_SKILL_DIR";
 const NO_MOTION_ENV: &str = "NO_MOTION";
 const NO_COLOR_ENV: &str = "NO_COLOR";
@@ -229,7 +230,15 @@ pub async fn run(args: LaunchArgs) -> Result<()> {
     let motion = select_motion(args.motion);
     let project_root = resolve_project_root();
     let explicit_state_file = args.state_file.as_deref().map(absolutize);
-    let state_file = resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+    let mut state_file =
+        resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+    if explicit_state_file.is_none() {
+        if let Some(ensured_state_file) =
+            ensure_active_run_for_dashboard(&session, &project_root).await
+        {
+            state_file = Some(ensured_state_file);
+        }
+    }
     let _launch_lock = DashboardLaunchLock::acquire(&session_key)?;
     let launch_plan = DashboardLaunchPlan {
         session: &session,
@@ -395,7 +404,15 @@ async fn focus_or_launch(
     let project_root = resolve_project_root();
     let window_name = select_window_name(args.window_name.as_deref());
     let explicit_state_file = args.state_file.as_deref().map(absolutize);
-    let state_file = resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+    let mut state_file =
+        resolve_state_file(explicit_state_file.as_deref(), &session, &project_root);
+    if explicit_state_file.is_none() {
+        if let Some(ensured_state_file) =
+            ensure_active_run_for_dashboard(&session, &project_root).await
+        {
+            state_file = Some(ensured_state_file);
+        }
+    }
     let _launch_lock = match DashboardLaunchLock::acquire(&session_key) {
         Ok(lock) => lock,
         Err(error) => {
@@ -718,6 +735,51 @@ async fn start_daemon_if_needed(
         }
         Err(error) => warn(format!("failed to spawn dashboard daemon: {error}")),
     }
+}
+
+async fn ensure_active_run_for_dashboard(session: &str, project_root: &Path) -> Option<PathBuf> {
+    let bin = resolve_flightdeck_state_bin(project_root)?;
+    let output = match Command::new(bin)
+        .args(["run", "ensure", "--project-root"])
+        .arg(project_root)
+        .args(["--tmux-session", session])
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            warn(format!(
+                "active-run stale check skipped before dashboard launch: failed to spawn flightdeck-state: {error}"
+            ));
+            return None;
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        warn(format!(
+            "active-run stale check failed before dashboard launch with status {}: {}",
+            output.status,
+            if stderr.is_empty() {
+                "(no stderr)"
+            } else {
+                stderr.as_str()
+            }
+        ));
+        return None;
+    }
+    let parsed = match serde_json::from_slice::<Value>(&output.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            warn(format!(
+                "active-run stale check returned malformed JSON before dashboard launch: {error}"
+            ));
+            return None;
+        }
+    };
+    parsed
+        .pointer("/paths/state_json")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
 }
 
 async fn tracked_dashboard_alive(
@@ -1093,6 +1155,31 @@ fn resolve_flightdeck_session_bin(project_root: &Path) -> Option<PathBuf> {
         return Some(installed);
     }
     which("flightdeck-session")
+}
+
+fn resolve_flightdeck_state_bin(project_root: &Path) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(STATE_BIN_ENV).map(PathBuf::from) {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Some(path) = std::env::var_os(SKILL_DIR_ENV)
+        .map(PathBuf::from)
+        .map(|skill_dir| skill_dir.join("scripts/flightdeck-state"))
+    {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let canonical = project_root.join("skills/flightdeck/scripts/flightdeck-state");
+    if canonical.is_file() {
+        return Some(canonical);
+    }
+    let installed = project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state");
+    if installed.is_file() {
+        return Some(installed);
+    }
+    which("flightdeck-state")
 }
 
 fn tui_command(

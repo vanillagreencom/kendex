@@ -746,7 +746,7 @@ pub struct ConversationStream {
 }
 
 fn folded_conversations(mut conversations: Vec<ConversationStream>) -> Vec<ConversationStream> {
-    conversations.sort_by(|left, right| right.ts.cmp(&left.ts));
+    conversations.sort_by_key(|conversation| std::cmp::Reverse(conversation.ts));
     let mut seen_streams = std::collections::HashSet::new();
     let mut folded = Vec::with_capacity(conversations.len());
     for conversation in conversations {

@@ -54,6 +54,36 @@ import { statePath as legacyStatePath } from "../state/master-state.ts";
 import { readActiveRun } from "../state/run-store.ts";
 import { resolveProjectRoot } from "../shared/project.ts";
 
+const USAGE_TEXT = `Usage:
+  flightdeck-daemon start  --session <S> --master <pane> --inner <p1>[,<p2>...] [--master-harness <h>] [--inner-harnesses <h1>[,<h2>...]] [--foreground|--in-tmux-window] [--debug-pane <pane_id>]
+  flightdeck-daemon stop        --session <S>
+  flightdeck-daemon status      --session <S>
+  flightdeck-daemon health      --session <S>
+  flightdeck-daemon find-window --session <S>
+  flightdeck-daemon events      --session <S>
+  flightdeck-daemon ack         --session <S>
+
+start exit codes:
+  1 lock/spawn/runtime failure
+  2 usage, missing dependency/session, or inner-pane validation failure
+  4 stale --master pane (re-resolve from $TMUX_PANE and retry once)
+
+stop exit codes (vstack#213):
+  0 daemon stopped (or stale PID file cleaned up)
+  1 no daemon for session
+  3 safety refusal (PID lock missing / flock unavailable / ambiguous state)
+`;
+
+const _rawArgs = process.argv.slice(2);
+if (_rawArgs.length === 0) {
+	process.stderr.write(USAGE_TEXT);
+	process.exit(2);
+}
+if (_rawArgs[0] === "--help" || _rawArgs[0] === "-h" || _rawArgs[0] === "help") {
+	process.stdout.write(USAGE_TEXT);
+	process.exit(0);
+}
+
 // Per-action required set so the hot path (ack / events) doesn't pay
 // a `command -v` fork per dep per invocation.
 //
@@ -91,26 +121,7 @@ function die(msg: string, code = 2): never {
 }
 
 function usage(): never {
-	process.stderr.write(
-`Usage:
-  flightdeck-daemon start  --session <S> --master <pane> --inner <p1>[,<p2>...] [--master-harness <h>] [--inner-harnesses <h1>[,<h2>...]] [--foreground|--in-tmux-window] [--debug-pane <pane_id>]
-  flightdeck-daemon stop        --session <S>
-  flightdeck-daemon status      --session <S>
-  flightdeck-daemon health      --session <S>
-  flightdeck-daemon find-window --session <S>
-  flightdeck-daemon events      --session <S>
-  flightdeck-daemon ack         --session <S>
-
-start exit codes:
-  1 lock/spawn/runtime failure
-  2 usage, missing dependency/session, or inner-pane validation failure
-  4 stale --master pane (re-resolve from $TMUX_PANE and retry once)
-
-stop exit codes (vstack#213):
-  0 daemon stopped (or stale PID file cleaned up)
-  1 no daemon for session
-  3 safety refusal (PID lock missing / flock unavailable / ambiguous state)
-`);
+	process.stderr.write(USAGE_TEXT);
 	process.exit(2);
 }
 
@@ -389,6 +400,9 @@ function cmdHealth(): void {
 		lines.push(`started_at=${meta.started_at || "(unknown)"}`);
 		lines.push(`master_pane_id=${meta.master_pane_id || "(unknown)"}`);
 		lines.push(`master_harness=${meta.master_harness || "(unknown)"}`);
+		if (!meta.master_harness) {
+			lines.push("master_harness_warning=unknown wake payload may target the wrong supervisor; restart daemon with --master-harness <harness>");
+		}
 		lines.push(`subscribed_pane_ids=${meta.subscribed_pane_ids.join(",") || "(none)"}`);
 		lines.push(`subscribed_pane_harnesses=${meta.subscribed_pane_harnesses.join(",") || "(none)"}`);
 		lines.push(`state_file_path=${meta.state_file_path || "(unknown)"}`);

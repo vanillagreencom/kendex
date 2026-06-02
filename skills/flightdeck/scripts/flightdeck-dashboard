@@ -18,7 +18,14 @@ if [[ -x "$BIN" && "${FLIGHTDECK_DASHBOARD_NO_REBUILD:-0}" != "1" ]] \
    && command -v cargo >/dev/null 2>&1; then
   if [[ -n "$(find "$CRATE_DIR/Cargo.toml" "$CRATE_DIR/Cargo.lock" "$CRATE_DIR/src" -newer "$BIN" -print -quit 2>/dev/null)" ]]; then
     echo "flightdeck-dashboard: source newer than $BIN; rebuilding (set FLIGHTDECK_DASHBOARD_NO_REBUILD=1 to skip)" >&2
-    cargo build --release --quiet --manifest-path "$CRATE_DIR/Cargo.toml" >&2
+    rebuild_log=$(mktemp -t flightdeck-dashboard-rebuild.XXXXXX)
+    if cargo build --release --quiet --manifest-path "$CRATE_DIR/Cargo.toml" >"$rebuild_log" 2>&1; then
+      rm -f "$rebuild_log"
+    else
+      echo "flightdeck-dashboard: warning: rebuild failed; using existing $BIN (set FLIGHTDECK_DASHBOARD_NO_REBUILD=1 to skip)" >&2
+      cat "$rebuild_log" >&2
+      rm -f "$rebuild_log"
+    fi
   fi
 fi
 

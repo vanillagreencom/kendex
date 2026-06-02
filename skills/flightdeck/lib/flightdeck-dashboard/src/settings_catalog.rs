@@ -2257,8 +2257,22 @@ FLIGHTDECK_STATE_DIR = 'tmp/custom'
             // but tuned via the daemon, not the dashboard popup.
             "FD_PI_BIND_SKIP_LOG_INTERVAL_SEC",
             "FD_PI_BIND_SKIP_STUCK_THRESHOLD",
+            "FD_PI_BRIDGE_READ_TIMEOUT_SEC",
+            "FD_PANE_REGISTRY_READ_TIMEOUT_SEC",
             "FD_SUB_BIND_SKIP_LOG_INTERVAL_SEC",
             "FD_SUB_BIND_SKIP_STUCK_THRESHOLD",
+            // Wake/watchdog operator knobs belong to daemon/subagent
+            // lifecycles rather than dashboard settings persistence.
+            "FD_BUSY_STALL_BRIDGE_PROBE_INTERVAL_SEC",
+            "FD_BUSY_STALL_CPU_PCT",
+            "FD_BUSY_STALL_GIT_PROBE_INTERVAL_SEC",
+            "FD_BUSY_STALL_THRESHOLD_SEC",
+            "FD_BUSY_STALL_WATCHDOG",
+            // Master wiring vars are consumed by wrappers and
+            // launchers, not edited from the dashboard popup.
+            "FLIGHTDECK_MASTER_HARNESS",
+            "FLIGHTDECK_PI_BRIDGE_DISCOVERY_TIMEOUT_MS",
+            "PI_CODING_AGENT",
             // Test/dev trampoline overrides documented in ENV.md but
             // are not user-editable settings (they swap out subprocess
             // binaries for test shims).

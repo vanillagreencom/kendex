@@ -128,7 +128,7 @@ pub fn decision_rows(model: &Model) -> Vec<DecisionRow> {
             })
         })
         .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.ts.cmp(&left.ts));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.ts));
     rows
 }
 

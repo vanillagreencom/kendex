@@ -28,6 +28,28 @@ function sessionName(): string {
 }
 
 describe("flightdeck-daemon (no-daemon paths)", () => {
+	test("--help prints usage before --session guard", () => {
+		const r = run(["--help"]);
+		expect(r.status).toBe(0);
+		expect(r.stdout).toContain("Usage:");
+		expect(r.stdout).toContain("flightdeck-daemon start");
+		expect(r.stderr).not.toContain("--session required");
+	});
+
+	test("help prints usage before --session guard", () => {
+		const r = run(["help"]);
+		expect(r.status).toBe(0);
+		expect(r.stdout).toContain("Usage:");
+		expect(r.stderr).not.toContain("--session required");
+	});
+
+	test("no subcommand prints usage before --session guard", () => {
+		const r = run([]);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("Usage:");
+		expect(r.stderr).not.toContain("--session required");
+	});
+
 	test("status: no daemon → exit 1", () => {
 		const r = run(["status", "--session", "NO-SUCH-SESSION"]);
 		expect(r.status).toBe(1);

@@ -271,7 +271,7 @@ fn file_mode_entries(model: &Model) -> Vec<EntrySummary> {
     let mut entries = Vec::with_capacity(model.snapshot.sessions.len());
     for session in &model.snapshot.sessions {
         let mut events = groups.remove(session.id.as_str()).unwrap_or_default();
-        events.sort_by(|left, right| right.ts.cmp(&left.ts));
+        events.sort_by_key(|event| std::cmp::Reverse(event.ts));
         let recent: Vec<&ActivityEvent> =
             events.into_iter().take(RECENT_EVENTS_PER_ENTRY).collect();
         let total_events = recent.len();

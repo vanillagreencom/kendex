@@ -862,20 +862,58 @@ ensure_daemon_for_session() {
     return 0
   fi
 
+  local master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
+  if [[ -z "$master_harness" ]]; then
+    # Default to the harness the supervisor itself is running under so
+    # daemon wake payloads and hash/stability tuning match the master.
+    # Do not inspect PI_SESSION_ID/PI_BRIDGE_SOCKET here: this script
+    # also stores those names for newly spawned *child* Pi panes, and
+    # treating child metadata as owner metadata would mis-arm non-Pi
+    # masters after a Pi launch.
+    if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
+      master_harness="$FLIGHTDECK_OWNER_HARNESS"
+    elif [[ -n "${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+      master_harness="claude"
+    elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_APP_INFO:-}" ]]; then
+      master_harness="opencode"
+    elif [[ -n "${CODEX_SESSION_ID:-}${CODEX_SANDBOX:-}" ]]; then
+      master_harness="codex"
+    elif [[ -n "${PI_CODING_AGENT:-}" ]]; then
+      master_harness="pi"
+    else
+      local master_cmd=""
+      master_cmd=$(tmux display-message -p -t "$master_pane" '#{pane_current_command}' 2>/dev/null || true)
+      case "$master_cmd" in
+        pi|pi-*) master_harness="pi" ;;
+        claude|claude-*) master_harness="claude" ;;
+        opencode|opencode-*) master_harness="opencode" ;;
+        codex|codex-*) master_harness="codex" ;;
+      esac
+    fi
+  fi
+
   # Run health and trust its staleness output. cmdHealth (vstack#213
   # round-1) computes staleness against the live tracked-entry set via
   # pane-registry inner-live-json, so we don't redo subscriber/harness
   # comparison in bash.
-  local health_output health_err health_status=0 staleness="" current_master=""
+  local health_output health_err health_status=0 staleness="" current_master="" current_master_harness=""
   health_err=$(mktemp -t flightdeck-session-health.XXXXXX)
   health_output=$("$FLIGHTDECK_DAEMON_BIN" health --session "$session_name" 2>"$health_err") || health_status=$?
   if (( health_status == 0 )); then
     staleness=$(awk -F= '/^staleness=/{print $2; exit}' <<<"$health_output")
     current_master=$(awk -F= '/^master_pane_id=/{print $2; exit}' <<<"$health_output")
+    current_master_harness=$(awk -F= '/^master_harness=/{print $2; exit}' <<<"$health_output")
     # If master pane diverged the daemon is wired to the wrong
     # supervisor; treat as stale regardless of staleness field.
     if [[ "$staleness" == "fresh" && -n "$current_master" && "$current_master" != "$master_pane" ]]; then
       staleness="stale-master"
+    fi
+    if [[ "$staleness" == "fresh" && -n "$master_harness" ]]; then
+      if [[ -z "$current_master_harness" || "$current_master_harness" == "(unknown)" ]]; then
+        staleness="stale-master-harness"
+      elif [[ "$current_master_harness" != "$master_harness" ]]; then
+        staleness="stale-master-harness"
+      fi
     fi
   fi
   rm -f "$health_err"
@@ -909,23 +947,6 @@ ensure_daemon_for_session() {
     # daemon-respawn-failed branch below.
   fi
 
-  local master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
-  if [[ -z "$master_harness" ]]; then
-    # Default to the harness the supervisor itself is running under so
-    # daemon hash/stability tuning matches. flightdeck-daemon already
-    # auto-detects pi via pi-bridge cwd-match for null masters, so
-    # leaving this empty is safe for non-pi sessions too.
-    if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
-      master_harness="$FLIGHTDECK_OWNER_HARNESS"
-    elif [[ -n "${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SESSION_ID:-}" ]]; then
-      master_harness="claude"
-    elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_APP_INFO:-}" ]]; then
-      master_harness="opencode"
-    elif [[ -n "${CODEX_SESSION_ID:-}${CODEX_SANDBOX:-}" ]]; then
-      master_harness="codex"
-    fi
-  fi
-
   local start_args=(start --session "$session_name" --master "$master_pane" --inner "$inner_panes_live" --inner-harnesses "$inner_harnesses_live")
   [[ -n "$master_harness" ]] && start_args+=(--master-harness "$master_harness")
   local start_err start_rc=0
@@ -951,14 +972,15 @@ ensure_daemon_for_session() {
     # other refusal must surface daemon-respawn-failed so the
     # operator sees the stop+start stderr instead of a silent
     # "raced" log line that masks the real issue.
-    local verify_output="" verify_status=0 verify_staleness="" verify_master=""
+    local verify_output="" verify_status=0 verify_staleness="" verify_master="" verify_master_harness=""
     verify_output=$("$FLIGHTDECK_DAEMON_BIN" health --session "$session_name" 2>/dev/null) || verify_status=$?
     if (( verify_status == 0 )); then
       verify_staleness=$(awk -F= '/^staleness=/{print $2; exit}' <<<"$verify_output")
       verify_master=$(awk -F= '/^master_pane_id=/{print $2; exit}' <<<"$verify_output")
+      verify_master_harness=$(awk -F= '/^master_harness=/{print $2; exit}' <<<"$verify_output")
     fi
-    if [[ "$verify_staleness" == "fresh" && "$verify_master" == "$master_pane" ]]; then
-      printf 'flightdeck-session: ensure_daemon: daemon-respawn-raced session=%s (verified fresh + master=%s after lock-race)\n' "$session_name" "$master_pane" >&2
+    if [[ "$verify_staleness" == "fresh" && "$verify_master" == "$master_pane" && ( -z "$master_harness" || "$verify_master_harness" == "$master_harness" ) ]]; then
+      printf 'flightdeck-session: ensure_daemon: daemon-respawn-raced session=%s (verified fresh + master=%s harness=%s after lock-race)\n' "$session_name" "$master_pane" "${master_harness:-(unknown)}" >&2
       start_rc=0
     fi
   fi

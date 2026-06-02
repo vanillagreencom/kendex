@@ -58,7 +58,7 @@ Issue mode adds `merge-ready`, `merged`, and `aborted` for the PR lifecycle; `wa
      fi
    fi
    ```
-   `flightdeck-dashboard launch` verifies the tracked `flightdeck-dashboard` entry and pane, refuses untracked same-name windows instead of spawning duplicates, and is guarded against recursive/active-run launches from the dashboard's own `flightdeck-session start`.
+   `flightdeck-dashboard launch` first runs the active-run stale check (same all-dead-pane predicate as `flightdeck-state run ensure`), then verifies the tracked `flightdeck-dashboard` entry and pane, refuses untracked same-name windows instead of spawning duplicates, and is guarded against recursive active-run creation from the dashboard's own `flightdeck-session start`.
 5. Spawn or attach the daemon idempotently after checking daemon status for live work:
    ```bash
    MASTER_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"

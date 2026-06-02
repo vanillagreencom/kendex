@@ -428,7 +428,7 @@ impl ActivityView {
             .iter()
             .filter(|event| event.event_type.as_str() == "decision.recorded")
             .collect::<Vec<_>>();
-        events.sort_by(|left, right| right.ts.cmp(&left.ts));
+        events.sort_by_key(|event| std::cmp::Reverse(event.ts));
         events
     }
 }

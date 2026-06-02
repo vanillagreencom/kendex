@@ -75,6 +75,7 @@ function run(repo: string, statePath: string, args: string[], extraEnv: Record<s
 	// vstack#227: per-test run-store isolation.
 	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
+	delete (env as Record<string, string | undefined>).PI_CODING_AGENT;
 	Object.assign(env, extraEnv);
 	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
@@ -90,6 +91,7 @@ function runState(repo: string, statePath: string, args: string[], extraEnv: Rec
 	env.FLIGHTDECK_STATE_DIR = "tmp";
 	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
 	env.FLIGHTDECK_DASHBOARD = "0";
+	delete (env as Record<string, string | undefined>).PI_CODING_AGENT;
 	Object.assign(env, extraEnv);
 	const r = spawnSync(resolve(HERE, "../../../../scripts/flightdeck-state"), args, { cwd: repo, encoding: "utf8", env });
 	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
@@ -1510,6 +1512,29 @@ exit 0
 			const pairSet = new Set<string>();
 			for (let i = 0; i < innerList.length; i += 1) pairSet.add(`${innerList[i]}:${harnessList[i]}`);
 			expect(pairSet).toEqual(new Set(["%6:claude", "%7:pi"]));
+		});
+
+		test(`ensure_daemon_for_session arms Pi masters with --master-harness pi`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const daemonCapture = join(repo, "daemon-calls.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "pi", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				PI_CODING_AGENT: "true",
+				SHIM_PRESENT: "0",
+				TMUX_PANE: "%5",
+			});
+
+			expect(r.status).toBe(0);
+			const starts = shimCalls(daemonCapture).filter((c) => c.action === "start");
+			expect(starts.length).toBeGreaterThan(0);
+			const lastStart = starts[starts.length - 1]!;
+			expect(flagValue(lastStart.args, "--master")).toBe("%5");
+			expect(flagValue(lastStart.args, "--master-harness")).toBe("pi");
 		});
 
 		test(`ensure_daemon_for_session stops + respawns with exact pairs when health says stale-inner`, () => {
