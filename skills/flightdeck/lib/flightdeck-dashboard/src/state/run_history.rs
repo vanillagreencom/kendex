@@ -15,16 +15,11 @@ const MAX_SNAPSHOTS_PER_RUN: usize = 50;
 #[derive(Debug, Error)]
 pub enum RunHistoryError {
     #[error(
-        "flightdeck-state command not found; set FLIGHTDECK_STATE_BIN or FLIGHTDECK_SKILL_DIR"
+        "flightdeck-state {command} command not found for project_root={project_root}; searched {searched}"
     )]
-    CommandNotFound,
-    #[error(
-        "flightdeck-state {command} command not found for project_root={project_root} tmux_session={tmux_session}; searched {searched}"
-    )]
-    CommandNotFoundWithContext {
+    CommandNotFound {
         command: &'static str,
         project_root: String,
-        tmux_session: String,
         searched: String,
     },
     #[error("failed to run flightdeck-state: {0}")]
@@ -193,6 +188,7 @@ pub fn list_runs(project_root: &Path) -> Result<Vec<HistoryRun>, RunHistoryError
             project_root.display().to_string(),
             "--json".to_owned(),
         ],
+        project_root,
     )?;
     let parsed: RunListOutput = serde_json::from_slice(&output)?;
     Ok(parsed
@@ -240,17 +236,7 @@ pub fn ensure_active_state_path(
         "--tmux-session".to_owned(),
         expected_session.to_owned(),
     ];
-    let output = match run_state_command_with_project("run ensure", &args, Some(project_root)) {
-        Err(RunHistoryError::CommandNotFound) => {
-            return Err(RunHistoryError::CommandNotFoundWithContext {
-                command: "run ensure",
-                project_root: project_root.display().to_string(),
-                tmux_session: expected_session.to_owned(),
-                searched: state_bin_search_context(Some(project_root)),
-            });
-        }
-        other => other?,
-    };
+    let output = run_state_command("run ensure", &args, project_root)?;
     let parsed: RunEnsureOutput = serde_json::from_slice(&output)?;
     parsed
         .paths
@@ -280,6 +266,7 @@ pub fn load_active_run_metadata(
             "--tmux-session".to_owned(),
             expected_session.to_owned(),
         ],
+        project_root,
     )?;
     if output_is_json_null(&output) {
         return Ok(ActiveRunLookup::None);
@@ -338,7 +325,7 @@ pub fn load_run_snapshot(
         args.push("--snapshot".to_owned());
         args.push(snapshot.to_owned());
     }
-    let output = run_state_command("run show", &args)?;
+    let output = run_state_command("run show", &args, project_root)?;
     let parsed: RunShowOutput = serde_json::from_slice(&output)?;
     let raw_state = serde_json::to_string(&parsed.state)?;
     let mut warn = stderr_warning;
@@ -370,6 +357,7 @@ pub fn import_legacy_archives(project_root: &Path) -> Result<ImportSummary, RunH
             "--project-root".to_owned(),
             project_root.display().to_string(),
         ],
+        project_root,
     )?;
     let parsed: ImportOutput = serde_json::from_slice(&output)?;
     let runs = list_runs(project_root)?;
@@ -449,16 +437,18 @@ fn output_is_json_null(output: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-fn run_state_command(command: &'static str, args: &[String]) -> Result<Vec<u8>, RunHistoryError> {
-    run_state_command_with_project(command, args, None)
-}
-
-fn run_state_command_with_project(
+fn run_state_command(
     command: &'static str,
     args: &[String],
-    project_root: Option<&Path>,
+    project_root: &Path,
 ) -> Result<Vec<u8>, RunHistoryError> {
-    let bin = resolve_flightdeck_state_bin(project_root).ok_or(RunHistoryError::CommandNotFound)?;
+    let bin = resolve_flightdeck_state_bin(project_root).ok_or_else(|| {
+        RunHistoryError::CommandNotFound {
+            command,
+            project_root: project_root.display().to_string(),
+            searched: state_bin_search_context(project_root),
+        }
+    })?;
     let output = Command::new(bin).args(args).output()?;
     if output.status.success() {
         return Ok(output.stdout);
@@ -470,7 +460,7 @@ fn run_state_command_with_project(
     })
 }
 
-fn resolve_flightdeck_state_bin(project_root: Option<&Path>) -> Option<PathBuf> {
+fn resolve_flightdeck_state_bin(project_root: &Path) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("FLIGHTDECK_STATE_BIN").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
@@ -484,15 +474,13 @@ fn resolve_flightdeck_state_bin(project_root: Option<&Path>) -> Option<PathBuf> 
             return Some(path);
         }
     }
-    if let Some(project_root) = project_root {
-        let canonical = project_root.join("skills/flightdeck/scripts/flightdeck-state");
-        if canonical.is_file() {
-            return Some(canonical);
-        }
-        let installed = project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state");
-        if installed.is_file() {
-            return Some(installed);
-        }
+    let canonical = project_root.join("skills/flightdeck/scripts/flightdeck-state");
+    if canonical.is_file() {
+        return Some(canonical);
+    }
+    let installed = project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state");
+    if installed.is_file() {
+        return Some(installed);
     }
     if let Ok(cwd) = std::env::current_dir() {
         let dev_path = cwd.join("../../scripts/flightdeck-state");
@@ -511,25 +499,23 @@ fn resolve_flightdeck_state_bin(project_root: Option<&Path>) -> Option<PathBuf> 
     which("flightdeck-state")
 }
 
-fn state_bin_search_context(project_root: Option<&Path>) -> String {
+fn state_bin_search_context(project_root: &Path) -> String {
     let mut searched = vec![
         "$FLIGHTDECK_STATE_BIN".to_owned(),
         "$FLIGHTDECK_SKILL_DIR/scripts/flightdeck-state".to_owned(),
     ];
-    if let Some(project_root) = project_root {
-        searched.push(
-            project_root
-                .join("skills/flightdeck/scripts/flightdeck-state")
-                .display()
-                .to_string(),
-        );
-        searched.push(
-            project_root
-                .join(".agents/skills/flightdeck/scripts/flightdeck-state")
-                .display()
-                .to_string(),
-        );
-    }
+    searched.push(
+        project_root
+            .join("skills/flightdeck/scripts/flightdeck-state")
+            .display()
+            .to_string(),
+    );
+    searched.push(
+        project_root
+            .join(".agents/skills/flightdeck/scripts/flightdeck-state")
+            .display()
+            .to_string(),
+    );
     if let Ok(cwd) = std::env::current_dir() {
         searched.push(
             cwd.join("../../scripts/flightdeck-state")

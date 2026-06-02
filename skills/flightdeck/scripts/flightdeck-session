@@ -92,6 +92,7 @@ usage() {
 Usage:
   flightdeck-session start --session-id <ID> --title <T> --cwd <path> --harness <H> (--cmd <cmd> | --prompt <text>) [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--model <id>] [--effort <level>|--thinking <level>] [--after-window-id <@ID>] [--no-active-run] [--strict-discovery]
   flightdeck-session attach --pane <%PANE_ID> --harness <H> --title <T> [--session-id <ID>] [--kind adhoc|workflow|issue] [--tracker linear|github] [--github-url <url>] [--worktree <path>] [--model <id>] [--effort <level>|--thinking <level>]
+  flightdeck-session detect-master-harness [--master-pane <pane>]
 USAGE
   exit 2
 }
@@ -138,6 +139,44 @@ pi_bridge_call() {
 
 require_tmux() {
   [[ -n "${TMUX:-}" ]] || { echo "Error: flightdeck-session requires an active tmux session" >&2; exit 2; }
+}
+
+resolve_master_harness() {
+  local master_pane="${1:-}" master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
+  if [[ -n "$master_harness" ]]; then
+    printf '%s\n' "$master_harness"
+    return 0
+  fi
+  # Default to the harness the supervisor itself is running under so
+  # daemon wake payloads and hash/stability tuning match the master.
+  # Do not inspect PI_SESSION_ID/PI_BRIDGE_SOCKET here: this script
+  # also stores those names for newly spawned *child* Pi panes, and
+  # treating child metadata as owner metadata would mis-arm non-Pi
+  # masters after a Pi launch.
+  if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
+    master_harness="$FLIGHTDECK_OWNER_HARNESS"
+  elif [[ -n "${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+    master_harness="claude"
+  elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_APP_INFO:-}" ]]; then
+    master_harness="opencode"
+  elif [[ -n "${CODEX_SESSION_ID:-}${CODEX_SANDBOX:-}" ]]; then
+    master_harness="codex"
+  elif [[ -n "${PI_CODING_AGENT:-}" ]]; then
+    master_harness="pi"
+  else
+    [[ -n "$master_pane" ]] || master_pane="${TMUX_PANE:-}"
+    if [[ -n "$master_pane" ]]; then
+      local master_cmd=""
+      master_cmd=$(tmux display-message -p -t "$master_pane" '#{pane_current_command}' 2>/dev/null || true)
+      case "$master_cmd" in
+        pi|pi-*) master_harness="pi" ;;
+        claude|claude-*) master_harness="claude" ;;
+        opencode|opencode-*) master_harness="opencode" ;;
+        codex|codex-*) master_harness="codex" ;;
+      esac
+    fi
+  fi
+  printf '%s\n' "$master_harness"
 }
 
 disable_auto_rename_if_requested() {
@@ -862,35 +901,8 @@ ensure_daemon_for_session() {
     return 0
   fi
 
-  local master_harness="${FLIGHTDECK_MASTER_HARNESS:-}"
-  if [[ -z "$master_harness" ]]; then
-    # Default to the harness the supervisor itself is running under so
-    # daemon wake payloads and hash/stability tuning match the master.
-    # Do not inspect PI_SESSION_ID/PI_BRIDGE_SOCKET here: this script
-    # also stores those names for newly spawned *child* Pi panes, and
-    # treating child metadata as owner metadata would mis-arm non-Pi
-    # masters after a Pi launch.
-    if [[ -n "${FLIGHTDECK_OWNER_HARNESS:-}" ]]; then
-      master_harness="$FLIGHTDECK_OWNER_HARNESS"
-    elif [[ -n "${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SESSION_ID:-}" ]]; then
-      master_harness="claude"
-    elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_APP_INFO:-}" ]]; then
-      master_harness="opencode"
-    elif [[ -n "${CODEX_SESSION_ID:-}${CODEX_SANDBOX:-}" ]]; then
-      master_harness="codex"
-    elif [[ -n "${PI_CODING_AGENT:-}" ]]; then
-      master_harness="pi"
-    else
-      local master_cmd=""
-      master_cmd=$(tmux display-message -p -t "$master_pane" '#{pane_current_command}' 2>/dev/null || true)
-      case "$master_cmd" in
-        pi|pi-*) master_harness="pi" ;;
-        claude|claude-*) master_harness="claude" ;;
-        opencode|opencode-*) master_harness="opencode" ;;
-        codex|codex-*) master_harness="codex" ;;
-      esac
-    fi
-  fi
+  local master_harness
+  master_harness=$(resolve_master_harness "$master_pane")
 
   # Run health and trust its staleness output. cmdHealth (vstack#213
   # round-1) computes staleness against the live tracked-entry set via
@@ -1236,10 +1248,24 @@ cmd_attach() {
   printf 'flightdeck-session: attached %s kind=%s pane_id=%s target=%s\n' "$session_id" "$kind" "$CAPTURE_PANE_ID" "$CAPTURE_PANE_TARGET"
 }
 
+cmd_detect_master_harness() {
+  local master_pane="${TMUX_PANE:-}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --master-pane) master_pane="$2"; shift 2 ;;
+      --master-pane=*) master_pane="${1#--master-pane=}"; shift ;;
+      --help|-h) echo "Usage: flightdeck-session detect-master-harness [--master-pane <pane>]"; exit 0 ;;
+      *) echo "Unknown flag: $1" >&2; echo "Usage: flightdeck-session detect-master-harness [--master-pane <pane>]" >&2; exit 2 ;;
+    esac
+  done
+  resolve_master_harness "$master_pane"
+}
+
 ACTION="${1:-start}"
 case "$ACTION" in
   start) shift || true; cmd_start "$@" ;;
   attach) shift || true; cmd_attach "$@" ;;
+  detect-master-harness) shift || true; cmd_detect_master_harness "$@" ;;
   --help|-h|help) usage ;;
   *) cmd_start "$@" ;;
 esac
