@@ -1035,8 +1035,91 @@ fn launch_runs_state_ensure_before_dashboard_probe_to_rotate_all_dead_active_run
         "dashboard launch did not run state ensure before probing: {state_args}"
     );
     assert!(
+        state_args.contains("--project-root\n"),
+        "missing project root flag: {state_args}"
+    );
+    assert!(
+        state_args.contains(&format!("{}\n", project.display())),
+        "missing project root value: {state_args}"
+    );
+    assert!(
+        state_args.contains("--tmux-session\n"),
+        "missing tmux session flag: {state_args}"
+    );
+    assert!(
+        state_args.contains(&format!("{SESSION}\n")),
+        "missing tmux session value: {state_args}"
+    );
+    assert!(
         session_capture.exists(),
         "fresh state after ensure should allow dashboard launch"
+    );
+    let entry = read_dashboard_entry(&state_file)?;
+    assert_eq!(entry["pane_id"], "%99");
+    Ok(())
+}
+
+#[test]
+fn focus_or_launch_runs_state_ensure_before_dashboard_probe_to_rotate_all_dead_active_run(
+) -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("tmp"))?;
+    std::fs::write(project.join("vstack.toml"), "")?;
+    let state_file = project.join("tmp/flightdeck-state-test-fd.json");
+    write_state_with_target(&state_file, "%dead", "@dead")?;
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let windows_file = temp.path().join("tmux-windows");
+    write_fake_tmux(&bin_dir, &windows_file)?;
+    let session_capture = temp.path().join("session-args");
+    let flightdeck_session = bin_dir.join("flightdeck-session");
+    write_capturing_flightdeck_session(&flightdeck_session, &session_capture)?;
+    let state_capture = temp.path().join("state-args");
+    let flightdeck_state = bin_dir.join("flightdeck-state");
+    write_state_ensure_clearing_shim(&flightdeck_state, &state_file, &state_capture)?;
+    let path = path_with_bin(&bin_dir);
+
+    let output = Command::new(dashboard_bin())
+        .current_dir(&project)
+        .args([
+            "focus-or-launch",
+            "--session",
+            SESSION,
+            "--json",
+            "--no-daemon",
+        ])
+        .env("PATH", path)
+        .env("TMUX", "/tmp/fake-tmux")
+        .env("FD_STATE_DIR", temp.path().join("runtime"))
+        .env("FLIGHTDECK_DASHBOARD", "1")
+        .env("FLIGHTDECK_SESSION_BIN", &flightdeck_session)
+        .env("FLIGHTDECK_STATE_BIN", &flightdeck_state)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "focus-or-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let state_args = std::fs::read_to_string(&state_capture)?;
+    assert!(
+        state_args.contains("run\nensure\n"),
+        "focus-or-launch did not run state ensure before probing: {state_args}"
+    );
+    assert!(
+        state_args.contains(&format!("{}\n", project.display())),
+        "missing project root value: {state_args}"
+    );
+    assert!(
+        state_args.contains(&format!("{SESSION}\n")),
+        "missing tmux session value: {state_args}"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "launched");
+    assert!(
+        session_capture.exists(),
+        "fresh state after ensure should allow focus-or-launch to launch"
     );
     let entry = read_dashboard_entry(&state_file)?;
     assert_eq!(entry["pane_id"], "%99");

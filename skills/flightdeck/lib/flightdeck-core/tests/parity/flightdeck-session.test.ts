@@ -1435,6 +1435,7 @@ action="\${1:-}"; shift || true
 SHIM_PRESENT="\${SHIM_PRESENT:-0}"
 SHIM_STALENESS="\${SHIM_STALENESS:-fresh}"
 SHIM_MASTER="\${SHIM_MASTER:-%0}"
+SHIM_MASTER_HARNESS="\${SHIM_MASTER_HARNESS:-}"
 SHIM_SUBSCRIBED="\${SHIM_SUBSCRIBED:-}"
 SHIM_HARNESSES="\${SHIM_HARNESSES:-}"
 case "$action" in
@@ -1445,6 +1446,7 @@ case "$action" in
     if [[ "$SHIM_PRESENT" != "1" ]]; then echo "session=test no daemon"; exit 1; fi
     printf 'session=test daemon_pid=4242 alive=true\\n'
     printf 'master_pane_id=%s\\n' "$SHIM_MASTER"
+    printf 'master_harness=%s\\n' "\${SHIM_MASTER_HARNESS:-(unknown)}"
     printf 'subscribed_pane_ids=%s\\n' "$SHIM_SUBSCRIBED"
     printf 'subscribed_pane_harnesses=%s\\n' "$SHIM_HARNESSES"
     printf 'staleness=%s\\n' "$SHIM_STALENESS"
@@ -1537,6 +1539,61 @@ exit 0
 			expect(flagValue(lastStart.args, "--master-harness")).toBe("pi");
 		});
 
+		test(`ensure_daemon_for_session respawns when health omits master_harness`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const daemonCapture = join(repo, "daemon-calls.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				FLIGHTDECK_OWNER_HARNESS: "claude",
+				SHIM_HARNESSES: "claude",
+				SHIM_MASTER: "%5",
+				SHIM_PRESENT: "1",
+				SHIM_STALENESS: "fresh",
+				SHIM_SUBSCRIBED: "%6",
+				TMUX_PANE: "%5",
+			});
+
+			expect(r.status).toBe(0);
+			const calls = shimCalls(daemonCapture);
+			expect(calls.some((c) => c.action === "stop")).toBe(true);
+			const starts = calls.filter((c) => c.action === "start");
+			expect(starts.length).toBeGreaterThan(0);
+			expect(flagValue(starts[starts.length - 1]!.args, "--master-harness")).toBe("claude");
+		});
+
+		test(`ensure_daemon_for_session respawns when health reports mismatched master_harness`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const daemonCapture = join(repo, "daemon-calls.log");
+			writeFileSync(daemonCapture, "");
+			const daemonShim = makeDaemonShim(repo, daemonCapture);
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				FLIGHTDECK_OWNER_HARNESS: "claude",
+				SHIM_HARNESSES: "claude",
+				SHIM_MASTER: "%5",
+				SHIM_MASTER_HARNESS: "pi",
+				SHIM_PRESENT: "1",
+				SHIM_STALENESS: "fresh",
+				SHIM_SUBSCRIBED: "%6",
+				TMUX_PANE: "%5",
+			});
+
+			expect(r.status).toBe(0);
+			const calls = shimCalls(daemonCapture);
+			expect(calls.some((c) => c.action === "stop")).toBe(true);
+			const starts = calls.filter((c) => c.action === "start");
+			expect(starts.length).toBeGreaterThan(0);
+			expect(flagValue(starts[starts.length - 1]!.args, "--master-harness")).toBe("claude");
+		});
+
 		test(`ensure_daemon_for_session stops + respawns with exact pairs when health says stale-inner`, () => {
 			const repo = makeRepo();
 			repos.push(repo);
@@ -1621,8 +1678,10 @@ exit 0
 				"--session-id", "manual-attach",
 			], {
 				FLIGHTDECK_DAEMON_BIN: daemonShim,
+				FLIGHTDECK_OWNER_HARNESS: "claude",
 				SHIM_HARNESSES: "claude",
 				SHIM_MASTER: "%5",
+				SHIM_MASTER_HARNESS: "claude",
 				SHIM_PRESENT: "1",
 				SHIM_STALENESS: "fresh",
 				SHIM_SUBSCRIBED: "%42",

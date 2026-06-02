@@ -4,6 +4,7 @@ use std::process::Command;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde_json::Value;
 use thiserror::Error;
 
 use super::snapshot::DashboardSnapshot;
@@ -17,6 +18,15 @@ pub enum RunHistoryError {
         "flightdeck-state command not found; set FLIGHTDECK_STATE_BIN or FLIGHTDECK_SKILL_DIR"
     )]
     CommandNotFound,
+    #[error(
+        "flightdeck-state {command} command not found for project_root={project_root} tmux_session={tmux_session}; searched {searched}"
+    )]
+    CommandNotFoundWithContext {
+        command: &'static str,
+        project_root: String,
+        tmux_session: String,
+        searched: String,
+    },
     #[error("failed to run flightdeck-state: {0}")]
     Io(#[from] std::io::Error),
     #[error("flightdeck-state {command} failed with status {status}: {stderr}")]
@@ -31,6 +41,14 @@ pub enum RunHistoryError {
     Snapshot(#[from] tracked_entries::SnapshotError),
     #[error("active run {run_id} has no metadata")]
     ActiveRunMissingMetadata { run_id: String },
+    #[error(
+        "flightdeck-state run ensure output missing string paths.state_json for project_root={project_root} tmux_session={tmux_session}: {output}"
+    )]
+    RunEnsureMissingStateJson {
+        project_root: String,
+        tmux_session: String,
+        output: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -146,6 +164,11 @@ struct ActivePointer {
 }
 
 #[derive(Debug, Deserialize)]
+struct RunEnsureOutput {
+    paths: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RunShowOutput {
     metadata: RunMetadata,
     state: serde_json::Value,
@@ -201,6 +224,46 @@ pub fn load_active_state_path(
         ActiveRunLookup::Matched(metadata) if !metadata.terminated => Ok(Some(metadata.state_path)),
         _ => Ok(None),
     }
+}
+
+/// Runs the lifecycle entrypoint before dashboard launch/focus so stale
+/// all-dead active runs are finalized before probing `.entries.flightdeck-dashboard`.
+pub fn ensure_active_state_path(
+    project_root: &Path,
+    expected_session: &str,
+) -> Result<PathBuf, RunHistoryError> {
+    let args = [
+        "run".to_owned(),
+        "ensure".to_owned(),
+        "--project-root".to_owned(),
+        project_root.display().to_string(),
+        "--tmux-session".to_owned(),
+        expected_session.to_owned(),
+    ];
+    let output = match run_state_command_with_project("run ensure", &args, Some(project_root)) {
+        Err(RunHistoryError::CommandNotFound) => {
+            return Err(RunHistoryError::CommandNotFoundWithContext {
+                command: "run ensure",
+                project_root: project_root.display().to_string(),
+                tmux_session: expected_session.to_owned(),
+                searched: state_bin_search_context(Some(project_root)),
+            });
+        }
+        other => other?,
+    };
+    let parsed: RunEnsureOutput = serde_json::from_slice(&output)?;
+    parsed
+        .paths
+        .as_ref()
+        .and_then(|paths| paths.get("state_json"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| RunHistoryError::RunEnsureMissingStateJson {
+            project_root: project_root.display().to_string(),
+            tmux_session: expected_session.to_owned(),
+            output: output_preview(&output),
+        })
 }
 
 pub fn load_active_run_metadata(
@@ -387,7 +450,15 @@ fn output_is_json_null(output: &[u8]) -> bool {
 }
 
 fn run_state_command(command: &'static str, args: &[String]) -> Result<Vec<u8>, RunHistoryError> {
-    let bin = resolve_flightdeck_state_bin().ok_or(RunHistoryError::CommandNotFound)?;
+    run_state_command_with_project(command, args, None)
+}
+
+fn run_state_command_with_project(
+    command: &'static str,
+    args: &[String],
+    project_root: Option<&Path>,
+) -> Result<Vec<u8>, RunHistoryError> {
+    let bin = resolve_flightdeck_state_bin(project_root).ok_or(RunHistoryError::CommandNotFound)?;
     let output = Command::new(bin).args(args).output()?;
     if output.status.success() {
         return Ok(output.stdout);
@@ -399,7 +470,7 @@ fn run_state_command(command: &'static str, args: &[String]) -> Result<Vec<u8>, 
     })
 }
 
-fn resolve_flightdeck_state_bin() -> Option<PathBuf> {
+fn resolve_flightdeck_state_bin(project_root: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("FLIGHTDECK_STATE_BIN").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
@@ -411,6 +482,16 @@ fn resolve_flightdeck_state_bin() -> Option<PathBuf> {
     {
         if path.is_file() {
             return Some(path);
+        }
+    }
+    if let Some(project_root) = project_root {
+        let canonical = project_root.join("skills/flightdeck/scripts/flightdeck-state");
+        if canonical.is_file() {
+            return Some(canonical);
+        }
+        let installed = project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state");
+        if installed.is_file() {
+            return Some(installed);
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
@@ -428,6 +509,54 @@ fn resolve_flightdeck_state_bin() -> Option<PathBuf> {
         }
     }
     which("flightdeck-state")
+}
+
+fn state_bin_search_context(project_root: Option<&Path>) -> String {
+    let mut searched = vec![
+        "$FLIGHTDECK_STATE_BIN".to_owned(),
+        "$FLIGHTDECK_SKILL_DIR/scripts/flightdeck-state".to_owned(),
+    ];
+    if let Some(project_root) = project_root {
+        searched.push(
+            project_root
+                .join("skills/flightdeck/scripts/flightdeck-state")
+                .display()
+                .to_string(),
+        );
+        searched.push(
+            project_root
+                .join(".agents/skills/flightdeck/scripts/flightdeck-state")
+                .display()
+                .to_string(),
+        );
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        searched.push(
+            cwd.join("../../scripts/flightdeck-state")
+                .display()
+                .to_string(),
+        );
+        searched.push(
+            cwd.join("skills/flightdeck/scripts/flightdeck-state")
+                .display()
+                .to_string(),
+        );
+        searched.push(
+            cwd.join(".agents/skills/flightdeck/scripts/flightdeck-state")
+                .display()
+                .to_string(),
+        );
+    }
+    searched.push("$PATH/flightdeck-state".to_owned());
+    searched.join(", ")
+}
+
+fn output_preview(output: &[u8]) -> String {
+    let text = String::from_utf8_lossy(output).trim().to_owned();
+    if text.is_empty() {
+        return "(empty stdout)".to_owned();
+    }
+    text.chars().take(512).collect()
 }
 
 fn which(bin: &str) -> Option<PathBuf> {
@@ -524,6 +653,37 @@ mod tests {
             assert!(error
                 .to_string()
                 .contains("flightdeck-state run active failed"));
+        });
+    }
+
+    #[test]
+    fn ensure_active_state_path_runs_lifecycle_entrypoint() {
+        with_fake_state_bin(|ctx| {
+            let state_path = ctx.project.join("runs/run-1/state.json");
+            write_json(
+                &ctx.responses.join("ensure.json"),
+                json!({ "paths": { "state_json": state_path } }),
+            );
+
+            let ensured = ensure_active_state_path(&ctx.project, "S").expect("ensure path");
+
+            assert_eq!(ensured, state_path);
+            assert_log_contains(&ctx.log, "run\nensure\n--project-root");
+            assert_log_contains(&ctx.log, "--tmux-session\nS");
+        });
+    }
+
+    #[test]
+    fn ensure_active_state_path_errors_when_state_json_missing() {
+        with_fake_state_bin(|ctx| {
+            write_json(&ctx.responses.join("ensure.json"), json!({ "paths": {} }));
+
+            let error = ensure_active_state_path(&ctx.project, "S").expect_err("ensure fails");
+
+            let message = error.to_string();
+            assert!(message.contains("missing string paths.state_json"));
+            assert!(message.contains("tmux_session=S"));
+            assert!(message.contains(ctx.project.to_str().expect("project str")));
         });
     }
 
@@ -674,6 +834,7 @@ case "$1 $2" in
     if [[ -f {responses}/fail-active ]]; then echo forced failure >&2; exit 7; fi
     cat {responses}/active.json
     ;;
+  "run ensure") cat {responses}/ensure.json ;;
   "run list") cat {responses}/list.json ;;
   "run show") cat {responses}/show.json ;;
   "run import-legacy") cat {responses}/import.json ;;
