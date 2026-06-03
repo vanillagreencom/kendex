@@ -5,7 +5,14 @@ use std::process::Command;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const SESSION: &str = "test-fd";
+mod common;
+
+use common::{
+    dashboard_bin, launch_command_without_daemon, make_executable, path_with_bin,
+    read_dashboard_entry, write_capturing_flightdeck_session, write_fake_tmux,
+    write_state_with_target, SESSION,
+};
+
 const SESSION_KEY: &str = "s42";
 
 fn write_settings(project: &Path, store_root: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
@@ -1134,31 +1141,6 @@ fn launch_command(
     command
 }
 
-fn launch_command_without_daemon(path: &str, runtime_dir: &Path, project: &Path) -> Command {
-    let mut command = Command::new(dashboard_bin());
-    command
-        .current_dir(project)
-        .args([
-            "launch",
-            "--session",
-            SESSION,
-            "--window-name",
-            "flightdeck-test",
-            "--no-daemon",
-        ])
-        .env("PATH", path)
-        .env("TMUX", "/tmp/fake-tmux")
-        .env("FD_STATE_DIR", runtime_dir)
-        .env("FLIGHTDECK_DASHBOARD", "1")
-        .env_remove("FLIGHTDECK_SESSION_BIN")
-        .env_remove("FLIGHTDECK_SKILL_DIR")
-        .env_remove("FLIGHTDECK_DASHBOARD_MOTION")
-        .env_remove("FLIGHTDECK_DAEMON_RUST")
-        .env_remove("NO_MOTION")
-        .env_remove("NO_COLOR");
-    command
-}
-
 fn launch_command_default_window(path: &str, runtime_dir: &Path, project: &Path) -> Command {
     let mut command = Command::new(dashboard_bin());
     command
@@ -1179,14 +1161,6 @@ fn launch_command_default_window(path: &str, runtime_dir: &Path, project: &Path)
     command
 }
 
-fn path_with_bin(bin_dir: &Path) -> String {
-    format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    )
-}
-
 fn captured_cmd_arg(path: &Path) -> Result<String, Box<dyn Error>> {
     let args = std::fs::read_to_string(path)?;
     let mut lines = args.lines();
@@ -1199,14 +1173,6 @@ fn captured_cmd_arg(path: &Path) -> Result<String, Box<dyn Error>> {
         }
     }
     Err("missing --cmd argument".into())
-}
-
-fn read_dashboard_entry(path: &Path) -> Result<Value, Box<dyn Error>> {
-    let value = serde_json::from_str::<Value>(&std::fs::read_to_string(path)?)?;
-    Ok(value
-        .pointer("/entries/flightdeck-dashboard")
-        .cloned()
-        .ok_or("dashboard entry missing")?)
 }
 
 fn write_state(path: &Path, with_entry: bool) -> Result<(), Box<dyn Error>> {
@@ -1248,67 +1214,6 @@ fn write_state_with_pane(path: &Path, pane_id: &str) -> Result<(), Box<dyn Error
     );
     std::fs::write(path, json)?;
     Ok(())
-}
-
-fn write_state_with_target(
-    path: &Path,
-    pane_id: &str,
-    window_id: &str,
-) -> Result<(), Box<dyn Error>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = format!(
-        r#"{{
-  "session_id": "{SESSION}",
-  "updated_at": "2026-05-15T00:00:00Z",
-  "entries": {{
-    "flightdeck-dashboard": {{
-      "id": "flightdeck-dashboard",
-      "title": "flightdeck-test",
-      "kind": "workflow",
-      "state": "waiting",
-      "harness": "shell",
-      "pane_id": "{pane_id}",
-      "window_id": "{window_id}"
-    }}
-  }}
-}}"#
-    );
-    std::fs::write(path, json)?;
-    Ok(())
-}
-
-fn write_fake_tmux(dir: &Path, windows_file: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    let path = dir.join("tmux");
-    std::fs::write(
-        &path,
-        format!(
-            r##"#!/usr/bin/env bash
-set -euo pipefail
-windows={windows:?}
-if [[ "${{1:-}}" == "display-message" ]]; then
-  args="$*"
-  if [[ "$args" == *"#{{session_id}}"* ]]; then echo '$42'; exit 0; fi
-  if [[ "$args" == *"#S"* ]]; then echo '{SESSION}'; exit 0; fi
-  if [[ "$args" == *"#{{pane_id}}"* ]]; then echo '%99'; exit 0; fi
-  exit 0
-fi
-if [[ "${{1:-}}" == "list-panes" ]]; then
-  echo '%99'
-  exit 0
-fi
-if [[ "${{1:-}}" == "list-windows" ]]; then
-  [[ -f "$windows" ]] && cat "$windows"
-  exit 0
-fi
-exit 0
-"##,
-            windows = windows_file.display()
-        ),
-    )?;
-    make_executable(&path)?;
-    Ok(path)
 }
 
 fn write_fake_tmux_with_select_log(
@@ -1493,46 +1398,6 @@ exit 23
     Ok(path.to_path_buf())
 }
 
-fn write_capturing_flightdeck_session(
-    path: &Path,
-    capture_file: &Path,
-) -> Result<PathBuf, Box<dyn Error>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        path,
-        format!(
-            r##"#!/usr/bin/env bash
-set -euo pipefail
-capture={capture:?}
-printf '%s\n' "$@" > "$capture"
-state_dir="${{FLIGHTDECK_STATE_DIR:-tmp}}"
-mkdir -p "$state_dir"
-cat > "$state_dir/flightdeck-state-{SESSION}.json" <<'JSON'
-{{
-  "session_id": "{SESSION}",
-  "updated_at": "2026-05-15T00:00:01Z",
-  "entries": {{
-    "flightdeck-dashboard": {{
-      "id": "flightdeck-dashboard",
-      "title": "flightdeck-test",
-      "kind": "workflow",
-      "state": "waiting",
-      "harness": "shell",
-      "pane_id": "%99"
-    }}
-  }}
-}}
-JSON
-"##,
-            capture = capture_file.display()
-        ),
-    )?;
-    make_executable(path)?;
-    Ok(path.to_path_buf())
-}
-
 fn write_lifecycle_guarding_flightdeck_session(
     path: &Path,
     capture_file: &Path,
@@ -1688,19 +1553,4 @@ JSON
     )?;
     make_executable(path)?;
     Ok(path.to_path_buf())
-}
-
-fn make_executable(path: &Path) -> Result<(), Box<dyn Error>> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms)?;
-    }
-    Ok(())
-}
-
-fn dashboard_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_flightdeck-dashboard")
 }

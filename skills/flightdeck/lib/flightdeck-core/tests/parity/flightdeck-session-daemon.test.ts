@@ -2,94 +2,10 @@
 // Uses the tmux shim; no real windows or Pi processes are created.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = resolve(HERE, "../../../../scripts/flightdeck-session");
-const SHIM_DIR = resolve(HERE, "./tmux-shim");
-
-interface ShimPane {
-	window_id: string;
-	window_name: string;
-	path: string;
-	window_index: number;
-	pane_index: number;
-	pane_pid?: number;
-	sent_keys?: string[];
-}
-
-interface ShimState {
-	session: string;
-	panes: Record<string, ShimPane>;
-	windows: Record<string, { name: string; index: number; automatic_rename?: string }>;
-	current_pane_id?: string;
-	current_window_id?: string;
-}
-
-function makeRepo(): string {
-	const dir = mkdtempSync(join(tmpdir(), "fdsession-daemon-"));
-	spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-	spawnSync("git", ["-C", dir, "commit", "-q", "--no-gpg-sign", "--allow-empty", "-m", "init"], {
-		env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
-	});
-	return dir;
-}
-
-function writeShimState(repo: string, state: ShimState): string {
-	const path = join(repo, "shim-state.json");
-	writeFileSync(path, JSON.stringify(state, null, 2));
-	return path;
-}
-
-// vstack#227: state lives in the active run dir; resolve via the CLI.
-function stateFile(repo: string): string {
-	const flightdeckState = resolve(HERE, "../../../../scripts/flightdeck-state");
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-	env.HOME = join(repo, "home");
-	env.FLIGHTDECK_STATE_DIR = "tmp";
-	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
-	const r = spawnSync(flightdeckState, ["path", "--session", "test-session"], { cwd: repo, encoding: "utf8", env });
-	if (r.status !== 0) {
-		throw new Error(`flightdeck-state path failed: ${r.stderr}`);
-	}
-	return (r.stdout ?? "").trim();
-}
-
-function run(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-	env.HOME = join(repo, "home");
-	env.TMUX = "/tmp/tmux-test";
-	env.TMUX_SHIM_STATE = statePath;
-	env.TMUX_PARITY_SESSION = "test-session";
-	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
-	env.FLIGHTDECK_STATE_DIR = "tmp";
-	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
-	env.FLIGHTDECK_DASHBOARD = "0";
-	delete (env as Record<string, string | undefined>).PI_CODING_AGENT;
-	Object.assign(env, extraEnv);
-	const r = spawnSync(SCRIPT, args, { cwd: repo, encoding: "utf8", env });
-	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
-}
-
-function runState(repo: string, statePath: string, args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-	env.HOME = join(repo, "home");
-	env.TMUX = "/tmp/tmux-test";
-	env.TMUX_SHIM_STATE = statePath;
-	env.TMUX_PARITY_SESSION = "test-session";
-	env.PATH = `${SHIM_DIR}:${env.PATH ?? ""}`;
-	env.FLIGHTDECK_STATE_DIR = "tmp";
-	env.FLIGHTDECK_RUN_STORE_ROOT = join(repo, ".vstack-run-store");
-	env.FLIGHTDECK_DASHBOARD = "0";
-	delete (env as Record<string, string | undefined>).PI_CODING_AGENT;
-	Object.assign(env, extraEnv);
-	const r = spawnSync(resolve(HERE, "../../../../scripts/flightdeck-state"), args, { cwd: repo, encoding: "utf8", env });
-	return { status: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
-}
+import { makeRepo, run, runState, stateFile, writeShimState } from "./support/flightdeck-session-fixtures";
 
 let repos: string[] = [];
 
@@ -142,6 +58,39 @@ case "$action" in
     exit 0 ;;
   stop)  echo stopped; exit 0 ;;
   start) echo started; exit 0 ;;
+esac
+exit 0
+`);
+			chmodSync(path, 0o755);
+			return path;
+		}
+
+		function makeStartRaceDaemonShim(repo: string, captureFile: string, verifyMasterHarness: string): string {
+			const path = join(repo, "flightdeck-daemon-start-race-shim");
+			const healthCount = join(repo, "flightdeck-daemon-health.count");
+			writeFileSync(path, `#!/usr/bin/env bash
+set -e
+printf '%s\n' "$*" >> ${JSON.stringify(captureFile)}
+action="\${1:-}"; shift || true
+case "$action" in
+  health)
+    count=0
+    [[ -f ${JSON.stringify(healthCount)} ]] && count=$(cat ${JSON.stringify(healthCount)})
+    count=$((count + 1))
+    printf '%s' "$count" > ${JSON.stringify(healthCount)}
+    if [[ "$count" == "1" ]]; then echo "session=test no daemon"; exit 1; fi
+    printf 'session=test daemon_pid=4242 alive=true\n'
+    printf 'master_pane_id=%s\n' "%5"
+    printf 'master_harness=%s\n' ${JSON.stringify(verifyMasterHarness)}
+    printf 'subscribed_pane_ids=%s\n' "%6"
+    printf 'subscribed_pane_harnesses=%s\n' "claude"
+    printf 'staleness=fresh\n'
+    exit 0 ;;
+  start)
+    echo "start-stderr-marker: lock race detected" >&2
+    exit 1 ;;
+  stop) echo stopped; exit 0 ;;
+  status) echo "session=test no daemon"; exit 1 ;;
 esac
 exit 0
 `);
@@ -565,6 +514,53 @@ exit 0
 			expect(r.stderr).toContain("daemon-respawn-failed");
 			expect(r.stderr).toContain("stop-stderr-marker");
 			expect(r.stderr).toContain("start-stderr-marker");
+		});
+
+		test(`ensure_daemon_for_session treats start rc=1 as raced only when verified master harness matches`, () => {
+			const repo = makeRepo();
+			repos.push(repo);
+			const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+			const captureFile = join(repo, "daemon-calls.log");
+			writeFileSync(captureFile, "");
+			const raceDaemon = makeStartRaceDaemonShim(repo, captureFile, "claude");
+
+			const r = run(repo, shim, ["start", "--session-id", "issue-A", "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+				FLIGHTDECK_DAEMON_BIN: raceDaemon,
+				FLIGHTDECK_MASTER_HARNESS: "claude",
+				TMUX_PANE: "%5",
+			});
+
+			expect(r.status).toBe(0);
+			expect(r.stderr).toContain("daemon-respawn-raced");
+			expect(r.stderr).not.toContain("daemon-respawn-failed");
+			const calls = shimCalls(captureFile);
+			expect(calls.filter((c) => c.action === "start")).toHaveLength(1);
+			expect(calls.filter((c) => c.action === "health")).toHaveLength(2);
+		});
+
+		test(`ensure_daemon_for_session keeps start rc=1 failed when verified master harness is unknown or mismatched`, () => {
+			for (const [index, verifyHarness] of ["(unknown)", "pi"].entries()) {
+				const repo = makeRepo();
+				repos.push(repo);
+				const shim = writeShimState(repo, { current_pane_id: "%5", panes: { "%5": { pane_index: 0, path: repo, window_id: "@5", window_index: 5, window_name: "supervisor" } }, session: "test-session", windows: { "@5": { index: 5, name: "supervisor" } } });
+				const captureFile = join(repo, `daemon-calls-${verifyHarness.replace(/[^a-z0-9]/gi, "_")}.log`);
+				writeFileSync(captureFile, "");
+				const raceDaemon = makeStartRaceDaemonShim(repo, captureFile, verifyHarness);
+
+				const r = run(repo, shim, ["start", "--session-id", `issue-race-${index}`, "--title", "A", "--cwd", repo, "--harness", "claude", "--cmd", "echo a"], {
+					FLIGHTDECK_DAEMON_BIN: raceDaemon,
+					FLIGHTDECK_MASTER_HARNESS: "claude",
+					TMUX_PANE: "%5",
+				});
+
+				expect(r.status).toBe(0);
+				expect(r.stderr).toContain("daemon-respawn-failed");
+				expect(r.stderr).toContain("start-stderr-marker");
+				expect(r.stderr).not.toContain("daemon-respawn-raced");
+				const calls = shimCalls(captureFile);
+				expect(calls.filter((c) => c.action === "start")).toHaveLength(1);
+				expect(calls.filter((c) => c.action === "health")).toHaveLength(2);
+			}
 		});
 
 		test(`flightdeck-state archive rejects FLIGHTDECK_DAEMON_BIN that is not absolute`, () => {

@@ -810,11 +810,13 @@ ensure_active_run_for_session() {
 #      compares meta against live tracked entries (pane-registry
 #      inner-live-json) and reports a definitive `staleness` field, so
 #      the bash side trusts it.
-#   5. If health says fresh AND `master_pane_id` matches the current
-#      master, leave the daemon alone. Otherwise stop + start.
+#   5. If health says fresh AND `master_pane_id` + `master_harness`
+#      match the current master, leave the daemon alone. Otherwise
+#      stop + start.
 #   6. After respawn, if `start` rc=1 (possible lock-race), re-run
 #      health and only declare a benign race when staleness is now
-#      `fresh`; surface daemon-respawn-failed otherwise.
+#      `fresh` and both master pane + harness match; surface
+#      daemon-respawn-failed otherwise.
 ensure_daemon_for_session() {
   [[ "${FLIGHTDECK_ENSURE_DAEMON:-1}" == "1" ]] || return 0
   [[ "${FLIGHTDECK_SKIP_ACTIVE_RUN:-0}" == "1" || "${FLIGHTDECK_NO_ACTIVE_RUN:-0}" == "1" ]] && return 0

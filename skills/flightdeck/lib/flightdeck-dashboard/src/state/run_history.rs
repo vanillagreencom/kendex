@@ -442,11 +442,12 @@ fn run_state_command(
     args: &[String],
     project_root: &Path,
 ) -> Result<Vec<u8>, RunHistoryError> {
-    let bin = resolve_flightdeck_state_bin(project_root).ok_or_else(|| {
+    let candidates = state_bin_candidates(project_root);
+    let bin = resolve_state_bin_candidate(&candidates).ok_or_else(|| {
         RunHistoryError::CommandNotFound {
             command,
             project_root: project_root.display().to_string(),
-            searched: state_bin_search_context(project_root),
+            searched: state_bin_search_context(&candidates),
         }
     })?;
     let output = Command::new(bin).args(args).output()?;
@@ -460,81 +461,109 @@ fn run_state_command(
     })
 }
 
-fn resolve_flightdeck_state_bin(project_root: &Path) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("FLIGHTDECK_STATE_BIN").map(PathBuf::from) {
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    if let Some(path) = std::env::var_os("FLIGHTDECK_SKILL_DIR")
-        .map(PathBuf::from)
-        .map(|skill_dir| skill_dir.join("scripts/flightdeck-state"))
-    {
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let canonical = project_root.join("skills/flightdeck/scripts/flightdeck-state");
-    if canonical.is_file() {
-        return Some(canonical);
-    }
-    let installed = project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state");
-    if installed.is_file() {
-        return Some(installed);
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        let dev_path = cwd.join("../../scripts/flightdeck-state");
-        if dev_path.is_file() {
-            return Some(dev_path);
-        }
-        let canonical = cwd.join("skills/flightdeck/scripts/flightdeck-state");
-        if canonical.is_file() {
-            return Some(canonical);
-        }
-        let installed = cwd.join(".agents/skills/flightdeck/scripts/flightdeck-state");
-        if installed.is_file() {
-            return Some(installed);
-        }
-    }
-    which("flightdeck-state")
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StateBinCandidate {
+    display: String,
+    lookup: StateBinLookup,
 }
 
-fn state_bin_search_context(project_root: &Path) -> String {
-    let mut searched = vec![
-        "$FLIGHTDECK_STATE_BIN".to_owned(),
-        "$FLIGHTDECK_SKILL_DIR/scripts/flightdeck-state".to_owned(),
-    ];
-    searched.push(
-        project_root
-            .join("skills/flightdeck/scripts/flightdeck-state")
-            .display()
-            .to_string(),
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StateBinLookup {
+    File(Option<PathBuf>),
+    PathCommand(&'static str),
+}
+
+fn state_bin_candidates(project_root: &Path) -> Vec<StateBinCandidate> {
+    let mut candidates = Vec::new();
+    push_state_bin_candidate(
+        &mut candidates,
+        StateBinCandidate {
+            display: "$FLIGHTDECK_STATE_BIN".to_owned(),
+            lookup: StateBinLookup::File(
+                std::env::var_os("FLIGHTDECK_STATE_BIN").map(PathBuf::from),
+            ),
+        },
     );
-    searched.push(
-        project_root
-            .join(".agents/skills/flightdeck/scripts/flightdeck-state")
-            .display()
-            .to_string(),
+    push_state_bin_candidate(
+        &mut candidates,
+        StateBinCandidate {
+            display: "$FLIGHTDECK_SKILL_DIR/scripts/flightdeck-state".to_owned(),
+            lookup: StateBinLookup::File(
+                std::env::var_os("FLIGHTDECK_SKILL_DIR")
+                    .map(PathBuf::from)
+                    .map(|skill_dir| skill_dir.join("scripts/flightdeck-state")),
+            ),
+        },
+    );
+    push_state_bin_candidate(
+        &mut candidates,
+        file_candidate(project_root.join("skills/flightdeck/scripts/flightdeck-state")),
+    );
+    push_state_bin_candidate(
+        &mut candidates,
+        file_candidate(project_root.join(".agents/skills/flightdeck/scripts/flightdeck-state")),
     );
     if let Ok(cwd) = std::env::current_dir() {
-        searched.push(
-            cwd.join("../../scripts/flightdeck-state")
-                .display()
-                .to_string(),
+        push_state_bin_candidate(
+            &mut candidates,
+            file_candidate(cwd.join("../../scripts/flightdeck-state")),
         );
-        searched.push(
-            cwd.join("skills/flightdeck/scripts/flightdeck-state")
-                .display()
-                .to_string(),
+        push_state_bin_candidate(
+            &mut candidates,
+            file_candidate(cwd.join("skills/flightdeck/scripts/flightdeck-state")),
         );
-        searched.push(
-            cwd.join(".agents/skills/flightdeck/scripts/flightdeck-state")
-                .display()
-                .to_string(),
+        push_state_bin_candidate(
+            &mut candidates,
+            file_candidate(cwd.join(".agents/skills/flightdeck/scripts/flightdeck-state")),
         );
     }
-    searched.push("$PATH/flightdeck-state".to_owned());
-    searched.join(", ")
+    push_state_bin_candidate(
+        &mut candidates,
+        StateBinCandidate {
+            display: "$PATH/flightdeck-state".to_owned(),
+            lookup: StateBinLookup::PathCommand("flightdeck-state"),
+        },
+    );
+    candidates
+}
+
+fn push_state_bin_candidate(candidates: &mut Vec<StateBinCandidate>, candidate: StateBinCandidate) {
+    if !candidates
+        .iter()
+        .any(|existing| existing.display == candidate.display)
+    {
+        candidates.push(candidate);
+    }
+}
+
+fn file_candidate(path: PathBuf) -> StateBinCandidate {
+    StateBinCandidate {
+        display: path.display().to_string(),
+        lookup: StateBinLookup::File(Some(path)),
+    }
+}
+
+fn resolve_state_bin_candidate(candidates: &[StateBinCandidate]) -> Option<PathBuf> {
+    for candidate in candidates {
+        match &candidate.lookup {
+            StateBinLookup::File(Some(path)) if path.is_file() => return Some(path.clone()),
+            StateBinLookup::PathCommand(command) => {
+                if let Some(path) = which(command) {
+                    return Some(path);
+                }
+            }
+            StateBinLookup::File(_) => {}
+        }
+    }
+    None
+}
+
+fn state_bin_search_context(candidates: &[StateBinCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| candidate.display.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn output_preview(output: &[u8]) -> String {
