@@ -992,6 +992,10 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
     }
 
+    if harnesses.iter().any(|h| matches!(h, Harness::Codex)) {
+        installer::migrate_codex_config(global)?;
+    }
+
     // Reconcile lock with disk: recover entries for skills installed on disk
     // but missing from the lock (e.g. after worktree creation or lock deletion),
     // and prune entries for items whose files no longer exist.

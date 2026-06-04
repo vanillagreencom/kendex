@@ -467,6 +467,12 @@ fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Re
     Ok(())
 }
 
+/// Migrate deprecated Codex config keys for the selected scope without
+/// creating a config file or enabling hooks when no native hook is installed.
+pub fn migrate_codex_config(global: bool) -> Result<()> {
+    migrate_codex_hooks_feature(&codex_root(global).join("config.toml"))
+}
+
 /// Build the command codex runs. For global scope we resolve to the absolute
 /// path under `~/.codex/hooks/`. For project scope we resolve from the git root
 /// (the codex docs recommend this so the hook works regardless of session cwd).
@@ -570,6 +576,22 @@ fn merge_codex_hooks_json(
 /// comments or key ordering. Removes the deprecated `codex_hooks` feature flag
 /// from the `[features]` table so Codex doesn't warn about custom config.
 fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
+    merge_codex_hooks_feature(config_path, true)
+}
+
+/// Migrate `[features] codex_hooks = ...` to `hooks = ...` when the file
+/// already exists. Unlike [`enable_codex_hooks_feature`], this is intentionally
+/// a no-op for missing files and does not force hooks on when users have
+/// `hooks = false`.
+fn migrate_codex_hooks_feature(config_path: &Path) -> Result<()> {
+    merge_codex_hooks_feature(config_path, false)
+}
+
+fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<()> {
+    if !enable_hooks && !config_path.exists() {
+        return Ok(());
+    }
+
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -580,25 +602,43 @@ fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
     };
 
     let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
-    let mut features_seen = false;
+    let state = codex_features_state(&lines);
+    let target_hooks_value = if enable_hooks {
+        Some("true".to_string())
+    } else {
+        state
+            .deprecated
+            .as_ref()
+            .map(|deprecated| deprecated.value.clone())
+    };
+
+    if target_hooks_value.is_none() && state.deprecated.is_none() {
+        return Ok(());
+    }
+
     let mut in_features = false;
-    let mut hooks_seen = false;
+    let mut hooks_written = false;
     let mut merged = Vec::with_capacity(lines.len() + 2);
 
     for line in lines.drain(..) {
         let trimmed = line.trim();
 
         if trimmed == "[features]" {
-            features_seen = true;
             in_features = true;
-            hooks_seen = false;
             merged.push(line);
             continue;
         }
 
         if in_features && is_toml_table_header(trimmed) {
-            if !hooks_seen {
-                merged.push("hooks = true".into());
+            if !state.hooks_seen
+                && let Some(value) = &target_hooks_value
+            {
+                let indent = state
+                    .deprecated
+                    .as_ref()
+                    .map(|deprecated| deprecated.indent.as_str())
+                    .unwrap_or("");
+                merged.push(format!("{indent}hooks = {value}"));
             }
             in_features = false;
             merged.push(line);
@@ -609,12 +649,17 @@ fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
             match toml_assignment_key(&line) {
                 Some("codex_hooks") => continue,
                 Some("hooks") => {
-                    if hooks_seen {
+                    if hooks_written {
                         continue;
                     }
-                    let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-                    merged.push(format!("{indent}hooks = true"));
-                    hooks_seen = true;
+                    if enable_hooks {
+                        let indent: String =
+                            line.chars().take_while(|c| c.is_whitespace()).collect();
+                        merged.push(format!("{indent}hooks = true"));
+                    } else {
+                        merged.push(line);
+                    }
+                    hooks_written = true;
                     continue;
                 }
                 _ => {}
@@ -624,9 +669,16 @@ fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
         merged.push(line);
     }
 
-    if features_seen && in_features && !hooks_seen {
-        merged.push("hooks = true".into());
-    } else if !features_seen {
+    if state.features_seen && in_features && !state.hooks_seen {
+        if let Some(value) = &target_hooks_value {
+            let indent = state
+                .deprecated
+                .as_ref()
+                .map(|deprecated| deprecated.indent.as_str())
+                .unwrap_or("");
+            merged.push(format!("{indent}hooks = {value}"));
+        }
+    } else if !state.features_seen && enable_hooks {
         if !merged.is_empty() && !merged.last().is_some_and(|s| s.is_empty()) {
             merged.push(String::new());
         }
@@ -638,8 +690,56 @@ fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
     if !output.ends_with('\n') {
         output.push('\n');
     }
-    std::fs::write(config_path, output)?;
+    if output != original {
+        std::fs::write(config_path, output)?;
+    }
     Ok(())
+}
+
+#[derive(Default)]
+struct CodexFeaturesState {
+    features_seen: bool,
+    hooks_seen: bool,
+    deprecated: Option<DeprecatedCodexHooksFeature>,
+}
+
+struct DeprecatedCodexHooksFeature {
+    indent: String,
+    value: String,
+}
+
+fn codex_features_state(lines: &[String]) -> CodexFeaturesState {
+    let mut state = CodexFeaturesState::default();
+    let mut in_features = false;
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "[features]" {
+            state.features_seen = true;
+            in_features = true;
+            continue;
+        }
+
+        if in_features && is_toml_table_header(trimmed) {
+            in_features = false;
+        }
+
+        if !in_features {
+            continue;
+        }
+
+        match toml_assignment_key(line) {
+            Some("hooks") => state.hooks_seen = true,
+            Some("codex_hooks") if state.deprecated.is_none() => {
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                let value = toml_assignment_value(line).unwrap_or("true").to_string();
+                state.deprecated = Some(DeprecatedCodexHooksFeature { indent, value });
+            }
+            _ => {}
+        }
+    }
+
+    state
 }
 
 fn is_toml_table_header(trimmed_line: &str) -> bool {
@@ -655,6 +755,15 @@ fn toml_assignment_key(line: &str) -> Option<&str> {
     trimmed
         .split_once('=')
         .map(|(key, _)| key.trim().trim_matches('"'))
+}
+
+fn toml_assignment_value(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') || trimmed.starts_with(';') {
+        return None;
+    }
+
+    trimmed.split_once('=').map(|(_, value)| value.trim())
 }
 
 /// Fallback path for codex hooks whose event has no codex equivalent — append a
@@ -1554,6 +1663,52 @@ mod tests {
         let hooks_pos = body.find("hooks = true").unwrap();
         let unrelated_pos = body.find("[unrelated]").unwrap();
         assert!(hooks_pos < unrelated_pos);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_codex_hooks_feature_does_not_create_config() {
+        let dir = tmpdir("codex_features_migrate_no_config");
+        let config = dir.join("config.toml");
+        migrate_codex_hooks_feature(&config).unwrap();
+        assert!(!config.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_codex_hooks_feature_preserves_deprecated_value() {
+        let dir = tmpdir("codex_features_migrate_only");
+        let config = dir.join("config.toml");
+        std::fs::write(
+            &config,
+            "[features]\ncodex_hooks = false\nother_flag = true\n\n[unrelated]\nx = 1\n",
+        )
+        .unwrap();
+        migrate_codex_hooks_feature(&config).unwrap();
+        let body = std::fs::read_to_string(&config).unwrap();
+        assert!(body.contains("hooks = false"));
+        assert!(body.contains("other_flag = true"));
+        assert!(!body.contains("codex_hooks"));
+        let hooks_pos = body.find("hooks = false").unwrap();
+        let unrelated_pos = body.find("[unrelated]").unwrap();
+        assert!(hooks_pos < unrelated_pos);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_codex_hooks_feature_prefers_existing_hooks_value() {
+        let dir = tmpdir("codex_features_migrate_existing_hooks");
+        let config = dir.join("config.toml");
+        std::fs::write(
+            &config,
+            "[features]\nhooks = false\ncodex_hooks = true\nother_flag = true\n",
+        )
+        .unwrap();
+        migrate_codex_hooks_feature(&config).unwrap();
+        let body = std::fs::read_to_string(&config).unwrap();
+        assert!(body.contains("hooks = false"));
+        assert!(!body.contains("hooks = true"));
+        assert!(!body.contains("codex_hooks"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

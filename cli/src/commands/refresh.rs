@@ -96,6 +96,15 @@ pub fn refresh_items_in_scope(
     let mut stats = RefreshStats::default();
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
 
+    if lock
+        .entries
+        .values()
+        .any(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
+        && let Err(err) = installer::migrate_codex_config(global)
+    {
+        eprintln!("Warning: failed to migrate Codex config feature flags: {err}");
+    }
+
     let installed_skills: Vec<String> = lock
         .entries
         .iter()
