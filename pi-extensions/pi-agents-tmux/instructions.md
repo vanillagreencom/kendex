@@ -10,7 +10,7 @@ Do not use for: trivial work the parent can do directly with read/grep/find; any
 
 Calling rules:
 - One self-contained `task` string per delegation — the subagent cannot ask follow-ups.
-- Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.pi/agent/agents` are explicitly needed.
+- Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.claude/agents` or `~/.pi/agent/agents` are explicitly needed.
 - Bg (`pane: false`) agents start in a fresh one-shot session when `sessionKey` is omitted. Pass a stable `sessionKey` only when you intentionally want to reuse memory across calls; reused lanes are preflight-guarded near context limit and default to refuse-and-warn.
 - Bg children and pane children both carry `PI_SUBAGENT_CHILD_AGENT` for identity/authorization; only visible pane children carry `PI_SUBAGENT_CHILD_PANE=1` and may update tmux pane title or poll pane inboxes.
 - Bg completions are captured from the child process's final assistant output. `complete_subagent` is reserved for persistent pane/follow-up tasks and is not exposed to bg children.

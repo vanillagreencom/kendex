@@ -2,14 +2,16 @@
  * Agent discovery and configuration for the project-local Pi subagent extension.
  *
  * Supported locations:
- * - ~/.pi/agent/agents/*.md       user-level agents
- * - .pi/agents/*.md               project-level Pi agents
+ * - ~/.claude/agents/*.md         user-level Claude agents
+ * - ~/.pi/agent/agents/*.md       user-level Pi agents
  * - .claude/agents/*.md           project-level compatibility import
+ * - .pi/agents/*.md               project-level Pi agents
  *
- * When duplicate names exist, precedence is: user < .claude < .pi.
+ * When duplicate names exist, precedence is: Claude user < Pi user < project .claude < project .pi.
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { effortFromModelId, normalizeReasoningEffort } from "./settings.js";
@@ -172,9 +174,20 @@ function isDirectory(p: string): boolean {
 	}
 }
 
+function homeAgentRoot(): string {
+	return path.resolve(process.env.HOME || os.homedir());
+}
+
+function userAgentDirs(): string[] {
+	return [path.join(homeAgentRoot(), ".claude", "agents"), path.join(getAgentDir(), "agents")];
+}
+
 function findNearestProjectAgentDirs(cwd: string): string[] {
-	let currentDir = cwd;
+	let currentDir = path.resolve(cwd);
+	const homeDir = homeAgentRoot();
 	while (true) {
+		if (currentDir === homeDir) return [];
+
 		const claudeDir = path.join(currentDir, ".claude", "agents");
 		const piDir = path.join(currentDir, ".pi", "agents");
 		const dirs = [claudeDir, piDir].filter(isDirectory);
@@ -187,10 +200,9 @@ function findNearestProjectAgentDirs(cwd: string): string[] {
 }
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDir = path.join(getAgentDir(), "agents");
 	const projectAgentDirs = findNearestProjectAgentDirs(cwd);
 
-	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
+	const userAgents = scope === "project" ? [] : userAgentDirs().flatMap((dir) => loadAgentsFromDir(dir, "user"));
 	const projectAgents =
 		scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project"));
 
