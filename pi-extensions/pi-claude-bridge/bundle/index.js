@@ -22237,17 +22237,22 @@ function convertPiMessages(messages, customToolNameToSdk) {
 }
 
 // src/models.ts
+var FABLE_MODEL_ID = "claude-fable-5";
+var FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
+function fallbackModelForPrimaryModel(modelId) {
+  return modelId === FABLE_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : void 0;
+}
 var MODEL_IDS_IN_ORDER = [
-  "claude-fable-5",
-  "claude-opus-4-8",
+  FABLE_MODEL_ID,
+  FABLE_FALLBACK_MODEL_ID,
   "claude-opus-4-7",
   "claude-opus-4-6",
   "claude-sonnet-4-6",
   "claude-haiku-4-5"
 ];
 var FALLBACK_MODELS = {
-  "claude-fable-5": {
-    id: "claude-fable-5",
+  [FABLE_MODEL_ID]: {
+    id: FABLE_MODEL_ID,
     name: "Claude Fable 5",
     reasoning: true,
     thinkingLevelMap: { xhigh: "xhigh" },
@@ -22255,8 +22260,8 @@ var FALLBACK_MODELS = {
     contextWindow: 1e6,
     maxTokens: 128e3
   },
-  "claude-opus-4-8": {
-    id: "claude-opus-4-8",
+  [FABLE_FALLBACK_MODEL_ID]: {
+    id: FABLE_FALLBACK_MODEL_ID,
     name: "Claude Opus 4.8",
     reasoning: true,
     thinkingLevelMap: { xhigh: "xhigh" },
@@ -38576,6 +38581,13 @@ function finalizeCurrentStream(stopReason) {
   ctx().currentPiStream.end();
   ctx().currentPiStream = null;
 }
+function updateTurnOutputModel(modelId) {
+  const c2 = ctx();
+  if (typeof modelId !== "string" || !modelId || !c2.turnOutput) return;
+  if (c2.turnOutput.model === modelId) return;
+  debug(`provider: active Claude model changed ${c2.turnOutput.model} -> ${modelId}`);
+  c2.turnOutput.model = modelId;
+}
 function processStreamEvent(message, customToolNameToPi, model) {
   const c2 = ctx();
   if (!c2.currentPiStream || !c2.turnOutput) return;
@@ -38587,6 +38599,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
   }
   if (event?.type === "message_start") {
     c2.resetToolTracking();
+    updateTurnOutputModel(event.message?.model);
     if (event.message?.usage) updateUsage(c2.turnOutput, event.message.usage, model);
     return;
   }
@@ -38725,6 +38738,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   const c2 = ctx();
   const assistantMsg = message.message;
   if (!assistantMsg?.content) return;
+  updateTurnOutputModel(assistantMsg.model);
   if (c2.turnSawStreamEvent) {
     if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
       c2.turnSawToolCall = true;
@@ -38771,6 +38785,8 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       const toolBlock = c2.turnBlocks[idx];
       c2.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c2.turnOutput });
       c2.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c2.turnOutput });
+    } else if (block.type === "fallback") {
+      updateTurnOutputModel(block.to?.model);
     } else {
       debug("processAssistantMessage: unhandled block type", block.type);
     }
@@ -38822,6 +38838,14 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
       case "system":
         if (message.subtype === "init" && message.session_id) {
           capturedSessionId = message.session_id;
+        } else if (message.subtype === "model_refusal_fallback") {
+          const originalModel = message.original_model;
+          const fallbackModel = message.fallback_model;
+          updateTurnOutputModel(fallbackModel);
+          debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
+          if (originalModel === FABLE_MODEL_ID && fallbackModel === FABLE_FALLBACK_MODEL_ID) {
+            safeNotify("Claude bridge switched Fable 5 to Opus 4.8 after Claude Code safety fallback.", "info");
+          }
         }
         break;
       case "user":
@@ -38976,16 +39000,19 @@ function streamClaudeAgentSdk(model, context, options) {
   const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
   const requestedEffort = options?.reasoning ? model.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
-  const extraArgs = { model: model.id };
+  const extraArgs = {};
   if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
   if (effort) extraArgs["thinking-display"] = "summarized";
+  const fallbackModel = fallbackModelForPrimaryModel(model.id);
   const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
   const queryOptions = {
     cwd,
+    model: model.id,
     env: childEnv,
     ...CLAUDE_BRIDGE_TOOL_ISOLATION,
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
+    ...fallbackModel ? { fallbackModel } : {},
     ...providerSettings.fastMode ? { settings: { fastMode: true } } : {},
     systemPrompt: {
       type: "preset",
@@ -39005,6 +39032,7 @@ function streamClaudeAgentSdk(model, context, options) {
     "provider: fresh query",
     `model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
     `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
+    `fallback=${fallbackModel ?? "none"}`,
     `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`

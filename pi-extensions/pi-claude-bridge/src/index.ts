@@ -11,7 +11,7 @@ import { resolve as pathResolve } from "path";
 import { homedir } from "os";
 import { delimiter, dirname, join } from "path";
 import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
-import { buildModels } from "./models.js";
+import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, buildModels, fallbackModelForPrimaryModel } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
@@ -1401,6 +1401,14 @@ function finalizeCurrentStream(stopReason?: string): void {
 	ctx().currentPiStream = null;
 }
 
+function updateTurnOutputModel(modelId: unknown): void {
+	const c = ctx();
+	if (typeof modelId !== "string" || !modelId || !c.turnOutput) return;
+	if (c.turnOutput.model === modelId) return;
+	debug(`provider: active Claude model changed ${c.turnOutput.model} -> ${modelId}`);
+	c.turnOutput.model = modelId;
+}
+
 /** Maps Anthropic stream events to pi stream events (text, thinking, toolcall).
  *  On message_stop with tool_use: ends currentPiStream so pi can execute the tool. */
 export function processStreamEvent(
@@ -1419,6 +1427,7 @@ export function processStreamEvent(
 
 	if (event?.type === "message_start") {
 		c.resetToolTracking();
+		updateTurnOutputModel(event.message?.model);
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
 		return;
 	}
@@ -1579,6 +1588,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	const c = ctx();
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
+	updateTurnOutputModel(assistantMsg.model);
 	if (c.turnSawStreamEvent) {
 		// Claude Agent SDK can yield the completed assistant message before (or
 		// instead of) a stream_event message_stop for a tool-use turn. Treat that
@@ -1630,6 +1640,8 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			const toolBlock = c.turnBlocks[idx];
 			c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
 			c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+		} else if (block.type === "fallback") {
+			updateTurnOutputModel(block.to?.model);
 		} else {
 			debug("processAssistantMessage: unhandled block type", block.type);
 		}
@@ -1698,6 +1710,14 @@ async function consumeQuery(
 			case "system":
 				if ((message as any).subtype === "init" && (message as any).session_id) {
 					capturedSessionId = (message as any).session_id;
+				} else if ((message as any).subtype === "model_refusal_fallback") {
+					const originalModel = (message as any).original_model;
+					const fallbackModel = (message as any).fallback_model;
+					updateTurnOutputModel(fallbackModel);
+					debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
+					if (originalModel === FABLE_MODEL_ID && fallbackModel === FABLE_FALLBACK_MODEL_ID) {
+						safeNotify("Claude bridge switched Fable 5 to Opus 4.8 after Claude Code safety fallback.", "info");
+					}
 				}
 				break;
 			case "user":
@@ -1908,11 +1928,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		: undefined;
 	const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
 
-	const extraArgs: Record<string, string | null> = { model: model.id };
+	const extraArgs: Record<string, string | null> = {};
 	if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
 	// Opus 4.7 defaults thinking.display to "omitted" (empty thinking text in stream).
 	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
 	if (effort) extraArgs["thinking-display"] = "summarized";
+	const fallbackModel = fallbackModelForPrimaryModel(model.id);
 
 	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
 	// when the user is logged into Anthropic). These are a separate code path from
@@ -1927,10 +1948,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,
+		model: model.id,
 		env: childEnv,
 		...CLAUDE_BRIDGE_TOOL_ISOLATION,
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
+		...(fallbackModel ? { fallbackModel } : {}),
 		...(providerSettings.fastMode ? { settings: { fastMode: true } } : {}),
 		systemPrompt: {
 			type: "preset", preset: "claude_code",
@@ -1949,6 +1972,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	debug("provider: fresh query",
 		`model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
+		`fallback=${fallbackModel ?? "none"}`,
 		`appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
 		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);

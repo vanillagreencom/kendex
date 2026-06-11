@@ -92,7 +92,7 @@ Keys may be bare model IDs (`claude-opus-4-8`), `claude-bridge/<id>`, or `*` for
 
 ### Fable 5 caveat
 
-The bridge registers `claude-bridge/claude-fable-5` and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. Claude can route Fable 5 prompts flagged by its cyber/bio safety classifiers to Opus 4.8 in Claude Code or API surfaces. This bridge does not add its own fallback layer, so flagged Fable 5 requests may be less reliable in Pi if the underlying Claude Code SDK does not handle the reroute transparently for that turn.
+The bridge registers `claude-bridge/claude-fable-5` and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. For Fable 5, the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
 
 ## Extra usage and rate limits
 

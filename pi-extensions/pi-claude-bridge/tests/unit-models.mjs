@@ -5,7 +5,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { MODEL_IDS_IN_ORDER, buildModels, resolveModelId } from "../src/models.js";
+import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, buildModels, fallbackModelForPrimaryModel, resolveModelId } from "../src/models.js";
 
 // Simulated pi-ai registry entry — extra fields mimic the ones pi-ai exposes
 // that must not leak into the provider-registered MODELS array.
@@ -36,7 +36,8 @@ describe("MODELS projection", () => {
 
 	it("lists Fable 5 before Opus models", () => {
 		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		assert.equal(models[0]?.id, "claude-fable-5");
+		assert.equal(models[0]?.id, FABLE_MODEL_ID);
+		assert.equal(models[1]?.id, FABLE_FALLBACK_MODEL_ID);
 	});
 
 	it("fills bridge-owned future IDs missing from pi-ai and drops unknown missing IDs", () => {
@@ -96,5 +97,11 @@ describe("resolveModelId", () => {
 
 	it("falls through to input when no match", () => {
 		assert.equal(resolveModelId(models, "gpt-9"), "gpt-9");
+	});
+
+	it("configures Opus 4.8 availability fallback for Fable 5 only", () => {
+		assert.equal(fallbackModelForPrimaryModel(FABLE_MODEL_ID), FABLE_FALLBACK_MODEL_ID);
+		assert.equal(fallbackModelForPrimaryModel(FABLE_FALLBACK_MODEL_ID), undefined);
+		assert.equal(fallbackModelForPrimaryModel("claude-sonnet-4-6"), undefined);
 	});
 });

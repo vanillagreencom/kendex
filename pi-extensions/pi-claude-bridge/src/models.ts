@@ -2,9 +2,16 @@
 // `resolveModelId` returns the first partial match, so `opus` resolves to the first-listed opus entry.
 // Extracted from index.ts so tests can import without activating the extension.
 
+export const FABLE_MODEL_ID = "claude-fable-5";
+export const FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
+
+export function fallbackModelForPrimaryModel(modelId: string): string | undefined {
+	return modelId === FABLE_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : undefined;
+}
+
 export const MODEL_IDS_IN_ORDER = [
-	"claude-fable-5",
-	"claude-opus-4-8",
+	FABLE_MODEL_ID,
+	FABLE_FALLBACK_MODEL_ID,
 	"claude-opus-4-7",
 	"claude-opus-4-6",
 	"claude-sonnet-4-6",
@@ -22,8 +29,8 @@ type BridgeModelMetadata = {
 };
 
 const FALLBACK_MODELS: Record<string, BridgeModelMetadata> = {
-	"claude-fable-5": {
-		id: "claude-fable-5",
+	[FABLE_MODEL_ID]: {
+		id: FABLE_MODEL_ID,
 		name: "Claude Fable 5",
 		reasoning: true,
 		thinkingLevelMap: { xhigh: "xhigh" },
@@ -31,8 +38,8 @@ const FALLBACK_MODELS: Record<string, BridgeModelMetadata> = {
 		contextWindow: 1000000,
 		maxTokens: 128000,
 	},
-	"claude-opus-4-8": {
-		id: "claude-opus-4-8",
+	[FABLE_FALLBACK_MODEL_ID]: {
+		id: FABLE_FALLBACK_MODEL_ID,
 		name: "Claude Opus 4.8",
 		reasoning: true,
 		thinkingLevelMap: { xhigh: "xhigh" },

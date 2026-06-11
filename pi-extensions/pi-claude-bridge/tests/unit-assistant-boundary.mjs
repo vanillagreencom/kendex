@@ -175,4 +175,45 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.equal(c.turnBlocks.length, 1);
 		assert.equal(c.turnBlocks[0].text, "fallback after stale content event");
 	});
+
+	it("updates the Pi assistant model when Claude Code switches models at message_start", () => {
+		const c = ctx();
+		c.resetTurnState({ ...model, id: "claude-fable-5" });
+		installFakeStream();
+
+		processStreamEvent({
+			type: "stream_event",
+			event: {
+				type: "message_start",
+				message: {
+					model: "claude-opus-4-8",
+					usage: { input_tokens: 1, output_tokens: 0 },
+				},
+			},
+		}, new Map(), model);
+
+		assert.equal(c.turnOutput.model, "claude-opus-4-8");
+		assert.equal(c.turnSawStreamEvent, false);
+	});
+
+	it("records fallback assistant blocks without rendering them as text", () => {
+		const c = ctx();
+		c.resetTurnState({ ...model, id: "claude-fable-5" });
+		installFakeStream();
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				model: "claude-opus-4-8",
+				content: [{
+					type: "fallback",
+					from: { model: "claude-fable-5" },
+					to: { model: "claude-opus-4-8" },
+				}],
+			},
+		}, model, new Map());
+
+		assert.equal(c.turnOutput.model, "claude-opus-4-8");
+		assert.equal(c.turnBlocks.length, 0);
+	});
 });
