@@ -19,6 +19,9 @@
 #                          completion. Combined with --skip.
 #   BOT_CHECK_NAME         Optional CI check name treated as an early review
 #                          completion signal (legacy fast-path for Claude).
+#                          When unset, PR-level approved reviewDecision can
+#                          still resolve stale pending bot signals if no
+#                          unresolved review threads remain.
 #
 # Exit codes:
 #   0 - All configured reviewers reached a terminal state (approved/changes/skipped)
@@ -198,12 +201,89 @@ collect_reviewers() {
   printf '%s' "$arr"
 }
 
+pr_review_decision_approved() {
+  local pr_json
+  if ! pr_json=$(gh pr view "$PR_NUM" --json reviewDecision 2>/dev/null); then
+    return 1
+  fi
+  [[ "$(jq -r '.reviewDecision // ""' <<<"$pr_json")" == "APPROVED" ]]
+}
+
+bot_check_name_passed() {
+  [[ -z "${BOT_CHECK_NAME:-}" ]] && return 0
+
+  local check_lines
+  check_lines=$(gh pr checks "$PR_NUM" 2>&1 | grep -E "^\s*${BOT_CHECK_NAME}\s" || true)
+  [[ -n "$check_lines" ]] && echo "$check_lines" | grep -qE '\bpass\b'
+}
+
+unresolved_pr_threads_count() {
+  local repo_info owner repo threads
+  repo_info=$(get_repo_info) || return 1
+  owner=$(get_owner "$repo_info")
+  repo=$(get_repo "$repo_info")
+
+  local query='
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes { isResolved }
+      }
+    }
+  }
+}'
+  threads=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$PR_NUM") || return 1
+  jq '[.repository.pullRequest.reviewThreads.nodes[]? | select((.isResolved // false) == false)] | length' <<<"$threads"
+}
+
+apply_pr_terminal_fallback() {
+  local entries="$1"
+
+  # Do not turn an explicit changes request into approval.
+  if jq -e 'any(.status == "changes")' >/dev/null <<<"$entries"; then
+    printf '%s' "$entries"
+    return 0
+  fi
+
+  # GitHub's PR-level reviewDecision can become terminal while a bot's sticky
+  # status comment still looks pending. Trust it only when the configured bot
+  # check has passed (if one is configured) and no unresolved review threads
+  # remain, so comment triage can proceed instead of polling stale prose.
+  if ! pr_review_decision_approved || ! bot_check_name_passed; then
+    printf '%s' "$entries"
+    return 0
+  fi
+
+  local unresolved
+  if ! unresolved=$(unresolved_pr_threads_count); then
+    printf '%s' "$entries"
+    return 0
+  fi
+  if [[ "$unresolved" -gt 0 ]]; then
+    printf '%s' "$entries"
+    return 0
+  fi
+
+  jq -c '
+    map(
+      if .status == "pending" or .status == "unknown" then
+        .status = "approved"
+        | .signals += ["pr_review_decision:approved", "pr_threads:clear"]
+      else
+        .
+      end
+    )
+  ' <<<"$entries"
+}
+
 collect_reviewers_or_exit() {
   local entries
   if ! entries=$(collect_reviewers); then
     emit_error "GitHub API failure while reading bot review status for PR #$PR_NUM"
     exit 3
   fi
+  entries=$(apply_pr_terminal_fallback "$entries")
   printf '%s' "$entries"
 }
 
@@ -285,6 +365,23 @@ wait_for_checklist() {
   sticky_checklist_done
 }
 
+pr_terminal_fallback_applied() {
+  local entries="$1"
+  jq -e 'any(.signals[]? == "pr_review_decision:approved")' >/dev/null <<<"$entries"
+}
+
+terminal_posting_done() {
+  local entries="$1"
+
+  # The PR-level fallback already verified that no unresolved review threads
+  # remain. Do not wait on stale sticky checklist prose after that point.
+  if pr_terminal_fallback_applied "$entries"; then
+    return 0
+  fi
+
+  wait_for_checklist
+}
+
 emit_result() {
   local status="$1"
   local entries="$2"
@@ -354,7 +451,7 @@ while [ $elapsed -lt $phase1_end ] && [[ -n "$BOT_CHECK_NAME" ]]; do
     if echo "$check_lines" | grep -qE '\b(pass|fail)\b'; then
       entries=$(collect_reviewers_or_exit)
       if ! any_blocking "$entries"; then
-        if wait_for_checklist; then
+        if terminal_posting_done "$entries"; then
           emit_result "complete" "$entries"
           exit 0
         else
@@ -376,7 +473,7 @@ done
 while [ $elapsed -lt $MAX_WAIT ]; do
   entries=$(collect_reviewers_or_exit)
   if ! any_blocking "$entries"; then
-    if wait_for_checklist; then
+    if terminal_posting_done "$entries"; then
       emit_result "complete" "$entries"
       exit 0
     else
@@ -400,7 +497,7 @@ done
 entries=$(collect_reviewers_or_exit)
 if ! any_blocking "$entries"; then
   # Crossed the line right at the bell.
-  if wait_for_checklist; then
+  if terminal_posting_done "$entries"; then
     emit_result "complete" "$entries"
     exit 0
   fi

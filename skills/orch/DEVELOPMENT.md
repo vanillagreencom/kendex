@@ -11,6 +11,17 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 3. **Fallback retry.** Auth still fails → drop env tokens, retry bot-token load. Recovers when project config/secrets have a valid token despite broken keyring.
 4. **Hard fail.** No path works → exit `3` with diagnostic. Callers do not poll against empty output.
 
+## Bot Review Terminal Fallback
+
+`bot-review-wait` primarily trusts per-reviewer signals from formal reviews, sticky comments, reactions, and unresolved threads. Some bot runs can leave a sticky comment looking pending after GitHub has already moved the PR to `reviewDecision=APPROVED`. In that case the waiter promotes pending/unknown reviewers to approved only when:
+
+- no reviewer has an explicit `changes` status,
+- `gh pr view --json reviewDecision` reports `APPROVED`,
+- `BOT_CHECK_NAME` is unset or the matching check line is `pass`, and
+- the PR has zero unresolved review threads.
+
+The emitted reviewer signals include `pr_review_decision:approved` and `pr_threads:clear` so callers can distinguish this fallback from a direct sticky/comment verdict. Entries with this signal skip the later sticky-checklist drain wait because the fallback already verified that thread propagation is clear.
+
 ## Tests
 
 ```bash

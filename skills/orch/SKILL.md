@@ -146,7 +146,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
 | `parallel-groups` | Local cache for safe parallel handoff analysis |
 
-`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output.
+`bot-review-wait --json` returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output. If a bot's direct signal remains pending after GitHub reports `reviewDecision=APPROVED`, the waiter treats the reviewer as approved only when any configured `BOT_CHECK_NAME` has passed and there are no unresolved review threads, then skips stale sticky-checklist waiting.
 
 `session-init --json` reports worktree Linear auth as the structured `linear_auth` object from `linear auth-check`. `linear_auth.error = "not installed"` is reserved for a missing Linear skill command; API key, 1Password, and API failures keep their original auth-check diagnostic.
 

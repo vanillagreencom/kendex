@@ -44,6 +44,9 @@ cat > "$FAKE_GITHUB_SH" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "sticky-comment" && "${3:-}" == "--body" ]]; then
+  if [[ "${2:-}" == "3" ]]; then
+    printf '%s\n' '- [ ] stale checklist item'
+  fi
   exit 0
 fi
 printf 'unexpected github.sh call: %s\n' "$*" >&2
@@ -79,7 +82,11 @@ case "${1:-}" in
     endpoint="${2:-}"
     case "$endpoint" in
       graphql)
-        echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+        if [[ "$*" == *"pr=4"* ]]; then
+          echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"vg-claude"}}]}}]}}}}}'
+        else
+          echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+        fi
         exit 0
         ;;
       repos/*/pulls/1/reviews)
@@ -87,6 +94,14 @@ case "${1:-}" in
         exit 0
         ;;
       repos/*/pulls/2/reviews)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/pulls/3/reviews)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/pulls/4/reviews)
         echo '[]'
         exit 0
         ;;
@@ -104,9 +119,61 @@ case "${1:-}" in
 JSON
         exit 0
         ;;
+      repos/*/issues/3/comments)
+        cat <<'JSON'
+[
+  {
+    "id": 3001,
+    "user": {"login": "vg-claude"},
+    "body": "**Claude is working** —— [View job](https://github.com/example/actions/runs/3)\n\n- [ ] Analyze changes\n- [ ] Post review",
+    "created_at": "2026-06-02T08:18:35Z",
+    "updated_at": "2026-06-02T08:20:33Z"
+  }
+]
+JSON
+        exit 0
+        ;;
+      repos/*/issues/4/comments)
+        cat <<'JSON'
+[
+  {
+    "id": 4001,
+    "user": {"login": "vg-claude"},
+    "body": "**Claude is working** —— [View job](https://github.com/example/actions/runs/4)\n\n- [ ] Post review",
+    "created_at": "2026-06-02T08:18:35Z",
+    "updated_at": "2026-06-02T08:20:33Z"
+  }
+]
+JSON
+        exit 0
+        ;;
       repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
         exit 0
+        ;;
+      repos/*/issues/3/reactions|repos/*/issues/comments/3001/reactions)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/issues/4/reactions|repos/*/issues/comments/4001/reactions)
+        echo '[]'
+        exit 0
+        ;;
+    esac
+    ;;
+  pr)
+    case "${2:-}" in
+      view)
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" ]]; then
+          echo '{"reviewDecision":"APPROVED"}'
+          exit 0
+        fi
+        ;;
+      checks)
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" ]]; then
+          echo 'Claude Code	pass	0	https://github.com/example/actions/runs/3'
+          exit 0
+        fi
         ;;
     esac
     ;;
@@ -139,6 +206,24 @@ output=$(run_wait 2 1 5 --json)
 assert_eq "$(jq -r .status <<<"$output")" "complete" "Claude comment-only auto-detect completes without reviewers arg"
 assert_eq "$(jq -r .verdict <<<"$output")" "approved" "Claude comment-only auto-detect returns approved verdict"
 assert_eq "$(jq -r '.approved_reviewers | join(",")' <<<"$output")" "claude[bot]" "Claude comment-only auto-detect records reviewer"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+BOT_CHECK_NAME="Claude Code"
+EOF
+output=$(run_wait 3 1 5 --json --reviewers 'vg-claude')
+assert_eq "$(jq -r .status <<<"$output")" "complete" "PR-level approved reviewDecision resolves stale pending sticky"
+assert_eq "$(jq -r .verdict <<<"$output")" "approved" "PR-level approved fallback returns approved verdict"
+assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "0" "PR-level approved fallback skips stale sticky checklist wait"
+assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "pr_review_decision:approved" "PR-level approved fallback records signal"
+
+set +e
+output=$(run_wait 4 1 1 --json --reviewers 'vg-claude')
+code=$?
+set -e
+assert_eq "$code" "0" "PR-level approved fallback does not fail on unresolved terminal threads"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "unresolved threads are terminal"
+assert_eq "$(jq -r .verdict <<<"$output")" "changes" "unresolved threads retain changes verdict"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

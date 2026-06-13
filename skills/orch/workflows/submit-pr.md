@@ -121,7 +121,7 @@ BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
 PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
 ```
 
-Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not configured. Max wait 600s. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. To ignore a reviewer: `--skip "bot-login"` or `BOT_SKIPPED_REVIEWERS`.
+Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not configured. Max wait 600s. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. If sticky prose is stale but GitHub reports `reviewDecision=APPROVED`, any configured `BOT_CHECK_NAME` has passed, and no unresolved review threads remain, `bot-review-wait` returns approved with `pr_review_decision:approved` and `pr_threads:clear` signals without waiting on the stale checklist. To ignore a reviewer: `--skip "bot-login"` or `BOT_SKIPPED_REVIEWERS`.
 
 **Route result**:
 
