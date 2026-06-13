@@ -28,7 +28,7 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 
 2. **Parse return**: Branch, Commit, QA Labels, Summary.
 
-3. **Do NOT shutdown dev agent.** Persists for § 3 fix cycles and re-delegation. Only § 5.4 shuts it down.
+3. **Do NOT shutdown dev agent.** Persists for § 3 fix cycles and re-delegation. Only § 5.5 shuts it down.
 
 → § 3
 
@@ -69,9 +69,25 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 - `issue_id`: [ISSUE_ID]
 - `pr_number`: from § 4
 
-### 5.3 Output Session Summary
+### 5.3 Move Linear Issue To In Review
 
 **Do NOT mark issues Done.** Issues stay "In Review" until merge triggers Done.
+
+1. **Resolve tracker**:
+   ```bash
+   TRACKER=linear; [[ "[ISSUE_ID]" == issue-* ]] && TRACKER=github
+   ```
+
+2. **Skip if** `TRACKER=github` (GitHub issues close via PR merge keywords). → § 5.4
+
+3. **Move to review**. After PR submission, bot/CI review, fix reconciliation, and final comments are complete, move the managed Linear issue into review ownership:
+   ```bash
+   .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
+   ```
+
+→ § 5.4
+
+### 5.4 Output Session Summary
 
 1. **Read final state**:
    ```bash
@@ -120,18 +136,18 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 
    | ID | Title | Changes |
    |----|-------|---------|
-   | [ISSUE_ID] | [TITLE] | state: Todo→Done, +rel [ISSUE_X] |
+   | [ISSUE_ID] | [TITLE] | state: [PREVIOUS]→In Review, +rel [ISSUE_X] |
 
    Omit sections with no data. Include sub-issues tree if bundled.
 
 
    </output_format>
 
-### 5.4 Shutdown Team
+### 5.5 Shutdown Team
 
 1. Terminate all still-active agents from `child_sessions` in workflow state.
 
-### 5.5 Offer Merge
+### 5.6 Offer Merge
 
 **Skip if** no PR created (§ 4) or CI not passing.
 
