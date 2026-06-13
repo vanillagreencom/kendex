@@ -42,7 +42,29 @@ fi
 
 2. **Check for existing PR**:
    ```bash
-   PR_NUM=$(.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-view --json number,state 2>/dev/null | jq -r .number)
+   mkdir -p tmp
+   PR_VIEW_RC=0
+   PR_VIEW_JSON=$(.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-view --json number,state 2>tmp/pr-view.err) || PR_VIEW_RC=$?
+   if [ "$PR_VIEW_RC" -eq 0 ]; then
+     PR_NUM=$(echo "$PR_VIEW_JSON" | jq -r '.number // empty')
+   else
+     PR_VIEW_STATUS=$(echo "$PR_VIEW_JSON" | jq -r '.status // "error"' 2>/dev/null || echo "error")
+     case "$PR_VIEW_STATUS" in
+       no_pr)
+         PR_NUM=""
+         ;;
+       auth_error|token_resolution_failed|token_resolution_timeout|token_resolution_unavailable|auth_timeout|gh_timeout|gh_error)
+         echo "PR lookup failed ($PR_VIEW_STATUS): $(echo "$PR_VIEW_JSON" | jq -r '.error // empty')" >&2
+         cat tmp/pr-view.err >&2
+         exit "$PR_VIEW_RC"
+         ;;
+       *)
+         echo "PR lookup failed with unparseable output" >&2
+         cat tmp/pr-view.err >&2
+         exit "$PR_VIEW_RC"
+         ;;
+     esac
+   fi
    ```
 
 3. **Build PR body** from current workflow state using the template below (omit empty sections).

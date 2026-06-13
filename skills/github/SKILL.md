@@ -22,7 +22,7 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | Command | Purpose |
 |---------|---------|
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
-| `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view) |
+| `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
 | `pr-threads <N> [--unresolved]` | Get thread list/count |
 | `pr-review-status <N> [--baseline-ts TS --baseline-threads N]` | Check review state, determine if action needed |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
@@ -121,14 +121,34 @@ Resolution rules:
 | `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local`) | Falls back to `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for review/comment filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for issue ID extraction from branches | `[A-Z]+-[0-9]+` |
+| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving `GH_BOT_TOKEN` | `10` |
+| `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `gh auth status` in `pr-view` | `10` |
+| `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` in `pr-view` | `30` |
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 
 Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local`.
 
+### `pr-view` failure contract
+
+`pr-view --json ...` returns normal `gh pr view` JSON on success. On failure it
+prints structured JSON to stdout and exits nonzero:
+
+```json
+{"status":"no_pr","error":"No pull request found for the current branch","detail":"...","exit_code":1,"number":null}
+```
+
+Known `status` values are `no_pr`, `auth_error`, `token_resolution_failed`,
+`token_resolution_timeout`, `token_resolution_unavailable`, `auth_timeout`,
+`gh_timeout`, and `gh_error`. Raw `gh`/`op` detail is also echoed to stderr so
+callers can distinguish no-PR, authentication, token resolution, and timeout
+cases without hanging.
+
 ## Error Handling
 
-- Returns `{"error": "message"}` on stderr with exit code 1
+- Most commands return `{"error": "message"}` on stderr with exit code 1
+- `pr-view --json ...` returns structured failure JSON on stdout so callers can
+  branch on `status` without losing raw stderr detail
 - Automatic retry on rate limiting (3 attempts with backoff)
 - NOT_FOUND errors return clean `{"error": "Not found"}`
 

@@ -28,8 +28,18 @@ CLI wrapper for GitHub API operations used in PR workflows.
 | `GH_BOT_TOKEN` | Bot account GitHub token | Falls back to `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for branch issue extraction | `[A-Z]+-[0-9]+` |
+| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` token resolution | `10` |
+| `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `pr-view` auth preflight | `10` |
+| `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` | `30` |
 
 Keep tokens in `.env.local`. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+
+`pr-view --json ...` emits normal `gh pr view` JSON on success. On failure it
+emits structured JSON on stdout with `status` (`no_pr`, `auth_error`,
+`token_resolution_failed`, `token_resolution_timeout`,
+`token_resolution_unavailable`, `auth_timeout`, `gh_timeout`, or `gh_error`),
+`error`, `detail`, `exit_code`, and `number:null`, then exits nonzero. Stderr
+keeps the raw `gh`/`op` detail for logs.
 
 ## Adding a Command
 

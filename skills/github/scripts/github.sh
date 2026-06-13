@@ -47,14 +47,39 @@ fi
 if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_BOT_TOKEN:-}" ]; then
     _env_bot_token="$GH_BOT_TOKEN"
     if [[ "$_env_bot_token" == op://* ]] && command -v op &>/dev/null; then
-        _resolved=$(op read "$_env_bot_token" 2>/dev/null || true)
-        [ -n "$_resolved" ] && _env_bot_token="$_resolved"
+        _op_timeout="${VSTACK_GITHUB_OP_TIMEOUT:-10}"
+        _op_status=0
+        if command -v timeout &>/dev/null; then
+            _resolved=$(timeout "${_op_timeout}s" op read "$_env_bot_token" 2>&1) || _op_status=$?
+        else
+            _resolved=$(op read "$_env_bot_token" 2>&1) || _op_status=$?
+        fi
+        if [ "$_op_status" -eq 0 ] && [ -n "$_resolved" ]; then
+            _env_bot_token="$_resolved"
+        else
+            case "$_op_status" in
+                124)
+                    export VSTACK_GITHUB_TOKEN_ERROR_TYPE="token_resolution_timeout"
+                    export VSTACK_GITHUB_TOKEN_ERROR="Timed out resolving GH_BOT_TOKEN 1Password reference after ${_op_timeout}s"
+                    ;;
+                *)
+                    export VSTACK_GITHUB_TOKEN_ERROR_TYPE="token_resolution_failed"
+                    export VSTACK_GITHUB_TOKEN_ERROR="Failed to resolve GH_BOT_TOKEN 1Password reference"
+                    ;;
+            esac
+            if [ -n "$_resolved" ]; then
+                export VSTACK_GITHUB_TOKEN_ERROR_DETAIL="$(printf '%s' "$_resolved" | head -c 500 | tr '\n' ' ')"
+            fi
+        fi
+    elif [[ "$_env_bot_token" == op://* ]]; then
+        export VSTACK_GITHUB_TOKEN_ERROR_TYPE="token_resolution_unavailable"
+        export VSTACK_GITHUB_TOKEN_ERROR="GH_BOT_TOKEN is a 1Password reference but 'op' CLI is not available"
     fi
     if [[ "$_env_bot_token" =~ ^gh[pors]_ ]] || [[ "$_env_bot_token" =~ ^github_pat_ ]]; then
         export GH_TOKEN="$_env_bot_token"
     fi
 fi
-unset _env_root _env_bot_token _resolved _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN
+unset _env_root _env_bot_token _resolved _op_timeout _op_status _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN
 
 show_help() {
     cat << 'EOF'

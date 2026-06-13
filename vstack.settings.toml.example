@@ -78,6 +78,15 @@ GH_ISSUE_PATTERN = "[A-Z]+-[0-9]+"
 GH_VERIFY_CMD = "make verify"
 # Used by: github (`pr-cross-check --verify`).
 
+VSTACK_GITHUB_OP_TIMEOUT = "10"
+# Used by: github (`pr-view` / bot token 1Password resolution).
+
+VSTACK_GITHUB_AUTH_TIMEOUT = "10"
+# Used by: github (`pr-view` auth preflight).
+
+VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
+# Used by: github (`pr-view`).
+
 # SECOND OPINION
 
 SECOND_OPINION_TARGET = "codex"
