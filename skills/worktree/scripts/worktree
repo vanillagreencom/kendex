@@ -113,6 +113,17 @@ issue_branch_name() {
   echo "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+current_checkout_path_for_issue() {
+  local issue="$1"
+  local expected_branch current_root current_branch
+  expected_branch="$(issue_branch_name "$issue")"
+  current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$current_root" ]] || return 1
+  current_branch="$(git -C "$current_root" branch --show-current 2>/dev/null || true)"
+  [[ -n "$current_branch" && "$current_branch" == "$expected_branch" ]] || return 1
+  printf '%s\n' "$current_root"
+}
+
 # Symlink a path from main repo into worktree (handles tracked dirs with assume-unchanged)
 # Idempotently append a worktree-relative path to the COMMON git-dir's
 # info/exclude so git treats the symlink we lay down as ignored content.
@@ -542,6 +553,8 @@ case "${1:-}" in
       WT_PATH="$PWD"
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
+    elif WT_PATH="$(current_checkout_path_for_issue "$ARG")"; then
+      :
     else
       WT_PATH="$(worktree_path "$ARG")"
     fi

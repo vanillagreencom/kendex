@@ -113,6 +113,17 @@ assert_branch_absent() {
   fi
 }
 
+assert_remote_branch_exists() {
+  local repo="$1" branch="$2" name="$3"
+  if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        missing remote branch: %s\n' "$name" "$branch"
+  fi
+}
+
 make_repo() {
   local repo="$1"
   mkdir -p "$repo"
@@ -217,6 +228,29 @@ assert_eq "$codex_branch_out" "Codex worktree branch ready: cc-999 ($CODEX_BRANC
 assert_eq "$(git -C "$CODEX_BRANCH_ROOT/trees/app-managed" branch --show-current)" "cc-999" "codex-branch renames app branch to issue branch"
 assert_branch_absent "$CODEX_BRANCH_ROOT/main" "app-managed-branch" "codex-branch removes old app branch name"
 assert_path_exists "$CODEX_BRANCH_ROOT/trees/app-managed/tmp" "codex-branch reapplies setup after branch normalization"
+
+CODEX_PUSH_ROOT="$TMP_ROOT/codex-push"
+make_repo "$CODEX_PUSH_ROOT/main"
+git init -q --bare "$CODEX_PUSH_ROOT/origin.git"
+git -C "$CODEX_PUSH_ROOT/main" remote add origin "$CODEX_PUSH_ROOT/origin.git"
+git -C "$CODEX_PUSH_ROOT/main" push -q -u origin main
+cat > "$CODEX_PUSH_ROOT/main/.env.local" <<'ENV'
+WORKTREE_BASE_DIR="../registry-trees"
+ENV
+git -C "$CODEX_PUSH_ROOT/main" worktree add -q -b issue-codex-push "$CODEX_PUSH_ROOT/app-worktrees/issue-codex-push" main
+printf 'codex-change\n' >> "$CODEX_PUSH_ROOT/app-worktrees/issue-codex-push/file.txt"
+git -C "$CODEX_PUSH_ROOT/app-worktrees/issue-codex-push" add file.txt
+git -C "$CODEX_PUSH_ROOT/app-worktrees/issue-codex-push" commit -q -m 'codex push change'
+set +e
+(
+  cd "$CODEX_PUSH_ROOT/app-worktrees/issue-codex-push" && \
+    "$WORKTREE_SCRIPT" push ISSUE-CODEX-PUSH --no-rebase >"$CODEX_PUSH_ROOT/codex-push.out" 2>"$CODEX_PUSH_ROOT/codex-push.err"
+)
+codex_push_code=$?
+set -e
+assert_eq "$codex_push_code" "0" "push issue ID uses current Codex worktree outside configured registry"
+assert_remote_branch_exists "$CODEX_PUSH_ROOT/main" "issue-codex-push" "push issue ID publishes current Codex worktree branch"
+assert_path_absent "$CODEX_PUSH_ROOT/registry-trees/issue-codex-push" "push issue ID does not require configured registry path"
 
 # .env.local is not special-cased. It is only linked when listed in
 # WORKTREE_SYMLINKS.
