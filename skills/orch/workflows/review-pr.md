@@ -47,10 +47,15 @@ fi
 
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+git -C [WORKTREE_PATH] status --porcelain
 git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-**If no changes**: Report "No changes to review" and **END**.
+**If `git status --porcelain` is not empty**:
+- Managed lifecycle with `dev_agent`: stop review and re-delegate to the dev agent to commit or revert the leftover files, then re-enter § 1. Do not run review against a dirty pre-submission worktree.
+- Standalone lifecycle: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. Do not continue through `review-pr`.
+
+**If no committed diff after the dirty check**: Report "No committed changes to review" and **END**.
 
 **Tiny/docs-only skip path**: Review is the default gate. If the full diff is docs/comments-only (`*.md`, comments, typo fixes) or tiny (≤10 changed lines, no logic change), present the diff stat and ask the user: `Run full review` | `Skip review (tiny/docs-only)`. On skip: `workflow-state set [ISSUE_ID] review_skipped "tiny-docs"` → § 11 with verdict `pass`. Never auto-skip without asking.
 

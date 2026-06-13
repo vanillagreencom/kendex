@@ -8,14 +8,22 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 |---------|------|
 | `start` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
 | `start [ISSUE_ID]` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
+| `start github OWNER/REPO#N` (from worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 2 → § 3 → § 4 → § 5 |
 
 ---
 
 ## 1. Initialize Worktree Session
 
+If invoked as `start github OWNER/REPO#N`, parse it before initialization:
+- `TRACKER=github`
+- `ISSUE_ID=issue-N`
+- `GITHUB_REPO=OWNER/REPO`
+
 **Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 2` with context:
 - `lifecycle`: `"managed"`
-- `issue_id`: from argument or branch
+- `issue_id`: normalized issue ID from argument or branch
+- `tracker`: `[TRACKER]` when parsed
+- `github_repo`: `[GITHUB_REPO]` when parsed
 
 ---
 
@@ -28,7 +36,14 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 
 2. **Parse return**: Branch, Commit, QA Labels, Summary.
 
-3. **Do NOT shutdown dev agent.** Persists for § 3 fix cycles and re-delegation. Only § 5.5 shuts it down.
+3. **Require committed clean work before review.** Do not proceed to § 3 unless § 2 validation confirms:
+   - `HEAD` advanced from the pre-dev SHA captured by `dev-start.md`.
+   - The returned commit exists in `HEAD` history.
+   - `git status --porcelain` is empty.
+
+   If any check fails, re-delegate to the same dev agent with the exact missing step: commit the implemented changes, report the commit SHA, and leave the worktree clean. Never review or submit a dirty worktree.
+
+4. **Do NOT shutdown dev agent.** Persists for § 3 fix cycles and re-delegation. Only § 5.5 shuts it down.
 
 → § 3
 
@@ -75,7 +90,7 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 
 1. **Resolve tracker**:
    ```bash
-   TRACKER=linear; [[ "[ISSUE_ID]" == issue-* ]] && TRACKER=github
+   TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
    ```
 
 2. **Skip if** `TRACKER=github` (GitHub issues close via PR merge keywords). → § 5.4

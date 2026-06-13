@@ -53,6 +53,7 @@ For each item:
 2. Create exactly one Codex app thread for that item with `codex_app.create_thread`.
    - The prompt must be exactly the start prompt from step 1.
    - Target the current saved project with a separate worktree environment for that issue. Do not run all issues in the controller thread, do not launch all issues in one child thread, and do not pass multiple issue IDs to a child thread.
+   - The child thread may start in a detached Codex app worktree. Its first `start`/`initialize` step must parse `github OWNER/REPO#N` into `ISSUE_ID=issue-N` and run `session-init --json github OWNER/REPO#N`, which normalizes the branch before dev/review/submit.
    - Use the current model and thinking settings unless the user explicitly requested overrides.
 3. If the runtime creates the thread before accepting the prompt, immediately call `codex_app.send_message_to_thread` for the returned `threadId` with the exact start prompt from step 1.
 4. If `codex_app.set_thread_title` is exposed, title the thread with the item identifier, such as `orch [ISSUE_ID]` or `orch github #[N]`.

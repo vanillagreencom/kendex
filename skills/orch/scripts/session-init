@@ -1,20 +1,51 @@
 #!/usr/bin/env bash
 # session-init — Initialize development session and display dashboard
-# Usage: session-init         # formatted dashboard
-#        session-init --json  # raw JSON for workflows
+# Usage: session-init                         # formatted dashboard
+#        session-init --json [ISSUE_ID]       # raw JSON for workflows
+#        session-init --json github OWNER/REPO#N
 
 set -euo pipefail
 
 OUTPUT_FORMAT="dashboard"
 ISSUE_ID_ARG=""
+TRACKER_ARG=""
+GITHUB_REPO_ARG=""
+GITHUB_ISSUE_ARG=""
+POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) OUTPUT_FORMAT="json"; shift ;;
     --)     shift; break ;;
     -*)     shift ;;  # ignore unknown flags
-    *)      ISSUE_ID_ARG="$1"; shift ;;
+    *)      POSITIONAL_ARGS+=("$1"); shift ;;
   esac
 done
+
+if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
+  if [[ "${POSITIONAL_ARGS[0]}" == "github" ]]; then
+    if [[ ${#POSITIONAL_ARGS[@]} -lt 2 ]]; then
+      echo "Error: github start requires OWNER/REPO#N" >&2
+      exit 2
+    fi
+    GITHUB_REF="${POSITIONAL_ARGS[1]}"
+    if [[ "$GITHUB_REF" =~ ^([^#[:space:]]+/[^#[:space:]]+)#([0-9]+)$ ]]; then
+      TRACKER_ARG="github"
+      GITHUB_REPO_ARG="${BASH_REMATCH[1]}"
+      GITHUB_ISSUE_ARG="${BASH_REMATCH[2]}"
+      ISSUE_ID_ARG="issue-${GITHUB_ISSUE_ARG}"
+    else
+      echo "Error: expected GitHub issue ref OWNER/REPO#N, got '$GITHUB_REF'" >&2
+      exit 2
+    fi
+  elif [[ "${POSITIONAL_ARGS[0]}" =~ ^([^#[:space:]]+/[^#[:space:]]+)#([0-9]+)$ ]]; then
+    TRACKER_ARG="github"
+    GITHUB_REPO_ARG="${BASH_REMATCH[1]}"
+    GITHUB_ISSUE_ARG="${BASH_REMATCH[2]}"
+    ISSUE_ID_ARG="issue-${GITHUB_ISSUE_ARG}"
+  else
+    ISSUE_ID_ARG="${POSITIONAL_ARGS[0]}"
+  fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -202,6 +233,10 @@ else
   ISSUE_ID=$(printf '%s' "$BRANCH" | grep -oiE "$_ISSUE_PAT" | head -1 | tr '[:lower:]' '[:upper:]' || true)
 fi
 ISSUE_ID="${ISSUE_ID:-}"
+if [[ -z "$TRACKER_ARG" && -n "$ISSUE_ID" ]]; then
+  TRACKER_ARG="linear"
+  [[ "$ISSUE_ID" == issue-* ]] && TRACKER_ARG="github"
+fi
 
 # Worktree detection
 IS_WORKTREE="false"
@@ -212,7 +247,7 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
   WORKTREE_NAME=$(basename "$(pwd)")
   if [[ -n "$ISSUE_ID_ARG" ]]; then
     normalize_codex_issue_branch "$ISSUE_ID"
-    source_project_env
+    vstack_load_project_env "$PROJECT_ROOT"
     BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
     ISSUE_ID="$ISSUE_ID_ARG"
   fi
@@ -235,7 +270,10 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
       --arg lang_version "$LANG_VERSION" \
       --arg branch "$BRANCH" \
       --arg issue_id "$ISSUE_ID" \
-      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, issue_id: $issue_id, gh_auth: $gh, linear_auth: $linear, lsp: $lsp}'
+      --arg tracker "$TRACKER_ARG" \
+      --arg github_repo "$GITHUB_REPO_ARG" \
+      --arg github_issue "$GITHUB_ISSUE_ARG" \
+      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, issue_id: $issue_id, tracker: $tracker, github_repo: $github_repo, github_issue: $github_issue, gh_auth: $gh, linear_auth: $linear, lsp: $lsp}'
   else
     GH_ICON=$([[ "$WT_GH_OK" == "true" ]] && echo "✓" || echo "✗")
     LINEAR_ICON=$([[ "$WT_LINEAR_OK" == "true" ]] && echo "✓" || echo "✗")
@@ -574,6 +612,9 @@ SESSION_JSON=$(jq -n \
   --arg lang_lsp "${LANG_LSP:-}" \
   --arg branch "$BRANCH" \
   --arg issue_id "$ISSUE_ID" \
+  --arg tracker "$TRACKER_ARG" \
+  --arg github_repo "$GITHUB_REPO_ARG" \
+  --arg github_issue "$GITHUB_ISSUE_ARG" \
   --arg build_status "$BUILD_STATUS" \
   --arg repo_owner "${REPO_OWNER:-}" \
   --arg repo_name "${REPO_NAME:-}" \
@@ -593,6 +634,9 @@ SESSION_JSON=$(jq -n \
   lang_lsp: $lang_lsp,
   branch: $branch,
   issue_id: $issue_id,
+  tracker: $tracker,
+  github_repo: $github_repo,
+  github_issue: $github_issue,
   build_status: $build_status,
   uncommitted: $uncommitted,
   worktrees: $worktrees,

@@ -56,8 +56,11 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 | `initialize` | `[ISSUE_ID]` | `workflows/initialize.md` | Team setup, auth, cache, state (standalone) |
 
 **`start` routing logic:**
-1. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md`
-2. Otherwise → `workflows/start.md`
+1. Parse explicit args first:
+   - `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, `OWNER/REPO` retained for GitHub API calls.
+   - `[ISSUE_ID]` → Linear unless it already starts with `issue-`.
+2. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md` with the parsed issue context.
+3. Otherwise → `workflows/start.md`
 
 ### Development
 
@@ -231,7 +234,7 @@ In a worktree, never create, switch to, or act on a different worktree or branch
 Resolve once per workflow, store as `TRACKER`:
 
 1. Caller `tracker` param wins.
-2. `ISSUE_ID` starts with `issue-` → `github`. Issue number = `${ISSUE_ID#issue-}`; repo from `gh repo view --json nameWithOwner`.
+2. `ISSUE_ID` starts with `issue-` → `github`. Issue number = `${ISSUE_ID#issue-}`; repo from caller context when supplied, otherwise from `gh repo view --json nameWithOwner`.
 3. Otherwise → `linear`.
 
 ```bash

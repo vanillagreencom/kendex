@@ -80,4 +80,6 @@ For app-visible handoff, use `handoff ... --harness codex-app` from the orch wor
 
 For multi-issue handoff, `handoff ISSUE_ID ISSUE_ID` defaults to Codex app threads when those tools are exposed. Create one Codex app thread per issue. Start each thread with exactly `$orch start ISSUE_ID` for Linear or `$orch start github OWNER/REPO#N` for GitHub. If the runtime separates thread creation from prompting, call `codex_app.send_message_to_thread` once for the returned thread ID with that same start prompt.
 
+Codex Desktop may create those child sessions as detached app worktrees under `~/.codex/worktrees`. The child `start` workflow still runs the normal worktree lifecycle: `session-init --json github OWNER/REPO#N` normalizes the branch to `issue-N`, then the session proceeds through implementation, review, PR submission, CI, and merge offer. A dirty or detached worktree is a hard preflight failure before review or PR submission.
+
 The Codex CLI does not expose these thread tools. Do not automate app-visible handoff with terminal launch helpers, `codex debug app-server`, raw `codex app-server`, or manual app-thread instructions.

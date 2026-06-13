@@ -8,11 +8,14 @@ Set up team, auth, cache, and workflow state for a worktree session.
 |---------|------|
 | `initialize` | § 1 → § 2 |
 | `initialize [ISSUE_ID]` | § 1 → § 2 |
+| `initialize github OWNER/REPO#N` | normalize to `issue-N`, then § 1 → § 2 |
 | (from start-worktree.md) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):
 - `lifecycle` (optional): `"managed"` (return to caller at § 2) | `"self"` (default, standalone).
 - `issue_id` (optional): Issue ID. If absent, extracted from branch.
+- `tracker` (optional): `linear` or `github`.
+- `github_repo` (optional): `OWNER/REPO` for GitHub work items.
 
 ---
 
@@ -22,7 +25,12 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
 1. **Run**: `.agents/skills/orch/scripts/session-init --json [ISSUE_ID]`
    - Pass `[ISSUE_ID]` as a positional argument if provided; otherwise omit it.
-   - Script resolves `ISSUE_ID` from the argument or current branch and returns it as `issue_id` in JSON output. In Codex-managed worktrees with an explicit `[ISSUE_ID]`, normalizes the app-created branch to the lower-case issue branch.
+   - For GitHub work items, pass the original form when available:
+     ```bash
+     .agents/skills/orch/scripts/session-init --json github [OWNER/REPO]#[N]
+     ```
+   - Script resolves `ISSUE_ID` from the argument or current branch and returns it as `issue_id` in JSON output. `github OWNER/REPO#N` returns `issue-N`.
+   - In Codex-managed worktrees with an explicit issue, the script normalizes the app-created detached branch to the lower-case issue branch before workflow-state initialization.
    - Read `issue_id` from output; if empty, fall back to the sanitized branch name (replace `/` with `-`) for workflow-state and team naming.
    - Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 

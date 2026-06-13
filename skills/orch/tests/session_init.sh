@@ -82,5 +82,19 @@ ok="$(jq -r '.linear_auth.ok // false' <<<"$out")"
 assert_eq "$ok" "false" "missing linear command reports ok=false"
 assert_eq "$err" "not installed" "missing linear command reports not installed"
 
+WT_GITHUB="$(make_worktree wt-github yes)"
+out="$(
+  cd "$WT_GITHUB"
+  TEST_PROJECT_ROOT="$WT_GITHUB" PATH="$STUB_BIN:$PATH" "$SCRIPT" --json github vanillagreencom/vstack#356
+)"
+issue="$(jq -r '.issue_id // empty' <<<"$out")"
+tracker="$(jq -r '.tracker // empty' <<<"$out")"
+repo="$(jq -r '.github_repo // empty' <<<"$out")"
+number="$(jq -r '.github_issue // empty' <<<"$out")"
+assert_eq "$issue" "issue-356" "GitHub refs normalize to issue-N in worktree init"
+assert_eq "$tracker" "github" "GitHub refs report github tracker"
+assert_eq "$repo" "vanillagreencom/vstack" "GitHub refs preserve owner/repo"
+assert_eq "$number" "356" "GitHub refs preserve issue number"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

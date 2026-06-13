@@ -37,3 +37,9 @@ Tests stage isolated repos/worktrees with parametrized CLI stubs on `PATH`. Each
 - `bot_review_wait.sh` — review-wait state machine + auth ladder.
 - `ci_wait.sh` — CI-wait state machine + auth ladder.
 - `session_init.sh` — worktree Linear auth diagnostic preservation.
+
+## Codex App Worktree Routing
+
+Codex Desktop handoff starts each child thread in an app-managed worktree, often on detached `HEAD`. `session-init --json github OWNER/REPO#N` is the normalization boundary: it converts the GitHub ref to `issue-N`, calls the worktree skill's `codex-branch` helper when the cwd is under `~/.codex/worktrees`, and returns the normalized issue context to `start-worktree.md`.
+
+The managed lifecycle relies on committed branch diffs. `dev-start.md`, `review-pr.md`, and `submit-pr.md` must reject dirty or detached worktrees before review/submission so uncommitted edits cannot be treated as "no changes".

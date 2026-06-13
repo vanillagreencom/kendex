@@ -35,12 +35,28 @@ fi
 
 ## 1. Push and Submit PR
 
-1. **Push branch**:
+1. **Preflight committed work**:
+   ```bash
+   BASE_BRANCH=$(.agents/skills/orch/scripts/resolve-base-branch "[WORKTREE_PATH]")
+   CURRENT_BRANCH=$(git -C "[WORKTREE_PATH]" branch --show-current)
+   git -C "[WORKTREE_PATH]" status --porcelain
+   git -C "[WORKTREE_PATH]" diff "origin/$BASE_BRANCH"...HEAD --stat
+   ```
+
+   Stop before pushing if any condition is true:
+   - `CURRENT_BRANCH` is empty (detached HEAD).
+   - `CURRENT_BRANCH` equals `$BASE_BRANCH`.
+   - `git status --porcelain` is not empty.
+   - The committed diff against `origin/$BASE_BRANCH` is empty.
+
+   In managed lifecycle, return to the caller with the failed preflight so the dev agent can normalize the branch and commit or clean the worktree. Do not create a PR from dirty or detached state.
+
+2. **Push branch**:
    ```bash
    .agents/skills/worktree/scripts/worktree push "[WORKTREE_PATH]" --set-upstream
    ```
 
-2. **Check for existing PR**:
+3. **Check for existing PR**:
    ```bash
    mkdir -p tmp
    PR_VIEW_RC=0
@@ -67,7 +83,7 @@ fi
    fi
    ```
 
-3. **Build PR body** from current workflow state using the template below (omit empty sections).
+4. **Build PR body** from current workflow state using the template below (omit empty sections).
 
    **PR body MUST be written to a file** — inline bodies with backticks or fenced code blocks corrupt under shell command substitution. Use a quoted heredoc (disables interpolation) or your harness's `Write` tool:
 
@@ -109,7 +125,7 @@ fi
    - **Created Issues**: Include if issues created during review.
    - **QA Metrics**: Include if QA agents ran. Format is project-configurable based on which QA agent types are active.
 
-4. **Create or update PR**:
+5. **Create or update PR**:
 
    **No existing PR** → create with `defer-ci` label. Always pass the body via `--body-file`:
    ```bash

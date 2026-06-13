@@ -84,6 +84,12 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 
 **Dev agents persist for the entire session.** Never shutdown dev agents — they stay alive for fix cycles, pending children, and PR review fixes. Only the caller's finalization step shuts them down.
 
+Before each implementation delegation, capture the current `HEAD`:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pre_delegate_sha "$(git -C [WORKTREE_PATH] rev-parse HEAD)"
+```
+
 **After each spawn**, persist the agent session:
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"agent_id": "[AGENT_OR_TASK_ID]"}'
@@ -161,20 +167,28 @@ Handoff from prior agents:
 
 1. **Run ALL checks** — do not proceed if ANY fails:
    ```bash
-   # Check commit exists
+   PRE_SHA=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty')
+   HEAD_SHA=$(git -C "[WORKTREE_PATH]" rev-parse HEAD)
+
+   # Check the implementation produced committed work.
    git -C "[WORKTREE_PATH]" log -1 --oneline
+   test -z "$PRE_SHA" || test "$HEAD_SHA" != "$PRE_SHA"
+
+   # Check no implemented files were left outside the commit.
+   test -z "$(git -C "[WORKTREE_PATH]" status --porcelain)"
 
    # Linear only: check state + summary (auto-includes pending children from bundle)
    .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
    ```
 
-   **GitHub/ad-hoc**: no tracker validation — require the commit plus a return message with Branch, Commit, QA Labels, and Summary content.
+   **GitHub/ad-hoc**: no tracker validation — require a new commit, a clean worktree, and a return message with Branch, Commit, QA Labels, and Summary content.
 
 2. **Evaluate results** (Linear):
 
    | Field | Expected | Failure Action |
    |-------|----------|----------------|
-   | commit | exists | Re-delegate § 2 with retry instructions |
+   | commit | `HEAD` advanced from `pre_delegate_sha` | Re-delegate § 2 with retry instructions |
+   | worktree | `git status --porcelain` empty | Re-delegate § 2: commit or revert leftover files |
    | `.all_ok` | `true` | Check `.results[]` below |
    | `.results[].state_ok` | `true` | Re-delegate § 2 |
    | `.results[].has_summary` | `true` | Re-delegate § 2 with retry instructions |

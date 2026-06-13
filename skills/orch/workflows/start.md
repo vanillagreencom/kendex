@@ -14,9 +14,11 @@ Start one work item. Never watches or manages other sessions.
 ## 1. Route
 
 1. If args start with `new`, invoke `workflows/start-new.md`.
-2. If cwd is a worktree, invoke `workflows/start-worktree.md` and stop.
-3. If args start with `github`, set `tracker=github`, parse `[OWNER/REPO]` and `[N]`.
-4. Else set `tracker=linear`, parse `[ISSUE_ID]` if present.
+2. Parse explicit work item args before checking cwd:
+   - If args start with `github`, set `tracker=github`, parse `[OWNER/REPO]` and `[N]`, and set `ISSUE_ID=issue-[N]`.
+   - Else set `tracker=linear`, parse `[ISSUE_ID]` if present.
+   - If parsed `ISSUE_ID` starts with `issue-`, set `tracker=github`.
+3. If cwd is a worktree, invoke `workflows/start-worktree.md` with the parsed context and stop.
 
 ## 2. Main Repo Dashboard
 
@@ -83,7 +85,7 @@ Ask one action:
 | Continue here | Execute `workflows/start-worktree.md` using `[WT_PATH]` as the worktree context |
 | Launch handoff | Invoke `workflows/handoff.md` |
 | Launch Codex app | Invoke `workflows/handoff.md` with `harness=codex-app`; Codex Desktop creates one app thread per issue via `codex_app` thread tools |
-| Manual | Print worktree path and exact `/orch start ...` command |
+| Manual | Print worktree path and exact `/orch start ...` command. For GitHub, use `/orch start github [OWNER/REPO]#[N]`; the worktree workflow normalizes it to `issue-[N]`. |
 
 <output_format>
 ### Milestone: Worktree Ready
