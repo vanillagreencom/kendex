@@ -72,10 +72,16 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    - Otherwise: from workflow state or issue labels
      ```bash
      AGENT=$(.agents/skills/orch/scripts/workflow-state get $ISSUE_ID '.agent // empty' 2>/dev/null)
-     TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
-     # Linear only — GitHub items: gh issue view ${ISSUE_ID#issue-} --json labels, or infer from component paths
-     [[ -z "$AGENT" && "$TRACKER" == "linear" ]] && AGENT=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID --format=compact | jq -r '[.labels[] | select(startswith("agent:"))] | first | split(":")[1] // empty')
+     TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
      ```
+
+     If `AGENT` is empty and `TRACKER` is `linear`, look up the Linear agent label:
+
+     ```bash
+     AGENT=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID --format=compact | jq -r '[.labels[] | select(startswith("agent:"))] | first | split(":")[1] // empty')
+     ```
+
+     GitHub items: use `gh issue view ${ISSUE_ID#issue-} --json labels`, or infer from component paths.
 
 2. **Group items by agent domain** if multi-domain. Order per [agent-sequencing.md](agent-sequencing.md).
 

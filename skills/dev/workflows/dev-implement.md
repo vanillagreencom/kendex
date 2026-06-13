@@ -32,9 +32,8 @@ Respect blocking order: complete blockers before blocked issues.
 - Read/Write/Edit/Grep/Glob: `[WORKTREE_PATH]/...`
 
 ```bash
-BASE_BRANCH=${WORKTREE_DEFAULT_BRANCH:-$(git -C [WORKTREE_PATH] symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
-git -C [WORKTREE_PATH] fetch origin "$BASE_BRANCH"
+.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 ```
 
 ---
@@ -323,21 +322,23 @@ Development-only feature exception: do not apply `needs-perf-test` for work isol
 
 **Target issue**: Linear posts to the issue you just implemented. GitHub/ad-hoc returns the same content to the orchestrator instead of posting a tracker comment.
 
-```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "## Completion Summary
+Create `tmp/completion-summary-[ISSUE_ID].md` with:
+
+```markdown
+## Completion Summary
 
 **Agent**: [AGENT_NAME]
-**Branch**: \`[BRANCH]\`
+**Branch**: `[BRANCH]`
 
 ### Files Created/Modified
-- \`path/to/file\` - Description
+- `path/to/file` - Description
 
 ### Key Decisions
 1. Decision and rationale
 2. DXXX recorded (if research-informed)
 
 ### Skills/Docs/Rules Updated
-- \`skill-name\`: Updated X
+- `skill-name`: Updated X
 (Skip if none)
 
 ### Domain Metrics
@@ -360,8 +361,12 @@ Bullets without a marker prefix are treated as genuine new backlog work and rout
 ### Handoff Notes
 Context the next agent in this bundle needs to complete its current-scope work (e.g., struct changes, API contracts, file locations). Do NOT put aspirational suggestions or future work here — those belong in Discovered Work.
 (Skip if none)
+```
 
-"
+Then post it:
+
+```bash
+.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md
 ```
 
 ### 9.2 Downstream Handoff (selective)

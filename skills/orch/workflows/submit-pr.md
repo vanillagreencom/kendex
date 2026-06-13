@@ -402,8 +402,12 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
    [filled SUMMARY_CONTENT — see template below]
    SUMMARY_EOF
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
-   # Linear only — GitHub items get linkage via `Closes #N` in the PR body
-   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "$(cat "$SUMMARY_FILE")"
+   ```
+
+   Linear only — GitHub items get linkage via `Closes #N` in the PR body:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
    ```
 
    **Summary content template** (omit empty sections):

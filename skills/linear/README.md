@@ -34,6 +34,8 @@ Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachmen
 
 `cache labels list --format=safe` returns issue-label metadata (`id`, `name`, `team`, `parent`, `is_group`) so workflow callers can preflight labels and reject parent/group labels before issue mutation.
 
+Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-line comments. Inline `--body` is intended for short plain strings.
+
 ## Configuration
 
 | Variable | Purpose | Default |

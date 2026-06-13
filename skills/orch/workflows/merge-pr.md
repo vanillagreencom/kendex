@@ -102,8 +102,12 @@ PR #N ready with warnings:
 
 ```bash
 ISSUE=$(.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text)
-TRACKER=linear; [[ "$ISSUE" == issue-* ]] && TRACKER=github
-[ -n "$ISSUE" ] && .agents/skills/worktree/scripts/worktree exists "$ISSUE"
+```
+
+If `ISSUE` is non-empty, check whether its worktree exists:
+
+```bash
+.agents/skills/worktree/scripts/worktree exists "$ISSUE"
 ```
 
 If worktree exists: Ask user `"Cleanup worktree for [ISSUE_ID]?"` → store for § 5.

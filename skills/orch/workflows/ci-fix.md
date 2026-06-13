@@ -96,7 +96,17 @@ Infer agent type from component paths or issue labels.
 
 **Flaky test detection**: If test failure involves concurrent/threading code and passes locally, check project testing conventions for common patterns (missing barriers, iteration-based waits, static mutable state).
 
-**Detect team context**: `.agents/skills/orch/scripts/workflow-state exists [ISSUE_ID] && TEAM=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .team_name)`
+**Detect team context**:
+
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+```
+
+If `.exists` is `true`, read `.team_name`:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .team_name
+```
 
 Delegate to `[AGENT]`. Wait for completion. Fill placeholders, omit empty lines/sections.
 
@@ -181,8 +191,18 @@ After fix is pushed:
 **Post to issue tracker** — **Linear only** (GitHub items: the PR conversation already records the fix):
 ```bash
 ISSUE=$(.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text)
-TRACKER=linear; [[ "$ISSUE" == issue-* ]] && TRACKER=github
-[[ -n "$ISSUE" && "$TRACKER" == "linear" ]] && .agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
+```
+
+If `ISSUE` is non-empty, determine tracker:
+
+```bash
+TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE")
+```
+
+If `TRACKER` is `linear`, post the short status:
+
+```bash
+.agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
 ```
 
 ## 6. Present Results

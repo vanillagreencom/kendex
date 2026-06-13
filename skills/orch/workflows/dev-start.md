@@ -26,20 +26,44 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 - Main repo, worktree missing → ask the user before creating
 
 ```bash
-TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
-# Init workflow state if not exists
-if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  # Linear only: check for parent context (start-new flow: sub-issue in parent's worktree)
-  PARENT_ID=""
-  [[ "$TRACKER" == "linear" ]] && PARENT_ID=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID --format=compact | jq -r '.parent.identifier // empty')
-  if [[ -n "$PARENT_ID" ]] && .agents/skills/orch/scripts/workflow-state exists $PARENT_ID; then
-    TEAM=$(.agents/skills/orch/scripts/workflow-state get $PARENT_ID '.team_name // empty')
-    WT_PATH=$(.agents/skills/orch/scripts/workflow-state get $PARENT_ID '.worktree // empty')
-    .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)" --team "$TEAM"
-  else
-    .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
-  fi
-fi
+TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
+```
+
+If workflow state already exists, skip initialization:
+
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json "$ISSUE_ID"
+```
+
+If `.exists` is `false`, initialize workflow state. Linear only: first check for parent context from a start-new sub-issue:
+
+```bash
+PARENT_ID=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID --format=compact | jq -r '.parent.identifier // empty')
+```
+
+If `PARENT_ID` is non-empty, check whether the parent workflow state exists:
+
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json "$PARENT_ID"
+```
+
+If `.exists` is `true`, read the parent team and worktree:
+
+```bash
+TEAM=$(.agents/skills/orch/scripts/workflow-state get $PARENT_ID '.team_name // empty')
+WT_PATH=$(.agents/skills/orch/scripts/workflow-state get $PARENT_ID '.worktree // empty')
+```
+
+Then initialize child state with the inherited context:
+
+```bash
+.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)" --team "$TEAM"
+```
+
+Otherwise, initialize state with the current worktree:
+
+```bash
+.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
 ```
 
 ## 1. Determine Agent

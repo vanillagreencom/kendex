@@ -37,7 +37,7 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 | Resource | Actions |
 |----------|---------|
 | `issues` | list, get, create, update, children, relations, bulk-get |
-| `comments` | list, create |
+| `comments` | list, create (`--body` or `--body-file`) |
 | `projects` | list, get, create, update, dependencies, updates |
 | `initiatives` | list, get, create, add-project |
 | `milestones` | list, get, create |

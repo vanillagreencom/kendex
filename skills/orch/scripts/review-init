@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Initialize standalone review context and print it as JSON.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+worktree="$(pwd)"
+pattern="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+issue_id=""
+state_path=""
+initialized=false
+
+if issue_id="$(printf '%s\n' "$branch" | grep -oiP "$pattern" | head -1)"; then
+    :
+else
+    issue_id=""
+fi
+
+if [[ -n "$issue_id" ]]; then
+    exists_json="$("$SCRIPT_DIR/workflow-state" exists --json "$issue_id")"
+    state_path="$(printf '%s\n' "$exists_json" | jq -r '.path')"
+    if [[ "$(printf '%s\n' "$exists_json" | jq -r '.exists')" == "false" ]]; then
+        state_path="$("$SCRIPT_DIR/workflow-state" init "$issue_id" --worktree "$worktree" --branch "$branch")"
+        initialized=true
+    fi
+fi
+
+jq -n \
+  --arg branch "$branch" \
+  --arg worktree "$worktree" \
+  --arg issue_id "$issue_id" \
+  --arg state_path "$state_path" \
+  --argjson initialized "$initialized" \
+  '{
+    branch: $branch,
+    worktree: $worktree,
+    issue_id: $issue_id,
+    state_path: $state_path,
+    initialized: $initialized
+  }'

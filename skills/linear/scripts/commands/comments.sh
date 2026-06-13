@@ -25,18 +25,34 @@ List:
   comments.sh list <issue-id>
 
 Create Options:
-  --body <text>         Comment body (required, supports markdown)
+  --body <text>         Comment body (required unless --body-file is set)
+  --body-file <path>    Read comment body from file (preferred for markdown)
   --parent <id>         Parent comment ID for replies
 
 Update Options:
-  --body <text>         New comment body
+  --body <text>         New comment body (required unless --body-file is set)
+  --body-file <path>    Read new comment body from file
 
 Examples:
   comments.sh list PROJ-42
   comments.sh create PROJ-42 --body "Starting work on this task"
+  comments.sh create PROJ-42 --body-file tmp/comment.md
   comments.sh update <comment-id> --body "Updated comment text"
   comments.sh delete <comment-id>
 EOF
+}
+
+read_body_file() {
+    local body_file="$1"
+    if [[ -z "$body_file" ]]; then
+        echo '{"error": "--body-file requires a non-empty path argument"}' >&2
+        return 1
+    fi
+    if [[ ! -r "$body_file" ]]; then
+        echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
+        return 1
+    fi
+    body=$(<"$body_file")
 }
 
 list_comments() {
@@ -97,11 +113,13 @@ create_comment() {
     shift
 
     local body=""
+    local body_file=""
     local parent_id=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --body) body="$2"; shift 2 ;;
+            --body-file) body_file="$2"; shift 2 ;;
             --parent) parent_id="$2"; shift 2 ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
@@ -109,8 +127,16 @@ create_comment() {
         esac
     done
 
+    if [[ -n "$body" && -n "$body_file" ]]; then
+        echo '{"error": "--body and --body-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$body_file" ]]; then
+        read_body_file "$body_file"
+    fi
+
     if [ -z "$body" ]; then
-        echo '{"error": "Required: --body"}' >&2
+        echo '{"error": "Required: --body or --body-file"}' >&2
         return 1
     fi
 
@@ -167,18 +193,28 @@ update_comment() {
     shift
 
     local body=""
+    local body_file=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --body) body="$2"; shift 2 ;;
+            --body-file) body_file="$2"; shift 2 ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
             *) break ;;
         esac
     done
 
+    if [[ -n "$body" && -n "$body_file" ]]; then
+        echo '{"error": "--body and --body-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$body_file" ]]; then
+        read_body_file "$body_file"
+    fi
+
     if [ -z "$body" ]; then
-        echo '{"error": "Required: --body"}' >&2
+        echo '{"error": "Required: --body or --body-file"}' >&2
         return 1
     fi
 

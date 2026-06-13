@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Print the default base branch for a worktree, falling back to main.
+
+set -euo pipefail
+
+worktree="${1:-.}"
+remote_head=""
+
+if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
+    base_branch="$WORKTREE_DEFAULT_BRANCH"
+else
+    remote_head="$(git -C "$worktree" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)"
+    base_branch="${remote_head#refs/remotes/origin/}"
+fi
+
+base_branch="${base_branch#origin/}"
+base_branch="${base_branch#refs/heads/}"
+
+if [[ -z "${base_branch:-}" || "$base_branch" == "$remote_head" ]]; then
+    base_branch="main"
+fi
+
+printf '%s\n' "$base_branch"

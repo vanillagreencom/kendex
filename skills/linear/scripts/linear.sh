@@ -14,7 +14,7 @@ Usage: ./linear.sh <resource> <action> [options]
 
 Resources:
   issues          Issue operations (list, get, create, update, children, relations)
-  comments        Comment operations (list, create)
+  comments        Comment operations (list, create/update; supports --body-file)
   projects        Project operations (list, get, create, update, dependencies, updates)
   initiatives     Initiative operations (list, get, create, add-project)
   milestones      Project milestone operations (list, get, create)

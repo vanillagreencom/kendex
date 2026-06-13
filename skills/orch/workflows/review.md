@@ -15,29 +15,27 @@ On-demand code review for the current session. Reviews recent commits, presents 
 
 **Init:**
 ```bash
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN") || true
-WT_PATH=$(pwd)
-
-if [[ -n "$ISSUE_ID" ]] && ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
-fi
+.agents/skills/orch/scripts/review-init
 ```
+
+Use the JSON fields as `BRANCH`, `WT_PATH`, and `ISSUE_ID`. If `issue_id` is empty, skip workflow-state steps.
 
 ---
 
 ## 1. Determine Review Scope
 
 ```bash
-BASE_BRANCH=${WORKTREE_DEFAULT_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
+.agents/skills/orch/scripts/resolve-base-branch .
 ```
+
+Use the output as `BASE_BRANCH`.
 
 **Diff range by argument:**
 
 | Argument | `DIFF_RANGE` | Description |
 |----------|-------------|-------------|
 | (none) | `HEAD` | Uncommitted changes (staged + unstaged) vs last commit |
-| `all` | `origin/$BASE_BRANCH..` | All branch changes including uncommitted work |
+| `all` | `origin/[BASE_BRANCH]..` | All branch changes including uncommitted work |
 | `last [N]` | `HEAD~[N]..HEAD` | Last N commits (committed only) |
 | `[HASH]` | `[HASH]~1..[HASH]` | Single commit |
 

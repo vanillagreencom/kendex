@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Print the tracker name for an orch issue id.
+
+set -euo pipefail
+
+issue_id="${1:-}"
+if [[ -z "$issue_id" ]]; then
+    echo "Usage: tracker-for-issue <issue-id>" >&2
+    exit 2
+fi
+
+if [[ "$issue_id" == issue-* ]]; then
+    printf 'github\n'
+else
+    printf 'linear\n'
+fi

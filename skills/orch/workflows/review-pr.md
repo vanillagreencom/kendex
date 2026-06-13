@@ -31,7 +31,7 @@ ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
 # Init workflow state if not exists
 if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
   .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git -C $WT_PATH rev-parse --abbrev-ref HEAD)"
-  TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
+  TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
   if [[ "$TRACKER" == "github" ]]; then
     QA_LABELS=$(gh issue view ${ISSUE_ID#issue-} --json labels --jq '[.labels[].name | select(startswith("needs-"))]')
   else
@@ -46,9 +46,8 @@ fi
 ## 1. Identify Changes
 
 ```bash
-BASE_BRANCH=${WORKTREE_DEFAULT_BRANCH:-$(git -C [WORKTREE_PATH] symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
-git -C [WORKTREE_PATH] diff "origin/$BASE_BRANCH"...HEAD --stat
+.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
 **If no changes**: Report "No changes to review" and **END**.

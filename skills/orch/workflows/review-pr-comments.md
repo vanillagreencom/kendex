@@ -504,9 +504,18 @@ If user requests fixes for skipped items → delegate via § 6.1 (single item), 
    [filled SUMMARY_CONTENT — see template below]
    SUMMARY_EOF
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
-   # Linear only — GitHub items get linkage via `Closes #N` in the PR body
-   TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
-   [[ "$TRACKER" == "linear" ]] && .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "$(cat "$SUMMARY_FILE")"
+   ```
+
+   Determine tracker:
+
+   ```bash
+   TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
+   ```
+
+   If `TRACKER` is `linear`, post to Linear. GitHub items get linkage via `Closes #N` in the PR body:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
    ```
 
    ```markdown

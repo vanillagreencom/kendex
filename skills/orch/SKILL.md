@@ -140,6 +140,9 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | Script | Purpose |
 |--------|---------|
 | `workflow-state` | Persistent state read/write/append (survives compaction) |
+| `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
+| `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
+| `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `bot-review-wait` | Block until bot review posts on a PR — invoked by per-issue agents inside their submit-pr flow |
 | `ci-wait` | Block until CI completes on a PR — same |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
@@ -159,7 +162,7 @@ Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-s
 | Action | Purpose |
 |--------|---------|
 | `init <ID> --agent <name> --worktree <path> [--branch <b>] [--team <t>]` | Initialize state file |
-| `exists <ID>` | Check state file exists (exit code) |
+| `exists [--json] <ID>` | Check state file exists; `--json` prints `{issue_id,path,exists}` and exits 0 |
 | `path <ID>` | Print state file path |
 | `get <ID> <.field>` | Read state field |
 | `set <ID> <field> <value>` | Write state field |
@@ -232,10 +235,10 @@ Resolve once per workflow, store as `TRACKER`:
 3. Otherwise → `linear`.
 
 ```bash
-TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
+TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
 ```
 
-Assign before any `$TRACKER` test. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — GitHub state lives in `gh issue`/PR linkage (`Closes #N`).
+Assign `TRACKER` before any tracker test. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — GitHub state lives in `gh issue`/PR linkage (`Closes #N`).
 
 ---
 

@@ -20,7 +20,7 @@ Post summary comments to git host and issue tracker, and selective handoff comme
 ```bash
 # Extract issue from branch if not provided
 ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
-TRACKER=linear; [[ "$ISSUE_ID" == issue-* ]] && TRACKER=github
+TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
 WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
 PR_NUMBER=$(.agents/skills/github/scripts/github.sh -C "$WT_PATH" pr-view --json number 2>/dev/null | jq -r .number)
 # Init workflow state if not exists
@@ -52,10 +52,13 @@ fi
    [filled SUMMARY_CONTENT — see template below]
    SUMMARY_EOF
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
-   # Linear only — GitHub items get linkage via `Closes #N` in the PR body
-   [[ "$TRACKER" == "linear" ]] && .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "$(cat "$SUMMARY_FILE")"
    ```
-   The Linear path uses `--body "$(cat ...)"` because `linear.sh` lacks `--body-file`; safe here because the heredoc is already on disk.
+
+   Linear only — GitHub items get linkage via `Closes #N` in the PR body:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
+   ```
 
    **Summary content template** (omit empty sections):
 

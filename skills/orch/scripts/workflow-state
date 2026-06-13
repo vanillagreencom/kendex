@@ -206,9 +206,33 @@ cmd_path() {
 }
 
 cmd_exists() {
-    local issue_id="$1"
+    local json=false
+
+    if [[ "${1:-}" == "--json" ]]; then
+        json=true
+        shift
+    fi
+
+    local issue_id="${1:-}"
+    if [[ -z "$issue_id" ]]; then
+        echo "Error: exists requires an issue_id" >&2
+        exit 2
+    fi
+
     local state_file
     state_file=$(get_state_file "$issue_id")
+
+    if [[ "$json" == true ]]; then
+        local exists=false
+        [[ -f "$state_file" ]] && exists=true
+        jq -n \
+          --arg issue_id "$issue_id" \
+          --arg path "$state_file" \
+          --argjson exists "$exists" \
+          '{issue_id: $issue_id, path: $path, exists: $exists}'
+        return 0
+    fi
+
     [[ -f "$state_file" ]]
 }
 
@@ -231,10 +255,11 @@ Commands:
   increment <issue_id> <field>  Increment numeric field
   set <issue_id> <field> <value>  Set field value
   path <issue_id>               Print state file path
-  exists <issue_id>             Exit 0 if exists, 1 if not
+  exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
 
 Examples:
   workflow-state init PROJ-123 --agent rust --worktree /tmp/wt
+  workflow-state exists --json PROJ-123
   workflow-state get PROJ-123 .cycles
   workflow-state increment PROJ-123 cycles
   workflow-state increment PROJ-123 pr_comment_review.iterations
