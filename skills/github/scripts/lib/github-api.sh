@@ -283,20 +283,58 @@ parse_format_arg() {
     echo "${remaining_args[@]:-}"
 }
 
-# Load and validate bot token from project config/env
+# Check whether a value is already a concrete GitHub token. `op://` references
+# are intentionally not considered resolved.
+is_resolved_github_token() {
+    local token="${1:-}"
+    [[ -n "$token" && "$token" != op://* ]] || return 1
+    [[ "$token" =~ ^gh[pors]_ ]] || [[ "$token" =~ ^github_pat_ ]]
+}
+
+select_github_auth_token() {
+    local token
+    for token in "${GH_BOT_TOKEN:-}" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
+        if is_resolved_github_token "$token"; then
+            printf '%s' "$token"
+            return 0
+        fi
+    done
+
+    for token in "${GH_BOT_TOKEN:-}" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
+        if [[ "$token" == op://* ]]; then
+            printf '%s' "$token"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Load and validate a GitHub auth token from process env or project config/env.
 # Supports direct tokens (ghp_*, gho_*, ghs_*, ghr_*) and 1Password references (op://...)
 # Returns: token string if valid, empty string if not configured/invalid
 # Outputs: diagnostic messages to stderr
 load_bot_token() {
     local token=""
 
-    # Load .env, public settings, then .env.local. .env.local still wins.
-    local lib_dir
-    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    # shellcheck source=vstack-env.sh
-    source "$lib_dir/vstack-env.sh"
-    vstack_load_project_env "$PROJECT_ROOT"
-    token="${GH_BOT_TOKEN:-}"
+    if ! token=$(select_github_auth_token); then
+        # Load .env, public settings, then .env.local only when the process env
+        # did not already carry a resolved GitHub token.
+        local lib_dir
+        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        # shellcheck source=vstack-env.sh
+        source "$lib_dir/vstack-env.sh"
+        vstack_load_project_env "$PROJECT_ROOT"
+        token=$(select_github_auth_token || true)
+    elif [[ "$token" == op://* ]]; then
+        # An unresolved inherited token can still be overridden by project env.
+        local lib_dir
+        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        # shellcheck source=vstack-env.sh
+        source "$lib_dir/vstack-env.sh"
+        vstack_load_project_env "$PROJECT_ROOT"
+        token=$(select_github_auth_token || true)
+    fi
 
     # Empty token - not configured
     if [ -z "$token" ]; then
@@ -323,14 +361,13 @@ load_bot_token() {
     # Validate GitHub token format
     # Classic: ghp_, gho_, ghs_, ghr_
     # Fine-grained: github_pat_
-    if [[ "$token" =~ ^gh[pors]_ ]] || [[ "$token" =~ ^github_pat_ ]]; then
+    if is_resolved_github_token "$token"; then
         echo "$token"
         return 0
     fi
 
     # Invalid format
     echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghs_*, ghr_*, or github_pat_*)" >&2
-    echo "  Current value starts with: ${token:0:4}..." >&2
     echo "  Fix: Update .env.local with a valid GitHub token" >&2
     return 0
 }

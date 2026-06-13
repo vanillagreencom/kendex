@@ -7,9 +7,11 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh::orch_sanitize_gh_env`. Four-step ladder:
 
 1. **Sanitize.** Env tokens set but `gh auth status` fails → try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status`. If that succeeds, warn on stderr and unset.
-2. **Bot-token load.** `GH_TOKEN` empty → load `GH_BOT_TOKEN` from `.env`, `vstack.settings.toml`, then `.env.local`. `op://` references resolve via `op read`.
+2. **Bot-token load.** `GH_TOKEN` empty → first use already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` from process env. Only if those are missing or still `op://` references, load `.env`, `vstack.settings.toml`, then `.env.local`. `op://` references resolve via `op read` only after the final token source is selected.
 3. **Fallback retry.** Auth still fails → drop env tokens, retry bot-token load. Recovers when project config/secrets have a valid token despite broken keyring.
 4. **Hard fail.** No path works → exit `3` with diagnostic. Callers do not poll against empty output.
+
+The `op` CLI service-account/token setup is intentionally outside orch. Launchers may inject resolved secrets before starting Codex, Claude, or Pi; orch preserves those values instead of clobbering them with local `op://` references.
 
 ## Bot Review Terminal Fallback
 

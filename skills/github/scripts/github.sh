@@ -26,6 +26,8 @@ _CALLER_GH_TOKEN_SET="${GH_TOKEN+x}"
 _CALLER_GH_TOKEN="${GH_TOKEN:-}"
 _CALLER_GITHUB_TOKEN_SET="${GITHUB_TOKEN+x}"
 _CALLER_GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+_CALLER_GH_BOT_TOKEN_SET="${GH_BOT_TOKEN+x}"
+_CALLER_GH_BOT_TOKEN="${GH_BOT_TOKEN:-}"
 
 _env_root=""
 if [ -n "$WORK_DIR" ]; then
@@ -43,6 +45,14 @@ if [ -n "$_CALLER_GH_TOKEN_SET" ]; then
 fi
 if [ -n "$_CALLER_GITHUB_TOKEN_SET" ]; then
     export GITHUB_TOKEN="$_CALLER_GITHUB_TOKEN"
+fi
+if [ -n "$_CALLER_GH_BOT_TOKEN_SET" ]; then
+    export GH_BOT_TOKEN="$_CALLER_GH_BOT_TOKEN"
+fi
+if [ -z "$_CALLER_GH_TOKEN" ] && [ -z "$_CALLER_GITHUB_TOKEN" ] && [ -n "$_CALLER_GH_BOT_TOKEN_SET" ]; then
+    if [[ "$_CALLER_GH_BOT_TOKEN" =~ ^gh[pors]_ ]] || [[ "$_CALLER_GH_BOT_TOKEN" =~ ^github_pat_ ]]; then
+        export GH_TOKEN="$_CALLER_GH_BOT_TOKEN"
+    fi
 fi
 if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_BOT_TOKEN:-}" ]; then
     _env_bot_token="$GH_BOT_TOKEN"
@@ -79,7 +89,7 @@ if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_BOT_TOKEN:-}" ]; then
         export GH_TOKEN="$_env_bot_token"
     fi
 fi
-unset _env_root _env_bot_token _resolved _op_timeout _op_status _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN
+unset _env_root _env_bot_token _resolved _op_timeout _op_status _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
 
 show_help() {
     cat << 'EOF'

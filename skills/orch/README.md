@@ -48,8 +48,8 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 |----------|---------|---------|
 | `ORCH_STATE_DIR` | State file directory | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache | `.cache/orch` |
-| `GH_TOKEN` | Main/user GitHub token | current `gh` auth |
-| `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | current `gh` auth |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | current `gh` auth |
+| `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
 | `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
 | `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
 | `BOT_CHECK_NAME` | CI check name for early review detection and PR-level approved fallback gating | — |
@@ -57,6 +57,8 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 `bot-review-wait` also handles stale pending bot prose: when GitHub reports `reviewDecision=APPROVED`, the configured bot check has passed if one is set, and no unresolved review threads remain, it returns a terminal approved result instead of continuing to poll the stale status comment or checklist.
 
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for GitHub auth fallback details and the test runner.
+
+GitHub auth helpers are env-first. If launch-time configuration already provides a resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN`, orch keeps it and does not re-read `op://` references from `.env.local` for GitHub auth. Service-account setup for the `op` CLI remains local environment configuration.
 
 ## Helper Scripts
 

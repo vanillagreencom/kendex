@@ -153,7 +153,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 
 `session-init --json` reports worktree Linear auth as the structured `linear_auth` object from `linear auth-check`. `linear_auth.error = "not installed"` is reserved for a missing Linear skill command; API key, 1Password, and API failures keep their original auth-check diagnostic.
 
-Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-step auth-resolution ladder — see `DEVELOPMENT.md` for the full ladder description. Exit `3` on hard auth failure; callers treat both scripts consistently.
+Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-step auth-resolution ladder — see `DEVELOPMENT.md` for the full ladder description. GitHub auth is env-first: already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values from the parent process win before local files are read, and `op read` is only used for the final selected `op://` reference. Exit `3` on hard auth failure; callers treat both scripts consistently.
 
 ### `workflow-state` actions
 

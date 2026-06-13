@@ -8,6 +8,8 @@
 #                                        -> exit 3 with "no working" diagnostic
 #   4. stale GH_TOKEN + broken keyring + valid .env.local GH_BOT_TOKEN
 #                                        -> bot-token fallback recovers
+#   5. broken keyring + inherited valid GH_BOT_TOKEN + .env.local op:// token
+#                                        -> inherited token wins, no op read
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,6 +126,14 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
+cat > "$TMP_ROOT/bin/op" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'op called: %s\n' "\$*" >>"$TMP_ROOT/op.calls"
+exit 1
+EOF
+chmod +x "$TMP_ROOT/bin/op"
+
 # Run ci-wait via the .agents symlink, exactly how it's invoked in
 # production. `env "$@"` injects test-controlled env tokens / stub flags.
 run_wait() {
@@ -175,6 +185,26 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "case4: .env.local GH_BOT_TOKEN recovers" "$stderr"
 assert_contains "$output" "CI passed" "case4: ci-wait reaches CI passed via bot-token fallback"
+rm -f "$TMP_ROOT/repo/.env.local"
+
+# Case 5: process env already has a resolved bot token; project op reference
+# should not be read.
+cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
+export GH_BOT_TOKEN=op://vault/github/bot
+ENVEOF
+rm -f "$TMP_ROOT/op.calls"
+stderr="$TMP_ROOT/case5.err"
+set +e
+output=$(run_wait GH_BOT_TOKEN=ghs_ENVBOT123 STUB_GH_DENY_KEYRING=1 STUB_GH_VALID_TOKEN=ghs_ENVBOT123 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case5: inherited GH_BOT_TOKEN recovers without project secret load" "$stderr"
+assert_contains "$output" "CI passed" "case5: ci-wait reaches CI passed via inherited bot token"
+if [[ -e "$TMP_ROOT/op.calls" ]]; then
+  assert_eq "$(cat "$TMP_ROOT/op.calls")" "" "case5: inherited GH_BOT_TOKEN does not call op" "$stderr"
+else
+  assert_eq "missing" "missing" "case5: inherited GH_BOT_TOKEN does not call op"
+fi
 rm -f "$TMP_ROOT/repo/.env.local"
 
 echo

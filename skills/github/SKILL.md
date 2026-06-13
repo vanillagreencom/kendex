@@ -118,7 +118,8 @@ Resolution rules:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local`) | Falls back to `gh` auth |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | Falls back to `gh` auth |
+| `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local` or parent env) | Falls back to `GH_TOKEN` / `GITHUB_TOKEN` for helper auth, then `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for review/comment filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for issue ID extraction from branches | `[A-Z]+-[0-9]+` |
 | `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving `GH_BOT_TOKEN` | `10` |
@@ -127,7 +128,7 @@ Resolution rules:
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 
-Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local`.
+Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` runs only when the final selected value is still an `op://` reference. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
 
 ### `pr-view` failure contract
 
