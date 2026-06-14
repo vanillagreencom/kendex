@@ -76,6 +76,8 @@ Commands:
   pr-merge           Merge PR as bot account (with safety checks)
   pr-cross-check     Analyze multiple PRs for conflicts/dependencies
   pr-issue           Extract issue ID from PR branch name
+  label-add          Add a PR/issue label
+  label-remove       Remove a PR/issue label
   await-mergeable    Wait for GitHub to resolve a PR's merge state (post-push or post-merge)
   ci-logs            Get CI failure logs for a PR
   bot-token          Check bot token configuration
@@ -117,7 +119,7 @@ command="${1:-help}"
 shift || true
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-review-status|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|pr-cross-check|pr-issue|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-review-status|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|pr-cross-check|pr-issue|label-add|label-remove|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then

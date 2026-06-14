@@ -32,6 +32,8 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now. Three exit codes — see below. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
+| `label-add <PR-or-issue> <label> [--reason TEXT] [--issue]` | Add a label through the sanitized router. |
+| `label-remove <PR-or-issue> <label> [--reason TEXT] [--issue]` | Remove a label through the sanitized router. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured |

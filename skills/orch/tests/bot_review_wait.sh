@@ -65,6 +65,10 @@ case "${1:-}" in
         exit 1
       fi
       if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+        if [[ -n "${STUB_GH_VALID_TOKEN:-}" && "${GH_TOKEN:-${GITHUB_TOKEN:-}}" == "$STUB_GH_VALID_TOKEN" ]]; then
+          echo "Logged in"
+          exit 0
+        fi
         echo "GH_TOKEN invalid" >&2
         exit 1
       fi
@@ -234,6 +238,15 @@ output=$(run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
 assert_eq "$(jq -r .status <<<"$output")" "complete" "bad GH_TOKEN falls back to gh keyring auth"
 assert_eq "$(jq -r .verdict <<<"$output")" "approved" "approved formal review returns terminal JSON"
 assert_contains "$(cat "$stderr")" "unsetting them" "fallback warning explains masked gh auth"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+export GH_TOKEN=bad-project-token
+EOF
+stderr="$TMP_ROOT/env-first.err"
+output=$(GH_TOKEN=ghs_CALLER123 STUB_GH_VALID_TOKEN=ghs_CALLER123 run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
+assert_eq "$(jq -r .status <<<"$output")" "complete" "caller GH_TOKEN wins over project GH_TOKEN"
+assert_eq "$(cat "$stderr")" "" "caller GH_TOKEN does not trigger sanitizer fallback"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

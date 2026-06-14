@@ -128,7 +128,7 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
    **Existing PR** (`$PR_NUM` set) → update body and ensure label:
    ```bash
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body "$PR_NUM" --body-file "$BODY_FILE"
-   .agents/skills/github/scripts/commands/label-add.sh "$PR_NUM" defer-ci --reason "queue for bot review before CI"
+   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" label-add "$PR_NUM" defer-ci --reason "queue for bot review before CI"
    ```
    If either command fails because the PR no longer exists or the label is already present, report the failure and continue only when the state is understood.
 
@@ -371,7 +371,7 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 2. **Remove label**:
    ```bash
-   .agents/skills/github/scripts/commands/label-remove.sh [PR_NUMBER] defer-ci --reason "bot review approved; running CI"
+   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" label-remove [PR_NUMBER] defer-ci --reason "bot review approved; running CI"
    ```
 
 3. **Wait for CI**:

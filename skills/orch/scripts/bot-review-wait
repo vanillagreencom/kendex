@@ -46,9 +46,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+_CALLER_GH_TOKEN_SET="${GH_TOKEN+x}"
+_CALLER_GH_TOKEN="${GH_TOKEN:-}"
+_CALLER_GITHUB_TOKEN_SET="${GITHUB_TOKEN+x}"
+_CALLER_GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+_CALLER_GH_BOT_TOKEN_SET="${GH_BOT_TOKEN+x}"
+_CALLER_GH_BOT_TOKEN="${GH_BOT_TOKEN:-}"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
+if [[ -n "$_CALLER_GH_TOKEN_SET" ]]; then
+  export GH_TOKEN="$_CALLER_GH_TOKEN"
+fi
+if [[ -n "$_CALLER_GITHUB_TOKEN_SET" ]]; then
+  export GITHUB_TOKEN="$_CALLER_GITHUB_TOKEN"
+fi
+if [[ -n "$_CALLER_GH_BOT_TOKEN_SET" ]]; then
+  export GH_BOT_TOKEN="$_CALLER_GH_BOT_TOKEN"
+fi
+unset _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
 
 GIT_HOST_CLI="${GIT_HOST_CLI:-$SKILLS_DIR/github/scripts/github.sh}"
 if [[ ! -x "$GIT_HOST_CLI" ]]; then

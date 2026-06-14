@@ -170,6 +170,28 @@ rm -f "$TMP_ROOT/op.calls"
 assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "label-remove falls back to keyring for unresolved GITHUB_TOKEN"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
+GH_BOT_TOKEN=ghs_ROUTERBOT123
+ENVEOF
+rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-add 42 defer-ci)
+assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-add"
+assert_file_missing "$TMP_ROOT/op.calls" "label-add project direct token avoids op"
+
+rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-remove 42 defer-ci)
+assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-remove"
+assert_file_missing "$TMP_ROOT/op.calls" "label-remove project direct token avoids op"
+
+cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
+# no GitHub token
+ENVEOF
+printf '%s\n' 'body text' >"$TMP_ROOT/pr-body.md"
+rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md")
+assert_eq "$output" "updated" "github.sh pr-edit-body falls back to keyring for unresolved GH_TOKEN"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "pr-edit-body unresolved GH_TOKEN attempts op once"
+
+cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=op://vault/github/bot
 ENVEOF
 rm -f "$TMP_ROOT/op.calls"
