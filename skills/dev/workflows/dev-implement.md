@@ -75,7 +75,8 @@ Ad-hoc: use delegation text as source of truth, skip tracker writes.
 
 ```bash
 # Linear
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] | jq -r '.description'
+.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+# Read `.description` from the JSON output.
 
 # GitHub
 gh issue view [N] --repo [OWNER/REPO] --json body --jq .body
@@ -375,8 +376,9 @@ Then post it:
 
 Check blocking relations:
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] | jq '.blocks'
+.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
+Read `.blocks` from the JSON output.
 
 Post a handoff comment to each downstream issue **only if** this work changed an API, interface, file, or contract the downstream issue depends on:
 ```bash

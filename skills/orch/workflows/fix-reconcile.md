@@ -21,9 +21,10 @@ Batch workflow — checks if applied fixes address existing open issues. Process
 
 1. **Read state**:
    ```bash
-   REVIEW_FIXES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items // []')
-   PR_FIXES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.fixes // []')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items // []'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.fixes // []'
    ```
+   Use the outputs as `REVIEW_FIXES` and `PR_FIXES`.
 
 2. **Merge** both arrays into `fixes`. Deduplicate by description.
 

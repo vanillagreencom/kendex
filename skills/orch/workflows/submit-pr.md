@@ -111,9 +111,11 @@ Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no 
    **No existing PR** → create with `defer-ci` label. Always pass the body via `--body-file`:
    ```bash
    # Linear
-   ISSUE_TITLE=$(.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] | jq -r '.title')
+   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+   # Read `.title` from the JSON output and use it as ISSUE_TITLE.
    # GitHub
-   ISSUE_TITLE=$(gh issue view ${ISSUE_ID#issue-} --json title --jq '.title')
+   gh issue view [N] --json title --jq '.title'
+   # Use the output as ISSUE_TITLE.
 
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create \
      --title "[PREFIX]([ISSUE_ID]): $ISSUE_TITLE" \
@@ -123,9 +125,10 @@ Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no 
 
    **Existing PR** (`$PR_NUM` set) → update body and ensure label:
    ```bash
-   gh pr edit "$PR_NUM" --body-file "$BODY_FILE" 2>/dev/null || true
-   .agents/skills/github/scripts/commands/label-add.sh "$PR_NUM" defer-ci --reason "queue for bot review before CI" 2>/dev/null || true
+   gh pr edit "$PR_NUM" --body-file "$BODY_FILE"
+   .agents/skills/github/scripts/commands/label-add.sh "$PR_NUM" defer-ci --reason "queue for bot review before CI"
    ```
+   If either command fails because the PR no longer exists or the label is already present, report the failure and continue only when the state is understood.
 
 ---
 
@@ -134,11 +137,9 @@ Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no 
 Wait for bot review to complete (sticky comment with verdict). CI is deferred via label.
 
 ```bash
-WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS")
-BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
-BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
-PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS"
 ```
+Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not configured. Max wait 600s. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. If sticky prose is stale but GitHub reports `reviewDecision=APPROVED`, any configured `BOT_CHECK_NAME` has passed, and no unresolved review threads remain, `bot-review-wait` returns approved with `pr_review_decision:approved` and `pr_threads:clear` signals without waiting on the stale checklist. To ignore a reviewer: `--skip "bot-login"` or `BOT_SKIPPED_REVIEWERS`.
 
@@ -160,16 +161,9 @@ Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not c
 
 ```bash
 # "Wait 5 min" path: extend checklist wait
-EXT_ELAPSED=0
-while [ $EXT_ELAPSED -lt 300 ]; do
-  CHECKLIST_DONE=$(.agents/skills/github/scripts/github.sh sticky-comment [PR_NUMBER] --body 2>/dev/null \
-    | grep -c '^\s*- \[ \]' || true)
-  if [ "$CHECKLIST_DONE" -eq 0 ]; then break; fi
-  sleep 30
-  EXT_ELAPSED=$((EXT_ELAPSED + 30))
-done
-# → § 3 regardless
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json --reviewers "$BOT_REVIEWERS"
 ```
+Use the returned JSON status and pending reviewer fields to re-route. If it still reports checklist timeout or pending reviewers, ask the user `Wait` | `Skip pending bot` | `Abort`; otherwise continue to § 3.
 
 **Extended poll** (timeout + pending only):
 ```bash
@@ -181,12 +175,10 @@ fi
 if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
   BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
 fi
-WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}")
-BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
-BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
-PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
+.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}"
 # Proceed to § 3 if complete/terminal; otherwise ask with pending reviewers.
 ```
+Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 ---
 
@@ -203,12 +195,10 @@ PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")
    if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
      BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
    fi
-   WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}")
-   BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
-   BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
-   PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
+   .agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}"
    # Proceed if complete/terminal; if still pending, include PENDING_REVIEWERS in triage notes.
    ```
+   Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 2. **Run Workflow**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.1` with context:
    - `lifecycle`: `"managed"`
@@ -244,12 +234,10 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
 
 1. **Check iteration count**:
    ```bash
-   ITERATIONS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations)
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations
    # Max 3 iterations
-   if [ "$ITERATIONS" -ge 3 ]; then
-     # → Max iterations exceeded → § 4
-   fi
    ```
+   Use the output as `ITERATIONS`. If `ITERATIONS >= 3`, go to § 4.
 
 2. **Wait for bot re-review** after fixes pushed:
    ```bash
@@ -257,8 +245,9 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
    .agents/skills/orch/scripts/bot-review-wait [PR_NUMBER]
 
    # 2. Read baseline from state
-   LAST_TS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty')
-   LAST_THREADS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0'
+   # Use the outputs as LAST_TS and LAST_THREADS.
 
    # 3. Check status against baseline
    .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "$LAST_TS" --baseline-threads "$LAST_THREADS"
@@ -297,8 +286,9 @@ Sub-issues created during comment triage need implementation before CI.
 
 1. **Check cycle count**:
    ```bash
-   SUBMIT_CYCLES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.submit_cycles // 0')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.submit_cycles // 0'
    ```
+   Use the output as `SUBMIT_CYCLES`.
    **If** `SUBMIT_CYCLES >= 2` → § 4 with note: "Max re-submit cycles reached, created issues may need manual implementation."
 
 2. **Increment**:
@@ -326,8 +316,10 @@ Sub-issues created during comment triage need implementation before CI.
 **Skip if** the issue does not have the `design` label.
 
 ```bash
-LABELS=$(.agents/skills/linear/scripts/linear.sh cache issues get "$ISSUE_ID" --format=compact 2>/dev/null | jq -r '.labels[]' 2>/dev/null)
+.agents/skills/linear/scripts/linear.sh cache issues get "[ISSUE_ID]" --format=compact
+jq -r '.labels[]' [ISSUE_JSON_FROM_PREVIOUS_COMMAND]
 ```
+Use the `jq` output as `LABELS`. For GitHub items, read labels with `gh issue view [N] --json labels --jq '.labels[].name'`.
 
 If `design` label present:
 
@@ -352,14 +344,12 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
    ```bash
    # Wait for late-arriving threads (bot posts inline comments after sticky update)
    sleep 15
-   UNRESOLVED=$(.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved | jq '.unresolved_count')
-   if [ "$UNRESOLVED" -eq 0 ]; then
-     # Double-check after additional delay to catch very late threads
-     sleep 15
-     UNRESOLVED=$(.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved | jq '.unresolved_count')
-   fi
-   CI_GATE_REROUTED=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.ci_gate_rerouted // false')
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
+   # Read `.unresolved_count` from the JSON output and use it as UNRESOLVED.
+   # If UNRESOLVED is 0, sleep 15 and run the same command again to double-check.
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.ci_gate_rerouted // false'
    ```
+   Use the workflow-state output as `CI_GATE_REROUTED`.
 
    | `UNRESOLVED` | `CI_GATE_REROUTED` | Action |
    |--------------|---------------------|--------|

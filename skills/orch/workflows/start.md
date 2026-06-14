@@ -70,11 +70,12 @@ If the issue is not open, stop and ask for a different item.
 3. Create/reuse worktree:
    ```bash
    # Linear
-   WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])
+   .agents/skills/worktree/scripts/worktree create [ISSUE_ID]
 
    # GitHub
-   WT_PATH=$(.agents/skills/worktree/scripts/worktree create issue-[N])
+   .agents/skills/worktree/scripts/worktree create issue-[N]
    ```
+   Use the create output as `WT_PATH`.
 
 ## 5. Handoff Or Continue
 

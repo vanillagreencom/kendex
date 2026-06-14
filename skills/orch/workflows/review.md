@@ -59,13 +59,16 @@ Collect decision IDs and summaries from JSON output.
 
 **Detect team context:**
 ```bash
-TEAM=$(.agents/skills/orch/scripts/workflow-state get $ISSUE_ID '.team_name // empty' 2>/dev/null) || true
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.team_name // empty'
 ```
+If state does not exist, use an empty `TEAM`.
 
 **Determine agent list**:
 ```bash
-AGENTS=$(.agents/skills/orch/scripts/list-review-agents)
+.agents/skills/orch/scripts/list-review-agents
 ```
+Use the output as `AGENTS`.
 
 Delegate to each review agent in parallel:
 

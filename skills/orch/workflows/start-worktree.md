@@ -90,8 +90,9 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 1. **Resolve tracker**:
    ```bash
-   TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
+   .agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]"
    ```
+   Use the output as `TRACKER`.
 
 2. **Skip if** `TRACKER=github` (GitHub issues close via PR merge keywords). → § 5.4
 
@@ -106,14 +107,15 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 1. **Read final state**:
    ```bash
-   CYCLES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles)
-   FIXED_COUNT=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length')
-   ESCALATED_COUNT=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length')
-   PR_ITERATIONS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations)
-   PR_FIXES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.fixes | length')
-   PR_ISSUES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length')
-   AUDIT_ISSUES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.fixes | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length'
    ```
+   Use the outputs as `CYCLES`, `FIXED_COUNT`, `ESCALATED_COUNT`, `PR_ITERATIONS`, `PR_FIXES`, `PR_ISSUES`, and `AUDIT_ISSUES`.
 
 2. **Output session summary**:
 

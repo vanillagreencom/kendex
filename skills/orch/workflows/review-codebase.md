@@ -37,8 +37,9 @@ mkdir -p "$WT_PATH/tmp"
 Enumerate every installed `reviewer-*` agent from active harness registries:
 
 ```bash
-AGENTS=$(.agents/skills/orch/scripts/list-review-agents)
+.agents/skills/orch/scripts/list-review-agents
 ```
+Use the output as `AGENTS`.
 
 If no agents are found, report `No reviewer-* agents installed; cannot run codebase review` and **END**. Use the full list — do not path-filter.
 

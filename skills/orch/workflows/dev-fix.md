@@ -27,8 +27,8 @@ Delegate fix items to a specialist dev agent. Works standalone (user-initiated) 
 Use the output as `ISSUE_ID`.
 
 Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
-- Inside a worktree → `WT_PATH=$(pwd)`
-- Main repo, worktree exists → `WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID)`
+- Inside a worktree → use current directory as `WT_PATH`
+- Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
 - Main repo, worktree missing → ask the user before creating
 
 ## 1. Build Fix Items
@@ -73,15 +73,19 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    - If `dev_agent` provided → use it (already alive)
    - Otherwise: from workflow state or issue labels
      ```bash
-     AGENT=$(.agents/skills/orch/scripts/workflow-state get $ISSUE_ID '.agent // empty' 2>/dev/null)
-     TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
+     .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+     .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
+     .agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
      ```
+     If state exists, use the second output as `AGENT`; otherwise leave `AGENT` empty. Use the tracker output as `TRACKER`.
 
      If `AGENT` is empty and `TRACKER` is `linear`, look up the Linear agent label:
 
      ```bash
-     AGENT=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID --format=compact | jq -r '[.labels[] | select(startswith("agent:"))] | first | split(":")[1] // empty')
+     .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
+     jq -r '[.labels[] | select(startswith("agent:"))] | first | split(":")[1] // empty' [ISSUE_JSON_FROM_PREVIOUS_COMMAND]
      ```
+     Use the `jq` output as `AGENT`.
 
      GitHub items: use `gh issue view ${ISSUE_ID#issue-} --json labels`, or infer from component paths.
 
@@ -89,8 +93,9 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
 3. **Detect team context**:
    ```bash
-   TEAM=$(.agents/skills/orch/scripts/workflow-state get $ISSUE_ID '.team_name // empty')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.team_name // empty'
    ```
+   Use the output as `TEAM`.
 
 4. **Delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available).
 

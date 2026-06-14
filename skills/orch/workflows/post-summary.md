@@ -34,12 +34,13 @@ Use the outputs as `ISSUE_ID`, `TRACKER`, `WT_PATH`, and `PR_NUMBER`. If `.exist
 
 1. **Read state**:
    ```bash
-   FIXED_COUNT=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length')
-   ESCALATED_COUNT=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length')
-   AUDIT_ISSUES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length')
-   PR_ISSUES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length')
-   CYCLES=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles)
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles
    ```
+   Use the outputs as `FIXED_COUNT`, `ESCALATED_COUNT`, `AUDIT_ISSUES`, `PR_ISSUES`, and `CYCLES`.
 
 2. **Skip if** `FIXED_COUNT == 0` AND `AUDIT_ISSUES == 0` AND `PR_ISSUES == 0` AND `ESCALATED_COUNT == 0`. → § 2
 
@@ -95,7 +96,7 @@ Use the outputs as `ISSUE_ID`, `TRACKER`, `WT_PATH`, and `PR_NUMBER`. If `.exist
 
 **Skip if** `TRACKER=github` (dependencies live in issue bodies, not tracked relations). → § 3
 
-1. **Check unblocked issues**: `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] | jq '.blocks'`
+1. **Check unblocked issues**: run `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]`, then read `.blocks` from the JSON output.
 
 2. **Evaluate conditions** — post handoff only if:
    - Downstream description references files touched in this PR

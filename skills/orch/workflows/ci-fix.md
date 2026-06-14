@@ -70,9 +70,11 @@ Classify error and route to appropriate flow:
 
 1. **Get or create worktree**:
    ```bash
-   ISSUE=$(.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text)
-   WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE 2>/dev/null || .agents/skills/worktree/scripts/worktree create $ISSUE --pr [PR_NUMBER])
+   .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+   .agents/skills/worktree/scripts/worktree exists [ISSUE_FROM_PREVIOUS_COMMAND]
+   .agents/skills/worktree/scripts/worktree path [ISSUE_FROM_PREVIOUS_COMMAND]
    ```
+   Use the first output as `ISSUE`. If the worktree is missing, run `.agents/skills/worktree/scripts/worktree create [ISSUE] --pr [PR_NUMBER]`; otherwise use the path output as `WT_PATH`.
 
 2. **Apply fix**.
 
@@ -157,8 +159,9 @@ For `queue` argument (merge queue failures). May need to dequeue PR while fixing
 
 4. **Create worktree from draft branch** (integration issues only):
    ```bash
-   WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER])
+   .agents/skills/worktree/scripts/worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]
    ```
+   Use the output as `WT_PATH`.
 
 5. **Delegate to architecture review agent**: Fill placeholders, omit empty lines/sections.
 
@@ -190,14 +193,16 @@ After fix is pushed:
 
 **Post to issue tracker** — **Linear only** (GitHub items: the PR conversation already records the fix):
 ```bash
-ISSUE=$(.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text)
+.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
 ```
+Use the output as `ISSUE`.
 
 If `ISSUE` is non-empty, determine tracker:
 
 ```bash
-TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE")
+.agents/skills/orch/scripts/tracker-for-issue "$ISSUE"
 ```
+Use the output as `TRACKER`.
 
 If `TRACKER` is `linear`, post the short status:
 

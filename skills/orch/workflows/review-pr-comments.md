@@ -39,11 +39,9 @@ On any `gh` or `.agents/skills/github/scripts/github.sh` failure: halt, report e
 Multiple bots may review on different timelines. Wait for all configured reviewers before triaging.
 
 ```bash
-WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS")
-BOT_STATUS=$(echo  "$WAIT_RESULT" | jq -r '.status')
-BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
-PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS"
 ```
+Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 `$BOT_REVIEWERS`: comma-separated bot usernames. Default: auto-detected from formal reviews, known review-bot comment summaries, PR-body reactions, and own-comment reactions. Custom comment-only bots must be configured explicitly via `BOT_REVIEWERS` / `--reviewers`.
 
@@ -52,8 +50,9 @@ PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")
 ### 1.2 Fetch Actionable Data
 
 ```bash
-PR_DATA=$(.agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]" --actionable)
+.agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]" --actionable
 ```
+Use the JSON output as `PR_DATA`.
 
 Output: `threads` (inline) + `comments` (PR-level).
 
@@ -132,8 +131,10 @@ Output: `threads` (inline) + `comments` (PR-level).
 
 2. **Get worktree**:
    ```bash
-   WT_PATH=$(.agents/skills/worktree/scripts/worktree path [ISSUE_ID] 2>/dev/null || echo ".")
+   .agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+   .agents/skills/worktree/scripts/worktree path [ISSUE_ID]
    ```
+   If the worktree does not exist, use `.` for `WT_PATH`; otherwise use the path output.
 
 3. **Decision context**: `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]`. Collect matching IDs and summaries for § 3 delegation prompt.
 
@@ -310,7 +311,16 @@ Issue suggestions: [N] items → § 6.2 audit
 
 **Skip if** no items marked "Fixing" in § 5. → § 6.2
 
-1. **Ensure worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree path [ISSUE_ID] 2>/dev/null || .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --pr [PR_NUMBER])`
+1. **Ensure worktree**:
+   ```bash
+   .agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+   .agents/skills/worktree/scripts/worktree path [ISSUE_ID]
+   ```
+   If the worktree is missing, run:
+   ```bash
+   .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --pr [PR_NUMBER]
+   ```
+   Use the existing path output or create output as `WT_PATH`.
 
 2. **Group items** by `agent` field.
 
@@ -385,8 +395,9 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
 
 2. **Check iteration limit**:
    ```bash
-   ITERATIONS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations)
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations
    ```
+   Use the output as `ITERATIONS`.
    **If** `ITERATIONS >= 5` → § 7.
 
 3. **Wait 5 minutes** for bot re-reviews:
@@ -397,9 +408,10 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
 4. **Check for new comments**:
    ```bash
    # Count unresolved threads + new PR-level comments since last triage
-   LAST_TS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty')
-   NEW_THREADS=$(.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved --since "$LAST_TS" | jq '.count')
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved --since "$LAST_TS"
    ```
+   Use the workflow-state output as `LAST_TS`. Read `.count` from the threads JSON output as `NEW_THREADS`.
 
 5. **Route**:
 
@@ -410,9 +422,10 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
 
 6. **Update baseline** (before looping):
    ```bash
-   NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   date -u +%Y-%m-%dT%H:%M:%SZ
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline "{\"last_ts\":\"$NOW\",\"last_threads\":$NEW_THREADS}"
    ```
+   Use the date output as `NOW`.
 
 7. **Loop**: Return to § 1.2 (skip § 1.1 bot-wait on re-triage — comments already arrived).
 
@@ -508,8 +521,9 @@ If user requests fixes for skipped items → delegate via § 6.1 (single item), 
    Determine tracker:
 
    ```bash
-   TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
+   .agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]"
    ```
+   Use the output as `TRACKER`.
 
    If `TRACKER` is `linear`, post to Linear. GitHub items get linkage via `Closes #N` in the PR body:
 
