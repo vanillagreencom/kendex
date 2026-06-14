@@ -173,6 +173,16 @@ cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=ghs_ROUTERBOT123
 ENVEOF
 rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 defer-ci)
+assert_eq "$output" "updated" "direct label-add loads project GH_BOT_TOKEN"
+assert_file_missing "$TMP_ROOT/op.calls" "direct label-add project direct token avoids op"
+
+rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 defer-ci)
+assert_eq "$output" "updated" "direct label-remove loads project GH_BOT_TOKEN"
+assert_file_missing "$TMP_ROOT/op.calls" "direct label-remove project direct token avoids op"
+
+rm -f "$TMP_ROOT/op.calls"
 output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-add 42 defer-ci)
 assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-add"
 assert_file_missing "$TMP_ROOT/op.calls" "label-add project direct token avoids op"
@@ -185,6 +195,15 @@ assert_file_missing "$TMP_ROOT/op.calls" "label-remove project direct token avoi
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 # no GitHub token
 ENVEOF
+rm -f "$TMP_ROOT/op.calls"
+set +e
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_BOT_TOKEN=ghs_BADBOT "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state 2>/dev/null)
+rc=$?
+set -e
+assert_eq "$rc" "3" "github.sh preserves selected GH_BOT_TOKEN instead of keyring fallback"
+assert_eq "$(jq -r .status <<<"$output")" "auth_error" "selected bad GH_BOT_TOKEN reports auth error"
+assert_file_missing "$TMP_ROOT/op.calls" "selected direct GH_BOT_TOKEN does not trigger op"
+
 printf '%s\n' 'body text' >"$TMP_ROOT/pr-body.md"
 rm -f "$TMP_ROOT/op.calls"
 output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md")

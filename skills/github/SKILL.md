@@ -32,8 +32,8 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now. Three exit codes — see below. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
-| `label-add <PR-or-issue> <label> [--reason TEXT] [--issue]` | Add a label through the sanitized router. |
-| `label-remove <PR-or-issue> <label> [--reason TEXT] [--issue]` | Remove a label through the sanitized router. |
+| `label-add <PR-or-issue> <label> [--reason TEXT] [--issue]` | Add a label through the sanitized router; direct script execution also loads current-project env. |
+| `label-remove <PR-or-issue> <label> [--reason TEXT] [--issue]` | Remove a label through the sanitized router; direct script execution also loads current-project env. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured |
@@ -131,7 +131,7 @@ Resolution rules:
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 
-Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` runs only for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
+Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` runs only for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Once a resolved `GH_BOT_TOKEN` is selected, helpers preserve that bot identity instead of replacing it with ambient keyring auth. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
 
 ### `pr-view` failure contract
 

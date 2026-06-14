@@ -5,6 +5,10 @@
 
 _ORCH_GH_AUTH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _ORCH_SHARED_GH_AUTH="$_ORCH_GH_AUTH_DIR/../../../github/scripts/lib/gh-auth.sh"
+if [[ ! -f "$_ORCH_SHARED_GH_AUTH" ]]; then
+  echo "orch gh-auth: shared GitHub auth helper not found at $_ORCH_SHARED_GH_AUTH" >&2
+  return 1 2>/dev/null || exit 1
+fi
 # shellcheck source=../../../github/scripts/lib/gh-auth.sh
 source "$_ORCH_SHARED_GH_AUTH"
 unset _ORCH_GH_AUTH_DIR _ORCH_SHARED_GH_AUTH

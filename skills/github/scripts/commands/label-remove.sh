@@ -65,6 +65,9 @@ main() {
         exit 2
     fi
 
+    local project_root
+    project_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    vstack_github_load_project_env_preserving_caller "$project_root"
     vstack_github_apply_selected_auth_token router || true
     vstack_github_sanitize_gh_env
 
