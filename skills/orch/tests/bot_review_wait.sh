@@ -84,7 +84,7 @@ case "${1:-}" in
       graphql)
         if [[ "$*" == *"pr=4"* ]]; then
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"vg-claude"}}]}}]}}}}}'
-        elif [[ "$*" == *"pr=5"* ]]; then
+        elif [[ "$*" == *"pr=5"* || "$*" == *"pr=6"* ]]; then
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"human-reviewer"}}]}}]}}}}}'
         else
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
@@ -107,7 +107,7 @@ case "${1:-}" in
         echo '[]'
         exit 0
         ;;
-      repos/*/pulls/5/reviews)
+      repos/*/pulls/5/reviews|repos/*/pulls/6/reviews)
         echo '[]'
         exit 0
         ;;
@@ -153,7 +153,7 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments)
         echo '[]'
         exit 0
         ;;
@@ -173,6 +173,24 @@ JSON
         echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"eyes"}]'
         exit 0
         ;;
+      repos/*/issues/6/reactions)
+        count_file="${FAKE_GH_STATE_DIR:-}/pr6-reactions-count"
+        count=0
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+          count="$(cat "$count_file")"
+        fi
+        count=$((count + 1))
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" ]]; then
+          mkdir -p "$FAKE_GH_STATE_DIR"
+          printf '%s' "$count" > "$count_file"
+        fi
+        if [[ "$count" -ge 2 ]]; then
+          echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1"}]'
+        else
+          echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"eyes"}]'
+        fi
+        exit 0
+        ;;
       repos/*/issues/comments/5001/reactions)
         echo '[]'
         exit 0
@@ -182,7 +200,7 @@ JSON
   pr)
     case "${2:-}" in
       view)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
           exit 0
         fi
@@ -243,6 +261,9 @@ assert_eq "$code" "0" "PR-level approved fallback does not fail on unresolved te
 assert_eq "$(jq -r .status <<<"$output")" "complete" "unresolved threads are terminal"
 assert_eq "$(jq -r .verdict <<<"$output")" "changes" "unresolved threads retain changes verdict"
 
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
 set +e
 output=$(timeout 4s bash -c 'cd "$1" && PATH="$2:$PATH" .agents/skills/orch/scripts/bot-review-wait 5 10 1 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin")
 code=$?
@@ -251,6 +272,15 @@ assert_eq "$code" "1" "approved PR with unresolved non-reviewer threads exits at
 assert_eq "$(jq -r .status <<<"$output")" "timeout" "approved PR with unresolved non-reviewer threads emits timeout JSON"
 assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "1" "approved PR with unresolved non-reviewer threads caps elapsed at max wait"
 assert_eq "$(jq -r '.pending_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "approved PR with unresolved non-reviewer threads keeps Codex pending"
+
+set +e
+output=$(timeout 4s bash -c 'cd "$1" && PATH="$2:$PATH" FAKE_GH_STATE_DIR="$3" .agents/skills/orch/scripts/bot-review-wait 6 10 1 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$TMP_ROOT/state")
+code=$?
+set -e
+assert_eq "$code" "0" "timeout final read observes reviewer terminal state"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "timeout final read emits complete JSON for terminal reviewer"
+assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "1" "timeout final read keeps elapsed capped at max wait"
+assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "reaction:+1" "timeout final read uses refreshed reviewer signals"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

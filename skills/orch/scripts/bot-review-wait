@@ -387,6 +387,9 @@ wait_for_checklist() {
   update_elapsed
   local p3_end=$((elapsed + PHASE3_MAX))
   [[ "$p3_end" -gt "$MAX_WAIT" ]] && p3_end="$MAX_WAIT"
+  if sticky_checklist_done; then
+    return 0
+  fi
   while ! deadline_reached && [[ "$elapsed" -lt "$p3_end" ]]; do
     if sticky_checklist_done; then
       return 0
@@ -400,7 +403,6 @@ wait_for_checklist() {
     [[ "$sleep_for" -gt "$remaining_phase" ]] && sleep_for="$remaining_phase"
     sleep_until_deadline "$sleep_for" || break
   done
-  deadline_reached && return 1
   sticky_checklist_done
 }
 
@@ -534,10 +536,8 @@ while ! deadline_reached; do
 done
 
 # --- Timeout: one final read ---
-entries="${last_entries:-}"
-if [[ -z "$entries" ]]; then
-  entries=$(collect_reviewers_or_exit)
-fi
+entries=$(collect_reviewers_or_exit)
+update_elapsed
 if ! any_blocking "$entries"; then
   # Crossed the line right at the bell.
   if terminal_posting_done "$entries"; then
