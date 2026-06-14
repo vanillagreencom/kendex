@@ -16,14 +16,18 @@ Persistent state file for orch workflows. Survives context compaction.
   "team_name": "proj-123",
   "qa_labels": ["needs-perf-test", "needs-safety-audit"],
   "child_sessions": {
-    "backend": { "status": "active", "agent_id": "agent_abc123", "spawned_at": "2026-03-19T10:00:00Z" },
-    "frontend": { "status": "closed", "agent_id": "agent_def456", "spawned_at": "2026-03-19T09:00:00Z" }
+    "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "2026-03-19T10:00:00Z" },
+    "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "2026-03-19T09:00:00Z" }
   },
   "review_agents": ["security-review", "test-review", "doc-review"],  // project-configured
   "review_agent_ids": {
     "security-review": "agent_rev123",
     "test-review": "agent_rev456",
     "doc-review": "agent_rev789"
+  },
+  "review_agent_runtime_types": {
+    "security-review": { "agent_type": "security-review", "fallback": null },
+    "doc-review": { "agent_type": "worker", "fallback": "spawn_rejected_or_unavailable" }
   },
   "pre_delegate_sha": "abc123f",
   "skip_qa": false,
@@ -77,9 +81,10 @@ Persistent state file for orch workflows. Survives context compaction.
 | `branch` | string | Git branch name |
 | `team_name` | string | Agent team name (optional, for recovery) |
 | `qa_labels` | string[] | QA trigger labels from dev return |
-| `child_sessions` | object | Per-agent lifecycle: `{agent: {status, agent_id, spawned_at}}` |
+| `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}` |
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
+| `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, fallback}}`; records Codex `worker` fallback without changing logical keys |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |

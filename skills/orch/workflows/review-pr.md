@@ -88,7 +88,7 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
-**Codex runtime agent type rule**: For each reviewer in `AGENTS`, call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt. Persist the returned agent id under `review_agent_ids[reviewer-name]`. Use `worker` only for an explicit generic-worker fallback, and record the fallback in status and workflow state.
+**Codex runtime agent type rule**: For each reviewer in `AGENTS`, first call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys: persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason.
 
 Before any spawn, read existing reviewer state:
 ```bash
@@ -103,6 +103,7 @@ After reconciliation, store the active reviewer set:
   ```bash
   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[AGENT_LIST_JSON]'
   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_ids '[AGENT_ID_MAP_JSON]'
+  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
   ```
 
 **Do NOT delegate yet.** Continue to § 2.1 to resolve external review availability *before* spawning.

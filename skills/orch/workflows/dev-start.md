@@ -92,7 +92,7 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 
 **Dev agents persist for the entire session.** Never shutdown dev agents — they stay alive for fix cycles, pending children, and PR review fixes. Only the caller's finalization step shuts them down.
 
-**Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the harness spawn call. Do not launch `worker` and simulate the selected dev identity in the prompt. Use `worker` only when no matching custom agent exists or when the selected agent is intentionally generic; record the generic-worker fallback in status and workflow state.
+**Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the first harness spawn call. Do not launch `worker` and simulate the selected dev identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical selected agent name in bootstrap/delegation text, reports, and workflow-state keys. Use `worker` only when no matching custom agent exists, when the selected agent is intentionally generic, or after the generated-agent spawn is rejected/unavailable; record the runtime `agent_type` and fallback reason in status and workflow state.
 
 Before each implementation delegation, capture the current `HEAD`:
 
@@ -102,7 +102,7 @@ Before each implementation delegation, capture the current `HEAD`:
 
 **After each spawn**, persist the agent session:
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"agent_id": "[AGENT_OR_TASK_ID]"}'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
 ```
 
 ### If Single Issue

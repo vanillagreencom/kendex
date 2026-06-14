@@ -97,6 +97,7 @@ cmd_init() {
         child_sessions: {},
         review_agents: [],
         review_agent_ids: {},
+        review_agent_runtime_types: {},
         pre_delegate_sha: null,
         skip_qa: false,
         cycles: 0,
