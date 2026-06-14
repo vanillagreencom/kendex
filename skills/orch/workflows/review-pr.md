@@ -88,6 +88,8 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
+**Codex runtime agent type rule**: For each reviewer in `AGENTS`, call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt. Persist the returned agent id under `review_agent_ids[reviewer-name]`. Use `worker` only for an explicit generic-worker fallback, and record the fallback in status and workflow state.
+
 Before any spawn, read existing reviewer state:
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agents // []'

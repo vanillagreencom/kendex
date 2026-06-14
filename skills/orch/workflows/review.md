@@ -70,6 +70,8 @@ If state does not exist, use an empty `TEAM`.
 ```
 Use the output as `AGENTS`.
 
+**Codex runtime agent type rule**: For each reviewer in `AGENTS`, call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt. If workflow state exists, persist the returned agent id under `review_agent_ids[reviewer-name]`. Use `worker` only for an explicit generic-worker fallback, and report that fallback in status.
+
 Delegate to each review agent in parallel:
 
 <delegation_format>

@@ -92,6 +92,8 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 
 **Dev agents persist for the entire session.** Never shutdown dev agents — they stay alive for fix cycles, pending children, and PR review fixes. Only the caller's finalization step shuts them down.
 
+**Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the harness spawn call. Do not launch `worker` and simulate the selected dev identity in the prompt. Use `worker` only when no matching custom agent exists or when the selected agent is intentionally generic; record the generic-worker fallback in status and workflow state.
+
 Before each implementation delegation, capture the current `HEAD`:
 
 ```bash
