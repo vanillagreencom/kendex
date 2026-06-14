@@ -22,13 +22,11 @@ Route PR review comments to domain agents, auto-fix valid items, loop until stab
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
-PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
-if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
-  .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
-fi
+.agents/skills/orch/scripts/git-context issue-from-branch .
+gh pr view --json number -q .number
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID_FROM_PREVIOUS_COMMAND]
 ```
+Use the outputs as `ISSUE_ID` and `PR_NUMBER`. If `.exists` is `false`, resolve `WT_PATH`, read the current branch with `git-context branch`, and run `workflow-state init`.
 
 ## API Error Handling
 
@@ -64,10 +62,12 @@ Output: `threads` (inline) + `comments` (PR-level).
 1. **Get baseline timestamp** for re-run filtering:
    ```bash
    mkdir -p tmp
-   GH_USER=$(gh api user -q .login)
-   .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --author "$GH_USER" > tmp/summary_comment_[PR_NUMBER].json
-   SUMMARY_TS=$(jq -r '.updated_at // empty' tmp/summary_comment_[PR_NUMBER].json)
+   gh api user -q .login
+   .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --author "[GH_USER_FROM_PREVIOUS_COMMAND]"
+   # Save output to tmp/summary_comment_[PR_NUMBER].json with the harness file-write tool.
+   jq -r '.updated_at // empty' tmp/summary_comment_[PR_NUMBER].json
    ```
+   Use the `jq` output as `SUMMARY_TS`.
 
 2. **Filter comments**. When `$SUMMARY_TS` is set, filter PR-level comments with `select(.created_at > $SUMMARY_TS)`.
 
@@ -498,13 +498,12 @@ If user requests fixes for skipped items → delegate via § 6.1 (single item), 
 
 2. **Post summary** — skip if no fixes AND no issues created. Write the summary to a file first so Markdown is shell-safe:
    ```bash
-   SUMMARY_FILE="[WORKTREE_PATH]/tmp/pr-comments-summary-[ISSUE_ID]-$(date +%Y%m%d-%H%M%S).md"
-   mkdir -p "$(dirname "$SUMMARY_FILE")"
-   cat > "$SUMMARY_FILE" <<'SUMMARY_EOF'
-   [filled SUMMARY_CONTENT — see template below]
-   SUMMARY_EOF
+   mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp compact
+   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/pr-comments-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
    ```
+   Use the summary file path as `SUMMARY_FILE`.
 
    Determine tracker:
 

@@ -21,8 +21,10 @@ Delegate fix items to a specialist dev agent. Works standalone (user-initiated) 
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")}
+# If ARG was provided, use it as ISSUE_ID. Otherwise:
+.agents/skills/orch/scripts/git-context issue-from-branch .
 ```
+Use the output as `ISSUE_ID`.
 
 Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
 - Inside a worktree → `WT_PATH=$(pwd)`

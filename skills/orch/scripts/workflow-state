@@ -200,6 +200,25 @@ cmd_set() {
     fi
 }
 
+cmd_set_git_head() {
+    local issue_id="$1"
+    local field="$2"
+    local worktree="${3:-.}"
+    local value
+
+    value="$(git -C "$worktree" rev-parse HEAD)"
+    cmd_set "$issue_id" "$field" "$value"
+}
+
+cmd_set_now() {
+    local issue_id="$1"
+    local field="$2"
+    local value
+
+    value="$(date +%s)"
+    cmd_set "$issue_id" "$field" "$value"
+}
+
 cmd_path() {
     local issue_id="$1"
     get_state_file "$issue_id"
@@ -254,6 +273,8 @@ Commands:
   append <issue_id> <field> <value>   Append to array field
   increment <issue_id> <field>  Increment numeric field
   set <issue_id> <field> <value>  Set field value
+  set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
+  set-now <issue_id> <field>     Set field to current epoch seconds
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
 
@@ -266,6 +287,8 @@ Examples:
   workflow-state append PROJ-123 json_paths "review.json"
   workflow-state append PROJ-123 fixed_items '{"description":"Fix","commit":"abc"}'
   workflow-state set PROJ-123 pr_review_baseline '{"last_ts":"2026-01-28","last_threads":2}'
+  workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
+  workflow-state set-now PROJ-123 review_delegated_at
   workflow-state update PROJ-123 '.fixed_items | map(select(.source == "qa-review"))'
 
 Environment:
@@ -285,6 +308,8 @@ case "${1:-help}" in
     append)    shift; cmd_append "$@" ;;
     increment) shift; cmd_increment "$@" ;;
     set)       shift; cmd_set "$@" ;;
+    set-git-head) shift; cmd_set_git_head "$@" ;;
+    set-now)   shift; cmd_set_now "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
     help|--help|-h) cmd_help ;;

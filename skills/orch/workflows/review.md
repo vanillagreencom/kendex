@@ -174,7 +174,7 @@ Ask user (omit categories with no items):
 
 1. **Capture pre-fix state** (if `ISSUE_ID` exists):
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pre_delegate_sha "$(git rev-parse HEAD)"
+   .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
    ```
 
 2. **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4.1 step 3` with context:

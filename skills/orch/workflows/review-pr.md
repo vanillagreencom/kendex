@@ -27,19 +27,11 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope). If no worktree exists for `$
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # Extract issue from branch if not provided
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
+.agents/skills/orch/scripts/git-context issue-from-branch .
 # Init workflow state if not exists
-if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git -C $WT_PATH rev-parse --abbrev-ref HEAD)"
-  TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
-  if [[ "$TRACKER" == "github" ]]; then
-    QA_LABELS=$(gh issue view ${ISSUE_ID#issue-} --json labels --jq '[.labels[].name | select(startswith("needs-"))]')
-  else
-    QA_LABELS=$(.agents/skills/linear/scripts/linear.sh cache issues get $ISSUE_ID | jq '[.labels[] | select(startswith("needs-"))]')
-  fi
-  .agents/skills/orch/scripts/workflow-state set $ISSUE_ID qa_labels "$QA_LABELS"
-fi
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID_FROM_PREVIOUS_COMMAND]
 ```
+Use the output as `ISSUE_ID`. If `.exists` is `false`, initialize with `git-context branch "$WT_PATH"` and `workflow-state init`, then resolve `TRACKER` and set `qa_labels` from the issue labels.
 
 ---
 
@@ -128,7 +120,7 @@ EXTERNAL_TARGET=$(.agents/skills/second-opinion/scripts/second-opinion detect 2>
 
 **Record delegation timestamp** before delegating — gates the § 3 watchdog filesystem fallback against stale JSONs from earlier cycles:
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_delegated_at "$(date +%s)"
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
 Delegate to each active reviewer in `[AGENTS]` in parallel. **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the *same parallel batch*.
@@ -158,8 +150,9 @@ Re-review cycle [N]. Already resolved — do NOT re-report:
 **External review execution** (only if `EXTERNAL_REVIEW_REQUESTED=true`; default timeout: `SECOND_OPINION_TIMEOUT` env var or 300s):
 
 ```bash
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-EXTERNAL_OUTPUT="[WORKTREE_PATH]/tmp/review-external-${TIMESTAMP}.json"
+mkdir -p [WORKTREE_PATH]/tmp
+.agents/skills/orch/scripts/git-context timestamp compact
+# Use [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json as EXTERNAL_OUTPUT.
 .agents/skills/second-opinion/scripts/second-opinion review \
   --cwd [WORKTREE_PATH] \
   --output "$EXTERNAL_OUTPUT"
@@ -285,7 +278,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 
 1. **Capture pre-fix state**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pre_delegate_sha "$(git -C [WORKTREE_PATH] rev-parse HEAD)"
+   .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
    ```
 
 2. **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 step 3` with context:
@@ -554,7 +547,7 @@ Issue suggestions: [N] items → § 9 audit
 
 3. **Capture pre-delegate state**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pre_delegate_sha "$(git -C [WORKTREE_PATH] rev-parse HEAD)"
+   .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
    ```
 
 4. **Delegate immediately.** Do **not** surface a Defer/Skip prompt — § 10 is mandatory once § 9 created `make_child` issues under `[ISSUE_ID]`.

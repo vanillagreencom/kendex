@@ -143,6 +143,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | Script | Purpose |
 |--------|---------|
 | `workflow-state` | Persistent state read/write/append (survives compaction) |
+| `git-context` | Print git-derived workflow values such as branch, head SHA, issue id, repo root, and timestamps without inline shell plumbing |
 | `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
@@ -169,6 +170,8 @@ Both `bot-review-wait` and `ci-wait` share `scripts/lib/gh-auth.sh` for a four-s
 | `path <ID>` | Print state file path |
 | `get <ID> <.field>` | Read state field |
 | `set <ID> <field> <value>` | Write state field |
+| `set-git-head <ID> <field> [worktree]` | Write current `HEAD` SHA to a field without command substitution |
+| `set-now <ID> <field>` | Write current epoch seconds to a field without command substitution |
 | `append <ID> <field> <value>` | Append to array field |
 | `increment <ID> <field>` | Increment counter |
 | `update <ID> <jq-expr>` | Arbitrary jq mutation (e.g. nested merges) |
@@ -365,7 +368,7 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 #### Durable Workflow State Files
 
-Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes.
+Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes, including `set-git-head` and `set-now` instead of inline `$(git ...)` or `$(date ...)` state-write snippets.
 
 Location: `$ORCH_STATE_DIR/workflow-state-[ID].json` (default: `tmp/`)
 

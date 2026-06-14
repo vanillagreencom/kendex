@@ -17,8 +17,10 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")}
+# If ARG was provided, use it as ISSUE_ID. Otherwise:
+.agents/skills/orch/scripts/git-context issue-from-branch .
 ```
+Use the output as `ISSUE_ID`.
 
 Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
 - Inside a worktree → `WT_PATH=$(pwd)`
@@ -57,13 +59,15 @@ WT_PATH=$(.agents/skills/orch/scripts/workflow-state get $PARENT_ID '.worktree /
 Then initialize child state with the inherited context:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)" --team "$TEAM"
+.agents/skills/orch/scripts/git-context branch "$WT_PATH"
+.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "[BRANCH_FROM_PREVIOUS_COMMAND]" --team "$TEAM"
 ```
 
 Otherwise, initialize state with the current worktree:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
+.agents/skills/orch/scripts/git-context branch "$WT_PATH"
+.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
 ```
 
 ## 1. Determine Agent
@@ -87,7 +91,7 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 Before each implementation delegation, capture the current `HEAD`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pre_delegate_sha "$(git -C [WORKTREE_PATH] rev-parse HEAD)"
+.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
 **After each spawn**, persist the agent session:
@@ -167,15 +171,16 @@ Handoff from prior agents:
 
 1. **Run ALL checks** — do not proceed if ANY fails:
    ```bash
-   PRE_SHA=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty')
-   HEAD_SHA=$(git -C "[WORKTREE_PATH]" rev-parse HEAD)
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty'
+   .agents/skills/orch/scripts/git-context head [WORKTREE_PATH]
 
    # Check the implementation produced committed work.
    git -C "[WORKTREE_PATH]" log -1 --oneline
-   test -z "$PRE_SHA" || test "$HEAD_SHA" != "$PRE_SHA"
+   # The previous two SHA outputs must differ unless pre_delegate_sha was empty.
 
    # Check no implemented files were left outside the commit.
-   test -z "$(git -C "[WORKTREE_PATH]" status --porcelain)"
+   git -C "[WORKTREE_PATH]" status --porcelain
+   # The status output must be empty.
 
    # Linear only: check state + summary (auto-includes pending children from bundle)
    .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]

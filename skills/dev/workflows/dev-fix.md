@@ -74,7 +74,8 @@ Use visual QA skills to validate that the fix renders correctly. Focus on what t
 ### 4.2 Commit
 
 ```bash
-git add -A && git commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
+git add -A
+git commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
 ```
 
 | Source | Commit Message |

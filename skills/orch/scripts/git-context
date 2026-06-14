@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Print small git context values for workflow snippets without inline shell plumbing.
+
+set -euo pipefail
+
+cmd="${1:-help}"
+shift || true
+
+worktree_arg() {
+    printf '%s' "${1:-.}"
+}
+
+case "$cmd" in
+    branch)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" branch --show-current
+        ;;
+    head)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" rev-parse HEAD
+        ;;
+    issue-from-branch)
+        worktree="$(worktree_arg "$@")"
+        pattern="${2:-${GH_ISSUE_PATTERN:-([A-Z]+-[0-9]+|issue-[0-9]+)}}"
+        branch="$(git -C "$worktree" branch --show-current)"
+        if [[ "$branch" =~ $pattern ]]; then
+            printf '%s\n' "${BASH_REMATCH[0]}"
+        else
+            echo "Error: no issue id matched branch '$branch'" >&2
+            exit 1
+        fi
+        ;;
+    repo-root)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" rev-parse --show-toplevel
+        ;;
+    common-root)
+        worktree="$(worktree_arg "$@")"
+        git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir)"
+        case "$git_common_dir" in
+            */.git) dirname "$git_common_dir" ;;
+            *) git -C "$worktree" rev-parse --show-toplevel ;;
+        esac
+        ;;
+    timestamp)
+        format="${1:-compact}"
+        case "$format" in
+            compact) date +%Y%m%d-%H%M%S ;;
+            epoch) date +%s ;;
+            *) echo "Error: unknown timestamp format '$format'" >&2; exit 2 ;;
+        esac
+        ;;
+    help|--help|-h)
+        cat << 'EOF'
+Usage: git-context <command> [worktree]
+
+Commands:
+  branch [worktree]               Print current branch
+  head [worktree]                 Print current HEAD SHA
+  issue-from-branch [worktree]    Print issue id matched from branch
+  repo-root [worktree]            Print git worktree root
+  common-root [worktree]          Print main checkout root for worktree sets
+  timestamp [compact|epoch]       Print workflow timestamp
+EOF
+        ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        exit 1
+        ;;
+esac

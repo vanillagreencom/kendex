@@ -14,9 +14,10 @@ Push changes, create/update PR, handle bot review, triage PR comments, and trigg
 
 **If PR# provided:**
 ```bash
-ISSUE_ID=$(.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text)
-WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
+.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
 ```
+Use the first output as `ISSUE_ID`. Use the second output as `WT_PATH`; if no worktree exists, use `.`.
 
 Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 
@@ -24,11 +25,15 @@ Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
-WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
-if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
-fi
+.agents/skills/orch/scripts/git-context issue-from-branch .
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+```
+Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no worktree exists, use `.`. If `.exists` is `false`, initialize:
+
+```bash
+.agents/skills/orch/scripts/git-context branch "$WT_PATH"
+.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree "$WT_PATH" --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
 ```
 
 ---
@@ -37,17 +42,17 @@ fi
 
 1. **Preflight committed work**:
    ```bash
-   BASE_BRANCH=$(.agents/skills/orch/scripts/resolve-base-branch "[WORKTREE_PATH]")
-   CURRENT_BRANCH=$(git -C "[WORKTREE_PATH]" branch --show-current)
+   .agents/skills/orch/scripts/resolve-base-branch "[WORKTREE_PATH]"
+   .agents/skills/orch/scripts/git-context branch "[WORKTREE_PATH]"
    git -C "[WORKTREE_PATH]" status --porcelain
-   git -C "[WORKTREE_PATH]" diff "origin/$BASE_BRANCH"...HEAD --stat
+   git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
    ```
 
    Stop before pushing if any condition is true:
-   - `CURRENT_BRANCH` is empty (detached HEAD).
-   - `CURRENT_BRANCH` equals `$BASE_BRANCH`.
+   - The current branch output is empty (detached HEAD).
+   - The current branch output equals the base branch output.
    - `git status --porcelain` is not empty.
-   - The committed diff against `origin/$BASE_BRANCH` is empty.
+   - The committed diff against the base branch output is empty.
 
    In managed lifecycle, return to the caller with the failed preflight so the dev agent can normalize the branch and commit or clean the worktree. Do not create a PR from dirty or detached state.
 
@@ -58,43 +63,19 @@ fi
 
 3. **Check for existing PR**:
    ```bash
-   mkdir -p tmp
-   PR_VIEW_RC=0
-   PR_VIEW_JSON=$(.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-view --json number,state 2>tmp/pr-view.err) || PR_VIEW_RC=$?
-   if [ "$PR_VIEW_RC" -eq 0 ]; then
-     PR_NUM=$(echo "$PR_VIEW_JSON" | jq -r '.number // empty')
-   else
-     PR_VIEW_STATUS=$(echo "$PR_VIEW_JSON" | jq -r '.status // "error"' 2>/dev/null || echo "error")
-     case "$PR_VIEW_STATUS" in
-       no_pr)
-         PR_NUM=""
-         ;;
-       auth_error|token_resolution_failed|token_resolution_timeout|token_resolution_unavailable|auth_timeout|gh_timeout|gh_error)
-         echo "PR lookup failed ($PR_VIEW_STATUS): $(echo "$PR_VIEW_JSON" | jq -r '.error // empty')" >&2
-         cat tmp/pr-view.err >&2
-         exit "$PR_VIEW_RC"
-         ;;
-       *)
-         echo "PR lookup failed with unparseable output" >&2
-         cat tmp/pr-view.err >&2
-         exit "$PR_VIEW_RC"
-         ;;
-     esac
-   fi
+   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-view --json number,state
    ```
+   If status is `no_pr`, create a new PR in step 5. For auth, token, timeout, or unparseable errors, stop and report the JSON error.
 
 4. **Build PR body** from current workflow state using the template below (omit empty sections).
 
-   **PR body MUST be written to a file** — inline bodies with backticks or fenced code blocks corrupt under shell command substitution. Use a quoted heredoc (disables interpolation) or your harness's `Write` tool:
+   **PR body MUST be written to a file** — inline bodies with backticks or fenced code blocks corrupt under shell command substitution. Prefer your harness's file-write tool:
 
    ```bash
-   BODY_FILE="[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-$(date +%Y%m%d-%H%M%S).md"
-   mkdir -p "$(dirname "$BODY_FILE")"
-   cat > "$BODY_FILE" <<'PR_BODY_EOF'
-   ## Summary
-   - ...
-   PR_BODY_EOF
+   mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp compact
    ```
+   Write the PR body to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md` and use that path as `BODY_FILE`.
 
    ```markdown
    ## Summary
@@ -194,8 +175,12 @@ done
 ```bash
 # Re-run multi-reviewer wait every 30s for up to 300s more.
 BOT_WAIT_ARGS=([PR_NUMBER] 30 300 --json)
-[[ -n "${BOT_REVIEWERS:-}" ]] && BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
-[[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]] && BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
+if [[ -n "${BOT_REVIEWERS:-}" ]]; then
+  BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
+fi
+if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
+  BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
+fi
 WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}")
 BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
 BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
@@ -212,8 +197,12 @@ PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")
 1. **Bot completion pre-check** — ensure all configured/detected bot reviewers have terminal status before triaging:
    ```bash
    BOT_WAIT_ARGS=([PR_NUMBER] 30 180 --json)
-   [[ -n "${BOT_REVIEWERS:-}" ]] && BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
-   [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]] && BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
+   if [[ -n "${BOT_REVIEWERS:-}" ]]; then
+     BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
+   fi
+   if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
+     BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
+   fi
    WAIT_RESULT=$(.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}")
    BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
    BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
@@ -272,7 +261,8 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
    LAST_THREADS=$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0')
 
    # 3. Check status against baseline
-   .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "$LAST_TS" --baseline-threads "$LAST_THREADS" > tmp/pr_status_[PR_NUMBER].json
+   .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "$LAST_TS" --baseline-threads "$LAST_THREADS"
+   # Save output to tmp/pr_status_[PR_NUMBER].json with the harness file-write tool.
    ```
 
 3. **Route based on status**:
@@ -293,10 +283,11 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
    # Add fixes/issues/skipped (same as § 3.1 step 3)
 
    # Update baseline
-   NEW_TS=$(jq -r '.sticky_updated_at' tmp/pr_status_[PR_NUMBER].json)
-   NEW_THREADS=$(jq -r '.unresolved_threads' tmp/pr_status_[PR_NUMBER].json)
+   jq -r '.sticky_updated_at' tmp/pr_status_[PR_NUMBER].json
+   jq -r '.unresolved_threads' tmp/pr_status_[PR_NUMBER].json
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline "{\"last_ts\":\"$NEW_TS\",\"last_threads\":$NEW_THREADS}"
    ```
+   Use the two `jq` outputs as `NEW_TS` and `NEW_THREADS`.
 
 5. **Max iterations exceeded**: Report to user with status, recommendation, and proceed to § 4.
 
@@ -434,13 +425,12 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 2. **Post summary** — skip if no fixes AND no issues created. Write to a file first (same backtick hazard as PR body):
    ```bash
-   SUMMARY_FILE="[WORKTREE_PATH]/tmp/submit-summary-[ISSUE_ID]-$(date +%Y%m%d-%H%M%S).md"
-   mkdir -p "$(dirname "$SUMMARY_FILE")"
-   cat > "$SUMMARY_FILE" <<'SUMMARY_EOF'
-   [filled SUMMARY_CONTENT — see template below]
-   SUMMARY_EOF
+   mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp compact
+   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/submit-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
    ```
+   Use the summary file path as `SUMMARY_FILE`.
 
    Linear only — GitHub items get linkage via `Closes #N` in the PR body:
 

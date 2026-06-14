@@ -19,15 +19,14 @@ Post summary comments to git host and issue tracker, and selective handoff comme
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # Extract issue from branch if not provided
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
-TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "$ISSUE_ID")
-WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
-PR_NUMBER=$(.agents/skills/github/scripts/github.sh -C "$WT_PATH" pr-view --json number 2>/dev/null | jq -r .number)
+.agents/skills/orch/scripts/git-context issue-from-branch .
+.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/github/scripts/github.sh -C [WORKTREE_PATH_FROM_PREVIOUS_COMMAND] pr-view --json number
 # Init workflow state if not exists
-if ! .agents/skills/orch/scripts/workflow-state exists $ISSUE_ID; then
-  .agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "$(git rev-parse --abbrev-ref HEAD)"
-fi
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
+Use the outputs as `ISSUE_ID`, `TRACKER`, `WT_PATH`, and `PR_NUMBER`. If `.exists` is `false`, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
 ---
 
@@ -46,13 +45,12 @@ fi
 
 3. **Post to git host and issue tracker** — consolidate all review cycle results from state. Write to a file first (same backtick hazard as submit-pr PR body):
    ```bash
-   SUMMARY_FILE="[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-$(date +%Y%m%d-%H%M%S).md"
-   mkdir -p "$(dirname "$SUMMARY_FILE")"
-   cat > "$SUMMARY_FILE" <<'SUMMARY_EOF'
-   [filled SUMMARY_CONTENT — see template below]
-   SUMMARY_EOF
+   mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp compact
+   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
    ```
+   Use the summary file path as `SUMMARY_FILE`.
 
    Linear only — GitHub items get linkage via `Closes #N` in the PR body:
 

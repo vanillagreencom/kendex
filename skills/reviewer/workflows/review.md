@@ -24,9 +24,8 @@ Extract from delegation message:
 if [[ -n "$DIFF_RANGE" ]]; then
   git -C [WORKTREE_PATH] diff $DIFF_RANGE
 else
-  BASE_BRANCH=${WORKTREE_DEFAULT_BRANCH:-$(git -C [WORKTREE_PATH] symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
-  git -C [WORKTREE_PATH] diff "origin/$BASE_BRANCH"...HEAD
+  .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+  git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 fi
 ```
 
