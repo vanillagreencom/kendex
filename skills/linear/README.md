@@ -36,6 +36,8 @@ Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachmen
 
 Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-line comments. Inline `--body` is intended for short plain strings.
 
+`issues bulk-update` applies each issue update independently. If one update fails after earlier items changed, the command emits a JSON summary with `partial: true`, per-issue success/error entries, and exits nonzero.
+
 ## Configuration
 
 | Variable | Purpose | Default |

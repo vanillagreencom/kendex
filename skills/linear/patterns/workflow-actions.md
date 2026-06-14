@@ -150,6 +150,8 @@ scripts/linear.sh issues update [ISSUE_ID] --cycle [CYCLE_ID] --state "Todo"
 scripts/linear.sh issues bulk-update [ISSUE_ID_1] [ISSUE_ID_2] --cycle [CYCLE_ID] --state "Todo"
 ```
 
+`bulk-update` is non-atomic. On nonzero exit, read its JSON output before retrying; `partial: true` means some listed issues already changed and the `results` array identifies which ones.
+
 ## Parent State Sync
 
 When changing a child's state or cycle:

@@ -557,23 +557,43 @@ bulk_update_issues() {
 
     for id in "${identifiers[@]}"; do
         local result
-        result=$(update_issue "$id" "${update_args[@]}" 2>&1)
+        local update_rc=0
+        if result=$(update_issue "$id" "${update_args[@]}" 2>&1); then
+            update_rc=0
+        else
+            update_rc=$?
+        fi
+
         local success
         success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
 
-        if [ "$success" = "true" ]; then
+        if [ "$update_rc" -eq 0 ] && [ "$success" = "true" ]; then
             ((success_count++))
             results+=("$(echo "$result" | jq -c '{identifier, success: true}')")
         else
             ((fail_count++))
-            results+=("{\"identifier\": \"$id\", \"success\": false, \"error\": $(echo "$result" | jq -Rs '.')}")
+            if [ -z "$result" ]; then
+                result="update_issue exited with status $update_rc without output"
+            fi
+            results+=("$(jq -cn --arg identifier "$id" --arg error "$result" --argjson exit_code "$update_rc" \
+                '{identifier: $identifier, success: false, exit_code: $exit_code, error: $error}')")
         fi
     done
 
     # Output summary
     local results_json
     results_json=$(printf '%s\n' "${results[@]}" | jq -s '.')
-    echo "{\"success\": $((fail_count == 0 ? 1 : 0)), \"updated\": $success_count, \"failed\": $fail_count, \"results\": $results_json}" | jq .
+    jq -n \
+        --argjson success "$([ "$fail_count" -eq 0 ] && echo true || echo false)" \
+        --argjson partial "$([ "$success_count" -gt 0 ] && [ "$fail_count" -gt 0 ] && echo true || echo false)" \
+        --argjson updated "$success_count" \
+        --argjson failed "$fail_count" \
+        --argjson results "$results_json" \
+        '{success: $success, partial: $partial, updated: $updated, failed: $failed, results: $results}'
+
+    if [ "$fail_count" -gt 0 ]; then
+        return 1
+    fi
 }
 
 get_issue() {
