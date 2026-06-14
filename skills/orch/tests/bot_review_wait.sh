@@ -84,6 +84,8 @@ case "${1:-}" in
       graphql)
         if [[ "$*" == *"pr=4"* ]]; then
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"vg-claude"}}]}}]}}}}}'
+        elif [[ "$*" == *"pr=5"* ]]; then
+          echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"human-reviewer"}}]}}]}}}}}'
         else
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
         fi
@@ -102,6 +104,10 @@ case "${1:-}" in
         exit 0
         ;;
       repos/*/pulls/4/reviews)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/pulls/5/reviews)
         echo '[]'
         exit 0
         ;;
@@ -147,6 +153,10 @@ JSON
 JSON
         exit 0
         ;;
+      repos/*/issues/5/comments)
+        echo '[]'
+        exit 0
+        ;;
       repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
         exit 0
@@ -159,12 +169,20 @@ JSON
         echo '[]'
         exit 0
         ;;
+      repos/*/issues/5/reactions)
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"eyes"}]'
+        exit 0
+        ;;
+      repos/*/issues/comments/5001/reactions)
+        echo '[]'
+        exit 0
+        ;;
     esac
     ;;
   pr)
     case "${2:-}" in
       view)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
           exit 0
         fi
@@ -224,6 +242,15 @@ set -e
 assert_eq "$code" "0" "PR-level approved fallback does not fail on unresolved terminal threads"
 assert_eq "$(jq -r .status <<<"$output")" "complete" "unresolved threads are terminal"
 assert_eq "$(jq -r .verdict <<<"$output")" "changes" "unresolved threads retain changes verdict"
+
+set +e
+output=$(timeout 4s bash -c 'cd "$1" && PATH="$2:$PATH" .agents/skills/orch/scripts/bot-review-wait 5 10 1 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin")
+code=$?
+set -e
+assert_eq "$code" "1" "approved PR with unresolved non-reviewer threads exits at max wait"
+assert_eq "$(jq -r .status <<<"$output")" "timeout" "approved PR with unresolved non-reviewer threads emits timeout JSON"
+assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "1" "approved PR with unresolved non-reviewer threads caps elapsed at max wait"
+assert_eq "$(jq -r '.pending_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "approved PR with unresolved non-reviewer threads keeps Codex pending"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

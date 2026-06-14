@@ -88,7 +88,44 @@ done
 PR_NUM="${POSITIONAL[0]:?Usage: bot-review-wait <PR#> [poll_interval] [max_wait] [--json] [--reviewers \"bot1,bot2\"] [--skip \"bot3,bot4\"]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 MAX_WAIT="${POSITIONAL[2]:-600}"
+START_TIME="$(date +%s)"
 elapsed=0
+
+update_elapsed() {
+  local now
+  now="$(date +%s)"
+  elapsed=$((now - START_TIME))
+  if [[ "$elapsed" -gt "$MAX_WAIT" ]]; then
+    elapsed="$MAX_WAIT"
+  fi
+}
+
+remaining_wait() {
+  update_elapsed
+  local remaining=$((MAX_WAIT - elapsed))
+  if [[ "$remaining" -gt 0 ]]; then
+    printf '%s' "$remaining"
+  else
+    printf '0'
+  fi
+}
+
+deadline_reached() {
+  update_elapsed
+  [[ "$elapsed" -ge "$MAX_WAIT" ]]
+}
+
+sleep_until_deadline() {
+  local requested="$1"
+  local remaining
+  remaining="$(remaining_wait)"
+  [[ "$remaining" -le 0 ]] && return 1
+  if [[ "$requested" -gt "$remaining" ]]; then
+    requested="$remaining"
+  fi
+  sleep "$requested"
+  update_elapsed
+}
 
 emit_error() {
   local message="$1"
@@ -347,21 +384,23 @@ sticky_checklist_done() {
 # checklist to drain after a terminal verdict has arrived.
 # Returns 0 if drained, 1 on timeout. Updates global $elapsed.
 wait_for_checklist() {
-  local p3_elapsed=0
-  local remaining=$((MAX_WAIT - elapsed))
-  local p3_max=$PHASE3_MAX
-  [[ $p3_max -gt $remaining ]] && p3_max=$remaining
-  while [ $p3_elapsed -lt $p3_max ]; do
+  update_elapsed
+  local p3_end=$((elapsed + PHASE3_MAX))
+  [[ "$p3_end" -gt "$MAX_WAIT" ]] && p3_end="$MAX_WAIT"
+  while ! deadline_reached && [[ "$elapsed" -lt "$p3_end" ]]; do
     if sticky_checklist_done; then
       return 0
     fi
     if ! $JSON_OUTPUT; then
       echo "Waiting for bot to finish posting threads..." >&2
     fi
-    sleep "$PHASE3_INTERVAL"
-    p3_elapsed=$((p3_elapsed + PHASE3_INTERVAL))
-    elapsed=$((elapsed + PHASE3_INTERVAL))
+    local remaining_phase=$((p3_end - elapsed))
+    [[ "$remaining_phase" -le 0 ]] && break
+    local sleep_for="$PHASE3_INTERVAL"
+    [[ "$sleep_for" -gt "$remaining_phase" ]] && sleep_for="$remaining_phase"
+    sleep_until_deadline "$sleep_for" || break
   done
+  deadline_reached && return 1
   sticky_checklist_done
 }
 
@@ -465,13 +504,15 @@ while [ $elapsed -lt $phase1_end ] && [[ -n "$BOT_CHECK_NAME" ]]; do
       break
     fi
   fi
-  sleep "$POLL_INTERVAL"
-  elapsed=$((elapsed + POLL_INTERVAL))
+  sleep_until_deadline "$POLL_INTERVAL" || break
 done
 
 # --- Main poll loop: per-reviewer status until all terminal or timeout ---
-while [ $elapsed -lt $MAX_WAIT ]; do
+last_entries=""
+while ! deadline_reached; do
   entries=$(collect_reviewers_or_exit)
+  last_entries="$entries"
+  update_elapsed
   if ! any_blocking "$entries"; then
     if terminal_posting_done "$entries"; then
       emit_result "complete" "$entries"
@@ -489,12 +530,14 @@ while [ $elapsed -lt $MAX_WAIT ]; do
       exit 2
     fi
   fi
-  sleep "$POLL_INTERVAL"
-  elapsed=$((elapsed + POLL_INTERVAL))
+  sleep_until_deadline "$POLL_INTERVAL" || break
 done
 
 # --- Timeout: one final read ---
-entries=$(collect_reviewers_or_exit)
+entries="${last_entries:-}"
+if [[ -z "$entries" ]]; then
+  entries=$(collect_reviewers_or_exit)
+fi
 if ! any_blocking "$entries"; then
   # Crossed the line right at the bell.
   if terminal_posting_done "$entries"; then
