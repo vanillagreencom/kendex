@@ -43,5 +43,13 @@ assert_eq "$fallback_branch" "main" "resolve-base-branch falls back to main"
 assert_eq "$("$REPO_ROOT/skills/orch/scripts/tracker-for-issue" issue-353)" "github" "tracker-for-issue detects GitHub ids"
 assert_eq "$("$REPO_ROOT/skills/orch/scripts/tracker-for-issue" CC-353)" "linear" "tracker-for-issue detects Linear ids"
 
+issue_repo="$TMP_ROOT/issue-repo"
+git init -q "$issue_repo"
+git -C "$issue_repo" checkout -q -b cc-536
+assert_eq "$("$REPO_ROOT/skills/orch/scripts/git-context" issue-from-branch "$issue_repo")" "CC-536" "git-context uppercases lower-case Linear branch ids"
+
+git -C "$issue_repo" checkout -q --orphan issue-369
+assert_eq "$("$REPO_ROOT/skills/orch/scripts/git-context" issue-from-branch "$issue_repo")" "issue-369" "git-context keeps GitHub issue branch ids lowercase"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -30,7 +30,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope). If no worktree exists for `$
 # Extract issue from branch if not provided
 .agents/skills/orch/scripts/git-context issue-from-branch .
 # Init workflow state if not exists
-.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
 Use the output as `ISSUE_ID`. If `.exists` is `false`, initialize with `git-context branch "$WT_PATH"` and `workflow-state init`, then resolve `TRACKER` and set `qa_labels` from the issue labels.
 

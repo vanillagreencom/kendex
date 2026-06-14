@@ -144,6 +144,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 |--------|---------|
 | `workflow-state` | Persistent state read/write/append (survives compaction) |
 | `git-context` | Print git-derived workflow values such as branch, head SHA, issue id, repo root, and timestamps without inline shell plumbing |
+| `pr-view-json` | Print PR view JSON and return success for expected `status=no_pr` so workflows can route to PR creation without shell fallback expressions |
 | `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
@@ -241,10 +242,10 @@ Resolve once per workflow, store as `TRACKER`:
 3. Otherwise → `linear`.
 
 ```bash
-TRACKER=$(.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]")
+.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]"
 ```
 
-Assign `TRACKER` before any tracker test. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — GitHub state lives in `gh issue`/PR linkage (`Closes #N`).
+Use the output as `TRACKER` before any tracker test. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — GitHub state lives in `gh issue`/PR linkage (`Closes #N`).
 
 ---
 
@@ -368,7 +369,7 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 #### Durable Workflow State Files
 
-Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes, including `set-git-head` and `set-now` instead of inline `$(git ...)` or `$(date ...)` state-write snippets.
+Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes, including `set-git-head` and `set-now` instead of inline command-substitution state-write snippets.
 
 Location: `$ORCH_STATE_DIR/workflow-state-[ID].json` (default: `tmp/`)
 

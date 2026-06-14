@@ -23,8 +23,14 @@ case "$cmd" in
         worktree="$(worktree_arg "$@")"
         pattern="${2:-${GH_ISSUE_PATTERN:-([A-Z]+-[0-9]+|issue-[0-9]+)}}"
         branch="$(git -C "$worktree" branch --show-current)"
+        shopt -s nocasematch
         if [[ "$branch" =~ $pattern ]]; then
-            printf '%s\n' "${BASH_REMATCH[0]}"
+            issue_id="${BASH_REMATCH[0]}"
+            if [[ "$issue_id" == issue-* ]]; then
+                printf '%s\n' "${issue_id,,}"
+            else
+                printf '%s\n' "${issue_id^^}"
+            fi
         else
             echo "Error: no issue id matched branch '$branch'" >&2
             exit 1

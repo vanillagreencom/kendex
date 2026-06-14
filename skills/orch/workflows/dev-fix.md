@@ -83,9 +83,8 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
      ```bash
      .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
-     jq -r '[.labels[] | select(startswith("agent:"))] | first | split(":")[1] // empty' [ISSUE_JSON_FROM_PREVIOUS_COMMAND]
      ```
-     Use the `jq` output as `AGENT`.
+     Read the first `agent:*` label from the JSON output and use the suffix as `AGENT`.
 
      GitHub items: use `gh issue view ${ISSUE_ID#issue-} --json labels`, or infer from component paths.
 

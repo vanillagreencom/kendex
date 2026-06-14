@@ -20,13 +20,14 @@ Post summary comments to git host and issue tracker, and selective handoff comme
 ```bash
 # Extract issue from branch if not provided
 .agents/skills/orch/scripts/git-context issue-from-branch .
-.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID_FROM_PREVIOUS_COMMAND]
-.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
-.agents/skills/github/scripts/github.sh -C [WORKTREE_PATH_FROM_PREVIOUS_COMMAND] pr-view --json number
+.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
+.agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID]
+.agents/skills/orch/scripts/pr-view-json [WT_PATH] --json number
 # Init workflow state if not exists
 .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
-Use the outputs as `ISSUE_ID`, `TRACKER`, `WT_PATH`, and `PR_NUMBER`. If `.exists` is `false`, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
+Use the first output as `ISSUE_ID` and the tracker output as `TRACKER`. Use current directory as `WT_PATH` unless `worktree exists` confirms a different path. Read `PR_NUMBER` from the PR JSON output. If `.exists` is `false`, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
 ---
 

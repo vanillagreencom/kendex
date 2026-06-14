@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Print PR view JSON while treating "no_pr" as a routable status, not a shell failure.
+
+set -euo pipefail
+
+worktree="${1:-.}"
+shift || true
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+GITHUB="$SKILLS_DIR/github/scripts/github.sh"
+
+if [[ ! -x "$GITHUB" ]]; then
+    echo "Error: github helper not found: $GITHUB" >&2
+    exit 1
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+stdout_file="$tmp_dir/stdout.json"
+stderr_file="$tmp_dir/stderr.txt"
+rc=0
+"$GITHUB" -C "$worktree" pr-view "$@" >"$stdout_file" 2>"$stderr_file" || rc=$?
+
+if [[ "$rc" -eq 0 ]]; then
+    cat "$stdout_file"
+    exit 0
+fi
+
+if jq -e '.status == "no_pr"' "$stdout_file" >/dev/null 2>&1; then
+    cat "$stdout_file"
+    exit 0
+fi
+
+cat "$stdout_file"
+cat "$stderr_file" >&2
+exit "$rc"

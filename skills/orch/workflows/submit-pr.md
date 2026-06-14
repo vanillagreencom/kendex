@@ -15,9 +15,10 @@ Push changes, create/update PR, handle bot review, triage PR comments, and trigg
 **If PR# provided:**
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
-.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID]
 ```
-Use the first output as `ISSUE_ID`. Use the second output as `WT_PATH`; if no worktree exists, use `.`.
+Use the first output as `ISSUE_ID`. If the worktree exists, use the path output as `WT_PATH`; otherwise ask before creating or use the current directory when already inside the PR checkout.
 
 Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 
@@ -26,10 +27,11 @@ Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 .agents/skills/orch/scripts/git-context issue-from-branch .
-.agents/skills/worktree/scripts/worktree path [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID]
 .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
-Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no worktree exists, use `.`. If `.exists` is `false`, initialize:
+Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the current directory as `WT_PATH`; use the worktree path output only when `worktree exists` confirms it. If `.exists` is `false`, initialize:
 
 ```bash
 .agents/skills/orch/scripts/git-context branch "$WT_PATH"
@@ -63,9 +65,9 @@ Use the first output as `ISSUE_ID`. Use the worktree output as `WT_PATH`; if no 
 
 3. **Check for existing PR**:
    ```bash
-   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-view --json number,state
+   .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state
    ```
-   If status is `no_pr`, create a new PR in step 5. For auth, token, timeout, or unparseable errors, stop and report the JSON error.
+   Use the JSON output as `PR_VIEW`. If `status` is `no_pr`, create a new PR in step 5. For auth, token, timeout, or unparseable errors, stop and report the JSON error.
 
 4. **Build PR body** from current workflow state using the template below (omit empty sections).
 
@@ -317,9 +319,8 @@ Sub-issues created during comment triage need implementation before CI.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get "[ISSUE_ID]" --format=compact
-jq -r '.labels[]' [ISSUE_JSON_FROM_PREVIOUS_COMMAND]
 ```
-Use the `jq` output as `LABELS`. For GitHub items, read labels with `gh issue view [N] --json labels --jq '.labels[].name'`.
+Read `.labels[]` from the JSON output and use it as `LABELS`. For GitHub items, read labels with `gh issue view [N] --json labels --jq '.labels[].name'`.
 
 If `design` label present:
 

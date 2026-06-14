@@ -24,7 +24,7 @@ Route PR review comments to domain agents, auto-fix valid items, loop until stab
 ```bash
 .agents/skills/orch/scripts/git-context issue-from-branch .
 gh pr view --json number -q .number
-.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID_FROM_PREVIOUS_COMMAND]
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
 Use the outputs as `ISSUE_ID` and `PR_NUMBER`. If `.exists` is `false`, resolve `WT_PATH`, read the current branch with `git-context branch`, and run `workflow-state init`.
 
