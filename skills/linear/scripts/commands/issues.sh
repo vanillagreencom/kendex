@@ -568,10 +568,10 @@ bulk_update_issues() {
         success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
 
         if [ "$update_rc" -eq 0 ] && [ "$success" = "true" ]; then
-            ((success_count++))
+            ((++success_count))
             results+=("$(echo "$result" | jq -c '{identifier, success: true}')")
         else
-            ((fail_count++))
+            ((++fail_count))
             if [ -z "$result" ]; then
                 result="update_issue exited with status $update_rc without output"
             fi
