@@ -52,7 +52,12 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 
 _token_ok() {
-  [[ "${GH_TOKEN:-}" == "ghs_ROUTERBOT123" ]]
+  local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ -n "$tok" ]]; then
+    [[ "$tok" == "ghs_ROUTERBOT123" ]]
+    return
+  fi
+  [[ "${STUB_KEYRING_OK:-0}" == "1" ]]
 }
 
 case "${1:-}" in
@@ -123,6 +128,17 @@ output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" GH_BOT_TOKEN=ghs_ROUT
 assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router uses inherited GH_BOT_TOKEN over local GH_TOKEN"
 assert_file_missing "$TMP_ROOT/op.calls" "github.sh router avoids op when inherited GH_BOT_TOKEN is resolved"
 
+cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
+GH_TOKEN=op://vault/github/user
+ENVEOF
+rm -f "$TMP_ROOT/op.calls"
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
+assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router falls back to keyring for unresolved GH_TOKEN"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "unresolved GH_TOKEN attempts op once before keyring fallback"
+
+cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
+GH_BOT_TOKEN=op://vault/github/bot
+ENVEOF
 rm -f "$TMP_ROOT/op.calls"
 output=$(load_token)
 assert_eq "$output" "ghs_RESOLVED123" "project op reference resolves when no env token exists"

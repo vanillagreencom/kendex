@@ -90,6 +90,7 @@ run_safety_checks() {
     if [ -z "$remote_ref" ]; then
         echo "  ⚠ WARNING: Branch not pushed to origin" >&2
         echo "    Run: git push -u origin $head" >&2
+        echo "    If GH_TOKEN/GITHUB_TOKEN is an unresolved op:// reference, run: env -u GH_TOKEN -u GITHUB_TOKEN git push -u origin $head" >&2
         # Don't fail - gh pr create can push
     else
         echo "  ✓ Branch exists on remote" >&2

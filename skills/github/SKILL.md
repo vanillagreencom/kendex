@@ -122,13 +122,13 @@ Resolution rules:
 | `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local` or parent env) | Falls back to `GH_TOKEN` / `GITHUB_TOKEN` for helper auth, then `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for review/comment filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for issue ID extraction from branches | `[A-Z]+-[0-9]+` |
-| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving `GH_BOT_TOKEN` | `10` |
+| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving GitHub token references | `10` |
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `gh auth status` in `pr-view` | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` in `pr-view` | `30` |
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 
-Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` runs only when the final selected value is still an `op://` reference. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
+Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` runs only when the final selected value is still an `op://` reference. If `GH_TOKEN` or `GITHUB_TOKEN` is an unresolved `op://` reference and `op read` cannot resolve it, `github.sh` drops that env token so `gh` can use keyring auth or a configured `GH_BOT_TOKEN`. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
 
 ### `pr-view` failure contract
 
@@ -176,7 +176,7 @@ env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
 GH_TOKEN= GITHUB_TOKEN= gh pr list
 ```
 
-For the rest of the shell: `unset GH_TOKEN GITHUB_TOKEN`. The `pr-create` wrapper above intentionally sets `GH_TOKEN="$token"` only for its one subprocess; it does not export it into the parent shell.
+For the rest of the shell: `unset GH_TOKEN GITHUB_TOKEN`. `github.sh` performs this fallback automatically when the env token fails but keyring auth succeeds, and it also drops unresolved `op://` env tokens after a failed bounded `op read`. The `pr-create` wrapper above intentionally sets `GH_TOKEN="$token"` only for its one subprocess; it does not export it into the parent shell.
 
 ## Dependencies
 

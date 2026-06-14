@@ -7,6 +7,7 @@ CLI wrapper for GitHub API operations used in PR workflows.
 - `scripts/github.sh` — Entry point (command router)
 - `scripts/git-diff-summary` — Standalone changed-file domain/scope and risk-flag summary helper
 - `scripts/commands/` — Individual command scripts
+- `scripts/lib/gh-auth.sh` — Shared GitHub token resolution and keyring fallback helpers
 - `scripts/lib/github-api.sh` — Shared library (auth, GraphQL, REST, error handling)
 - `SKILL.md` — Agent-facing skill definition
 
@@ -33,7 +34,7 @@ CLI wrapper for GitHub API operations used in PR workflows.
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `pr-view` auth preflight | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` | `30` |
 
-Keep tokens in `.env.local` unless the parent process injects already-resolved secrets at launch. Token loaders are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` is only called when the final selected value is an `op://` reference. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+Keep tokens in `.env.local` unless the parent process injects already-resolved secrets at launch. Token loaders are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` is only called when the final selected value is an `op://` reference. If `GH_TOKEN` or `GITHUB_TOKEN` is an unresolved `op://` reference and `op read` cannot resolve it, `github.sh` drops that env token so `gh` can use keyring auth or a configured `GH_BOT_TOKEN`. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
 
 `pr-view --json ...` emits normal `gh pr view` JSON on success. On failure it
 emits structured JSON on stdout with `status` (`no_pr`, `auth_error`,

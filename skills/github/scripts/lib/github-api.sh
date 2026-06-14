@@ -37,6 +37,8 @@ json_or_default() {
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+# shellcheck source=gh-auth.sh
+source "$_LIB_DIR/gh-auth.sh"
 
 # Get repository owner and name from current git context
 get_repo_info() {
@@ -286,28 +288,11 @@ parse_format_arg() {
 # Check whether a value is already a concrete GitHub token. `op://` references
 # are intentionally not considered resolved.
 is_resolved_github_token() {
-    local token="${1:-}"
-    [[ -n "$token" && "$token" != op://* ]] || return 1
-    [[ "$token" =~ ^gh[pors]_ ]] || [[ "$token" =~ ^github_pat_ ]]
+    vstack_github_is_resolved_token "$@"
 }
 
 select_github_auth_token() {
-    local token
-    for token in "${GH_BOT_TOKEN:-}" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
-        if is_resolved_github_token "$token"; then
-            printf '%s' "$token"
-            return 0
-        fi
-    done
-
-    for token in "${GH_BOT_TOKEN:-}" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"; do
-        if [[ "$token" == op://* ]]; then
-            printf '%s' "$token"
-            return 0
-        fi
-    done
-
-    return 1
+    vstack_github_select_auth_token bot
 }
 
 # Load and validate a GitHub auth token from process env or project config/env.
@@ -343,17 +328,15 @@ load_bot_token() {
 
     # Check for 1Password reference
     if [[ "$token" == op://* ]]; then
-        if command -v op &>/dev/null; then
-            local resolved
-            if resolved=$(op read "$token" 2>/dev/null); then
-                token="$resolved"
-            else
-                echo "Warning: Failed to resolve 1Password reference. Run: op signin" >&2
-                return 0
-            fi
-        else
+        local resolved
+        if vstack_github_resolve_op_reference_to_var "$token" "GH_BOT_TOKEN" resolved; then
+            token="$resolved"
+        elif [ "${VSTACK_GITHUB_TOKEN_ERROR_TYPE:-}" = "token_resolution_unavailable" ]; then
             echo "Warning: GH_BOT_TOKEN is a 1Password reference but 'op' CLI not found" >&2
             echo "  Install: https://developer.1password.com/docs/cli/get-started/" >&2
+            return 0
+        else
+            echo "Warning: Failed to resolve 1Password reference. Run: op signin" >&2
             return 0
         fi
     fi
