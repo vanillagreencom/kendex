@@ -45,13 +45,21 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+_auth_ok() {
+  local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ "$tok" == op://* ]]; then
+    return 1
+  fi
+  [[ "${STUB_AUTH_OK:-1}" == "1" ]]
+}
+
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
       if [[ "${STUB_AUTH_SLEEP:-0}" == "1" ]]; then
         sleep 5
       fi
-      if [[ "${STUB_AUTH_OK:-1}" == "1" ]]; then
+      if _auth_ok; then
         echo "Logged in"
         exit 0
       fi
@@ -61,6 +69,7 @@ case "${1:-}" in
     ;;
   pr)
     if [[ "${2:-}" == "view" ]]; then
+      _auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       case "${STUB_PR_MODE:-ok}" in
         no_pr)
           echo 'no pull requests found for branch "feature/no-pr"' >&2
@@ -89,6 +98,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 cat > "$TMP_ROOT/bin/op" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'op called: %s\n' "$*" >>"${STUB_OP_CALLS:?}"
 case "${STUB_OP_MODE:-fail}" in
   slow)
     sleep 5
@@ -108,6 +118,7 @@ chmod +x "$TMP_ROOT/bin/op"
 run_pr_view() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_OP_CALLS="$TMP_ROOT/op.calls" \
        env -u GH_TOKEN -u GITHUB_TOKEN "$@" "$GITHUB_SH" -C "$TMP_ROOT/repo" pr-view --json number,state)
 }
 
@@ -137,6 +148,26 @@ rc=$?
 set -e
 assert_eq "$rc" "124" "gh pr view timeout exits 124" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "gh_timeout" "gh timeout emits structured status" "$stderr"
+
+rm -f "$TMP_ROOT/op.calls"
+stderr="$TMP_ROOT/inherited-gh-token-op.err"
+set +e
+output=$(run_pr_view GH_TOKEN=op://vault/github/user STUB_AUTH_OK=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "inherited op GH_TOKEN falls back to keyring" "$stderr"
+assert_eq "$(jq -r .number <<<"$output")" "42" "inherited op GH_TOKEN preserves gh JSON" "$stderr"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "inherited op GH_TOKEN attempts op once" "$stderr"
+
+rm -f "$TMP_ROOT/op.calls"
+stderr="$TMP_ROOT/inherited-github-token-op.err"
+set +e
+output=$(run_pr_view GITHUB_TOKEN=op://vault/github/user STUB_AUTH_OK=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "inherited op GITHUB_TOKEN falls back to keyring" "$stderr"
+assert_eq "$(jq -r .number <<<"$output")" "42" "inherited op GITHUB_TOKEN preserves gh JSON" "$stderr"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "inherited op GITHUB_TOKEN attempts op once" "$stderr"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=op://vault/item/field

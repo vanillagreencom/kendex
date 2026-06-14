@@ -51,27 +51,9 @@ fi
 if [ -n "$_CALLER_GH_BOT_TOKEN_SET" ]; then
     export GH_BOT_TOKEN="$_CALLER_GH_BOT_TOKEN"
 fi
-if [ -z "$_CALLER_GH_TOKEN" ] && [ -z "$_CALLER_GITHUB_TOKEN" ] && [ -n "$_CALLER_GH_BOT_TOKEN_SET" ]; then
-    if [[ "$_CALLER_GH_BOT_TOKEN" =~ ^gh[pors]_ ]] || [[ "$_CALLER_GH_BOT_TOKEN" =~ ^github_pat_ ]]; then
-        export GH_TOKEN="$_CALLER_GH_BOT_TOKEN"
-    fi
-fi
-vstack_github_resolve_env_reference GH_TOKEN || true
-vstack_github_resolve_env_reference GITHUB_TOKEN || true
+vstack_github_apply_selected_auth_token router || true
 vstack_github_sanitize_gh_env
-if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${GH_BOT_TOKEN:-}" ]; then
-    _env_bot_token="$GH_BOT_TOKEN"
-    if [[ "$_env_bot_token" == op://* ]]; then
-        if vstack_github_resolve_op_reference_to_var "$_env_bot_token" "GH_BOT_TOKEN" _resolved; then
-            _env_bot_token="$_resolved"
-        fi
-    fi
-    if vstack_github_is_resolved_token "$_env_bot_token"; then
-        export GH_TOKEN="$_env_bot_token"
-    fi
-fi
-vstack_github_sanitize_gh_env
-unset _env_root _env_bot_token _resolved _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
+unset _env_root _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
 
 show_help() {
     cat << 'EOF'
@@ -90,6 +72,7 @@ Commands:
   pr-list-ready      List PRs ready for merge
   pr-list-failing    List PRs with CI failures
   pr-create          Create PR as bot account
+  pr-edit-body       Update PR body from a file
   pr-merge           Merge PR as bot account (with safety checks)
   pr-cross-check     Analyze multiple PRs for conflicts/dependencies
   pr-issue           Extract issue ID from PR branch name
@@ -134,7 +117,7 @@ command="${1:-help}"
 shift || true
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-review-status|pr-list-ready|pr-list-failing|pr-create|pr-merge|pr-cross-check|pr-issue|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-review-status|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|pr-cross-check|pr-issue|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then

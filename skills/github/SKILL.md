@@ -28,6 +28,7 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed. Prefer `--body-file` for Markdown with backticks/code fences; `--body` is safe only for plain strings. `--force` skips checks. |
+| `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
 | `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now. Three exit codes — see below. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
@@ -128,7 +129,7 @@ Resolution rules:
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 
-Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers are env-first: resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values are used before project files are read, and `op read` runs only when the final selected value is still an `op://` reference. If `GH_TOKEN` or `GITHUB_TOKEN` is an unresolved `op://` reference and `op read` cannot resolve it, `github.sh` drops that env token so `gh` can use keyring auth or a configured `GH_BOT_TOKEN`. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
+Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` runs only for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
 
 ### `pr-view` failure contract
 
@@ -176,7 +177,7 @@ env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
 GH_TOKEN= GITHUB_TOKEN= gh pr list
 ```
 
-For the rest of the shell: `unset GH_TOKEN GITHUB_TOKEN`. `github.sh` performs this fallback automatically when the env token fails but keyring auth succeeds, and it also drops unresolved `op://` env tokens after a failed bounded `op read`. The `pr-create` wrapper above intentionally sets `GH_TOKEN="$token"` only for its one subprocess; it does not export it into the parent shell.
+For the rest of the shell: `unset GH_TOKEN GITHUB_TOKEN`. `github.sh` performs this fallback automatically when the selected env token fails but keyring auth succeeds, and it also drops unresolved `op://` env tokens after a failed bounded `op read`. The `pr-create` wrapper above intentionally sets `GH_TOKEN="$token"` only for its one subprocess; it does not export it into the parent shell.
 
 ## Dependencies
 

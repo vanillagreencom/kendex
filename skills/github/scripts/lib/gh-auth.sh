@@ -9,6 +9,24 @@ vstack_github_is_resolved_token() {
   [[ "$token" =~ ^gh[pors]_ ]] || [[ "$token" =~ ^github_pat_ ]]
 }
 
+vstack_github_auth_status() {
+  local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${auth_timeout}s" gh auth status >/dev/null 2>&1
+  else
+    gh auth status >/dev/null 2>&1
+  fi
+}
+
+vstack_github_keyring_auth_status() {
+  local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${auth_timeout}s" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
+  else
+    env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
+  fi
+}
+
 vstack_github_resolve_op_reference_to_var() {
   local ref="${1:?vstack_github_resolve_op_reference: ref required}"
   local label="${2:-GitHub token}"
@@ -84,10 +102,10 @@ vstack_github_resolve_env_reference() {
 vstack_github_sanitize_gh_env() {
   command -v gh >/dev/null 2>&1 || return 0
   [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && return 0
-  if gh auth status >/dev/null 2>&1; then
+  if vstack_github_auth_status; then
     return 0
   fi
-  if env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1; then
+  if vstack_github_keyring_auth_status; then
     echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
     unset GH_TOKEN GITHUB_TOKEN
     export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
@@ -102,6 +120,7 @@ vstack_github_select_auth_token() {
 
   case "$mode" in
     bot) order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
+    router) order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
     *) order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
   esac
 
@@ -120,6 +139,30 @@ vstack_github_select_auth_token() {
       return 0
     fi
   done
+
+  return 1
+}
+
+vstack_github_apply_selected_auth_token() {
+  local mode="${1:-default}"
+  local token="" resolved=""
+
+  token="$(vstack_github_select_auth_token "$mode" || true)"
+  [[ -n "$token" ]] || return 1
+
+  if [[ "$token" == op://* ]]; then
+    if ! vstack_github_resolve_op_reference_to_var "$token" "GitHub token" resolved; then
+      unset GH_TOKEN GITHUB_TOKEN
+      return 1
+    fi
+    token="$resolved"
+  fi
+
+  if vstack_github_is_resolved_token "$token"; then
+    export GH_TOKEN="$token"
+    unset GITHUB_TOKEN
+    return 0
+  fi
 
   return 1
 }
@@ -145,7 +188,7 @@ vstack_github_load_token() {
 
   [[ -n "$token" ]] || return 1
   if [[ "$token" == op://* ]]; then
-    if resolved=$(vstack_github_resolve_op_reference "$token" "GitHub token"); then
+    if vstack_github_resolve_op_reference_to_var "$token" "GitHub token" resolved; then
       token="$resolved"
     else
       return 1

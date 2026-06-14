@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/label-activity.sh
 source "$SCRIPT_DIR/../lib/label-activity.sh"
+# shellcheck source=../lib/gh-auth.sh
+source "$SCRIPT_DIR/../lib/gh-auth.sh"
 
 show_help() {
     cat <<'EOF'
@@ -62,6 +64,9 @@ main() {
         show_help >&2
         exit 2
     fi
+
+    vstack_github_apply_selected_auth_token router || true
+    vstack_github_sanitize_gh_env
 
     local rc=0
     if [ "$kind" = "issue" ]; then
