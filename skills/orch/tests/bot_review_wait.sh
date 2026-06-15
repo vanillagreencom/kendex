@@ -60,6 +60,14 @@ set -euo pipefail
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
+      if [[ -n "${FAKE_GH_AUTH_STATUS_COUNT_FILE:-}" ]]; then
+        count=0
+        if [[ -f "$FAKE_GH_AUTH_STATUS_COUNT_FILE" ]]; then
+          count="$(cat "$FAKE_GH_AUTH_STATUS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$FAKE_GH_AUTH_STATUS_COUNT_FILE"
+      fi
       if [[ "${FAKE_GH_AUTH_MODE:-token-invalid-keyring-ok}" == "hang" ]]; then
         sleep 5
       fi
@@ -342,13 +350,15 @@ assert_eq "$(jq -r .status <<<"$output")" "error" "hard gh auth failure emits JS
 assert_contains "$(cat "$stderr")" "GitHub CLI authentication failed" "hard gh auth failure emits stderr diagnostic"
 
 stderr="$TMP_ROOT/auth-hang.err"
+auth_status_count_file="$TMP_ROOT/auth-hang-status-count"
 set +e
-output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" VSTACK_GITHUB_AUTH_TIMEOUT=1 FAKE_GH_AUTH_MODE=hang .agents/skills/orch/scripts/bot-review-wait 1 1 30 --json --reviewers "review-bot[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
+output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" VSTACK_GITHUB_AUTH_TIMEOUT=1 FAKE_GH_AUTH_MODE=hang FAKE_GH_AUTH_STATUS_COUNT_FILE="$3" .agents/skills/orch/scripts/bot-review-wait 1 1 30 --json --reviewers "review-bot[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$auth_status_count_file" 2>"$stderr")
 code=$?
 set -e
 assert_eq "$code" "3" "hanging gh auth status exits through bounded preflight"
 assert_eq "$(jq -r .status <<<"$output")" "error" "hanging gh auth status emits JSON error"
 assert_contains "$(cat "$stderr")" "GitHub CLI authentication failed" "hanging gh auth status emits stderr diagnostic"
+assert_eq "$(cat "$auth_status_count_file")" "1" "hanging keyring auth is probed once"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
