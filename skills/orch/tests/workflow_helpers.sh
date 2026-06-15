@@ -22,6 +22,28 @@ assert_eq() {
   fi
 }
 
+assert_file_contains() {
+  local file="$1" pattern="$2" name="$3"
+  if grep -Fq -- "$pattern" "$file"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
+  fi
+}
+
+assert_file_not_contains() {
+  local file="$1" pattern="$2" name="$3"
+  if grep -Fq -- "$pattern" "$file"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unexpected pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
+  else
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  fi
+}
+
 echo "=== orch Codex-safe helper commands ==="
 
 state_dir="$TMP_ROOT/state"
@@ -85,6 +107,22 @@ assert_eq "$(jq -r '.status' <<<"$preflight_ok")" "ok" "codex app preflight acce
 assert_eq "$(jq -r '.severity' <<<"$preflight_ok")" "info" "codex app preflight classifies tracked generated agents as info"
 assert_eq "$(jq -r '.requires_confirmation' <<<"$preflight_ok")" "false" "codex app preflight does not ask confirmation when tracked agents exist"
 assert_eq "$(jq -r '.tracked_agents' <<<"$preflight_ok")" "1" "codex app preflight reports tracked agent count"
+
+orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
+submit_workflow="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+comments_workflow="$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
+
+assert_file_contains "$orch_skill" "#### Harness-Safe Shell" "orch skill documents Harness-Safe Shell section"
+assert_file_contains "$orch_skill" 'Avoid inline `$(...)`, shell `for`/`while` loops' "Harness-Safe Shell section bans unsafe shell helper shapes"
+
+for workflow in "$submit_workflow" "$comments_workflow"; do
+  workflow_name="$(basename "$workflow")"
+  assert_file_not_contains "$workflow" 'BOT_WAIT_ARGS' "$workflow_name avoids bot wait arrays"
+  assert_file_not_contains "$workflow" "IFS=',' read -ra REVIEW_BOTS" "$workflow_name avoids IFS reviewer splitting"
+  assert_file_not_contains "$workflow" 'for BOT in "${REVIEW_BOTS[@]}"' "$workflow_name avoids reviewer shell loops"
+  assert_file_not_contains "$workflow" '--reviewers "$BOT_REVIEWERS"' "$workflow_name avoids required BOT_REVIEWERS expansion"
+  assert_file_not_contains "$workflow" 'printenv BOT_REVIEWERS' "$workflow_name avoids optional reviewer probing"
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

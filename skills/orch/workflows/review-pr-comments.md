@@ -43,7 +43,7 @@ Multiple bots may review on different timelines. Wait for all configured or dete
 ```
 Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
-Default reviewer detection uses formal reviews, known review-bot comment summaries, PR-body reactions, and own-comment reactions. Custom comment-only bots can be configured via `BOT_REVIEWERS` / `--reviewers`; in strict harnesses, first run `printenv BOT_REVIEWERS` and then rerun with a literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` value. Do not include `--reviewers "$BOT_REVIEWERS"` in required command examples because unset-variable expansion can be rejected.
+This is the preferred harness-safe path. `bot-review-wait` automatically honors configured `BOT_REVIEWERS` and `BOT_SKIPPED_REVIEWERS` from the environment or project settings, and auto-detects reviewers when no explicit configuration exists. Use literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` or `--skip "[BOT_LOGIN]"` only for intentional ad-hoc overrides.
 
 **Polling behavior**: per reviewer, status is `pending|approved|changes|skipped|unknown`. Claude-style comments parse `✅ Approved` / `Changes requested`; Codex-style signals use 👀 = pending, 👍 = approved, inline threads = changes. Returns `status=complete` only when no reviewer is pending. If `status=timeout`, ask the user `Wait` | `Skip pending bot` (configure via `BOT_SKIPPED_REVIEWERS`) | `Proceed without`. Late arrivals are caught in § 6.3.
 
@@ -404,13 +404,13 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
    ```bash
    # Count unresolved threads + new PR-level comments since last triage
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
-   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved --since "$LAST_TS"
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved --since "[LAST_TS_FROM_PREVIOUS_COMMAND]"
    ```
-   Use the workflow-state output as `LAST_TS`. Read `.count` from the threads JSON output as `NEW_THREADS`.
+   Use the workflow-state output as `LAST_TS_FROM_PREVIOUS_COMMAND`. Read `.count` from the threads JSON output as `NEW_THREADS_FROM_PREVIOUS_COMMAND`.
 
 5. **Route**:
 
-   | `NEW_THREADS` | Action |
+   | `NEW_THREADS_FROM_PREVIOUS_COMMAND` | Action |
    |---------------|--------|
    | `0` | → § 7 |
    | `> 0` | Update baseline, loop to § 1 |
@@ -418,9 +418,9 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
 6. **Update baseline** (before looping):
    ```bash
    date -u +%Y-%m-%dT%H:%M:%SZ
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline "{\"last_ts\":\"$NOW\",\"last_threads\":$NEW_THREADS}"
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_ts":"[NOW_FROM_PREVIOUS_COMMAND]","last_threads":[NEW_THREADS_FROM_PREVIOUS_COMMAND]}'
    ```
-   Use the date output as `NOW`.
+   Use the date output as `NOW_FROM_PREVIOUS_COMMAND`.
 
 7. **Loop**: Return to § 1.2 (skip § 1.1 bot-wait on re-triage — comments already arrived).
 
