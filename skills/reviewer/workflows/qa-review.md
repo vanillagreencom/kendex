@@ -107,7 +107,7 @@ QA_COMPLETE
 verdict: [pass|action_required]
 agent: [AGENT_NAME]
 benchmark_commit: [SHA or "none"]
-File: tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
+File: [WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
 ```json
 {complete JSON object}
 ```
