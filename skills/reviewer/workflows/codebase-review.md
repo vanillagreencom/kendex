@@ -71,7 +71,7 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json
 ## Constraints
 
 **Do NOT**:
-- Modify files
+- Modify project files other than the required `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` review artifact
 - Modify issue tracker state
 - Create commits or push changes
 - Call other subagents
