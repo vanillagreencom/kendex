@@ -120,9 +120,13 @@ vstack_github_resolve_op_reference_to_var() {
 vstack_github_sanitize_gh_env() {
   command -v gh >/dev/null 2>&1 || return 0
   [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && return 0
+  local auth_status=0
   if vstack_github_auth_status; then
     return 0
+  else
+    auth_status=$?
   fi
+  [[ "$auth_status" -eq 124 ]] && return 0
   if [[ "${VSTACK_GITHUB_SELECTED_TOKEN_SOURCE:-}" == "GH_BOT_TOKEN" ]]; then
     return 0
   fi
@@ -141,7 +145,9 @@ vstack_github_select_auth_token() {
 
   case "$mode" in
     bot) order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
+    bot-only) order=(GH_BOT_TOKEN) ;;
     router) order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
+    user) order=(GH_TOKEN GITHUB_TOKEN) ;;
     *) order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
   esac
 
@@ -172,7 +178,9 @@ vstack_github_apply_selected_auth_token() {
   unset VSTACK_GITHUB_SELECTED_TOKEN_SOURCE
   case "$mode" in
     bot) order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
+    bot-only) order=(GH_BOT_TOKEN) ;;
     router) order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
+    user) order=(GH_TOKEN GITHUB_TOKEN) ;;
     *) order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
   esac
 

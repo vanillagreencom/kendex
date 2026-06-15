@@ -33,7 +33,13 @@ cat >"$STUB_BIN/git" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
   "rev-parse --show-toplevel") printf '%s\n' "${TEST_PROJECT_ROOT:?}" ;;
-  "rev-parse --git-common-dir") printf '%s\n' "${TEST_PROJECT_ROOT:?}/../main/.git" ;;
+  "rev-parse --git-common-dir")
+    if [[ "${TEST_WORKTREE:-true}" == "false" ]]; then
+      printf '%s\n' "${TEST_PROJECT_ROOT:?}/.git"
+    else
+      printf '%s\n' "${TEST_PROJECT_ROOT:?}/../main/.git"
+    fi
+    ;;
   "branch --show-current") printf '%s\n' "issue-322" ;;
   *) exit 1 ;;
 esac
@@ -52,6 +58,18 @@ cat >"$STUB_BIN/gh" <<'SH'
 set -euo pipefail
 
 case "${1:-}" in
+  auth)
+    if [[ "${2:-}" == "status" ]]; then
+      tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+      [[ "$tok" == "gho_VALID123" ]] || { echo "auth failed" >&2; exit 1; }
+      if [[ "$*" == *"--json hosts"* ]]; then
+        printf '%s\n' '{"hosts":{"github.com":[{"login":"test-user","state":"success","gitProtocol":"https","active":true}]}}'
+      else
+        echo "Logged in"
+      fi
+      exit 0
+    fi
+    ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
       tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -125,6 +143,16 @@ out="$(
 )"
 gh_auth="$(jq -r '.gh_auth // false' <<<"$out")"
 assert_eq "$gh_auth" "true" "worktree GitHub auth accepts selected GITHUB_TOKEN"
+
+WT_DASHBOARD_TOKEN="$(make_worktree wt-dashboard-token yes yes)"
+out="$(
+  cd "$WT_DASHBOARD_TOKEN"
+  TEST_PROJECT_ROOT="$WT_DASHBOARD_TOKEN" TEST_WORKTREE=false PATH="$STUB_BIN:$PATH" GITHUB_TOKEN=gho_VALID123 "$SCRIPT" --json
+)"
+gh_available="$(jq -r '.gh_auth.available // false' <<<"$out")"
+gh_active="$(jq -r '.gh_auth.active_account // empty' <<<"$out")"
+assert_eq "$gh_available" "true" "dashboard GitHub auth accepts selected GITHUB_TOKEN"
+assert_eq "$gh_active" "test-user" "dashboard GitHub auth reports selected token account"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

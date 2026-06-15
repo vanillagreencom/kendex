@@ -73,6 +73,9 @@ case "${1:-}" in
     ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
+      if [[ "${STUB_API_USER_SLEEP:-0}" == "1" ]]; then
+        sleep 5
+      fi
       _auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
       exit 0
@@ -151,6 +154,14 @@ rc=$?
 set -e
 assert_eq "$rc" "124" "auth preflight timeout exits 124" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "auth_timeout" "auth timeout emits structured status" "$stderr"
+
+stderr="$TMP_ROOT/api-user-auth-timeout.err"
+set +e
+output=$(run_pr_view GH_TOKEN=ghs_VALIDBOT123 STUB_API_USER_SLEEP=1 VSTACK_GITHUB_AUTH_TIMEOUT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "124" "env-token auth preflight timeout exits 124" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "auth_timeout" "env-token auth timeout emits structured status" "$stderr"
 
 stderr="$TMP_ROOT/stale-keyring.err"
 set +e

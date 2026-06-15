@@ -60,6 +60,9 @@ set -euo pipefail
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
+      if [[ "${FAKE_GH_AUTH_MODE:-token-invalid-keyring-ok}" == "hang" ]]; then
+        sleep 5
+      fi
       if [[ "${FAKE_GH_AUTH_MODE:-token-invalid-keyring-ok}" == "fail" ]]; then
         echo "gh auth failed" >&2
         exit 1
@@ -85,6 +88,14 @@ case "${1:-}" in
   api)
     endpoint="${2:-}"
     if [[ "$endpoint" == "user" ]]; then
+      if [[ -n "${FAKE_GH_USER_COUNT_FILE:-}" ]]; then
+        count=0
+        if [[ -f "$FAKE_GH_USER_COUNT_FILE" ]]; then
+          count="$(cat "$FAKE_GH_USER_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$FAKE_GH_USER_COUNT_FILE"
+      fi
       if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
         if [[ -n "${STUB_GH_VALID_TOKEN:-}" && "${GH_TOKEN:-${GITHUB_TOKEN:-}}" == "$STUB_GH_VALID_TOKEN" ]]; then
           echo "test-user"
@@ -265,9 +276,11 @@ assert_eq "$(jq -r .status <<<"$output")" "complete" "caller GH_TOKEN wins over 
 assert_eq "$(cat "$stderr")" "" "caller GH_TOKEN does not trigger sanitizer fallback"
 
 stderr="$TMP_ROOT/stale-keyring.err"
-output=$(GH_TOKEN=ghs_CALLER123 STUB_GH_VALID_TOKEN=ghs_CALLER123 FAKE_GH_AUTH_MODE=fail run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
+user_count_file="$TMP_ROOT/stale-keyring-api-user-count"
+output=$(GH_TOKEN=ghs_CALLER123 STUB_GH_VALID_TOKEN=ghs_CALLER123 FAKE_GH_AUTH_MODE=fail FAKE_GH_USER_COUNT_FILE="$user_count_file" run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
 assert_eq "$(jq -r .status <<<"$output")" "complete" "caller GH_TOKEN ignores stale keyring status"
 assert_eq "$(cat "$stderr")" "" "stale keyring does not trigger sanitizer fallback for valid caller token"
+assert_eq "$(cat "$user_count_file")" "1" "selected token is validated once at startup"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"
@@ -327,6 +340,15 @@ set -e
 assert_eq "$code" "3" "hard gh auth failure exits 3"
 assert_eq "$(jq -r .status <<<"$output")" "error" "hard gh auth failure emits JSON error"
 assert_contains "$(cat "$stderr")" "GitHub CLI authentication failed" "hard gh auth failure emits stderr diagnostic"
+
+stderr="$TMP_ROOT/auth-hang.err"
+set +e
+output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" VSTACK_GITHUB_AUTH_TIMEOUT=1 FAKE_GH_AUTH_MODE=hang .agents/skills/orch/scripts/bot-review-wait 1 1 30 --json --reviewers "review-bot[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
+code=$?
+set -e
+assert_eq "$code" "3" "hanging gh auth status exits through bounded preflight"
+assert_eq "$(jq -r .status <<<"$output")" "error" "hanging gh auth status emits JSON error"
+assert_contains "$(cat "$stderr")" "GitHub CLI authentication failed" "hanging gh auth status emits stderr diagnostic"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

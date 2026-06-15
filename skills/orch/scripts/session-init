@@ -121,33 +121,6 @@ json_or_default() {
   printf '%s' "$output"
 }
 
-is_github_token() {
-  [[ "$1" =~ ^gh[pours]_ ]] || [[ "$1" =~ ^github_pat_ ]]
-}
-
-resolve_secret_ref() {
-  local value="$1"
-
-  if [[ "$value" == op://* ]]; then
-    command -v op &>/dev/null || return 1
-    op read "$value" 2>/dev/null || return 1
-  else
-    printf '%s' "$value"
-  fi
-}
-
-resolve_github_token_var() {
-  local var_name="$1"
-  local value="${!var_name:-}"
-  local token=""
-
-  [[ -n "$value" ]] || return 1
-  token=$(resolve_secret_ref "$value") || return 1
-  is_github_token "$token" || return 1
-
-  printf '%s' "$token"
-}
-
 gh_with_token() {
   local token="$1"
   shift
@@ -186,9 +159,15 @@ linear_auth_check() {
   return "$rc"
 }
 
+load_session_github_token() {
+  local mode="$1"
+  declare -F vstack_github_load_token >/dev/null 2>&1 || return 1
+  vstack_github_load_token "$PROJECT_ROOT" "$mode"
+}
+
 # Main sessions should use the user's repo token; worktree sessions prefer the bot token.
-GH_MAIN_TOKEN=$(resolve_github_token_var GH_TOKEN 2>/dev/null || true)
-GH_BOT_TOKEN_RESOLVED=$(resolve_github_token_var GH_BOT_TOKEN 2>/dev/null || true)
+GH_MAIN_TOKEN=$(load_session_github_token user 2>/dev/null || true)
+GH_BOT_TOKEN_RESOLVED=$(load_session_github_token bot-only 2>/dev/null || true)
 GH_DASHBOARD_TOKEN="${GH_MAIN_TOKEN:-$GH_BOT_TOKEN_RESOLVED}"
 
 # ─────────────────────────────────────────────────────────────────────────────

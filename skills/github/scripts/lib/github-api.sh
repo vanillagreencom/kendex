@@ -106,7 +106,10 @@ filter_prs_to_default_scope() {
 
 # Check gh CLI authentication
 check_gh_auth() {
-    if ! vstack_github_auth_status; then
+    if vstack_github_has_env_token; then
+        return 0
+    fi
+    if ! vstack_github_keyring_auth_status; then
         echo '{"error": "gh CLI not authenticated. Run: gh auth login"}' >&2
         return 1
     fi
