@@ -25,6 +25,10 @@ orch_github_auth_status_capture() {
   vstack_github_auth_status_capture "$@"
 }
 
+orch_github_keyring_auth_status() {
+  vstack_github_keyring_auth_status
+}
+
 orch_is_resolved_github_token() {
   vstack_github_is_resolved_token "$@"
 }

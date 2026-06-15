@@ -10,19 +10,6 @@ source "$COMMAND_DIR/../lib/pr-branch.sh"
 # shellcheck source=../lib/gh-auth.sh
 source "$COMMAND_DIR/../lib/gh-auth.sh"
 
-run_bounded_capture() {
-    local seconds="$1"
-    local stdout_file="$2"
-    local stderr_file="$3"
-    shift 3
-
-    if command -v timeout &>/dev/null; then
-        timeout "${seconds}s" "$@" >"$stdout_file" 2>"$stderr_file"
-    else
-        "$@" >"$stdout_file" 2>"$stderr_file"
-    fi
-}
-
 json_error() {
     local status="$1"
     local message="$2"
@@ -162,7 +149,7 @@ main() {
 
     local pr_timeout="${VSTACK_GITHUB_PR_VIEW_TIMEOUT:-30}"
     local output status=0
-    run_bounded_capture "$pr_timeout" "$pr_out" "$pr_err" "${cmd[@]}" || status=$?
+    vstack_github_run_bounded_capture "$pr_timeout" "$pr_out" "$pr_err" "${cmd[@]}" || status=$?
     output="$(cat "$pr_out")"
     if [ "$status" -ne 0 ]; then
         local detail error_status message exit_status

@@ -11,7 +11,9 @@
 #   5. broken keyring + inherited valid GH_BOT_TOKEN + .env.local op:// token
 #                                        -> inherited token wins, no op read
 #   6. valid selected token + stale keyring auth status
-#                                        -> token preflight wins
+#                                        -> token preflight wins once
+#   7. no env token + hanging keyring auth
+#                                        -> bounded failure, not hang
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,6 +97,9 @@ _stub_auth_ok() {
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
+      if [[ "${STUB_GH_AUTH_STATUS_SLEEP:-0}" == "1" ]]; then
+        sleep 5
+      fi
       if [[ "${STUB_GH_AUTH_STATUS_FAIL:-0}" == "1" ]]; then
         echo "keyring default failed" >&2
         exit 1
@@ -109,6 +114,14 @@ case "${1:-}" in
     ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
+      if [[ -n "${STUB_GH_API_USER_COUNT_FILE:-}" ]]; then
+        count=0
+        if [[ -f "$STUB_GH_API_USER_COUNT_FILE" ]]; then
+          count="$(cat "$STUB_GH_API_USER_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_GH_API_USER_COUNT_FILE"
+      fi
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
       exit 0
@@ -223,13 +236,25 @@ rm -f "$TMP_ROOT/repo/.env.local"
 # Case 6: a selected env token works for API calls while gh auth status would
 # fail because of a stale keyring account.
 stderr="$TMP_ROOT/case6.err"
+api_count_file="$TMP_ROOT/case6-api-user-count"
 set +e
-output=$(run_wait GH_TOKEN=ghs_VALIDUSER123 STUB_GH_VALID_TOKEN=ghs_VALIDUSER123 STUB_GH_AUTH_STATUS_FAIL=1 2>"$stderr")
+output=$(run_wait GH_TOKEN=ghs_VALIDUSER123 STUB_GH_VALID_TOKEN=ghs_VALIDUSER123 STUB_GH_AUTH_STATUS_FAIL=1 STUB_GH_API_USER_COUNT_FILE="$api_count_file" 2>"$stderr")
 rc=$?
 set -e
 assert_eq "$rc" "0" "case6: valid selected token ignores stale keyring status" "$stderr"
 assert_contains "$output" "CI passed" "case6: ci-wait reaches CI passed via selected token"
 assert_not_contains "$(cat "$stderr")" "unsetting them" "case6: selected token does not trigger sanitizer fallback" "$stderr"
+assert_eq "$(cat "$api_count_file")" "1" "case6: selected token validates once at startup" "$stderr"
+
+# Case 7: no env tokens and keyring auth hangs. The bounded auth preflight
+# should return the normal no-working-auth diagnostic instead of hanging.
+stderr="$TMP_ROOT/case7.err"
+set +e
+output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" VSTACK_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "3" "case7: hanging keyring auth exits 3" "$stderr"
+assert_contains "$(cat "$stderr")" "no working GitHub auth path" "case7: hanging keyring auth reports no working path" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

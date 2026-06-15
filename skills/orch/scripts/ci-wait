@@ -35,18 +35,40 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 3
 fi
 
-orch_sanitize_gh_env
+AUTH_READY=false
 
-if [[ -z "${GH_TOKEN:-}" ]]; then
+if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  auth_status=0
+  if orch_github_auth_status; then
+    AUTH_READY=true
+  else
+    auth_status=$?
+    if [[ "$auth_status" -ne 124 && "${VSTACK_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]] && orch_github_keyring_auth_status; then
+      echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+      unset GH_TOKEN GITHUB_TOKEN
+      export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
+      AUTH_READY=true
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}" ]]; then
   orch_load_env_bot_token "$PROJECT_ROOT" || true
 fi
 
-if ! orch_github_auth_status; then
+if [[ "$AUTH_READY" != "true" ]] && orch_github_auth_status; then
+  AUTH_READY=true
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
   unset GH_TOKEN GITHUB_TOKEN
   orch_load_env_bot_token "$PROJECT_ROOT" || true
+  if orch_github_auth_status; then
+    AUTH_READY=true
+  fi
 fi
 
-if ! orch_github_auth_status; then
+if [[ "$AUTH_READY" != "true" ]]; then
   {
     echo "ci-wait: no working GitHub auth path."
     echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
