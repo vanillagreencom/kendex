@@ -205,12 +205,14 @@ cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 export GH_BOT_TOKEN=ghs_VALIDBOT123
 ENVEOF
 stderr="$TMP_ROOT/case4.err"
+api_count_file="$TMP_ROOT/case4-api-user-count"
 set +e
-output=$(run_wait GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 STUB_GH_VALID_TOKEN=ghs_VALIDBOT123 2>"$stderr")
+output=$(run_wait GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 STUB_GH_VALID_TOKEN=ghs_VALIDBOT123 STUB_GH_API_USER_COUNT_FILE="$api_count_file" 2>"$stderr")
 rc=$?
 set -e
 assert_eq "$rc" "0" "case4: .env.local GH_BOT_TOKEN recovers" "$stderr"
 assert_contains "$output" "CI passed" "case4: ci-wait reaches CI passed via bot-token fallback"
+assert_eq "$(cat "$api_count_file")" "2" "case4: stale env and bot token are each validated once" "$stderr"
 rm -f "$TMP_ROOT/repo/.env.local"
 
 # Case 5: process env already has a resolved bot token; project op reference

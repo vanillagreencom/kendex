@@ -4,12 +4,13 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 
 ## GitHub Auth Fallback
 
-`bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh::orch_sanitize_gh_env`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Four-step ladder:
+`bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Each candidate source is probed at most once during startup:
 
-1. **Sanitize.** Env tokens set but selected-token auth preflight (`gh api user`) fails → try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status`. If that succeeds, warn on stderr and unset.
-2. **Bot-token load.** `GH_TOKEN` empty → first use already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` from process env. Only if those are missing or still `op://` references, load `.env`, `vstack.settings.toml`, then `.env.local`. `op://` references resolve via `op read` only after the final token source is selected. The `github.sh` router separately prefers resolved `GH_BOT_TOKEN` before resolved `GITHUB_TOKEN` so bot access is not blocked by a user token.
-3. **Fallback retry.** Auth still fails → drop env tokens, retry bot-token load. Recovers when project config/secrets have a valid token despite broken keyring.
-4. **Hard fail.** No path works → exit `3` with diagnostic. Callers do not poll against empty output.
+1. **Selected env token.** If `GH_TOKEN` or `GITHUB_TOKEN` is set, validate it with bounded `gh api user`.
+2. **Keyring fallback.** If that env token fails, try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status` once. If it succeeds, warn on stderr and unset the stale env token.
+3. **Bot-token load.** If keyring does not recover, unset stale `GH_TOKEN`/`GITHUB_TOKEN` before loading a `GH_BOT_TOKEN` candidate from process env or project config/secrets. `op://` references resolve via `op read` only after the final token source is selected. The `github.sh` router separately prefers resolved `GH_BOT_TOKEN` before resolved `GITHUB_TOKEN` so bot access is not blocked by a user token.
+4. **No-env keyring.** If no env token was present at startup and no bot token loads, probe keyring auth once.
+5. **Hard fail.** No path works → exit `3` with diagnostic. Callers do not poll against empty output.
 
 The `op` CLI service-account/token setup is intentionally outside orch. Launchers may inject resolved secrets before starting Codex, Claude, or Pi; orch preserves those values instead of clobbering them with local `op://` references.
 

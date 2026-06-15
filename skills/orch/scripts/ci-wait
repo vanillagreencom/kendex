@@ -8,15 +8,13 @@
 # Usage: ci-wait <PR#> [poll_interval] [max_wait]
 #
 # Auth resolution ladder (see vstack#19):
-#   1. orch_sanitize_gh_env — drop stale GH_TOKEN/GITHUB_TOKEN
-#      env vars that mask working `gh` keyring auth.
-#   2. If GH_TOKEN ended up empty (never set, or step 1 cleared it), match
-#      skills/github/scripts/github.sh and load GH_BOT_TOKEN from project
-#      config/secrets if one is present.
-#   3. If the current GitHub auth preflight still fails, drop any remaining
-#      stale env token and retry the GH_BOT_TOKEN load — covers the
-#      stale-env-token + bad-keyring + valid-bot-token combination.
-#   4. If no auth path works after that, exit 3 with a clear diagnostic.
+#   1. Validate the currently selected GH_TOKEN/GITHUB_TOKEN once, if present.
+#   2. If that env token fails, try keyring auth once with env tokens removed.
+#   3. If keyring does not recover, unset the stale env token and load a
+#      GH_BOT_TOKEN candidate from project config/secrets.
+#   4. Validate the loaded bot token once, or keyring once when no env token
+#      was present at startup.
+#   5. If no auth path works after that, exit 3 with a clear diagnostic.
 #      Exit 3 matches bot-review-wait's auth-error exit so callers can
 #      treat the two consistently.
 #
@@ -36,6 +34,7 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 AUTH_READY=false
+KEYRING_PROBED=false
 
 if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
   auth_status=0
@@ -43,28 +42,37 @@ if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
     AUTH_READY=true
   else
     auth_status=$?
-    if [[ "$auth_status" -ne 124 && "${VSTACK_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]] && orch_github_keyring_auth_status; then
-      echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+    if [[ "$auth_status" -ne 124 && "${VSTACK_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
+      KEYRING_PROBED=true
+      if orch_github_keyring_auth_status; then
+        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        unset GH_TOKEN GITHUB_TOKEN
+        export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
+        AUTH_READY=true
+      else
+        unset GH_TOKEN GITHUB_TOKEN
+      fi
+    else
       unset GH_TOKEN GITHUB_TOKEN
-      export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
-      AUTH_READY=true
     fi
   fi
 fi
 
-if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}" ]]; then
+if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
   orch_load_env_bot_token "$PROJECT_ROOT" || true
-fi
-
-if [[ "$AUTH_READY" != "true" ]] && orch_github_auth_status; then
-  AUTH_READY=true
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
-  unset GH_TOKEN GITHUB_TOKEN
-  orch_load_env_bot_token "$PROJECT_ROOT" || true
-  if orch_github_auth_status; then
-    AUTH_READY=true
+  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    if orch_github_auth_status; then
+      AUTH_READY=true
+    fi
+  elif [[ "$KEYRING_PROBED" != "true" ]]; then
+    KEYRING_PROBED=true
+    if orch_github_auth_status; then
+      export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
+      AUTH_READY=true
+    fi
   fi
 fi
 

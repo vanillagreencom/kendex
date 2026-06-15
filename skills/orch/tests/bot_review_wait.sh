@@ -276,6 +276,18 @@ assert_contains "$(cat "$stderr")" "unsetting them" "fallback warning explains m
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"
+export GH_TOKEN=bad-token
+export GH_BOT_TOKEN=ghs_VALIDBOT123
+EOF
+stderr="$TMP_ROOT/stale-env-bot.err"
+user_count_file="$TMP_ROOT/stale-env-bot-api-user-count"
+output=$(FAKE_GH_AUTH_MODE=fail STUB_GH_VALID_TOKEN=ghs_VALIDBOT123 FAKE_GH_USER_COUNT_FILE="$user_count_file" run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
+assert_eq "$(jq -r .status <<<"$output")" "complete" "bad GH_TOKEN falls back to GH_BOT_TOKEN when keyring fails"
+assert_eq "$(jq -r .verdict <<<"$output")" "approved" "bot-token fallback returns terminal JSON"
+assert_eq "$(cat "$user_count_file")" "2" "stale env and bot token are each validated once"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
 export GH_TOKEN=bad-project-token
 EOF
 stderr="$TMP_ROOT/env-first.err"
