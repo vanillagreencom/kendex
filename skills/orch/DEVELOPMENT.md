@@ -6,7 +6,7 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 
 `bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh::orch_sanitize_gh_env`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Four-step ladder:
 
-1. **Sanitize.** Env tokens set but `gh auth status` fails → try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status`. If that succeeds, warn on stderr and unset.
+1. **Sanitize.** Env tokens set but selected-token auth preflight (`gh api user`) fails → try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status`. If that succeeds, warn on stderr and unset.
 2. **Bot-token load.** `GH_TOKEN` empty → first use already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` from process env. Only if those are missing or still `op://` references, load `.env`, `vstack.settings.toml`, then `.env.local`. `op://` references resolve via `op read` only after the final token source is selected. The `github.sh` router separately prefers resolved `GH_BOT_TOKEN` before resolved `GITHUB_TOKEN` so bot access is not blocked by a user token.
 3. **Fallback retry.** Auth still fails → drop env tokens, retry bot-token load. Recovers when project config/secrets have a valid token despite broken keyring.
 4. **Hard fail.** No path works → exit `3` with diagnostic. Callers do not poll against empty output.

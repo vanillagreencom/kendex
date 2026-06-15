@@ -6,25 +6,75 @@
 vstack_github_is_resolved_token() {
   local token="${1:-}"
   [[ -n "$token" && "$token" != op://* ]] || return 1
-  [[ "$token" =~ ^gh[pors]_ ]] || [[ "$token" =~ ^github_pat_ ]]
+  [[ "$token" =~ ^gh[pours]_ ]] || [[ "$token" =~ ^github_pat_ ]]
+}
+
+vstack_github_run_bounded() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+  else
+    "$@"
+  fi
+}
+
+vstack_github_run_bounded_capture() {
+  local seconds="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  shift 3
+
+  vstack_github_run_bounded "$seconds" "$@" >"$stdout_file" 2>"$stderr_file"
+}
+
+vstack_github_has_env_token() {
+  [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]
+}
+
+vstack_github_token_auth_status() {
+  vstack_github_has_env_token || return 1
+  local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
+  vstack_github_run_bounded "$auth_timeout" gh api user --jq '.login' >/dev/null 2>&1
+}
+
+vstack_github_token_auth_status_capture() {
+  local auth_timeout="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+
+  vstack_github_has_env_token || return 1
+  vstack_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api user --jq '.login'
 }
 
 vstack_github_auth_status() {
   local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${auth_timeout}s" gh auth status >/dev/null 2>&1
-  else
-    gh auth status >/dev/null 2>&1
+
+  if vstack_github_has_env_token; then
+    vstack_github_token_auth_status
+    return $?
   fi
+
+  vstack_github_run_bounded "$auth_timeout" gh auth status >/dev/null 2>&1
+}
+
+vstack_github_auth_status_capture() {
+  local auth_timeout="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+
+  if vstack_github_has_env_token; then
+    vstack_github_token_auth_status_capture "$auth_timeout" "$stdout_file" "$stderr_file"
+    return $?
+  fi
+
+  vstack_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh auth status
 }
 
 vstack_github_keyring_auth_status() {
   local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${auth_timeout}s" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
-  else
-    env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
-  fi
+  vstack_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
 }
 
 vstack_github_resolve_op_reference_to_var() {

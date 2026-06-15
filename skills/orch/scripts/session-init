@@ -88,6 +88,11 @@ vstack_load_project_env "$PROJECT_ROOT"
 # Sibling skill scripts (resolved from install location)
 LINEAR="$SKILLS_DIR/linear/scripts/linear.sh"
 GITHUB="$SKILLS_DIR/github/scripts/github.sh"
+GITHUB_AUTH_LIB="$SKILLS_DIR/github/scripts/lib/gh-auth.sh"
+if [[ -f "$GITHUB_AUTH_LIB" ]]; then
+  # shellcheck source=../../../github/scripts/lib/gh-auth.sh
+  source "$GITHUB_AUTH_LIB"
+fi
 
 json_or_default() {
   local fallback="$1"
@@ -117,7 +122,7 @@ json_or_default() {
 }
 
 is_github_token() {
-  [[ "$1" =~ ^gh[pors]_ ]] || [[ "$1" =~ ^github_pat_ ]]
+  [[ "$1" =~ ^gh[pours]_ ]] || [[ "$1" =~ ^github_pat_ ]]
 }
 
 resolve_secret_ref() {
@@ -253,7 +258,11 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
   fi
   # Fast path: worktree sessions skip full dashboard, check only auth + LSP
   WT_GH_OK="false"
-  WT_GH_TOKEN="${GH_BOT_TOKEN_RESOLVED:-$GH_MAIN_TOKEN}"
+  if declare -F vstack_github_load_token >/dev/null 2>&1; then
+    WT_GH_TOKEN=$(vstack_github_load_token "$PROJECT_ROOT" bot 2>/dev/null || true)
+  else
+    WT_GH_TOKEN="${GH_BOT_TOKEN_RESOLVED:-$GH_MAIN_TOKEN}"
+  fi
   gh_with_token "$WT_GH_TOKEN" api user &>/dev/null && WT_GH_OK="true"
   WT_LINEAR=$(linear_auth_check 2>/dev/null || true)
   WT_LINEAR_OK=$(echo "$WT_LINEAR" | jq -r '.ok // false')

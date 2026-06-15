@@ -68,6 +68,13 @@ case "${1:-}" in
       exit 0
     fi
     ;;
+  api)
+    if [[ "${2:-}" == "user" ]]; then
+      _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      echo "test-user"
+      exit 0
+    fi
+    ;;
   pr)
     if [[ "${2:-}" == "view" ]]; then
       _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }

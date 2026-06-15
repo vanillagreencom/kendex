@@ -13,7 +13,7 @@
 #   2. If GH_TOKEN ended up empty (never set, or step 1 cleared it), match
 #      skills/github/scripts/github.sh and load GH_BOT_TOKEN from project
 #      config/secrets if one is present.
-#   3. If the current `gh auth status` still fails, drop any remaining
+#   3. If the current GitHub auth preflight still fails, drop any remaining
 #      stale env token and retry the GH_BOT_TOKEN load — covers the
 #      stale-env-token + bad-keyring + valid-bot-token combination.
 #   4. If no auth path works after that, exit 3 with a clear diagnostic.
@@ -41,12 +41,12 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
   orch_load_env_bot_token "$PROJECT_ROOT" || true
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
+if ! orch_github_auth_status; then
   unset GH_TOKEN GITHUB_TOKEN
   orch_load_env_bot_token "$PROJECT_ROOT" || true
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
+if ! orch_github_auth_status; then
   {
     echo "ci-wait: no working GitHub auth path."
     echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."

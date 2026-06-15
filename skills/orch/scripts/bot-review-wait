@@ -173,15 +173,16 @@ ensure_gh_ready() {
   fi
 
   local auth_output
-  if auth_output=$(gh auth status 2>&1); then
+  if orch_github_auth_status; then
     return 0
   fi
+  auth_output=$(gh auth status 2>&1 || true)
 
   # A bad GH_TOKEN/GITHUB_TOKEN masks gh keyring auth. If keyring auth works
   # with those variables removed, prefer the working auth source instead of
   # polling until timeout with every API read degraded to "unknown".
   orch_sanitize_gh_env
-  if gh auth status >/dev/null 2>&1; then
+  if orch_github_auth_status; then
     return 0
   fi
 
@@ -190,7 +191,7 @@ ensure_gh_ready() {
   # stale env token first so we are not just retrying the bad one.
   unset GH_TOKEN GITHUB_TOKEN
   if orch_load_env_bot_token "$PROJECT_ROOT" && \
-     gh auth status >/dev/null 2>&1; then
+     orch_github_auth_status; then
     return 0
   fi
 

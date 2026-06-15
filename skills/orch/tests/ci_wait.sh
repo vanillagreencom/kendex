@@ -10,6 +10,8 @@
 #                                        -> bot-token fallback recovers
 #   5. broken keyring + inherited valid GH_BOT_TOKEN + .env.local op:// token
 #                                        -> inherited token wins, no op read
+#   6. valid selected token + stale keyring auth status
+#                                        -> token preflight wins
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,12 +95,23 @@ _stub_auth_ok() {
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
+      if [[ "${STUB_GH_AUTH_STATUS_FAIL:-0}" == "1" ]]; then
+        echo "keyring default failed" >&2
+        exit 1
+      fi
       if _stub_auth_ok; then
         echo "Logged in"
         exit 0
       fi
       echo "auth failed" >&2
       exit 1
+    fi
+    ;;
+  api)
+    if [[ "${2:-}" == "user" ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      echo "test-user"
+      exit 0
     fi
     ;;
   repo)
@@ -206,6 +219,17 @@ else
   assert_eq "missing" "missing" "case5: inherited GH_BOT_TOKEN does not call op"
 fi
 rm -f "$TMP_ROOT/repo/.env.local"
+
+# Case 6: a selected env token works for API calls while gh auth status would
+# fail because of a stale keyring account.
+stderr="$TMP_ROOT/case6.err"
+set +e
+output=$(run_wait GH_TOKEN=ghs_VALIDUSER123 STUB_GH_VALID_TOKEN=ghs_VALIDUSER123 STUB_GH_AUTH_STATUS_FAIL=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case6: valid selected token ignores stale keyring status" "$stderr"
+assert_contains "$output" "CI passed" "case6: ci-wait reaches CI passed via selected token"
+assert_not_contains "$(cat "$stderr")" "unsetting them" "case6: selected token does not trigger sanitizer fallback" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

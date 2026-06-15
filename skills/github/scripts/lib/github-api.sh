@@ -106,7 +106,7 @@ filter_prs_to_default_scope() {
 
 # Check gh CLI authentication
 check_gh_auth() {
-    if ! gh auth status &>/dev/null; then
+    if ! vstack_github_auth_status; then
         echo '{"error": "gh CLI not authenticated. Run: gh auth login"}' >&2
         return 1
     fi
@@ -296,7 +296,7 @@ select_github_auth_token() {
 }
 
 # Load and validate a GitHub auth token from process env or project config/env.
-# Supports direct tokens (ghp_*, gho_*, ghs_*, ghr_*) and 1Password references (op://...)
+# Supports direct tokens (ghp_*, gho_*, ghu_*, ghs_*, ghr_*) and 1Password references (op://...)
 # Returns: token string if valid, empty string if not configured/invalid
 # Outputs: diagnostic messages to stderr
 load_bot_token() {
@@ -342,7 +342,7 @@ load_bot_token() {
     fi
 
     # Validate GitHub token format
-    # Classic: ghp_, gho_, ghs_, ghr_
+    # Classic: ghp_, gho_, ghu_, ghs_, ghr_
     # Fine-grained: github_pat_
     if is_resolved_github_token "$token"; then
         echo "$token"
@@ -350,7 +350,7 @@ load_bot_token() {
     fi
 
     # Invalid format
-    echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghs_*, ghr_*, or github_pat_*)" >&2
+    echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghu_*, ghs_*, ghr_*, or github_pat_*)" >&2
     echo "  Fix: Update .env.local with a valid GitHub token" >&2
     return 0
 }

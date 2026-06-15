@@ -4,8 +4,11 @@
 
 set -euo pipefail
 
+COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/pr-branch.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/pr-branch.sh"
+source "$COMMAND_DIR/../lib/pr-branch.sh"
+# shellcheck source=../lib/gh-auth.sh
+source "$COMMAND_DIR/../lib/gh-auth.sh"
 
 run_bounded_capture() {
     local seconds="$1"
@@ -140,7 +143,7 @@ main() {
 
     local auth_timeout="${VSTACK_GITHUB_AUTH_TIMEOUT:-10}"
     local auth_status=0
-    run_bounded_capture "$auth_timeout" "$auth_out" "$auth_err" gh auth status || auth_status=$?
+    vstack_github_auth_status_capture "$auth_timeout" "$auth_out" "$auth_err" || auth_status=$?
     if [ "$auth_status" -ne 0 ]; then
         local auth_detail
         auth_detail="$(cat "$auth_out" "$auth_err" 2>/dev/null | head -c 1000)"

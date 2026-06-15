@@ -17,6 +17,10 @@ orch_sanitize_gh_env() {
   vstack_github_sanitize_gh_env
 }
 
+orch_github_auth_status() {
+  vstack_github_auth_status
+}
+
 orch_is_resolved_github_token() {
   vstack_github_is_resolved_token "$@"
 }

@@ -84,6 +84,22 @@ case "${1:-}" in
     ;;
   api)
     endpoint="${2:-}"
+    if [[ "$endpoint" == "user" ]]; then
+      if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+        if [[ -n "${STUB_GH_VALID_TOKEN:-}" && "${GH_TOKEN:-${GITHUB_TOKEN:-}}" == "$STUB_GH_VALID_TOKEN" ]]; then
+          echo "test-user"
+          exit 0
+        fi
+        echo "HTTP 401: Bad credentials" >&2
+        exit 1
+      fi
+      if [[ "${FAKE_GH_AUTH_MODE:-token-invalid-keyring-ok}" == "fail" ]]; then
+        echo "HTTP 401: Bad credentials" >&2
+        exit 1
+      fi
+      echo "test-user"
+      exit 0
+    fi
     case "$endpoint" in
       graphql)
         if [[ "$*" == *"pr=4"* ]]; then
@@ -247,6 +263,11 @@ stderr="$TMP_ROOT/env-first.err"
 output=$(GH_TOKEN=ghs_CALLER123 STUB_GH_VALID_TOKEN=ghs_CALLER123 run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
 assert_eq "$(jq -r .status <<<"$output")" "complete" "caller GH_TOKEN wins over project GH_TOKEN"
 assert_eq "$(cat "$stderr")" "" "caller GH_TOKEN does not trigger sanitizer fallback"
+
+stderr="$TMP_ROOT/stale-keyring.err"
+output=$(GH_TOKEN=ghs_CALLER123 STUB_GH_VALID_TOKEN=ghs_CALLER123 FAKE_GH_AUTH_MODE=fail run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
+assert_eq "$(jq -r .status <<<"$output")" "complete" "caller GH_TOKEN ignores stale keyring status"
+assert_eq "$(cat "$stderr")" "" "stale keyring does not trigger sanitizer fallback for valid caller token"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"
