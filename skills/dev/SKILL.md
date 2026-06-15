@@ -39,6 +39,7 @@ Review and QA-review workflows live in the reviewer skill: [`../reviewer/workflo
 
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
+- Keep required workflow shell commands harness-safe: use simple explicit commands, avoid shell loops, command substitution, heredocs, array-building snippets, and redirected writes to `tmp/`. Use file-write/edit tools or `apply_patch` for generated Markdown/JSON files.
 - **Return requires an agent-to-agent message.** Every `**Return exactly**` step must be delivered through the harness return channel (Claude Code: `SendMessage`; Codex: `send_input`; OpenCode: resume via stored `task_id`; Pi bg: final assistant message captured by `subagent`). Disk writes do not reach the orchestrator. In Pi persistent panes, after printing the exact return body once, call `complete_subagent` with the final status/summary/files/validation; bg agents must not call `complete_subagent`.
 
 ## Configuration

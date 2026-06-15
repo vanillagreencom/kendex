@@ -233,6 +233,17 @@ Evaluate "Skip if [condition]" literally. If true, append "(SKIPPED)" and mark c
 
 In a worktree, never create, switch to, or act on a different worktree or branch. If the resolved `ISSUE_ID` differs from the current branch, stop and ask: reuse, abort, or switch explicitly.
 
+#### Harness-Safe Shell
+
+Generated workflow commands must be safe for strict harness command policies. Prefer one simple command per tool call with explicit arguments. Avoid inline `$(...)`, shell `for`/`while` loops, array-building snippets, heredocs, pipelines used only for value plumbing, and redirected writes to `tmp/`; Codex can classify those helper shapes as approval-required even when approval policy is `never`.
+
+Use helper scripts instead of shell plumbing:
+- `git-context` for branch/head/timestamp/issue values.
+- `workflow-state set-git-head`, `set-now`, `get`, and `append` for state writes.
+- Harness file-write/edit tools, or `apply_patch`, for Markdown/JSON bodies and completion summaries.
+
+When a workflow needs several files read, issue separate read commands for each file or use the harness file-read tool; do not wrap required reads in a shell loop. When an optional environment variable affects a command, either omit the option and let the script auto-detect, or first read the value with `printenv VAR` and then run a second command with a literal value. Do not include unset-variable expansions such as `"$BOT_REVIEWERS"` in required command examples.
+
 #### Tracker Resolution
 
 Resolve once per workflow, store as `TRACKER`:

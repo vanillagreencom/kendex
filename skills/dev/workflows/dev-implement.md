@@ -30,6 +30,7 @@ Respect blocking order: complete blockers before blocked issues.
 
 - Bash: `git -C [WORKTREE_PATH] ...`
 - Read/Write/Edit/Grep/Glob: `[WORKTREE_PATH]/...`
+- Keep shell commands harness-safe: use one simple command per call with explicit arguments. Avoid inline shell loops, command substitution, heredocs, pipelines used only to pass values, and redirected writes to `tmp/`; Codex may treat those helper shapes as approval-required under `never` approval. For required multi-file reads, read each file directly. For generated Markdown/JSON files, use the harness file-write/edit tool or `apply_patch` instead of shell redirection.
 
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
@@ -123,6 +124,8 @@ Before planning, check your domain's code (per your agent's Domain Setup):
 ### 2.5 Domain-Specific Setup
 
 Follow your agent definition for architecture docs, code paths, skills to load.
+
+If multiple architecture or policy documents are required, read them as separate file reads or separate simple commands. Do not use shell `for` loops to satisfy mandatory context reads.
 
 ### 2.6 Capture Baseline (if `baseline` label)
 

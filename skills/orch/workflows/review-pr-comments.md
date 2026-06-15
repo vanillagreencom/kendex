@@ -36,14 +36,14 @@ On any `gh` or `.agents/skills/github/scripts/github.sh` failure: halt, report e
 
 ### 1.1 Wait for All Bot Reviews
 
-Multiple bots may review on different timelines. Wait for all configured reviewers before triaging.
+Multiple bots may review on different timelines. Wait for all configured or detected reviewers before triaging.
 
 ```bash
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS"
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json
 ```
 Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
-`$BOT_REVIEWERS`: comma-separated bot usernames. Default: auto-detected from formal reviews, known review-bot comment summaries, PR-body reactions, and own-comment reactions. Custom comment-only bots must be configured explicitly via `BOT_REVIEWERS` / `--reviewers`.
+Default reviewer detection uses formal reviews, known review-bot comment summaries, PR-body reactions, and own-comment reactions. Custom comment-only bots can be configured via `BOT_REVIEWERS` / `--reviewers`; in strict harnesses, first run `printenv BOT_REVIEWERS` and then rerun with a literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` value. Do not include `--reviewers "$BOT_REVIEWERS"` in required command examples because unset-variable expansion can be rejected.
 
 **Polling behavior**: per reviewer, status is `pending|approved|changes|skipped|unknown`. Claude-style comments parse `✅ Approved` / `Changes requested`; Codex-style signals use 👀 = pending, 👍 = approved, inline threads = changes. Returns `status=complete` only when no reviewer is pending. If `status=timeout`, ask the user `Wait` | `Skip pending bot` (configure via `BOT_SKIPPED_REVIEWERS`) | `Proceed without`. Late arrivals are caught in § 6.3.
 
@@ -85,14 +85,9 @@ Output: `threads` (inline) + `comments` (PR-level).
 
 3. **Collect bot review comments** — from ALL review bots (not just one):
    ```bash
-   # Get the review-summary comment from each bot reviewer.
-   # --review-summary picks (in order): "View job" sticky → review-section
-   # comment → the bot's earliest comment (Codex-style submission post).
-   IFS=',' read -ra REVIEW_BOTS <<< "$BOT_REVIEWERS"
-   for BOT in "${REVIEW_BOTS[@]}"; do
-     .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "$BOT" --review-summary
-   done
+   .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
    ```
+   Get the review-summary comment from each bot reviewer by running the command once per bot with the literal bot login. `--review-summary` picks, in order: "View job" sticky, review-section comment, then the bot's earliest comment (Codex-style submission post). Do not use a shell `for` loop or `IFS` split for required comment collection in Codex.
    If no bot reviews found AND no bot reactions on the PR body: ask user `Wait` | `Skip triage`.
    (Reaction-only bots like Codex may have no summary comment yet — check `.reactions` from `pr-data` to confirm presence.)
 

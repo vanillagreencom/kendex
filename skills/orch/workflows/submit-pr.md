@@ -77,7 +77,7 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
    mkdir -p [WORKTREE_PATH]/tmp
    .agents/skills/orch/scripts/git-context timestamp compact
    ```
-   Write the PR body to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md` and use that path as `BODY_FILE`.
+   Write the PR body to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md` with the harness file-write/edit tool or `apply_patch`, then use that path as `BODY_FILE`. Do not use shell redirection or heredocs to create the file.
 
    ```markdown
    ## Summary
@@ -139,11 +139,11 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
 Wait for bot review to complete (sticky comment with verdict). CI is deferred via label.
 
 ```bash
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS"
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json
 ```
 Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
-Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not configured. Max wait 600s. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. If sticky prose is stale but GitHub reports `reviewDecision=APPROVED`, any configured `BOT_CHECK_NAME` has passed, and no unresolved review threads remain, `bot-review-wait` returns approved with `pr_review_decision:approved` and `pr_threads:clear` signals without waiting on the stale checklist. To ignore a reviewer: `--skip "bot-login"` or `BOT_SKIPPED_REVIEWERS`.
+Waits for all detected bot reviewers. Max wait 600s. If configured reviewers are required, first run `printenv BOT_REVIEWERS`; if it prints a value, rerun with `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` using the literal printed value. Do not include `--reviewers "$BOT_REVIEWERS"` in a required command because unset-variable expansion can be rejected by strict harnesses. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. If sticky prose is stale but GitHub reports `reviewDecision=APPROVED`, any configured `BOT_CHECK_NAME` has passed, and no unresolved review threads remain, `bot-review-wait` returns approved with `pr_review_decision:approved` and `pr_threads:clear` signals without waiting on the stale checklist. To ignore a reviewer: `--skip "bot-login"` or `BOT_SKIPPED_REVIEWERS`.
 
 **Route result**:
 
@@ -163,23 +163,16 @@ Waits for all configured bot reviewers (`$BOT_REVIEWERS`). Auto-detects if not c
 
 ```bash
 # "Wait 5 min" path: extend checklist wait
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json --reviewers "$BOT_REVIEWERS"
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json
 ```
 Use the returned JSON status and pending reviewer fields to re-route. If it still reports checklist timeout or pending reviewers, ask the user `Wait` | `Skip pending bot` | `Abort`; otherwise continue to § 3.
 
 **Extended poll** (timeout + pending only):
 ```bash
-# Re-run multi-reviewer wait every 30s for up to 300s more.
-BOT_WAIT_ARGS=([PR_NUMBER] 30 300 --json)
-if [[ -n "${BOT_REVIEWERS:-}" ]]; then
-  BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
-fi
-if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
-  BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
-fi
-.agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}"
+.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json
 # Proceed to § 3 if complete/terminal; otherwise ask with pending reviewers.
 ```
+If the user chooses to skip a pending bot, run a second explicit command with `--skip "[BOT_LOGIN]"`. If configured reviewers are required, run `printenv BOT_REVIEWERS` first and pass the literal comma-separated value with `--reviewers`.
 Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 ---
@@ -190,16 +183,10 @@ Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEW
 
 1. **Bot completion pre-check** — ensure all configured/detected bot reviewers have terminal status before triaging:
    ```bash
-   BOT_WAIT_ARGS=([PR_NUMBER] 30 180 --json)
-   if [[ -n "${BOT_REVIEWERS:-}" ]]; then
-     BOT_WAIT_ARGS+=(--reviewers "$BOT_REVIEWERS")
-   fi
-   if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
-     BOT_WAIT_ARGS+=(--skip "$BOT_SKIPPED_REVIEWERS")
-   fi
-   .agents/skills/orch/scripts/bot-review-wait "${BOT_WAIT_ARGS[@]}"
+   .agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 180 --json
    # Proceed if complete/terminal; if still pending, include PENDING_REVIEWERS in triage notes.
    ```
+   If configured reviewers or skipped reviewers are required, collect each value with `printenv` first and rerun using literal `--reviewers` / `--skip` arguments.
    Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
 
 2. **Run Workflow**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.1` with context:
@@ -418,7 +405,7 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
    ```bash
    mkdir -p [WORKTREE_PATH]/tmp
    .agents/skills/orch/scripts/git-context timestamp compact
-   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/submit-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md
+   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/submit-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md with the harness file-write/edit tool or apply_patch.
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
    ```
    Use the summary file path as `SUMMARY_FILE`.
