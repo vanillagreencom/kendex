@@ -90,7 +90,9 @@ changes.
    - `action_required`: 1+ items in `blockers[]`
    - `pass`: `blockers[]` empty
 
-2. **Return the JSON** in your response (the calling agent writes the file):
+2. **Create the artifact** at `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact path. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes.
+
+3. **Return the JSON** in your response so the calling agent can validate the same content:
 
 ---
 

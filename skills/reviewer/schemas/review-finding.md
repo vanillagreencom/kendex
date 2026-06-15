@@ -2,6 +2,8 @@
 
 All review/QA agents output JSON to `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`.
 
+Create the JSON artifact with the active harness file-write/edit tool. In Codex, use `apply_patch` to add or update the target file under `tmp/`. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes for review artifacts.
+
 ## Schema
 
 ```json

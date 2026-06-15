@@ -47,7 +47,12 @@ Read the orch skill's recommendation-bias patterns if available. Apply its actio
 
 ## 4. Return JSON Report
 
-Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Save to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json`.
+Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Target artifact path: `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json`.
+
+Artifact write path:
+- Create `[WORKTREE_PATH]/tmp` with `mkdir -p [WORKTREE_PATH]/tmp` if it does not exist.
+- Write the JSON with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact artifact path.
+- Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes to create the JSON.
 
 Send this result to the orchestrator as an agent-to-agent message. **Writing the JSON to disk is not a return**.
 

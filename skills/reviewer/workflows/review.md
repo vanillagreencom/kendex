@@ -50,7 +50,12 @@ Items listed as fixed or escalated are already resolved — do NOT re-report the
 
 ### 1.5 Return JSON Report
 
-Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Save to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Target artifact path: `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+
+Artifact write path:
+- Create `[WORKTREE_PATH]/tmp` with `mkdir -p [WORKTREE_PATH]/tmp` if it does not exist.
+- Write the JSON with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact artifact path.
+- Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes to create the JSON.
 
 **Verdict rules:**
 - `action_required`: 1+ items in `blockers[]`

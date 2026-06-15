@@ -186,7 +186,7 @@ URL: [URL]
    - NOISE or failed checks: Omit entirely
    - **Already fixed**: If a comment is verified resolved by a prior fix commit, do NOT omit silently. Return it in `questions[]` with `outcome: "already_fixed"`, `commit: "[SHA]"`, and a `draft_response` — orchestrator replies & resolves in § 6.1 step 8.
 3. Preserve `source_id` and `source_type` from input on each item.
-4. Save JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+4. Create `[WORKTREE_PATH]/tmp` if needed, then save JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` with the harness file-write/edit tool. In Codex, use `apply_patch`; do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes.
 5. Return exactly:
 
    <output_format>
@@ -226,7 +226,7 @@ URL: [URL]
 
    1. Read `workflows/recommendation-bias.md`. Apply its decision flow.
    2. Build JSON per `../../reviewer/schemas/review-finding.md` with YOUR cross-cutting findings only.
-   3. Save to `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json` and return:
+   3. Create `[WORKTREE_PATH]/tmp` if needed, then save to `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json` with the harness file-write/edit tool. In Codex, use `apply_patch`; do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes. Return:
 
    <output_format>
    Report: [WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json

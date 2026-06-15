@@ -79,6 +79,7 @@ Use this table to avoid duplicate findings across parallel reviewers. If domains
 
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
+- Review JSON artifacts must be created through the active harness file-write/edit path. In Codex, use `apply_patch` to add or update the target file under `[WORKTREE_PATH]/tmp/`. Do not create review JSON with shell redirection, heredocs, `tee`, `echo >`, command substitution, or other shell-plumbing writes.
 - **Return requires an agent-to-agent message.** Every `**Return exactly**` step must be delivered through the harness return channel. Claude Code uses `SendMessage`; Codex uses `send_input`; OpenCode resumes the stored `task_id`; Pi bg agents return via the final assistant message captured by `subagent`. Disk writes never count as a return path. In Pi persistent panes, after printing the exact return body once, call `complete_subagent` with the final status/summary/files/validation; bg agents must not call `complete_subagent`.
 
 ## Configuration
