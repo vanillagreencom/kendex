@@ -49,6 +49,14 @@ Cleanup script:
 
 From a Codex Desktop app-created worktree, `worktree push CC-123` pushes the active checkout when its current branch matches `cc-123`. It does not require the app-created worktree to live under the configured `WORKTREE_BASE_DIR` registry.
 
+`worktree push` and origin fetches automatically use the GitHub skill's
+`git-https-auth` fallback when that helper is installed. If `origin` or the
+configured bot remote is `git@github.com:...` / `ssh://git@github.com/...` and
+`gh` auth is valid, the command runs with temporary HTTPS rewrite and
+`gh auth git-credential` config. The repository's remote URLs and git config
+are not modified. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to disable this
+for a call.
+
 `codex-setup` applies the same env/config symlinks, copies, mkdirs, bot remote, bot git identity, and lightweight dependency bootstrap that `create` applies after creating a worktree. `codex-branch` renames or switches the app-created worktree branch to the lower-case issue branch expected by `orch`. `codex-cleanup` is intentionally a no-op lifecycle hook for this script; Codex owns app-created worktree and branch deletion. Keep project-level teardown such as stopping containers or removing disposable caches in the Codex environment cleanup script after this command, but do not call `worktree remove` from the hook.
 
 ## Configuration

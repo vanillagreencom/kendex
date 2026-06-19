@@ -14,6 +14,19 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 
 The `op` CLI service-account/token setup is intentionally outside orch. Launchers may inject resolved secrets before starting Codex, Claude, or Pi; orch preserves those values instead of clobbering them with local `op://` references.
 
+## Git HTTPS Fallback
+
+Merge and submit workflows should use targeted `origin` git operations through
+the GitHub skill's `scripts/git-https-auth` helper instead of broad remote
+enumeration. The helper is a per-command fallback for SSH-backed GitHub remotes:
+it validates selected env-token or keyring `gh` auth, then supplies temporary
+`credential.helper=!gh auth git-credential` and `url.https://github.com/.insteadOf`
+config so GitHub SSH URLs work over HTTPS. It does not persist config.
+
+Do not use `git fetch --all --prune` for current-PR closure. Secondary remotes
+may be useful for a project but optional for syncing `origin` after merge, and
+their SSH failures should not block branch cleanup or tracker closure.
+
 ## Bot Review Terminal Fallback
 
 `bot-review-wait` primarily trusts per-reviewer signals from formal reviews, sticky comments, reactions, and unresolved threads. Some bot runs can leave a sticky comment looking pending after GitHub has already moved the PR to `reviewDecision=APPROVED`. In that case the waiter promotes pending/unknown reviewers to approved only when:

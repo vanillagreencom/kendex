@@ -43,6 +43,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 
+GITHUB_AUTH_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-auth.sh"
+if [[ -f "$GITHUB_AUTH_LIB" ]]; then
+  # shellcheck source=../../github/scripts/lib/gh-auth.sh
+  source "$GITHUB_AUTH_LIB"
+fi
+
+git_with_github_https_auth() {
+  if declare -F vstack_github_git >/dev/null 2>&1; then
+    vstack_github_git "$@"
+  else
+    git "$@"
+  fi
+}
+
 strip_trailing_slashes() {
   local path="$1"
   while [[ "$path" != "/" && "$path" == */ ]]; do
@@ -102,7 +116,7 @@ DEFAULT_BRANCH="$(detect_default_branch)"
 
 # Fetch origin to update tracking refs. Never touches local branches.
 fetch_origin() {
-  git -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
+  git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
 }
 
 worktree_path() {
@@ -409,7 +423,7 @@ case "${1:-}" in
         echo "$EXISTING_WT"
         exit 0
       fi
-      git -C "$PROJECT_ROOT" fetch origin "$BASE" >/dev/null 2>&1 || true
+      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "$BASE" >/dev/null 2>&1 || true
       git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
         git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
     else
@@ -490,7 +504,7 @@ case "${1:-}" in
     ;;
 
   cleanup)
-    git -C "$PROJECT_ROOT" fetch --prune origin
+    git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
     for wt in $(git -C "$PROJECT_ROOT" worktree list --porcelain | grep "^worktree " | grep -v "$PROJECT_ROOT$" | cut -d' ' -f2); do
       BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null)
       if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" branch -d "$BRANCH" 2>/dev/null; then
@@ -571,7 +585,7 @@ case "${1:-}" in
     fi
 
     if [[ "$AUTO_REBASE" == true ]]; then
-      git -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
+      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
         if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
@@ -591,9 +605,9 @@ case "${1:-}" in
     fi
 
     if [[ -n "$SET_UPSTREAM" ]]; then
-      git -C "$WT_PATH" push "$SET_UPSTREAM" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"
+      git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"
     else
-      git -C "$WT_PATH" push "$REMOTE" HEAD
+      git_with_github_https_auth -C "$WT_PATH" push "$REMOTE" HEAD
     fi
     ;;
 

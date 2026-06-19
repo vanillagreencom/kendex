@@ -226,11 +226,20 @@ merge. Detach them first.
 
 4. **Sync main repo** (ALWAYS runs after merge):
    ```bash
-   git -C [MAIN_REPO_ROOT] fetch --all --prune
-   git -C [MAIN_REPO_ROOT] pull --rebase
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [MAIN_REPO_ROOT]
+   ```
+   Use the output as `BASE_BRANCH`.
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] pull --rebase origin [BASE_BRANCH]
    git -C [MAIN_REPO_ROOT] worktree prune
    ```
-   `--rebase` prevents merge-bubble commits when local main diverged.
+   Target `origin` only. Optional secondary remotes must not block closure of
+   the current PR. `git-https-auth` preserves normal SSH behavior unless a
+   GitHub SSH remote is present and `gh` auth is valid, in which case it
+   applies a per-command HTTPS/`gh auth git-credential` fallback. `--rebase`
+   prevents merge-bubble commits when local main diverged.
 
 5. **Sweep stale branches & worktrees** (after all PRs merged and synced). Default: scoped to current PR only — do not enumerate unrelated branches or sibling worktrees.
 
@@ -333,7 +342,7 @@ For each file flagged as overlapping in § 2.1:
 | ⏭️ | #[P] | [ISSUE_ID] - [TITLE] | Review threads |
 | ❌ | #[Q] | [ISSUE_ID] - [TITLE] | Merge conflicts |
 
-Total: [N] PRs merged | Synced: git fetch --all --prune; git pull --rebase
+Total: [N] PRs merged | Synced: origin fetch/pull via git-https-auth
 
 ### 🧹 STALE CLEANUP
 

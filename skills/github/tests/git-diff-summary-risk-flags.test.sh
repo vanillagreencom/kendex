@@ -34,6 +34,7 @@ init_repo() {
     git -C "$repo" init -q -b main
     git -C "$repo" config user.email test@example.com
     git -C "$repo" config user.name test
+    git -C "$repo" config commit.gpgsign false
     printf 'base\n' > "$repo/README.md"
     git -C "$repo" add README.md
     git -C "$repo" commit -q -m init

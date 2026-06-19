@@ -60,6 +60,12 @@ See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for GitHub auth fallback details and th
 
 GitHub auth helpers are env-first. If launch-time configuration already provides a resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN`, orch keeps it and does not re-read `op://` references from `.env.local` for GitHub auth. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. Service-account setup for the `op` CLI remains local environment configuration.
 
+Git workflow helpers use targeted `origin` operations for PR closure. When a
+repo remote is SSH-backed but `gh` auth is valid, `skills/github/scripts/git-https-auth`
+adds per-command HTTPS rewrite and `gh auth git-credential` config so Codex and
+other non-SSH sessions can fetch, pull, or push without mutating remotes.
+Optional secondary remotes are not fetched during merge sync.
+
 ## Helper Scripts
 
 Use `skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` to print the base branch for a worktree. It honors `WORKTREE_DEFAULT_BRANCH`, then `origin/HEAD`, and falls back to `main`.

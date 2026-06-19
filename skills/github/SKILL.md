@@ -48,6 +48,24 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 
 Most commands accept no PR number to auto-detect from the current branch.
 
+### Git HTTPS Auth Helper
+
+`git-https-auth [-C path] <git args...>` runs `git` normally, but when the
+target repo or explicit URL uses a GitHub SSH remote and `gh` auth is valid, it
+adds per-command config for `gh auth git-credential` and rewrites GitHub SSH
+URLs to HTTPS. This covers Codex and other harnesses where GitHub CLI auth is
+valid but an SSH key or agent is unavailable. It never persists git config.
+
+Use it for workflow network operations that only need `origin`, for example:
+
+```bash
+.agents/skills/github/scripts/git-https-auth -C . fetch --prune origin
+.agents/skills/github/scripts/git-https-auth -C . push -u origin HEAD:refs/heads/my-branch
+```
+
+Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to disable the fallback, or
+`always` to force the temporary config for a GitHub operation.
+
 ### Diff Summary Helper
 
 `git-diff-summary [-C path] [base-branch|--staged|--head]` is a standalone
@@ -128,6 +146,7 @@ Resolution rules:
 | `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving GitHub token references | `10` |
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for GitHub auth preflight in `pr-view` | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` in `pr-view` | `30` |
+| `VSTACK_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` SSH→HTTPS fallback | `auto` |
 
 Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
 

@@ -283,3 +283,197 @@ vstack_github_load_token() {
   vstack_github_is_resolved_token "$token" || return 1
   printf '%s' "$token"
 }
+
+vstack_github_git_url_is_github_ssh() {
+  local url="${1:-}"
+  case "$url" in
+    git@github.com:*|git@github-*:*)
+      return 0
+      ;;
+    ssh://git@github.com/*|ssh://git@github.com:*/*|ssh://git@github-*/*|ssh://git@github-*:*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+vstack_github_git_args_have_github_ssh_url() {
+  local arg
+  for arg in "$@"; do
+    if vstack_github_git_url_is_github_ssh "$arg"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+vstack_github_git_work_dir_from_args() {
+  local cwd="$PWD"
+  local value
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -C)
+        shift
+        [[ $# -gt 0 ]] || break
+        value="$1"
+        if [[ "$value" == /* ]]; then
+          cwd="$value"
+        else
+          cwd="$cwd/$value"
+        fi
+        shift
+        ;;
+      -C*)
+        value="${1#-C}"
+        if [[ "$value" == /* ]]; then
+          cwd="$value"
+        else
+          cwd="$cwd/$value"
+        fi
+        shift
+        ;;
+      -c|--git-dir|--work-tree|--namespace)
+        shift
+        [[ $# -gt 0 ]] || break
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  printf '%s\n' "$cwd"
+}
+
+vstack_github_git_repo_has_github_ssh_remote() {
+  local repo="${1:-.}"
+  local remotes remote url
+
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 1
+  remotes="$(git -C "$repo" remote 2>/dev/null || true)"
+  [[ -n "$remotes" ]] || return 1
+
+  while IFS= read -r remote; do
+    [[ -n "$remote" ]] || continue
+
+    while IFS= read -r url; do
+      [[ -n "$url" ]] || continue
+      if vstack_github_git_url_is_github_ssh "$url"; then
+        return 0
+      fi
+    done < <(git -C "$repo" remote get-url --all "$remote" 2>/dev/null || true)
+
+    while IFS= read -r url; do
+      [[ -n "$url" ]] || continue
+      if vstack_github_git_url_is_github_ssh "$url"; then
+        return 0
+      fi
+    done < <(git -C "$repo" remote get-url --push --all "$remote" 2>/dev/null || true)
+  done <<<"$remotes"
+
+  return 1
+}
+
+vstack_github_git_should_use_https_fallback() {
+  local mode="${VSTACK_GITHUB_GIT_HTTPS_FALLBACK:-auto}"
+  local work_dir
+
+  case "$mode" in
+    never|false|off|0)
+      return 1
+      ;;
+    always|true|on|1)
+      return 0
+      ;;
+    auto|"")
+      ;;
+    *)
+      echo "Warning: Unknown VSTACK_GITHUB_GIT_HTTPS_FALLBACK='$mode'; using auto." >&2
+      ;;
+  esac
+
+  if vstack_github_git_args_have_github_ssh_url "$@"; then
+    return 0
+  fi
+
+  work_dir="$(vstack_github_git_work_dir_from_args "$@")"
+  vstack_github_git_repo_has_github_ssh_remote "$work_dir"
+}
+
+vstack_github_git_https_auth_available() {
+  command -v gh >/dev/null 2>&1 || return 1
+  vstack_github_apply_selected_auth_token router >/dev/null 2>&1 || true
+  vstack_github_sanitize_gh_env || true
+  vstack_github_auth_status
+}
+
+vstack_github_git_collect_https_rewrites() {
+  local work_dir="$1"
+  shift
+
+  printf '%s\n' 'git@github.com:'
+  printf '%s\n' 'ssh://git@github.com/'
+  printf '%s\n' 'ssh://git@github.com:22/'
+  printf '%s\n' 'ssh://git@github.com:443/'
+
+  local arg remote url host
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^git@(github[^:]*): ]]; then
+      printf 'git@%s:\n' "${BASH_REMATCH[1]}"
+    elif [[ "$arg" =~ ^ssh://git@(github[^/:]*)(:[0-9]+)?/ ]]; then
+      host="${BASH_REMATCH[1]}"
+      printf 'ssh://git@%s/\n' "$host"
+      printf 'ssh://git@%s:22/\n' "$host"
+      printf 'ssh://git@%s:443/\n' "$host"
+    fi
+  done
+
+  if git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r remote; do
+      [[ -n "$remote" ]] || continue
+      while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        if [[ "$url" =~ ^git@(github[^:]*): ]]; then
+          printf 'git@%s:\n' "${BASH_REMATCH[1]}"
+        elif [[ "$url" =~ ^ssh://git@(github[^/:]*)(:[0-9]+)?/ ]]; then
+          host="${BASH_REMATCH[1]}"
+          printf 'ssh://git@%s/\n' "$host"
+          printf 'ssh://git@%s:22/\n' "$host"
+          printf 'ssh://git@%s:443/\n' "$host"
+        fi
+      done < <(
+        {
+          git -C "$work_dir" remote get-url --all "$remote" 2>/dev/null || true
+          git -C "$work_dir" remote get-url --push --all "$remote" 2>/dev/null || true
+        } | awk 'NF && !seen[$0]++'
+      )
+    done < <(git -C "$work_dir" remote 2>/dev/null || true)
+  fi
+}
+
+vstack_github_git() {
+  if vstack_github_git_should_use_https_fallback "$@" && vstack_github_git_https_auth_available; then
+    local work_dir rewrite
+    local -a git_args
+    work_dir="$(vstack_github_git_work_dir_from_args "$@")"
+    git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
+    while IFS= read -r rewrite; do
+      [[ -n "$rewrite" ]] || continue
+      git_args+=(-c "url.https://github.com/.insteadOf=$rewrite")
+    done < <(vstack_github_git_collect_https_rewrites "$work_dir" "$@" | awk 'NF && !seen[$0]++')
+
+    git "${git_args[@]}" "$@"
+    return $?
+  fi
+
+  git "$@"
+}

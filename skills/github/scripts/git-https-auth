@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Git wrapper for GitHub SSH remotes when gh HTTPS auth is available.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+show_help() {
+  cat <<'EOF'
+Usage: git-https-auth [-C <path>] <git arguments...>
+
+Runs git normally, but when the target repository or explicit URL uses a
+GitHub SSH remote and gh auth is valid, the command gets temporary config:
+
+  credential.helper = !gh auth git-credential
+  url.https://github.com/.insteadOf = git@github.com:
+  url.https://github.com/.insteadOf = ssh://git@github.com/
+
+The config is per-process only and does not mutate repository or global git
+config. Set VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never to disable, or =always to
+force the temporary config for GitHub operations.
+EOF
+}
+
+case "${1:-}" in
+  ""|--help|-h)
+    show_help
+    exit 0
+    ;;
+esac
+
+WORK_DIR="$(vstack_github_git_work_dir_from_args "$@")"
+ENV_ROOT="$(cd "$WORK_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$ENV_ROOT" ]]; then
+  vstack_github_load_project_env_preserving_caller "$ENV_ROOT"
+fi
+
+vstack_github_git "$@"

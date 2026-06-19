@@ -5,6 +5,7 @@ CLI wrapper for GitHub API operations used in PR workflows.
 ## Structure
 
 - `scripts/github.sh` — Entry point (command router)
+- `scripts/git-https-auth` — Git wrapper for per-command GitHub SSH→HTTPS fallback through `gh` auth
 - `scripts/git-diff-summary` — Standalone changed-file domain/scope and risk-flag summary helper
 - `scripts/commands/` — Individual command scripts
 - `scripts/lib/gh-auth.sh` — Shared GitHub token resolution and keyring fallback helpers
@@ -20,6 +21,7 @@ CLI wrapper for GitHub API operations used in PR workflows.
 ```bash
 ./scripts/github.sh pr-view 123 --json number,title,state
 ./scripts/github.sh bot-token
+./scripts/git-https-auth -C . fetch --prune origin
 ```
 
 ## Configuration
@@ -33,6 +35,7 @@ CLI wrapper for GitHub API operations used in PR workflows.
 | `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` token resolution | `10` |
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `pr-view` auth preflight | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` | `30` |
+| `VSTACK_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` SSH→HTTPS fallback | `auto` |
 
 Keep tokens in `.env.local` unless the parent process injects already-resolved secrets at launch. Token loaders preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` is only called for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Once a resolved `GH_BOT_TOKEN` is selected, helpers preserve that bot identity instead of replacing it with ambient keyring auth. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
 
@@ -42,6 +45,26 @@ emits structured JSON on stdout with `status` (`no_pr`, `auth_error`,
 `token_resolution_unavailable`, `auth_timeout`, `gh_timeout`, or `gh_error`),
 `error`, `detail`, `exit_code`, and `number:null`, then exits nonzero. Stderr
 keeps the raw `gh`/`op` detail for logs.
+
+## Git HTTPS Fallback
+
+Use `scripts/git-https-auth` for git network operations in workflows that
+should succeed with GitHub CLI auth even when project remotes are SSH-backed.
+The helper detects GitHub SSH remotes or explicit GitHub SSH URLs, validates
+the selected env token or `gh` keyring auth, and then runs the git command with
+temporary `credential.helper=!gh auth git-credential` and SSH-to-HTTPS rewrite
+config. It does not persist config and leaves non-GitHub or unauthenticated
+git commands on the normal path.
+
+Prefer targeted remotes in automation:
+
+```bash
+./scripts/git-https-auth -C "$repo" fetch --prune origin
+./scripts/git-https-auth -C "$repo" pull --rebase origin "$base_branch"
+```
+
+Avoid `git fetch --all` in PR closure workflows unless every remote is required;
+optional secondary remotes should not block syncing `origin` after a merge.
 
 ## Adding a Command
 

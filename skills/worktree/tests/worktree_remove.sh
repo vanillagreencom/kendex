@@ -130,6 +130,7 @@ make_repo() {
   git -C "$repo" init -q -b main
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
+  git -C "$repo" config commit.gpgsign false
   printf 'base\n' > "$repo/file.txt"
   git -C "$repo" add file.txt
   git -C "$repo" commit -q -m base
@@ -251,6 +252,60 @@ set -e
 assert_eq "$codex_push_code" "0" "push issue ID uses current Codex worktree outside configured registry"
 assert_remote_branch_exists "$CODEX_PUSH_ROOT/main" "issue-codex-push" "push issue ID publishes current Codex worktree branch"
 assert_path_absent "$CODEX_PUSH_ROOT/registry-trees/issue-codex-push" "push issue ID does not require configured registry path"
+
+GITHUB_PUSH_ROOT="$TMP_ROOT/github-push"
+make_repo "$GITHUB_PUSH_ROOT/main"
+git -C "$GITHUB_PUSH_ROOT/main" remote add origin git@github.com:owner/repo.git
+git -C "$GITHUB_PUSH_ROOT/main" worktree add -q -b issue-github-push "$GITHUB_PUSH_ROOT/trees/issue-github-push" main
+printf 'github-change\n' >> "$GITHUB_PUSH_ROOT/trees/issue-github-push/file.txt"
+git -C "$GITHUB_PUSH_ROOT/trees/issue-github-push" add file.txt
+git -C "$GITHUB_PUSH_ROOT/trees/issue-github-push" commit -q -m 'github push change'
+mkdir -p "$GITHUB_PUSH_ROOT/bin"
+REAL_GIT="$(command -v git)"
+cat > "$GITHUB_PUSH_ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  if [[ "\$arg" == "push" ]]; then
+    printf '%s\n' "\$*" >"$GITHUB_PUSH_ROOT/push.args"
+    exit 0
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GITHUB_PUSH_ROOT/bin/git"
+cat > "$GITHUB_PUSH_ROOT/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  auth)
+    if [[ "${2:-}" == "status" || "${2:-}" == "git-credential" ]]; then
+      echo "Logged in"
+      exit 0
+    fi
+    ;;
+  api)
+    if [[ "${2:-}" == "user" ]]; then
+      echo "test-user"
+      exit 0
+    fi
+    ;;
+esac
+printf 'unexpected gh call: %s\n' "$*" >&2
+exit 1
+EOF
+chmod +x "$GITHUB_PUSH_ROOT/bin/gh"
+set +e
+(
+  cd "$GITHUB_PUSH_ROOT/trees/issue-github-push" && \
+    PATH="$GITHUB_PUSH_ROOT/bin:$PATH" "$WORKTREE_SCRIPT" push ISSUE-GITHUB-PUSH --no-rebase --set-upstream >"$GITHUB_PUSH_ROOT/github-push.out" 2>"$GITHUB_PUSH_ROOT/github-push.err"
+)
+github_push_code=$?
+set -e
+assert_eq "$github_push_code" "0" "push uses gh HTTPS fallback for GitHub SSH remote"
+assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "credential.helper=!gh auth git-credential" "push command installs gh credential helper"
+assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "url.https://github.com/.insteadOf=git@github.com:" "push command rewrites GitHub scp SSH URL"
+assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "push -u origin HEAD:refs/heads/issue-github-push" "push command still targets configured remote branch"
 
 # .env.local is not special-cased. It is only linked when listed in
 # WORKTREE_SYMLINKS.

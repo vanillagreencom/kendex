@@ -112,6 +112,7 @@ assert_eq "$(jq -r '.tracked_agents' <<<"$preflight_ok")" "1" "codex app preflig
 orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
 submit_workflow="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 comments_workflow="$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
+merge_workflow="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 
 assert_file_contains "$orch_skill" "#### Harness-Safe Shell" "orch skill documents Harness-Safe Shell section"
 assert_file_contains "$orch_skill" 'Avoid inline `$(...)`, shell `for`/`while` loops' "Harness-Safe Shell section bans unsafe shell helper shapes"
@@ -124,6 +125,10 @@ for workflow in "$submit_workflow" "$comments_workflow"; do
   assert_file_not_contains "$workflow" '--reviewers "$BOT_REVIEWERS"' "$workflow_name avoids required BOT_REVIEWERS expansion"
   assert_file_not_contains "$workflow" 'printenv BOT_REVIEWERS' "$workflow_name avoids optional reviewer probing"
 done
+
+assert_file_not_contains "$merge_workflow" "fetch --all --prune" "merge-pr avoids all-remote fetch during sync"
+assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin" "merge-pr sync fetches origin through HTTPS auth helper"
+assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] pull --rebase origin [BASE_BRANCH]" "merge-pr sync pulls origin base branch through HTTPS auth helper"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
