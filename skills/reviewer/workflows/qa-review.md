@@ -55,9 +55,16 @@ When the benchmarking skill's regression check exits with code 1, classify every
 
 **Skip if** not the performance QA agent.
 
-- **Backend changes**: Pipe benchmark output through the benchmarking skill's parser for automatic recording
-- **Frontend/UI changes**: Run a project-specific perf capture tool and pipe results to the benchmarking skill's record command
-- **Manual entry**: Run the benchmarking skill's record command with the component name and JSON data
+- Use the project's benchmarking skill's direct runner or recorder commands when
+  they are documented as standalone commands.
+- Do not use shell pipelines, redirection, heredocs, `tee`, `cat >`, inline
+  environment assignment, command substitution, or shell plumbing to capture or
+  record benchmark output under Codex `approval=never`.
+- If the only documented recording path requires shell plumbing, stop and report
+  the harness gap instead of inventing an alternate command shape.
+- If manual entry is supported, pass the component name and JSON data only by a
+  documented direct argument or body-file option. Do not create the body file
+  with shell redirection.
 
 See the project's benchmarking skill for full recording details if available.
 
@@ -70,6 +77,16 @@ If the parser records zero results, stop and report the harness gap instead of
 counting the run as benchmark coverage. Common causes are missing required
 features, parser prefix drift after bench refactors, or tool output format
 changes.
+
+If the benchmark recorder fails closed on all-zero counters, report a benchmark
+environment/tooling failure. Include the command, commit, and error evidence in
+the QA report, set `benchmark_commit` to `"none"`, and do not bypass the failure
+with manual benchmark data.
+
+If a targeted regression command reports numeric regressions but an aggregate
+validation command passes, classify and report the targeted numeric regressions.
+The aggregate validation result is supporting context, not a substitute for the
+targeted regression output.
 
 **Note**: Benchmark results may be symlinked to the main repo in worktrees. Results are written directly to main's directory — no commit needed. Record the latest commit SHA from your worktree branch as the benchmark commit in your return output (§ 3).
 

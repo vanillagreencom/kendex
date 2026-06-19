@@ -113,6 +113,7 @@ orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
 submit_workflow="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 comments_workflow="$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
 merge_workflow="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
+qa_workflow="$REPO_ROOT/skills/reviewer/workflows/qa-review.md"
 
 assert_file_contains "$orch_skill" "#### Harness-Safe Shell" "orch skill documents Harness-Safe Shell section"
 assert_file_contains "$orch_skill" 'Avoid inline `$(...)`, shell `for`/`while` loops' "Harness-Safe Shell section bans unsafe shell helper shapes"
@@ -129,6 +130,12 @@ done
 assert_file_not_contains "$merge_workflow" "fetch --all --prune" "merge-pr avoids all-remote fetch during sync"
 assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin" "merge-pr sync fetches origin through HTTPS auth helper"
 assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] pull --rebase origin [BASE_BRANCH]" "merge-pr sync pulls origin base branch through HTTPS auth helper"
+
+assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
+assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
+assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"
+assert_file_contains "$qa_workflow" "benchmark recorder fails closed on all-zero counters" "qa-review documents all-zero recorder fallback"
+assert_file_contains "$qa_workflow" "targeted regression command reports numeric regressions" "qa-review reports targeted numeric regressions"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
