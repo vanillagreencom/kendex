@@ -77,6 +77,7 @@ preflight_repo="$TMP_ROOT/preflight-repo"
 git init -q "$preflight_repo"
 git -C "$preflight_repo" config user.name "Test User"
 git -C "$preflight_repo" config user.email "test@example.com"
+git -C "$preflight_repo" config commit.gpgsign false
 mkdir -p "$preflight_repo/.codex/agents"
 cat >"$preflight_repo/.gitignore" <<'EOF'
 /.codex/**
