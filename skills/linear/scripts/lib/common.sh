@@ -440,13 +440,15 @@ resolve_project_id() {
 
     # Look up by name
     local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id } } }'
+    local variables
+    variables=$(jq -nc --arg name "$project_ref" '{name: $name}')
     local result
-    result=$(graphql_query "$query" "{\"name\": \"$project_ref\"}")
+    result=$(graphql_query "$query" "$variables")
     local project_id
     project_id=$(echo "$result" | jq -r '.projects.nodes[0].id // empty')
 
     if [ -z "$project_id" ]; then
-        echo "{\"error\": \"Project not found: $project_ref\"}" >&2
+        jq -nc --arg message "Project not found: $project_ref" '{error: $message}' >&2
         return 1
     fi
 
