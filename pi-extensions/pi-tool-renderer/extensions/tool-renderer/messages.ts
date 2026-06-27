@@ -103,7 +103,32 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any, cwd
 	], unwrapped.markers);
 }
 
-export const __test = { applyPromptZoneMarkers, renderStyledCodeBlock, renderUserMessageBorder, stripPromptZoneMarkers };
+function safeCtxCwd(ctx?: ExtensionContext): string {
+	try {
+		return ctx?.cwd ?? process.cwd();
+	} catch {
+		return process.cwd();
+	}
+}
+
+function safeCtxHasUI(ctx?: ExtensionContext): boolean {
+	try {
+		return Boolean(ctx?.hasUI);
+	} catch {
+		return false;
+	}
+}
+
+function safeCtxTheme(ctx?: ExtensionContext): any {
+	try {
+		if (!ctx?.hasUI) return FALLBACK_THEME;
+		return ctx.ui?.theme ?? FALLBACK_THEME;
+	} catch {
+		return FALLBACK_THEME;
+	}
+}
+
+export const __test = { applyPromptZoneMarkers, renderStyledCodeBlock, renderUserMessageBorder, safeCtxCwd, safeCtxHasUI, safeCtxTheme, stripPromptZoneMarkers };
 
 function appendUserMessageBreak(lines: string[], width: number, cwd?: string): string[] {
 	if (lines.length === 0 || !settingBoolean("userMessageTrailingBlankLine", true, cwd)) return lines;
@@ -132,8 +157,8 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 		prototype.render = function compactUserMessageRender(this: any, width: number): string[] {
 			const box = this?.contentBox;
 			const ctx = state?.activeCtx;
-			const cwd = ctx?.cwd ?? process.cwd();
-			if (box && ctx?.hasUI) {
+			const cwd = safeCtxCwd(ctx);
+			if (box && safeCtxHasUI(ctx)) {
 				const compact = settingBoolean("compactUserMessages", true, cwd);
 				const paddingY = compact ? 0 : 1;
 				const boxState = compact ? `${paddingY}:border:ansi-green:text:pi-red:left` : `${paddingY}:background:userMessageBg`;
@@ -144,12 +169,12 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 						box.setBgFn?.(undefined);
 					} else {
 						box.setBgFn?.((content: string) => {
-							const theme = state?.activeCtx?.ui?.theme;
+							const theme = safeCtxTheme(state?.activeCtx);
 							if (!theme?.bg) return content;
 							try {
 								return theme.bg("userMessageBg", content);
 							} catch {
-								return theme.bg("userMessageBg", content);
+								return content;
 							}
 						});
 					}
@@ -158,7 +183,7 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 				}
 
 				if (compact && width >= 4) {
-					const theme = ctx.ui?.theme ?? FALLBACK_THEME;
+					const theme = safeCtxTheme(ctx);
 					const frameWidth = stableRenderWidth(width, cwd);
 					const lines = state!.originalRender.call(this, Math.max(1, frameWidth - 2));
 					return appendUserMessageBreak(renderUserMessageBorder(lines, frameWidth, theme, cwd), width, cwd);
@@ -220,7 +245,7 @@ export function installAssistantMessageRenderer(pi: ExtensionAPI, AssistantMessa
 		};
 		prototype.updateContent = function alignedAssistantUpdateContent(this: any, message: any): void {
 			state!.originalUpdateContent.call(this, message);
-			const cwd = state?.activeCtx?.cwd ?? process.cwd();
+			const cwd = safeCtxCwd(state?.activeCtx);
 			if (settingBoolean("alignAssistantMessages", true, cwd)) alignAssistantContent(this);
 		};
 	}
@@ -255,13 +280,13 @@ export function installCompactionSummaryRenderer(pi: ExtensionAPI, Component: an
 		prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL] = state;
 		prototype.updateDisplay = function compactCompactionSummaryDisplay(this: any): void {
 			const ctx = state?.activeCtx;
-			const cwd = ctx?.cwd ?? process.cwd();
+			const cwd = safeCtxCwd(ctx);
 			if (!settingBoolean("compactCompactionMessages", true, cwd)) {
 				state!.originalUpdateDisplay.call(this);
 				return;
 			}
 
-			const theme = ctx?.ui?.theme ?? FALLBACK_THEME;
+			const theme = safeCtxTheme(ctx);
 			const message = this?.message ?? {};
 			const tokensBefore = Number.isFinite(Number(message.tokensBefore)) ? Number(message.tokensBefore) : 0;
 			const tokenStr = tokensBefore.toLocaleString();
@@ -341,13 +366,13 @@ export function installSkillInvocationRenderer(pi: ExtensionAPI, Component: any)
 		prototype[SKILL_INVOCATION_RENDERER_PATCH_SYMBOL] = state;
 		prototype.updateDisplay = function compactSkillInvocationDisplay(this: any): void {
 			const ctx = state?.activeCtx;
-			const cwd = ctx?.cwd ?? process.cwd();
+			const cwd = safeCtxCwd(ctx);
 			if (!settingBoolean("compactSkillMessages", true, cwd)) {
 				state!.originalUpdateDisplay.call(this);
 				return;
 			}
 
-			const th = ctx?.ui?.theme ?? FALLBACK_THEME;
+			const th = safeCtxTheme(ctx);
 			const skillBlock = this?.skillBlock ?? {};
 			const name = typeof skillBlock.name === "string" && skillBlock.name.trim() ? skillBlock.name.trim() : "skill";
 			const content = typeof skillBlock.content === "string" ? skillBlock.content : "";
@@ -390,7 +415,7 @@ interface MarkdownCodeBlockPatchState {
 function codeBlockBgParts(ctx?: ExtensionContext): { open: string; close: string } {
 	const marker = "\uE000";
 	try {
-		const theme = ctx?.hasUI ? ctx.ui.theme : undefined;
+		const theme = safeCtxHasUI(ctx) ? safeCtxTheme(ctx) : undefined;
 		if (theme?.bg) return ansiPartsFromStyled(theme.bg("customMessageBg", marker));
 	} catch {
 		// Fall through to a neutral dark background.
@@ -410,7 +435,7 @@ function padAnsiLine(line: string, width: number): string {
 }
 
 function renderStyledCodeBlock(token: any, width: number, markdownTheme: any, ctx?: ExtensionContext): string[] {
-	const contentWidth = stableRenderWidth(width, ctx?.cwd);
+	const contentWidth = stableRenderWidth(width, safeCtxCwd(ctx));
 	const rawLang = typeof token?.lang === "string" ? token.lang.trim() : "";
 	const lang = rawLang.split(/\s+/)[0] || undefined;
 	const code = typeof token?.text === "string" ? token.text : "";
@@ -449,8 +474,10 @@ export function installMarkdownCodeBlockRenderer(pi: ExtensionAPI): void {
 		};
 		prototype[MARKDOWN_CODE_BLOCK_PATCH_SYMBOL] = state;
 		prototype.renderToken = function styledCodeBlockRenderToken(this: any, token: any, width: number, nextTokenType?: string, styleContext?: unknown): string[] {
-			if (token?.type === "code" && settingBoolean("styledCodeBlocks", true, state?.activeCtx?.cwd)) {
-				const codeLines = renderStyledCodeBlock(token, width, this?.theme, state?.activeCtx);
+			const ctx = state?.activeCtx;
+			const cwd = safeCtxCwd(ctx);
+			if (token?.type === "code" && settingBoolean("styledCodeBlocks", true, cwd)) {
+				const codeLines = renderStyledCodeBlock(token, width, this?.theme, ctx);
 				if (nextTokenType && nextTokenType !== "space") return [...codeLines, ""];
 				return codeLines;
 			}
@@ -469,4 +496,3 @@ export function installMarkdownCodeBlockRenderer(pi: ExtensionAPI): void {
 		state!.activeCtx = undefined;
 	});
 }
-
