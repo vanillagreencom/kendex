@@ -48,19 +48,19 @@ keeps the raw `gh`/`op` detail for logs.
 
 ## Git HTTPS Fallback
 
-Use `scripts/git-https-auth` for git network operations in workflows that
-should succeed with GitHub CLI auth even when project remotes are SSH-backed.
-The helper detects GitHub SSH remotes or explicit GitHub SSH URLs, validates
-the selected env token or `gh` keyring auth, and then runs the git command with
-temporary `credential.helper=!gh auth git-credential` and SSH-to-HTTPS rewrite
-config. It does not persist config and leaves non-GitHub or unauthenticated
-git commands on the normal path.
+Use `scripts/git-https-auth` for the GitHub network operations in workflows
+that should succeed with GitHub CLI auth even when project remotes are
+SSH-backed. The helper detects GitHub SSH remotes or explicit GitHub SSH URLs,
+validates the selected env token or `gh` keyring auth, and then runs the git
+command with temporary `credential.helper=!gh auth git-credential` and
+SSH-to-HTTPS rewrite config. It does not persist config and leaves non-GitHub
+or unauthenticated git commands on the normal path.
 
-Prefer targeted remotes in automation:
+Prefer targeted post-fetch sync commands in automation:
 
 ```bash
 ./scripts/git-https-auth -C "$repo" fetch --prune origin
-./scripts/git-https-auth -C "$repo" merge --ff-only "origin/$base_branch"
+git -C "$repo" merge --ff-only "origin/$base_branch"
 ```
 
 Avoid `git fetch --all` in PR closure workflows unless every remote is required;

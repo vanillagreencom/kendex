@@ -128,9 +128,10 @@ for workflow in "$submit_workflow" "$comments_workflow"; do
 done
 
 assert_file_not_contains "$merge_workflow" "fetch --all --prune" "merge-pr avoids all-remote fetch during sync"
-assert_file_not_contains "$merge_workflow" "pull --rebase origin [BASE_BRANCH]" "merge-pr avoids rebase pull during post-merge sync"
+assert_file_not_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] pull" "merge-pr avoids pull during post-merge sync"
+assert_file_not_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] merge" "merge-pr keeps local merge outside HTTPS credential wrapper"
 assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin" "merge-pr sync fetches origin through HTTPS auth helper"
-assert_file_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] merge --ff-only origin/[BASE_BRANCH]" "merge-pr sync fast-forwards to fetched origin base branch through HTTPS auth helper"
+assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards to quoted fetched origin base branch with plain git"
 
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
