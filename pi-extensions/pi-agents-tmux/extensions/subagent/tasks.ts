@@ -830,8 +830,13 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				}
 				let detail = paneCompletionDetailsFromCompletion(completion, agentDir.name, filePath, undefined, registry, tasks);
 				await beforeCompletionRegistryUpdateForTests?.({ filePath, runtimeRoot, taskId: detail.taskId });
+				let completionAlreadyPersisted = false;
 				tasks = await updateTaskRegistry(runtimeRoot, (records) => {
 					const existing = records[detail.taskId];
+					if (existing && existing.agent === agentName && (isTerminalTaskStatus(existing.status) || existing.status === "needs_completion") && (existing.completedAt || existing.completionArchivePath)) {
+						completionAlreadyPersisted = true;
+						return;
+					}
 					records[detail.taskId] = {
 						...existing,
 						taskId: detail.taskId,
@@ -854,6 +859,22 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						completedAt: detail.completedAt,
 					};
 				});
+				if (completionAlreadyPersisted) {
+					try {
+						const archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
+						await afterCompletionArchiveForTests?.({ archivePath, filePath, runtimeRoot, taskId: detail.taskId });
+						try {
+							tasks = await persistCompletionArchivePath(runtimeRoot, detail.taskId, archivePath, new Date().toISOString());
+						} catch (error) {
+							await ensureCompletionOutboxRetrySource(filePath, archivePath, completion, error);
+							if (isFileLockTimeoutError(error)) warnCompletionRetryableLock(filePath, error);
+							else console.error(`pi-agents-tmux completion archive path persistence failed after terminal task state was saved; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+						}
+					} catch (error) {
+						console.warn(`pi-agents-tmux completion archive failed for already-persisted task state; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+					}
+					continue;
+				}
 				let archivePath: string | undefined;
 				try {
 					archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);

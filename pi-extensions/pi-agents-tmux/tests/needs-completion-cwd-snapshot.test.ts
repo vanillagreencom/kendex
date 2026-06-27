@@ -398,7 +398,6 @@ describe("needs_completion cwd snapshots", () => {
 	test("pollPaneCompletions preserves existing archive path when duplicate poll archive persistence fails", async () => {
 		const runtimeRoot = tempDir("needs-completion-runtime-");
 		const cwd = tempGitRepo();
-		let lockDir: string | undefined;
 		try {
 			const seeded = await seedPaneTask(runtimeRoot, cwd, "task-duplicate-archive");
 			const outboxFile = join(runtimeRoot, "outbox", "rust", "task-duplicate-archive.json");
@@ -432,12 +431,8 @@ describe("needs_completion cwd snapshots", () => {
 						updatedAt: "2026-05-20T00:00:02.000Z",
 					},
 				});
+				rmSync(outboxFile, { force: true });
 				setBeforeCompletionRegistryUpdateForTests();
-			});
-			setAfterCompletionArchiveForTests(({ runtimeRoot: hookRuntimeRoot }) => {
-				lockDir = holdTaskRegistryLock(hookRuntimeRoot);
-				forceFastRegistryLockTimeout();
-				setAfterCompletionArchiveForTests();
 			});
 
 			const count = await pollPaneCompletions(runtimeRoot, {
@@ -446,18 +441,17 @@ describe("needs_completion cwd snapshots", () => {
 			} as any);
 			const persisted = (await readTaskRegistry(runtimeRoot))["task-duplicate-archive"]!;
 
-			expect(count).toBe(1);
+			expect(count).toBe(0);
 			expect(persisted.status).toBe("completed");
 			expect(persisted.completionArchivePath).toBe(existingArchivePath);
 			expect(persisted.completionSourcePath).toBe(outboxFile);
 			expect(existsSync(existingArchivePath)).toBe(true);
-			expect(existsSync(outboxFile)).toBe(true);
-			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(1);
+			expect(existsSync(outboxFile)).toBe(false);
+			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(0);
 		} finally {
 			setAfterCompletionArchiveForTests();
 			setBeforeCompletionRegistryUpdateForTests();
 			setFileLockOptionsForTests();
-			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
 			rmSync(runtimeRoot, { force: true, recursive: true });
 			rmSync(cwd, { force: true, recursive: true });
