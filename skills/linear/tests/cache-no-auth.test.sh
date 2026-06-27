@@ -118,6 +118,17 @@ run_cache_read() {
   fi
 }
 
+run_cache_read "cache issues list help" cache issues list --help
+help_out="$RUN_OUT"
+if ! grep -q 'Linear Cache Query - Read from local cache' <<<"$help_out"; then
+  echo "FAIL cache issues list --help did not print cache help: $help_out"
+  exit 1
+fi
+if echo "$help_out" | jq -e . >/dev/null 2>&1; then
+  echo "FAIL cache issues list --help returned JSON query output instead of help: $help_out"
+  exit 1
+fi
+
 run_cache_read "cache projects list" cache projects list --format=safe
 projects_out="$RUN_OUT"
 if ! echo "$projects_out" | jq -e '.[0].name == "Authless Cache Project"' >/dev/null; then

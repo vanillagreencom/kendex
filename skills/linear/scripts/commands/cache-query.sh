@@ -1001,6 +1001,29 @@ cache_list_cycles() {
 # =============================================================================
 
 main() {
+    for arg in "$@"; do
+        case "$arg" in
+        --help | -h)
+            show_help
+            return 0
+            ;;
+        esac
+    done
+
+    case "${1:-}" in
+    help)
+        show_help
+        return 0
+        ;;
+    esac
+
+    case "${2:-}" in
+    help)
+        show_help
+        return 0
+        ;;
+    esac
+
     if [[ ! -f "$CACHE_DIR/meta.json" ]]; then
         echo '{"error": "No cache found. Run: linear.sh sync"}' >&2
         return 1
