@@ -33,6 +33,20 @@ assert_not_contains() {
   fi
 }
 
+assert_order() {
+  local file="$1" first="$2" second="$3" name="$4"
+  local first_line second_line
+  first_line=$(grep -nF "$first" "$file" | head -n 1 | cut -d: -f1 || true)
+  second_line=$(grep -nF "$second" "$file" | head -n 1 | cut -d: -f1 || true)
+  if [[ -n "$first_line" && -n "$second_line" && "$first_line" -lt "$second_line" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        order: %s before %s\n        file:  %s\n' "$name" "$first" "$second" "$file"
+  fi
+}
+
 echo "=== Codex orch runtime agent type guidance ==="
 
 skill="$REPO_ROOT/skills/orch/SKILL.md"
@@ -61,6 +75,11 @@ assert_contains "$review_pr" "carry forward any \`EXISTING_REVIEW_AGENT_RUNTIME_
 assert_contains "$review_pr" "When writing \`review_agent_runtime_types\`, include preserved entries for reused reviewers and new/updated entries for reviewers launched in this step." "review-pr writes preserved and new runtime metadata"
 assert_contains "$review_pr" "**Do NOT spawn or delegate yet.** Continue to § 2.1 to resolve external review availability before launching reviewers." "review-pr resolves external availability before reviewer launch"
 assert_contains "$review_pr" "For each reviewer in \`REVIEWERS_TO_LAUNCH\`, spawn it now." "review-pr launches missing reviewers in section 2.2"
+assert_contains "$review_pr" "**Record delegation timestamp immediately before the actual delegation batch**" "review-pr timestamp is tied to actual delegation"
+assert_contains "$review_pr" "output produced during reviewer spawn/bootstrap" "review-pr timestamp excludes spawn/bootstrap output"
+assert_contains "$review_pr" "Start the coordinated delegation batch:" "review-pr labels actual delegation batch"
+assert_order "$review_pr" ".agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'" ".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at" "review-pr records timestamp after reviewer state writes"
+assert_order "$review_pr" ".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at" "Delegate to each active reviewer in \`[AGENTS]\` in parallel." "review-pr records timestamp before reviewer delegation"
 
 assert_contains "$review" "first call the harness spawn API with \`agent_type\` equal to that reviewer name" "review requires reviewer runtime agent_type first"
 assert_contains "$review" "unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated \`agent_type\`" "review permits generated-agent unavailable fallback"

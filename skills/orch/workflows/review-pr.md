@@ -117,12 +117,7 @@ If the command fails or prints `none`, set `EXTERNAL_REVIEW_REQUESTED=false`. Ot
 
 ## 2.2 Launch Review Agents
 
-**Record delegation timestamp** before delegating — gates the § 3 watchdog filesystem fallback against stale JSONs from earlier cycles:
-```bash
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
-```
-
-Launch internal reviewer work and optional external review in one coordinated step:
+Prepare internal reviewer sessions before the coordinated delegation step:
 - For each reusable reviewer, keep the existing session id and preserve its carried-forward `EXISTING_REVIEW_AGENT_RUNTIME_TYPES[reviewer-name]` entry in `AGENT_RUNTIME_TYPE_MAP_JSON`.
 - For each reviewer in `REVIEWERS_TO_LAUNCH`, spawn it now. Follow the Codex runtime agent type rule above when running in Codex.
 - When writing `review_agent_runtime_types`, include preserved entries for reused reviewers and new/updated entries for reviewers launched in this step.
@@ -134,6 +129,12 @@ After launch/reuse, store the active reviewer set:
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
+**Record delegation timestamp immediately before the actual delegation batch** — gates the § 3 watchdog filesystem fallback against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap:
+```bash
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
+```
+
+Start the coordinated delegation batch:
 - Delegate to each active reviewer in `[AGENTS]` in parallel.
 - **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the same parallel batch.
 
