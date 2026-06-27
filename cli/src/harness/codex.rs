@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Generate a Codex agent file (.codex/agents/<name>.toml)
 ///
 /// Format: TOML with name, description, model, sandbox_mode,
-/// and developer_instructions (the agent body).
+/// skills, and developer_instructions (the agent body).
 ///
 /// Hooks are NOT rendered here — codex hooks install as native shell hooks via
 /// `installer::install_hook_codex` (which writes `<scope>/.codex/hooks/*.sh`,
@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 /// uniform.
 pub fn generate_agent(
     agent: &Agent,
+    global: bool,
     dir: &Path,
-    _skills: &[(String, String)],
+    skills: &[(String, String)],
     _hooks: &[Hook],
     extras: &agent::AgentExtras,
 ) -> Result<PathBuf> {
@@ -79,13 +80,18 @@ pub fn generate_agent(
         output.push_str(&format!("model_reasoning_effort = \"{effort}\"\n"));
     }
     output.push_str(&format!("sandbox_mode = \"{sandbox_mode}\"\n"));
+    if !skills.is_empty() {
+        let names: Vec<String> = skills.iter().map(|(name, _)| name.clone()).collect();
+        output.push_str(&format!("skills = {}\n", toml_string_array(&names)));
+    }
 
     // Developer instructions as multiline TOML string
     output.push_str("developer_instructions = '''\n");
 
     let guidance = agent::guidance_section(extras.guidance.as_deref());
     let skills_section = agent::load_skills_section();
-    let combined = format!("{}{}", guidance, skills_section);
+    let required_skills = required_skills_section(skills, global);
+    let combined = format!("{}{}{}", guidance, skills_section, required_skills);
     let body = agent::insert_after_intro(&agent.body, &combined);
     let hooks_prose = agent::custom_hooks_section(&extras.custom_hooks);
     let instructions = agent::instructions_section(extras.instructions.as_deref());
@@ -100,6 +106,40 @@ pub fn generate_agent(
 
     std::fs::write(&path, &output)?;
     Ok(path)
+}
+
+fn required_skills_section(skills: &[(String, String)], global: bool) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut section = String::from("## Required Skills\n\n");
+    section.push_str(
+        "Load these skills before using their workflows. Prefer the listed local path when it exists; if a path is missing, report the missing install instead of substituting a stale global path.\n\n",
+    );
+    for (name, description) in skills {
+        section.push_str(&format!(
+            "- `{}`: {} (`{}`)\n",
+            name,
+            description.trim(),
+            codex_skill_md_path(name, global)
+        ));
+    }
+    section.push('\n');
+    section
+}
+
+fn codex_skill_md_path(name: &str, global: bool) -> String {
+    if global {
+        crate::config::codex_home_dir()
+            .join("skills")
+            .join(name)
+            .join("SKILL.md")
+            .display()
+            .to_string()
+    } else {
+        format!(".agents/skills/{name}/SKILL.md")
+    }
 }
 
 fn escape_toml(s: &str) -> String {
@@ -193,8 +233,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("tpm", AgentRole::Manager);
-        let path =
-            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &AgentExtras::default())
+            .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("sandbox_mode = \"workspace-write\""));
 
@@ -211,8 +251,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("reviewer-arch", AgentRole::Reviewer);
-        let path =
-            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &AgentExtras::default())
+            .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(
             content.contains(
@@ -248,7 +288,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("nickname_candidates = [\"Rust-One\", \"Rust-Two\"]"));
 
@@ -269,7 +309,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("model_reasoning_effort = \"xhigh\""));
 
@@ -284,10 +324,61 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("scout", AgentRole::Analyst);
-        let path =
-            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &AgentExtras::default())
+            .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("model_reasoning_effort"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writes_skills_field_and_project_local_inventory() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_codex_skills_project_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer);
+        let skills = vec![
+            (
+                "dev".into(),
+                "Delegated implementation and review-fix workflows.".into(),
+            ),
+            ("github".into(), "GitHub workflow helpers.".into()),
+        ];
+        let path = generate_agent(&agent, false, &dir, &skills, &[], &AgentExtras::default())
+            .expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("skills = [\"dev\", \"github\"]"));
+        assert!(content.contains("## Required Skills"));
+        assert!(content.contains("`.agents/skills/dev/SKILL.md`"));
+        assert!(!content.contains(".codex/skills/dev/SKILL.md"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn global_inventory_uses_codex_home_skills() {
+        let dir =
+            std::env::temp_dir().join(format!("vstack_codex_skills_global_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer);
+        let skills = vec![("dev".into(), "Delegated implementation.".into())];
+        let path = generate_agent(&agent, true, &dir, &skills, &[], &AgentExtras::default())
+            .expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let expected = crate::config::codex_home_dir()
+            .join("skills")
+            .join("dev")
+            .join("SKILL.md")
+            .display()
+            .to_string();
+        assert!(content.contains(&format!("`{expected}`")));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
