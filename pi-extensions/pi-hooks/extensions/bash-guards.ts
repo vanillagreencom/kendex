@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { findCargoWorkspaceRootResultAsync, runCargoAsync, runWorkspaceClippyAsync } from "./cargo.js";
 
@@ -1429,6 +1429,28 @@ export interface BlockReason {
  * configured lint budget. Git target probes use short async timeouts and do not
  * block the main thread.
  */
+/**
+ * Locate the nearest Cargo manifest directory for the relevant Rust files when
+ * the repo root has no Cargo.toml (vstack nests its workspace under cli/), so
+ * `cargo metadata` from the repo root finds nothing. Mirrors
+ * hooks/pre-commit-check.sh: walk up from each file's directory to the first
+ * ancestor that contains a Cargo.toml. Returns an absolute directory or null.
+ * Files are repo-root-relative (from `git ... --name-only`).
+ */
+export function nearestCargoManifestDir(repoRoot: string, files: string[]): string | null {
+	for (const file of files) {
+		let dir = dirname(file);
+		while (dir && dir !== "." && dir !== "/" && dir !== "..") {
+			const candidate = join(repoRoot, dir);
+			if (existsSync(join(candidate, "Cargo.toml"))) return candidate;
+			const parent = dirname(dir);
+			if (parent === dir) break;
+			dir = parent;
+		}
+	}
+	return null;
+}
+
 export async function runPreCommitCheck(cwd: string, timeoutMs: number, command: string): Promise<BlockReason | undefined> {
 	const metadataBudget = Math.min(5000, Math.floor(timeoutMs / 4));
 	const commit = await resolveProjectGitCommit(command, cwd, metadataBudget);
@@ -1439,7 +1461,17 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 	if (rustFiles.kind === "error") return { reason: `pi-hooks pre-commit: ${rustFiles.reason}` };
 	if (rustFiles.files.length === 0) return undefined;
 
-	const workspace = await findCargoWorkspaceRootResultAsync(commit.cwd, metadataBudget);
+	let workspace = await findCargoWorkspaceRootResultAsync(commit.cwd, metadataBudget);
+	if (workspace.kind === "none") {
+		// The manifest may live in a subdirectory (vstack nests cli/Cargo.toml),
+		// so `cargo metadata` from the repo root finds nothing. Mirror
+		// hooks/pre-commit-check.sh and resolve the workspace from the nearest
+		// Cargo.toml above the relevant Rust files.
+		const manifestDir = nearestCargoManifestDir(commit.root, rustFiles.files);
+		if (manifestDir) {
+			workspace = await findCargoWorkspaceRootResultAsync(manifestDir, metadataBudget);
+		}
+	}
 	if (workspace.kind === "error") return { reason: `pi-hooks pre-commit: ${workspace.reason}` };
 	if (workspace.kind === "none") {
 		return { reason: `pi-hooks pre-commit: found Rust files but could not identify a Cargo workspace: ${workspace.reason}` };

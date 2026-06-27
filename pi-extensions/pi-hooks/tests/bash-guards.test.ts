@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { gitCommitTargets, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
+import { gitCommitTargets, nearestCargoManifestDir, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
 
 function runGit(args: string[], cwd: string): void {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -353,6 +353,29 @@ git commit -m test`, project, 1000)).toBe(resolve(project));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(other, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("nearestCargoManifestDir", () => {
+	test("resolves a Cargo.toml nested under the repo root (vstack cli/)", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-hooks-ws-"));
+		try {
+			mkdirSync(join(root, "cli", "src", "harness"), { recursive: true });
+			writeFileSync(join(root, "cli", "Cargo.toml"), "[package]\nname = \"x\"\nversion = \"0.0.0\"\n");
+			expect(nearestCargoManifestDir(root, ["cli/src/harness/codex.rs"])).toBe(join(root, "cli"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("returns null when no Cargo.toml sits above the files", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-hooks-ws-"));
+		try {
+			mkdirSync(join(root, "docs"), { recursive: true });
+			expect(nearestCargoManifestDir(root, ["docs/notes.rs"])).toBeNull();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 		}
 	});
 });
