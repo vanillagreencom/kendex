@@ -142,6 +142,18 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "checks" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_once" ]]; then
+        count=0
+        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
+        if [[ "$count" -eq 1 ]]; then
+          echo '[{"name":"build","state":"IN_PROGRESS"}]'
+          exit 8
+        fi
+      fi
       echo '[{"name":"build","state":"SUCCESS"}]'
       exit 0
     fi
@@ -257,6 +269,18 @@ rc=$?
 set -e
 assert_eq "$rc" "3" "case7: hanging keyring auth exits 3" "$stderr"
 assert_contains "$(cat "$stderr")" "no working GitHub auth path" "case7: hanging keyring auth reports no working path" "$stderr"
+
+# Case 8: gh pr checks exits 8 while checks are pending but still prints valid
+# JSON. ci-wait should treat the JSON as authoritative and keep polling.
+stderr="$TMP_ROOT/case8.err"
+checks_count_file="$TMP_ROOT/case8-checks-count"
+set +e
+output=$(run_wait STUB_PR_CHECKS_MODE=pending_once STUB_PR_CHECKS_COUNT_FILE="$checks_count_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case8: pending checks exit code keeps polling" "$stderr"
+assert_contains "$output" "CI passed" "case8: ci-wait reaches CI passed after pending checks"
+assert_eq "$(cat "$checks_count_file")" "2" "case8: ci-wait polls again after pending JSON" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

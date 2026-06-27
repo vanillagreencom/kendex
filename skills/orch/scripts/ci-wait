@@ -168,7 +168,12 @@ trap 'rm -f "$checks_stderr"' EXIT
 elapsed=0
 while [ $elapsed -lt $MAX_WAIT ]; do
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
-  if ! checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state 2>"$checks_stderr"); then
+  checks_status=0
+  set +e
+  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state 2>"$checks_stderr")
+  checks_status=$?
+  set -e
+  if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
     echo "gh pr checks failed for PR #$PR_NUM in $REPO:" >&2
     cat "$checks_stderr" >&2
     exit 1

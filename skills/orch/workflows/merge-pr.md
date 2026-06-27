@@ -67,11 +67,14 @@ Use the output as `CHECK`.
 
 ### 3.1 Resolve transient readiness blockers before prompting
 
-If `CHECK.transient == true`, wait and re-check — do NOT prompt the user yet.
-Transient issue prefixes include `unknown:` (GitHub still computing mergeable
-status), `ci_pending:` (checks still running), `ci_unconfigured:`, and
-`ci_fetch_failed:`. Treat `CHECK.transient` as the contract; do not special-case
-only `unknown:`.
+If `CHECK.transient == true`, route by the transient issue prefix before any
+user prompt. Transient issue prefixes include `unknown:` (GitHub still
+computing mergeable status), `ci_pending:` (checks still running),
+`ci_unconfigured:`, and `ci_fetch_failed:`. Treat `CHECK.transient` as the
+contract for whether the block may resolve by waiting, but choose the wait path
+from the specific issue prefix.
+
+For `unknown:` only, wait for GitHub's merge-state computation and re-check:
 
 ```bash
 .agents/skills/github/scripts/github.sh await-mergeable [PR_NUMBER]
@@ -81,8 +84,28 @@ Use the second command output as `CHECK`.
 
 `await-mergeable` polls `state` + `mergeStateStatus` (never `mergeable` — stays UNKNOWN after merge, hangs forever). Exit 124 on timeout → surface to user.
 
-If the refreshed `CHECK.transient` is still `true`, repeat this § 3.1
-wait/re-check step. Continue to § 3.2 only after `CHECK.transient` is `false`.
+For `ci_pending:`, wait on CI with the bounded CI watcher, then re-check:
+
+```bash
+.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 600
+.agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
+```
+Use the second command output as `CHECK`. If `ci-wait` exits nonzero or times
+out, surface that result to the user, re-run `pr-merge --check` once for fresh
+state, then continue to § 3.2 without another automatic wait loop.
+
+For `ci_fetch_failed:` or `ci_unconfigured:`, use a short bounded backoff before
+re-checking:
+
+```bash
+sleep 30
+.agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
+```
+Use the second command output as `CHECK`. Repeat at most three total checks
+before continuing to § 3.2 with the latest `CHECK`.
+
+Do not repeat § 3.1 indefinitely. Continue to § 3.2 when `CHECK.transient` is
+`false` or when the relevant bounded wait/backoff path times out.
 
 ### 3.2 Parse and act
 
