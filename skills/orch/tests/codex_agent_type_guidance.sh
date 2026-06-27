@@ -55,6 +55,10 @@ assert_contains "$review_pr" "first call the harness spawn API with \`agent_type
 assert_contains "$review_pr" "unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated \`agent_type\`" "review-pr permits generated-agent unavailable fallback"
 assert_contains "$review_pr" "persist the returned id under \`review_agent_ids[reviewer-name]\`" "review-pr keeps id keyed by reviewer name"
 assert_contains "$review_pr" "record runtime metadata under \`review_agent_runtime_types[reviewer-name]\`" "review-pr records reviewer fallback metadata"
+assert_contains "$review_pr" ".agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agent_runtime_types // {}'" "review-pr loads existing reviewer runtime metadata"
+assert_contains "$review_pr" "Use the outputs as \`EXISTING_REVIEW_AGENTS\`, \`EXISTING_REVIEW_AGENT_IDS\`, and \`EXISTING_REVIEW_AGENT_RUNTIME_TYPES\`." "review-pr names existing runtime metadata state"
+assert_contains "$review_pr" "carry forward any \`EXISTING_REVIEW_AGENT_RUNTIME_TYPES[reviewer-name]\` entry into \`AGENT_RUNTIME_TYPE_MAP_JSON\`" "review-pr preserves reusable reviewer runtime metadata"
+assert_contains "$review_pr" "When writing \`review_agent_runtime_types\`, include preserved entries for reused reviewers and new/updated entries for reviewers launched in this step." "review-pr writes preserved and new runtime metadata"
 assert_contains "$review_pr" "**Do NOT spawn or delegate yet.** Continue to § 2.1 to resolve external review availability before launching reviewers." "review-pr resolves external availability before reviewer launch"
 assert_contains "$review_pr" "For each reviewer in \`REVIEWERS_TO_LAUNCH\`, spawn it now." "review-pr launches missing reviewers in section 2.2"
 

@@ -94,10 +94,11 @@ Before any spawn, read existing reviewer state:
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agents // []'
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agent_ids // {}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agent_runtime_types // {}'
 ```
-Use the outputs as `EXISTING_REVIEW_AGENTS` and `EXISTING_REVIEW_AGENT_IDS`.
+Use the outputs as `EXISTING_REVIEW_AGENTS`, `EXISTING_REVIEW_AGENT_IDS`, and `EXISTING_REVIEW_AGENT_RUNTIME_TYPES`.
 
-For each reviewer in `[AGENTS]`: classify it as reusable, missing, closed, or confirmed-stuck. Reuse by exact name when `review_agent_ids` points to a live/recoverable session. If only `review_agents` exists, attempt one recovery/resume, then treat as missing. Add only missing, closed, or confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`. Do not respawn already-live reviewers.
+For each reviewer in `[AGENTS]`: classify it as reusable, missing, closed, or confirmed-stuck. Reuse by exact name when `review_agent_ids` points to a live/recoverable session. If only `review_agents` exists, attempt one recovery/resume, then treat as missing. Add only missing, closed, or confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`. Do not respawn already-live reviewers. When a reviewer is reusable, carry forward any `EXISTING_REVIEW_AGENT_RUNTIME_TYPES[reviewer-name]` entry into `AGENT_RUNTIME_TYPE_MAP_JSON` instead of rebuilding runtime metadata only from newly spawned reviewers.
 
 **Do NOT spawn or delegate yet.** Continue to § 2.1 to resolve external review availability before launching reviewers.
 
@@ -122,8 +123,9 @@ If the command fails or prints `none`, set `EXTERNAL_REVIEW_REQUESTED=false`. Ot
 ```
 
 Launch internal reviewer work and optional external review in one coordinated step:
-- For each reusable reviewer, keep the existing session id and runtime metadata.
+- For each reusable reviewer, keep the existing session id and preserve its carried-forward `EXISTING_REVIEW_AGENT_RUNTIME_TYPES[reviewer-name]` entry in `AGENT_RUNTIME_TYPE_MAP_JSON`.
 - For each reviewer in `REVIEWERS_TO_LAUNCH`, spawn it now. Follow the Codex runtime agent type rule above when running in Codex.
+- When writing `review_agent_runtime_types`, include preserved entries for reused reviewers and new/updated entries for reviewers launched in this step.
 
 After launch/reuse, store the active reviewer set:
 ```bash
