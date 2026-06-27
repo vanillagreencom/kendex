@@ -80,7 +80,9 @@ require_pattern "$tpm_audit_project_order" 'Do not write the artifact yourself' 
 
 audit_issues="$SKILL_DIR/workflows/audit-issues.md"
 require_pattern "$audit_issues" 'Treat `File:` as a destination hint only' 'audit parent File hint handling'
-require_pattern "$audit_issues" 'Write the inline JSON exactly to the resolved absolute path in the caller worktree' 'audit parent writes child JSON artifact'
+require_pattern "$audit_issues" '[Ww]rite the inline JSON exactly to the resolved absolute path in the caller worktree' 'audit parent writes child JSON artifact'
+require_pattern "$audit_issues" 'already-readable artifact inside the caller worktree' 'audit parent readable artifact fallback'
+require_pattern "$audit_issues" 'request a TPM rerun with inline JSON' 'audit parent inline JSON rerun halt'
 reject_fixed_string "$audit_issues" 'Agent returns `.JSON` file. If missing, halt.' 'audit parent assumes child-written JSON artifact'
 
 echo "all pass"

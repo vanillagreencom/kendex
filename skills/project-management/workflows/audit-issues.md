@@ -92,9 +92,12 @@ Arguments: (none)
    - Resolve relative paths under the caller worktree (current repo root for project-order audits).
    - Reject absolute paths outside the caller worktree; use the fallback `tmp/...` path instead.
 
-3. **Write artifact**: Ensure `tmp/` exists in the caller worktree. Write the inline JSON exactly to the resolved absolute path in the caller worktree.
+3. **Materialize artifact**:
+   - If inline JSON is present, ensure `tmp/` exists in the caller worktree and write the inline JSON exactly to the resolved absolute path in the caller worktree.
+   - If inline JSON is missing but the returned `File:` path resolves to an already-readable artifact inside the caller worktree, skip writing and use that existing artifact.
+   - Otherwise halt and request a TPM rerun with inline JSON.
 
-4. **Read file**: Use Read tool on the caller-written artifact to get structured findings.
+4. **Read file**: Use Read tool on the caller-written or existing artifact to get structured findings.
 
 5. **Present findings** using this format. Omit empty sections.
 
@@ -260,9 +263,12 @@ TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit
    - Resolve relative paths under the caller worktree (PROJECT `Worktree:` value, ISSUE `worktree` from the input JSON, or current repo root when empty).
    - Reject absolute paths outside the caller worktree; use the fallback `tmp/...` path instead.
 
-3. **Write artifact**: Ensure `tmp/` exists in the caller worktree. Write the inline JSON exactly to the resolved absolute path in the caller worktree.
+3. **Materialize artifact**:
+   - If inline JSON is present, ensure `tmp/` exists in the caller worktree and write the inline JSON exactly to the resolved absolute path in the caller worktree.
+   - If inline JSON is missing but the returned `File:` path resolves to an already-readable artifact inside the caller worktree, skip writing and use that existing artifact.
+   - Otherwise halt and request a TPM rerun with inline JSON.
 
-4. **Read file**: Use Read tool on the caller-written artifact to get structured findings.
+4. **Read file**: Use Read tool on the caller-written or existing artifact to get structured findings.
 
 ---
 
