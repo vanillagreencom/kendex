@@ -346,7 +346,7 @@ For each file flagged as overlapping in § 2.1:
 | ⏭️ | #[P] | [ISSUE_ID] - [TITLE] | Review threads |
 | ❌ | #[Q] | [ISSUE_ID] - [TITLE] | Merge conflicts |
 
-Total: [N] PRs merged | Synced: origin fetch/ff-only merge via git-https-auth
+Total: [N] PRs merged | Synced: origin fetch via git-https-auth + local ff-only merge
 
 ### 🧹 STALE CLEANUP
 
