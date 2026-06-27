@@ -15,6 +15,7 @@ import {
 	readTaskRegistry,
 	recordTaskDispatchFailure,
 	refreshTaskDiagnostics,
+	setAfterCompletionArchiveForTests,
 	writePaneRegistry,
 	writeTaskRegistry,
 } from "../extensions/subagent/tasks.js";
@@ -327,6 +328,66 @@ describe("needs_completion cwd snapshots", () => {
 			expect(emitted.some((event) => event.name === "subagents:completed")).toBe(true);
 		} finally {
 			setFileLockOptionsForTests();
+			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
+			rmSync(runtimeRoot, { force: true, recursive: true });
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("pollPaneCompletions repairs archive path after post-archive registry lock timeout", async () => {
+		const runtimeRoot = tempDir("needs-completion-runtime-");
+		const cwd = tempGitRepo();
+		let lockDir: string | undefined;
+		try {
+			await seedPaneTask(runtimeRoot, cwd, "task-archive-repair");
+			const outboxFile = join(runtimeRoot, "outbox", "rust", "task-archive-repair.json");
+			mkdirSync(dirname(outboxFile), { recursive: true });
+			writeFileSync(outboxFile, JSON.stringify({
+				agent: "rust",
+				filesChanged: ["x.ts"],
+				status: "completed",
+				summary: "done with archive repair",
+				taskId: "task-archive-repair",
+				validation: ["ok"],
+			}), "utf8");
+			const emitted: Array<{ name: string; payload: any }> = [];
+			setAfterCompletionArchiveForTests(({ runtimeRoot: hookRuntimeRoot }) => {
+				lockDir = holdTaskRegistryLock(hookRuntimeRoot);
+				forceFastRegistryLockTimeout();
+				setAfterCompletionArchiveForTests();
+			});
+
+			const firstCount = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const firstPersisted = (await readTaskRegistry(runtimeRoot))["task-archive-repair"]!;
+
+			expect(firstCount).toBe(1);
+			expect(firstPersisted.status).toBe("completed");
+			expect(firstPersisted.completionArchivePath).toBeUndefined();
+			expect(firstPersisted.completionSourcePath).toBe(outboxFile);
+			expect(existsSync(outboxFile)).toBe(true);
+			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(1);
+
+			setFileLockOptionsForTests();
+			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
+			const retryCount = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const repaired = (await readTaskRegistry(runtimeRoot))["task-archive-repair"]!;
+
+			expect(retryCount).toBe(0);
+			expect(repaired.status).toBe("completed");
+			expect(repaired.completionArchivePath).toContain(join(runtimeRoot, "processed", "rust"));
+			expect(existsSync(repaired.completionArchivePath!)).toBe(true);
+			expect(existsSync(outboxFile)).toBe(false);
+			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(1);
+		} finally {
+			setAfterCompletionArchiveForTests();
+			setFileLockOptionsForTests();
+			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
 			rmSync(runtimeRoot, { force: true, recursive: true });
 			rmSync(cwd, { force: true, recursive: true });

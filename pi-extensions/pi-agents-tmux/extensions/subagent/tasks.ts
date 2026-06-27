@@ -713,13 +713,47 @@ export function formatCompletionGroup(completions: PaneCompletionDetails[]): str
 
 const paneCompletionPollLocks = new Set<string>();
 const emittedPaneCompletionKeys = new Set<string>();
+let afterCompletionArchiveForTests: ((context: { archivePath: string; filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void) | undefined;
 
 export function paneCompletionDedupKey(runtimeRoot: string, agent: string, taskId: string): string {
 	return `${normalizedPath(runtimeRoot)}\0${agent}\0${taskId}`;
 }
 
+export function setAfterCompletionArchiveForTests(hook?: (context: { archivePath: string; filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void): void {
+	afterCompletionArchiveForTests = hook;
+}
+
 function warnCompletionRetryableLock(filePath: string, error: unknown): void {
 	console.warn(`pi-agents-tmux completion collection could not persist task registry state while the registry lock was busy; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+}
+
+async function ensureCompletionOutboxRetrySource(filePath: string, archivePath: string, completion: PaneCompletion, error: unknown): Promise<void> {
+	if (await fileExists(filePath)) return;
+	try {
+		await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+		await fs.promises.rename(archivePath, filePath);
+		return;
+	} catch (restoreError) {
+		if (await fileExists(filePath)) return;
+		try {
+			await atomicWriteJson(filePath, completion);
+			return;
+		} catch (writeError) {
+			console.error(`pi-agents-tmux completion retry source restore failed for ${filePath}: ${stringifyError(writeError)}; archive=${archivePath}; original persistence error: ${stringifyError(error)}; restore error: ${stringifyError(restoreError)}`);
+		}
+	}
+}
+
+async function persistCompletionArchivePath(runtimeRoot: string, taskId: string, archivePath: string, updatedAt: string): Promise<PaneTaskRegistry> {
+	return updateTaskRegistry(runtimeRoot, (records) => {
+		const existing = records[taskId];
+		if (!existing || (!isTerminalTaskStatus(existing.status) && existing.status !== "needs_completion")) return;
+		records[taskId] = {
+			...existing,
+			completionArchivePath: archivePath,
+			updatedAt,
+		};
+	});
 }
 
 export async function pollPaneCompletions(runtimeRoot: string, pi: ExtensionAPI, triggerTurn = false): Promise<number> {
@@ -775,7 +809,15 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 					|| Boolean(existing && existing.agent === agentName && (isTerminalTaskStatus(existing.status) || existing.status === "needs_completion") && (existing.completedAt || existing.completionArchivePath));
 				if (alreadyEmitted) {
 					try {
-						await archiveCompletion(runtimeRoot, agentName, filePath);
+						const archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
+						await afterCompletionArchiveForTests?.({ archivePath, filePath, runtimeRoot, taskId });
+						try {
+							tasks = await persistCompletionArchivePath(runtimeRoot, taskId, archivePath, new Date().toISOString());
+						} catch (error) {
+							await ensureCompletionOutboxRetrySource(filePath, archivePath, completion, error);
+							if (isFileLockTimeoutError(error)) warnCompletionRetryableLock(filePath, error);
+							else console.error(`pi-agents-tmux completion archive path persistence failed after terminal task state was saved; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+						}
 					} catch (error) {
 						console.warn(`pi-agents-tmux completion archive failed for already-persisted task state; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
 					}
@@ -810,18 +852,14 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				try {
 					archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
 					detail = { ...detail, archivePath };
+					await afterCompletionArchiveForTests?.({ archivePath, filePath, runtimeRoot, taskId: detail.taskId });
 					try {
-						tasks = await updateTaskRegistry(runtimeRoot, (records) => {
-							const existing = records[detail.taskId];
-							if (!existing || (!isTerminalTaskStatus(existing.status) && existing.status !== "needs_completion")) return;
-							records[detail.taskId] = {
-								...existing,
-								completionArchivePath: archivePath,
-								updatedAt: detail.completedAt,
-							};
-						});
+						tasks = await persistCompletionArchivePath(runtimeRoot, detail.taskId, archivePath, detail.completedAt);
 					} catch (error) {
-						console.warn(`pi-agents-tmux completion archive path persistence failed after terminal task state was saved: ${stringifyError(error)}`);
+						await ensureCompletionOutboxRetrySource(filePath, archivePath, completion, error);
+						detail = { ...detail, archivePath: undefined };
+						if (isFileLockTimeoutError(error)) warnCompletionRetryableLock(filePath, error);
+						else console.error(`pi-agents-tmux completion archive path persistence failed after terminal task state was saved; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
 					}
 				} catch (error) {
 					console.warn(`pi-agents-tmux completion archive failed after terminal task state was saved; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
