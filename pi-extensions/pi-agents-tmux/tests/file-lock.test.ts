@@ -15,7 +15,7 @@ test("acquireFileLock waits long enough to reap stale locks before timing out", 
 	const lockDir = `${filePath}.lock`;
 	mkdirSync(lockDir, { recursive: true });
 
-	const release = await acquireFileLock(filePath, { staleMs: 25, retryMs: 2, timeoutMs: 1 });
+	const release = await acquireFileLock(filePath, { staleMs: 100, retryMs: 5, timeoutMs: 1 });
 
 	assert.equal(existsSync(lockDir), true);
 	await release();

@@ -34,6 +34,7 @@ import {
 	cycleAgentDashboard,
 	normalizeAgentDashboardVisibility,
 } from "./dashboard-visibility.js";
+import { isFileLockTimeoutError } from "./file-lock.js";
 import {
 	addArtifactPathSection,
 	addSectionHeading,
@@ -636,7 +637,11 @@ export default function (pi: ExtensionAPI) {
 		return diagnostics;
 	};
 	const warnBestEffortRegistryFailure = (context: string, error: unknown) => {
-		console.warn(`pi-agents-tmux ${context} skipped: ${stringifyError(error)}`);
+		if (isFileLockTimeoutError(error)) {
+			console.warn(`pi-agents-tmux ${context} skipped while the task registry lock was busy: ${stringifyError(error)}`);
+			return;
+		}
+		console.error(`pi-agents-tmux ${context} failed: ${stringifyError(error)}`);
 	};
 
 	const persistTaskEvent = (event: Record<string, unknown>, status: PaneTaskStatus) => {
@@ -896,6 +901,7 @@ export default function (pi: ExtensionAPI) {
 						: { record: refreshed.record, updated: false };
 					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
 				} catch (error) {
+					if (!isFileLockTimeoutError(error)) throw error;
 					warnBestEffortRegistryFailure(`dashboard sync for task ${record.taskId}`, error);
 					updateDashboardFromTaskRecord(record, runtimeRoot);
 				}

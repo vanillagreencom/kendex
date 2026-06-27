@@ -12,6 +12,7 @@ interface LockOptions {
 const DEFAULT_STALE_MS = 30_000;
 const DEFAULT_RETRY_MS = 25;
 const DEFAULT_TIMEOUT_MS = 45_000;
+let fileLockOptionsForTests: LockOptions | undefined;
 
 export class FileLockTimeoutError extends Error {
 	constructor(
@@ -25,6 +26,10 @@ export class FileLockTimeoutError extends Error {
 
 export function isFileLockTimeoutError(error: unknown): error is FileLockTimeoutError {
 	return error instanceof FileLockTimeoutError || (error instanceof Error && error.name === "FileLockTimeoutError");
+}
+
+export function setFileLockOptionsForTests(opts?: LockOptions): void {
+	fileLockOptionsForTests = opts;
 }
 
 function effectiveTimeoutMs(timeoutMs: number, staleMs: number, retryMs: number): number {
@@ -119,7 +124,7 @@ export async function acquireFileLock(filePath: string, opts: LockOptions = {}):
 			};
 		}
 
-		await clearStaleLock(lockDir, staleMs);
+		if (await clearStaleLock(lockDir, staleMs)) continue;
 
 		if (Date.now() - start > timeoutMs) {
 			throw new FileLockTimeoutError(filePath, timeoutMs);
@@ -140,7 +145,7 @@ export async function acquireFileLock(filePath: string, opts: LockOptions = {}):
  */
 export async function withCrossProcessFileLock<T>(filePath: string, fn: () => Promise<T>, opts?: LockOptions): Promise<T> {
 	return withFileMutationQueue(filePath, async () => {
-		const release = await acquireFileLock(filePath, opts);
+		const release = await acquireFileLock(filePath, opts ?? fileLockOptionsForTests);
 		try {
 			return await fn();
 		} finally {

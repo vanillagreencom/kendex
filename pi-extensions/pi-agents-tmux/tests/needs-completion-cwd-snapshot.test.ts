@@ -7,6 +7,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
 import { setGitExecFileForTests } from "../extensions/subagent/cwd-snapshot.js";
+import { setFileLockOptionsForTests } from "../extensions/subagent/file-lock.js";
+import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import {
 	markTaskNeedsCompletion,
 	pollPaneCompletions,
@@ -20,6 +22,16 @@ import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
 function tempDir(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
+}
+
+function holdTaskRegistryLock(runtimeRoot: string): string {
+	const lockDir = `${taskRegistryPath(runtimeRoot)}.lock`;
+	mkdirSync(lockDir, { recursive: true });
+	return lockDir;
+}
+
+function forceFastRegistryLockTimeout(): void {
+	setFileLockOptionsForTests({ retryMs: 1, staleMs: Number.POSITIVE_INFINITY, timeoutMs: 5 });
 }
 
 function tempGitRepo(): string {
@@ -268,6 +280,59 @@ describe("needs_completion cwd snapshots", () => {
 		}
 	});
 
+	test("pollPaneCompletions leaves completion outbox retryable when terminal registry write times out", async () => {
+		const runtimeRoot = tempDir("needs-completion-runtime-");
+		const cwd = tempGitRepo();
+		try {
+			await seedPaneTask(runtimeRoot, cwd, "task-lock-completed");
+			const outboxFile = join(runtimeRoot, "outbox", "rust", "task-lock-completed.json");
+			mkdirSync(dirname(outboxFile), { recursive: true });
+			writeFileSync(outboxFile, JSON.stringify({
+				agent: "rust",
+				filesChanged: [],
+				status: "completed",
+				summary: "done under contention",
+				taskId: "task-lock-completed",
+				validation: [],
+			}), "utf8");
+			const emitted: Array<{ name: string; payload: any }> = [];
+			const lockDir = holdTaskRegistryLock(runtimeRoot);
+			forceFastRegistryLockTimeout();
+
+			const lockedCount = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const lockedRecord = (await readTaskRegistry(runtimeRoot))["task-lock-completed"]!;
+
+			expect(lockedCount).toBe(0);
+			expect(lockedRecord.status).toBe("running");
+			expect(existsSync(outboxFile)).toBe(true);
+			expect(emitted).toHaveLength(0);
+
+			setFileLockOptionsForTests();
+			rmSync(lockDir, { force: true, recursive: true });
+			const retryCount = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const persisted = (await readTaskRegistry(runtimeRoot))["task-lock-completed"]!;
+
+			expect(retryCount).toBe(1);
+			expect(persisted.status).toBe("completed");
+			expect(persisted.summary).toBe("done under contention");
+			expect(persisted.completionSourcePath).toBe(outboxFile);
+			expect(persisted.completionArchivePath).toContain(join(runtimeRoot, "processed", "rust"));
+			expect(existsSync(outboxFile)).toBe(false);
+			expect(emitted.some((event) => event.name === "subagents:completed")).toBe(true);
+		} finally {
+			setFileLockOptionsForTests();
+			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
+			rmSync(runtimeRoot, { force: true, recursive: true });
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
 	test("pollPaneCompletions snapshots malformed completion outbox", async () => {
 		const runtimeRoot = tempDir("needs-completion-runtime-");
 		const cwd = tempGitRepo();
@@ -408,6 +473,32 @@ describe("needs_completion cwd snapshots", () => {
 			expect(refreshed.record.diagnostics?.join("\n")).toContain("Malformed completion JSON");
 			expect(persisted.cwdSnapshot).toEqual(refreshed.record.cwdSnapshot);
 		} finally {
+			rmSync(runtimeRoot, { force: true, recursive: true });
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("refreshTaskDiagnostics returns fallback diagnostics when registry update lock times out", async () => {
+		const runtimeRoot = tempDir("needs-completion-runtime-");
+		const cwd = tempGitRepo();
+		try {
+			const doneFile = join(runtimeRoot, "done", "rust", "task-refresh-lock.md");
+			mkdirSync(dirname(doneFile), { recursive: true });
+			writeFileSync(doneFile, "done", "utf8");
+			const record = await seedPaneTask(runtimeRoot, cwd, "task-refresh-lock", { doneFile });
+			holdTaskRegistryLock(runtimeRoot);
+			forceFastRegistryLockTimeout();
+
+			const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
+			const persisted = (await readTaskRegistry(runtimeRoot))["task-refresh-lock"]!;
+
+			expect(refreshed.record.status).toBe("needs_completion");
+			expect(refreshed.diagnostics.join("\n")).toContain("Task registry refresh skipped");
+			expect(refreshed.diagnostics.join("\n")).toContain("Expected outbox");
+			expect(persisted.status).toBe("running");
+		} finally {
+			setFileLockOptionsForTests();
+			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
 			rmSync(runtimeRoot, { force: true, recursive: true });
 			rmSync(cwd, { force: true, recursive: true });
 		}

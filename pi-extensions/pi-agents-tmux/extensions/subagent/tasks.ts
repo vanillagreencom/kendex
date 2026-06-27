@@ -718,6 +718,10 @@ export function paneCompletionDedupKey(runtimeRoot: string, agent: string, taskI
 	return `${normalizedPath(runtimeRoot)}\0${agent}\0${taskId}`;
 }
 
+function warnCompletionRetryableLock(filePath: string, error: unknown): void {
+	console.warn(`pi-agents-tmux completion collection could not persist task registry state while the registry lock was busy; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+}
+
 export async function pollPaneCompletions(runtimeRoot: string, pi: ExtensionAPI, triggerTurn = false): Promise<number> {
 	const lockKey = normalizedPath(runtimeRoot);
 	if (paneCompletionPollLocks.has(lockKey)) return 0;
@@ -768,12 +772,16 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				const dedupKey = paneCompletionDedupKey(runtimeRoot, agentName, taskId);
 				const existing = tasks[taskId];
 				const alreadyEmitted = emittedPaneCompletionKeys.has(dedupKey)
-					|| Boolean(existing && existing.agent === agentName && isTerminalTaskStatus(existing.status) && (existing.completedAt || existing.completionArchivePath));
-				const archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
-				if (alreadyEmitted) continue;
-				const detail = paneCompletionDetailsFromCompletion(completion, agentDir.name, filePath, archivePath, registry, tasks);
-				completions.push(detail);
-				emittedPaneCompletionKeys.add(dedupKey);
+					|| Boolean(existing && existing.agent === agentName && (isTerminalTaskStatus(existing.status) || existing.status === "needs_completion") && (existing.completedAt || existing.completionArchivePath));
+				if (alreadyEmitted) {
+					try {
+						await archiveCompletion(runtimeRoot, agentName, filePath);
+					} catch (error) {
+						console.warn(`pi-agents-tmux completion archive failed for already-persisted task state; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+					}
+					continue;
+				}
+				let detail = paneCompletionDetailsFromCompletion(completion, agentDir.name, filePath, undefined, registry, tasks);
 				tasks = await updateTaskRegistry(runtimeRoot, (records) => {
 					const existing = records[detail.taskId];
 					records[detail.taskId] = {
@@ -786,7 +794,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						kind: "pane",
 						paneId: detail.paneId,
 						completionSourcePath: detail.sourcePath,
-						completionArchivePath: detail.archivePath,
+						completionArchivePath: undefined,
 						transcriptPath: detail.transcriptPath,
 						summary: detail.summary,
 						filesChanged: detail.filesChanged,
@@ -798,6 +806,28 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						completedAt: detail.completedAt,
 					};
 				});
+				let archivePath: string | undefined;
+				try {
+					archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
+					detail = { ...detail, archivePath };
+					try {
+						tasks = await updateTaskRegistry(runtimeRoot, (records) => {
+							const existing = records[detail.taskId];
+							if (!existing || (!isTerminalTaskStatus(existing.status) && existing.status !== "needs_completion")) return;
+							records[detail.taskId] = {
+								...existing,
+								completionArchivePath: archivePath,
+								updatedAt: detail.completedAt,
+							};
+						});
+					} catch (error) {
+						console.warn(`pi-agents-tmux completion archive path persistence failed after terminal task state was saved: ${stringifyError(error)}`);
+					}
+				} catch (error) {
+					console.warn(`pi-agents-tmux completion archive failed after terminal task state was saved; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
+				}
+				completions.push(detail);
+				emittedPaneCompletionKeys.add(dedupKey);
 				const updatedRecord = tasks[detail.taskId];
 				const completionEvent = detail.status === "completed"
 					? "subagents:completed"
@@ -840,6 +870,10 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 			} catch (error) {
 				const code = typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined;
 				if (!parseFailure && code === "ENOENT") continue;
+				if (isFileLockTimeoutError(error)) {
+					warnCompletionRetryableLock(filePath, error);
+					continue;
+				}
 				let oldEnough = true;
 				try {
 					const stat = await fs.promises.stat(filePath);
@@ -852,11 +886,18 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				const diagnostic = parseFailure
 					? completionParseErrorMessage(filePath, error)
 					: `Unable to collect completion JSON at ${filePath}: ${stringifyError(error)}. The file was left in place for retry.`;
-				const updated = await markTaskNeedsCompletion(runtimeRoot, agentDir.name, taskId, {
-					diagnostic,
-					outboxFile: filePath,
-					transcriptPath: registry[agentDir.name]?.sessionFile,
-				});
+				let updated: PaneTaskRecord | undefined;
+				try {
+					updated = await markTaskNeedsCompletion(runtimeRoot, agentDir.name, taskId, {
+						diagnostic,
+						outboxFile: filePath,
+						transcriptPath: registry[agentDir.name]?.sessionFile,
+					});
+				} catch (markError) {
+					if (!isFileLockTimeoutError(markError)) throw markError;
+					warnCompletionRetryableLock(filePath, markError);
+					continue;
+				}
 				if (updated) {
 					tasks = { ...tasks, [taskId]: updated };
 					emitSubagentEvent(pi, "subagents:needs_completion", {
