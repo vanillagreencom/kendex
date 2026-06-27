@@ -510,6 +510,53 @@ describe("needs_completion cwd snapshots", () => {
 		}
 	});
 
+	test("pollPaneCompletions preserves needs_completion when a later outbox has unknown status", async () => {
+		const runtimeRoot = tempDir("needs-completion-runtime-");
+		const cwd = tempGitRepo();
+		try {
+			const existingOutboxFile = join(runtimeRoot, "outbox", "rust", "task-late-unknown-watchdog.json");
+			await seedPaneTask(runtimeRoot, cwd, "task-late-unknown", {
+				completedAt: "2026-05-20T00:00:02.000Z",
+				completionSourcePath: existingOutboxFile,
+				status: "needs_completion",
+				summary: "needs completion before late malformed fallback",
+				updatedAt: "2026-05-20T00:00:02.000Z",
+			});
+			const outboxFile = join(runtimeRoot, "outbox", "rust", "task-late-unknown.json");
+			mkdirSync(dirname(outboxFile), { recursive: true });
+			writeFileSync(outboxFile, JSON.stringify({
+				agent: "rust",
+				filesChanged: ["x.ts"],
+				status: "done-ish",
+				summary: "late malformed fallback",
+				taskId: "task-late-unknown",
+				validation: ["ok"],
+			}), "utf8");
+			const emitted: Array<{ name: string; payload: any }> = [];
+
+			const count = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const persisted = (await readTaskRegistry(runtimeRoot))["task-late-unknown"]!;
+
+			expect(count).toBe(0);
+			expect(persisted.status).toBe("needs_completion");
+			expect(persisted.summary).toBe("needs completion before late malformed fallback");
+			expect(persisted.completionSourcePath).toBe(existingOutboxFile);
+			expect(persisted.completionArchivePath).toContain(join(runtimeRoot, "processed", "rust"));
+			expect(existsSync(outboxFile)).toBe(false);
+			expect(emitted.filter((event) => event.name === "subagents:failed")).toHaveLength(0);
+		} finally {
+			setAfterCompletionArchiveForTests();
+			setBeforeCompletionRegistryUpdateForTests();
+			setFileLockOptionsForTests();
+			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
+			rmSync(runtimeRoot, { force: true, recursive: true });
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
 	test("pollPaneCompletions snapshots malformed completion outbox", async () => {
 		const runtimeRoot = tempDir("needs-completion-runtime-");
 		const cwd = tempGitRepo();

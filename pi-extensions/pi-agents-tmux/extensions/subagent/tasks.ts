@@ -736,7 +736,7 @@ function isPersistedCompletionDuplicate(existing: PaneTaskRecord | undefined, ag
 	if (!existing || existing.agent !== agentName) return false;
 	if (!existing.completedAt && !existing.completionArchivePath) return false;
 	if (isTerminalTaskStatus(existing.status)) return true;
-	return existing.status === "needs_completion" && status === "needs_completion";
+	return existing.status === "needs_completion" && !isTerminalTaskStatus(status);
 }
 
 async function ensureCompletionOutboxRetrySource(filePath: string, archivePath: string, completion: PaneCompletion, error: unknown): Promise<void> {
