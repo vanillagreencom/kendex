@@ -92,7 +92,7 @@ Examples:
   projects.sh delete <id>
 
   # Project dependencies
-  projects.sh list-dependencies <project-id>
+  projects.sh list-dependencies <id-or-name>
   projects.sh add-dependency <project-id> --blocked-by <other-id>
   projects.sh add-dependency <project-id> --blocks <other-id>
   projects.sh remove-dependency <relation-id>
