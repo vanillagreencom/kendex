@@ -60,11 +60,13 @@ Prefer targeted remotes in automation:
 
 ```bash
 ./scripts/git-https-auth -C "$repo" fetch --prune origin
-./scripts/git-https-auth -C "$repo" pull --rebase origin "$base_branch"
+./scripts/git-https-auth -C "$repo" merge --ff-only "origin/$base_branch"
 ```
 
 Avoid `git fetch --all` in PR closure workflows unless every remote is required;
 optional secondary remotes should not block syncing `origin` after a merge.
+Use the explicit fetched `origin/$base_branch` ref for post-merge sync so
+automation avoids `git pull`'s branch/ref resolution ambiguity.
 
 ## Adding a Command
 
