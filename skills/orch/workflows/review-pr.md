@@ -71,7 +71,7 @@ Use the outputs as `CYCLES`, `FIXED`, and `ESCALATED`.
 
 If `CYCLES > 0`: include the "Previous review cycle context" section in the delegation prompt, populated from `FIXED` and `ESCALATED`.
 
-## 2. Launch Review Agents
+## 2. Prepare Review Agents
 
 **Detect team context**:
 ```bash
@@ -88,7 +88,7 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
-**Codex runtime agent type rule**: For each reviewer in `AGENTS`, first call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys: persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason.
+**Codex runtime agent type rule**: When § 2.2 launches a reviewer, first call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys: persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason.
 
 Before any spawn, read existing reviewer state:
 ```bash
@@ -97,16 +97,9 @@ Before any spawn, read existing reviewer state:
 ```
 Use the outputs as `EXISTING_REVIEW_AGENTS` and `EXISTING_REVIEW_AGENT_IDS`.
 
-For each reviewer in `[AGENTS]`: reuse by exact name when `review_agent_ids` points to a live/recoverable session. If only `review_agents` exists, attempt one recovery/resume, then treat as missing. Spawn only the missing, closed, or confirmed-stuck reviewer. Do not respawn already-live reviewers.
+For each reviewer in `[AGENTS]`: classify it as reusable, missing, closed, or confirmed-stuck. Reuse by exact name when `review_agent_ids` points to a live/recoverable session. If only `review_agents` exists, attempt one recovery/resume, then treat as missing. Add only missing, closed, or confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`. Do not respawn already-live reviewers.
 
-After reconciliation, store the active reviewer set:
-  ```bash
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[AGENT_LIST_JSON]'
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_ids '[AGENT_ID_MAP_JSON]'
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
-  ```
-
-**Do NOT delegate yet.** Continue to § 2.1 to resolve external review availability *before* spawning.
+**Do NOT spawn or delegate yet.** Continue to § 2.1 to resolve external review availability before launching reviewers.
 
 ## 2.1 External Review Availability
 
@@ -121,14 +114,26 @@ If the command fails or prints `none`, set `EXTERNAL_REVIEW_REQUESTED=false`. Ot
 
 **Skip if** `EXTERNAL_TARGET` is empty or `"none"`. Set `EXTERNAL_REVIEW_REQUESTED=false` → § 2.2. Otherwise `EXTERNAL_REVIEW_REQUESTED=true` → § 2.2.
 
-## 2.2 Delegate Review Agents
+## 2.2 Launch Review Agents
 
 **Record delegation timestamp** before delegating — gates the § 3 watchdog filesystem fallback against stale JSONs from earlier cycles:
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
-Delegate to each active reviewer in `[AGENTS]` in parallel. **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the *same parallel batch*.
+Launch internal reviewer work and optional external review in one coordinated step:
+- For each reusable reviewer, keep the existing session id and runtime metadata.
+- For each reviewer in `REVIEWERS_TO_LAUNCH`, spawn it now. Follow the Codex runtime agent type rule above when running in Codex.
+
+After launch/reuse, store the active reviewer set:
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[AGENT_LIST_JSON]'
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_ids '[AGENT_ID_MAP_JSON]'
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
+```
+
+- Delegate to each active reviewer in `[AGENTS]` in parallel.
+- **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the same parallel batch.
 
 **Harness-specific batching:**
 - **Claude Code / Codex / OpenCode**: spawn reviewers via the harness sub-agent task API; run the external review shell command in the same delegation step.

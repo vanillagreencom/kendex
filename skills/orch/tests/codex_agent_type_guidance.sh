@@ -55,6 +55,8 @@ assert_contains "$review_pr" "first call the harness spawn API with \`agent_type
 assert_contains "$review_pr" "unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated \`agent_type\`" "review-pr permits generated-agent unavailable fallback"
 assert_contains "$review_pr" "persist the returned id under \`review_agent_ids[reviewer-name]\`" "review-pr keeps id keyed by reviewer name"
 assert_contains "$review_pr" "record runtime metadata under \`review_agent_runtime_types[reviewer-name]\`" "review-pr records reviewer fallback metadata"
+assert_contains "$review_pr" "**Do NOT spawn or delegate yet.** Continue to § 2.1 to resolve external review availability before launching reviewers." "review-pr resolves external availability before reviewer launch"
+assert_contains "$review_pr" "For each reviewer in \`REVIEWERS_TO_LAUNCH\`, spawn it now." "review-pr launches missing reviewers in section 2.2"
 
 assert_contains "$review" "first call the harness spawn API with \`agent_type\` equal to that reviewer name" "review requires reviewer runtime agent_type first"
 assert_contains "$review" "unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated \`agent_type\`" "review permits generated-agent unavailable fallback"
