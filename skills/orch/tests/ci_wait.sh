@@ -154,6 +154,18 @@ case "${1:-}" in
           exit 8
         fi
       fi
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "expected_once" ]]; then
+        count=0
+        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
+        if [[ "$count" -eq 1 ]]; then
+          echo '[{"name":"build","state":"SUCCESS"},{"name":"required","state":"EXPECTED"}]'
+          exit 8
+        fi
+      fi
       echo '[{"name":"build","state":"SUCCESS"}]'
       exit 0
     fi
@@ -178,6 +190,12 @@ run_wait() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30)
+}
+
+run_wait_short() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5)
 }
 
 echo "=== ci-wait auth handling ==="
@@ -281,6 +299,19 @@ set -e
 assert_eq "$rc" "0" "case8: pending checks exit code keeps polling" "$stderr"
 assert_contains "$output" "CI passed" "case8: ci-wait reaches CI passed after pending checks"
 assert_eq "$(cat "$checks_count_file")" "2" "case8: ci-wait polls again after pending JSON" "$stderr"
+
+# Case 9: WAITING/REQUESTED/EXPECTED states must count as pending even when
+# bucket is absent. Otherwise one success plus one expected required check can
+# age through stale-check handling instead of polling.
+stderr="$TMP_ROOT/case9.err"
+checks_count_file="$TMP_ROOT/case9-checks-count"
+set +e
+output=$(run_wait_short STUB_PR_CHECKS_MODE=expected_once STUB_PR_CHECKS_COUNT_FILE="$checks_count_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case9: EXPECTED checks are treated as pending" "$stderr"
+assert_contains "$output" "CI passed" "case9: ci-wait reaches CI passed after expected check clears"
+assert_eq "$(cat "$checks_count_file")" "2" "case9: ci-wait polls again after EXPECTED JSON" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

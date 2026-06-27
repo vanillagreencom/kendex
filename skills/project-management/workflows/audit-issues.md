@@ -258,17 +258,13 @@ TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit
 
    Treat `File:` as a destination hint only; do not assume the child agent wrote that file. If inline JSON is missing and the returned path is not already readable in the caller worktree, halt and request a TPM rerun with inline JSON.
 
-2. **Resolve artifact path**:
-   - Use the returned `File:` path if present; otherwise choose `tmp/audit-project-YYYYMMDD-HHMMSS.json` (PROJECT) or `tmp/audit-issues-YYYYMMDD-HHMMSS.json` (ISSUE).
-   - Resolve relative paths under the caller worktree (PROJECT `Worktree:` value, ISSUE `worktree` from the input JSON, or current repo root when empty).
-   - Reject absolute paths outside the caller worktree; use the fallback `tmp/...` path instead.
-
-3. **Materialize artifact**:
-   - If inline JSON is present, ensure `tmp/` exists in the caller worktree and write the inline JSON exactly to the resolved absolute path in the caller worktree.
-   - If inline JSON is missing but the returned `File:` path resolves to an already-readable artifact inside the caller worktree, skip writing and use that existing artifact.
-   - Otherwise halt and request a TPM rerun with inline JSON.
-
-4. **Read file**: Use Read tool on the caller-written or existing artifact to get structured findings.
+2. **Resolve and read the artifact**:
+   - Caller worktree = PROJECT `Worktree:` value, ISSUE `worktree` from the input JSON, or current repo root when empty.
+   - Artifact path = returned `File:` path when present, otherwise `tmp/audit-project-YYYYMMDD-HHMMSS.json` (PROJECT) or `tmp/audit-issues-YYYYMMDD-HHMMSS.json` (ISSUE), resolved under the caller worktree.
+   - If the path is absolute outside the caller worktree, discard it and use the fallback `tmp/...` path.
+   - If inline JSON is present, ensure `tmp/` exists and write the inline JSON exactly to the resolved path.
+   - If inline JSON is absent, use the resolved path only when it already exists and is readable.
+   - Read the resulting file. If neither write nor readable-file fallback is possible, halt and request a TPM rerun with inline JSON.
 
 ---
 

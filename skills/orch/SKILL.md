@@ -195,6 +195,8 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
 | `BOT_REVIEWERS` | Comma-separated bot usernames to wait for | Auto-detects |
 | `BOT_CHECK_NAME` | CI check name to treat as early review signal | — |
+| `BOT_REVIEW_SETTLE_SECONDS` | Extra re-check window after Codex-style approval signals so late inline review threads are caught | `180` |
+| `BOT_REVIEW_SETTLE_INTERVAL` | Poll interval during the terminal settle window | `15` |
 
 ## System Dependencies
 

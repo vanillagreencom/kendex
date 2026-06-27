@@ -22,6 +22,11 @@
 #                          When unset, PR-level approved reviewDecision can
 #                          still resolve stale pending bot signals if no
 #                          unresolved review threads remain.
+#   BOT_REVIEW_SETTLE_SECONDS
+#                          Seconds to wait/re-check after Codex-style approval
+#                          signals before declaring review complete. Default 180.
+#   BOT_REVIEW_SETTLE_INTERVAL
+#                          Poll interval during terminal settle. Default 15.
 #
 # Exit codes:
 #   0 - All configured reviewers reached a terminal state (approved/changes/skipped)
@@ -259,6 +264,8 @@ REVIEWERS=("${trimmed[@]}")
 
 PHASE3_MAX=300       # Sticky-checklist wait after terminal verdict
 PHASE3_INTERVAL=10
+BOT_REVIEW_SETTLE_SECONDS="${BOT_REVIEW_SETTLE_SECONDS:-180}"
+BOT_REVIEW_SETTLE_INTERVAL="${BOT_REVIEW_SETTLE_INTERVAL:-15}"
 
 # Per-iteration: collect all reviewers' status into a JSON array.
 collect_reviewers() {
@@ -446,19 +453,86 @@ wait_for_checklist() {
 
 pr_terminal_fallback_applied() {
   local entries="$1"
-  jq -e 'any(.signals[]? == "pr_review_decision:approved")' >/dev/null <<<"$entries"
+  jq -e 'any(.[]?.signals[]?; . == "pr_review_decision:approved")' >/dev/null <<<"$entries"
+}
+
+requires_terminal_settle() {
+  local entries="$1"
+  local verdict
+  verdict=$(aggregate_verdict "$entries")
+  [[ "$verdict" == "approved" ]] || return 1
+  jq -e '
+    any(.[]?.signals[]?; . == "reaction:+1" or . == "pr_review_decision:approved")
+  ' >/dev/null <<<"$entries"
+}
+
+codex_late_inline_changes_detected() {
+  local entries="$1"
+  jq -e '
+    any(.[]?;
+      .status == "changes"
+      and ((.unresolved_threads // 0) > 0)
+      and ((.signals // []) | any(startswith("inline:")))
+      and ((.signals // []) | any(. == "reaction:+1" or . == "pr_review_decision:approved"))
+    )
+  ' >/dev/null <<<"$entries"
+}
+
+wait_for_terminal_settle() {
+  local entries="$1"
+  requires_terminal_settle "$entries" || return 0
+
+  local settle_seconds="$BOT_REVIEW_SETTLE_SECONDS"
+  [[ "$settle_seconds" =~ ^[0-9]+$ ]] || settle_seconds=180
+  [[ "$settle_seconds" -le 0 ]] && return 0
+
+  local interval="$BOT_REVIEW_SETTLE_INTERVAL"
+  [[ "$interval" =~ ^[0-9]+$ ]] || interval=15
+  [[ "$interval" -le 0 ]] && interval=1
+
+  update_elapsed
+  local settle_end=$((elapsed + settle_seconds))
+  [[ "$settle_end" -gt "$MAX_WAIT" ]] && settle_end="$MAX_WAIT"
+
+  while ! deadline_reached && [[ "$elapsed" -lt "$settle_end" ]]; do
+    if ! $JSON_OUTPUT; then
+      echo "Waiting briefly for late bot review threads..." >&2
+    fi
+    local remaining_phase=$((settle_end - elapsed))
+    [[ "$remaining_phase" -le 0 ]] && break
+    local sleep_for="$interval"
+    [[ "$sleep_for" -gt "$remaining_phase" ]] && sleep_for="$remaining_phase"
+    sleep_until_deadline "$sleep_for" || break
+
+    local fresh
+    fresh=$(collect_reviewers_or_exit)
+    local fresh_verdict
+    fresh_verdict=$(aggregate_verdict "$fresh")
+    if [[ "$fresh_verdict" != "approved" ]] || any_blocking "$fresh"; then
+      return 1
+    fi
+    if jq -e 'any(.[]?; (.unresolved_threads // 0) > 0)' >/dev/null <<<"$fresh"; then
+      return 1
+    fi
+  done
+  return 0
 }
 
 terminal_posting_done() {
   local entries="$1"
 
   # The PR-level fallback already verified that no unresolved review threads
-  # remain. Do not wait on stale sticky checklist prose after that point.
+  # remain. Still apply the terminal settle window because Codex-style inline
+  # threads may appear shortly after early approval signals.
   if pr_terminal_fallback_applied "$entries"; then
-    return 0
+    wait_for_terminal_settle "$entries"
+    return $?
   fi
 
-  wait_for_checklist
+  if ! wait_for_checklist; then
+    return 1
+  fi
+  wait_for_terminal_settle "$entries"
 }
 
 emit_result() {
@@ -534,6 +608,14 @@ while [ $elapsed -lt $phase1_end ] && [[ -n "$BOT_CHECK_NAME" ]]; do
           emit_result "complete" "$entries"
           exit 0
         else
+          entries=$(collect_reviewers_or_exit)
+          if any_blocking "$entries"; then
+            break
+          fi
+          if codex_late_inline_changes_detected "$entries"; then
+            emit_result "complete" "$entries"
+            exit 0
+          fi
           emit_result "checklist_timeout" "$entries"
           exit 2
         fi
@@ -565,6 +647,10 @@ while ! deadline_reached; do
         # Something regressed to pending while we waited on the checklist.
         # Continue the main loop to re-evaluate.
         continue
+      fi
+      if codex_late_inline_changes_detected "$entries"; then
+        emit_result "complete" "$entries"
+        exit 0
       fi
       emit_result "checklist_timeout" "$entries"
       exit 2

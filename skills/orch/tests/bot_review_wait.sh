@@ -44,7 +44,7 @@ cat > "$FAKE_GITHUB_SH" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "sticky-comment" && "${3:-}" == "--body" ]]; then
-  if [[ "${2:-}" == "3" ]]; then
+  if [[ "${2:-}" == "3" || "${2:-}" == "9" ]]; then
     printf '%s\n' '- [ ] stale checklist item'
   fi
   exit 0
@@ -125,6 +125,19 @@ case "${1:-}" in
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"vg-claude"}}]}}]}}}}}'
         elif [[ "$*" == *"pr=5"* || "$*" == *"pr=6"* ]]; then
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"human-reviewer"}}]}}]}}}}}'
+        elif [[ "$*" == *"pr=7"* || "$*" == *"pr=8"* ]]; then
+          pr_id="7"
+          [[ "$*" == *"pr=8"* ]] && pr_id="8"
+          count_file="${FAKE_GH_STATE_DIR:-}/pr${pr_id}-reactions-count"
+          count=0
+          if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+            count="$(cat "$count_file")"
+          fi
+          if [[ "$count" -ge 2 ]]; then
+            echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector[bot]"}}]}}]}}}}}'
+          else
+            echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+          fi
         else
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
         fi
@@ -146,8 +159,12 @@ case "${1:-}" in
         echo '[]'
         exit 0
         ;;
-      repos/*/pulls/5/reviews|repos/*/pulls/6/reviews)
+      repos/*/pulls/5/reviews|repos/*/pulls/6/reviews|repos/*/pulls/7/reviews|repos/*/pulls/8/reviews)
         echo '[]'
+        exit 0
+        ;;
+      repos/*/pulls/9/reviews)
+        echo '[{"user":{"login":"vg-claude"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:00Z"}]'
         exit 0
         ;;
       repos/*/issues/2/comments)
@@ -192,7 +209,7 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments)
         echo '[]'
         exit 0
         ;;
@@ -205,6 +222,10 @@ JSON
         exit 0
         ;;
       repos/*/issues/4/reactions|repos/*/issues/comments/4001/reactions)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/issues/9/reactions)
         echo '[]'
         exit 0
         ;;
@@ -230,6 +251,34 @@ JSON
         fi
         exit 0
         ;;
+      repos/*/issues/7/reactions)
+        count_file="${FAKE_GH_STATE_DIR:-}/pr7-reactions-count"
+        count=0
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+          count="$(cat "$count_file")"
+        fi
+        count=$((count + 1))
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" ]]; then
+          mkdir -p "$FAKE_GH_STATE_DIR"
+          printf '%s' "$count" > "$count_file"
+        fi
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1"}]'
+        exit 0
+        ;;
+      repos/*/issues/8/reactions)
+        count_file="${FAKE_GH_STATE_DIR:-}/pr8-reactions-count"
+        count=0
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+          count="$(cat "$count_file")"
+        fi
+        count=$((count + 1))
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" ]]; then
+          mkdir -p "$FAKE_GH_STATE_DIR"
+          printf '%s' "$count" > "$count_file"
+        fi
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1"}]'
+        exit 0
+        ;;
       repos/*/issues/comments/5001/reactions)
         echo '[]'
         exit 0
@@ -239,13 +288,13 @@ JSON
   pr)
     case "${2:-}" in
       view)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
           exit 0
         fi
         ;;
       checks)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "8" ]]; then
           echo 'Claude Code	pass	0	https://github.com/example/actions/runs/3'
           exit 0
         fi
@@ -314,11 +363,38 @@ cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"
 BOT_CHECK_NAME="Claude Code"
 EOF
-output=$(run_wait 3 1 5 --json --reviewers 'vg-claude')
+output=$(BOT_REVIEW_SETTLE_SECONDS=0 run_wait 3 1 5 --json --reviewers 'vg-claude')
 assert_eq "$(jq -r .status <<<"$output")" "complete" "PR-level approved reviewDecision resolves stale pending sticky"
 assert_eq "$(jq -r .verdict <<<"$output")" "approved" "PR-level approved fallback returns approved verdict"
 assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "0" "PR-level approved fallback skips stale sticky checklist wait"
 assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "pr_review_decision:approved" "PR-level approved fallback records signal"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+set +e
+output=$(timeout 8s bash -c 'cd "$1" && PATH="$2:$PATH" FAKE_GH_STATE_DIR="$3" BOT_REVIEW_SETTLE_SECONDS=2 BOT_REVIEW_SETTLE_INTERVAL=1 .agents/skills/orch/scripts/bot-review-wait 7 1 5 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$TMP_ROOT/pr7-state")
+code=$?
+set -e
+assert_eq "$code" "0" "Codex-style approval waits for late inline threads"
+assert_eq "$(cat "$TMP_ROOT/pr7-state/pr7-reactions-count")" "3" "Codex-style approval re-reads reviewer status during settle"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "late inline thread emits complete JSON"
+assert_eq "$(jq -r .verdict <<<"$output")" "changes" "late inline thread changes the verdict"
+assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "inline:1" "late inline thread is represented in reviewer signals"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+BOT_CHECK_NAME="Claude Code"
+EOF
+set +e
+output=$(timeout 8s bash -c 'cd "$1" && PATH="$2:$PATH" FAKE_GH_STATE_DIR="$3" BOT_REVIEW_SETTLE_SECONDS=2 BOT_REVIEW_SETTLE_INTERVAL=1 .agents/skills/orch/scripts/bot-review-wait 8 1 5 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$TMP_ROOT/pr8-state")
+code=$?
+set -e
+assert_eq "$code" "0" "BOT_CHECK_NAME fast path refreshes after late inline threads"
+assert_eq "$(cat "$TMP_ROOT/pr8-state/pr8-reactions-count")" "3" "BOT_CHECK_NAME fast path re-reads reviewer status during settle"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "BOT_CHECK_NAME late inline thread emits complete JSON"
+assert_eq "$(jq -r .verdict <<<"$output")" "changes" "BOT_CHECK_NAME late inline thread changes the verdict"
+assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "inline:1" "BOT_CHECK_NAME late inline thread is represented in reviewer signals"
 
 set +e
 output=$(run_wait 4 1 1 --json --reviewers 'vg-claude')
@@ -339,6 +415,14 @@ assert_eq "$code" "1" "approved PR with unresolved non-reviewer threads exits at
 assert_eq "$(jq -r .status <<<"$output")" "timeout" "approved PR with unresolved non-reviewer threads emits timeout JSON"
 assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "1" "approved PR with unresolved non-reviewer threads caps elapsed at max wait"
 assert_eq "$(jq -r '.pending_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "approved PR with unresolved non-reviewer threads keeps Codex pending"
+
+set +e
+output=$(run_wait 9 1 1 --json --reviewers 'vg-claude')
+code=$?
+set -e
+assert_eq "$code" "2" "changes verdict with pending sticky checklist exits checklist timeout"
+assert_eq "$(jq -r .status <<<"$output")" "checklist_timeout" "changes verdict with pending sticky checklist emits timeout JSON"
+assert_eq "$(jq -r .verdict <<<"$output")" "changes" "changes verdict with pending sticky checklist preserves changes verdict"
 
 set +e
 output=$(timeout 4s bash -c 'cd "$1" && PATH="$2:$PATH" FAKE_GH_STATE_DIR="$3" .agents/skills/orch/scripts/bot-review-wait 6 10 1 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$TMP_ROOT/state")

@@ -157,9 +157,39 @@ is_transient_failure() {
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
 get_failed_run_id() {
   local pr="$1"
-  gh pr checks "$pr" --repo "$REPO" --json name,state,link 2>/dev/null | \
-    jq -r '.[] | select(.state == "FAILURE") | .link' | \
+  gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link 2>/dev/null | \
+    jq -r '
+      def bucket:
+        (.bucket // (
+          if (.state == "SUCCESS") then "pass"
+          elif (.state == "SKIPPED") then "skipping"
+          elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
+          elif (.state == "CANCELLED") then "cancel"
+          else "fail"
+          end
+        ));
+      .[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .link
+    ' | \
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
+}
+
+classify_checks() {
+  jq -c '
+    def bucket:
+      (.bucket // (
+        if (.state == "SUCCESS") then "pass"
+        elif (.state == "SKIPPED") then "skipping"
+        elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
+        elif (.state == "CANCELLED") then "cancel"
+        else "fail"
+        end
+      ));
+    {
+      pending: [.[] | select(bucket == "pending")],
+      failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))],
+      passed: [.[] | select(bucket == "pass")]
+    }
+  '
 }
 
 checks_stderr=$(mktemp)
@@ -170,7 +200,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
   set +e
-  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state 2>"$checks_stderr")
+  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state,bucket 2>"$checks_stderr")
   checks_status=$?
   set -e
   if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
@@ -199,10 +229,12 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   # Reset no-checks counter once we see checks
   no_checks_count=0
 
-  # Count checks by state
-  pending_count=$(echo "$checks_json" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED")] | length')
-  failed_count=$(echo "$checks_json" | jq '[.[] | select(.state == "FAILURE")] | length')
-  success_count=$(echo "$checks_json" | jq '[.[] | select(.state == "SUCCESS")] | length')
+  # Count checks by GitHub's bucket classifier, with state fallbacks for older
+  # gh output. This must stay aligned with github pr-merge --check.
+  check_classes=$(echo "$checks_json" | classify_checks)
+  pending_count=$(echo "$check_classes" | jq '.pending | length')
+  failed_count=$(echo "$check_classes" | jq '.failed | length')
+  success_count=$(echo "$check_classes" | jq '.passed | length')
 
   # Track if we've observed a fresh run (guards against stale-check race)
   if [ "$pending_count" -gt 0 ]; then
@@ -225,7 +257,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
     fi
 
     echo "CI failed:"
-    echo "$checks_json" | jq -r '.[] | select(.state == "FAILURE") | "  \(.name): FAILED"'
+    echo "$check_classes" | jq -r '.failed[] | "  \(.name): \(.state // .bucket // "FAILED")"'
     exit 1
   fi
 

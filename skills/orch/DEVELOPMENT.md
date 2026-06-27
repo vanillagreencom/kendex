@@ -36,7 +36,9 @@ their SSH failures should not block branch cleanup or tracker closure.
 - `BOT_CHECK_NAME` is unset or the matching check line is `pass`, and
 - the PR has zero unresolved review threads.
 
-The emitted reviewer signals include `pr_review_decision:approved` and `pr_threads:clear` so callers can distinguish this fallback from a direct sticky/comment verdict. Entries with this signal skip the later sticky-checklist drain wait because the fallback already verified that thread propagation is clear.
+The emitted reviewer signals include `pr_review_decision:approved` and `pr_threads:clear` so callers can distinguish this fallback from a direct sticky/comment verdict.
+
+Codex-style reaction approvals and PR-level approved fallbacks then run a short terminal settle window (`BOT_REVIEW_SETTLE_SECONDS`, default 180s). The waiter re-reads reviewer status during that window and returns to the normal review loop if late inline threads appear, preventing merge workflows from treating early approval as final while the bot is still posting review comments.
 
 ## Tests
 
