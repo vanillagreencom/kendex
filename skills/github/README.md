@@ -46,6 +46,10 @@ emits structured JSON on stdout with `status` (`no_pr`, `auth_error`,
 `error`, `detail`, `exit_code`, and `number:null`, then exits nonzero. Stderr
 keeps the raw `gh`/`op` detail for logs.
 
+`pr-merge --check` reports still-running checks as `ci_pending: ...` and sets
+`transient: true` when those pending checks are the only blockers. Terminal
+failed or cancelled checks remain `ci_failed: ...` and are not transient.
+
 ## Git HTTPS Fallback
 
 Use `scripts/git-https-auth` for the GitHub network operations in workflows

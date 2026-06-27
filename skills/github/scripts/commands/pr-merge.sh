@@ -10,6 +10,7 @@
 # When BLOCKED, stderr distinguishes TRANSIENT issues (mergeable UNKNOWN,
 # ci pending — caller should `await-mergeable` and retry) from PERMANENT
 # issues (conflicts, ci_failed, changes_requested — caller must fix and re-push).
+# Still-running checks are emitted as ci_pending, not ci_failed.
 
 set -euo pipefail
 
@@ -23,7 +24,7 @@ source "$SCRIPT_DIR/../lib/pr-branch.sh"
 
 # Issue prefixes that resolve on their own once GitHub finishes computing or
 # CI completes. Callers should `await-mergeable` and retry rather than fix.
-TRANSIENT_PREFIXES='unknown:|ci_unconfigured:|ci_fetch_failed:'
+TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
 show_help() {
     cat <<'EOF'
@@ -92,20 +93,43 @@ run_checks() {
     fi
 
     # 2. Check CI status
-    local ci_json ci_pass
-    if ! ci_json=$(gh pr checks "$pr_num" --json name,state 2>&1); then
+    local ci_json
+    set +e
+    ci_json=$(gh pr checks "$pr_num" --json name,state,bucket 2>&1)
+    set -e
+
+    # `gh pr checks` exits 8 while checks are pending, but still prints usable
+    # JSON. Treat any valid array response as authoritative regardless of the
+    # command's exit status.
+    if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ci_json"; then
         can_merge=false
         issues+=("ci_fetch_failed: Failed to fetch CI checks from GitHub")
-    elif ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ci_json"; then
-        can_merge=false
-        issues+=("ci_fetch_failed: Invalid CI response from GitHub")
     elif [ "$(echo "$ci_json" | jq 'length')" -eq 0 ]; then
         warnings+=("ci_unconfigured: No status checks configured")
     else
-        ci_pass=$(echo "$ci_json" | jq 'all(.state == "SUCCESS" or .state == "SKIPPED")')
-        if [ "$ci_pass" != "true" ]; then
-            local failed
-            failed=$(echo "$ci_json" | jq -r '[.[] | select(.state != "SUCCESS" and .state != "SKIPPED")] | map(.name + " (" + .state + ")") | join(", ")')
+        local ci_classification pending failed
+        ci_classification=$(echo "$ci_json" | jq -c '
+            def bucket:
+                (.bucket // (
+                    if (.state == "SUCCESS") then "pass"
+                    elif (.state == "SKIPPED") then "skipping"
+                    elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
+                    elif (.state == "CANCELLED") then "cancel"
+                    else "fail"
+                    end
+                ));
+            {
+                pending: [.[] | select(bucket == "pending") | .name + " (" + .state + ")"],
+                failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .name + " (" + .state + ")"]
+            }
+        ')
+        pending=$(echo "$ci_classification" | jq -r '.pending | join(", ")')
+        failed=$(echo "$ci_classification" | jq -r '.failed | join(", ")')
+        if [ -n "$pending" ]; then
+            can_merge=false
+            issues+=("ci_pending: $pending")
+        fi
+        if [ -n "$failed" ]; then
             can_merge=false
             issues+=("ci_failed: $failed")
         fi

@@ -88,10 +88,11 @@ parsing stderr:
 | `1`  | BLOCKED               | `BLOCKED PR #N`              | Checks failed; nothing merged, nothing queued |
 
 A BLOCKED outcome is further classified on stderr as **transient** (mergeable
-UNKNOWN, CI pending — caller should `await-mergeable` and retry) or
-**permanent** (conflicts, ci_failed, changes_requested — caller must fix and
-re-push). Programmatic callers can check the `transient` field in the
-`--check` JSON output before deciding to retry.
+UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should
+`await-mergeable` and retry) or **permanent** (conflicts, `ci_failed`,
+`changes_requested` — caller must fix and re-push). Programmatic callers can
+check the `transient` field in the `--check` JSON output before deciding to
+retry.
 
 ### PR Merge Check Output
 
@@ -100,7 +101,9 @@ re-push). Programmatic callers can check the `transient` field in the
 ```
 
 `transient: true` means every blocking issue is recoverable by waiting
-(prefixes `unknown:`, `ci_unconfigured:`, `ci_fetch_failed:`).
+(prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`,
+`ci_fetch_failed:`). Still-running checks are reported as `ci_pending: ...`;
+terminal failing or cancelled checks remain `ci_failed: ...`.
 
 ### Waiting for merge state (gotcha)
 
