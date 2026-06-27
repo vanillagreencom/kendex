@@ -13,20 +13,20 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Monitor groups tasks by session (pane, bg lane, bg one-shot) under expandable Active and Completed sections, with active sessions first and newest invocations first inside each section; repeated same-agent launches get session numbers and task numbers reset per session. Steering/follow-up delivery mode is shown in expanded rows and trace metadata.
 - Chat completion rows show actual results, never a repeat of the original request.
 - Task detail shows Summary and Completion tabs; Summary contains task metadata, artifacts, and task text, while Completion contains result summary, files changed, and validation.
-- Bg one-shot transcripts keep start/end/tool audit events but omit successful streaming `message_update` snapshots by default to avoid large duplicate JSONL files. Failed runs preserve the latest unfinalized update as `buffered: true`; set `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` before launching Pi to retain every stream snapshot for debugging.
-- `needs_completion` diagnostics try to attach a best-effort worker `cwdSnapshot` for Git worktree cwds, so `get_subagent_result` can show HEAD, dirty status, and last commit without manual shell inspection when the snapshot is available. Dirty scans avoid content filters, reject unsafe tracked paths, enforce the lstat deadline across parent/final probes, and skip tracked paths under symlinked parent directories.
+- Bg one-shot transcripts keep enough history to inspect results without creating oversized session files.
+- When a task needs manual completion, result views include useful repository context when available.
 - Dashboard widget shows live state, turns, tokens, and cost for every spawned agent; working agents stay above attention/completed agents, newest invocations lead each bucket, and activity updates do not reshuffle rows. Once you hide it, lifecycle updates do not reopen it until you toggle it back in.
-- Task registry locking is cross-process and stale-lock aware; if a killed or stalled Pi process leaves a lock behind, dashboard and Monitor refreshes wait for stale recovery and skip transient lock contention instead of exiting Pi. Pane completion collection leaves or restores outbox files until terminal task state and the processed archive path are persisted, so lock contention can retry without losing completions.
+- Dashboard and Monitor refreshes recover gracefully if another Pi process is updating agent state.
 - Grouped completion notifications batch multiple agents finishing together.
-- When `pi-session-bridge` is loaded, spawn/queue/start/steer/completion lifecycle points publish structured `agent.*` activity broker events without adding chat messages (`agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.pane_cwd_stale`).
+- When `pi-session-bridge` is loaded, other tools can subscribe to agent lifecycle updates without adding chat messages.
 - `taskId` retrieval, mid-run steering, and pane stop without losing memory. When `pi-session-bridge` provides compact input events, trace views humanize `steer` vs `followUp` input records instead of showing raw JSON only.
 - Stop kills the tmux process but preserves the session — next launch resumes it.
-- Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`. Bg completions are captured from the child process's final assistant output; `complete_subagent` is reserved for persistent pane/follow-up tasks and is withheld from bg children.
-- Bg one-shot children have a process-level deadline (`bgTaskTimeoutMs`, default 30 minutes). A child that never exits is marked failed with `reason: "unresponsive_timeout"`, its process group is terminated, and the parent parallel queue keeps draining instead of waiting forever.
+- Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.
+- Bg one-shot agents have a configurable timeout so one stalled child does not block the rest of a parallel run.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
 - Large parallel calls run through a flat worker pool capped at `maxConcurrency`; callers do not need to split requests. Pane idle waits use `wait_for_subagent_idle`.
-- Persistent panes auto-resume after detected provider rate limits. Scheduling prefers validated structured quota snapshots (Claude usage endpoints, Codex/OpenAI `wham/usage` fixtures/seams, SDK reset/retry fields) and records `resetSource`; malformed quota data falls back with sanitized diagnostics, and localized `resets <time>` prose is only a degraded fallback before plain backoff.
-- Periodic pane idle-stall probes cache `pi-bridge` resolution at extension load. A structured `spawn`/`ENOENT` for the expected `pi-bridge` binary is treated as genuinely missing and skips silently; other ENOENT/spawn failures are written to `subagent-diagnostics.jsonl`. If initial resolver setup fails, one `pi-bridge resolver failed: ...` diagnostic is written.
+- Persistent panes can auto-resume after detected provider rate limits.
+- Idle pane checks are quiet by default and write diagnostics only when something needs attention.
 
 ## Install
 
@@ -110,17 +110,17 @@ Frontmatter fields:
 
 Everything after the frontmatter is the agent's system prompt.
 
-Pane tasks move through queued → running → completed | blocked | failed. On Linux, before reusing a live pane, `subagent` verifies the pane process cwd is still present and matches the requested task `cwd`; stale or mismatched panes return a structured `pane-cwd-stale` error, publish `agent.pane_cwd_stale`, and should be recovered with `stop_subagent` plus a retry using `forceSpawn: true`. Stop kills the tmux process; the session file is preserved so the next launch resumes memory.
+Pane tasks move through queued → running → completed | blocked | failed. If a saved pane no longer points at the right working directory, stop it and launch a fresh pane. Stop closes the tmux process but preserves the session so the next launch can resume memory.
 
 Persistent pane children own their tmux pane and set the pane title to `agent:<name>`. Background one-shot children keep the same agent identity for authorization but do not update the inherited parent pane title or poll pane inbox files.
 
-See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subagent`, `delegate_subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `wait_for_subagent_idle`) and activity broker mapping.
+See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for contributor-facing tool schemas and lifecycle internals.
 
 ## Restricted delegation (`delegate_subagent`)
 
 vstack-installed engineer agents default to denying `subagent` so they cannot orchestrate fleets, but they still need to spend a fresh context window on reconnaissance work. `delegate_subagent` is the bridge:
 
-- Only visible to child Pi processes whose `PI_SUBAGENT_CHILD_AGENT` is set (panes and bg one-shot children both export this for issue #228). Visible pane ownership is separate: only pane launchers export `PI_SUBAGENT_CHILD_PANE=1`.
+- Only available to child agent sessions launched by this extension.
 - Only the targets listed in the caller agent's `allowed-subagents:` frontmatter are accepted; missing or unlisted targets fail with an inventory error.
 - Single-dispatch only — no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, or `resumeSession` exposure.
 - Targets with `pane: true` are rejected — restricted delegation is bg-only.
@@ -160,7 +160,7 @@ There is one execution-concurrency knob — `maxConcurrency` — and it caps con
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
 | Max concurrency | Cap on concurrent one-shot/background agent executions in the parallel dispatch queue; persistent pane agents only occupy the queue until launch/enqueue. |
-| Background task timeout | Deadline in milliseconds for bg one-shot child processes. On timeout the child is marked failed with `reason: "unresponsive_timeout"` and its process group is terminated. Set `0` to disable. |
+| Background task timeout | Deadline in milliseconds for bg one-shot agents. Set `0` to disable. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 | Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |
@@ -186,14 +186,14 @@ There is one execution-concurrency knob — `maxConcurrency` — and it caps con
 | Truncate agent results | Apply Pi-sized inline caps to tool output. |
 | Result max bytes | Inline byte cap per agent result. |
 | Result max lines | Inline line cap per agent result. |
-| Preserve full agent output | Save oversized output to the session runtime and include the artifact path. |
+| Preserve full agent output | Save oversized output and include a path to retrieve it. |
 
 ### Persistent panes
 
 | Setting | What it does |
 | --- | --- |
-| Completion poll interval | Parent poll rate for pane completion files. |
-| Child inbox poll interval | Child pane poll rate for incoming tasks. |
+| Completion poll interval | How often the parent checks persistent pane results. |
+| Child inbox poll interval | How often child panes check for new tasks. |
 | Force session bridge for panes | Load `pi-session-bridge` in pane launchers so steering keeps working. |
 
 ### Keyboard

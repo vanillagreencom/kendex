@@ -19,7 +19,7 @@ cli/src/
 │   ├── claude.rs        → .claude/agents/*.md (disallowedTools, effort/background/isolation/memory, skills, hooks frontmatter)
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills)
 │   ├── opencode.rs      → .opencode/agents/*.md (YAML frontmatter + skills)
-│   ├── codex.rs         → .codex/agents/*.toml (developer_instructions + skills)
+│   ├── codex.rs         → .codex/agents/*.toml (developer_instructions + Required Skills section)
 │   └── pi.rs            → .pi/agents/*.md (name, description, deny-tools, model, pane)
 └── tui/                 Install wizard: install_flow, state, summary, multiselect, render
 
@@ -41,7 +41,7 @@ skill-templates/         Templates for new skills
 - **Skill dependencies use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md.
 - **Hooks diverge by harness.** Claude Code: native shell hooks + settings.json + agent frontmatter. Cursor: safety `.mdc` rules. OpenCode: `.opencode/agents/*.md` + instructions. Codex: native shell hooks under `<scope>/.codex/hooks/` registered in `<scope>/.codex/hooks.json` with `[features] hooks = true` in `config.toml` — events without a codex equivalent (e.g. Claude's `TaskCompleted`) fall back to inline prose in `developer_instructions`. Pi: native TS implementations in the `@vanillagreen/pi-hooks` extension, listening on `tool_call`/`tool_result`/`turn_end`; each hook independently toggleable in pi-extension-manager.
 - **Pi extensions are npm-shaped.** vstack copies them to `<scope>/packages/<name>`, runs `npm install --omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund` there when `package.json` has `dependencies` or `optionalDependencies`, and registers the path in Pi's `settings.json` `packages` array.
-- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install; users add/remove and refresh. Agents get `skills:` frontmatter and a "Required Skills" body section.
+- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install; users add/remove and refresh. Markdown-based harnesses get `skills:` frontmatter; Codex agents get a "Required Skills" instruction section.
 - **Reconciliation is automatic.** After every `vstack add`, all installed agents are regenerated with the current full set of installed skills and hooks.
 - **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parents. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state.
 - **Runtime settings are split from secrets.** Portable skill scripts load `.env`, then `vstack.settings.toml` / `.vstack/settings.toml` `[env]`, then `.env.local`. Put committed non-sensitive defaults in `vstack.settings.toml`; reserve `.env.local` for secrets, API keys, private URLs, signing keys, and personal overrides. Existing `.env.local` settings remain supported for compatibility.

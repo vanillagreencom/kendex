@@ -2,15 +2,15 @@
 
 ![Session bridge CLI flow](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-session-bridge/assets/session-bridge-cli.png)
 
-Control a running Pi session from outside the TUI. The interactive Pi terminal stays visible; a Unix-domain socket exposes a structured JSONL side channel for external clients.
+Control a running Pi session from outside the TUI. The interactive Pi terminal stays visible while local clients send prompts, steering, follow-ups, and questions through `pi-bridge`.
 
 ## Highlights
 
-- External clients send prompts, steering, follow-ups, and aborts over a structured socket; plain text and expanded skills avoid tmux key injection, while extension/TUI slash commands use a guarded own-pane tmux route.
+- External clients send prompts, steering, follow-ups, and aborts through the bridge.
 - Subscribe to live Pi events (messages, tool calls, agent end) without scraping panes.
-- Activity broker at `Symbol.for("vstack.pi.activity")` lets local extensions publish structured `vstack_activity` events to the bridge stream without chat noise.
+- Local extensions can publish activity updates to bridge clients without adding chat messages.
 - Discover active Pi sessions through registry files; target by pid, cwd, session, or name.
-- `pi-bridge` CLI handles common operations; raw JSONL protocol is documented for any language.
+- `pi-bridge` CLI handles common operations; contributor-facing protocol notes live in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 - When `pi-questions` is loaded, external clients can list, answer, and reject pending questions.
 
 ## Install
@@ -62,74 +62,33 @@ If exactly one active bridge exists, target flags are optional. Filters: `--pid`
 
 ### Compact vs raw history
 
-`pi-bridge history` and the `stream` channel both default to compact event envelopes:
+`pi-bridge history` and the `stream` channel default to compact event previews so large tool outputs do not overwhelm the TUI or bridge clients.
 
-- `input` → `{ source, streamingBehavior, imagesCount, textBytes, textLength, textPreview, textTruncated }`; idle prompts omit `streamingBehavior`, mid-stream interrupts use `steer`, and queued prompts use `followUp`.
-- `message_update` → `{ role, type, contentIndex, deltaLength, deltaBytes, deltaPreview }`.
-- `tool_execution_*` → `{ toolName, toolUseId, status, isError, *Bytes, *Preview, artifactPath, logPath, detailPath }`.
-- `agent_end` → `{ status, stopReason, usage, messagesCount, finalTextBytes, finalTextLength, finalTextPreview }`.
-
-When a payload had to be shrunk the envelope adds sibling metadata: `truncated: true`, `originalBytes`, `rawEventPath` (per-session JSONL under `<bridgeDir>/raw/<pid>.jsonl`), `rawEventRef` (line ref). The sidecar's on-disk size is bounded by `maxRawSpillBytes`: each spill compares against `statSync` of the file, runs a lazy compaction that rewrites the JSONL with only the slots whose envelopes are still in history, and refuses the spill if the file would still overflow. Sidecars are cleaned up on `session_shutdown` and process exit, and stale files belonging to dead pids are removed on bridge start. When a spill is disabled or refused the envelope carries a `rawError` string instead of `rawEventPath`/`rawEventRef`.
-
-Pass `--raw` (or `--verbose`) to `pi-bridge history` to rehydrate compact envelopes from the sidecar:
+Pass `--raw` (or `--verbose`) to `pi-bridge history` when you need the full stored payload:
 
 - `--event NAME` — only return events with that name (e.g. `tool_execution_end`).
 - `--since TS` — only return events with `timestamp >= TS` (ISO 8601, ms precision).
 - `--max-bytes N` — cap response payload (default ~1 MiB; older events trimmed first, the most recent envelope is always included).
 
-The `history` response also includes `totalEvents`, `responseTruncated`, `rawSpillPath`, and (when raw recovery fails) `rawErrors` so callers can decide whether to page further or read the JSONL directly.
+The `history` response includes enough metadata for callers to page further or request raw payloads when needed.
 
 ## Raw protocol
 
-Connect to the advertised Unix socket and exchange one JSON object per LF-delimited record. Requests may include `id`; responses use `type:"response"` with the same `id`.
-
-Example requests:
-
-```json
-{"id":"1","type":"get_state"}
-{"id":"2","type":"prompt","message":"Run tests","deliverAs":"auto"}
-{"id":"3","type":"steer","message":"Focus on errors"}
-{"id":"4","type":"follow_up","message":"Summarize when done"}
-{"id":"5","type":"abort"}
-```
-
-Example response and event:
-
-```json
-{"type":"response","id":"1","command":"get_state","success":true,"data":{}}
-{"type":"event","event":"input","timestamp":"...","data":{"source":"extension","streamingBehavior":"followUp","textBytes":42,"textLength":42,"textPreview":"summarize when done"},"truncated":true,"originalBytes":96,"rawEventPath":"/tmp/pi-session-bridge-1000/raw/12345.jsonl","rawEventRef":"6"}
-{"type":"event","event":"message_update","timestamp":"...","data":{"role":"assistant","contentIndex":0,"deltaLength":50000,"deltaBytes":50000,"deltaPreview":"Hello..."},"truncated":true,"originalBytes":50012,"rawEventPath":"/tmp/pi-session-bridge-1000/raw/12345.jsonl","rawEventRef":"7"}
-{"type":"event","event":"vstack_activity","timestamp":"...","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent done"}}
-```
-
-Clients receive events by default. Send `{"type":"subscribe","enabled":false}` to mute them. `vstack_activity` rows are bridge events, not `sendMessage()` chat entries, so they do not render in the conversation.
-
-Compact event envelopes always include enough fields to reason about the original payload (preview, byte count, truncation flag). To replay raw deltas/results call `history` with `{"raw":true}` or read the per-session JSONL referenced by `rawEventPath` directly.
+Most users should use the `pi-bridge` CLI. Custom client authors can use the local socket protocol; request/response examples and event-envelope details are in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
 ## Activity broker
 
-`pi-session-bridge` exposes an in-process broker at `globalThis[Symbol.for("vstack.pi.activity")]` for local Pi extensions:
-
-```ts
-interface PiActivityBroker {
-  publish(event: PiActivityEvent): void;
-  subscribe(listener: (event: PiActivityEvent) => void): () => void;
-  recent(limit?: number): PiActivityEvent[];
-}
-```
-
-`publish()` is best-effort and fail-open. The broker keeps a 100-event ring buffer; `recent(limit)` returns newest-first validated events for in-process replay. `pi-bridge stream` emits live broker publications as `event:"vstack_activity"` only while the bridge is connected; external clients that need earlier rows must use an in-process consumer before they leave the ring.
+Local Pi extensions can publish activity updates that `pi-bridge stream` exposes to connected clients. This is used by vstack extensions for agent progress, background tasks, and questions without adding messages to the conversation. Contributor-facing broker details are in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
 
 ## Slash command notes
 
 `pi-bridge send` uses a hybrid slash dispatch path:
 
-- Plain text keeps the normal `sendUserMessage` path.
-- `/skill:<name> ...` expands client-side from the loaded skill's `sourceInfo.path`, inlining the same `<skill ...>` block Pi's editor would produce the first time a skill is loaded in a Pi session.
-- Repeated `/skill:<name> ...` sends in the same Pi session skip the `SKILL.md` body and send `Skill <name> (previously loaded). Invocation: ...` instead. Changing the `SKILL.md` file content changes its hash and forces a fresh full expansion; session shutdown evicts that session, bridge restart loses the in-memory cache, and the bridge keeps only the 100 most recent sessions.
-- Prompt templates (`/<name> ...` from loaded prompt paths) expand client-side with Pi-compatible `$1`, `$@`, `$ARGUMENTS`, `${@:N[:L]}`, and `${N:-default}` substitution; unquoted spaces, tabs, and newlines split arguments, while quoted newlines stay inside the argument.
-- Extension/TUI commands (for example `/bridge:ping` and `/tasks:add`) are pasted into Pi's own tmux pane with `send-keys -l` + enter after resolving the pane by walking parent processes from `process.pid`. This briefly shows text in the editor and always delivers immediately (`deliverAs` does not apply to this route).
-- If tmux pane resolution or paste fails, the bridge falls back to the old raw `sendUserMessage` behavior instead of failing the request.
+- Plain text sends a normal user message.
+- `/skill:<name> ...` and prompt templates expand before being sent, matching Pi's editor behavior.
+- Repeated skill sends in the same Pi session use a short reminder instead of resending the entire skill body.
+- Extension/TUI commands, such as `/bridge:ping` and `/tasks:add`, are delivered to Pi's own editor so they behave like typed commands.
+- If command delivery fails, the bridge falls back to sending the text as a normal message.
 
 ## Settings
 
@@ -147,7 +106,7 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | Max history response bytes | Maximum bytes returned in a single `history` response; older envelopes drop first. |
 | Event preview bytes | Bytes of `delta`/`result`/`output` retained as `*Preview` strings inside compact events. |
 | Spill raw events | When `true`, oversized payloads spill to the per-session JSONL so `history --raw` can rehydrate them. |
-| Max raw spill bytes | Cap on the on-disk size of the per-session raw JSONL. New spills check `statSync` of the file; if appending would exceed the cap, the sidecar is rewritten with only live slots, and the spill is refused (with `rawError`) when even the compacted file plus the new line would not fit. |
+| Max raw spill bytes | Cap on stored raw event payloads for `history --raw`. |
 | Max request line bytes | Maximum JSONL request size accepted. |
 | Registry heartbeat | Ms between registry file updates. |
 | Notify on start | In-TUI notification when the bridge starts. |

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Generate a Codex agent file (.codex/agents/<name>.toml)
 ///
 /// Format: TOML with name, description, model, sandbox_mode,
-/// skills, and developer_instructions (the agent body).
+/// and developer_instructions (the agent body).
 ///
 /// Hooks are NOT rendered here — codex hooks install as native shell hooks via
 /// `installer::install_hook_codex` (which writes `<scope>/.codex/hooks/*.sh`,
@@ -80,10 +80,6 @@ pub fn generate_agent(
         output.push_str(&format!("model_reasoning_effort = \"{effort}\"\n"));
     }
     output.push_str(&format!("sandbox_mode = \"{sandbox_mode}\"\n"));
-    if !skills.is_empty() {
-        let names: Vec<String> = skills.iter().map(|(name, _)| name.clone()).collect();
-        output.push_str(&format!("skills = {}\n", toml_string_array(&names)));
-    }
 
     // Developer instructions as multiline TOML string
     output.push_str("developer_instructions = '''\n");
@@ -333,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_skills_field_and_project_local_inventory() {
+    fn writes_project_local_required_skills_without_unsupported_top_level_field() {
         let dir = std::env::temp_dir().join(format!(
             "vstack_codex_skills_project_{}",
             std::process::id()
@@ -352,7 +348,7 @@ mod tests {
         let path = generate_agent(&agent, false, &dir, &skills, &[], &AgentExtras::default())
             .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("skills = [\"dev\", \"github\"]"));
+        assert!(!content.contains("\nskills = "));
         assert!(content.contains("## Required Skills"));
         assert!(content.contains("`.agents/skills/dev/SKILL.md`"));
         assert!(!content.contains(".codex/skills/dev/SKILL.md"));

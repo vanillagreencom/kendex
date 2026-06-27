@@ -3,9 +3,9 @@
 ![Claude bridge demo response](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png)
 ![Claude Bridge settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
 
-Run Claude Code as a Pi provider. Adds `claude-bridge/*` models to `/model` and routes Pi turns through the Claude Agent SDK while keeping Pi's tools and TUI.
+Run Claude Code as a Pi provider. Adds `claude-bridge/*` models to `/model` while keeping Pi's tools and TUI.
 
-Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge). The provider, MCP bridge, session sync, and SDK plumbing come from upstream; this fork removes the AskClaude tool and adds opt-in forwarding for Pi prompt context.
+Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge). This fork removes the AskClaude tool and adds opt-in forwarding for Pi prompt context.
 
 ## Highlights
 
@@ -100,18 +100,18 @@ The bridge registers `claude-bridge/claude-fable-5` and `claude-bridge/claude-op
 
 Claude Code's `/extra-usage` local command works through the Claude Agent SDK. In Pi, use `/claude-bridge:extra` to run that flow from claude-bridge. Persist automatic launch on extra-usage errors with **Allow extra usage helper** in `/extensions:settings`.
 
-When Claude Code emits rate-limit reset metadata, the bridge shows one red ASCII `[rate-limit]` Pi warning with the reset timestamp including timezone context, deduplicates repeated Claude Code error lines, and suppresses the SDK's follow-up `Claude Code returned an error result: ...` wrapper when the bridge already emitted the terminal error. The bridge also emits `vstack:rate-limit` on Pi's extension event bus so `pi-qol` can opt into reset-time auto-resume.
+When Claude Code reports a rate-limit reset time, the bridge shows one clear `[rate-limit]` warning with timezone context and avoids repeating the same error line. If `pi-qol` is installed, it can use the reset time to resume later.
 
 Allowed-warning rate-limit events are filtered before user notification. The bridge normalizes unambiguous numeric utilization (`0 < value < 1` as fractional, `1 < value <= 100` as percent), suppresses low or unit-ambiguous values such as exact `1`, and only shows a neutral warning at 80%+ instead of claiming an unverified `% used` value. Check Claude Code `/usage` for exact allowed-warning utilization.
 
-If Claude Code accepts a turn but produces no assistant/tool output, the bridge treats that stream-idle stall as a retryable overload/rate-limit failure: it closes the stalled Claude Code subprocess, emits a normal assistant error with a backoff hint, and lets `pi-agents-tmux` reuse its existing rate-limit retry ladder. Tune the first-output timeout with `CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT` (bare numbers are seconds; suffixes `ms`, `s`, and `m` are accepted). Default: `90s`; set `0` to disable.
+If Claude Code accepts a turn but produces no visible output, the bridge returns a retryable assistant error with a backoff hint instead of leaving Pi stuck waiting. Tune the first-output timeout with `CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT` (bare numbers are seconds; suffixes `ms`, `s`, and `m` are accepted). Default: `90s`; set `0` to disable.
 
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
 
-If a Claude Code SDK stream yields a completed assistant tool-use message before a `message_stop` stream event, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately and Claude Code's MCP handlers stay blocked until the matching Pi tool results are delivered, preventing empty inline tool results or one-render-cycle-late result batches in subagent panes.
+Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification and writes a diagnostic file to `~/.pi/agent/claude-bridge-diag.log` so lost or mismatched tool output is visible.
 
-Tool-result integrity failures are surfaced even when debug logging is off. If the bridge has to repair missing Claude Code `tool_use` / Pi `toolResult` pairs with `[no tool result recorded]`, Pi shows an error notification and writes a JSON diagnostic to `~/.pi/agent/claude-bridge-diag.log` with counts, affected tool names, and sampled tool-call IDs so the lost output is visible. Tool results whose IDs were never registered in the active assistant tool-use turn are refused instead of being queued against another pending call, and any remaining MCP handlers receive an internal-error result so the turn cannot report false success. If a query tears down while parallel tool results are still queued or unresolved, the bridge writes the same kind of diagnostic, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn instead of silently resuming a corrupted session.
+Startup failures include the resolved Claude executable and working directory, which makes missing binaries and wrong launch directories easier to fix.
 
-Before starting Claude Code, the bridge preflights the resolved executable and working directory. Failures include the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type so spawn issues point at the real failing path instead of the Claude Agent SDK's generic native-binary message. If Node still emits a spawn error after preflight, the bridge wraps that error with the same context before handing it back to the SDK.
+Contributor-facing stream, tool-result, and startup diagnostics are documented in [`DEVELOPMENT.md`](./DEVELOPMENT.md).

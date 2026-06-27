@@ -134,7 +134,7 @@ Secret values may also be injected by the parent process at launch time. GitHub 
 | Claude Code | Richest native hook support. Works per project or globally. |
 | Cursor | Project scope only; safety rules surface as `.cursor/rules`. |
 | OpenCode | Config-dir aware. |
-| Codex | Project agents live in `.codex/agents/*.toml`; their `skills = [...]` and Required Skills section point project installs at `.agents/skills/<name>/SKILL.md`. Native hooks are used for supported events; events without a Codex equivalent fall back to safety guidance inside agent instructions. |
+| Codex | Project agents live in `.codex/agents/*.toml`; their Required Skills section points project installs at `.agents/skills/<name>/SKILL.md`. Native hooks are used for supported events; events without a Codex equivalent fall back to safety guidance inside agent instructions. |
 | Pi | Adds Pi extension installation alongside agents and skills. |
 
 Windows: CLI runs natively; symlink mode falls back to copy.

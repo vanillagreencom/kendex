@@ -60,6 +60,32 @@ fn parse_skills_field(frontmatter: &str) -> Vec<String> {
     Vec::new()
 }
 
+fn parse_required_skills_section(content: &str) -> Vec<String> {
+    let Some(start) = content.find("## Required Skills") else {
+        return Vec::new();
+    };
+    let after_header = &content[start + "## Required Skills".len()..];
+    let section = after_header
+        .find("\n## ")
+        .map(|end| &after_header[..end])
+        .unwrap_or(after_header);
+
+    section
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let rest = trimmed.strip_prefix("- `")?;
+            let end = rest.find('`')?;
+            let name = rest[..end].trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        })
+        .collect()
+}
+
 fn read_agent_skills(path: &Path) -> Vec<String> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -67,8 +93,16 @@ fn read_agent_skills(path: &Path) -> Vec<String> {
     if let Ok((fm, _body)) = split_yaml_frontmatter(&content) {
         return parse_skills_field(&fm);
     }
-    // Codex agents use [developer_instructions] TOML, not YAML frontmatter.
-    // Detect skill blocks via a `skills =` TOML line.
+    // Codex agents keep their skill inventory inside developer_instructions.
+    if let Some(body) = crate::agent::extract_body_from_codex_toml(&content) {
+        let skills = parse_required_skills_section(&body);
+        if !skills.is_empty() {
+            return skills;
+        }
+    }
+
+    // Backward compatibility for older Codex agent files generated with an
+    // unsupported top-level `skills = [...]` field.
     for line in content.lines() {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("skills =") {
@@ -278,7 +312,7 @@ fn check_staleness(entry: &LockEntry) -> &'static str {
 
 #[cfg(test)]
 mod parse_skills_field_tests {
-    use super::parse_skills_field;
+    use super::{parse_required_skills_section, parse_skills_field};
 
     #[test]
     fn comma_separated_inline() {
@@ -314,5 +348,17 @@ mod parse_skills_field_tests {
         assert!(parse_skills_field("name: x").is_empty());
         assert!(parse_skills_field("skills:").is_empty());
         assert!(parse_skills_field("skills: []").is_empty());
+    }
+
+    #[test]
+    fn required_skills_section_lists_codex_skill_names() {
+        let body = "# Agent\n\n## Required Skills\n\n- `dev`: Delegation (`.agents/skills/dev/SKILL.md`)\n- `github`: GitHub helpers (`.agents/skills/github/SKILL.md`)\n\n## Other\n\nText.";
+        let skills = parse_required_skills_section(body);
+        assert_eq!(skills, vec!["dev".to_string(), "github".to_string()]);
+    }
+
+    #[test]
+    fn missing_required_skills_section_yields_empty_vec() {
+        assert!(parse_required_skills_section("# Agent\n\n## Notes\n").is_empty());
     }
 }
