@@ -732,6 +732,13 @@ function warnCompletionRetryableLock(filePath: string, error: unknown): void {
 	console.warn(`pi-agents-tmux completion collection could not persist task registry state while the registry lock was busy; leaving ${filePath} in place for retry: ${stringifyError(error)}`);
 }
 
+function isPersistedCompletionDuplicate(existing: PaneTaskRecord | undefined, agentName: string, status: PaneTaskStatus): boolean {
+	if (!existing || existing.agent !== agentName) return false;
+	if (!existing.completedAt && !existing.completionArchivePath) return false;
+	if (isTerminalTaskStatus(existing.status)) return true;
+	return existing.status === "needs_completion" && status === "needs_completion";
+}
+
 async function ensureCompletionOutboxRetrySource(filePath: string, archivePath: string, completion: PaneCompletion, error: unknown): Promise<void> {
 	if (await fileExists(filePath)) return;
 	try {
@@ -810,8 +817,9 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				const taskId = completion.taskId || path.basename(filePath, path.extname(filePath));
 				const dedupKey = paneCompletionDedupKey(runtimeRoot, agentName, taskId);
 				const existing = tasks[taskId];
+				const completionStatus = normalizePaneTaskStatus(completion.status);
 				const alreadyEmitted = emittedPaneCompletionKeys.has(dedupKey)
-					|| Boolean(existing && existing.agent === agentName && (isTerminalTaskStatus(existing.status) || existing.status === "needs_completion") && (existing.completedAt || existing.completionArchivePath));
+					|| isPersistedCompletionDuplicate(existing, agentName, completionStatus);
 				if (alreadyEmitted) {
 					try {
 						const archivePath = await archiveCompletion(runtimeRoot, agentName, filePath);
@@ -833,7 +841,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 				let completionAlreadyPersisted = false;
 				tasks = await updateTaskRegistry(runtimeRoot, (records) => {
 					const existing = records[detail.taskId];
-					if (existing && existing.agent === agentName && (isTerminalTaskStatus(existing.status) || existing.status === "needs_completion") && (existing.completedAt || existing.completionArchivePath)) {
+					if (isPersistedCompletionDuplicate(existing, agentName, detail.status)) {
 						completionAlreadyPersisted = true;
 						return;
 					}
