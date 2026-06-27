@@ -714,6 +714,7 @@ export function formatCompletionGroup(completions: PaneCompletionDetails[]): str
 const paneCompletionPollLocks = new Set<string>();
 const emittedPaneCompletionKeys = new Set<string>();
 let afterCompletionArchiveForTests: ((context: { archivePath: string; filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void) | undefined;
+let beforeCompletionRegistryUpdateForTests: ((context: { filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void) | undefined;
 
 export function paneCompletionDedupKey(runtimeRoot: string, agent: string, taskId: string): string {
 	return `${normalizedPath(runtimeRoot)}\0${agent}\0${taskId}`;
@@ -721,6 +722,10 @@ export function paneCompletionDedupKey(runtimeRoot: string, agent: string, taskI
 
 export function setAfterCompletionArchiveForTests(hook?: (context: { archivePath: string; filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void): void {
 	afterCompletionArchiveForTests = hook;
+}
+
+export function setBeforeCompletionRegistryUpdateForTests(hook?: (context: { filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void): void {
+	beforeCompletionRegistryUpdateForTests = hook;
 }
 
 function warnCompletionRetryableLock(filePath: string, error: unknown): void {
@@ -824,6 +829,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 					continue;
 				}
 				let detail = paneCompletionDetailsFromCompletion(completion, agentDir.name, filePath, undefined, registry, tasks);
+				await beforeCompletionRegistryUpdateForTests?.({ filePath, runtimeRoot, taskId: detail.taskId });
 				tasks = await updateTaskRegistry(runtimeRoot, (records) => {
 					const existing = records[detail.taskId];
 					records[detail.taskId] = {
@@ -836,7 +842,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						kind: "pane",
 						paneId: detail.paneId,
 						completionSourcePath: detail.sourcePath,
-						completionArchivePath: undefined,
+						completionArchivePath: existing?.completionArchivePath,
 						transcriptPath: detail.transcriptPath,
 						summary: detail.summary,
 						filesChanged: detail.filesChanged,

@@ -16,6 +16,7 @@ import {
 	recordTaskDispatchFailure,
 	refreshTaskDiagnostics,
 	setAfterCompletionArchiveForTests,
+	setBeforeCompletionRegistryUpdateForTests,
 	writePaneRegistry,
 	writeTaskRegistry,
 } from "../extensions/subagent/tasks.js";
@@ -386,6 +387,75 @@ describe("needs_completion cwd snapshots", () => {
 			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(1);
 		} finally {
 			setAfterCompletionArchiveForTests();
+			setFileLockOptionsForTests();
+			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
+			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
+			rmSync(runtimeRoot, { force: true, recursive: true });
+			rmSync(cwd, { force: true, recursive: true });
+		}
+	});
+
+	test("pollPaneCompletions preserves existing archive path when duplicate poll archive persistence fails", async () => {
+		const runtimeRoot = tempDir("needs-completion-runtime-");
+		const cwd = tempGitRepo();
+		let lockDir: string | undefined;
+		try {
+			const seeded = await seedPaneTask(runtimeRoot, cwd, "task-duplicate-archive");
+			const outboxFile = join(runtimeRoot, "outbox", "rust", "task-duplicate-archive.json");
+			const existingArchivePath = join(runtimeRoot, "processed", "rust", "task-duplicate-archive-existing.json");
+			mkdirSync(dirname(outboxFile), { recursive: true });
+			mkdirSync(dirname(existingArchivePath), { recursive: true });
+			writeFileSync(existingArchivePath, JSON.stringify({
+				agent: "rust",
+				status: "completed",
+				summary: "done by faster poller",
+				taskId: "task-duplicate-archive",
+			}), "utf8");
+			writeFileSync(outboxFile, JSON.stringify({
+				agent: "rust",
+				filesChanged: ["x.ts"],
+				status: "completed",
+				summary: "done by slower duplicate poller",
+				taskId: "task-duplicate-archive",
+				validation: ["ok"],
+			}), "utf8");
+			const emitted: Array<{ name: string; payload: any }> = [];
+			setBeforeCompletionRegistryUpdateForTests(async () => {
+				await writeTaskRegistry(runtimeRoot, {
+					"task-duplicate-archive": {
+						...seeded,
+						completedAt: "2026-05-20T00:00:02.000Z",
+						completionArchivePath: existingArchivePath,
+						completionSourcePath: outboxFile,
+						status: "completed",
+						summary: "done by faster poller",
+						updatedAt: "2026-05-20T00:00:02.000Z",
+					},
+				});
+				setBeforeCompletionRegistryUpdateForTests();
+			});
+			setAfterCompletionArchiveForTests(({ runtimeRoot: hookRuntimeRoot }) => {
+				lockDir = holdTaskRegistryLock(hookRuntimeRoot);
+				forceFastRegistryLockTimeout();
+				setAfterCompletionArchiveForTests();
+			});
+
+			const count = await pollPaneCompletions(runtimeRoot, {
+				events: { emit: (name: string, payload: any) => emitted.push({ name, payload }) },
+				sendMessage: () => undefined,
+			} as any);
+			const persisted = (await readTaskRegistry(runtimeRoot))["task-duplicate-archive"]!;
+
+			expect(count).toBe(1);
+			expect(persisted.status).toBe("completed");
+			expect(persisted.completionArchivePath).toBe(existingArchivePath);
+			expect(persisted.completionSourcePath).toBe(outboxFile);
+			expect(existsSync(existingArchivePath)).toBe(true);
+			expect(existsSync(outboxFile)).toBe(true);
+			expect(emitted.filter((event) => event.name === "subagents:completed")).toHaveLength(1);
+		} finally {
+			setAfterCompletionArchiveForTests();
+			setBeforeCompletionRegistryUpdateForTests();
 			setFileLockOptionsForTests();
 			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
