@@ -59,14 +59,16 @@ or unauthenticated git commands on the normal path.
 Prefer targeted post-fetch sync commands in automation:
 
 ```bash
-./scripts/git-https-auth -C "$repo" fetch --prune origin
+./scripts/git-https-auth -C "$repo" fetch --prune origin "+refs/heads/$base_branch:refs/remotes/origin/$base_branch"
 git -C "$repo" merge --ff-only "origin/$base_branch"
 ```
 
 Avoid `git fetch --all` in PR closure workflows unless every remote is required;
 optional secondary remotes should not block syncing `origin` after a merge.
-Use the explicit fetched `origin/$base_branch` ref for post-merge sync so
-automation avoids `git pull`'s branch/ref resolution ambiguity.
+Fetch into the explicit `refs/remotes/origin/$base_branch` tracking ref and use
+that same `origin/$base_branch` ref for post-merge sync so automation avoids
+`git pull`'s branch/ref resolution ambiguity and does not depend on the
+repository's configured `remote.origin.fetch` refspec.
 
 ## Adding a Command
 

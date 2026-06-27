@@ -231,16 +231,18 @@ merge. Detach them first.
    Use the output as `BASE_BRANCH`.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin "+refs/heads/[BASE_BRANCH]:refs/remotes/origin/[BASE_BRANCH]"
    git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"
    git -C [MAIN_REPO_ROOT] worktree prune
    ```
    Target `origin` only. Optional secondary remotes must not block closure of
    the current PR. The fetch uses `git-https-auth`, which preserves normal SSH
    behavior unless a GitHub SSH remote is present and `gh` auth is valid; then
-   it applies a per-command HTTPS/`gh auth git-credential` fallback. Keep the
-   local fast-forward merge on plain `git` so credential helper config is not
-   exposed to merge-time repository hooks. Sync to the explicit fetched
+   it applies a per-command HTTPS/`gh auth git-credential` fallback. Fetch the
+   base branch with an explicit refspec so narrowed `remote.origin.fetch`
+   config cannot leave `origin/[BASE_BRANCH]` stale or missing. Keep the local
+   fast-forward merge on plain `git` so credential helper config is not exposed
+   to merge-time repository hooks. Sync to the explicit fetched
    `origin/[BASE_BRANCH]` ref with `--ff-only` so local main never gains
    merge-bubble commits; if the fast-forward fails, stop and surface the
    divergence for manual handling.
