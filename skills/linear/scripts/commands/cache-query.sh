@@ -1017,7 +1017,7 @@ main() {
         list) cache_list_issues "$@" ;;
         get) cache_get_issue "$@" ;;
         children) cache_list_children "$@" ;;
-        list-relations) cache_list_relations "${1:-}" ;;
+        list-relations | relations) cache_list_relations "${1:-}" ;;
         list-comments) cache_list_comments "$@" ;;
         validate-completion) cache_validate_completion "$@" ;;
         bulk-get) cache_bulk_get_issues "$@" ;;
@@ -1034,7 +1034,7 @@ main() {
         case "$action" in
         list) cache_list_projects "$@" ;;
         get) cache_get_project "$@" ;;
-        list-dependencies) cache_list_dependencies "${1:-}" ;;
+        list-dependencies | dependencies) cache_list_dependencies "${1:-}" ;;
         --help | -h) show_help ;;
         *)
             echo "{\"error\": \"Unknown projects action: $action\"}" >&2

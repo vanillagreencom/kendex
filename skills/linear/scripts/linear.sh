@@ -13,9 +13,9 @@ Linear GraphQL API CLI
 Usage: ./linear.sh <resource> <action> [options]
 
 Resources:
-  issues          Issue operations (list, get, create, update, children, relations)
+  issues          Issue operations (list, get, create, update, children, list-relations, add-relation)
   comments        Comment operations (list, create/update; supports --body-file)
-  projects        Project operations (list, get, create, update, dependencies, updates)
+  projects        Project operations (list, get, create, update, list-dependencies, add-dependency, updates)
   initiatives     Initiative operations (list, get, create, add-project)
   milestones      Project milestone operations (list, get, create)
   labels          Issue label operations (list, create)
@@ -34,12 +34,14 @@ Examples:
   # Issues with parent/sub-issues and relations
   ./linear.sh issues list --label "backend" --state "Todo,In Progress"
   ./linear.sh issues create --title "Task" --parent PROJ-42
+  ./linear.sh issues list-relations PROJ-42
   ./linear.sh issues add-relation PROJ-42 --blocks PROJ-43
   ./linear.sh issues children PROJ-42              # Direct children
   ./linear.sh issues children PROJ-42 --recursive  # All descendants (3 levels)
 
   # Projects with dependencies and health updates
   ./linear.sh projects list --state started
+  ./linear.sh projects list-dependencies <id>
   ./linear.sh projects add-dependency <id> --blocked-by <other-id>
   ./linear.sh projects post-update <id> --health on-track --body "Progressing well"
 

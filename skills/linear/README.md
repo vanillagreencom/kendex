@@ -38,6 +38,8 @@ Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-lin
 
 `issues bulk-update` applies each issue update independently. If one update fails after earlier items changed, the command emits a JSON summary with `partial: true`, per-issue success/error entries, and exits nonzero.
 
+Use explicit list actions for dependency reads: `issues list-relations ISSUE` and `projects list-dependencies PROJECT`. The older read-only aliases `issues relations` and `projects dependencies` remain accepted for compatibility, but new workflows should use the explicit names.
+
 ## Configuration
 
 | Variable | Purpose | Default |

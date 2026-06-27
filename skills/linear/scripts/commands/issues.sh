@@ -2231,7 +2231,7 @@ main() {
         fi
         list_children "$@"
         ;;
-    list-relations)
+    list-relations | relations)
         if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
             show_help
             exit 0

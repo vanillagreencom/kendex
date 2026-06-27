@@ -36,9 +36,9 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 
 | Resource | Actions |
 |----------|---------|
-| `issues` | list, get, create, update, children, relations, bulk-get, bulk-update |
+| `issues` | list, get, create, update, children, list-relations, add-relation, remove-relation, bulk-get, bulk-update |
 | `comments` | list, create (`--body` or `--body-file`) |
-| `projects` | list, get, create, update, dependencies, updates |
+| `projects` | list, get, create, update, list-dependencies, add-dependency, remove-dependency, post-update, list-updates |
 | `initiatives` | list, get, create, add-project |
 | `milestones` | list, get, create |
 | `labels` | list, create |
@@ -51,6 +51,8 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 | `sync` | Sync Linear data to local cache |
 | `cache` | Query local cache (issues, projects, cycles, initiatives, comments, labels, attachments) |
 | `auth-check` | Validate API key |
+
+Compatibility aliases: `issues relations` maps to `issues list-relations`, and `projects dependencies` maps to `projects list-dependencies`. Prefer the explicit action names in new workflows.
 
 ## Hierarchy
 

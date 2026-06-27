@@ -290,6 +290,28 @@ format_project_single() {
     }'
 }
 
+format_project_dependencies() {
+    local raw="$1"
+    echo "$raw" | jq '.project | {
+        id: .id,
+        name: (.name // ""),
+        blocked_by: [(.relations.nodes // [])[] | select(.type == "dependency") | {
+            relation_id: .id,
+            id: .relatedProject.id,
+            name: .relatedProject.name,
+            state: (.relatedProject.state // ""),
+            progress: (.relatedProject.progress // 0)
+        }],
+        blocks: [(.inverseRelations.nodes // [])[] | select(.type == "dependency") | {
+            relation_id: .id,
+            id: .project.id,
+            name: .project.name,
+            state: (.project.state // ""),
+            progress: (.project.progress // 0)
+        }]
+    }'
+}
+
 # Format projects list to IDs only
 format_projects_ids() {
     local raw="$1"
