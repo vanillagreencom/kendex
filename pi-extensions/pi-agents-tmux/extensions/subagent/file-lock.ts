@@ -11,7 +11,28 @@ interface LockOptions {
 
 const DEFAULT_STALE_MS = 30_000;
 const DEFAULT_RETRY_MS = 25;
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 45_000;
+
+export class FileLockTimeoutError extends Error {
+	constructor(
+		public readonly filePath: string,
+		public readonly timeoutMs: number,
+	) {
+		super(`Timed out acquiring file lock for ${filePath} after ${timeoutMs}ms`);
+		this.name = "FileLockTimeoutError";
+	}
+}
+
+export function isFileLockTimeoutError(error: unknown): error is FileLockTimeoutError {
+	return error instanceof FileLockTimeoutError || (error instanceof Error && error.name === "FileLockTimeoutError");
+}
+
+function effectiveTimeoutMs(timeoutMs: number, staleMs: number, retryMs: number): number {
+	if (!Number.isFinite(timeoutMs)) return timeoutMs;
+	if (!Number.isFinite(staleMs)) return timeoutMs;
+	const retryFloor = Number.isFinite(retryMs) ? Math.max(1, retryMs) : 1;
+	return Math.max(timeoutMs, Math.max(0, staleMs) + retryFloor);
+}
 
 function lockDirFor(filePath: string): string {
 	return `${filePath}.lock`;
@@ -62,7 +83,7 @@ export async function acquireFileLock(filePath: string, opts: LockOptions = {}):
 	const lockDir = lockDirFor(filePath);
 	const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
 	const retryMs = opts.retryMs ?? DEFAULT_RETRY_MS;
-	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const timeoutMs = effectiveTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, staleMs, retryMs);
 	const start = Date.now();
 	let touchTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -101,7 +122,7 @@ export async function acquireFileLock(filePath: string, opts: LockOptions = {}):
 		await clearStaleLock(lockDir, staleMs);
 
 		if (Date.now() - start > timeoutMs) {
-			throw new Error(`Timed out acquiring file lock for ${filePath} after ${timeoutMs}ms`);
+			throw new FileLockTimeoutError(filePath, timeoutMs);
 		}
 		const jitter = randomJitter(retryMs);
 		await new Promise((resolve) => setTimeout(resolve, retryMs + jitter));

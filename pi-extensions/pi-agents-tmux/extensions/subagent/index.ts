@@ -58,6 +58,7 @@ import {
 	parseTranscriptUsage,
 	resolveSubagentStatuslineInfo,
 	shortTaskId,
+	stringifyError,
 	subagentBranch,
 	wrappedText,
 } from "./format.js";
@@ -634,6 +635,9 @@ export default function (pi: ExtensionAPI) {
 		}
 		return diagnostics;
 	};
+	const warnBestEffortRegistryFailure = (context: string, error: unknown) => {
+		console.warn(`pi-agents-tmux ${context} skipped: ${stringifyError(error)}`);
+	};
 
 	const persistTaskEvent = (event: Record<string, unknown>, status: PaneTaskStatus) => {
 		const runtimeRoot = typeof event.runtimeRoot === "string" ? event.runtimeRoot : undefined;
@@ -885,11 +889,16 @@ export default function (pi: ExtensionAPI) {
 			for (const record of sorted) {
 				if (!record.taskId || !record.agent) continue;
 				if (inferTaskRecordKind(runtimeRoot, record) === "pane" && record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
-				const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-				const backfilled = taskNeedsSummaryBackfill(refreshed.record)
-					? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
-					: { record: refreshed.record, updated: false };
-				updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
+				try {
+					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
+					const backfilled = taskNeedsSummaryBackfill(refreshed.record)
+						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
+						: { record: refreshed.record, updated: false };
+					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
+				} catch (error) {
+					warnBestEffortRegistryFailure(`dashboard sync for task ${record.taskId}`, error);
+					updateDashboardFromTaskRecord(record, runtimeRoot);
+				}
 			}
 		});
 		await persistRuntimeSnapshot(ctx, runtimeRoot);
@@ -1112,7 +1121,7 @@ export default function (pi: ExtensionAPI) {
 			void updateTaskRegistry(runtimeRoot, (records) => {
 				const existing = records[taskId];
 				if (existing) records[taskId] = { ...existing, deliverAs, updatedAt: new Date().toISOString() };
-			});
+			}).catch((error) => warnBestEffortRegistryFailure("steer event persistence", error));
 		}
 	});
 
@@ -1344,6 +1353,7 @@ export default function (pi: ExtensionAPI) {
 					await syncDashboardFromTaskRegistry(ctx, runtimeRoot);
 					await refreshLiveUsage();
 				})
+				.catch((error) => warnBestEffortRegistryFailure("pane completion poll", error))
 				.finally(() => {
 					completionPollInFlight = false;
 				});

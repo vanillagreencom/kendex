@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { publishSubagentActivity } from "./activity.js";
 import { sanitizeCwdSnapshot, sanitizeCwdSnapshotText, snapshotCwdGitState } from "./cwd-snapshot.js";
-import { atomicWriteFile, withCrossProcessFileLock } from "./file-lock.js";
+import { atomicWriteFile, isFileLockTimeoutError, withCrossProcessFileLock } from "./file-lock.js";
 import { readLastAssistantTextFromTranscript, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
 import {
@@ -183,6 +183,10 @@ export function appendUniqueDiagnostic(existing: string[] | undefined, diagnosti
 	const diagnostics = [...(existing ?? [])];
 	if (!diagnostics.includes(compact)) diagnostics.push(compact);
 	return diagnostics.slice(-8);
+}
+
+function taskRegistryLockDiagnostic(error: unknown): string {
+	return `Task registry refresh skipped while another Pi process held the registry lock: ${stringifyError(error)}`;
 }
 
 function appendUniqueDiagnostics(existing: string[] | undefined, diagnostics: string[]): string[] | undefined {
@@ -495,9 +499,14 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 		const sanitized = sanitizedBgTaskRecord(record);
 		const changed = JSON.stringify(sanitized) !== JSON.stringify(record);
 		if (changed) {
-			await updateTaskRegistry(runtimeRoot, (records) => {
-				records[record.taskId] = sanitized;
-			});
+			try {
+				await updateTaskRegistry(runtimeRoot, (records) => {
+					records[record.taskId] = sanitized;
+				});
+			} catch (error) {
+				if (!isFileLockTimeoutError(error)) throw error;
+				return { record: sanitized, diagnostics: appendUniqueDiagnostic(sanitized.diagnostics, taskRegistryLockDiagnostic(error)) };
+			}
 		}
 		return { record: sanitized, diagnostics: record.diagnostics ?? [] };
 	}
@@ -577,18 +586,32 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 	}
 
 	let updated = record;
-	await updateTaskRegistry(runtimeRoot, (records) => {
-		const existing = records[record.taskId] ?? record;
+	try {
+		await updateTaskRegistry(runtimeRoot, (records) => {
+			const existing = records[record.taskId] ?? record;
+			updated = {
+				...existing,
+				...pathPatch,
+				status: nextStatus,
+				diagnostics,
+				cwdSnapshot,
+				updatedAt: new Date().toISOString(),
+			};
+			records[record.taskId] = updated;
+		});
+	} catch (error) {
+		if (!isFileLockTimeoutError(error)) throw error;
+		const fallbackDiagnostics = appendUniqueDiagnostic(diagnostics, taskRegistryLockDiagnostic(error));
 		updated = {
-			...existing,
+			...record,
 			...pathPatch,
 			status: nextStatus,
-			diagnostics,
+			diagnostics: fallbackDiagnostics,
 			cwdSnapshot,
 			updatedAt: new Date().toISOString(),
 		};
-		records[record.taskId] = updated;
-	});
+		return { record: updated, diagnostics: [...fallbackDiagnostics, ...artifactDiagnostics] };
+	}
 	if (shouldPatchCwdSnapshot) updated = await patchNeedsCompletionCwdSnapshot(runtimeRoot, updated.agent, updated.taskId) ?? updated;
 	return { record: updated, diagnostics: [...(updated.diagnostics ?? diagnostics), ...artifactDiagnostics] };
 }

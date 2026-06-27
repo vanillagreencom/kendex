@@ -198,6 +198,8 @@ Status legend per row: live pane, startable, stale, background. Dashboard rows: 
 
 Pane registries and task records are stored in sidecar files and mirrored into session custom entries only when the snapshot changes AND the session file's on-disk leaf still matches the active in-memory leaf. This prevents duplicate / orphaned Pi processes from advancing an older branch and making `/resume` land before the latest visible turns.
 
+Registry writes use `withCrossProcessFileLock()` so parent sessions and child panes do not interleave JSON writes. The default lock timeout must stay longer than the stale-lock window so a killed process's lock can be reaped before callers give up. Dashboard and Monitor refreshes are best-effort: if task diagnostics cannot update a record because another process holds the registry lock, they keep rendering the last known record and retry on the next poll instead of terminating Pi.
+
 ### Bounded session-state snapshots (vstack#177)
 
 `persistRuntimeSnapshot()` enforces two guards on the `vstack-subagents:runtime-state` JSONL entry:
