@@ -72,6 +72,8 @@ Store project IDs and metadata for cross-project analysis.
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
+Use the returned issue JSON for relation analysis. The supported cache payload includes `blocks`, `blocked_by`, and `related`; do not call a separate relation cache subcommand.
+
 For proposed issues, use provided fields directly.
 
 ### 1.5 Fetch Comparison Set

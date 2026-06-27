@@ -56,4 +56,13 @@ if grep -R --line-number --fixed-strings -- '["agent:researcher", "research", DO
   fail 'hard-coded research create label remains in VALIDATED_LABELS'
 fi
 
+unsupported_relations_cmd="cache issues relation""s"
+if grep -R --line-number --fixed-strings -- "$unsupported_relations_cmd" "$SKILL_DIR/workflows" "$SKILL_DIR/README.md" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references" "$SKILL_DIR/schemas"; then
+  fail 'unsupported Linear cache relation lookup subcommand remains in project-management docs'
+fi
+
+tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
+require_pattern "$tpm_audit" 'cache issues get \[ISSUE_ID\]' 'supported cached issue fetch for relation analysis'
+require_pattern "$tpm_audit" 'blocks`, `blocked_by`, and `related`' 'relation fields from cached issue JSON'
+
 echo "all pass"
