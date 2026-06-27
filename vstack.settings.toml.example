@@ -92,7 +92,7 @@ VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
 SECOND_OPINION_TARGET = "codex"
 # Used by: second-opinion. Values: claude, codex.
 
-SECOND_OPINION_TIMEOUT = "600"
+SECOND_OPINION_TIMEOUT = "300"
 # Used by: second-opinion.
 
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"

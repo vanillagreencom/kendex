@@ -228,7 +228,7 @@ fi
 # Validate CWD
 [[ -d "$CWD" ]] || { echo "Error: --cwd directory not found: $CWD" >&2; exit 1; }
 
-echo "→ second-opinion: target=$TARGET_CLI mode=$MODE cwd=$CWD" >&2
+echo "→ second-opinion: target=$TARGET_CLI mode=$MODE cwd=$CWD timeout=${TIMEOUT}s" >&2
 
 # --- Prompt construction (review mode) ----------------------------------------
 
@@ -335,14 +335,14 @@ CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-codex exec -m gpt-5.4 -s read-only -c mod
 
 case "$TARGET_CLI" in
   claude)
-    echo "→ cmd: $CLAUDE_CMD" >&2
+    echo "→ cmd: timeout ${TIMEOUT}s $CLAUDE_CMD" >&2
     # shellcheck disable=SC2086
     RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
       $CLAUDE_CMD \
       < "$PROMPT_TMP" 2>"$STDERR_TMP") || EXIT_CODE=$?
     ;;
   codex)
-    echo "→ cmd: $CODEX_CMD" >&2
+    echo "→ cmd: timeout ${TIMEOUT}s $CODEX_CMD" >&2
     # shellcheck disable=SC2086
     RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
       $CODEX_CMD \
