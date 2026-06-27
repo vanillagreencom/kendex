@@ -17,12 +17,24 @@ cat >"$TMP_ROOT/bin/curl" <<'SH'
 config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
+variables="$(jq -c '.variables' <<<"$payload")"
 
 case "$query" in
 *"GetRelations"*)
   printf '%s' '{"data":{"issue":{"identifier":"PROJ-42","title":"Current","relations":{"nodes":[{"id":"rel-1","type":"blocks","relatedIssue":{"id":"issue-43","identifier":"PROJ-43","title":"Downstream","state":{"name":"Todo"}}}]},"inverseRelations":{"nodes":[{"id":"rel-2","type":"blocks","issue":{"id":"issue-41","identifier":"PROJ-41","title":"Upstream","state":{"name":"In Progress"}}}]}}}}___HTTP_CODE___200'
   ;;
+*"projects(filter: {name: {eq: \$name}}"*)
+  if [[ "$(jq -r '.name' <<<"$variables")" != "Tech Debt & Bugs" ]]; then
+    printf '%s' '{"errors":[{"message":"unexpected project name"}]}___HTTP_CODE___200'
+    exit 0
+  fi
+  printf '%s' '{"data":{"projects":{"nodes":[{"id":"project-1"}]}}}___HTTP_CODE___200'
+  ;;
 *"GetProjectDependencies"*)
+  if [[ "$(jq -r '.id' <<<"$variables")" != "project-1" ]]; then
+    printf '%s' '{"errors":[{"message":"dependencies query did not use resolved project id"}]}___HTTP_CODE___200'
+    exit 0
+  fi
   printf '%s' '{"data":{"project":{"id":"project-1","name":"Tech Debt & Bugs","relations":{"nodes":[{"id":"dep-1","type":"dependency","anchorType":"project","relatedAnchorType":"project","relatedProject":{"id":"project-0","name":"Foundation","state":"started","progress":0.5}}]},"inverseRelations":{"nodes":[{"id":"dep-2","type":"dependency","anchorType":"project","relatedAnchorType":"project","project":{"id":"project-2","name":"Followup","state":"planned","progress":0}}]}}}}___HTTP_CODE___200'
   ;;
 *)

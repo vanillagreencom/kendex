@@ -644,6 +644,11 @@ list_dependencies() {
         return 1
     fi
 
+    local resolved_project_id
+    if ! resolved_project_id=$(resolve_project_id "$project_id"); then
+        return 1
+    fi
+
     local query='
     query GetProjectDependencies($id: String!) {
         project(id: $id) {
@@ -670,7 +675,7 @@ list_dependencies() {
         }
     }'
 
-    local variables="{\"id\": \"$project_id\"}"
+    local variables="{\"id\": \"$resolved_project_id\"}"
     local result
     result=$(graphql_query "$query" "$variables")
 
