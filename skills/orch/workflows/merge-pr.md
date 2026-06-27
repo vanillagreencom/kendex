@@ -65,9 +65,13 @@ For each PR:
 ```
 Use the output as `CHECK`.
 
-### 3.1 Resolve transient "unknown" before prompting
+### 3.1 Resolve transient readiness blockers before prompting
 
-If `issues` contains an entry starting with `unknown:` (GitHub still computing mergeable status), wait and re-check — do NOT prompt the user:
+If `CHECK.transient == true`, wait and re-check — do NOT prompt the user yet.
+Transient issue prefixes include `unknown:` (GitHub still computing mergeable
+status), `ci_pending:` (checks still running), `ci_unconfigured:`, and
+`ci_fetch_failed:`. Treat `CHECK.transient` as the contract; do not special-case
+only `unknown:`.
 
 ```bash
 .agents/skills/github/scripts/github.sh await-mergeable [PR_NUMBER]
@@ -76,6 +80,9 @@ If `issues` contains an entry starting with `unknown:` (GitHub still computing m
 Use the second command output as `CHECK`.
 
 `await-mergeable` polls `state` + `mergeStateStatus` (never `mergeable` — stays UNKNOWN after merge, hangs forever). Exit 124 on timeout → surface to user.
+
+If the refreshed `CHECK.transient` is still `true`, repeat this § 3.1
+wait/re-check step. Continue to § 3.2 only after `CHECK.transient` is `false`.
 
 ### 3.2 Parse and act
 
