@@ -81,11 +81,22 @@ Arguments: (none)
 
 ### 2.2 Present Results
 
-1. **Collect JSON path**: Agent returns `.JSON` file. If missing, halt.
+1. **Collect TPM payload**: Agent returns an `<output_format>` block with:
+   - `File: tmp/audit-project-order-YYYYMMDD-HHMMSS.json` (destination hint)
+   - fenced `json` containing the complete project-order audit output
 
-2. **Read file**: Use Read tool to get structured findings.
+   Treat `File:` as a destination hint only; do not assume the child agent wrote that file. If inline JSON is missing and the returned path is not already readable in the caller worktree, halt and request a TPM rerun with inline JSON.
 
-3. **Present findings** using this format. Omit empty sections.
+2. **Resolve artifact path**:
+   - Use the returned `File:` path if present; otherwise choose `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`.
+   - Resolve relative paths under the caller worktree (current repo root for project-order audits).
+   - Reject absolute paths outside the caller worktree; use the fallback `tmp/...` path instead.
+
+3. **Write artifact**: Ensure `tmp/` exists in the caller worktree. Write the inline JSON exactly to the resolved absolute path in the caller worktree.
+
+4. **Read file**: Use Read tool on the caller-written artifact to get structured findings.
+
+5. **Present findings** using this format. Omit empty sections.
 
    <output_format>
 
@@ -238,9 +249,20 @@ TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit
 
 ### 4.2 Process Audit Results
 
-1. **Collect JSON path**: Agent returns `.JSON` file. If missing, halt.
+1. **Collect TPM payload**: Agent returns an `<output_format>` block with:
+   - `File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json` (destination hint)
+   - fenced `json` containing the complete audit output
 
-2. **Read file**: Use Read tool to get structured findings.
+   Treat `File:` as a destination hint only; do not assume the child agent wrote that file. If inline JSON is missing and the returned path is not already readable in the caller worktree, halt and request a TPM rerun with inline JSON.
+
+2. **Resolve artifact path**:
+   - Use the returned `File:` path if present; otherwise choose `tmp/audit-project-YYYYMMDD-HHMMSS.json` (PROJECT) or `tmp/audit-issues-YYYYMMDD-HHMMSS.json` (ISSUE).
+   - Resolve relative paths under the caller worktree (PROJECT `Worktree:` value, ISSUE `worktree` from the input JSON, or current repo root when empty).
+   - Reject absolute paths outside the caller worktree; use the fallback `tmp/...` path instead.
+
+3. **Write artifact**: Ensure `tmp/` exists in the caller worktree. Write the inline JSON exactly to the resolved absolute path in the caller worktree.
+
+4. **Read file**: Use Read tool on the caller-written artifact to get structured findings.
 
 ---
 

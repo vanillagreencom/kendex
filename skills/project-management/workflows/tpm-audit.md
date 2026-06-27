@@ -649,9 +649,9 @@ For each input issue, assign action based on analysis:
 
 ## 12. Return Output
 
-1. **Build JSON** per [audit-output.md](../schemas/audit-output.md), filename `tmp/audit-project-YYYYMMDD-HHMMSS.json` (PROJECT) or `tmp/audit-issues-YYYYMMDD-HHMMSS.json` (ISSUES).
+1. **Build JSON** per [audit-output.md](../schemas/audit-output.md). Set the destination hint to `tmp/audit-project-YYYYMMDD-HHMMSS.json` (PROJECT) or `tmp/audit-issues-YYYYMMDD-HHMMSS.json` (ISSUES).
 
-2. **Return the JSON** in your response (the calling agent writes the file):
+2. **Return the JSON inline** in your response. Do not write the artifact yourself; the calling agent writes the file in its worktree using the returned `File:` hint.
 
    <output_format>
    File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json

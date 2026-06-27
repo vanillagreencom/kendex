@@ -20,6 +20,13 @@ require_pattern() {
   fi
 }
 
+reject_fixed_string() {
+  local file="$1" needle="$2" desc="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "$desc remains in ${file#$SKILL_DIR/}"
+  fi
+}
+
 mutation_workflows=(
   workflows/roadmap-create.md
   workflows/audit-issues.md
@@ -64,5 +71,16 @@ fi
 tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
 require_pattern "$tpm_audit" 'cache issues get \[ISSUE_ID\]' 'supported cached issue fetch for relation analysis'
 require_pattern "$tpm_audit" 'blocks`, `blocked_by`, and `related`' 'relation fields from cached issue JSON'
+require_pattern "$tpm_audit" 'Return the JSON inline' 'TPM inline audit JSON return contract'
+require_pattern "$tpm_audit" 'Do not write the artifact yourself' 'TPM child-does-not-write artifact contract'
+
+tpm_audit_project_order="$SKILL_DIR/workflows/tpm-audit-project-order.md"
+require_pattern "$tpm_audit_project_order" 'Return the JSON inline' 'TPM project-order inline JSON return contract'
+require_pattern "$tpm_audit_project_order" 'Do not write the artifact yourself' 'TPM project-order child-does-not-write artifact contract'
+
+audit_issues="$SKILL_DIR/workflows/audit-issues.md"
+require_pattern "$audit_issues" 'Treat `File:` as a destination hint only' 'audit parent File hint handling'
+require_pattern "$audit_issues" 'Write the inline JSON exactly to the resolved absolute path in the caller worktree' 'audit parent writes child JSON artifact'
+reject_fixed_string "$audit_issues" 'Agent returns `.JSON` file. If missing, halt.' 'audit parent assumes child-written JSON artifact'
 
 echo "all pass"

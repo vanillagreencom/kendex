@@ -140,9 +140,9 @@ Assuming reorders applied, find position 1 among `planned`/`backlog` with no inc
 
 ## 5. Return Output
 
-1. **Build JSON** per [audit-project-order-output.md](../schemas/audit-project-order-output.md), filename `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`.
+1. **Build JSON** per [audit-project-order-output.md](../schemas/audit-project-order-output.md). Set the destination hint to `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`.
 
-2. **Return the JSON** in your response (the calling agent writes the file):
+2. **Return the JSON inline** in your response. Do not write the artifact yourself; the calling agent writes the file in its worktree using the returned `File:` hint.
 
    <output_format>
    File: tmp/audit-project-order-YYYYMMDD-HHMMSS.json
