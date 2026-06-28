@@ -34,7 +34,7 @@
 
             sourceRoot = "source/cli";
 
-            cargoHash = "sha256-Zg9VgmZ4uTA9AhuBfvhXp6kr1f8+QXnkPpEMQ6ipvsU=";
+            cargoLock.lockFile = ./cli/Cargo.lock;
 
             nativeBuildInputs = with pkgs; [
               git
