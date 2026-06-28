@@ -8,6 +8,7 @@ Cross-model code review and consultation via external AI CLI. Auto-detects your 
 skills/second-opinion/
 ├── SKILL.md                    # Agent-facing routing table + config
 ├── README.md                   # This file
+├── vstack.settings.toml.example # Defaults merged into project settings
 ├── schemas/
 │   └── review-finding-prompt.md  # JSON schema (shared by review + audit)
 ├── scripts/
@@ -49,6 +50,8 @@ From the shell:
 ## Configuration
 
 All optional — defaults work out of the box. Set shared, non-sensitive defaults in `vstack.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
+
+Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.toml.example` when the file is missing, or merge any missing second-opinion keys into an existing file without overwriting user values.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

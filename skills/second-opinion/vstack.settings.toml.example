@@ -1,0 +1,15 @@
+[env]
+
+# SECOND OPINION
+
+# Used by: second-opinion.
+SECOND_OPINION_TIMEOUT = "300"
+
+# Used by: second-opinion.
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+
+# Used by: second-opinion.
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# Uncomment only when this project must force one target instead of auto-detecting.
+# SECOND_OPINION_TARGET = "claude"

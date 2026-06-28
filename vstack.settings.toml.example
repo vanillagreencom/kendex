@@ -98,7 +98,7 @@ SECOND_OPINION_TIMEOUT = "300"
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 # Used by: second-opinion.
 
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 # Used by: second-opinion.
 
 # DEBUG / OVERRIDE HOOKS

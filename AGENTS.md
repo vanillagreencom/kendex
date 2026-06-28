@@ -45,6 +45,7 @@ skill-templates/         Templates for new skills
 - **Reconciliation is automatic.** After every `vstack add`, all installed agents are regenerated with the current full set of installed skills and hooks.
 - **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parents. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state.
 - **Runtime settings are split from secrets.** Portable skill scripts load `.env`, then `vstack.settings.toml` / `.vstack/settings.toml` `[env]`, then `.env.local`. Put committed non-sensitive defaults in `vstack.settings.toml`; reserve `.env.local` for secrets, API keys, private URLs, signing keys, and personal overrides. Existing `.env.local` settings remain supported for compatibility.
+- **Skill settings templates are opt-in.** A skill can ship `vstack.settings.toml.example`; project-scope `vstack add` and `vstack refresh` merge its `[env]` defaults into `<project>/vstack.settings.toml`, creating the file when missing and never overwriting existing keys. Global installs do not write project settings.
 
 ## Formats
 
@@ -66,6 +67,15 @@ user-invocable: true
 dependencies:
   required: [linear, github, worktree]
 ```
+
+Optional skill settings template (`skills/*/vstack.settings.toml.example`):
+```toml
+[env]
+
+MY_SKILL_TIMEOUT = "300"
+```
+
+Project installs merge these defaults into `vstack.settings.toml` so shared non-secret settings are available as soon as the skill is installed.
 
 ### Hook header (`hooks/*.sh`)
 ```bash

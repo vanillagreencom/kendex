@@ -62,6 +62,8 @@ All modes accept:
 
 Set non-sensitive defaults in `vstack.settings.toml` under `[env]`. Existing `.env.local` and `.env` values still work; `.env.local` wins.
 
+Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.toml.example` when missing and merge only absent second-opinion keys into existing files.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SECOND_OPINION_TARGET` | auto-detect | Force target CLI: `claude` or `codex` |

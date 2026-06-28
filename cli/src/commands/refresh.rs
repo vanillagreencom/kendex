@@ -391,6 +391,30 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
 
     if !global {
+        let project_canon = project_root
+            .canonicalize()
+            .unwrap_or_else(|_| project_root.clone());
+        let project_is_source = source_dirs
+            .iter()
+            .any(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == project_canon);
+        if !project_is_source {
+            let installed_settings_skills: Vec<Skill> = all_source_skills
+                .iter()
+                .filter(|skill| {
+                    lock.entries
+                        .get(&skill.name)
+                        .is_some_and(|entry| entry.kind == ItemKind::Skill)
+                })
+                .cloned()
+                .collect();
+            if let Some(result) = crate::project_settings::ensure_skill_settings(
+                &project_root,
+                &installed_settings_skills,
+            )? {
+                eprintln!("  + {}", result.summary());
+            }
+        }
+
         let harnesses_by_agent: HashMap<String, Vec<Harness>> = lock
             .entries
             .iter()

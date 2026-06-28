@@ -12,6 +12,7 @@ mod installer;
 mod mapping;
 mod pi_extension;
 mod project_config;
+mod project_settings;
 mod resolve;
 mod scope;
 mod skill;

@@ -1011,6 +1011,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // Perform installation
     let mut results = Vec::new();
     let mut log_lines: Vec<String> = Vec::new();
+    let mut settings_note: Option<String> = None;
 
     // Collect computed agent→skill mappings to write to project vstack.toml
     let mut agent_skill_map: std::collections::HashMap<String, Vec<String>> =
@@ -1147,6 +1148,12 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // make every item appear outdated on next launch).
     if writes_project_config {
         crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
+        if let Some(result) = crate::project_settings::ensure_skill_settings(
+            &config::project_root(),
+            &selected_skills,
+        )? {
+            settings_note = Some(format!("Project settings: {}", result.summary()));
+        }
     }
 
     // Update lock file
@@ -1247,6 +1254,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                     skipped_harnesses.join(", ")
                 ));
             }
+            if let Some(note) = &settings_note {
+                notes.push(note.clone());
+            }
             if global {
                 notes.extend(harnesses.iter().flat_map(|h| {
                     h.summary_paths(true).into_iter().map(move |path| {
@@ -1308,6 +1318,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             eprintln!(
                 "  Add per-agent guidance or instructions in vstack.toml, then run `vstack refresh` to apply"
             );
+        }
+        if let Some(note) = &settings_note {
+            eprintln!("  {note}");
         }
         // Check for CLI updates in non-interactive mode
         crate::commands::update::check_update_hint();

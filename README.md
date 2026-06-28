@@ -125,6 +125,8 @@ Portable skill scripts load runtime settings in this order:
 
 Use `vstack.settings.toml` for non-sensitive project defaults that should be committed, such as worktree paths, issue regexes, bot usernames, default Linear team names, and second-opinion command defaults. Keep `.env.local` for secrets, tokens, API keys, private URLs, signing keys, and personal overrides. See [`vstack.settings.toml.example`](vstack.settings.toml.example) and [`.env.local.example`](.env.local.example).
 
+When a project install includes a skill that ships `vstack.settings.toml.example`, `vstack add` seeds `vstack.settings.toml` with that skill's non-sensitive defaults. Existing files are merged by adding missing `[env]` keys only; user values are not overwritten. `vstack refresh` also performs this merge for installed skills.
+
 Secret values may also be injected by the parent process at launch time. GitHub and Linear helpers preserve already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, `GH_BOT_TOKEN`, and `LINEAR_API_KEY` values before reading local files or resolving `op://` references.
 
 ## Supported Tools
