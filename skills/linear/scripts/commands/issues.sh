@@ -982,7 +982,13 @@ create_issue() {
     # Write-through: upsert new issue into cache
     local created_issue
     created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
-    if [[ -n "$requested_parent_id" && -n "$created_issue" && "$created_issue" != "null" ]]; then
+    if [[ -n "$requested_parent_id" ]]; then
+        if [[ -z "$created_issue" || "$created_issue" = "null" ]]; then
+            jq -nc --arg parent "$parent" \
+                '{error: "Issue created but response omitted issue object; cannot verify requested parent " + $parent}' >&2
+            return 1
+        fi
+
         local created_parent_id
         created_parent_id=$(echo "$created_issue" | jq -r '.parent.id // empty')
         if [ "$created_parent_id" != "$requested_parent_id" ]; then

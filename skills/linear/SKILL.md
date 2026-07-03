@@ -129,7 +129,7 @@ sortOrder → sort_order  # Manual sort position
 | `--project` | Name or UUID | Fail with "not found" |
 | `--state` | Exact name (case-sensitive) | Fail, lists available states |
 | `--milestone` | Name or UUID | Fail with "not found" |
-| `--parent` | Issue identifier or UUID | Fail if the parent cannot be resolved or verified after create/update |
+| `--parent` | Issue identifier or UUID | Fail if the parent cannot be resolved; create also fails if the link cannot be verified or repaired |
 | `--labels` | Comma-separated issue-label names | Warn + skip invalid, continue (workflow callers must preflight strictly) |
 | `--assignee` | Name or `me` | Silent fail |
 
