@@ -36,6 +36,8 @@ Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachmen
 
 Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-line comments. Inline `--body` is intended for short plain strings.
 
+Use `issues create --parent PROJ-42` to create a sub-issue. The command resolves the parent identifier to a UUID, sends `parentId` on create, and verifies the returned issue is linked. If Linear ignores the create-time parent, the command repairs the link with `issueUpdate`; if that cannot be verified, it exits nonzero.
+
 `issues bulk-update` applies each issue update independently. If one update fails after earlier items changed, the command emits a JSON summary with `partial: true`, per-issue success/error entries, and exits nonzero.
 
 Use explicit list actions for dependency reads: `issues list-relations ISSUE` and `projects list-dependencies PROJECT`. The older read-only aliases `issues relations` and `projects dependencies` remain accepted for compatibility, but new workflows should use the explicit names.

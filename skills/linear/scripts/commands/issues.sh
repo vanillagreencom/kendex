@@ -777,6 +777,7 @@ create_issue() {
     local milestone=""
     local cycle=""
     local estimate=""
+    local requested_parent_id=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -819,6 +820,10 @@ create_issue() {
         --parent)
             parent="$2"
             shift 2
+            ;;
+        --parent=*)
+            parent="${1#*=}"
+            shift
             ;;
         --milestone)
             milestone="$2"
@@ -933,12 +938,12 @@ create_issue() {
     # Handle parent (for sub-issues) - resolve identifier to UUID
     if [ -n "$parent" ]; then
         local parent_id
-        parent_id=$(resolve_issue_id "$parent")
-        if [ -z "$parent_id" ]; then
+        if ! parent_id=$(resolve_issue_id "$parent") || [ -z "$parent_id" ]; then
             echo "{\"error\": \"Parent issue not found: $parent\"}" >&2
             return 1
         fi
-        input_parts+=("\"parentId\": \"$parent_id\"")
+        requested_parent_id="$parent_id"
+        input_parts+=("\"parentId\": \"$requested_parent_id\"")
     fi
 
     # Handle milestone (auto-resolves name or UUID, fail fast on miss)
@@ -977,6 +982,51 @@ create_issue() {
     # Write-through: upsert new issue into cache
     local created_issue
     created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
+    if [[ -n "$requested_parent_id" && -n "$created_issue" && "$created_issue" != "null" ]]; then
+        local created_parent_id
+        created_parent_id=$(echo "$created_issue" | jq -r '.parent.id // empty')
+        if [ "$created_parent_id" != "$requested_parent_id" ]; then
+            local child_issue_id
+            child_issue_id=$(echo "$created_issue" | jq -r '.id // empty')
+            if [ -z "$child_issue_id" ]; then
+                jq -nc --arg parent "$parent" \
+                    '{error: "Issue created but response omitted child id; cannot verify requested parent " + $parent}' >&2
+                return 1
+            fi
+
+            local parent_fix_mutation="
+            mutation EnsureIssueParent(\$id: String!, \$input: IssueUpdateInput!) {
+                issueUpdate(id: \$id, input: \$input) {
+                    success
+                    issue {
+                        $ISSUE_RETURN_FIELDS
+                    }
+                }
+            }"
+            local parent_fix_variables
+            parent_fix_variables=$(jq -cn --arg id "$child_issue_id" --arg parentId "$requested_parent_id" \
+                '{id: $id, input: {parentId: $parentId}}')
+            local parent_fix_result
+            if ! parent_fix_result=$(graphql_query "$parent_fix_mutation" "$parent_fix_variables"); then
+                jq -nc --arg child "$child_issue_id" --arg parent "$parent" \
+                    '{error: "Issue " + $child + " was created, but Linear did not attach parent " + $parent + " during create and the follow-up repair failed"}' >&2
+                return 1
+            fi
+
+            local updated_issue
+            updated_issue=$(echo "$parent_fix_result" | jq '.issueUpdate.issue // empty')
+            local updated_parent_id
+            updated_parent_id=$(echo "$updated_issue" | jq -r '.parent.id // empty')
+            if [ "$updated_parent_id" != "$requested_parent_id" ]; then
+                jq -nc --arg child "$child_issue_id" --arg parent "$parent" \
+                    '{error: "Issue " + $child + " was created, but parent " + $parent + " could not be verified after follow-up repair"}' >&2
+                return 1
+            fi
+
+            result=$(echo "$parent_fix_result" | jq -c '{issueCreate: {success: (.issueUpdate.success // false), issue: .issueUpdate.issue}}')
+            created_issue="$updated_issue"
+        fi
+    fi
     [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_upsert_issue "$created_issue" 2>/dev/null || true
     [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_patch_relation_snapshots "$created_issue" 2>/dev/null || true
     # Download any attachments in the new issue description
