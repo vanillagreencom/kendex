@@ -338,6 +338,39 @@ assert_eq "$lease_race_second_code" "1" "auto-rebased push rejects remote branch
 assert_eq "$(git --git-dir="$LEASE_RACE_ROOT/origin.git" rev-parse refs/heads/issue-lease-race)" "$lease_race_external_commit" "remote branch remains at external commit after lease rejection"
 assert_contains "$(cat "$LEASE_RACE_ROOT/lease-race-second.err")" "force-with-lease expectation" "lease rejection diagnostic tells user to fetch and rebase"
 
+DIVERGED_REMOTE_ROOT="$TMP_ROOT/diverged-remote"
+make_repo "$DIVERGED_REMOTE_ROOT/main"
+git init -q --bare "$DIVERGED_REMOTE_ROOT/origin.git"
+git -C "$DIVERGED_REMOTE_ROOT/main" remote add origin "$DIVERGED_REMOTE_ROOT/origin.git"
+git -C "$DIVERGED_REMOTE_ROOT/main" push -q -u origin main
+git -C "$DIVERGED_REMOTE_ROOT/main" worktree add -q -b issue-diverged-push "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push" main
+printf 'branch-change\n' > "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push/branch.txt"
+git -C "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push" add branch.txt
+git -C "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push" commit -q -m 'branch change'
+(
+  cd "$DIVERGED_REMOTE_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-DIVERGED-PUSH --set-upstream >"$DIVERGED_REMOTE_ROOT/diverged-first.out" 2>"$DIVERGED_REMOTE_ROOT/diverged-first.err"
+)
+diverged_old_oid="$(git --git-dir="$DIVERGED_REMOTE_ROOT/origin.git" rev-parse refs/heads/issue-diverged-push)"
+diverged_old_tree="$(git --git-dir="$DIVERGED_REMOTE_ROOT/origin.git" rev-parse "${diverged_old_oid}^{tree}")"
+diverged_external_commit="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$DIVERGED_REMOTE_ROOT/origin.git" commit-tree "$diverged_old_tree" -p "$diverged_old_oid" -m 'observed external branch update')"
+git --git-dir="$DIVERGED_REMOTE_ROOT/origin.git" update-ref refs/heads/issue-diverged-push "$diverged_external_commit"
+git -C "$DIVERGED_REMOTE_ROOT/main" fetch -q origin "+refs/heads/issue-diverged-push:refs/remotes/origin/issue-diverged-push"
+printf 'local-review-fix\n' > "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push/fix.txt"
+git -C "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push" add fix.txt
+git -C "$DIVERGED_REMOTE_ROOT/trees/issue-diverged-push" commit -q -m 'local review fix'
+set +e
+(
+  cd "$DIVERGED_REMOTE_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-DIVERGED-PUSH >"$DIVERGED_REMOTE_ROOT/diverged-second.out" 2>"$DIVERGED_REMOTE_ROOT/diverged-second.err"
+)
+diverged_second_code=$?
+set -e
+assert_eq "$diverged_second_code" "1" "auto-rebased push rejects already-observed remote divergence"
+assert_eq "$(git --git-dir="$DIVERGED_REMOTE_ROOT/origin.git" rev-parse refs/heads/issue-diverged-push)" "$diverged_external_commit" "remote branch remains at observed external commit after divergence rejection"
+assert_contains "$(cat "$DIVERGED_REMOTE_ROOT/diverged-second.err")" "not contained in local branch" "divergence diagnostic names non-ancestor remote tip"
+assert_contains "$(cat "$DIVERGED_REMOTE_ROOT/diverged-second.err")" "Fetch and rebase/merge" "divergence diagnostic tells user to fetch and rebase"
+
 BROKEN_REMOTE_ROOT="$TMP_ROOT/broken-remote"
 make_repo "$BROKEN_REMOTE_ROOT/main"
 git init -q --bare "$BROKEN_REMOTE_ROOT/origin.git"
