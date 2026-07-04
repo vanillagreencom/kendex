@@ -44,6 +44,10 @@ config. This lets Codex/GitHub-authenticated sessions push without a working
 SSH key. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to force the normal SSH
 path.
 
+When `push` performs its auto-rebase, the following push uses a scoped
+`--force-with-lease` for the target branch. Plain pushes are still used when
+`--no-rebase` is passed or no auto-rebase runs.
+
 `remove` deletes the worktree before deleting the local branch. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
 
 When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.

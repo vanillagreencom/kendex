@@ -57,6 +57,20 @@ git_with_github_https_auth() {
   fi
 }
 
+remote_ref_lease_arg() {
+  local wt="$1" remote="$2" branch="$3"
+  local remote_head_ref="refs/heads/$branch"
+  local remote_tracking_ref="refs/remotes/$remote/$branch"
+
+  if git_with_github_https_auth -C "$wt" fetch "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>&1; then
+    printf '%s\n' "--force-with-lease=${remote_head_ref}:${remote_tracking_ref}"
+  else
+    # Empty expectation means the remote branch must not already exist. This
+    # keeps first pushes safe while still allowing auto-rebased new branches.
+    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+  fi
+}
+
 strip_trailing_slashes() {
   local path="$1"
   while [[ "$path" != "/" && "$path" == */ ]]; do
@@ -544,6 +558,7 @@ case "${1:-}" in
       echo "Usage: $0 push [ID|/path] [--set-upstream|-u] [--no-rebase]"
       echo ""
       echo "Push worktree branch to remote. Auto-rebases onto origin/$DEFAULT_BRANCH first."
+      echo "Auto-rebased pushes use --force-with-lease scoped to the target branch."
       echo "Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to origin."
       echo ""
       echo "Options:"
@@ -554,6 +569,7 @@ case "${1:-}" in
     ARG="${2:-}"
     SET_UPSTREAM=""
     AUTO_REBASE=true
+    REBASE_RAN=false
     shift 2 || shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -593,6 +609,7 @@ case "${1:-}" in
           echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
           exit 1
         fi
+        REBASE_RAN=true
         # Rebase can replace symlinks with tracked content — restore them
         setup_worktree_links "$WT_PATH"
       fi
@@ -604,10 +621,15 @@ case "${1:-}" in
       [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
     fi
 
+    PUSH_LEASE=()
+    if [[ "$REBASE_RAN" == true && -n "$CURRENT_BRANCH" ]]; then
+      PUSH_LEASE=("$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")")
+    fi
+
     if [[ -n "$SET_UPSTREAM" ]]; then
-      git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"
+      git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "${PUSH_LEASE[@]}" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"
     else
-      git_with_github_https_auth -C "$WT_PATH" push "$REMOTE" HEAD
+      git_with_github_https_auth -C "$WT_PATH" push "${PUSH_LEASE[@]}" "$REMOTE" HEAD
     fi
     ;;
 

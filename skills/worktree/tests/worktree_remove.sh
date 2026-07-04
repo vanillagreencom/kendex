@@ -253,6 +253,42 @@ assert_eq "$codex_push_code" "0" "push issue ID uses current Codex worktree outs
 assert_remote_branch_exists "$CODEX_PUSH_ROOT/main" "issue-codex-push" "push issue ID publishes current Codex worktree branch"
 assert_path_absent "$CODEX_PUSH_ROOT/registry-trees/issue-codex-push" "push issue ID does not require configured registry path"
 
+REBASE_PUSH_ROOT="$TMP_ROOT/rebase-push"
+make_repo "$REBASE_PUSH_ROOT/main"
+git init -q --bare "$REBASE_PUSH_ROOT/origin.git"
+git -C "$REBASE_PUSH_ROOT/main" remote add origin "$REBASE_PUSH_ROOT/origin.git"
+git -C "$REBASE_PUSH_ROOT/main" push -q -u origin main
+git -C "$REBASE_PUSH_ROOT/main" worktree add -q -b issue-rebase-push "$REBASE_PUSH_ROOT/trees/issue-rebase-push" main
+printf 'branch-change\n' > "$REBASE_PUSH_ROOT/trees/issue-rebase-push/branch.txt"
+git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" add branch.txt
+git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" commit -q -m 'branch change'
+set +e
+(
+  cd "$REBASE_PUSH_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-REBASE-PUSH --set-upstream >"$REBASE_PUSH_ROOT/rebase-push-first.out" 2>"$REBASE_PUSH_ROOT/rebase-push-first.err"
+)
+rebase_push_first_code=$?
+set -e
+assert_eq "$rebase_push_first_code" "0" "push with auto-rebase can create remote branch with lease"
+printf 'main-advanced\n' > "$REBASE_PUSH_ROOT/main/main-advanced.txt"
+git -C "$REBASE_PUSH_ROOT/main" add main-advanced.txt
+git -C "$REBASE_PUSH_ROOT/main" commit -q -m 'advance main'
+git -C "$REBASE_PUSH_ROOT/main" push -q origin main
+printf 'review-fix\n' > "$REBASE_PUSH_ROOT/trees/issue-rebase-push/fix.txt"
+git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" add fix.txt
+git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" commit -q -m 'review fix'
+set +e
+(
+  cd "$REBASE_PUSH_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-REBASE-PUSH >"$REBASE_PUSH_ROOT/rebase-push-second.out" 2>"$REBASE_PUSH_ROOT/rebase-push-second.err"
+)
+rebase_push_second_code=$?
+set -e
+assert_eq "$rebase_push_second_code" "0" "auto-rebased already-pushed branch pushes with force-with-lease"
+git -C "$REBASE_PUSH_ROOT/main" fetch -q origin "+refs/heads/issue-rebase-push:refs/remotes/origin/issue-rebase-push"
+assert_eq "$(git -C "$REBASE_PUSH_ROOT/main" rev-parse origin/issue-rebase-push)" "$(git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" rev-parse HEAD)" "remote branch matches auto-rebased local head"
+assert_path_exists "$REBASE_PUSH_ROOT/trees/issue-rebase-push/main-advanced.txt" "auto-rebase placed branch on advanced main"
+
 GITHUB_PUSH_ROOT="$TMP_ROOT/github-push"
 make_repo "$GITHUB_PUSH_ROOT/main"
 git -C "$GITHUB_PUSH_ROOT/main" remote add origin git@github.com:owner/repo.git
