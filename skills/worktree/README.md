@@ -58,9 +58,12 @@ are not modified. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to disable this
 for a call.
 
 When `worktree push` auto-rebases a branch before pushing, it uses a scoped
-`--force-with-lease` for the target branch so already-pushed PR branches can be
-rebased onto an advanced `origin/main` without failing non-fast-forward. Calls
-that skip auto-rebase still use plain pushes.
+`--force-with-lease` pinned to the target branch OID known before the rebase so
+already-pushed PR branches can be rebased onto an advanced `origin/main`
+without failing non-fast-forward. If the remote branch has advanced beyond the
+local branch, the command aborts and asks you to fetch/rebase/merge first
+instead of overwriting unseen remote commits. Calls that skip auto-rebase still
+use plain pushes.
 
 `codex-setup` applies the same env/config symlinks, copies, mkdirs, bot remote, bot git identity, and lightweight dependency bootstrap that `create` applies after creating a worktree. `codex-branch` renames or switches the app-created worktree branch to the lower-case issue branch expected by `orch`. `codex-cleanup` is intentionally a no-op lifecycle hook for this script; Codex owns app-created worktree and branch deletion. Keep project-level teardown such as stopping containers or removing disposable caches in the Codex environment cleanup script after this command, but do not call `worktree remove` from the hook.
 

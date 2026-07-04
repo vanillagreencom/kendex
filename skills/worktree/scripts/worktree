@@ -61,14 +61,47 @@ remote_ref_lease_arg() {
   local wt="$1" remote="$2" branch="$3"
   local remote_head_ref="refs/heads/$branch"
   local remote_tracking_ref="refs/remotes/$remote/$branch"
+  local expected_oid=""
+  local fetch_err=""
+  local fetch_status=0
 
-  if git_with_github_https_auth -C "$wt" fetch "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>&1; then
-    printf '%s\n' "--force-with-lease=${remote_head_ref}:${remote_tracking_ref}"
-  else
-    # Empty expectation means the remote branch must not already exist. This
-    # keeps first pushes safe while still allowing auto-rebased new branches.
-    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+  expected_oid="$(git -C "$wt" show-ref --verify --hash "$remote_tracking_ref" 2>/dev/null || true)"
+
+  if [[ -z "$expected_oid" && "$remote" != "origin" ]]; then
+    fetch_err="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-fetch.XXXXXX")"
+    if git_with_github_https_auth -C "$wt" fetch "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>"$fetch_err"; then
+      expected_oid="$(git -C "$wt" show-ref --verify --hash "$remote_tracking_ref" 2>/dev/null || true)"
+    else
+      fetch_status=$?
+      if grep -qiE "couldn't find remote ref|could not find remote ref|remote ref does not exist|remote branch .* not found" "$fetch_err"; then
+        rm -f "$fetch_err"
+        printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+        return 0
+      fi
+
+      echo "Error: Could not fetch remote branch '$branch' from remote '$remote' for force-with-lease." >&2
+      sed 's/^/  /' "$fetch_err" >&2
+      rm -f "$fetch_err"
+      return "$fetch_status"
+    fi
+    rm -f "$fetch_err"
   fi
+
+  if [[ -z "$expected_oid" ]]; then
+    # Empty expectation means the remote branch must not already exist. This
+    # keeps first pushes safe and prevents overwriting an existing branch that
+    # the local checkout has never observed.
+    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+    return 0
+  fi
+
+  if ! git -C "$wt" merge-base --is-ancestor "$expected_oid" HEAD; then
+    echo "Error: Remote '$remote/$branch' points at $expected_oid, which is not contained in local branch '$branch'." >&2
+    echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
+    return 1
+  fi
+
+  printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
 }
 
 strip_trailing_slashes() {
@@ -558,7 +591,7 @@ case "${1:-}" in
       echo "Usage: $0 push [ID|/path] [--set-upstream|-u] [--no-rebase]"
       echo ""
       echo "Push worktree branch to remote. Auto-rebases onto origin/$DEFAULT_BRANCH first."
-      echo "Auto-rebased pushes use --force-with-lease scoped to the target branch."
+      echo "Auto-rebased pushes use --force-with-lease pinned to the pre-rebase target branch OID."
       echo "Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to origin."
       echo ""
       echo "Options:"
@@ -569,7 +602,6 @@ case "${1:-}" in
     ARG="${2:-}"
     SET_UPSTREAM=""
     AUTO_REBASE=true
-    REBASE_RAN=false
     shift 2 || shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -600,16 +632,24 @@ case "${1:-}" in
       REMOTE="origin"
     fi
 
+    CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+    PUSH_LEASE=()
+    if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+      if LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
+        PUSH_LEASE=("$LEASE_ARG")
+      else
+        exit 1
+      fi
+    fi
+
     if [[ "$AUTO_REBASE" == true ]]; then
-      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
-      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
         if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
           git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
           echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
           exit 1
         fi
-        REBASE_RAN=true
         # Rebase can replace symlinks with tracked content — restore them
         setup_worktree_links "$WT_PATH"
       fi
@@ -621,15 +661,20 @@ case "${1:-}" in
       [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
     fi
 
-    PUSH_LEASE=()
-    if [[ "$REBASE_RAN" == true && -n "$CURRENT_BRANCH" ]]; then
-      PUSH_LEASE=("$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")")
-    fi
-
     if [[ -n "$SET_UPSTREAM" ]]; then
-      git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "${PUSH_LEASE[@]}" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"
+      if ! git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "${PUSH_LEASE[@]}" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"; then
+        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
+          echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+        fi
+        exit 1
+      fi
     else
-      git_with_github_https_auth -C "$WT_PATH" push "${PUSH_LEASE[@]}" "$REMOTE" HEAD
+      if ! git_with_github_https_auth -C "$WT_PATH" push "${PUSH_LEASE[@]}" "$REMOTE" HEAD; then
+        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
+          echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+        fi
+        exit 1
+      fi
     fi
     ;;
 

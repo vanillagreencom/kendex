@@ -289,6 +289,109 @@ git -C "$REBASE_PUSH_ROOT/main" fetch -q origin "+refs/heads/issue-rebase-push:r
 assert_eq "$(git -C "$REBASE_PUSH_ROOT/main" rev-parse origin/issue-rebase-push)" "$(git -C "$REBASE_PUSH_ROOT/trees/issue-rebase-push" rev-parse HEAD)" "remote branch matches auto-rebased local head"
 assert_path_exists "$REBASE_PUSH_ROOT/trees/issue-rebase-push/main-advanced.txt" "auto-rebase placed branch on advanced main"
 
+LEASE_RACE_ROOT="$TMP_ROOT/lease-race"
+make_repo "$LEASE_RACE_ROOT/main"
+git init -q --bare "$LEASE_RACE_ROOT/origin.git"
+git -C "$LEASE_RACE_ROOT/main" remote add origin "$LEASE_RACE_ROOT/origin.git"
+git -C "$LEASE_RACE_ROOT/main" push -q -u origin main
+git -C "$LEASE_RACE_ROOT/main" worktree add -q -b issue-lease-race "$LEASE_RACE_ROOT/trees/issue-lease-race" main
+printf 'branch-change\n' > "$LEASE_RACE_ROOT/trees/issue-lease-race/branch.txt"
+git -C "$LEASE_RACE_ROOT/trees/issue-lease-race" add branch.txt
+git -C "$LEASE_RACE_ROOT/trees/issue-lease-race" commit -q -m 'branch change'
+(
+  cd "$LEASE_RACE_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-LEASE-RACE --set-upstream >"$LEASE_RACE_ROOT/lease-race-first.out" 2>"$LEASE_RACE_ROOT/lease-race-first.err"
+)
+printf 'main-advanced\n' > "$LEASE_RACE_ROOT/main/main-advanced.txt"
+git -C "$LEASE_RACE_ROOT/main" add main-advanced.txt
+git -C "$LEASE_RACE_ROOT/main" commit -q -m 'advance main'
+git -C "$LEASE_RACE_ROOT/main" push -q origin main
+printf 'review-fix\n' > "$LEASE_RACE_ROOT/trees/issue-lease-race/fix.txt"
+git -C "$LEASE_RACE_ROOT/trees/issue-lease-race" add fix.txt
+git -C "$LEASE_RACE_ROOT/trees/issue-lease-race" commit -q -m 'review fix'
+lease_race_old_oid="$(git --git-dir="$LEASE_RACE_ROOT/origin.git" rev-parse refs/heads/issue-lease-race)"
+lease_race_old_tree="$(git --git-dir="$LEASE_RACE_ROOT/origin.git" rev-parse "${lease_race_old_oid}^{tree}")"
+lease_race_external_commit="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$LEASE_RACE_ROOT/origin.git" commit-tree "$lease_race_old_tree" -p "$lease_race_old_oid" -m 'external branch update')"
+mkdir -p "$LEASE_RACE_ROOT/bin"
+REAL_GIT="$(command -v git)"
+cat > "$LEASE_RACE_ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  if [[ "\$arg" == "rebase" && ! -e "$LEASE_RACE_ROOT/lease-race-mutated" ]]; then
+    touch "$LEASE_RACE_ROOT/lease-race-mutated"
+    "$REAL_GIT" --git-dir="$LEASE_RACE_ROOT/origin.git" update-ref refs/heads/issue-lease-race "$lease_race_external_commit"
+    break
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$LEASE_RACE_ROOT/bin/git"
+set +e
+(
+  cd "$LEASE_RACE_ROOT/main" && \
+    PATH="$LEASE_RACE_ROOT/bin:$PATH" "$WORKTREE_SCRIPT" push ISSUE-LEASE-RACE >"$LEASE_RACE_ROOT/lease-race-second.out" 2>"$LEASE_RACE_ROOT/lease-race-second.err"
+)
+lease_race_second_code=$?
+set -e
+assert_eq "$lease_race_second_code" "1" "auto-rebased push rejects remote branch update after lease capture"
+assert_eq "$(git --git-dir="$LEASE_RACE_ROOT/origin.git" rev-parse refs/heads/issue-lease-race)" "$lease_race_external_commit" "remote branch remains at external commit after lease rejection"
+assert_contains "$(cat "$LEASE_RACE_ROOT/lease-race-second.err")" "force-with-lease expectation" "lease rejection diagnostic tells user to fetch and rebase"
+
+BROKEN_REMOTE_ROOT="$TMP_ROOT/broken-remote"
+make_repo "$BROKEN_REMOTE_ROOT/main"
+git init -q --bare "$BROKEN_REMOTE_ROOT/origin.git"
+git -C "$BROKEN_REMOTE_ROOT/main" remote add origin "$BROKEN_REMOTE_ROOT/origin.git"
+git -C "$BROKEN_REMOTE_ROOT/main" push -q -u origin main
+git -C "$BROKEN_REMOTE_ROOT/main" remote add broken "$BROKEN_REMOTE_ROOT/missing.git"
+cat > "$BROKEN_REMOTE_ROOT/main/.env.local" <<'ENV'
+BOT_REMOTE_NAME="broken"
+ENV
+git -C "$BROKEN_REMOTE_ROOT/main" worktree add -q -b issue-broken-push "$BROKEN_REMOTE_ROOT/trees/issue-broken-push" main
+printf 'broken-remote-change\n' > "$BROKEN_REMOTE_ROOT/trees/issue-broken-push/branch.txt"
+git -C "$BROKEN_REMOTE_ROOT/trees/issue-broken-push" add branch.txt
+git -C "$BROKEN_REMOTE_ROOT/trees/issue-broken-push" commit -q -m 'branch change'
+set +e
+(
+  cd "$BROKEN_REMOTE_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-BROKEN-PUSH >"$BROKEN_REMOTE_ROOT/broken-push.out" 2>"$BROKEN_REMOTE_ROOT/broken-push.err"
+)
+broken_push_code=$?
+set -e
+assert_eq "$broken_push_code" "1" "force-with-lease setup aborts on non-missing fetch failure"
+assert_contains "$(cat "$BROKEN_REMOTE_ROOT/broken-push.err")" "Could not fetch remote branch 'issue-broken-push' from remote 'broken'" "fetch failure diagnostic names remote branch"
+
+BOT_PUSH_ROOT="$TMP_ROOT/bot-push"
+make_repo "$BOT_PUSH_ROOT/main"
+git init -q --bare "$BOT_PUSH_ROOT/origin.git"
+git init -q --bare "$BOT_PUSH_ROOT/bot.git"
+git -C "$BOT_PUSH_ROOT/main" remote add origin "$BOT_PUSH_ROOT/origin.git"
+git -C "$BOT_PUSH_ROOT/main" remote add bot "$BOT_PUSH_ROOT/bot.git"
+git -C "$BOT_PUSH_ROOT/main" push -q -u origin main
+cat > "$BOT_PUSH_ROOT/main/.env.local" <<'ENV'
+BOT_REMOTE_NAME="bot"
+ENV
+git -C "$BOT_PUSH_ROOT/main" worktree add -q -b issue-bot-push "$BOT_PUSH_ROOT/trees/issue-bot-push" main
+printf 'bot-branch-change\n' > "$BOT_PUSH_ROOT/trees/issue-bot-push/branch.txt"
+git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" add branch.txt
+git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" commit -q -m 'bot branch change'
+(
+  cd "$BOT_PUSH_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-BOT-PUSH --set-upstream >"$BOT_PUSH_ROOT/bot-push-first.out" 2>"$BOT_PUSH_ROOT/bot-push-first.err"
+)
+printf 'main-advanced\n' > "$BOT_PUSH_ROOT/main/main-advanced.txt"
+git -C "$BOT_PUSH_ROOT/main" add main-advanced.txt
+git -C "$BOT_PUSH_ROOT/main" commit -q -m 'advance main'
+git -C "$BOT_PUSH_ROOT/main" push -q origin main
+printf 'bot-review-fix\n' > "$BOT_PUSH_ROOT/trees/issue-bot-push/fix.txt"
+git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" add fix.txt
+git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" commit -q -m 'bot review fix'
+(
+  cd "$BOT_PUSH_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push ISSUE-BOT-PUSH >"$BOT_PUSH_ROOT/bot-push-second.out" 2>"$BOT_PUSH_ROOT/bot-push-second.err"
+)
+assert_eq "$(git --git-dir="$BOT_PUSH_ROOT/bot.git" rev-parse refs/heads/issue-bot-push)" "$(git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" rev-parse HEAD)" "auto-rebased push uses configured bot remote lease"
+
 GITHUB_PUSH_ROOT="$TMP_ROOT/github-push"
 make_repo "$GITHUB_PUSH_ROOT/main"
 git -C "$GITHUB_PUSH_ROOT/main" remote add origin git@github.com:owner/repo.git

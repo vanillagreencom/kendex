@@ -45,8 +45,11 @@ SSH key. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to force the normal SSH
 path.
 
 When `push` performs its auto-rebase, the following push uses a scoped
-`--force-with-lease` for the target branch. Plain pushes are still used when
-`--no-rebase` is passed or no auto-rebase runs.
+`--force-with-lease` pinned to the target branch OID known before the rebase.
+Plain pushes are still used when `--no-rebase` is passed or no auto-rebase
+runs. If the remote branch has advanced beyond the local branch, `push` aborts
+and asks the user to fetch/rebase/merge first instead of overwriting unseen
+remote commits.
 
 `remove` deletes the worktree before deleting the local branch. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
 
