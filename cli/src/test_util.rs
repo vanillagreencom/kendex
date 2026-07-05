@@ -1,46 +1,52 @@
-//! Shared test helpers. Anything that mutates process-global state (env vars,
-//! cwd, etc.) lives here so the entire test suite serializes through one lock
-//! instead of separate per-module locks racing against each other.
+//! Shared test helpers. Tests that need sandboxed global config paths use
+//! thread-local overrides instead of mutating process-global environment.
 
 #![cfg(test)]
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::path::{Path, PathBuf};
+use std::thread::LocalKey;
 
-/// Single global mutex guarding environment mutations across the whole crate.
-/// Tests in any module that need to redirect process-global env must go
-/// through helpers here.
-pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static PI_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static CODEX_HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
 
-/// Run `body` with `PI_CODING_AGENT_DIR` set to `pi_dir`, restoring the
-/// previous value (or unsetting) afterwards. Tolerates a poisoned lock from a
-/// prior panicking test so failures don't cascade across the whole suite.
+pub(crate) fn pi_dir_override() -> Option<PathBuf> {
+    PI_DIR_OVERRIDE.with(|slot| slot.borrow().clone())
+}
+
+pub(crate) fn codex_home_override() -> Option<PathBuf> {
+    CODEX_HOME_OVERRIDE.with(|slot| slot.borrow().clone())
+}
+
+/// Run `body` with the global Pi dir redirected to `pi_dir` for the current
+/// test thread, restoring the previous override afterwards.
 pub(crate) fn with_pi_dir<R>(pi_dir: &Path, body: impl FnOnce() -> R) -> R {
-    with_env_var("PI_CODING_AGENT_DIR", pi_dir, body)
+    with_path_override(&PI_DIR_OVERRIDE, pi_dir, body)
 }
 
-/// Run `body` with `CODEX_HOME` set to `codex_home`, restoring the previous
-/// value afterwards.
+/// Run `body` with the Codex home redirected to `codex_home` for the current
+/// test thread, restoring the previous override afterwards.
 pub(crate) fn with_codex_home<R>(codex_home: &Path, body: impl FnOnce() -> R) -> R {
-    with_env_var("CODEX_HOME", codex_home, body)
+    with_path_override(&CODEX_HOME_OVERRIDE, codex_home, body)
 }
 
-fn with_env_var<R>(key: &str, value: &Path, body: impl FnOnce() -> R) -> R {
-    let guard = match ENV_LOCK.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let prev = std::env::var_os(key);
-    unsafe {
-        std::env::set_var(key, value);
+fn with_path_override<R>(
+    slot: &'static LocalKey<RefCell<Option<PathBuf>>>,
+    value: &Path,
+    body: impl FnOnce() -> R,
+) -> R {
+    let result = slot.with(|slot| {
+        let previous = slot.replace(Some(value.to_path_buf()));
+        let result = catch_unwind(AssertUnwindSafe(body));
+        slot.replace(previous);
+        result
+    });
+
+    match result {
+        Ok(value) => value,
+        Err(payload) => resume_unwind(payload),
     }
-    let result = body();
-    unsafe {
-        if let Some(prev) = prev {
-            std::env::set_var(key, prev);
-        } else {
-            std::env::remove_var(key);
-        }
-    }
-    drop(guard);
-    result
 }

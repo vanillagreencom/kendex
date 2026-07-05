@@ -214,7 +214,7 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Hook)
         .filter(|(n, _)| pass(n))
     {
-        let Some(hook) = source_hook_for_lock_entry(hooks, entry) else {
+        let Some(hook) = crate::resolve::source_hook_for_lock_entry(hooks, entry) else {
             continue;
         };
         for harness_id in &entry.harnesses {
@@ -263,7 +263,7 @@ pub fn prune_hook_harnesses(
         .values_mut()
         .filter(|entry| entry.kind == ItemKind::Hook && pass(&entry.name))
     {
-        let Some(hook) = source_hook_for_lock_entry(source_hooks, entry) else {
+        let Some(hook) = crate::resolve::source_hook_for_lock_entry(source_hooks, entry) else {
             continue;
         };
         let mut new_harnesses = Vec::new();
@@ -304,46 +304,6 @@ pub fn prune_hook_harnesses(
     }
 
     pruned_any
-}
-
-fn source_hook_for_lock_entry<'a>(
-    source_hooks: &'a [Hook],
-    entry: &config::LockEntry,
-) -> Option<&'a Hook> {
-    if should_match_entry_source(&entry.source)
-        && let Some(root) = config::resolve_source_path(&entry.source)
-    {
-        for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
-            if hook_path_is_from_source(hook, &root) {
-                return Some(hook);
-            }
-        }
-        return None;
-    }
-
-    for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
-        if hook.source_path.as_os_str().is_empty() {
-            return Some(hook);
-        }
-    }
-
-    source_hooks.iter().find(|hook| hook.name == entry.name)
-}
-
-fn should_match_entry_source(source: &str) -> bool {
-    let path = Path::new(source);
-    source == "." || path.is_absolute() || (source.contains('/') && !source.starts_with('.'))
-}
-
-fn hook_path_is_from_source(hook: &Hook, source_root: &Path) -> bool {
-    let root = source_root
-        .canonicalize()
-        .unwrap_or_else(|_| source_root.to_path_buf());
-    let hook_path = hook
-        .source_path
-        .canonicalize()
-        .unwrap_or_else(|_| hook.source_path.clone());
-    hook_path.starts_with(root.join("hooks")) || hook_path.starts_with(root)
 }
 
 /// Reinstall every item recorded in the selected scopes from current source:
@@ -387,12 +347,17 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         lock.save(&lock_path)?;
     }
 
+    // Resolve source directories once per refresh. Cached remote sources update
+    // during resolution; reusing this list avoids duplicate git fetch/reset
+    // cycles for pruning and aggregation.
+    let source_dirs = resolve_sources(&lock);
+
     // Self-heal hook lock entries: drop harness ids the hook no longer
     // applies to (the `harnesses:` allowlist in source may have changed
     // since install). Done up-front so all downstream passes see the
     // pruned state.
     {
-        let source_hooks_for_prune: Vec<crate::hook::Hook> = resolve_sources(&lock)
+        let source_hooks_for_prune: Vec<crate::hook::Hook> = source_dirs
             .iter()
             .flat_map(|dir| crate::hook::discover_hooks(&dir.join("hooks")).unwrap_or_default())
             .collect();
@@ -428,8 +393,6 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     // After mapping is loaded below we overlay its frontmatter defaults so
     // source-level `[agent-frontmatter.<harness>]` entries feed regeneration.
 
-    // Resolve source directories from lock file entries
-    let source_dirs = resolve_sources(&lock);
     if source_dirs.is_empty() {
         eprintln!("Could not locate any package sources. Run `vstack add` to reinstall.");
         return Ok(());

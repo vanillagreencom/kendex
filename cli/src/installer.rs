@@ -837,75 +837,96 @@ fn install_hook_cursor(hook: &Hook, global: bool) -> Result<()> {
 }
 
 /// Remove an installed item.
-/// Each harness cleanup is independent — one failure doesn't block others.
-pub fn remove_item(name: &str, harnesses: &[Harness], global: bool) -> Result<Vec<PathBuf>> {
+///
+/// Hook cleanup is attempted for every requested harness. If any hook cleanup
+/// fails, the error includes hook/harness/scope context so callers can keep the
+/// lock entry until a later retry succeeds.
+pub fn remove_item(
+    name: &str,
+    kind: Option<ItemKind>,
+    harnesses: &[Harness],
+    global: bool,
+) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
+    let mut cleanup_errors = Vec::new();
+    let remove_agents = kind.is_none_or(|kind| kind == ItemKind::Agent);
+    let remove_skills = kind.is_none_or(|kind| kind == ItemKind::Skill);
+    let remove_hooks = kind.is_none_or(|kind| kind == ItemKind::Hook);
 
     for harness in harnesses {
         // Agent files
-        let agent_paths = match harness {
-            Harness::ClaudeCode => vec![harness.agents_dir(global).join(format!("{name}.md"))],
-            Harness::Cursor => {
-                vec![
-                    harness.agents_dir(global).join(format!("{name}.mdc")),
-                    harness
-                        .agents_dir(global)
-                        .join(format!("safety-{name}.mdc")),
-                ]
-            }
-            Harness::OpenCode => vec![harness.agents_dir(global).join(format!("{name}.md"))],
-            Harness::Codex => vec![harness.agents_dir(global).join(format!("{name}.toml"))],
-            Harness::Pi => vec![harness.agents_dir(global).join(format!("{name}.md"))],
-        };
+        if remove_agents {
+            let agent_paths = match harness {
+                Harness::ClaudeCode => vec![harness.agents_dir(global).join(format!("{name}.md"))],
+                Harness::Cursor => vec![harness.agents_dir(global).join(format!("{name}.mdc"))],
+                Harness::OpenCode => vec![harness.agents_dir(global).join(format!("{name}.md"))],
+                Harness::Codex => vec![harness.agents_dir(global).join(format!("{name}.toml"))],
+                Harness::Pi => vec![harness.agents_dir(global).join(format!("{name}.md"))],
+            };
 
-        for path in agent_paths {
-            if path.exists() && std::fs::remove_file(&path).is_ok() {
-                removed.push(path);
+            for path in agent_paths {
+                if path.exists() && std::fs::remove_file(&path).is_ok() {
+                    removed.push(path);
+                }
             }
         }
 
         // Skill directories
-        let skill_path = harness.skills_dir(global).join(name);
-        if skill_path.exists() || skill_path.is_symlink() {
-            let ok = if skill_path.is_symlink() || skill_path.is_file() {
-                std::fs::remove_file(&skill_path).is_ok()
-            } else {
-                std::fs::remove_dir_all(&skill_path).is_ok()
-            };
-            if ok {
-                removed.push(skill_path);
+        if remove_skills {
+            let skill_path = harness.skills_dir(global).join(name);
+            if skill_path.exists() || skill_path.is_symlink() {
+                let ok = if skill_path.is_symlink() || skill_path.is_file() {
+                    std::fs::remove_file(&skill_path).is_ok()
+                } else {
+                    std::fs::remove_dir_all(&skill_path).is_ok()
+                };
+                if ok {
+                    removed.push(skill_path);
+                }
             }
         }
 
-        // Hook cleanup (per-harness, each independent)
-        if let Ok(hook_removed) = remove_hook_install(name, *harness, global) {
-            removed.extend(hook_removed);
+        if remove_hooks {
+            match remove_hook_install(name, *harness, global) {
+                Ok(hook_removed) => removed.extend(hook_removed),
+                Err(err) => cleanup_errors.push(format!(
+                    "hook {name} cleanup failed for {} {} scope: {err:#}",
+                    harness.name(),
+                    if global { "global" } else { "project" }
+                )),
+            }
         }
     }
 
-    let canonical_skill_paths = if global {
-        vec![
-            crate::config::global_state_dir().join("skills").join(name),
-            crate::config::codex_home_dir().join("skills").join(name),
-        ]
-    } else {
-        vec![
-            crate::config::project_root()
-                .join(".agents")
-                .join("skills")
-                .join(name),
-        ]
-    };
+    if !cleanup_errors.is_empty() {
+        anyhow::bail!(cleanup_errors.join("; "));
+    }
 
-    for path in canonical_skill_paths {
-        if path.exists() || path.is_symlink() {
-            let ok = if path.is_symlink() || path.is_file() {
-                std::fs::remove_file(&path).is_ok()
-            } else {
-                std::fs::remove_dir_all(&path).is_ok()
-            };
-            if ok {
-                removed.push(path);
+    if remove_skills {
+        let canonical_skill_paths = if global {
+            vec![
+                crate::config::global_state_dir().join("skills").join(name),
+                crate::config::codex_home_dir().join("skills").join(name),
+            ]
+        } else {
+            vec![
+                crate::config::project_root()
+                    .join(".agents")
+                    .join("skills")
+                    .join(name),
+            ]
+        };
+
+        for path in canonical_skill_paths {
+            if path.exists() || path.is_symlink() {
+                let ok = if path.is_symlink() || path.is_file() {
+                    std::fs::remove_file(&path).is_ok()
+                } else {
+                    std::fs::remove_dir_all(&path).is_ok()
+                };
+                if ok {
+                    removed.push(path);
+                }
             }
         }
     }

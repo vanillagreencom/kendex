@@ -769,16 +769,14 @@ const NPM_PRODUCTION_INSTALL_ARGS: &[&str] = &[
 ];
 
 #[cfg(test)]
-static NPM_COMMAND_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+thread_local! {
+    static NPM_COMMAND_OVERRIDE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
 
 fn npm_command() -> PathBuf {
     #[cfg(test)]
     {
-        let guard = match NPM_COMMAND_OVERRIDE.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if let Some(command) = guard.as_ref() {
+        if let Some(command) = NPM_COMMAND_OVERRIDE.with(|slot| slot.borrow().clone()) {
             return command.clone();
         }
     }
@@ -1301,20 +1299,12 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
 
     #[cfg(test)]
     fn with_npm_command_override<R>(command: &Path, body: impl FnOnce() -> R) -> R {
-        let mut guard = match NPM_COMMAND_OVERRIDE.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let previous = guard.replace(command.to_path_buf());
-        drop(guard);
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
-
-        let mut guard = match NPM_COMMAND_OVERRIDE.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        *guard = previous;
+        let result = NPM_COMMAND_OVERRIDE.with(|slot| {
+            let previous = slot.replace(Some(command.to_path_buf()));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+            slot.replace(previous);
+            result
+        });
 
         match result {
             Ok(value) => value,

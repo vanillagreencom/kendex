@@ -225,6 +225,63 @@ fn remove_hook_cleans_claude_artifacts_settings_and_lock() {
 }
 
 #[test]
+fn remove_hook_keeps_lock_entry_when_codex_cleanup_fails() {
+    let sandbox = Sandbox::new("remove-hook-codex-failure");
+    let source = sandbox.source.to_string_lossy();
+    fs::create_dir_all(sandbox.project.join(".codex/hooks")).unwrap();
+    fs::write(
+        sandbox.project.join(".codex/hooks/guard.sh"),
+        "#!/usr/bin/env bash\n",
+    )
+    .unwrap();
+    fs::write(sandbox.project.join(".codex/hooks.json"), "{not-json").unwrap();
+    fs::write(
+        sandbox.project.join(".vstack-lock.json"),
+        format!(
+            r#"{{
+  "version": 1,
+  "entries": {{
+    "guard": {{
+      "name": "guard",
+      "kind": "hook",
+      "source": "{source}",
+      "harnesses": ["codex"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }}
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "guard", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "vstack remove should fail when Codex cleanup fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(lock.contains("\"guard\""), "lock entry lost: {lock}");
+    assert!(
+        lock.contains("\"codex\""),
+        "Codex harness lost from lock: {lock}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to remove guard"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn refresh_prunes_hook_artifacts_when_harness_allowlist_drops_claude() {
     let sandbox = Sandbox::new("refresh-prune-hook");
 

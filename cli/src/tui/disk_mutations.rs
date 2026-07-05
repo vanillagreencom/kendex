@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::config::{self, ItemKind};
 use crate::harness::Harness;
+use anyhow::Context;
 
 use super::DiscoveredItems;
 use super::multiselect::{MovePlan, RemovePlan};
@@ -49,14 +50,22 @@ fn remove_one(name: &str, scope_global: bool) {
         return;
     };
     if entry.kind == ItemKind::PiExtension {
-        let _ = crate::pi_extension::remove_pi_extension(name, scope_global);
+        if let Err(err) = crate::pi_extension::remove_pi_extension(name, scope_global) {
+            eprintln!("Warning: failed to remove {name}: {err:#}");
+            return;
+        }
     } else {
         let harnesses: Vec<Harness> = entry
             .harnesses
             .iter()
             .filter_map(|h| Harness::from_id(h))
             .collect();
-        let _ = crate::installer::remove_item(name, &harnesses, scope_global);
+        if let Err(err) =
+            crate::installer::remove_item(name, Some(entry.kind), &harnesses, scope_global)
+        {
+            eprintln!("Warning: failed to remove {name}: {err:#}");
+            return;
+        }
     }
     lock.remove(name);
     let _ = lock.save(&lock_path);
@@ -165,7 +174,8 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
                 }
             }
             ItemKind::Hook => {
-                let Some(hook) = items.hooks.iter().find(|h| h.name == plan.name) else {
+                let Some(hook) = crate::resolve::source_hook_for_lock_entry(&items.hooks, &entry)
+                else {
                     continue;
                 };
                 let target_harnesses = filter_harnesses_for_hook_target(hook, &target_harnesses);
@@ -220,14 +230,21 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
         moved_names.push(plan.name.clone());
     }
 
-    moved_names.extend(generate_moved_agents(
+    let moved_agent_names = generate_moved_agents(
         items,
         &agent_intents,
         to_global,
         &mut dst_lock,
         &mapping,
         &project_config,
-    ));
+    );
+    if let Err(err) =
+        reinstall_codex_hooks_for_moved_agents(items, &moved_agent_names, to_global, &dst_lock)
+    {
+        eprintln!("Warning: failed to install Codex hook prose for moved agents: {err:#}");
+        return;
+    }
+    moved_names.extend(moved_agent_names);
 
     if dst_lock.save(&dst_lock_path).is_err() {
         // Couldn't persist the destination lock. Don't remove anything at
@@ -292,6 +309,44 @@ fn generate_moved_agents(
     }
 
     moved_names
+}
+
+fn reinstall_codex_hooks_for_moved_agents(
+    items: &DiscoveredItems,
+    moved_agent_names: &[String],
+    to_global: bool,
+    dst_lock: &config::LockFile,
+) -> anyhow::Result<()> {
+    if moved_agent_names.is_empty() {
+        return Ok(());
+    }
+    let moved_agents: Vec<Agent> = items
+        .agents
+        .iter()
+        .filter(|agent| moved_agent_names.iter().any(|name| name == &agent.name))
+        .cloned()
+        .collect();
+    if moved_agents.is_empty() {
+        return Ok(());
+    }
+
+    for entry in dst_lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Hook)
+        .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
+    {
+        let Some(hook) = crate::resolve::source_hook_for_lock_entry(&items.hooks, entry) else {
+            continue;
+        };
+        if !hook.applies_to(Harness::Codex.id()) {
+            continue;
+        }
+        crate::installer::install_hook(hook, Harness::Codex, to_global, &moved_agents)
+            .with_context(|| format!("installing Codex hook {} for moved agents", hook.name))?;
+    }
+
+    Ok(())
 }
 
 pub(super) fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
@@ -410,6 +465,31 @@ mod tests {
         }
     }
 
+    fn codex_fallback_hook(name: &str) -> crate::hook::Hook {
+        crate::hook::Hook {
+            name: name.into(),
+            event: "TaskCompleted".into(),
+            matcher: None,
+            description: "Complete task safely".into(),
+            safety: Some("Check completion state.".into()),
+            timeout: None,
+            harnesses: Some(vec!["codex".into()]),
+            script: String::new(),
+            source_path: PathBuf::new(),
+        }
+    }
+
+    fn tmpdir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "vstack-disk-mutations-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn filter_harnesses_drops_cursor_when_moving_to_global() {
         // Regression: Cursor is project-only. A move-to-global plan must
@@ -504,5 +584,46 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn codex_hooks_are_reinstalled_for_newly_moved_agents() {
+        let root = tmpdir("codex-moved-agent-hooks");
+        let codex_home = root.join("codex");
+        let agents_dir = codex_home.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("rust.toml"),
+            "name = \"rust\"\ndeveloper_instructions = '''\nBody\n'''\n",
+        )
+        .unwrap();
+
+        let mut dst_lock = LockFile::default();
+        dst_lock.add(LockEntry {
+            name: "finish-check".into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["codex".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        let items = DiscoveredItems {
+            agents: vec![agent_fixture("rust")],
+            skills: Vec::new(),
+            hooks: vec![codex_fallback_hook("finish-check")],
+            pi_extensions: Vec::new(),
+            extras: Vec::new(),
+        };
+
+        crate::test_util::with_codex_home(&codex_home, || {
+            reinstall_codex_hooks_for_moved_agents(&items, &["rust".to_string()], true, &dst_lock)
+                .unwrap();
+        });
+
+        let content = std::fs::read_to_string(agents_dir.join("rust.toml")).unwrap();
+        assert!(content.contains("## Safety: finish-check"));
+        assert!(content.contains("Check completion state."));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

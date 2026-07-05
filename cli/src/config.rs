@@ -394,6 +394,11 @@ pub fn opencode_project_config_path() -> PathBuf {
 }
 
 pub fn codex_home_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = crate::test_util::codex_home_override() {
+        return path;
+    }
+
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| user_home_dir().join(".codex"))
@@ -404,6 +409,11 @@ pub fn codex_home_dir() -> PathBuf {
 /// Honors `PI_CODING_AGENT_DIR` so tests can redirect to a sandbox dir
 /// without touching the real `~/.pi/agent`.
 pub fn pi_global_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = crate::test_util::pi_dir_override() {
+        return path;
+    }
+
     std::env::var_os("PI_CODING_AGENT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| user_home_dir().join(".pi").join("agent"))

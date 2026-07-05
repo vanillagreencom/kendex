@@ -21,7 +21,7 @@ cli/src/
 │   ├── opencode.rs      → .opencode/agents/*.md (YAML frontmatter + skills)
 │   ├── codex.rs         → .codex/agents/*.toml (developer_instructions + Required Skills section)
 │   └── pi.rs            → .pi/agents/*.md (name, description, deny-tools, model, pane)
-└── tui/                 Install wizard: install_flow, state, summary, multiselect, render
+└── tui/                 Install wizard: install_flow, disk_mutations (worker-side install/remove/move/update writes), state, summary, multiselect, render
 
 (agent.rs, skill.rs, hook.rs, frontmatter.rs are simple parsers — names match their job.)
 
