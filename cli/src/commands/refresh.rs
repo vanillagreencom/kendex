@@ -77,8 +77,8 @@ fn merge_upstream<T: Clone>(
 /// Both `vstack refresh` and the TUI's inline-update path go through this
 /// helper. Caller is responsible for: source discovery (filling in
 /// `agents`/`skills`/`hooks`/`pi_extensions` and `mapping`), project-config
-/// loading, lock loading, lock-disk reconciliation, and writing the
-/// upstream-additions back to disk via
+/// loading, lock loading, lock-disk reconciliation, hook-harness pruning via
+/// [`prune_hook_harnesses`], and writing the upstream-additions back to disk via
 /// [`crate::project_config::merge_upstream_agent_skills`].
 #[allow(clippy::too_many_arguments)]
 pub fn refresh_items_in_scope(
@@ -245,6 +245,67 @@ pub fn refresh_items_in_scope(
     stats
 }
 
+/// Drop hook harness ids that no longer satisfy the source hook `harnesses:`
+/// allowlist, removing the stale harness artifacts/settings before mutating the
+/// lock. Returns true when the lock changed.
+pub fn prune_hook_harnesses(
+    global: bool,
+    lock: &mut config::LockFile,
+    source_hooks: &[Hook],
+    name_filter: Option<&[String]>,
+) -> bool {
+    let pass = |name: &str| name_filter.is_none_or(|names| names.iter().any(|n| n == name));
+    let mut pruned_any = false;
+    let mut remove_hook_entries = Vec::new();
+
+    for entry in lock
+        .entries
+        .values_mut()
+        .filter(|entry| entry.kind == ItemKind::Hook && pass(&entry.name))
+    {
+        let Some(hook) = source_hooks.iter().find(|hook| hook.name == entry.name) else {
+            continue;
+        };
+        let mut new_harnesses = Vec::new();
+        for harness_id in &entry.harnesses {
+            if hook.applies_to(harness_id) {
+                new_harnesses.push(harness_id.clone());
+                continue;
+            }
+
+            let Some(harness) = Harness::from_id(harness_id) else {
+                pruned_any = true;
+                continue;
+            };
+            match installer::remove_hook_install(&entry.name, harness, global) {
+                Ok(_) => pruned_any = true,
+                Err(err) => {
+                    eprintln!(
+                        "Warning: failed to remove hook {} from {} during refresh: {err}",
+                        entry.name,
+                        harness.name()
+                    );
+                    new_harnesses.push(harness_id.clone());
+                }
+            }
+        }
+        if new_harnesses != entry.harnesses {
+            entry.harnesses = new_harnesses;
+            pruned_any = true;
+        }
+        if entry.harnesses.is_empty() {
+            remove_hook_entries.push(entry.name.clone());
+        }
+    }
+
+    for name in remove_hook_entries {
+        lock.remove(&name);
+        pruned_any = true;
+    }
+
+    pruned_any
+}
+
 /// Reinstall every item recorded in the selected scopes from current source:
 /// regenerate agent files (re-applying `vstack.toml` customizations),
 /// re-copy skills, hooks, and Pi packages. Use after editing source files
@@ -295,52 +356,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .iter()
             .flat_map(|dir| crate::hook::discover_hooks(&dir.join("hooks")).unwrap_or_default())
             .collect();
-        let mut pruned_any = false;
-        let mut remove_hook_entries = Vec::new();
-        for entry in lock
-            .entries
-            .values_mut()
-            .filter(|e| e.kind == ItemKind::Hook)
-        {
-            let Some(hook) = source_hooks_for_prune.iter().find(|h| h.name == entry.name) else {
-                continue;
-            };
-            let mut new_harnesses = Vec::new();
-            for harness_id in &entry.harnesses {
-                if hook.applies_to(harness_id) {
-                    new_harnesses.push(harness_id.clone());
-                    continue;
-                }
-
-                let Some(harness) = Harness::from_id(harness_id) else {
-                    pruned_any = true;
-                    continue;
-                };
-                match installer::remove_hook_install(&entry.name, harness, global) {
-                    Ok(_) => pruned_any = true,
-                    Err(err) => {
-                        eprintln!(
-                            "Warning: failed to remove hook {} from {} during refresh: {err}",
-                            entry.name,
-                            harness.name()
-                        );
-                        new_harnesses.push(harness_id.clone());
-                    }
-                }
-            }
-            if new_harnesses != entry.harnesses {
-                entry.harnesses = new_harnesses;
-                pruned_any = true;
-            }
-            if entry.harnesses.is_empty() {
-                remove_hook_entries.push(entry.name.clone());
-            }
-        }
-        for name in remove_hook_entries {
-            lock.remove(&name);
-            pruned_any = true;
-        }
-        if pruned_any {
+        if prune_hook_harnesses(global, &mut lock, &source_hooks_for_prune, None) {
             lock.save(&lock_path)?;
         }
     }
@@ -714,5 +730,62 @@ fn update_cached_repo(repo_dir: &std::path::Path) {
         }
         Ok(_) => eprintln!("  Warning: git fetch failed — using cached version"),
         Err(_) => eprintln!("  Warning: git not available — using cached version"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{InstallMethod, LockEntry, LockFile};
+
+    fn lock_hook(name: &str, harnesses: Vec<&str>) -> LockEntry {
+        LockEntry {
+            name: name.into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: harnesses.into_iter().map(String::from).collect(),
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        }
+    }
+
+    fn source_hook(name: &str, harnesses: Option<Vec<&str>>) -> Hook {
+        Hook {
+            name: name.into(),
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            description: String::new(),
+            safety: None,
+            timeout: None,
+            harnesses: harnesses.map(|items| items.into_iter().map(String::from).collect()),
+            script: String::new(),
+            source_path: PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn prune_hook_harnesses_respects_name_filter_and_removes_empty_hook_entry() {
+        let mut lock = LockFile::default();
+        lock.add(lock_hook("guard", vec!["pi"]));
+        lock.add(lock_hook("other", vec!["pi"]));
+        let hooks = vec![
+            source_hook("guard", Some(vec!["codex"])),
+            source_hook("other", Some(vec!["codex"])),
+        ];
+
+        assert!(prune_hook_harnesses(
+            false,
+            &mut lock,
+            &hooks,
+            Some(&["guard".to_string()]),
+        ));
+        assert!(!lock.entries.contains_key("guard"));
+        assert_eq!(
+            lock.entries
+                .get("other")
+                .map(|entry| entry.harnesses.as_slice()),
+            Some(&["pi".to_string()][..])
+        );
     }
 }

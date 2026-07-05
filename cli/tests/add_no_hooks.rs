@@ -197,6 +197,34 @@ fn selected_hook_install_emits_claude_hook_frontmatter_and_script() {
 }
 
 #[test]
+fn remove_hook_cleans_claude_artifacts_settings_and_lock() {
+    let sandbox = Sandbox::new("remove-hook");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add");
+    assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "guard", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack remove");
+
+    assert!(!sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    assert!(!settings.contains("guard.sh"), "stale settings: {settings}");
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(!lock.contains("guard"), "stale lock entry: {lock}");
+}
+
+#[test]
 fn refresh_prunes_hook_artifacts_when_harness_allowlist_drops_claude() {
     let sandbox = Sandbox::new("refresh-prune-hook");
 

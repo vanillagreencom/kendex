@@ -2610,12 +2610,38 @@ fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
 
     for scope_global in [false, true] {
         let lock_path = crate::config::lock_file_path(scope_global);
-        let Ok(lock) = crate::config::LockFile::load(&lock_path) else {
+        let Ok(mut lock) = crate::config::LockFile::load(&lock_path) else {
             continue;
         };
         if !names.iter().any(|n| lock.entries.contains_key(n)) {
             continue;
         }
+        let updates_hooks = names.iter().any(|name| {
+            lock.entries
+                .get(name)
+                .is_some_and(|entry| entry.kind == crate::config::ItemKind::Hook)
+        });
+
+        let pruned = crate::commands::refresh::prune_hook_harnesses(
+            scope_global,
+            &mut lock,
+            &items.hooks,
+            Some(names),
+        );
+        if pruned {
+            let _ = lock.save(&lock_path);
+        }
+        let refresh_names: Vec<String> = if updates_hooks {
+            let mut expanded = names.to_vec();
+            for (name, entry) in &lock.entries {
+                if entry.kind == crate::config::ItemKind::Agent && !expanded.contains(name) {
+                    expanded.push(name.clone());
+                }
+            }
+            expanded
+        } else {
+            names.to_vec()
+        };
 
         let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
         project_config.overlay_source_frontmatter(&mapping);
@@ -2630,14 +2656,13 @@ fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
             &mapping,
             &mut project_config,
             &project_root,
-            Some(names),
+            Some(&refresh_names),
         );
 
         if !scope_global {
             stats.persist_upstream(&project_root);
         }
 
-        let mut lock = crate::config::LockFile::load(&lock_path).unwrap_or_default();
         let now = crate::config::now_iso();
         for name in names {
             if let Some(entry) = lock.entries.get_mut(name) {

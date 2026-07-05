@@ -1554,8 +1554,15 @@ mod tests {
     }
 
     #[test]
-    fn remove_hook_from_codex_json_strips_entry_and_prunes_event() {
+    fn remove_hook_install_codex_strips_script_json_and_legacy_prose() {
         let dir = tmpdir("codex_remove_strip");
+        let hooks_dir = dir.join("hooks");
+        let agents_dir = dir.join("agents");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(hooks_dir.join("post-edit-lint.sh"), "#!/usr/bin/env bash\n").unwrap();
+        std::fs::write(hooks_dir.join("block-bare-cd.sh"), "#!/usr/bin/env bash\n").unwrap();
+
         let hooks_json = dir.join("hooks.json");
         std::fs::write(
             &hooks_json,
@@ -1581,33 +1588,33 @@ mod tests {
 }"#,
         )
         .unwrap();
+        let agent_toml = agents_dir.join("rust.toml");
+        std::fs::write(
+            &agent_toml,
+            r#"name = "rust"
+developer_instructions = '''
+Body
 
-        // Use the inner helper-equivalent inline since remove_hook_from_codex_json
-        // takes (global, name) and resolves codex_root() from env. We mirror its
-        // logic against an explicit path here so the test is hermetic.
-        let content = std::fs::read_to_string(&hooks_json).unwrap();
-        let mut doc: serde_json::Value = serde_json::from_str(&content).unwrap();
-        let script_token = "post-edit-lint.sh";
-        if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-            let keys: Vec<String> = hooks.keys().cloned().collect();
-            for event in keys {
-                if let Some(arr) = hooks.get_mut(&event).and_then(|v| v.as_array_mut()) {
-                    arr.retain(|entry| {
-                        !entry
-                            .pointer("/hooks/0/command")
-                            .and_then(|c| c.as_str())
-                            .is_some_and(|c| c.contains(script_token))
-                    });
-                    if arr.is_empty() {
-                        hooks.remove(&event);
-                    }
-                }
-            }
-        }
-        std::fs::write(&hooks_json, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+## Safety: post-edit-lint
+
+Remove me.
+
+## Keep
+
+Keep me.
+'''
+"#,
+        )
+        .unwrap();
+
+        crate::test_util::with_codex_home(&dir, || {
+            remove_hook_install("post-edit-lint", Harness::Codex, true).unwrap();
+        });
 
         let result: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&hooks_json).unwrap()).unwrap();
+        assert!(!hooks_dir.join("post-edit-lint.sh").exists());
+        assert!(hooks_dir.join("block-bare-cd.sh").exists());
         assert!(
             result.pointer("/hooks/PostToolUse").is_none(),
             "empty PostToolUse should be pruned"
@@ -1618,6 +1625,9 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(pre.len(), 2, "unrelated PreToolUse entries preserved");
+        let agent = std::fs::read_to_string(agent_toml).unwrap();
+        assert!(!agent.contains("Safety: post-edit-lint"));
+        assert!(agent.contains("## Keep"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
