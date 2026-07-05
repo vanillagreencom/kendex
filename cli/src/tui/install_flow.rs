@@ -16,7 +16,9 @@ use std::io;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::disk_mutations::{perform_inline_update, perform_move_plans, perform_remove_plans};
+use super::disk_mutations::{
+    DiskMutationReport, perform_inline_update, perform_move_plans, perform_remove_plans,
+};
 use super::multiselect::{
     ActionButton, ConfirmAction, ConfirmDialog, MovePlan, ProgressOverlay, RemovePlan, RepoOption,
     Scope, SelectItem, TabKind, TabbedSelect,
@@ -58,24 +60,24 @@ struct PendingWork {
 /// closure and the main thread owns every mutation that touches the TUI
 /// state, terminal, or process lifetime.
 enum PostWork {
-    /// Reload installed-state tabs and set a flash message.
-    Done(String),
-    /// As Done, but also drop a source registry entry. Used by RemoveSource.
-    DoneForgetSource { source: String, flash: String },
-    /// As Done, but afterwards leave the alt screen and run the CLI binary
-    /// updater (which exits the process). Used when an update batch mixes
-    /// content items with the vstack (cli) row.
-    DoneThenCliUpdate(String),
+    /// Worker-side install/remove/move/update mutation result.
+    DiskMutation {
+        action: String,
+        suffix: String,
+        then_cli_update: bool,
+        forget_source: Option<String>,
+        result: std::sync::Arc<std::sync::Mutex<Option<DiskMutationReport>>>,
+    },
     /// Apply-picker outcome: leave the picker open, mark the just-applied
     /// theme as active, and flash success or the error message.
-    ApplyPickerResult {
+    ApplyPicker {
         extra_name: String,
         theme_id: String,
         result: std::sync::Arc<
             std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
         >,
     },
-    RevertPickerResult {
+    RevertPicker {
         extra_name: String,
         result: std::sync::Arc<
             std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
@@ -1367,7 +1369,7 @@ fn handle_apply_picker_key(
     }
     if let Some(action) = action {
         // Picker intentionally stays open so the user can switch themes in
-        // quick succession; PostWork::ApplyPickerResult updates the active
+        // quick succession; PostWork::ApplyPicker updates the active
         // marker on the still-open dialog and flashes the result.
         return execute_action(state, action);
     }
@@ -1998,7 +2000,7 @@ fn execute_action(
             spawn_work(
                 state,
                 label,
-                PostWork::ApplyPickerResult {
+                PostWork::ApplyPicker {
                     extra_name: extra_for_post,
                     theme_id: theme_for_post,
                     result: result_slot,
@@ -2024,7 +2026,7 @@ fn execute_action(
             spawn_work(
                 state,
                 label,
-                PostWork::RevertPickerResult {
+                PostWork::RevertPicker {
                     extra_name: extra_for_post,
                     result: result_slot,
                 },
@@ -2055,22 +2057,26 @@ fn execute_action(
             let n = content_names.len();
             let items_clone = state.items.clone();
             let label = format!("Updating {n} item(s)…");
-            let post = if has_cli {
-                PostWork::DoneThenCliUpdate(format!("Updated {n} item(s)"))
-            } else {
-                PostWork::Done(format!("Updated {n} item(s)"))
-            };
-            spawn_work(state, label, post, move || {
-                perform_inline_update(&content_names, &items_clone);
-            });
+            spawn_disk_work(
+                state,
+                label,
+                "Updated".into(),
+                String::new(),
+                has_cli,
+                None,
+                move || perform_inline_update(&content_names, &items_clone),
+            );
             Ok(None)
         }
         ConfirmAction::RemoveMarked(plans) => {
             let n = plans.len();
-            spawn_work(
+            spawn_disk_work(
                 state,
                 format!("Removing {n} item(s)…"),
-                PostWork::Done(format!("Removed {n} item(s)")),
+                "Removed".into(),
+                String::new(),
+                false,
+                None,
                 move || perform_remove_plans(&plans),
             );
             Ok(None)
@@ -2082,20 +2088,26 @@ fn execute_action(
             let kept_global = plans.first().is_some_and(|p| p.from_project);
             let kept = if kept_global { "global" } else { "project" };
             let n = plans.len();
-            spawn_work(
+            spawn_disk_work(
                 state,
                 format!("Resolving {n} duplicate(s)…"),
-                PostWork::Done(format!("Resolved {n} dup(s) — kept {kept}")),
+                "Resolved".into(),
+                format!(" duplicate(s) — kept {kept}"),
+                false,
+                None,
                 move || perform_remove_plans(&plans),
             );
             Ok(None)
         }
         ConfirmAction::RemoveAll(plans) => {
             let n = plans.len();
-            spawn_work(
+            spawn_disk_work(
                 state,
                 format!("Uninstalling {n} item(s)…"),
-                PostWork::Done(format!("Uninstalled all {n} item(s)")),
+                "Uninstalled".into(),
+                String::new(),
+                false,
+                None,
                 move || perform_remove_plans(&plans),
             );
             Ok(None)
@@ -2104,10 +2116,13 @@ fn execute_action(
             let n = items.len();
             let target = if to_global { "global" } else { "project" };
             let items_clone = state.items.clone();
-            spawn_work(
+            spawn_disk_work(
                 state,
                 format!("Moving {n} item(s) to {target}…"),
-                PostWork::Done(format!("Moved {n} item(s) to {target}")),
+                "Moved".into(),
+                format!(" to {target}"),
+                false,
+                None,
                 move || perform_move_plans(&items_clone, &items, to_global),
             );
             Ok(None)
@@ -2129,13 +2144,13 @@ fn execute_action(
                 })
                 .collect();
             let n = plans.len();
-            spawn_work(
+            spawn_disk_work(
                 state,
                 format!("Removing source ({n} package(s))…"),
-                PostWork::DoneForgetSource {
-                    source: source.clone(),
-                    flash: format!("Removed source and uninstalled {n} package(s)"),
-                },
+                "Removed source and uninstalled".into(),
+                String::new(),
+                false,
+                Some(source.clone()),
                 move || perform_remove_plans(&plans),
             );
             Ok(None)
@@ -2159,11 +2174,69 @@ where
     state.pending_work = Some(PendingWork { join, post });
 }
 
+fn spawn_disk_work<F>(
+    state: &mut FlowState<'_>,
+    label: String,
+    action: String,
+    suffix: String,
+    then_cli_update: bool,
+    forget_source: Option<String>,
+    work: F,
+) where
+    F: FnOnce() -> DiskMutationReport + Send + 'static,
+{
+    let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let writer = std::sync::Arc::clone(&result);
+    spawn_work(
+        state,
+        label,
+        PostWork::DiskMutation {
+            action,
+            suffix,
+            then_cli_update,
+            forget_source,
+            result,
+        },
+        move || {
+            let report = work();
+            if let Ok(mut guard) = writer.lock() {
+                *guard = Some(report);
+            }
+        },
+    );
+}
+
+fn format_disk_mutation_flash(report: &DiskMutationReport, action: &str, suffix: &str) -> String {
+    if report.failed.is_empty() {
+        return format!("{action} {} item(s){suffix}", report.completed);
+    }
+
+    let first_failure = report
+        .failed
+        .first()
+        .map(String::as_str)
+        .unwrap_or("unknown failure");
+    if report.completed > 0 {
+        format!(
+            "Partial: {action} {}/{} item(s){suffix}; {} failed: {first_failure}",
+            report.completed,
+            report.attempted,
+            report.failed.len()
+        )
+    } else {
+        format!(
+            "Failed: {action} 0/{} item(s){suffix}; {} failed: {first_failure}",
+            report.attempted,
+            report.failed.len()
+        )
+    }
+}
+
 /// Apply a finished worker's outcome on the main thread. Owns every
 /// mutation that touches TUI state, the terminal, or process lifetime.
 fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<InstallFlowResult>> {
     match post {
-        PostWork::ApplyPickerResult {
+        PostWork::ApplyPicker {
             extra_name,
             theme_id,
             result,
@@ -2200,7 +2273,7 @@ fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<I
             }
             Ok(None)
         }
-        PostWork::RevertPickerResult { extra_name, result } => {
+        PostWork::RevertPicker { extra_name, result } => {
             let outcome = result.lock().ok().and_then(|mut g| g.take());
             match outcome {
                 Some(Ok(revert_outcome)) => {
@@ -2231,22 +2304,34 @@ fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<I
             }
             Ok(None)
         }
-        PostWork::Done(flash) => {
+        PostWork::DiskMutation {
+            action,
+            suffix,
+            then_cli_update,
+            forget_source: source_to_forget,
+            result,
+        } => {
+            let outcome = result.lock().ok().and_then(|mut g| g.take());
             rebuild_tabs(state);
-            state.select.flash_message = Some(flash);
-            Ok(None)
-        }
-        PostWork::DoneForgetSource { source, flash } => {
-            forget_source(&mut state.select, &source);
-            rebuild_tabs(state);
-            state.select.flash_message = Some(flash);
-            Ok(None)
-        }
-        PostWork::DoneThenCliUpdate(flash) => {
-            rebuild_tabs(state);
-            state.select.flash_message = Some(flash);
-            run_cli_update_inline()?;
-            // run_cli_update_inline exits the process; this line is unreachable.
+            match outcome {
+                Some(report) => {
+                    if report.failed.is_empty()
+                        && let Some(source) = source_to_forget
+                    {
+                        forget_source(&mut state.select, &source);
+                        rebuild_tabs(state);
+                    }
+                    state.select.flash_message =
+                        Some(format_disk_mutation_flash(&report, &action, &suffix));
+                    if then_cli_update && report.failed.is_empty() {
+                        run_cli_update_inline()?;
+                    }
+                }
+                None => {
+                    state.select.flash_message =
+                        Some(format!("{action} finished but produced no mutation result"));
+                }
+            }
             Ok(None)
         }
     }

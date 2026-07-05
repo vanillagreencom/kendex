@@ -1,10 +1,30 @@
 use crate::agent::Agent;
 use crate::config::{self, ItemKind};
 use crate::harness::Harness;
-use anyhow::Context;
 
 use super::DiscoveredItems;
 use super::multiselect::{MovePlan, RemovePlan};
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct DiskMutationReport {
+    pub attempted: usize,
+    pub completed: usize,
+    pub failed: Vec<String>,
+}
+
+impl DiskMutationReport {
+    fn new(attempted: usize) -> Self {
+        Self {
+            attempted,
+            completed: 0,
+            failed: Vec::new(),
+        }
+    }
+
+    fn fail(&mut self, item: &str, err: impl std::fmt::Display) {
+        self.failed.push(format!("{item}: {err}"));
+    }
+}
 
 /// Resolve a lock entry's harness id list to the set that actually supports
 /// the move's destination scope. When moving to global, harnesses without
@@ -30,45 +50,55 @@ fn filter_harnesses_for_hook_target(
         .collect()
 }
 
-pub(super) fn perform_remove_plans(plans: &[RemovePlan]) {
+pub(super) fn perform_remove_plans(plans: &[RemovePlan]) -> DiskMutationReport {
+    let mut report = DiskMutationReport::new(plans.len());
     for plan in plans {
+        let mut removed_any = false;
+        let mut failures = Vec::new();
         if plan.from_project {
-            remove_one(&plan.name, false);
+            match remove_one(&plan.name, false) {
+                Ok(removed) => removed_any |= removed,
+                Err(err) => failures.push(format!("project scope: {err:#}")),
+            }
         }
         if plan.from_global {
-            remove_one(&plan.name, true);
+            match remove_one(&plan.name, true) {
+                Ok(removed) => removed_any |= removed,
+                Err(err) => failures.push(format!("global scope: {err:#}")),
+            }
+        }
+        if failures.is_empty() {
+            if removed_any {
+                report.completed += 1;
+            }
+        } else {
+            report.fail(&plan.name, failures.join("; "));
         }
     }
+    report
 }
 
-fn remove_one(name: &str, scope_global: bool) {
+fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
     let lock_path = config::lock_file_path(scope_global);
     let Ok(mut lock) = config::LockFile::load(&lock_path) else {
-        return;
+        return Ok(false);
     };
     let Some(entry) = lock.entries.get(name).cloned() else {
-        return;
+        return Ok(false);
     };
     if entry.kind == ItemKind::PiExtension {
-        if let Err(err) = crate::pi_extension::remove_pi_extension(name, scope_global) {
-            eprintln!("Warning: failed to remove {name}: {err:#}");
-            return;
-        }
+        crate::pi_extension::remove_pi_extension(name, scope_global)?;
     } else {
         let harnesses: Vec<Harness> = entry
             .harnesses
             .iter()
             .filter_map(|h| Harness::from_id(h))
             .collect();
-        if let Err(err) =
-            crate::installer::remove_item(name, Some(entry.kind), &harnesses, scope_global)
-        {
-            eprintln!("Warning: failed to remove {name}: {err:#}");
-            return;
-        }
+        crate::installer::remove_item(name, Some(entry.kind), &harnesses, scope_global)?;
     }
     lock.remove(name);
-    let _ = lock.save(&lock_path);
+    lock.save(&lock_path)?;
+    Ok(true)
 }
 
 fn matched_hooks_for_move_destination(
@@ -105,12 +135,20 @@ struct AgentMoveIntent {
 /// rather than losing it to a half-completed move. The destination lock
 /// entry tracks the harnesses that actually succeeded, not the source's
 /// original list.
-pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bool) {
+pub(super) fn perform_move_plans(
+    items: &DiscoveredItems,
+    plans: &[MovePlan],
+    to_global: bool,
+) -> DiskMutationReport {
+    let mut report = DiskMutationReport::new(plans.len());
     let from_global = !to_global;
 
     let src_lock_path = config::lock_file_path(from_global);
     let Ok(src_lock) = config::LockFile::load(&src_lock_path) else {
-        return;
+        for plan in plans {
+            report.fail(&plan.name, "failed to load source lock");
+        }
+        return report;
     };
     let dst_lock_path = config::lock_file_path(to_global);
     let mut dst_lock = config::LockFile::load(&dst_lock_path).unwrap_or_default();
@@ -132,6 +170,7 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
 
     for plan in plans {
         let Some(entry) = src_lock.entries.get(&plan.name).cloned() else {
+            report.fail(&plan.name, "source lock entry not found");
             continue;
         };
         // Cursor (project-only) silently dropped from a move-to-global
@@ -139,10 +178,12 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
         let target_harnesses = filter_harnesses_for_target(&entry.harnesses, to_global);
         if target_harnesses.is_empty() {
             // Nothing can be moved for this item — keep the source in place.
+            report.fail(&plan.name, "no destination harness supports target scope");
             continue;
         }
 
         let mut succeeded: Vec<Harness> = Vec::new();
+        let mut install_failures = Vec::new();
         match entry.kind {
             ItemKind::Agent => {
                 if items.agents.iter().any(|a| a.name == plan.name) {
@@ -151,31 +192,34 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
                         entry,
                         target_harnesses,
                     });
+                } else {
+                    report.fail(&plan.name, "source agent not found");
                 }
                 continue;
             }
             ItemKind::Skill => {
                 let Some(skill) = items.skills.iter().find(|s| s.name == plan.name) else {
+                    report.fail(&plan.name, "source skill not found");
                     continue;
                 };
                 let instr = project_config.skill_instructions_for(&skill.name);
                 for harness in &target_harnesses {
-                    if crate::installer::install_skill(
+                    match crate::installer::install_skill(
                         skill,
                         *harness,
                         to_global,
                         entry.method,
                         instr,
-                    )
-                    .is_ok()
-                    {
-                        succeeded.push(*harness);
+                    ) {
+                        Ok(_) => succeeded.push(*harness),
+                        Err(err) => install_failures.push(format!("{}: {err:#}", harness.name())),
                     }
                 }
             }
             ItemKind::Hook => {
                 let Some(hook) = crate::resolve::source_hook_for_lock_entry(&items.hooks, &entry)
                 else {
+                    report.fail(&plan.name, "source hook not found");
                     continue;
                 };
                 let target_harnesses = filter_harnesses_for_hook_target(hook, &target_harnesses);
@@ -183,6 +227,7 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
                     // Source hook allowlist no longer includes any destination
                     // harness. Treat as no move so source stays tracked until
                     // refresh/prune removes it intentionally.
+                    report.fail(&plan.name, "hook allowlist excludes destination harnesses");
                     continue;
                 }
                 let agents_for_hook: Vec<Agent> = items
@@ -197,21 +242,29 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
                     .cloned()
                     .collect();
                 for harness in &target_harnesses {
-                    if crate::installer::install_hook(hook, *harness, to_global, &agents_for_hook)
-                        .is_ok()
-                    {
-                        succeeded.push(*harness);
+                    match crate::installer::install_hook(
+                        hook,
+                        *harness,
+                        to_global,
+                        &agents_for_hook,
+                    ) {
+                        Ok(_) => succeeded.push(*harness),
+                        Err(err) => install_failures.push(format!("{}: {err:#}", harness.name())),
                     }
                 }
             }
             ItemKind::PiExtension => {
                 let Some(ext) = items.pi_extensions.iter().find(|e| e.name == plan.name) else {
+                    report.fail(&plan.name, "source Pi package not found");
                     continue;
                 };
-                if crate::pi_extension::install_pi_extension(ext, to_global).is_ok() {
-                    // Pi packages aren't per-harness; mirror src list so the
-                    // entry round-trips cleanly.
-                    succeeded = target_harnesses.clone();
+                match crate::pi_extension::install_pi_extension(ext, to_global) {
+                    Ok(_) => {
+                        // Pi packages aren't per-harness; mirror src list so the
+                        // entry round-trips cleanly.
+                        succeeded = target_harnesses.clone();
+                    }
+                    Err(err) => install_failures.push(format!("Pi: {err:#}")),
                 }
             }
             ItemKind::Extra => {}
@@ -219,6 +272,12 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
 
         if succeeded.is_empty() {
             // Every destination install failed. Don't remove the source.
+            let reason = if install_failures.is_empty() {
+                "no destination install succeeded".to_string()
+            } else {
+                install_failures.join("; ")
+            };
+            report.fail(&plan.name, reason);
             continue;
         }
 
@@ -241,23 +300,36 @@ pub(super) fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to
     if let Err(err) =
         reinstall_codex_hooks_for_moved_agents(items, &moved_agent_names, to_global, &dst_lock)
     {
-        eprintln!("Warning: failed to install Codex hook prose for moved agents: {err:#}");
-        return;
+        for name in moved_agent_names {
+            report.fail(
+                &name,
+                format!("failed to install Codex hook prose: {err:#}"),
+            );
+        }
+        return report;
     }
     moved_names.extend(moved_agent_names);
 
-    if dst_lock.save(&dst_lock_path).is_err() {
+    if let Err(err) = dst_lock.save(&dst_lock_path) {
         // Couldn't persist the destination lock. Don't remove anything at
         // the source — the install succeeded on disk but we couldn't
         // record it, so leaving the source intact lets a retry recover.
-        return;
+        for name in moved_names {
+            report.fail(&name, format!("failed to save destination lock: {err:#}"));
+        }
+        return report;
     }
 
     // Remove files + lock entries at the source scope only for items that
     // actually made it to the destination.
     for name in &moved_names {
-        remove_one(name, from_global);
+        match remove_one(name, from_global) {
+            Ok(true) => report.completed += 1,
+            Ok(false) => report.fail(name, "source lock entry missing after destination install"),
+            Err(err) => report.fail(name, format!("failed to remove source install: {err:#}")),
+        }
     }
+    report
 }
 
 fn generate_moved_agents(
@@ -330,26 +402,30 @@ fn reinstall_codex_hooks_for_moved_agents(
         return Ok(());
     }
 
-    for entry in dst_lock
+    let fallback_hooks: Vec<crate::hook::Hook> = dst_lock
         .entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook)
         .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
-    {
-        let Some(hook) = crate::resolve::source_hook_for_lock_entry(&items.hooks, entry) else {
-            continue;
-        };
-        if !hook.applies_to(Harness::Codex.id()) {
-            continue;
-        }
-        crate::installer::install_hook(hook, Harness::Codex, to_global, &moved_agents)
-            .with_context(|| format!("installing Codex hook {} for moved agents", hook.name))?;
-    }
+        .filter_map(|entry| crate::resolve::source_hook_for_lock_entry(&items.hooks, entry))
+        .filter(|hook| crate::installer::codex_event_for(&hook.event).is_none())
+        .cloned()
+        .collect();
+    crate::installer::install_codex_fallback_hooks_for_agents(
+        &fallback_hooks,
+        to_global,
+        &moved_agents,
+    )?;
 
     Ok(())
 }
 
-pub(super) fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
+pub(super) fn perform_inline_update(
+    names: &[String],
+    items: &DiscoveredItems,
+) -> DiskMutationReport {
+    let mut report = DiskMutationReport::new(names.len());
+    let mut completed_names = std::collections::HashSet::new();
     let project_root = config::project_root();
     let source_dir = source_dir_for_items(items);
     let mapping = source_dir
@@ -376,8 +452,13 @@ pub(super) fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
             &items.hooks,
             Some(names),
         );
-        if pruned {
-            let _ = lock.save(&lock_path);
+        if pruned && let Err(err) = lock.save(&lock_path) {
+            for name in names {
+                if lock.entries.contains_key(name) {
+                    report.fail(name, format!("failed to save pruned lock: {err:#}"));
+                }
+            }
+            continue;
         }
         let refresh_names: Vec<String> = if updates_hooks {
             let mut expanded = names.to_vec();
@@ -418,8 +499,25 @@ pub(super) fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
                 entry.source_hash = config::compute_source_hash(entry);
             }
         }
-        let _ = lock.save(&lock_path);
+        match lock.save(&lock_path) {
+            Ok(()) => {
+                for name in names {
+                    if lock.entries.contains_key(name) {
+                        completed_names.insert(name.clone());
+                    }
+                }
+            }
+            Err(err) => {
+                for name in names {
+                    if lock.entries.contains_key(name) {
+                        report.fail(name, format!("failed to save refreshed lock: {err:#}"));
+                    }
+                }
+            }
+        }
     }
+    report.completed = completed_names.len();
+    report
 }
 
 fn source_dir_for_items(items: &DiscoveredItems) -> Option<&std::path::Path> {

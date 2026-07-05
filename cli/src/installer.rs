@@ -15,6 +15,120 @@ pub struct InstallResult {
     pub detail: String,
 }
 
+pub(crate) fn validate_item_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("item name must not be empty");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("item name {name:?} must not be . or ..");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("item name {name:?} must not contain path separators");
+    }
+    if Path::new(name).is_absolute() {
+        anyhow::bail!("item name {name:?} must not be an absolute path");
+    }
+    Ok(())
+}
+
+fn validate_file_name(file_name: &str) -> Result<()> {
+    if file_name.is_empty()
+        || file_name == "."
+        || file_name == ".."
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || Path::new(file_name).is_absolute()
+    {
+        anyhow::bail!("unsafe file name {file_name:?}");
+    }
+    Ok(())
+}
+
+fn checked_child_path(parent: &Path, file_name: &str) -> Result<PathBuf> {
+    validate_file_name(file_name)?;
+    let path = parent.join(file_name);
+    if !path.starts_with(parent) {
+        anyhow::bail!(
+            "refusing path outside expected directory: {}",
+            path.display()
+        );
+    }
+    if parent.exists() {
+        let parent_canon = parent
+            .canonicalize()
+            .with_context(|| format!("canonicalizing {}", parent.display()))?;
+        if path.exists() {
+            let target_canon = path
+                .canonicalize()
+                .with_context(|| format!("canonicalizing {}", path.display()))?;
+            if !target_canon.starts_with(&parent_canon) {
+                anyhow::bail!(
+                    "refusing target outside expected directory: {}",
+                    path.display()
+                );
+            }
+        } else if let Some(path_parent) = path.parent() {
+            let path_parent_canon = path_parent
+                .canonicalize()
+                .with_context(|| format!("canonicalizing {}", path_parent.display()))?;
+            if path_parent_canon != parent_canon {
+                anyhow::bail!(
+                    "refusing path outside expected directory: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn command_mentions_hook_name(command: &str, name: &str) -> bool {
+    let file = format!("{name}.sh");
+    let unix_segment = format!("/{file}");
+    let windows_segment = format!("\\{file}");
+    command.contains(&unix_segment)
+        || command.contains(&windows_segment)
+        || command
+            .split_whitespace()
+            .any(|part| part.trim_matches(|c| matches!(c, '\'' | '"')) == file)
+}
+
+fn hook_entry_mentions_name(entry: &serde_json::Value, name: &str) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .is_some_and(|handlers| {
+            handlers.iter().any(|handler| {
+                handler
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|command| command_mentions_hook_name(command, name))
+            })
+        })
+}
+
+fn remove_hook_entries_from_hooks_object(
+    hooks_obj: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> bool {
+    let mut changed = false;
+    let event_keys: Vec<String> = hooks_obj.keys().cloned().collect();
+    for event in event_keys {
+        if let Some(arr) = hooks_obj.get_mut(&event).and_then(|v| v.as_array_mut()) {
+            let before = arr.len();
+            arr.retain(|entry| !hook_entry_mentions_name(entry, name));
+            if arr.len() != before {
+                changed = true;
+            }
+            if arr.is_empty() {
+                hooks_obj.remove(&event);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// Install an agent to a specific harness
 pub fn install_agent(
     agent: &Agent,
@@ -24,6 +138,7 @@ pub fn install_agent(
     hooks: &[crate::hook::Hook],
     extras: &crate::agent::AgentExtras,
 ) -> Result<InstallResult> {
+    validate_item_name(&agent.name)?;
     let output_path = harness.generate_agent(agent, global, skills, hooks, extras)?;
 
     let detail = format!(
@@ -56,6 +171,7 @@ pub fn install_skill(
     method: InstallMethod,
     instructions: Option<&str>,
 ) -> Result<InstallResult> {
+    validate_item_name(&skill.name)?;
     let dest = harness.install_skill(skill, global)?;
 
     // Canonical location: .agents/skills/<name>/ (universal, like Vercel npx skills)
@@ -181,6 +297,7 @@ pub fn install_hook(
     global: bool,
     agents: &[Agent],
 ) -> Result<String> {
+    validate_item_name(&hook.name)?;
     if !hook.applies_to(harness.id()) {
         return Ok(format!(
             "[hook] {} → {} (skipped: harness not in `harnesses:`)",
@@ -206,12 +323,13 @@ pub fn install_hook(
 
 /// Claude Code: copy hook script + merge into settings.json
 fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
+    validate_item_name(&hook.name)?;
     // Copy the script
     let hooks_dir = Harness::ClaudeCode
         .hooks_dir(global)
         .expect("Claude hooks dir");
     std::fs::create_dir_all(&hooks_dir)?;
-    let dest = hooks_dir.join(format!("{}.sh", hook.name));
+    let dest = checked_child_path(&hooks_dir, &format!("{}.sh", hook.name))?;
     std::fs::write(&dest, &hook.script)?;
 
     // Make executable
@@ -241,6 +359,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         map.insert("hooks".into(), serde_json::json!({}));
     }
     let hooks_obj = map.get_mut("hooks").unwrap().as_object_mut().unwrap();
+    remove_hook_entries_from_hooks_object(hooks_obj, &hook.name);
 
     // Build the hook entry.
     // Project installs: use $CLAUDE_PROJECT_DIR so hooks resolve regardless of CWD.
@@ -273,7 +392,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     };
 
     // Add to the appropriate event array
-    if !hooks_obj.contains_key(&hook.event) {
+    if !hooks_obj.get(&hook.event).is_some_and(|v| v.is_array()) {
         hooks_obj.insert(hook.event.clone(), serde_json::json!([]));
     }
     let event_arr = hooks_obj
@@ -282,19 +401,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         .as_array_mut()
         .unwrap();
 
-    // Don't duplicate if already present
-    let already_exists = event_arr.iter().any(|e| {
-        e.get("hooks")
-            .and_then(|h| h.as_array())
-            .and_then(|a| a.first())
-            .and_then(|h| h.get("command"))
-            .and_then(|c| c.as_str())
-            .is_some_and(|c| c.contains(&hook.name))
-    });
-
-    if !already_exists {
-        event_arr.push(hook_entry);
-    }
+    event_arr.push(hook_entry);
 
     let output = serde_json::to_string_pretty(&settings)?;
     std::fs::write(&settings_path, output)?;
@@ -304,28 +411,34 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
 
 /// OpenCode: add permission rules based on hook intent
 fn install_hook_opencode(hook: &Hook, global: bool) -> Result<()> {
+    validate_item_name(&hook.name)?;
     let config_path = if global {
         crate::config::opencode_global_config_path()
     } else {
         crate::config::opencode_project_config_path()
     };
+    let instruction_dir = opencode_hook_instruction_dir(global);
+    if instruction_dir.exists() {
+        checked_child_path(&instruction_dir, &format!("vstack-hook-{}.md", hook.name))?;
+    }
     let instruction_path = opencode_hook_instruction_path(global, &hook.name);
     let instruction_ref = opencode_hook_instruction_ref(global, &hook.name);
     install_hook_opencode_at_path(hook, &config_path, &instruction_path, &instruction_ref)
 }
 
-pub(crate) fn opencode_hook_instruction_path(global: bool, name: &str) -> PathBuf {
-    let file_name = format!("vstack-hook-{name}.md");
+fn opencode_hook_instruction_dir(global: bool) -> PathBuf {
     if global {
-        crate::config::opencode_global_dir()
-            .join("instructions")
-            .join(file_name)
+        crate::config::opencode_global_dir().join("instructions")
     } else {
         crate::config::project_root()
             .join(".opencode")
             .join("instructions")
-            .join(file_name)
     }
+}
+
+pub(crate) fn opencode_hook_instruction_path(global: bool, name: &str) -> PathBuf {
+    let file_name = format!("vstack-hook-{name}.md");
+    opencode_hook_instruction_dir(global).join(file_name)
 }
 
 fn opencode_hook_instruction_ref(global: bool, name: &str) -> String {
@@ -370,6 +483,11 @@ fn install_hook_opencode_at_path(
     }
     if let Some(parent) = instruction_path.parent() {
         std::fs::create_dir_all(parent)?;
+        let file_name = instruction_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("OpenCode hook instruction path missing file name")?;
+        checked_child_path(parent, file_name)?;
     }
 
     std::fs::write(instruction_path, opencode_hook_instruction_contents(hook))?;
@@ -469,11 +587,12 @@ fn install_hook_codex(hook: &Hook, global: bool, agents: &[Agent]) -> Result<()>
 /// merge the entry into `<root>/hooks.json`, and ensure
 /// `[features] hooks = true` is set in `<root>/config.toml`.
 fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Result<()> {
+    validate_item_name(&hook.name)?;
     let root = codex_root(global);
 
     let hooks_dir = root.join("hooks");
     std::fs::create_dir_all(&hooks_dir)?;
-    let script_path = hooks_dir.join(format!("{}.sh", hook.name));
+    let script_path = checked_child_path(&hooks_dir, &format!("{}.sh", hook.name))?;
     std::fs::write(&script_path, &hook.script)?;
     #[cfg(unix)]
     {
@@ -540,7 +659,8 @@ fn merge_codex_hooks_json(
         root_map.insert("hooks".into(), serde_json::json!({}));
     }
     let hooks_obj = root_map.get_mut("hooks").unwrap().as_object_mut().unwrap();
-    if !hooks_obj.contains_key(codex_event) {
+    remove_hook_entries_from_hooks_object(hooks_obj, &hook.name);
+    if !hooks_obj.get(codex_event).is_some_and(|v| v.is_array()) {
         hooks_obj.insert(codex_event.to_string(), serde_json::json!([]));
     }
     let event_arr = hooks_obj
@@ -548,24 +668,6 @@ fn merge_codex_hooks_json(
         .unwrap()
         .as_array_mut()
         .unwrap();
-
-    // Match the full `/<name>.sh` segment so a hook named `foo` doesn't
-    // collide with one named `notfoo`.
-    let script_token = format!("/{}.sh", hook.name);
-    let already_present = event_arr.iter().any(|entry| {
-        entry
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|h| h.get("command"))
-            .and_then(|c| c.as_str())
-            .is_some_and(|c| c.contains(&script_token))
-    });
-    if already_present {
-        let output = serde_json::to_string_pretty(&doc)?;
-        std::fs::write(hooks_json, output)?;
-        return Ok(());
-    }
 
     let mut handler = serde_json::json!({
         "type": "command",
@@ -791,13 +893,15 @@ fn toml_assignment_value(line: &str) -> Option<&str> {
 /// safety advisory to every agent's developer_instructions block. Matches the
 /// original (pre-native) behavior.
 fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Result<()> {
+    validate_item_name(&hook.name)?;
     let agents_dir = Harness::Codex.agents_dir(global);
     if !agents_dir.exists() {
         return Ok(());
     }
 
     for agent in agents {
-        let toml_path = agents_dir.join(format!("{}.toml", agent.name));
+        validate_item_name(&agent.name)?;
+        let toml_path = checked_child_path(&agents_dir, &format!("{}.toml", agent.name))?;
         if !toml_path.exists() {
             continue;
         }
@@ -820,6 +924,19 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
     Ok(())
 }
 
+pub fn install_codex_fallback_hooks_for_agents(
+    hooks: &[Hook],
+    global: bool,
+    agents: &[Agent],
+) -> Result<()> {
+    for hook in hooks {
+        if hook.applies_to(Harness::Codex.id()) && codex_event_for(&hook.event).is_none() {
+            install_hook_codex_prose(hook, global, agents)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn cursor_hook_rule_path(global: bool, name: &str) -> PathBuf {
     Harness::Cursor
         .agents_dir(global)
@@ -828,10 +945,11 @@ pub(crate) fn cursor_hook_rule_path(global: bool, name: &str) -> PathBuf {
 
 /// Cursor: add safety advisory to a dedicated .mdc file
 fn install_hook_cursor(hook: &Hook, global: bool) -> Result<()> {
+    validate_item_name(&hook.name)?;
     let rules_dir = Harness::Cursor.agents_dir(global);
     std::fs::create_dir_all(&rules_dir)?;
 
-    let path = cursor_hook_rule_path(global, &hook.name);
+    let path = checked_child_path(&rules_dir, &format!("safety-{}.mdc", hook.name))?;
     std::fs::write(&path, cursor_hook_rule_contents(hook))?;
     Ok(())
 }
@@ -847,6 +965,7 @@ pub fn remove_item(
     harnesses: &[Harness],
     global: bool,
 ) -> Result<Vec<PathBuf>> {
+    validate_item_name(name)?;
     let mut removed = Vec::new();
     let mut cleanup_errors = Vec::new();
     let remove_agents = kind.is_none_or(|kind| kind == ItemKind::Agent);
@@ -938,14 +1057,13 @@ pub fn remove_item(
 /// strips legacy `## Safety: <name>` prose from generated Codex agent TOMLs,
 /// because older installs stored unmapped hook guidance there.
 pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result<Vec<PathBuf>> {
+    validate_item_name(name)?;
     let mut removed = Vec::new();
 
     match harness {
         Harness::ClaudeCode => {
-            let hook_path = harness
-                .hooks_dir(global)
-                .expect("Claude hooks dir")
-                .join(format!("{name}.sh"));
+            let hooks_dir = harness.hooks_dir(global).expect("Claude hooks dir");
+            let hook_path = checked_child_path(&hooks_dir, &format!("{name}.sh"))?;
             if hook_path.exists() {
                 std::fs::remove_file(&hook_path)?;
                 removed.push(hook_path);
@@ -957,7 +1075,8 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
         }
         Harness::Codex => {
             let root = codex_root(global);
-            let script_path = root.join("hooks").join(format!("{name}.sh"));
+            let hooks_dir = root.join("hooks");
+            let script_path = checked_child_path(&hooks_dir, &format!("{name}.sh"))?;
             if script_path.exists() {
                 std::fs::remove_file(&script_path)?;
                 removed.push(script_path);
@@ -966,7 +1085,8 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
             strip_hook_prose_from_codex_agents(global, name)?;
         }
         Harness::Cursor => {
-            let rule_path = cursor_hook_rule_path(global, name);
+            let rules_dir = Harness::Cursor.agents_dir(global);
+            let rule_path = checked_child_path(&rules_dir, &format!("safety-{name}.mdc"))?;
             if rule_path.exists() {
                 std::fs::remove_file(&rule_path)?;
                 removed.push(rule_path);
@@ -980,6 +1100,7 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
 
 /// Remove a hook entry from Claude Code settings.json
 fn remove_hook_from_claude_settings(global: bool, name: &str) -> Result<()> {
+    validate_item_name(name)?;
     let settings_path = if global {
         crate::config::claude_global_dir().join("settings.json")
     } else {
@@ -995,23 +1116,7 @@ fn remove_hook_from_claude_settings(global: bool, name: &str) -> Result<()> {
 
     let mut changed = false;
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        for (_event, entries) in hooks.iter_mut() {
-            if let Some(arr) = entries.as_array_mut() {
-                let before = arr.len();
-                arr.retain(|entry| {
-                    !entry
-                        .get("hooks")
-                        .and_then(|h| h.as_array())
-                        .and_then(|a| a.first())
-                        .and_then(|h| h.get("command"))
-                        .and_then(|c| c.as_str())
-                        .is_some_and(|c| c.contains(name))
-                });
-                if arr.len() != before {
-                    changed = true;
-                }
-            }
-        }
+        changed |= remove_hook_entries_from_hooks_object(hooks, name);
     }
 
     if changed {
@@ -1026,6 +1131,7 @@ fn remove_hook_from_claude_settings(global: bool, name: &str) -> Result<()> {
 /// `[features] hooks = true` in `config.toml` because other hooks may
 /// rely on it.
 fn remove_hook_from_codex_json(global: bool, name: &str) -> Result<()> {
+    validate_item_name(name)?;
     let root = codex_root(global);
     let hooks_json = root.join("hooks.json");
     if !hooks_json.exists() {
@@ -1036,31 +1142,10 @@ fn remove_hook_from_codex_json(global: bool, name: &str) -> Result<()> {
     let mut doc: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| format!("parsing Codex hooks config {}", hooks_json.display()))?;
 
-    let script_token = format!("/{name}.sh");
     let mut changed = false;
 
     if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        let event_keys: Vec<String> = hooks.keys().cloned().collect();
-        for event in event_keys {
-            if let Some(arr) = hooks.get_mut(&event).and_then(|v| v.as_array_mut()) {
-                let before = arr.len();
-                arr.retain(|entry| {
-                    !entry
-                        .get("hooks")
-                        .and_then(|h| h.as_array())
-                        .and_then(|a| a.first())
-                        .and_then(|h| h.get("command"))
-                        .and_then(|c| c.as_str())
-                        .is_some_and(|c| c.contains(&script_token))
-                });
-                if arr.len() != before {
-                    changed = true;
-                }
-                if arr.is_empty() {
-                    hooks.remove(&event);
-                }
-            }
-        }
+        changed |= remove_hook_entries_from_hooks_object(hooks, name);
         if hooks.is_empty()
             && let Some(map) = doc.as_object_mut()
         {
@@ -1091,6 +1176,7 @@ fn remove_hook_from_codex_json(global: bool, name: &str) -> Result<()> {
 /// Strip any `## Safety: <name>` prose block we previously injected into codex
 /// agent TOMLs (legacy fallback path). Idempotent.
 fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Result<()> {
+    validate_item_name(name)?;
     let agents_dir = Harness::Codex.agents_dir(global);
     if !agents_dir.exists() {
         return Ok(());
@@ -1130,6 +1216,7 @@ fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Result<()> {
 
 /// Remove hook instructions and permission entries from OpenCode opencode.json
 fn remove_hook_from_opencode_json(global: bool, name: &str) -> Result<()> {
+    validate_item_name(name)?;
     let config_path = if global {
         crate::config::opencode_global_config_path()
     } else {
@@ -1146,6 +1233,16 @@ fn remove_hook_from_opencode_json_at_path(
     instruction_ref: &str,
     name: &str,
 ) -> Result<()> {
+    validate_item_name(name)?;
+    if let Some(parent) = instruction_path.parent()
+        && parent.exists()
+    {
+        let file_name = instruction_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("OpenCode hook instruction path missing file name")?;
+        checked_child_path(parent, file_name)?;
+    }
     if !config_path.exists() {
         let _ = std::fs::remove_file(instruction_path);
         return Ok(());
@@ -1507,6 +1604,58 @@ mod tests {
             Some(1)
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_codex_hooks_json_replaces_existing_hook_registration() {
+        let dir = tmpdir("codex_merge_replace");
+        let hooks_json = dir.join("hooks.json");
+        std::fs::write(
+            &hooks_json,
+            r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "bash /home/.codex/hooks/guard.sh", "timeout": 30}]
+      }
+    ]
+  }
+}"#,
+        )
+        .unwrap();
+        let mut hook = hook_fixture("guard", "PostCompact", None);
+        hook.timeout = Some(5);
+        merge_codex_hooks_json(
+            &hooks_json,
+            "PostCompact",
+            &hook,
+            "bash /home/.codex/hooks/guard.sh",
+        )
+        .unwrap();
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&hooks_json).unwrap()).unwrap();
+        assert!(doc.pointer("/hooks/PreToolUse").is_none());
+        let arr = doc
+            .pointer("/hooks/PostCompact")
+            .and_then(|v| v.as_array())
+            .expect("PostCompact array present");
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].pointer("/matcher").is_none());
+        assert_eq!(
+            arr[0].pointer("/hooks/0/timeout").and_then(|v| v.as_u64()),
+            Some(5)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_item_name_rejects_path_like_names() {
+        for name in ["", ".", "..", "../victim", "a/b", "a\\b", "/abs"] {
+            assert!(validate_item_name(name).is_err(), "accepted {name:?}");
+        }
+        assert!(validate_item_name("guard-hook").is_ok());
     }
 
     #[test]

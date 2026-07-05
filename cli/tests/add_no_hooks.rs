@@ -75,6 +75,40 @@ exit 0
     .unwrap();
 }
 
+fn write_custom_hook(
+    source: &Path,
+    name: &str,
+    event: &str,
+    matcher: Option<&str>,
+    timeout: Option<u32>,
+    harnesses: Option<&str>,
+) {
+    let matcher_line = matcher
+        .map(|value| format!("# matcher: {value}\n"))
+        .unwrap_or_default();
+    let timeout_line = timeout
+        .map(|value| format!("# timeout: {value}\n"))
+        .unwrap_or_default();
+    let harness_line = harnesses
+        .map(|value| format!("# harnesses: {value}\n"))
+        .unwrap_or_default();
+    fs::write(
+        source.join("hooks").join(format!("{name}.sh")),
+        format!(
+            r#"# ---
+# name: {name}
+# event: {event}
+{matcher_line}# description: {name} hook
+{timeout_line}{harness_line}# safety: Keep state safe.
+# ---
+#!/usr/bin/env bash
+exit 0
+"#
+        ),
+    )
+    .unwrap();
+}
+
 struct Sandbox {
     root: PathBuf,
     source: PathBuf,
@@ -194,6 +228,153 @@ fn selected_hook_install_emits_claude_hook_frontmatter_and_script() {
     assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
     let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
     assert!(settings.contains(".claude/hooks/guard.sh"));
+}
+
+#[test]
+fn refresh_upserts_claude_hook_registration_when_event_changes() {
+    let sandbox = Sandbox::new("refresh-claude-hook-upsert");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add");
+
+    write_custom_hook(&sandbox.source, "guard", "PostCompact", None, Some(7), None);
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack refresh");
+
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    assert!(parsed.pointer("/hooks/PreToolUse").is_none());
+    let post = parsed
+        .pointer("/hooks/PostCompact")
+        .and_then(|value| value.as_array())
+        .expect("PostCompact hook present");
+    assert_eq!(post.len(), 1, "stale or duplicate hooks: {settings}");
+    assert!(post[0].pointer("/matcher").is_none());
+    assert_eq!(
+        post[0].pointer("/timeout").and_then(|v| v.as_u64()),
+        Some(7)
+    );
+}
+
+#[test]
+fn codex_fallback_hook_add_keeps_agent_safety_prose_after_reconcile() {
+    let sandbox = Sandbox::new("add-codex-fallback-hook");
+    write_custom_hook(
+        &sandbox.source,
+        "finish",
+        "TaskCompleted",
+        None,
+        None,
+        Some("[codex]"),
+    );
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--agent",
+            "rust",
+            "--hook",
+            "finish",
+            "--harness",
+            "codex",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add agent+hook");
+
+    let agent = fs::read_to_string(sandbox.project.join(".codex/agents/rust.toml")).unwrap();
+    assert!(
+        agent.contains("## Safety: finish"),
+        "missing fallback prose:\n{agent}"
+    );
+}
+
+#[test]
+fn codex_fallback_hook_only_add_updates_existing_agent_after_reconcile() {
+    let sandbox = Sandbox::new("add-codex-fallback-hook-only");
+    write_custom_hook(
+        &sandbox.source,
+        "finish",
+        "TaskCompleted",
+        None,
+        None,
+        Some("[codex]"),
+    );
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--agent", "rust", "--harness", "codex", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add agent");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "finish", "--harness", "codex", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add hook");
+
+    let agent = fs::read_to_string(sandbox.project.join(".codex/agents/rust.toml")).unwrap();
+    assert!(
+        agent.contains("## Safety: finish"),
+        "missing fallback prose:\n{agent}"
+    );
+}
+
+#[test]
+fn adding_codex_agent_after_fallback_hook_installed_adds_safety_prose() {
+    let sandbox = Sandbox::new("add-codex-agent-after-fallback-hook");
+    write_custom_hook(
+        &sandbox.source,
+        "finish",
+        "TaskCompleted",
+        None,
+        None,
+        Some("[codex]"),
+    );
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "finish", "--harness", "codex", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add hook");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--agent", "rust", "--harness", "codex", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add agent");
+
+    let agent = fs::read_to_string(sandbox.project.join(".codex/agents/rust.toml")).unwrap();
+    assert!(
+        agent.contains("## Safety: finish"),
+        "missing fallback prose:\n{agent}"
+    );
 }
 
 #[test]

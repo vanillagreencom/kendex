@@ -1556,7 +1556,7 @@ fn reconcile_agents(
         .filter(|(_, e)| e.kind == config::ItemKind::Agent)
         .collect();
 
-    if agent_entries.is_empty() || installed_skills.is_empty() {
+    if agent_entries.is_empty() {
         return Ok(());
     }
 
@@ -1568,6 +1568,8 @@ fn reconcile_agents(
     let source_agents = crate::agent::discover_agents(&agents_dir).unwrap_or_default();
     let source_skills = crate::skill::discover_skills(&skills_dir).unwrap_or_default();
     let source_hooks = crate::hook::discover_hooks(&hooks_dir).unwrap_or_default();
+    let mut regenerated_codex_agents: Vec<crate::agent::Agent> = Vec::new();
+    let mut regenerated_codex_agent_names = std::collections::HashSet::new();
 
     for (name, entry) in &agent_entries {
         let Some(agent) = source_agents.iter().find(|a| &a.name == *name) else {
@@ -1617,16 +1619,34 @@ fn reconcile_agents(
                         &agent.role,
                         harness.id(),
                     );
-                    let _ = harness.generate_agent(
-                        agent,
-                        global,
-                        &skill_pairs,
-                        &matched_hooks,
-                        &extras,
-                    );
+                    if harness
+                        .generate_agent(agent, global, &skill_pairs, &matched_hooks, &extras)
+                        .is_ok()
+                        && matches!(harness, Harness::Codex)
+                        && regenerated_codex_agent_names.insert(agent.name.clone())
+                    {
+                        regenerated_codex_agents.push(agent.clone());
+                    }
                 }
             }
         }
+    }
+
+    if !regenerated_codex_agents.is_empty() {
+        let codex_fallback_hooks: Vec<crate::hook::Hook> = lock
+            .entries
+            .values()
+            .filter(|entry| entry.kind == config::ItemKind::Hook)
+            .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
+            .filter_map(|entry| crate::resolve::source_hook_for_lock_entry(&source_hooks, entry))
+            .filter(|hook| installer::codex_event_for(&hook.event).is_none())
+            .cloned()
+            .collect();
+        installer::install_codex_fallback_hooks_for_agents(
+            &codex_fallback_hooks,
+            global,
+            &regenerated_codex_agents,
+        )?;
     }
 
     Ok(())

@@ -882,4 +882,19 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn prune_hook_harnesses_keeps_lock_when_hook_name_is_unsafe() {
+        let mut lock = LockFile::default();
+        lock.add(lock_hook("../victim", vec!["codex"]));
+        let hooks = vec![source_hook("../victim", Some(vec!["pi"]))];
+
+        assert!(!prune_hook_harnesses(true, &mut lock, &hooks, None));
+        assert_eq!(
+            lock.entries
+                .get("../victim")
+                .map(|entry| entry.harnesses.as_slice()),
+            Some(&["codex".to_string()][..])
+        );
+    }
 }
