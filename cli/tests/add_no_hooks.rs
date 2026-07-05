@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,21 +11,10 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("vstack-{name}-{}-{nanos}", std::process::id()))
 }
 
-#[test]
-fn agent_install_without_hooks_does_not_emit_claude_hook_frontmatter() {
-    let root = unique_temp_dir("add-no-hooks");
-    let source = root.join("source");
-    let project = root.join("project");
-    let home = root.join("home");
-    let xdg = root.join("xdg");
-    let pi_dir = root.join("pi");
-
+fn write_fixture_source(source: &Path, hook_harnesses: Option<&str>) {
     fs::create_dir_all(source.join("agents")).unwrap();
     fs::create_dir_all(source.join("skills/dev")).unwrap();
     fs::create_dir_all(source.join("hooks")).unwrap();
-    fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&home).unwrap();
-    fs::create_dir_all(&xdg).unwrap();
 
     fs::write(
         source.join("vstack.toml"),
@@ -62,39 +51,102 @@ license: MIT
 "#,
     )
     .unwrap();
+    write_hook(source, hook_harnesses);
+}
+
+fn write_hook(source: &Path, harnesses: Option<&str>) {
+    let harness_line = harnesses
+        .map(|value| format!("# harnesses: {value}\n"))
+        .unwrap_or_default();
     fs::write(
         source.join("hooks/guard.sh"),
-        r#"# ---
+        format!(
+            r#"# ---
 # name: guard
 # event: PreToolUse
 # matcher: Bash
 # description: Guard bash
-# ---
+{harness_line}# ---
 #!/usr/bin/env bash
 exit 0
-"#,
+"#
+        ),
     )
     .unwrap();
+}
 
-    let output = Command::new(env!("CARGO_BIN_EXE_vstack"))
-        .arg("add")
-        .arg(&source)
-        .args(["--agent", "rust", "--harness", "claude", "--copy", "-y"])
-        .current_dir(&project)
-        .env("HOME", &home)
-        .env("XDG_CONFIG_HOME", &xdg)
-        .env("PI_CODING_AGENT_DIR", &pi_dir)
-        .output()
-        .unwrap();
+struct Sandbox {
+    root: PathBuf,
+    source: PathBuf,
+    project: PathBuf,
+    home: PathBuf,
+    xdg: PathBuf,
+    pi_dir: PathBuf,
+}
 
+impl Sandbox {
+    fn new(name: &str) -> Self {
+        let root = unique_temp_dir(name);
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let xdg = root.join("xdg");
+        let pi_dir = root.join("pi");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&xdg).unwrap();
+        fs::create_dir_all(&pi_dir).unwrap();
+        write_fixture_source(&source, None);
+        Self {
+            root,
+            source,
+            project,
+            home,
+            xdg,
+            pi_dir,
+        }
+    }
+
+    fn vstack(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vstack"));
+        command
+            .current_dir(&self.project)
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", &self.xdg)
+            .env("PI_CODING_AGENT_DIR", &self.pi_dir);
+        command
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn assert_success(output: std::process::Output, context: &str) {
     assert!(
         output.status.success(),
-        "vstack add failed\nstdout:\n{}\nstderr:\n{}",
+        "{context} failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
 
-    let agent_path = project.join(".claude/agents/rust.md");
+#[test]
+fn agent_install_without_hooks_does_not_emit_claude_hook_frontmatter() {
+    let sandbox = Sandbox::new("add-no-hooks");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--agent", "rust", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add");
+
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
     let content = fs::read_to_string(&agent_path).unwrap();
     assert!(
         content.contains("skills: dev"),
@@ -109,9 +161,122 @@ exit 0
         "agent references uninstalled hook:\n{content}"
     );
     assert!(
-        !project.join(".claude/hooks/guard.sh").exists(),
+        !sandbox.project.join(".claude/hooks/guard.sh").exists(),
         "unselected hook should not be installed"
     );
+}
 
-    let _ = fs::remove_dir_all(root);
+#[test]
+fn selected_hook_install_emits_claude_hook_frontmatter_and_script() {
+    let sandbox = Sandbox::new("add-selected-hook");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--agent",
+            "rust",
+            "--hook",
+            "guard",
+            "--harness",
+            "claude",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add");
+
+    let agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    assert!(agent.lines().any(|line| line.trim() == "hooks:"));
+    assert!(agent.contains("$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh"));
+    assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    assert!(settings.contains(".claude/hooks/guard.sh"));
+}
+
+#[test]
+fn refresh_prunes_hook_artifacts_when_harness_allowlist_drops_claude() {
+    let sandbox = Sandbox::new("refresh-prune-hook");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add");
+    assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+
+    write_hook(&sandbox.source, Some("[codex]"));
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack refresh");
+
+    assert!(!sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    assert!(!settings.contains("guard.sh"), "stale settings: {settings}");
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(!lock.contains("guard"), "stale lock entry: {lock}");
+}
+
+#[test]
+fn refresh_agent_hook_frontmatter_uses_hook_harness_from_lock() {
+    let sandbox = Sandbox::new("refresh-hook-harness-scope");
+    let source = sandbox.source.to_string_lossy();
+    fs::write(
+        sandbox.project.join(".vstack-lock.json"),
+        format!(
+            r#"{{
+  "version": 1,
+  "entries": {{
+    "rust": {{
+      "name": "rust",
+      "kind": "agent",
+      "source": "{source}",
+      "harnesses": ["claude-code", "codex"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }},
+    "dev": {{
+      "name": "dev",
+      "kind": "skill",
+      "source": "{source}",
+      "harnesses": ["claude-code", "codex"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }},
+    "guard": {{
+      "name": "guard",
+      "kind": "hook",
+      "source": "{source}",
+      "harnesses": ["codex"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }}
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack refresh");
+
+    let claude_agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    assert!(
+        !claude_agent.contains(".claude/hooks/guard.sh"),
+        "Claude agent referenced hook installed only for Codex:\n{claude_agent}"
+    );
+    assert!(sandbox.project.join(".codex/hooks/guard.sh").exists());
 }

@@ -2376,6 +2376,22 @@ fn remove_one(name: &str, scope_global: bool) {
     let _ = lock.save(&lock_path);
 }
 
+fn matched_hooks_for_move_destination(
+    dst_lock: &crate::config::LockFile,
+    items: &DiscoveredItems,
+    mapping: &crate::mapping::MappingConfig,
+    agent: &Agent,
+    harness: Harness,
+) -> Vec<crate::hook::Hook> {
+    crate::resolve::matched_installed_hooks_for_agent_harness(
+        dst_lock,
+        &items.hooks,
+        mapping,
+        &agent.role,
+        harness.id(),
+    )
+}
+
 /// Move plans = install at the destination scope, then remove from the
 /// source scope. Uses each item's existing source-scope lock entry to
 /// preserve harness list and install method.
@@ -2421,6 +2437,7 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
     // Plans that succeeded at the destination — only these are eligible
     // for source removal at the end.
     let mut moved_names: Vec<String> = Vec::new();
+    let mut moved_agent_names: Vec<String> = Vec::new();
 
     for plan in plans {
         let Some(entry) = src_lock.entries.get(&plan.name).cloned() else {
@@ -2451,16 +2468,9 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                     None,
                 );
                 for harness in &target_harnesses {
-                    let installed_hooks_dst = crate::resolve::hooks_installed_for_harness(
-                        &dst_lock,
-                        &items.hooks,
-                        harness.id(),
+                    let matched_hooks = matched_hooks_for_move_destination(
+                        &dst_lock, items, &mapping, agent, *harness,
                     );
-                    let matched_hooks: Vec<crate::hook::Hook> = mapping
-                        .hooks_for_agent(&agent.role, &installed_hooks_dst)
-                        .into_iter()
-                        .cloned()
-                        .collect();
                     if harness
                         .generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras)
                         .is_ok()
@@ -2534,7 +2544,43 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
         new_entry.installed_at = crate::config::now_iso();
         new_entry.source_hash = crate::config::compute_source_hash(&new_entry);
         dst_lock.add(new_entry);
+        if entry.kind == crate::config::ItemKind::Agent {
+            moved_agent_names.push(plan.name.clone());
+        }
         moved_names.push(plan.name.clone());
+    }
+
+    // Hooks may be moved in the same batch as agents. Move plans are not
+    // ordered by dependency, so an agent can be generated before a concurrently
+    // moved hook lands in the destination lock. Regenerate moved agents once
+    // after all successful destination entries are known so hook frontmatter
+    // reflects the final destination hook set.
+    let installed_skills_final: Vec<String> = dst_lock
+        .entries
+        .iter()
+        .filter(|(_, e)| e.kind == crate::config::ItemKind::Skill)
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in &moved_agent_names {
+        let Some(agent) = items.agents.iter().find(|a| &a.name == name) else {
+            continue;
+        };
+        let Some(entry) = dst_lock.entries.get(name) else {
+            continue;
+        };
+        let source_skills =
+            mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills_final);
+        let skill_pairs = crate::resolve::resolve_skill_pairs(&source_skills, &items.skills);
+        let extras =
+            crate::resolve::build_agent_extras(&project_config, &agent.name, &agent.role, None);
+        for harness_id in &entry.harnesses {
+            if let Some(harness) = Harness::from_id(harness_id) {
+                let matched_hooks =
+                    matched_hooks_for_move_destination(&dst_lock, items, &mapping, agent, harness);
+                let _ =
+                    harness.generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras);
+            }
+        }
     }
 
     if dst_lock.save(&dst_lock_path).is_err() {
@@ -2832,5 +2878,64 @@ mod tests {
         let ids = vec!["claude-code".to_string(), "made-up-harness".to_string()];
         let result = filter_harnesses_for_target(&ids, true);
         assert_eq!(result, vec![Harness::ClaudeCode]);
+    }
+
+    #[test]
+    fn move_destination_hook_matching_uses_destination_harness_lock() {
+        let mut dst_lock = crate::config::LockFile::default();
+        dst_lock.add(crate::config::LockEntry {
+            name: "guard".into(),
+            kind: crate::config::ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["claude-code".into()],
+            method: crate::config::InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        let items = DiscoveredItems {
+            agents: Vec::new(),
+            skills: Vec::new(),
+            hooks: vec![crate::hook::Hook {
+                name: "guard".into(),
+                event: "PreToolUse".into(),
+                matcher: Some("Bash".into()),
+                description: String::new(),
+                safety: None,
+                timeout: None,
+                harnesses: None,
+                script: String::new(),
+                source_path: std::path::PathBuf::new(),
+            }],
+            pi_extensions: Vec::new(),
+            extras: Vec::new(),
+        };
+        let mut mapping = crate::mapping::MappingConfig::default();
+        mapping.hook_events.insert(
+            "PreToolUse:Bash".into(),
+            crate::mapping::HookTarget::All("all".into()),
+        );
+        let agent = agent_fixture("rust");
+
+        assert_eq!(
+            matched_hooks_for_move_destination(
+                &dst_lock,
+                &items,
+                &mapping,
+                &agent,
+                Harness::ClaudeCode,
+            )
+            .len(),
+            1
+        );
+        assert!(
+            matched_hooks_for_move_destination(
+                &dst_lock,
+                &items,
+                &mapping,
+                &agent,
+                Harness::Codex,
+            )
+            .is_empty()
+        );
     }
 }

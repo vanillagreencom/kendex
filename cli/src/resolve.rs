@@ -43,6 +43,43 @@ pub fn hooks_installed_for_harness(
         .collect()
 }
 
+/// Return hooks from a selected/pre-lock set that apply to an agent on a
+/// specific harness.
+pub fn matched_selected_hooks_for_agent_harness(
+    mapping: &crate::mapping::MappingConfig,
+    agent_role: &AgentRole,
+    hooks: &[crate::hook::Hook],
+    harness_id: &str,
+) -> Vec<crate::hook::Hook> {
+    let applicable_hooks: Vec<crate::hook::Hook> = hooks
+        .iter()
+        .filter(|hook| hook.applies_to(harness_id))
+        .cloned()
+        .collect();
+    mapping
+        .hooks_for_agent(agent_role, &applicable_hooks)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+/// Return hooks from the scope lock that apply to an agent on a specific
+/// harness.
+pub fn matched_installed_hooks_for_agent_harness(
+    lock: &crate::config::LockFile,
+    hooks: &[crate::hook::Hook],
+    mapping: &crate::mapping::MappingConfig,
+    agent_role: &AgentRole,
+    harness_id: &str,
+) -> Vec<crate::hook::Hook> {
+    let installed_hooks = hooks_installed_for_harness(lock, hooks, harness_id);
+    mapping
+        .hooks_for_agent(agent_role, &installed_hooks)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
 /// Read guidance/instructions from an existing agent file on disk.
 /// Returns empty extras if the file doesn't exist.
 pub fn read_existing_extras(path: &Path, harness: Harness) -> AgentExtras {
@@ -115,4 +152,98 @@ pub fn is_vstack_source(dir: &Path) -> bool {
     .filter(|&&b| b)
     .count();
     count >= 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{InstallMethod, ItemKind, LockEntry, LockFile};
+    use crate::mapping::{HookTarget, MappingConfig};
+    use std::path::PathBuf;
+
+    fn hook(name: &str, harnesses: Option<Vec<&str>>) -> crate::hook::Hook {
+        crate::hook::Hook {
+            name: name.into(),
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            description: String::new(),
+            safety: None,
+            timeout: None,
+            harnesses: harnesses.map(|items| items.into_iter().map(String::from).collect()),
+            script: String::new(),
+            source_path: PathBuf::new(),
+        }
+    }
+
+    fn mapping_all_bash_hooks() -> MappingConfig {
+        let mut mapping = MappingConfig::default();
+        mapping
+            .hook_events
+            .insert("PreToolUse:Bash".into(), HookTarget::All("all".into()));
+        mapping
+    }
+
+    #[test]
+    fn matched_installed_hooks_are_scoped_to_harness_lock_entries() {
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "guard".into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["codex".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        let hooks = vec![hook("guard", None)];
+        let mapping = mapping_all_bash_hooks();
+
+        assert!(
+            matched_installed_hooks_for_agent_harness(
+                &lock,
+                &hooks,
+                &mapping,
+                &AgentRole::Engineer,
+                "claude-code",
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            matched_installed_hooks_for_agent_harness(
+                &lock,
+                &hooks,
+                &mapping,
+                &AgentRole::Engineer,
+                "codex",
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn matched_selected_hooks_respect_source_harness_allowlist_before_lock_exists() {
+        let hooks = vec![hook("guard", Some(vec!["claude-code"]))];
+        let mapping = mapping_all_bash_hooks();
+
+        assert_eq!(
+            matched_selected_hooks_for_agent_harness(
+                &mapping,
+                &AgentRole::Engineer,
+                &hooks,
+                "claude-code",
+            )
+            .len(),
+            1
+        );
+        assert!(
+            matched_selected_hooks_for_agent_harness(
+                &mapping,
+                &AgentRole::Engineer,
+                &hooks,
+                "codex",
+            )
+            .is_empty()
+        );
+    }
 }

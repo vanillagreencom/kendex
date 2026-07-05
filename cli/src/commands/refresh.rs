@@ -162,13 +162,13 @@ pub fn refresh_items_in_scope(
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
-                let installed_hooks =
-                    crate::resolve::hooks_installed_for_harness(lock, hooks, harness.id());
-                let matched_hooks: Vec<Hook> = mapping
-                    .hooks_for_agent(&agent.role, &installed_hooks)
-                    .into_iter()
-                    .cloned()
-                    .collect();
+                let matched_hooks = crate::resolve::matched_installed_hooks_for_agent_harness(
+                    lock,
+                    hooks,
+                    mapping,
+                    &agent.role,
+                    harness.id(),
+                );
                 let _ =
                     harness.generate_agent(agent, global, &skill_pairs, &matched_hooks, &extras);
             }
@@ -296,6 +296,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .flat_map(|dir| crate::hook::discover_hooks(&dir.join("hooks")).unwrap_or_default())
             .collect();
         let mut pruned_any = false;
+        let mut remove_hook_entries = Vec::new();
         for entry in lock
             .entries
             .values_mut()
@@ -304,16 +305,40 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             let Some(hook) = source_hooks_for_prune.iter().find(|h| h.name == entry.name) else {
                 continue;
             };
-            let new_harnesses: Vec<String> = entry
-                .harnesses
-                .iter()
-                .filter(|h| hook.applies_to(h))
-                .cloned()
-                .collect();
+            let mut new_harnesses = Vec::new();
+            for harness_id in &entry.harnesses {
+                if hook.applies_to(harness_id) {
+                    new_harnesses.push(harness_id.clone());
+                    continue;
+                }
+
+                let Some(harness) = Harness::from_id(harness_id) else {
+                    pruned_any = true;
+                    continue;
+                };
+                match installer::remove_hook_install(&entry.name, harness, global) {
+                    Ok(_) => pruned_any = true,
+                    Err(err) => {
+                        eprintln!(
+                            "Warning: failed to remove hook {} from {} during refresh: {err}",
+                            entry.name,
+                            harness.name()
+                        );
+                        new_harnesses.push(harness_id.clone());
+                    }
+                }
+            }
             if new_harnesses != entry.harnesses {
                 entry.harnesses = new_harnesses;
                 pruned_any = true;
             }
+            if entry.harnesses.is_empty() {
+                remove_hook_entries.push(entry.name.clone());
+            }
+        }
+        for name in remove_hook_entries {
+            lock.remove(&name);
+            pruned_any = true;
         }
         if pruned_any {
             lock.save(&lock_path)?;

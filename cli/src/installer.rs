@@ -878,29 +878,8 @@ pub fn remove_item(name: &str, harnesses: &[Harness], global: bool) -> Result<Ve
         }
 
         // Hook cleanup (per-harness, each independent)
-        if *harness == Harness::ClaudeCode {
-            let hook_path = harness
-                .hooks_dir(global)
-                .expect("Claude hooks dir")
-                .join(format!("{name}.sh"));
-            if hook_path.exists() && std::fs::remove_file(&hook_path).is_ok() {
-                removed.push(hook_path);
-            }
-            let _ = remove_hook_from_claude_settings(global, name);
-        }
-
-        if *harness == Harness::OpenCode {
-            let _ = remove_hook_from_opencode_json(global, name);
-        }
-
-        if *harness == Harness::Codex {
-            let root = codex_root(global);
-            let script_path = root.join("hooks").join(format!("{name}.sh"));
-            if script_path.exists() && std::fs::remove_file(&script_path).is_ok() {
-                removed.push(script_path);
-            }
-            let _ = remove_hook_from_codex_json(global, name);
-            let _ = strip_hook_prose_from_codex_agents(global, name);
+        if let Ok(hook_removed) = remove_hook_install(name, *harness, global) {
+            removed.extend(hook_removed);
         }
     }
 
@@ -929,6 +908,48 @@ pub fn remove_item(name: &str, harnesses: &[Harness], global: bool) -> Result<Ve
                 removed.push(path);
             }
         }
+    }
+
+    Ok(removed)
+}
+
+/// Remove a hook's harness-specific artifacts/config without touching agents or skills.
+pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result<Vec<PathBuf>> {
+    let mut removed = Vec::new();
+
+    match harness {
+        Harness::ClaudeCode => {
+            let hook_path = harness
+                .hooks_dir(global)
+                .expect("Claude hooks dir")
+                .join(format!("{name}.sh"));
+            if hook_path.exists() {
+                std::fs::remove_file(&hook_path)?;
+                removed.push(hook_path);
+            }
+            remove_hook_from_claude_settings(global, name)?;
+        }
+        Harness::OpenCode => {
+            remove_hook_from_opencode_json(global, name)?;
+        }
+        Harness::Codex => {
+            let root = codex_root(global);
+            let script_path = root.join("hooks").join(format!("{name}.sh"));
+            if script_path.exists() {
+                std::fs::remove_file(&script_path)?;
+                removed.push(script_path);
+            }
+            remove_hook_from_codex_json(global, name)?;
+            strip_hook_prose_from_codex_agents(global, name)?;
+        }
+        Harness::Cursor => {
+            let rule_path = cursor_hook_rule_path(global, name);
+            if rule_path.exists() {
+                std::fs::remove_file(&rule_path)?;
+                removed.push(rule_path);
+            }
+        }
+        Harness::Pi => {}
     }
 
     Ok(removed)
