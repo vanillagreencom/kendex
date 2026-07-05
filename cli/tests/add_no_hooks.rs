@@ -231,6 +231,92 @@ fn selected_hook_install_emits_claude_hook_frontmatter_and_script() {
 }
 
 #[test]
+fn hook_only_add_regenerates_existing_agent_with_no_installed_skills() {
+    let sandbox = Sandbox::new("hook-only-no-skills");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--agent",
+            "rust",
+            "--harness",
+            "claude",
+            "--copy",
+            "--no-auto-skills",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add agent without skills");
+    let before = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    assert!(
+        !before.contains("skills:"),
+        "unexpected skills before hook add:\n{before}"
+    );
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add hook only");
+
+    let agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    assert!(agent.lines().any(|line| line.trim() == "hooks:"));
+    assert!(agent.contains("$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh"));
+    assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\\\""));
+}
+
+#[test]
+fn claude_hook_add_preserves_user_handler_with_same_script_basename() {
+    let sandbox = Sandbox::new("claude-preserve-user-hook");
+    fs::create_dir_all(sandbox.project.join(".claude")).unwrap();
+    fs::write(
+        sandbox.project.join(".claude/settings.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "bash ./scripts/guard.sh"}]
+      }
+    ]
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add hook");
+
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    let entries = parsed
+        .pointer("/hooks/PreToolUse")
+        .and_then(|value| value.as_array())
+        .expect("PreToolUse entries");
+    assert_eq!(
+        entries.len(),
+        2,
+        "user hook should be preserved: {settings}"
+    );
+    assert!(settings.contains("bash ./scripts/guard.sh"));
+    assert!(settings.contains("bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\\\""));
+}
+
+#[test]
 fn refresh_upserts_claude_hook_registration_when_event_changes() {
     let sandbox = Sandbox::new("refresh-claude-hook-upsert");
 

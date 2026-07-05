@@ -223,7 +223,7 @@ fn format_hooks_yaml_with_custom(hooks: &[Hook], custom: &[agent::CustomHookEntr
             .entry(matcher)
             .or_default()
             .push(format!(
-                "$CLAUDE_PROJECT_DIR/.claude/hooks/{}.sh",
+                "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/{}.sh\"",
                 hook.name
             ));
     }

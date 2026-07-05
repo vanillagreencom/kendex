@@ -1633,15 +1633,8 @@ fn reconcile_agents(
     }
 
     if !regenerated_codex_agents.is_empty() {
-        let codex_fallback_hooks: Vec<crate::hook::Hook> = lock
-            .entries
-            .values()
-            .filter(|entry| entry.kind == config::ItemKind::Hook)
-            .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
-            .filter_map(|entry| crate::resolve::source_hook_for_lock_entry(&source_hooks, entry))
-            .filter(|hook| installer::codex_event_for(&hook.event).is_none())
-            .cloned()
-            .collect();
+        let codex_fallback_hooks =
+            crate::resolve::installed_codex_fallback_hooks(&lock, &source_hooks);
         installer::install_codex_fallback_hooks_for_agents(
             &codex_fallback_hooks,
             global,

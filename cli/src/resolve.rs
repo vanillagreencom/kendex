@@ -42,6 +42,23 @@ pub fn hooks_installed_for_harness(
         .collect()
 }
 
+/// Return installed Codex fallback hooks from the lock using lock-entry source
+/// ownership, harness allowlists, and Codex native-event mapping.
+pub(crate) fn installed_codex_fallback_hooks(
+    lock: &crate::config::LockFile,
+    source_hooks: &[crate::hook::Hook],
+) -> Vec<crate::hook::Hook> {
+    lock.entries
+        .values()
+        .filter(|entry| entry.kind == crate::config::ItemKind::Hook)
+        .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
+        .filter_map(|entry| source_hook_for_lock_entry(source_hooks, entry))
+        .filter(|hook| hook.applies_to(Harness::Codex.id()))
+        .filter(|hook| crate::installer::codex_event_for(&hook.event).is_none())
+        .cloned()
+        .collect()
+}
+
 /// Return the source hook matching a hook lock entry's recorded source.
 ///
 /// Aggregated source discovery can contain same-named hooks from multiple
@@ -227,6 +244,12 @@ mod tests {
         }
     }
 
+    fn hook_with_event(name: &str, event: &str, harnesses: Option<Vec<&str>>) -> crate::hook::Hook {
+        let mut hook = hook(name, harnesses);
+        hook.event = event.into();
+        hook
+    }
+
     fn lock_hook(name: &str, source: &Path, harnesses: Vec<&str>) -> LockEntry {
         LockEntry {
             name: name.into(),
@@ -370,5 +393,47 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installed_codex_fallback_hooks_filters_native_and_non_codex_entries() {
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "fallback".into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["codex".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(LockEntry {
+            name: "native".into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["codex".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(LockEntry {
+            name: "claude-only".into(),
+            kind: ItemKind::Hook,
+            source: "source".into(),
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        let hooks = vec![
+            hook_with_event("fallback", "TaskCompleted", Some(vec!["codex"])),
+            hook_with_event("native", "PreToolUse", Some(vec!["codex"])),
+            hook_with_event("claude-only", "TaskCompleted", Some(vec!["claude-code"])),
+        ];
+
+        let fallback = installed_codex_fallback_hooks(&lock, &hooks);
+
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].name, "fallback");
     }
 }

@@ -296,6 +296,7 @@ pub(super) fn perform_move_plans(
         &mut dst_lock,
         &mapping,
         &project_config,
+        &mut report,
     );
     if let Err(err) =
         reinstall_codex_hooks_for_moved_agents(items, &moved_agent_names, to_global, &dst_lock)
@@ -339,6 +340,7 @@ fn generate_moved_agents(
     dst_lock: &mut config::LockFile,
     mapping: &crate::mapping::MappingConfig,
     project_config: &crate::project_config::ProjectConfig,
+    report: &mut DiskMutationReport,
 ) -> Vec<String> {
     let installed_skills_final: Vec<String> = dst_lock
         .entries
@@ -350,6 +352,7 @@ fn generate_moved_agents(
 
     for intent in intents {
         let Some(agent) = items.agents.iter().find(|a| a.name == intent.name) else {
+            report.fail(&intent.name, "source agent missing");
             continue;
         };
         let source_skills =
@@ -358,17 +361,27 @@ fn generate_moved_agents(
         let extras =
             crate::resolve::build_agent_extras(project_config, &agent.name, &agent.role, None);
         let mut succeeded = Vec::new();
+        let mut failures = Vec::new();
         for harness in &intent.target_harnesses {
             let matched_hooks =
                 matched_hooks_for_move_destination(dst_lock, items, mapping, agent, *harness);
-            if harness
-                .generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras)
-                .is_ok()
-            {
-                succeeded.push(*harness);
+            match harness.generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras) {
+                Ok(_) => succeeded.push(*harness),
+                Err(err) => failures.push(format!("{}: {err:#}", harness.name())),
             }
         }
         if succeeded.is_empty() {
+            if failures.is_empty() {
+                report.fail(&intent.name, "no destination harnesses available");
+            } else {
+                report.fail(
+                    &intent.name,
+                    format!(
+                        "failed to generate destination agent: {}",
+                        failures.join("; ")
+                    ),
+                );
+            }
             continue;
         }
 
@@ -402,15 +415,7 @@ fn reinstall_codex_hooks_for_moved_agents(
         return Ok(());
     }
 
-    let fallback_hooks: Vec<crate::hook::Hook> = dst_lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == ItemKind::Hook)
-        .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
-        .filter_map(|entry| crate::resolve::source_hook_for_lock_entry(&items.hooks, entry))
-        .filter(|hook| crate::installer::codex_event_for(&hook.event).is_none())
-        .cloned()
-        .collect();
+    let fallback_hooks = crate::resolve::installed_codex_fallback_hooks(dst_lock, &items.hooks);
     crate::installer::install_codex_fallback_hooks_for_agents(
         &fallback_hooks,
         to_global,
@@ -723,5 +728,48 @@ mod tests {
         assert!(content.contains("## Safety: finish-check"));
         assert!(content.contains("Check completion state."));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn generate_moved_agents_reports_when_no_harness_succeeds() {
+        let mut dst_lock = LockFile::default();
+        let entry = LockEntry {
+            name: "rust".into(),
+            kind: ItemKind::Agent,
+            source: "source".into(),
+            harnesses: vec!["cursor".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        };
+        let intent = AgentMoveIntent {
+            name: "rust".into(),
+            entry,
+            target_harnesses: vec![Harness::Cursor],
+        };
+        let items = DiscoveredItems {
+            agents: vec![agent_fixture("rust")],
+            skills: Vec::new(),
+            hooks: Vec::new(),
+            pi_extensions: Vec::new(),
+            extras: Vec::new(),
+        };
+        let mut report = DiskMutationReport::new(1);
+
+        let moved = generate_moved_agents(
+            &items,
+            &[intent],
+            true,
+            &mut dst_lock,
+            &MappingConfig::default(),
+            &crate::project_config::ProjectConfig::default(),
+            &mut report,
+        );
+
+        assert!(moved.is_empty());
+        assert!(!dst_lock.entries.contains_key("rust"));
+        assert_eq!(report.failed.len(), 1);
+        assert!(report.failed[0].contains("rust"));
+        assert!(report.failed[0].contains("Cursor"));
     }
 }

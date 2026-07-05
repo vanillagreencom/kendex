@@ -13,8 +13,9 @@ cli/src/
 ├── scope.rs             Scope enum (project | global | all); uniform `--scope`/`-g` parsing
 ├── mapping.rs           Source vstack.toml — MappingConfig (agent-skills, role-skills, hook-events)
 ├── project_config.rs    Project vstack.toml — ProjectConfig, ensure/write/update
-├── resolve.rs           Shared helpers — skill-pair resolution, read_existing_extras, is_vstack_source
-├── installer.rs         Symlink/copy logic, per-harness hook installation, removal
+├── resolve.rs           Shared helpers — skill-pair resolution, hook source attribution/matching, read_existing_extras, is_vstack_source
+├── installer.rs         Symlink/copy logic, install/remove orchestration
+├── installer/hooks.rs   Hook install/remove/config cleanup for Claude/Codex/OpenCode/Cursor
 ├── harness/             (canonical → per-harness translation)
 │   ├── claude.rs        → .claude/agents/*.md (disallowedTools, effort/background/isolation/memory, skills, hooks frontmatter)
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills)
