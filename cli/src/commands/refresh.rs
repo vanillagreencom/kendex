@@ -208,13 +208,13 @@ pub fn refresh_items_in_scope(
         .filter_map(|(name, _)| agents.iter().find(|a| &a.name == name).cloned())
         .collect();
 
-    for (name, entry) in lock
+    for (_name, entry) in lock
         .entries
         .iter()
         .filter(|(_, e)| e.kind == ItemKind::Hook)
         .filter(|(n, _)| pass(n))
     {
-        let Some(hook) = hooks.iter().find(|h| &h.name == name) else {
+        let Some(hook) = source_hook_for_lock_entry(hooks, entry) else {
             continue;
         };
         for harness_id in &entry.harnesses {
@@ -263,7 +263,7 @@ pub fn prune_hook_harnesses(
         .values_mut()
         .filter(|entry| entry.kind == ItemKind::Hook && pass(&entry.name))
     {
-        let Some(hook) = source_hooks.iter().find(|hook| hook.name == entry.name) else {
+        let Some(hook) = source_hook_for_lock_entry(source_hooks, entry) else {
             continue;
         };
         let mut new_harnesses = Vec::new();
@@ -304,6 +304,46 @@ pub fn prune_hook_harnesses(
     }
 
     pruned_any
+}
+
+fn source_hook_for_lock_entry<'a>(
+    source_hooks: &'a [Hook],
+    entry: &config::LockEntry,
+) -> Option<&'a Hook> {
+    if should_match_entry_source(&entry.source)
+        && let Some(root) = config::resolve_source_path(&entry.source)
+    {
+        for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
+            if hook_path_is_from_source(hook, &root) {
+                return Some(hook);
+            }
+        }
+        return None;
+    }
+
+    for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
+        if hook.source_path.as_os_str().is_empty() {
+            return Some(hook);
+        }
+    }
+
+    source_hooks.iter().find(|hook| hook.name == entry.name)
+}
+
+fn should_match_entry_source(source: &str) -> bool {
+    let path = Path::new(source);
+    source == "." || path.is_absolute() || (source.contains('/') && !source.starts_with('.'))
+}
+
+fn hook_path_is_from_source(hook: &Hook, source_root: &Path) -> bool {
+    let root = source_root
+        .canonicalize()
+        .unwrap_or_else(|_| source_root.to_path_buf());
+    let hook_path = hook
+        .source_path
+        .canonicalize()
+        .unwrap_or_else(|_| hook.source_path.clone());
+    hook_path.starts_with(root.join("hooks")) || hook_path.starts_with(root)
 }
 
 /// Reinstall every item recorded in the selected scopes from current source:
@@ -737,12 +777,17 @@ fn update_cached_repo(repo_dir: &std::path::Path) {
 mod tests {
     use super::*;
     use crate::config::{InstallMethod, LockEntry, LockFile};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn lock_hook(name: &str, harnesses: Vec<&str>) -> LockEntry {
+        lock_hook_from_source(name, "source", harnesses)
+    }
+
+    fn lock_hook_from_source(name: &str, source: &str, harnesses: Vec<&str>) -> LockEntry {
         LockEntry {
             name: name.into(),
             kind: ItemKind::Hook,
-            source: "source".into(),
+            source: source.into(),
             harnesses: harnesses.into_iter().map(String::from).collect(),
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -751,6 +796,14 @@ mod tests {
     }
 
     fn source_hook(name: &str, harnesses: Option<Vec<&str>>) -> Hook {
+        source_hook_from_path(name, harnesses, PathBuf::new())
+    }
+
+    fn source_hook_from_path(
+        name: &str,
+        harnesses: Option<Vec<&str>>,
+        source_path: PathBuf,
+    ) -> Hook {
         Hook {
             name: name.into(),
             event: "PreToolUse".into(),
@@ -760,8 +813,26 @@ mod tests {
             timeout: None,
             harnesses: harnesses.map(|items| items.into_iter().map(String::from).collect()),
             script: String::new(),
-            source_path: PathBuf::new(),
+            source_path,
         }
+    }
+
+    fn tmpdir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "vstack-refresh-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn make_source(root: &Path, name: &str) -> PathBuf {
+        let source = root.join(name);
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("hooks")).unwrap();
+        source
     }
 
     #[test]
@@ -787,5 +858,65 @@ mod tests {
                 .map(|entry| entry.harnesses.as_slice()),
             Some(&["pi".to_string()][..])
         );
+    }
+
+    #[test]
+    fn prune_hook_harnesses_uses_lock_entry_source_when_names_collide() {
+        let root = tmpdir("source-attribution");
+        let source_a = make_source(&root, "source-a");
+        let source_b = make_source(&root, "source-b");
+        let mut lock = LockFile::default();
+        lock.add(lock_hook_from_source(
+            "guard",
+            &source_b.to_string_lossy(),
+            vec!["claude-code"],
+        ));
+        let hooks = vec![
+            source_hook_from_path(
+                "guard",
+                Some(vec!["codex"]),
+                source_a.join("hooks/guard.sh"),
+            ),
+            source_hook_from_path(
+                "guard",
+                Some(vec!["claude-code"]),
+                source_b.join("hooks/guard.sh"),
+            ),
+        ];
+
+        assert!(!prune_hook_harnesses(false, &mut lock, &hooks, None));
+        assert_eq!(
+            lock.entries
+                .get("guard")
+                .map(|entry| entry.harnesses.as_slice()),
+            Some(&["claude-code".to_string()][..])
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prune_hook_harnesses_keeps_codex_lock_when_cleanup_fails() {
+        let root = tmpdir("codex-cleanup-failure");
+        let codex_home = root.join("codex");
+        std::fs::create_dir_all(codex_home.join("hooks")).unwrap();
+        std::fs::write(codex_home.join("hooks/guard.sh"), "#!/usr/bin/env bash\n").unwrap();
+        std::fs::write(codex_home.join("hooks.json"), "{not-json").unwrap();
+        let mut lock = LockFile::default();
+        lock.add(lock_hook("guard", vec!["codex"]));
+        let hooks = vec![source_hook("guard", Some(vec!["pi"]))];
+
+        crate::test_util::with_codex_home(&codex_home, || {
+            assert!(!prune_hook_harnesses(true, &mut lock, &hooks, None));
+        });
+        assert_eq!(
+            lock.entries
+                .get("guard")
+                .map(|entry| entry.harnesses.as_slice()),
+            Some(&["codex".to_string()][..])
+        );
+        assert!(codex_home.join("hooks.json").exists());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -254,6 +254,77 @@ fn refresh_prunes_hook_artifacts_when_harness_allowlist_drops_claude() {
 }
 
 #[test]
+fn refresh_prune_uses_hook_lock_source_when_duplicate_hook_names_exist() {
+    let sandbox = Sandbox::new("refresh-multisource-hook");
+    let source_a = &sandbox.source;
+    let source_b = sandbox.root.join("source-b");
+    write_hook(source_a, Some("[codex]"));
+    write_fixture_source(&source_b, Some("[claude-code]"));
+
+    let source_a = source_a.to_string_lossy();
+    let source_b = source_b.to_string_lossy();
+    fs::write(
+        sandbox.project.join(".vstack-lock.json"),
+        format!(
+            r#"{{
+  "version": 1,
+  "entries": {{
+    "dev": {{
+      "name": "dev",
+      "kind": "skill",
+      "source": "{source_a}",
+      "harnesses": ["claude-code"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }},
+    "guard": {{
+      "name": "guard",
+      "kind": "hook",
+      "source": "{source_b}",
+      "harnesses": ["claude-code"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }},
+    "rust": {{
+      "name": "rust",
+      "kind": "agent",
+      "source": "{source_a}",
+      "harnesses": ["claude-code"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }}
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack refresh");
+
+    assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
+    assert!(
+        settings.contains("guard.sh"),
+        "missing settings hook: {settings}"
+    );
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(
+        lock.contains("\"guard\""),
+        "missing hook lock entry: {lock}"
+    );
+    assert!(
+        lock.contains("\"claude-code\""),
+        "missing Claude harness in lock: {lock}"
+    );
+}
+
+#[test]
 fn refresh_agent_hook_frontmatter_uses_hook_harness_from_lock() {
     let sandbox = Sandbox::new("refresh-hook-harness-scope");
     let source = sandbox.source.to_string_lossy();

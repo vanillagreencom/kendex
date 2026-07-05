@@ -913,7 +913,9 @@ pub fn remove_item(name: &str, harnesses: &[Harness], global: bool) -> Result<Ve
     Ok(removed)
 }
 
-/// Remove a hook's harness-specific artifacts/config without touching agents or skills.
+/// Remove a hook's harness-specific artifacts/config. Codex cleanup also
+/// strips legacy `## Safety: <name>` prose from generated Codex agent TOMLs,
+/// because older installs stored unmapped hook guidance there.
 pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
 
@@ -1008,11 +1010,10 @@ fn remove_hook_from_codex_json(global: bool, name: &str) -> Result<()> {
     if !hooks_json.exists() {
         return Ok(());
     }
-    let content = std::fs::read_to_string(&hooks_json)?;
-    let mut doc: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
+    let content = std::fs::read_to_string(&hooks_json)
+        .with_context(|| format!("reading Codex hooks config {}", hooks_json.display()))?;
+    let mut doc: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parsing Codex hooks config {}", hooks_json.display()))?;
 
     let script_token = format!("/{name}.sh");
     let mut changed = false;
@@ -1048,10 +1049,19 @@ fn remove_hook_from_codex_json(global: bool, name: &str) -> Result<()> {
 
     if changed {
         if doc.as_object().is_some_and(|m| m.is_empty()) {
-            let _ = std::fs::remove_file(&hooks_json);
+            match std::fs::remove_file(&hooks_json) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("removing Codex hooks config {}", hooks_json.display())
+                    });
+                }
+            }
         } else {
             let output = serde_json::to_string_pretty(&doc)?;
-            std::fs::write(&hooks_json, output)?;
+            std::fs::write(&hooks_json, output)
+                .with_context(|| format!("writing Codex hooks config {}", hooks_json.display()))?;
         }
     }
     Ok(())
@@ -1065,17 +1075,16 @@ fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Result<()> {
         return Ok(());
     }
     let marker = format!("\n## Safety: {name}\n");
-    let entries = match std::fs::read_dir(&agents_dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries.flatten() {
+    let entries = std::fs::read_dir(&agents_dir)
+        .with_context(|| format!("reading Codex agents dir {}", agents_dir.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!("reading Codex agents dir entry in {}", agents_dir.display())
+        })?;
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "toml") {
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading Codex agent {}", path.display()))?;
             if let Some(start) = content.find(&marker) {
                 // Find the end: next '## ' header or the closing ''' of
                 // developer_instructions, whichever comes first.
@@ -1090,7 +1099,8 @@ fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Result<()> {
                 let mut new_content = String::with_capacity(content.len());
                 new_content.push_str(&content[..start]);
                 new_content.push_str(&content[end..]);
-                let _ = std::fs::write(&path, new_content);
+                std::fs::write(&path, new_content)
+                    .with_context(|| format!("writing Codex agent {}", path.display()))?;
             }
         }
     }
