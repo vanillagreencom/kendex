@@ -1094,6 +1094,11 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     };
 
     for harness in &harnesses {
+        let selected_hooks_for_harness: Vec<hook::Hook> = selected_hooks
+            .iter()
+            .filter(|h| h.applies_to(harness.id()))
+            .cloned()
+            .collect();
         for a in &selected_agents {
             // Merge project [agent-skills] (authoritative) with role-skills from
             // source so newly-added upstream skills (e.g. `vstack add --skill X`
@@ -1114,7 +1119,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 .or_insert_with(|| skill_names.clone());
 
             let matched_hooks: Vec<hook::Hook> = mapping
-                .hooks_for_agent(&a.role, &selected_hooks)
+                .hooks_for_agent(&a.role, &selected_hooks_for_harness)
                 .into_iter()
                 .cloned()
                 .collect();
@@ -1583,12 +1588,6 @@ fn reconcile_agents(
 
         let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, &source_skills);
 
-        let matched_hooks: Vec<crate::hook::Hook> = mapping
-            .hooks_for_agent(&agent.role, &source_hooks)
-            .into_iter()
-            .cloned()
-            .collect();
-
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id)
                 && harnesses.contains(&harness)
@@ -1615,6 +1614,16 @@ fn reconcile_agents(
             if let Some(harness) = Harness::from_id(harness_id) {
                 // Only reconcile harnesses that were part of this install
                 if harnesses.contains(&harness) {
+                    let installed_hooks = crate::resolve::hooks_installed_for_harness(
+                        &lock,
+                        &source_hooks,
+                        harness.id(),
+                    );
+                    let matched_hooks: Vec<crate::hook::Hook> = mapping
+                        .hooks_for_agent(&agent.role, &installed_hooks)
+                        .into_iter()
+                        .cloned()
+                        .collect();
                     let _ = harness.generate_agent(
                         agent,
                         global,

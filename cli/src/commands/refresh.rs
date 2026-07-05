@@ -112,19 +112,6 @@ pub fn refresh_items_in_scope(
         .map(|(name, _)| name.clone())
         .collect();
 
-    let installed_hook_names: std::collections::HashSet<String> = lock
-        .entries
-        .iter()
-        .filter(|(_, e)| e.kind == ItemKind::Hook)
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    let installed_hooks: Vec<Hook> = hooks
-        .iter()
-        .filter(|h| installed_hook_names.contains(&h.name))
-        .cloned()
-        .collect();
-
     // ── Agents ───────────────────────────────────────────────
     for (name, entry) in lock
         .entries
@@ -157,12 +144,6 @@ pub fn refresh_items_in_scope(
 
         let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, skills);
 
-        let matched_hooks: Vec<Hook> = mapping
-            .hooks_for_agent(&agent.role, &installed_hooks)
-            .into_iter()
-            .cloned()
-            .collect();
-
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 let existing_path = harness
@@ -181,6 +162,13 @@ pub fn refresh_items_in_scope(
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
+                let installed_hooks =
+                    crate::resolve::hooks_installed_for_harness(lock, hooks, harness.id());
+                let matched_hooks: Vec<Hook> = mapping
+                    .hooks_for_agent(&agent.role, &installed_hooks)
+                    .into_iter()
+                    .cloned()
+                    .collect();
                 let _ =
                     harness.generate_agent(agent, global, &skill_pairs, &matched_hooks, &extras);
             }

@@ -20,6 +20,29 @@ pub fn resolve_skill_pairs(names: &[String], available: &[Skill]) -> Vec<(String
         .collect()
 }
 
+/// Return source hooks that are actually installed for a specific harness.
+///
+/// Source `vstack.toml` hook mappings describe where hooks should attach once
+/// installed; they must not cause agent frontmatter to reference hooks absent
+/// from the scope lock or from the harness-specific hook install set.
+pub fn hooks_installed_for_harness(
+    lock: &crate::config::LockFile,
+    hooks: &[crate::hook::Hook],
+    harness_id: &str,
+) -> Vec<crate::hook::Hook> {
+    hooks
+        .iter()
+        .filter(|hook| {
+            lock.entries.get(&hook.name).is_some_and(|entry| {
+                entry.kind == crate::config::ItemKind::Hook
+                    && entry.harnesses.iter().any(|h| h == harness_id)
+                    && hook.applies_to(harness_id)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Read guidance/instructions from an existing agent file on disk.
 /// Returns empty extras if the file doesn't exist.
 pub fn read_existing_extras(path: &Path, harness: Harness) -> AgentExtras {

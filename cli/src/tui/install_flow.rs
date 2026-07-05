@@ -2444,22 +2444,6 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                     mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills_dst);
                 let skill_pairs =
                     crate::resolve::resolve_skill_pairs(&source_skills, &items.skills);
-                let installed_hooks_dst: Vec<crate::hook::Hook> = items
-                    .hooks
-                    .iter()
-                    .filter(|h| {
-                        dst_lock
-                            .entries
-                            .get(&h.name)
-                            .is_some_and(|e| e.kind == crate::config::ItemKind::Hook)
-                    })
-                    .cloned()
-                    .collect();
-                let matched_hooks: Vec<crate::hook::Hook> = mapping
-                    .hooks_for_agent(&agent.role, &installed_hooks_dst)
-                    .into_iter()
-                    .cloned()
-                    .collect();
                 let extras = crate::resolve::build_agent_extras(
                     &project_config,
                     &agent.name,
@@ -2467,6 +2451,16 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                     None,
                 );
                 for harness in &target_harnesses {
+                    let installed_hooks_dst = crate::resolve::hooks_installed_for_harness(
+                        &dst_lock,
+                        &items.hooks,
+                        harness.id(),
+                    );
+                    let matched_hooks: Vec<crate::hook::Hook> = mapping
+                        .hooks_for_agent(&agent.role, &installed_hooks_dst)
+                        .into_iter()
+                        .cloned()
+                        .collect();
                     if harness
                         .generate_agent(agent, to_global, &skill_pairs, &matched_hooks, &extras)
                         .is_ok()
