@@ -832,11 +832,11 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
         Harness::ClaudeCode => {
             let hooks_dir = harness.hooks_dir(global).expect("Claude hooks dir");
             let hook_path = checked_child_path(&hooks_dir, &format!("{name}.sh"))?;
+            remove_hook_from_claude_settings(global, name, &hook_path)?;
             if hook_path.exists() {
                 std::fs::remove_file(&hook_path)?;
                 removed.push(hook_path);
             }
-            remove_hook_from_claude_settings(global, name, &hooks_dir.join(format!("{name}.sh")))?;
         }
         Harness::OpenCode => {
             remove_hook_from_opencode_json(global, name)?;
@@ -845,12 +845,12 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
             let root = codex_root(global);
             let hooks_dir = root.join("hooks");
             let script_path = checked_child_path(&hooks_dir, &format!("{name}.sh"))?;
+            remove_hook_from_codex_json(global, name, &script_path)?;
+            strip_hook_prose_from_codex_agents(global, name)?;
             if script_path.exists() {
                 std::fs::remove_file(&script_path)?;
                 removed.push(script_path.clone());
             }
-            remove_hook_from_codex_json(global, name, &script_path)?;
-            strip_hook_prose_from_codex_agents(global, name)?;
         }
         Harness::Cursor => {
             let rules_dir = Harness::Cursor.agents_dir(global);
@@ -1042,7 +1042,7 @@ fn remove_hook_from_opencode_json_at_path(
         }
     }
 
-    let _ = std::fs::remove_file(instruction_path);
+    let remove_instruction = instruction_path.exists();
 
     // If no vstack hook instructions remain, remove the temporary bash restriction we added.
     if let Some(map) = config.as_object_mut() {
@@ -1091,6 +1091,9 @@ fn remove_hook_from_opencode_json_at_path(
     if changed {
         let output = serde_json::to_string_pretty(&config)?;
         std::fs::write(config_path, output)?;
+    }
+    if remove_instruction {
+        let _ = std::fs::remove_file(instruction_path);
     }
     Ok(())
 }
@@ -1674,6 +1677,32 @@ Keep me.
         );
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn remove_hook_from_opencode_keeps_instruction_when_config_parse_fails() {
+        let base = std::env::temp_dir().join("vstack_test_opencode_invalid_config");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let config_path = base.join("opencode.json");
+        let instruction_path = base.join("instructions").join("vstack-hook-guard.md");
+        std::fs::create_dir_all(instruction_path.parent().unwrap()).unwrap();
+        std::fs::write(&instruction_path, "# Safety").unwrap();
+        std::fs::write(&config_path, "{not-json").unwrap();
+
+        let result = remove_hook_from_opencode_json_at_path(
+            &config_path,
+            &instruction_path,
+            "instructions/vstack-hook-guard.md",
+            "guard",
+        );
+
+        assert!(result.is_err());
+        assert!(
+            instruction_path.exists(),
+            "instruction file should remain when config cleanup fails"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

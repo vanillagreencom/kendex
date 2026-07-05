@@ -1,4 +1,5 @@
 use crate::agent::Agent;
+use crate::commands::refresh_sources::{resolve_single_source, resolve_sources};
 use crate::config::{self, ItemKind};
 use crate::harness::Harness;
 use crate::hook::Hook;
@@ -20,7 +21,7 @@ fn source_pi_extension_for_lock_name<'a>(
     })
 }
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Result counts from one invocation of [`refresh_items_in_scope`].
 #[derive(Default)]
@@ -629,117 +630,11 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Resolve source directories from lock file entries.
-/// Handles local paths, "." (walks up from CWD), and remote shorthand (cached clones).
-fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
-    let mut sources: Vec<PathBuf> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for entry in lock.entries.values() {
-        if seen.contains(&entry.source) {
-            continue;
-        }
-        seen.insert(entry.source.clone());
-
-        if let Some(dir) = resolve_single_source(&entry.source)
-            && !sources.contains(&dir)
-        {
-            sources.push(dir);
-        }
-    }
-
-    // Fallback: walk up from CWD to find a vstack source repo
-    if sources.is_empty()
-        && let Ok(mut dir) = std::env::current_dir()
-    {
-        loop {
-            if crate::resolve::is_vstack_source(&dir) {
-                sources.push(dir);
-                break;
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-    }
-
-    // Fallback: try the source registry (cached remote repos)
-    if sources.is_empty() {
-        let reg_path = config::source_registry_path();
-        if let Ok(registry) = config::SourceRegistry::load(&reg_path) {
-            for entry in registry.current.iter().chain(registry.entries.iter()) {
-                if let Some(dir) = resolve_single_source(entry)
-                    && !sources.contains(&dir)
-                {
-                    sources.push(dir);
-                }
-            }
-        }
-    }
-
-    sources
-}
-
-fn resolve_single_source(source: &str) -> Option<PathBuf> {
-    // Absolute or relative path that exists
-    let p = std::path::Path::new(source);
-    if p.is_absolute() && p.is_dir() && crate::resolve::is_vstack_source(p) {
-        return Some(p.to_path_buf());
-    }
-
-    // "." — walk up from CWD
-    if source == "." {
-        let mut dir = std::env::current_dir().ok()?;
-        loop {
-            if crate::resolve::is_vstack_source(&dir) {
-                return Some(dir);
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-        return None;
-    }
-
-    // Remote shorthand (owner/repo) — update and use cached clone
-    let cache_dir = config::global_base_dir().join(".vstack").join("cache");
-    let key = source.replace('/', "_");
-    let cached = cache_dir.join(&key);
-    if cached.join(".git").exists() {
-        update_cached_repo(&cached);
-        return Some(cached);
-    }
-
-    None
-}
-
-/// Pull latest changes for a cached remote repo.
-fn update_cached_repo(repo_dir: &std::path::Path) {
-    eprintln!("Updating cached repo...");
-    let fetch = std::process::Command::new("git")
-        .args(["fetch", "origin", "--quiet"])
-        .current_dir(repo_dir)
-        .status();
-    match fetch {
-        Ok(s) if s.success() => {
-            let reset = std::process::Command::new("git")
-                .args(["reset", "--hard", "origin/HEAD"])
-                .current_dir(repo_dir)
-                .stderr(std::process::Stdio::null())
-                .status();
-            if !reset.is_ok_and(|s| s.success()) {
-                eprintln!("  Warning: git reset failed — cached repo may be stale");
-            }
-        }
-        Ok(_) => eprintln!("  Warning: git fetch failed — using cached version"),
-        Err(_) => eprintln!("  Warning: git not available — using cached version"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{InstallMethod, LockEntry, LockFile};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn lock_hook(name: &str, harnesses: Vec<&str>) -> LockEntry {

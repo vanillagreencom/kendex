@@ -167,6 +167,14 @@ fn assert_success(output: std::process::Output, context: &str) {
     );
 }
 
+fn agent_frontmatter(content: &str) -> &str {
+    content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .map(|(frontmatter, _)| frontmatter)
+        .expect("frontmatter present")
+}
+
 #[test]
 fn agent_install_without_hooks_does_not_emit_claude_hook_frontmatter() {
     let sandbox = Sandbox::new("add-no-hooks");
@@ -225,6 +233,14 @@ fn selected_hook_install_emits_claude_hook_frontmatter_and_script() {
     let agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
     assert!(agent.lines().any(|line| line.trim() == "hooks:"));
     assert!(agent.contains("$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh"));
+    let parsed: serde_json::Value =
+        serde_yaml::from_str(agent_frontmatter(&agent)).expect("valid Claude YAML frontmatter");
+    assert_eq!(
+        parsed
+            .pointer("/hooks/PreToolUse/0/hooks/0/command")
+            .and_then(|value| value.as_str()),
+        Some("bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"")
+    );
     assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
     let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
     assert!(settings.contains(".claude/hooks/guard.sh"));
@@ -546,6 +562,62 @@ fn remove_hook_keeps_lock_entry_when_codex_cleanup_fails() {
         stderr.contains("failed to remove guard"),
         "stderr: {stderr}"
     );
+    assert!(
+        sandbox.project.join(".codex/hooks/guard.sh").exists(),
+        "hook script should remain when config cleanup fails"
+    );
+}
+
+#[test]
+fn remove_hook_keeps_claude_script_when_settings_cleanup_fails() {
+    let sandbox = Sandbox::new("remove-hook-claude-failure");
+    let source = sandbox.source.to_string_lossy();
+    fs::create_dir_all(sandbox.project.join(".claude/hooks")).unwrap();
+    fs::write(
+        sandbox.project.join(".claude/hooks/guard.sh"),
+        "#!/usr/bin/env bash\n",
+    )
+    .unwrap();
+    fs::write(sandbox.project.join(".claude/settings.json"), "{not-json").unwrap();
+    fs::write(
+        sandbox.project.join(".vstack-lock.json"),
+        format!(
+            r#"{{
+  "version": 1,
+  "entries": {{
+    "guard": {{
+      "name": "guard",
+      "kind": "hook",
+      "source": "{source}",
+      "harnesses": ["claude-code"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z"
+    }}
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "guard", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "vstack remove should fail when Claude cleanup fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        sandbox.project.join(".claude/hooks/guard.sh").exists(),
+        "hook script should remain when settings cleanup fails"
+    );
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(lock.contains("\"guard\""), "lock entry lost: {lock}");
 }
 
 #[test]

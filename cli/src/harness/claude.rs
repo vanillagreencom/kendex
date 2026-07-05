@@ -23,8 +23,10 @@ pub fn generate_agent(
     output.push_str("---\n");
     output.push_str(&format!("name: {}\n", agent.name));
     // Quote description to handle YAML-special chars (colons, hashes, etc.)
-    let desc = agent.description.replace('"', "\\\"");
-    output.push_str(&format!("description: \"{}\"\n", desc));
+    output.push_str(&format!(
+        "description: {}\n",
+        yaml_double_quoted(&agent.description)
+    ));
 
     let frontmatter = extras.frontmatter_for("claude-code");
     // Map model to Claude Code format unless project config supplies an exact id.
@@ -243,16 +245,34 @@ fn format_hooks_yaml_with_custom(hooks: &[Hook], custom: &[agent::CustomHookEntr
     for (event, matchers) in &by_event {
         yaml.push_str(&format!("  {}:\n", event));
         for (matcher, commands) in matchers {
-            yaml.push_str(&format!("    - matcher: \"{}\"\n", matcher));
+            yaml.push_str(&format!("    - matcher: {}\n", yaml_double_quoted(matcher)));
             yaml.push_str("      hooks:\n");
             for cmd in commands {
                 yaml.push_str("        - type: command\n");
-                yaml.push_str(&format!("          command: \"{}\"\n", cmd));
+                yaml.push_str(&format!("          command: {}\n", yaml_double_quoted(cmd)));
             }
         }
     }
 
     yaml
+}
+
+fn yaml_double_quoted(value: &str) -> String {
+    let mut output = String::with_capacity(value.len() + 2);
+    output.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            ch if ch.is_control() => output.push_str(&format!("\\x{:02X}", ch as u32)),
+            ch => output.push(ch),
+        }
+    }
+    output.push('"');
+    output
 }
 
 #[cfg(test)]
@@ -271,6 +291,28 @@ mod tests {
             body: format!("# {name}\n\nIntro.\n"),
             source_path: Default::default(),
         }
+    }
+
+    fn hook_fixture(name: &str) -> Hook {
+        Hook {
+            name: name.into(),
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            description: "Guard bash".into(),
+            safety: None,
+            timeout: None,
+            harnesses: None,
+            script: String::new(),
+            source_path: Default::default(),
+        }
+    }
+
+    fn frontmatter(content: &str) -> &str {
+        content
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(frontmatter, _)| frontmatter)
+            .expect("frontmatter present")
     }
 
     #[test]
@@ -353,6 +395,39 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion, Bash, Write"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_agent_hook_frontmatter_is_valid_yaml_when_command_contains_quotes() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_claude_agent_hook_yaml_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer);
+        let path = generate_agent(
+            &agent,
+            &dir,
+            &[],
+            &[hook_fixture("guard")],
+            &AgentExtras::default(),
+        )
+        .expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value =
+            serde_yaml::from_str(frontmatter(&content)).expect("valid YAML frontmatter");
+        let command = parsed
+            .pointer("/hooks/PreToolUse/0/hooks/0/command")
+            .and_then(|value| value.as_str())
+            .expect("hook command");
+        assert_eq!(
+            command,
+            "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\""
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
