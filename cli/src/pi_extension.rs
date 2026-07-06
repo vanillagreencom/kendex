@@ -641,6 +641,21 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
         )
     })?;
 
+    match remove_append_system_for(name, global) {
+        Ok(AppendSystemRemoveOutcome::Updated | AppendSystemRemoveOutcome::Deleted) => {
+            removed.push(append_path.clone());
+        }
+        Ok(AppendSystemRemoveOutcome::NoOp) => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "removing appendSystem block for {name} from {}",
+                    append_path.display()
+                )
+            });
+        }
+    }
+
     // Read package.json BEFORE deleting the dir so we know which bin
     // symlinks to clean up. Best-effort: if the package.json is gone or
     // unreadable, skip bin cleanup rather than failing the whole remove.
@@ -664,20 +679,6 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     }
     if unregister_from_pi_settings(name, &dest, global)? {
         removed.push(crate::config::pi_settings_path(global));
-    }
-    match remove_append_system_for(name, global) {
-        Ok(AppendSystemRemoveOutcome::Updated | AppendSystemRemoveOutcome::Deleted) => {
-            removed.push(append_path.clone());
-        }
-        Ok(AppendSystemRemoveOutcome::NoOp) => {}
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!(
-                    "removing appendSystem block for {name} from {}",
-                    append_path.display()
-                )
-            });
-        }
     }
     let _ = remove_from_source_index(name, global);
     Ok(removed)
@@ -1920,6 +1921,47 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
             assert!(settings.contains("pi-append-remove"));
             assert_eq!(std::fs::read_to_string(&outside).unwrap(), append_before);
             assert!(append_path.is_symlink());
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn remove_pi_extension_errors_on_invalid_utf8_append_system_before_package_or_settings() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_remove_append_utf8_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-invalid");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("instructions.md"), "REMOVE ME\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-invalid", "pi": { "extensions": [], "appendSystem": "instructions.md" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+            let settings_path = crate::config::pi_settings_path(true);
+            let append_path = append_system_path(true);
+            let invalid = vec![0xff, 0xfe, 0xfd];
+            std::fs::write(&append_path, &invalid).unwrap();
+
+            let err = remove_pi_extension("pi-append-invalid", true).unwrap_err();
+            let message = format!("{err:#}");
+            assert!(message.contains("APPEND_SYSTEM.md"), "{message}");
+            assert!(
+                message.contains("stream did not contain valid UTF-8"),
+                "{message}"
+            );
+            assert!(dest.is_dir(), "package dir should remain on failure");
+            let settings = std::fs::read_to_string(&settings_path).unwrap();
+            assert!(settings.contains("pi-append-invalid"));
+            assert_eq!(std::fs::read(&append_path).unwrap(), invalid);
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);
