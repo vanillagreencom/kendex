@@ -384,6 +384,20 @@ fn checked_package_child_path(base: &Path, rel: &str, kind: &str) -> Result<Path
     Ok(target)
 }
 
+fn checked_existing_package_child_path(base: &Path, rel: &str, kind: &str) -> Result<PathBuf> {
+    let target = checked_package_child_path(base, rel, kind)?;
+    let base_canon = base
+        .canonicalize()
+        .with_context(|| format!("canonicalizing package dir {}", base.display()))?;
+    let target_canon = target
+        .canonicalize()
+        .with_context(|| format!("canonicalizing {kind} path {}", target.display()))?;
+    if !target_canon.starts_with(&base_canon) {
+        anyhow::bail!("{kind} path escapes package directory: `{rel}`");
+    }
+    Ok(target_canon)
+}
+
 /// Does the package appear to be installed in the given Pi scope?
 ///
 /// This checks both the deployed package directory and `settings.json`, so it
@@ -468,6 +482,21 @@ fn remove_same_scope_legacy_packages(name: &str, global: bool) -> Result<()> {
 /// duplicate; callers can use this to omit the entry from the lock file
 /// summary so vstack's view of state stays accurate.
 pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<PathBuf>> {
+    install_pi_extension_inner(ext, global, false)
+}
+
+pub(crate) fn install_pi_extension_for_move(
+    ext: &PiExtension,
+    global: bool,
+) -> Result<Option<PathBuf>> {
+    install_pi_extension_inner(ext, global, true)
+}
+
+fn install_pi_extension_inner(
+    ext: &PiExtension,
+    global: bool,
+    allow_opposite_scope_duplicate: bool,
+) -> Result<Option<PathBuf>> {
     validate_pi_package_name(&ext.name)?;
     // Step 1: same-scope legacy migration for package renames. This is safe to
     // do automatically because these are vstack-owned package names and the new
@@ -477,7 +506,7 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<Pa
     // Step 2a: cross-scope guard for the same current package name. Pi loads
     // from both scopes — duplicate registration would crash startup. Existing
     // scope is authoritative.
-    if is_pi_extension_installed(&ext.name, !global) {
+    if !allow_opposite_scope_duplicate && is_pi_extension_installed(&ext.name, !global) {
         let this_label = if global { "global" } else { "project" };
         let other_label = if global { "project" } else { "global" };
         eprintln!(
@@ -493,7 +522,7 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<Pa
     // selected scope automatically, but do not delete packages from the other
     // scope as a side effect of this install.
     for legacy in legacy_names_for(&ext.name) {
-        if is_pi_extension_installed(legacy, !global) {
+        if !allow_opposite_scope_duplicate && is_pi_extension_installed(legacy, !global) {
             let this_label = if global { "global" } else { "project" };
             let other_label = if global { "project" } else { "global" };
             eprintln!(
@@ -1078,7 +1107,10 @@ pub fn install_append_system_for(
     let Some(rel) = ext.append_system.as_deref() else {
         return remove_append_system_if_present(&ext.name, global);
     };
-    let source = package_dir.join(rel);
+    let source = match checked_existing_package_child_path(package_dir, rel, "appendSystem") {
+        Ok(path) => path,
+        Err(_) => return remove_append_system_if_present(&ext.name, global),
+    };
     let content = match std::fs::read_to_string(&source) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1780,6 +1812,145 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         });
 
         assert!(victim.join("keep.txt").exists());
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn install_pi_extension_rejects_invalid_package_name() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_invalid_install_name_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("bad");
+        write_mini_source(&source, "../../victim");
+        let pi_dir = sandbox.join("agent");
+        let victim = sandbox.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("keep.txt"), "do not delete").unwrap();
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let err = install_pi_extension(&ext, true).unwrap_err();
+            assert!(err.to_string().contains("invalid Pi package name"));
+        });
+
+        assert!(victim.join("keep.txt").exists());
+        assert!(!pi_dir.join("packages").exists());
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn install_pi_extension_rejects_invalid_bin_name() {
+        let sandbox =
+            std::env::temp_dir().join(format!("vstack_pi_invalid_bin_name_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-bad-bin");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        std::fs::write(source.join("bin/tool.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-bad-bin", "pi": { "extensions": [] }, "bin": { "../evil": "./bin/tool.js" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+        let victim = sandbox.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("keep.txt"), "do not delete").unwrap();
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let err = install_pi_extension(&ext, true).unwrap_err();
+            assert!(err.to_string().contains("invalid Pi bin name"));
+            assert!(!pi_dir.join("bin/../evil").exists());
+        });
+
+        assert!(victim.join("keep.txt").exists());
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn install_pi_extension_rejects_escaping_bin_target() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_escaping_bin_target_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-bad-target");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-bad-target", "pi": { "extensions": [] }, "bin": { "safe-bin": "../victim" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+        let victim = sandbox.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("keep.txt"), "do not delete").unwrap();
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let err = install_pi_extension(&ext, true).unwrap_err();
+            assert!(err.to_string().contains("invalid Pi bin target path"));
+            assert!(!pi_dir.join("bin/safe-bin").exists());
+        });
+
+        assert!(victim.join("keep.txt").exists());
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn append_system_rejects_parent_path_without_reading_secret() {
+        let sandbox =
+            std::env::temp_dir().join(format!("vstack_pi_append_parent_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let package = sandbox.join("pkg");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(sandbox.join("secret.md"), "SECRET\n").unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{ "name": "pi-append", "pi": { "extensions": [], "appendSystem": "../secret.md" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            append_system_upsert(&append_system_path(true), "pi-append", "OLD").unwrap();
+            let ext = PiExtension::from_dir(&package).unwrap();
+            assert!(install_append_system_for(&ext, &package, true).unwrap());
+            assert!(!append_system_path(true).exists());
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_system_rejects_symlink_escape_without_reading_secret() {
+        use std::os::unix::fs::symlink;
+
+        let sandbox =
+            std::env::temp_dir().join(format!("vstack_pi_append_symlink_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let package = sandbox.join("pkg");
+        std::fs::create_dir_all(&package).unwrap();
+        let secret = sandbox.join("secret.md");
+        std::fs::write(&secret, "SECRET\n").unwrap();
+        symlink(&secret, package.join("instructions.md")).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{ "name": "pi-append", "pi": { "extensions": [], "appendSystem": "instructions.md" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            append_system_upsert(&append_system_path(true), "pi-append", "OLD").unwrap();
+            let ext = PiExtension::from_dir(&package).unwrap();
+            assert!(install_append_system_for(&ext, &package, true).unwrap());
+            assert!(!append_system_path(true).exists());
+        });
+
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 

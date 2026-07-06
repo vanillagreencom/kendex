@@ -4,7 +4,6 @@ pub mod check;
 pub mod init;
 pub mod list;
 pub mod refresh;
-pub(crate) mod refresh_sources;
 pub mod remove;
 pub mod update;
 pub mod update_pi;

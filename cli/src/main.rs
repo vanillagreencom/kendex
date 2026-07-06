@@ -13,6 +13,7 @@ mod mapping;
 mod pi_extension;
 mod project_config;
 mod project_settings;
+mod refresh_sources;
 mod resolve;
 mod scope;
 mod skill;

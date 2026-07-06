@@ -95,9 +95,8 @@ pub(super) fn perform_remove_plans(plans: &[RemovePlan]) -> DiskMutationReport {
 
 fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
     let lock_path = config::lock_file_path(scope_global);
-    let Ok(mut lock) = config::LockFile::load(&lock_path) else {
-        return Ok(false);
-    };
+    let mut lock = config::LockFile::load(&lock_path)
+        .map_err(|err| anyhow::anyhow!("failed to load lock {}: {err:#}", lock_path.display()))?;
     let Some(entry) = lock.entries.get(name).cloned() else {
         return Ok(false);
     };
@@ -296,12 +295,15 @@ pub(super) fn perform_move_plans(
                     report.fail(&plan.name, "source Pi package not found");
                     continue;
                 };
-                match crate::pi_extension::install_pi_extension(ext, to_global) {
-                    Ok(_) => {
+                match crate::pi_extension::install_pi_extension_for_move(ext, to_global) {
+                    Ok(Some(_)) => {
                         // Pi packages aren't per-harness; mirror src list so the
                         // entry round-trips cleanly.
                         succeeded = target_harnesses.clone();
                     }
+                    Ok(None) => install_failures.push(
+                        "Pi: destination install skipped (package already installed)".to_string(),
+                    ),
                     Err(err) => install_failures.push(format!("Pi: {err:#}")),
                 }
             }
@@ -500,8 +502,8 @@ pub(super) fn perform_inline_update(
     let mapping = source_dir
         .map(crate::mapping::MappingConfig::load)
         .unwrap_or_default();
-    let refresh_sources: Vec<crate::commands::refresh_sources::RefreshSource> = source_dir
-        .map(|root| crate::commands::refresh_sources::RefreshSource {
+    let refresh_sources: Vec<crate::refresh_sources::RefreshSource> = source_dir
+        .map(|root| crate::refresh_sources::RefreshSource {
             root: root.to_path_buf(),
             aliases: vec![root.to_string_lossy().into_owned()],
             mapping: mapping.clone(),

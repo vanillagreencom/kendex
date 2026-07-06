@@ -416,6 +416,224 @@ fn perform_move_plans_moves_agent_and_cleans_source() {
 }
 
 #[test]
+fn perform_move_plans_moves_skill_and_cleans_source() {
+    let root = tmpdir("move-skill-success");
+    let project = root.join("project");
+    let source = root.join("source");
+    let home = root.join("home");
+    let config = root.join("config");
+    let skill_dir = source.join("skills/dev");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: dev\ndescription: Dev skill\nlicense: MIT\n---\n# Dev\n",
+    )
+    .unwrap();
+    let skill = crate::skill::Skill::from_file(&skill_dir.join("SKILL.md")).unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "dev".into(),
+        kind: ItemKind::Skill,
+        source: source.to_string_lossy().into_owned(),
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+    let items = DiscoveredItems {
+        agents: Vec::new(),
+        skills: vec![skill.clone()],
+        hooks: Vec::new(),
+        pi_extensions: Vec::new(),
+        extras: Vec::new(),
+    };
+    let plan = MovePlan {
+        name: "dev".into(),
+        kind_label: "skill".into(),
+        from_global: false,
+    };
+
+    let report = crate::test_util::with_home_and_config(&home, &config, || {
+        crate::test_util::with_project_root(&project, || {
+            crate::installer::install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Copy,
+                None,
+            )
+            .unwrap();
+            perform_move_plans(&items, &[plan], true)
+        })
+    });
+
+    assert_eq!(report.completed, 1, "report: {report:?}");
+    assert!(report.failed.is_empty(), "report: {report:?}");
+    assert!(home.join(".claude/skills/dev/SKILL.md").exists());
+    assert!(!project.join(".claude/skills/dev").exists());
+    let dst_lock = LockFile::load(&config.join("vstack/.vstack-lock.json")).unwrap();
+    assert!(dst_lock.entries.contains_key("dev"));
+    let src_lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert!(!src_lock.entries.contains_key("dev"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn perform_move_plans_moves_hook_and_cleans_source() {
+    let root = tmpdir("move-hook-success");
+    let project = root.join("project");
+    let source = root.join("source");
+    let home = root.join("home");
+    let config = root.join("config");
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let mut hook = hook_fixture("guard", None);
+    hook.source_path = source.join("hooks/guard.sh");
+    hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    std::fs::write(&hook.source_path, &hook.script).unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "guard".into(),
+        kind: ItemKind::Hook,
+        source: source.to_string_lossy().into_owned(),
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+    let items = DiscoveredItems {
+        agents: Vec::new(),
+        skills: Vec::new(),
+        hooks: vec![hook.clone()],
+        pi_extensions: Vec::new(),
+        extras: Vec::new(),
+    };
+    let plan = MovePlan {
+        name: "guard".into(),
+        kind_label: "hook".into(),
+        from_global: false,
+    };
+
+    let report = crate::test_util::with_home_and_config(&home, &config, || {
+        crate::test_util::with_project_root(&project, || {
+            crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+            perform_move_plans(&items, &[plan], true)
+        })
+    });
+
+    assert_eq!(report.completed, 1, "report: {report:?}");
+    assert!(report.failed.is_empty(), "report: {report:?}");
+    assert!(home.join(".claude/hooks/guard.sh").exists());
+    assert!(!project.join(".claude/hooks/guard.sh").exists());
+    let dst_lock = LockFile::load(&config.join("vstack/.vstack-lock.json")).unwrap();
+    assert!(dst_lock.entries.contains_key("guard"));
+    let src_lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert!(!src_lock.entries.contains_key("guard"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn perform_move_plans_moves_pi_package_and_cleans_source() {
+    let root = tmpdir("move-pi-success");
+    let project = root.join("project");
+    let source = root.join("source");
+    let home = root.join("home");
+    let config = root.join("config");
+    let pi_global = root.join("pi-agent");
+    let ext_dir = source.join("pi-extensions/pi-mini");
+    std::fs::create_dir_all(ext_dir.join("extensions")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(ext_dir.join("extensions/mini.ts"), "// noop\n").unwrap();
+    std::fs::write(
+        ext_dir.join("package.json"),
+        r#"{ "name": "pi-mini", "pi": { "extensions": ["./extensions/mini.ts"] } }"#,
+    )
+    .unwrap();
+    let ext = crate::pi_extension::PiExtension::from_dir(&ext_dir).unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "pi-mini".into(),
+        kind: ItemKind::PiExtension,
+        source: source.to_string_lossy().into_owned(),
+        harnesses: vec!["pi".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+    let items = DiscoveredItems {
+        agents: Vec::new(),
+        skills: Vec::new(),
+        hooks: Vec::new(),
+        pi_extensions: vec![ext.clone()],
+        extras: Vec::new(),
+    };
+    let plan = MovePlan {
+        name: "pi-mini".into(),
+        kind_label: "pi-package".into(),
+        from_global: false,
+    };
+
+    let report = crate::test_util::with_home_and_config(&home, &config, || {
+        crate::test_util::with_pi_dir(&pi_global, || {
+            crate::test_util::with_project_root(&project, || {
+                crate::pi_extension::install_pi_extension(&ext, false)
+                    .unwrap()
+                    .unwrap();
+                perform_move_plans(&items, &[plan], true)
+            })
+        })
+    });
+
+    assert_eq!(report.completed, 1, "report: {report:?}");
+    assert!(report.failed.is_empty(), "report: {report:?}");
+    assert!(pi_global.join("packages/pi-mini/package.json").exists());
+    assert!(!project.join(".pi/packages/pi-mini").exists());
+    let dst_lock = LockFile::load(&config.join("vstack/.vstack-lock.json")).unwrap();
+    assert!(dst_lock.entries.contains_key("pi-mini"));
+    let src_lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert!(!src_lock.entries.contains_key("pi-mini"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn perform_remove_plans_reports_corrupt_lock() {
+    let root = tmpdir("remove-corrupt-lock");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join(".vstack-lock.json"), "{not-json").unwrap();
+    let plan = RemovePlan {
+        name: "rust".into(),
+        kind_label: "agent".into(),
+        from_project: true,
+        from_global: false,
+    };
+
+    let report = crate::test_util::with_project_root(&project, || perform_remove_plans(&[plan]));
+
+    assert_eq!(report.completed, 0);
+    assert_eq!(report.failed.len(), 1);
+    assert!(report.failed[0].contains("failed to load lock"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn inline_update_refreshes_hook_config_and_agents() {
     let root = tmpdir("inline-update-hook");
     let project = root.join("project");

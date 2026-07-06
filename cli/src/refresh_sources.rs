@@ -216,14 +216,37 @@ pub(crate) fn source_pi_extension_for_lock_name<'a>(
 }
 
 pub(crate) fn resolve_single_source(source: &str) -> Option<PathBuf> {
+    resolve_single_source_with(source, true, true)
+}
+
+pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
+    resolve_single_source_with(source, false, false)
+}
+
+fn resolve_single_source_with(
+    source: &str,
+    update_remote: bool,
+    require_vstack_source: bool,
+) -> Option<PathBuf> {
     // Absolute local path that exists.
     let p = std::path::Path::new(source);
-    if p.is_absolute() && p.is_dir() && crate::resolve::is_vstack_source(p) {
+    if p.is_absolute()
+        && p.is_dir()
+        && (!require_vstack_source || crate::resolve::is_vstack_source(p))
+    {
         return Some(p.to_path_buf());
     }
 
-    // "." — walk up from CWD.
-    if source == "." {
+    let looks_like_remote =
+        source.contains('/') && !source.starts_with('.') && !source.starts_with('/');
+
+    // Relative local source tokens resolve by walking up from CWD. The pure
+    // config hash/reconcile path also preserves legacy bare-relative fallback.
+    if source == "."
+        || source.starts_with("./")
+        || source.starts_with("../")
+        || (!require_vstack_source && !looks_like_remote)
+    {
         let mut dir = std::env::current_dir().ok()?;
         loop {
             if crate::resolve::is_vstack_source(&dir) {
@@ -236,12 +259,15 @@ pub(crate) fn resolve_single_source(source: &str) -> Option<PathBuf> {
         return None;
     }
 
-    // Remote shorthand (owner/repo) — update and use cached clone.
+    // Remote shorthand (owner/repo) — update once during top-level source resolution,
+    // then use the cached clone without side effects from pure attribution/hash paths.
     let cache_dir = config::global_base_dir().join(".vstack").join("cache");
     let key = source.replace('/', "_");
     let cached = cache_dir.join(&key);
     if cached.join(".git").exists() {
-        update_cached_repo(&cached);
+        if update_remote {
+            update_cached_repo(&cached);
+        }
         return Some(cached);
     }
 

@@ -1,14 +1,14 @@
 use crate::agent::Agent;
-use crate::commands::refresh_sources::{
-    RefreshSource, all_source_hooks, all_source_pi_extensions, load_refresh_sources,
-    refresh_source_for_entry, resolve_skill_pairs_from_sources, resolve_source_records,
-    source_pi_extension_for_lock_name,
-};
 use crate::config::{self, ItemKind};
 use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::installer;
 use crate::project_config::ProjectConfig;
+use crate::refresh_sources::{
+    RefreshSource, all_source_hooks, all_source_pi_extensions, load_refresh_sources,
+    refresh_source_for_entry, resolve_skill_pairs_from_sources, resolve_source_records,
+    source_pi_extension_for_lock_name,
+};
 use crate::skill::Skill;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
