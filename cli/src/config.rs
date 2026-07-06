@@ -322,10 +322,18 @@ pub fn lock_file_path(global: bool) -> PathBuf {
 }
 
 pub fn user_home_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = crate::test_util::home_dir_override() {
+        return path;
+    }
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
 }
 
 pub fn user_config_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = crate::test_util::config_dir_override() {
+        return path;
+    }
     dirs::config_dir().unwrap_or_else(|| user_home_dir().join(".config"))
 }
 

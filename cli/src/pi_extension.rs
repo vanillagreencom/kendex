@@ -319,12 +319,79 @@ pub fn legacy_names_for(name: &str) -> &'static [&'static str] {
         .unwrap_or(&[])
 }
 
+fn validate_safe_component(kind: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains('/')
+        || value.contains('\\')
+        || value.starts_with('-')
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
+    {
+        anyhow::bail!("invalid {kind} `{value}`");
+    }
+    Ok(())
+}
+
+fn validate_pi_package_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.contains('\\') || name.starts_with('/') || name.contains("//") {
+        anyhow::bail!("invalid Pi package name `{name}`");
+    }
+    if let Some(rest) = name.strip_prefix('@') {
+        let Some((scope, package)) = rest.split_once('/') else {
+            anyhow::bail!("invalid Pi package name `{name}`");
+        };
+        if package.contains('/') {
+            anyhow::bail!("invalid Pi package name `{name}`");
+        }
+        validate_safe_component("Pi package scope", scope)?;
+        validate_safe_component("Pi package name", package)?;
+        return Ok(());
+    }
+    if name.contains('/') {
+        anyhow::bail!("invalid Pi package name `{name}`");
+    }
+    validate_safe_component("Pi package name", name)
+}
+
+fn checked_pi_package_path(name: &str, global: bool) -> Result<PathBuf> {
+    validate_pi_package_name(name)?;
+    let base = crate::config::pi_packages_dir(global);
+    let dest = base.join(name);
+    if !dest.starts_with(&base) {
+        anyhow::bail!("Pi package path escapes package directory: `{name}`");
+    }
+    Ok(dest)
+}
+
+fn checked_package_child_path(base: &Path, rel: &str, kind: &str) -> Result<PathBuf> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        anyhow::bail!("invalid {kind} path `{rel}`");
+    }
+    for component in rel_path.components() {
+        match component {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => anyhow::bail!("invalid {kind} path `{rel}`"),
+        }
+    }
+    let target = base.join(rel_path);
+    if !target.starts_with(base) {
+        anyhow::bail!("{kind} path escapes package directory: `{rel}`");
+    }
+    Ok(target)
+}
+
 /// Does the package appear to be installed in the given Pi scope?
 ///
 /// This checks both the deployed package directory and `settings.json`, so it
 /// also catches stale settings entries left after manual deletion.
 pub fn is_pi_extension_installed(name: &str, global: bool) -> bool {
-    let dest = crate::config::pi_packages_dir(global).join(name);
+    let Ok(dest) = checked_pi_package_path(name, global) else {
+        return false;
+    };
     dest.exists()
         || dest.is_symlink()
         || settings_references_package(name, &dest, global).unwrap_or(false)
@@ -401,6 +468,7 @@ fn remove_same_scope_legacy_packages(name: &str, global: bool) -> Result<()> {
 /// duplicate; callers can use this to omit the entry from the lock file
 /// summary so vstack's view of state stays accurate.
 pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<PathBuf>> {
+    validate_pi_package_name(&ext.name)?;
     // Step 1: same-scope legacy migration for package renames. This is safe to
     // do automatically because these are vstack-owned package names and the new
     // package supersedes the old one.
@@ -439,7 +507,7 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<Pa
 
     let dest_dir = crate::config::pi_packages_dir(global);
     std::fs::create_dir_all(&dest_dir)?;
-    let dest = dest_dir.join(&ext.name);
+    let dest = checked_pi_package_path(&ext.name, global)?;
 
     // Idempotent reinstall: clear any prior copy. NotFound is fine; other
     // errors (EACCES etc.) propagate so we don't copy onto a broken state.
@@ -532,15 +600,16 @@ fn remove_from_source_index(name: &str, global: bool) -> Result<()> {
 /// Remove a Pi package, its bin symlinks, and its settings entry.
 pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
-    let dest = crate::config::pi_packages_dir(global).join(name);
+    let dest = checked_pi_package_path(name, global)?;
 
     // Read package.json BEFORE deleting the dir so we know which bin
     // symlinks to clean up. Best-effort: if the package.json is gone or
     // unreadable, skip bin cleanup rather than failing the whole remove.
-    if dest.is_dir()
+    if std::fs::symlink_metadata(&dest).is_ok_and(|meta| meta.is_dir())
         && let Ok(ext) = PiExtension::from_dir(&dest)
     {
         for cli_name in ext.bin.keys() {
+            validate_safe_component("Pi bin name", cli_name)?;
             let link = crate::config::pi_bin_dir(global).join(cli_name);
             match std::fs::remove_file(&link) {
                 Ok(()) => removed.push(link),
@@ -578,7 +647,8 @@ fn install_bin_links(ext: &PiExtension, package_dest: &Path, global: bool) -> Re
     let bin_dir = crate::config::pi_bin_dir(global);
     std::fs::create_dir_all(&bin_dir)?;
     for (cli_name, rel_target) in &ext.bin {
-        let target = package_dest.join(rel_target);
+        validate_safe_component("Pi bin name", cli_name)?;
+        let target = checked_package_child_path(package_dest, rel_target, "Pi bin target")?;
         if !target.exists() {
             eprintln!(
                 "  Warning: skip bin link {cli_name} → {} (target missing)",
@@ -1690,6 +1760,26 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
             assert!(after.get("packages").is_none());
         });
 
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn remove_pi_extension_rejects_path_traversal_name() {
+        let sandbox =
+            std::env::temp_dir().join(format!("vstack_pi_reject_traversal_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let pi_dir = sandbox.join("agent");
+        let victim = sandbox.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("keep.txt"), "do not delete").unwrap();
+
+        with_pi_dir(&pi_dir, || {
+            let err = remove_pi_extension("../../victim", true).unwrap_err();
+            assert!(err.to_string().contains("invalid Pi package name"));
+            assert!(!is_pi_extension_installed("../../victim", true));
+        });
+
+        assert!(victim.join("keep.txt").exists());
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 

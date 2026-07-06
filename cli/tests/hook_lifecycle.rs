@@ -547,6 +547,68 @@ fn adding_codex_agent_after_fallback_hook_installed_adds_safety_prose() {
 }
 
 #[test]
+fn removing_one_codex_fallback_hook_keeps_remaining_fallback_prose() {
+    let sandbox = Sandbox::new("remove-one-codex-fallback-hook");
+    write_custom_hook(
+        &sandbox.source,
+        "finish-a",
+        "TaskCompleted",
+        None,
+        None,
+        Some("[codex]"),
+    );
+    write_custom_hook(
+        &sandbox.source,
+        "finish-b",
+        "TaskCompleted",
+        None,
+        None,
+        Some("[codex]"),
+    );
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--agent",
+            "rust",
+            "--hook",
+            "finish-a",
+            "--hook",
+            "finish-b",
+            "--harness",
+            "codex",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add agent+hooks");
+
+    let before = fs::read_to_string(sandbox.project.join(".codex/agents/rust.toml")).unwrap();
+    assert!(before.contains("## Safety: finish-a"));
+    assert!(before.contains("## Safety: finish-b"));
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "finish-a", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack remove fallback hook");
+
+    let after = fs::read_to_string(sandbox.project.join(".codex/agents/rust.toml")).unwrap();
+    assert!(
+        !after.contains("## Safety: finish-a"),
+        "removed hook stayed: {after}"
+    );
+    assert!(
+        after.contains("## Safety: finish-b"),
+        "remaining fallback prose missing:\n{after}"
+    );
+}
+
+#[test]
 fn remove_hook_cleans_claude_artifacts_settings_agents_and_lock() {
     let sandbox = Sandbox::new("remove-hook");
 
