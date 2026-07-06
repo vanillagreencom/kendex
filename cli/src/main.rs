@@ -10,6 +10,7 @@ mod harness;
 mod hook;
 mod installer;
 mod mapping;
+mod path_safety;
 mod pi_extension;
 mod project_config;
 mod project_settings;

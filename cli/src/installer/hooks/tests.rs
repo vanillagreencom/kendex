@@ -134,29 +134,6 @@ fn merge_codex_hooks_json_replaces_existing_hook_registration() {
 }
 
 #[test]
-fn validate_item_name_rejects_path_like_names() {
-    for name in [
-        "",
-        ".",
-        "..",
-        "../victim",
-        "a/b",
-        "a\\b",
-        "/abs",
-        "-leading-dash",
-        "bad\";touch pwn;#",
-        "bad$(touch pwn)",
-        "has spaces",
-        "has\nnewline",
-        "bad`touch pwn`",
-    ] {
-        assert!(validate_item_name(name).is_err(), "accepted {name:?}");
-    }
-    assert!(validate_item_name("guard-hook").is_ok());
-    assert!(validate_item_name("guard.hook_1").is_ok());
-}
-
-#[test]
 fn hook_prune_preserves_user_handlers_with_same_basename() {
     let mut hooks_obj = serde_json::json!({
             "PreToolUse": [

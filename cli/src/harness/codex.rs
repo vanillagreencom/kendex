@@ -100,7 +100,7 @@ pub fn generate_agent(
     }
     output.push_str("'''\n");
 
-    std::fs::write(&path, &output)?;
+    crate::path_safety::write_file_no_follow(&path, &output)?;
     Ok(path)
 }
 

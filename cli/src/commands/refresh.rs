@@ -133,7 +133,7 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Agent)
         .filter(|(n, _)| pass(n))
     {
-        if let Err(err) = installer::validate_item_name(name) {
+        if let Err(err) = crate::path_safety::validate_item_name(name) {
             stats.fail(name, None, format!("invalid agent name: {err:#}"));
             continue;
         }

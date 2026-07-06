@@ -1,8 +1,9 @@
 use crate::hook::Hook;
+use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::{checked_child_path, validate_item_name};
+use super::checked_child_path;
 
 /// OpenCode: add permission rules based on hook intent
 pub(super) fn install_hook_opencode(hook: &Hook, global: bool) -> Result<()> {

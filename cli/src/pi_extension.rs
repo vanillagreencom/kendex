@@ -544,9 +544,11 @@ fn install_pi_extension_inner(
 
     copy_dir(&ext.source_dir, &dest)?;
     install_production_dependencies_if_needed(&ext.name, &dest)?;
-    install_append_system_for(ext, &dest, global)?;
+    let append_system_action = append_system_install_action(ext, &dest)?;
     install_bin_links(ext, &dest, global)?;
+    crate::path_safety::ensure_file_write_target_safe(&append_system_path(global))?;
     register_in_pi_settings(&ext.name, &dest, global)?;
+    apply_append_system_action(&ext.name, append_system_action, global)?;
     let _ = update_source_index(ext, global);
 
     Ok(Some(dest))
@@ -1015,6 +1017,7 @@ fn append_system_strip_block(existing: &str, begin: &str, end: &str) -> String {
 /// file changed. Block boundaries use HTML comment markers so the file
 /// stays valid markdown. Creates the file (and parent dir) if missing.
 pub fn append_system_upsert(target: &Path, name: &str, content: &str) -> Result<bool> {
+    crate::path_safety::ensure_file_write_target_safe(target)?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Ok(matches!(
@@ -1039,10 +1042,8 @@ pub fn append_system_upsert(target: &Path, name: &str, content: &str) -> Result<
     if next == existing {
         return Ok(false);
     }
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(target, &next).with_context(|| format!("writing {}", target.display()))?;
+    crate::path_safety::write_file_no_follow(target, &next)
+        .with_context(|| format!("writing {}", target.display()))?;
     Ok(true)
 }
 
@@ -1061,6 +1062,7 @@ pub enum AppendSystemRemoveOutcome {
 /// no-op. When removing the block leaves an empty file, delete the file
 /// rather than leaving an empty placeholder behind.
 pub fn append_system_remove(target: &Path, name: &str) -> Result<AppendSystemRemoveOutcome> {
+    crate::path_safety::ensure_file_write_target_safe(target)?;
     let existing = match std::fs::read_to_string(target) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1086,14 +1088,23 @@ pub fn append_system_remove(target: &Path, name: &str) -> Result<AppendSystemRem
         if next == existing {
             return Ok(AppendSystemRemoveOutcome::NoOp);
         }
-        std::fs::write(target, &next).with_context(|| format!("writing {}", target.display()))?;
+        crate::path_safety::write_file_no_follow(target, &next)
+            .with_context(|| format!("writing {}", target.display()))?;
         Ok(AppendSystemRemoveOutcome::Updated)
     }
 }
 
+enum AppendSystemInstallAction {
+    Remove,
+    Upsert(String),
+}
+
 /// Run `append_system_upsert` for a Pi extension, reading the markdown body
 /// from `<package_dir>/<pi.appendSystem>`. Returns `Ok(true)` if the file
-/// changed.
+/// changed. Invalid `pi.appendSystem` metadata is an install error; callers
+/// that install a package should run this only after other fallible package
+/// registration steps or use the internal append-system action helper to defer the
+/// file mutation until the install is ready to commit.
 ///
 /// When the extension does not declare `pi.appendSystem` (or the referenced
 /// file is missing/empty), any previously-installed block for this extension
@@ -1104,8 +1115,16 @@ pub fn install_append_system_for(
     package_dir: &Path,
     global: bool,
 ) -> Result<bool> {
+    let action = append_system_install_action(ext, package_dir)?;
+    apply_append_system_action(&ext.name, action, global)
+}
+
+fn append_system_install_action(
+    ext: &PiExtension,
+    package_dir: &Path,
+) -> Result<AppendSystemInstallAction> {
     let Some(rel) = ext.append_system.as_deref() else {
-        return remove_append_system_if_present(&ext.name, global);
+        return Ok(AppendSystemInstallAction::Remove);
     };
     let source =
         checked_package_child_path(package_dir, rel, "appendSystem").with_context(|| {
@@ -1117,7 +1136,7 @@ pub fn install_append_system_for(
     match std::fs::symlink_metadata(&source) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return remove_append_system_if_present(&ext.name, global);
+            return Ok(AppendSystemInstallAction::Remove);
         }
         Err(e) => {
             return Err(e).with_context(|| {
@@ -1139,7 +1158,7 @@ pub fn install_append_system_for(
     let content = match std::fs::read_to_string(&source) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return remove_append_system_if_present(&ext.name, global);
+            return Ok(AppendSystemInstallAction::Remove);
         }
         Err(e) => {
             return Err(e).with_context(|| {
@@ -1152,9 +1171,23 @@ pub fn install_append_system_for(
         }
     };
     if content.trim().is_empty() {
-        return remove_append_system_if_present(&ext.name, global);
+        return Ok(AppendSystemInstallAction::Remove);
     }
-    append_system_upsert(&append_system_path(global), &ext.name, &content)
+    Ok(AppendSystemInstallAction::Upsert(content))
+}
+
+fn apply_append_system_action(
+    name: &str,
+    action: AppendSystemInstallAction,
+    global: bool,
+) -> Result<bool> {
+    crate::path_safety::ensure_file_write_target_safe(&append_system_path(global))?;
+    match action {
+        AppendSystemInstallAction::Remove => remove_append_system_if_present(name, global),
+        AppendSystemInstallAction::Upsert(content) => {
+            append_system_upsert(&append_system_path(global), name, &content)
+        }
+    }
 }
 
 fn remove_append_system_if_present(name: &str, global: bool) -> Result<bool> {
@@ -1933,6 +1966,45 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
     }
 
     #[test]
+    fn failed_pi_install_does_not_mutate_append_system_settings_or_index() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_failed_append_transaction_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-bin");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        std::fs::write(source.join("instructions.md"), "APPEND ME\n").unwrap();
+        std::fs::write(source.join("bin/tool.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-bin", "pi": { "extensions": [], "appendSystem": "instructions.md" }, "bin": { "safe-bin": "../victim" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            append_system_upsert(&append_system_path(true), "other", "KEEP").unwrap();
+            let before = std::fs::read_to_string(append_system_path(true)).unwrap();
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let err = install_pi_extension(&ext, true).unwrap_err();
+            assert!(err.to_string().contains("invalid Pi bin target path"));
+            assert_eq!(
+                std::fs::read_to_string(append_system_path(true)).unwrap(),
+                before
+            );
+            let settings_path = crate::config::pi_settings_path(true);
+            if settings_path.exists() {
+                let settings = std::fs::read_to_string(settings_path).unwrap();
+                assert!(!settings.contains("pi-append-bin"));
+            }
+            assert!(!crate::config::pi_source_index_path(true).exists());
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
     fn append_system_rejects_parent_path_without_reading_secret() {
         let sandbox =
             std::env::temp_dir().join(format!("vstack_pi_append_parent_{}", std::process::id()));
@@ -2295,6 +2367,32 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         let outcome = append_system_remove(&target, "@scope/only").unwrap();
         assert_eq!(outcome, AppendSystemRemoveOutcome::Deleted);
         assert!(!target.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_system_upsert_rejects_target_symlink_without_overwriting_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_append_sys_target_symlink_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("outside.md");
+        let target = dir.join("APPEND_SYSTEM.md");
+        std::fs::write(&outside, "KEEP\n").unwrap();
+        symlink(&outside, &target).unwrap();
+
+        let err = append_system_upsert(&target, "@scope/pkg", "NEW").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("refusing to write through symlink")
+        );
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "KEEP\n");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

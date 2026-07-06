@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 
 pub(super) fn checked_agent_path(dir: &Path, name: &str, extension: &str) -> Result<PathBuf> {
-    crate::installer::validate_item_name(name)?;
+    crate::path_safety::validate_item_name(name)?;
     let path = dir.join(format!("{name}.{extension}"));
     if !path.starts_with(dir) {
         bail!(
@@ -338,6 +338,7 @@ impl std::fmt::Display for Harness {
 #[cfg(test)]
 mod tests {
     use super::Harness;
+    use crate::agent::{Agent, AgentRole};
 
     #[test]
     fn cursor_is_project_scope_only() {
@@ -407,5 +408,53 @@ mod tests {
             );
             assert_eq!(install_root, sandbox);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generate_agent_rejects_final_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack-agent-symlink-{}-{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        let outside = root.join("outside.md");
+        let link = project.join(".claude").join("agents").join("rust.md");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::fs::write(&outside, "keep").unwrap();
+        symlink(&outside, &link).unwrap();
+
+        let agent = Agent {
+            name: "rust".into(),
+            description: "Rust".into(),
+            model: "sonnet".into(),
+            role: AgentRole::Engineer,
+            color: None,
+            effort: None,
+            body: "# Rust\n".into(),
+            source_path: std::path::PathBuf::new(),
+        };
+
+        let err = crate::test_util::with_project_root(&project, || {
+            Harness::ClaudeCode
+                .generate_agent(
+                    &agent,
+                    false,
+                    &[],
+                    &[],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap_err()
+        });
+        assert!(
+            err.to_string()
+                .contains("refusing to write through symlink")
+        );
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

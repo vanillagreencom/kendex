@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::harness::Harness;
 use crate::hook::Hook;
+use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -8,25 +9,6 @@ mod opencode;
 
 use opencode::{install_hook_opencode, remove_hook_from_opencode_json};
 pub(crate) use opencode::{opencode_hook_instruction_contents, opencode_hook_instruction_path};
-
-pub(crate) fn validate_item_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("item name must not be empty");
-    }
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        anyhow::bail!("item name must not be empty");
-    };
-    if !first.is_ascii_alphanumeric() {
-        anyhow::bail!("item name {name:?} must start with an ASCII letter or digit");
-    }
-    if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) {
-        anyhow::bail!(
-            "item name {name:?} must contain only ASCII letters, digits, '.', '_', or '-'"
-        );
-    }
-    Ok(())
-}
 
 fn validate_file_name(file_name: &str) -> Result<()> {
     if file_name.is_empty()

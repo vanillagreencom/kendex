@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 
 mod hooks;
 
+pub(crate) use crate::path_safety::validate_item_name;
 pub(crate) use hooks::{
     codex_event_for, codex_root, cursor_hook_rule_contents, cursor_hook_rule_path,
     install_codex_fallback_hooks_for_agents, install_hook, migrate_codex_config,
     opencode_hook_instruction_contents, opencode_hook_instruction_path, remove_hook_install,
-    validate_item_name,
 };
 
 pub(crate) fn codex_hook_safety_block(hook: &Hook) -> String {
@@ -182,9 +182,9 @@ pub fn install_skill(
 
 /// Remove an installed item.
 ///
-/// Hook cleanup is attempted for every requested harness. If any hook cleanup
-/// fails, the error includes hook/harness/scope context so callers can keep the
-/// lock entry until a later retry succeeds.
+/// Agent/skill deletion and hook cleanup are attempted for every requested
+/// harness. Any deletion failure includes path/harness/scope context so callers
+/// can keep the lock entry until a later retry succeeds.
 pub fn remove_item(
     name: &str,
     kind: Option<ItemKind>,
@@ -210,8 +210,15 @@ pub fn remove_item(
             };
 
             for path in agent_paths {
-                if path.exists() && std::fs::remove_file(&path).is_ok() {
-                    removed.push(path);
+                match remove_expected_path(&path, ExpectedArtifact::File) {
+                    Ok(true) => removed.push(path),
+                    Ok(false) => {}
+                    Err(err) => cleanup_errors.push(format!(
+                        "agent {name} removal failed for {} {} scope at {}: {err:#}",
+                        harness.name(),
+                        if global { "global" } else { "project" },
+                        path.display()
+                    )),
                 }
             }
         }
@@ -219,15 +226,15 @@ pub fn remove_item(
         // Skill directories
         if remove_skills {
             let skill_path = harness.skills_dir(global).join(name);
-            if skill_path.exists() || skill_path.is_symlink() {
-                let ok = if skill_path.is_symlink() || skill_path.is_file() {
-                    std::fs::remove_file(&skill_path).is_ok()
-                } else {
-                    std::fs::remove_dir_all(&skill_path).is_ok()
-                };
-                if ok {
-                    removed.push(skill_path);
-                }
+            match remove_expected_path(&skill_path, ExpectedArtifact::Any) {
+                Ok(true) => removed.push(skill_path),
+                Ok(false) => {}
+                Err(err) => cleanup_errors.push(format!(
+                    "skill {name} removal failed for {} {} scope at {}: {err:#}",
+                    harness.name(),
+                    if global { "global" } else { "project" },
+                    skill_path.display()
+                )),
             }
         }
 
@@ -241,10 +248,6 @@ pub fn remove_item(
                 )),
             }
         }
-    }
-
-    if !cleanup_errors.is_empty() {
-        anyhow::bail!(cleanup_errors.join("; "));
     }
 
     if remove_skills {
@@ -263,20 +266,50 @@ pub fn remove_item(
         };
 
         for path in canonical_skill_paths {
-            if path.exists() || path.is_symlink() {
-                let ok = if path.is_symlink() || path.is_file() {
-                    std::fs::remove_file(&path).is_ok()
-                } else {
-                    std::fs::remove_dir_all(&path).is_ok()
-                };
-                if ok {
-                    removed.push(path);
-                }
+            match remove_expected_path(&path, ExpectedArtifact::Any) {
+                Ok(true) => removed.push(path),
+                Ok(false) => {}
+                Err(err) => cleanup_errors.push(format!(
+                    "canonical skill {name} removal failed for {} scope at {}: {err:#}",
+                    if global { "global" } else { "project" },
+                    path.display()
+                )),
             }
         }
     }
 
+    if !cleanup_errors.is_empty() {
+        anyhow::bail!(cleanup_errors.join("; "));
+    }
+
     Ok(removed)
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedArtifact {
+    File,
+    Any,
+}
+
+fn remove_expected_path(path: &Path, expected: ExpectedArtifact) -> Result<bool> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("checking {}", path.display())),
+    };
+    if meta.file_type().is_symlink() || meta.is_file() {
+        std::fs::remove_file(path).with_context(|| format!("removing file {}", path.display()))?;
+        return Ok(true);
+    }
+    if meta.is_dir() {
+        if matches!(expected, ExpectedArtifact::File) {
+            anyhow::bail!("expected file but found directory");
+        }
+        std::fs::remove_dir_all(path)
+            .with_context(|| format!("removing directory {}", path.display()))?;
+        return Ok(true);
+    }
+    anyhow::bail!("unsupported file type")
 }
 
 /// Record installation in lock file
@@ -470,6 +503,29 @@ mod tests {
                 .harnesses
                 .contains(&Harness::ClaudeCode.id().to_string())
         );
+    }
+
+    #[test]
+    fn remove_item_reports_agent_delete_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_remove_agent_failure_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        let bad_agent_path = project.join(".claude").join("agents").join("rust.md");
+        std::fs::create_dir_all(&bad_agent_path).unwrap();
+
+        let err = crate::test_util::with_project_root(&project, || {
+            remove_item("rust", Some(ItemKind::Agent), &[Harness::ClaudeCode], false).unwrap_err()
+        });
+        let message = err.to_string();
+        assert!(message.contains("agent rust removal failed"));
+        assert!(message.contains("Claude Code project scope"));
+        assert!(message.contains("rust.md"));
+        assert!(bad_agent_path.is_dir());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
