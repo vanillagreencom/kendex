@@ -133,6 +133,10 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Agent)
         .filter(|(n, _)| pass(n))
     {
+        if let Err(err) = installer::validate_item_name(name) {
+            stats.fail(name, None, format!("invalid agent name: {err:#}"));
+            continue;
+        }
         let Some(source) = refresh_source_for_entry(sources, entry) else {
             if name_filter.is_none() {
                 eprintln!("  ! {} — source not found, skipped", name);

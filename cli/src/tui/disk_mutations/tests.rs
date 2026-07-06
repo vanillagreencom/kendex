@@ -239,6 +239,58 @@ fn generate_moved_agents_reports_when_no_harness_succeeds() {
 }
 
 #[test]
+fn generate_moved_agents_rejects_name_that_escapes_output_dir() {
+    let root = tmpdir("move-agent-name-traversal");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let mut dst_lock = LockFile::default();
+    let entry = LockEntry {
+        name: "../../pwned".into(),
+        kind: ItemKind::Agent,
+        source: "source".into(),
+        harnesses: vec!["claude-code".into(), "codex".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    };
+    let intent = AgentMoveIntent {
+        name: "../../pwned".into(),
+        entry,
+        target_harnesses: vec![Harness::ClaudeCode, Harness::Codex],
+    };
+    let items = DiscoveredItems {
+        agents: vec![agent_fixture("../../pwned")],
+        skills: Vec::new(),
+        hooks: Vec::new(),
+        pi_extensions: Vec::new(),
+        extras: Vec::new(),
+    };
+    let mut report = DiskMutationReport::new(1);
+
+    let moved = crate::test_util::with_project_root(&project, || {
+        generate_moved_agents(
+            &items,
+            &[intent],
+            false,
+            &mut dst_lock,
+            &MappingConfig::default(),
+            &crate::project_config::ProjectConfig::default(),
+            &mut report,
+        )
+    });
+
+    assert!(moved.is_empty());
+    assert!(!dst_lock.entries.contains_key("../../pwned"));
+    assert_eq!(report.failed.len(), 1);
+    assert!(report.failed[0].contains("invalid agent name"));
+    assert!(!project.join("pwned.md").exists());
+    assert!(!project.join("pwned.toml").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn generate_moved_agents_reports_partial_failure_and_rolls_back_success() {
     let root = tmpdir("partial-agent-move");
     let project = root.join("project");

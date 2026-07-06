@@ -17,7 +17,7 @@ pub fn generate_agent(
 ) -> Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
 
-    let path = dir.join(format!("{}.md", agent.name));
+    let path = super::checked_agent_path(dir, &agent.name, "md")?;
 
     let frontmatter = extras.frontmatter_for("opencode");
     let mode = opencode_mode_for(&frontmatter);

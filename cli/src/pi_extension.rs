@@ -544,10 +544,10 @@ fn install_pi_extension_inner(
 
     copy_dir(&ext.source_dir, &dest)?;
     install_production_dependencies_if_needed(&ext.name, &dest)?;
+    install_append_system_for(ext, &dest, global)?;
     install_bin_links(ext, &dest, global)?;
     register_in_pi_settings(&ext.name, &dest, global)?;
     let _ = update_source_index(ext, global);
-    let _ = install_append_system_for(ext, &dest, global);
 
     Ok(Some(dest))
 }
@@ -1107,16 +1107,49 @@ pub fn install_append_system_for(
     let Some(rel) = ext.append_system.as_deref() else {
         return remove_append_system_if_present(&ext.name, global);
     };
-    let source = match checked_existing_package_child_path(package_dir, rel, "appendSystem") {
-        Ok(path) => path,
-        Err(_) => return remove_append_system_if_present(&ext.name, global),
+    let source =
+        checked_package_child_path(package_dir, rel, "appendSystem").with_context(|| {
+            format!(
+                "invalid pi.appendSystem path for package {}: `{rel}`",
+                ext.name
+            )
+        })?;
+    match std::fs::symlink_metadata(&source) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return remove_append_system_if_present(&ext.name, global);
+        }
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "checking pi.appendSystem path for package {}: {}",
+                    ext.name,
+                    source.display()
+                )
+            });
+        }
     };
+    let source = checked_existing_package_child_path(package_dir, rel, "appendSystem")
+        .with_context(|| {
+            format!(
+                "invalid pi.appendSystem path for package {}: `{rel}`",
+                ext.name
+            )
+        })?;
     let content = match std::fs::read_to_string(&source) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return remove_append_system_if_present(&ext.name, global);
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "reading pi.appendSystem for package {}: {}",
+                    ext.name,
+                    source.display()
+                )
+            });
+        }
     };
     if content.trim().is_empty() {
         return remove_append_system_if_present(&ext.name, global);
@@ -1917,8 +1950,14 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         with_pi_dir(&pi_dir, || {
             append_system_upsert(&append_system_path(true), "pi-append", "OLD").unwrap();
             let ext = PiExtension::from_dir(&package).unwrap();
-            assert!(install_append_system_for(&ext, &package, true).unwrap());
-            assert!(!append_system_path(true).exists());
+            let err = install_pi_extension(&ext, true).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid pi.appendSystem path"),
+                "unexpected error: {err:#}"
+            );
+            let append = std::fs::read_to_string(append_system_path(true)).unwrap();
+            assert!(append.contains("OLD"));
+            assert!(!append.contains("SECRET"));
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);
@@ -1947,8 +1986,14 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         with_pi_dir(&pi_dir, || {
             append_system_upsert(&append_system_path(true), "pi-append", "OLD").unwrap();
             let ext = PiExtension::from_dir(&package).unwrap();
-            assert!(install_append_system_for(&ext, &package, true).unwrap());
-            assert!(!append_system_path(true).exists());
+            let err = install_append_system_for(&ext, &package, true).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid pi.appendSystem path"),
+                "unexpected error: {err:#}"
+            );
+            let append = std::fs::read_to_string(append_system_path(true)).unwrap();
+            assert!(append.contains("OLD"));
+            assert!(!append.contains("SECRET"));
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);

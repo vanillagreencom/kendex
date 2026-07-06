@@ -321,3 +321,42 @@ fn refresh_items_reports_agent_write_failure_without_success() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn refresh_rejects_agent_name_that_escapes_output_dir() {
+    let root = tmpdir("agent-name-traversal");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        source.join("agents/evil.md"),
+        "---\nname: \"../../pwned\"\ndescription: Evil\nmodel: sonnet\nrole: engineer\n---\n# Evil\n",
+    )
+    .unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "../../pwned",
+        ItemKind::Agent,
+        &source,
+        vec!["claude-code", "codex"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+
+    assert_eq!(stats.agents_refreshed, 0);
+    assert!(!stats.successful_items.contains("../../pwned"));
+    assert_eq!(stats.failures.len(), 1);
+    assert_eq!(stats.failures[0].item, "../../pwned");
+    assert!(stats.failures[0].error.contains("invalid agent name"));
+    assert!(!project.join("pwned.md").exists());
+    assert!(!project.join("pwned.toml").exists());
+    assert!(!project.join(".claude/pwned.md").exists());
+    assert!(!project.join(".codex/config.toml").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}

@@ -404,6 +404,10 @@ fn generate_moved_agents(
     let mut moved_names = Vec::new();
 
     for intent in intents {
+        if let Err(err) = crate::installer::validate_item_name(&intent.name) {
+            report.fail(&intent.name, format!("invalid agent name: {err:#}"));
+            continue;
+        }
         let Some(agent) = items.agents.iter().find(|a| a.name == intent.name) else {
             report.fail(&intent.name, "source agent missing");
             continue;

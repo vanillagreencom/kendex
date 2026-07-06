@@ -7,7 +7,19 @@ pub mod pi;
 use crate::agent::Agent;
 use crate::skill::Skill;
 use anyhow::{Result, bail};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+pub(super) fn checked_agent_path(dir: &Path, name: &str, extension: &str) -> Result<PathBuf> {
+    crate::installer::validate_item_name(name)?;
+    let path = dir.join(format!("{name}.{extension}"));
+    if !path.starts_with(dir) {
+        bail!(
+            "refusing agent path outside expected directory: {}",
+            path.display()
+        );
+    }
+    Ok(path)
+}
 
 /// Supported AI coding harnesses
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
