@@ -641,20 +641,12 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
         )
     })?;
 
-    match remove_append_system_for(name, global) {
-        Ok(AppendSystemRemoveOutcome::Updated | AppendSystemRemoveOutcome::Deleted) => {
-            removed.push(append_path.clone());
-        }
-        Ok(AppendSystemRemoveOutcome::NoOp) => {}
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!(
-                    "removing appendSystem block for {name} from {}",
-                    append_path.display()
-                )
-            });
-        }
-    }
+    let append_plan = append_system_remove_plan(&append_path, name).with_context(|| {
+        format!(
+            "removing appendSystem block for {name} from {}",
+            append_path.display()
+        )
+    })?;
 
     // Read package.json BEFORE deleting the dir so we know which bin
     // symlinks to clean up. Best-effort: if the package.json is gone or
@@ -679,6 +671,17 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     }
     if unregister_from_pi_settings(name, &dest, global)? {
         removed.push(crate::config::pi_settings_path(global));
+    }
+    match apply_append_system_remove_plan(&append_path, append_plan).with_context(|| {
+        format!(
+            "removing appendSystem block for {name} from {}",
+            append_path.display()
+        )
+    })? {
+        AppendSystemRemoveOutcome::Updated | AppendSystemRemoveOutcome::Deleted => {
+            removed.push(append_path.clone());
+        }
+        AppendSystemRemoveOutcome::NoOp => {}
     }
     let _ = remove_from_source_index(name, global);
     Ok(removed)
@@ -1075,39 +1078,63 @@ pub enum AppendSystemRemoveOutcome {
     Deleted,
 }
 
+enum AppendSystemRemovePlan {
+    NoOp,
+    Write(String),
+    Delete,
+}
+
 /// Remove the named block from `target` if present. Missing file is a
 /// no-op. When removing the block leaves an empty file, delete the file
 /// rather than leaving an empty placeholder behind.
 pub fn append_system_remove(target: &Path, name: &str) -> Result<AppendSystemRemoveOutcome> {
+    let plan = append_system_remove_plan(target, name)?;
+    apply_append_system_remove_plan(target, plan)
+}
+
+fn append_system_remove_plan(target: &Path, name: &str) -> Result<AppendSystemRemovePlan> {
     crate::path_safety::ensure_file_write_target_safe(target)?;
     let existing = match std::fs::read_to_string(target) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AppendSystemRemoveOutcome::NoOp);
+            return Ok(AppendSystemRemovePlan::NoOp);
         }
         Err(e) => return Err(e.into()),
     };
     let (begin, end) = append_system_block_markers(name);
     if !existing.contains(&begin) {
-        return Ok(AppendSystemRemoveOutcome::NoOp);
+        return Ok(AppendSystemRemovePlan::NoOp);
     }
     let stripped = append_system_strip_block(&existing, &begin, &end);
     if stripped.is_empty() {
-        match std::fs::remove_file(target) {
+        Ok(AppendSystemRemovePlan::Delete)
+    } else {
+        let next = format!("{stripped}\n");
+        if next == existing {
+            return Ok(AppendSystemRemovePlan::NoOp);
+        }
+        Ok(AppendSystemRemovePlan::Write(next))
+    }
+}
+
+fn apply_append_system_remove_plan(
+    target: &Path,
+    plan: AppendSystemRemovePlan,
+) -> Result<AppendSystemRemoveOutcome> {
+    match plan {
+        AppendSystemRemovePlan::NoOp => Ok(AppendSystemRemoveOutcome::NoOp),
+        AppendSystemRemovePlan::Write(next) => {
+            crate::path_safety::write_file_no_follow(target, &next)
+                .with_context(|| format!("writing {}", target.display()))?;
+            Ok(AppendSystemRemoveOutcome::Updated)
+        }
+        AppendSystemRemovePlan::Delete => match std::fs::remove_file(target) {
             Ok(()) => Ok(AppendSystemRemoveOutcome::Deleted),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok(AppendSystemRemoveOutcome::Deleted)
             }
             Err(e) => Err(e.into()),
-        }
-    } else {
-        let next = format!("{stripped}\n");
-        if next == existing {
-            return Ok(AppendSystemRemoveOutcome::NoOp);
-        }
-        crate::path_safety::write_file_no_follow(target, &next)
-            .with_context(|| format!("writing {}", target.display()))?;
-        Ok(AppendSystemRemoveOutcome::Updated)
+        },
     }
 }
 
@@ -1962,6 +1989,49 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
             let settings = std::fs::read_to_string(&settings_path).unwrap();
             assert!(settings.contains("pi-append-invalid"));
             assert_eq!(std::fs::read(&append_path).unwrap(), invalid);
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn remove_pi_extension_keeps_append_system_when_later_cleanup_fails() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_remove_append_later_failure_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-later");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        std::fs::write(source.join("instructions.md"), "KEEP ME\n").unwrap();
+        std::fs::write(source.join("bin/tool.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-later", "pi": { "extensions": [], "appendSystem": "instructions.md" }, "bin": { "later-bin": "bin/tool.js" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+            let settings_path = crate::config::pi_settings_path(true);
+            let append_path = append_system_path(true);
+            let append_before = std::fs::read_to_string(&append_path).unwrap();
+            let bin_link = crate::config::pi_bin_dir(true).join("later-bin");
+            std::fs::remove_file(&bin_link).unwrap();
+            std::fs::create_dir_all(&bin_link).unwrap();
+
+            let err = remove_pi_extension("pi-append-later", true).unwrap_err();
+            let message = format!("{err:#}");
+            assert!(message.contains("Is a directory"), "{message}");
+            assert!(dest.is_dir(), "package dir should remain on failure");
+            let settings = std::fs::read_to_string(&settings_path).unwrap();
+            assert!(settings.contains("pi-append-later"));
+            assert_eq!(
+                std::fs::read_to_string(&append_path).unwrap(),
+                append_before
+            );
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);
