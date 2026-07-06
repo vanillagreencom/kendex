@@ -1905,6 +1905,47 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 
+    #[test]
+    fn remove_pi_extension_removes_append_system_after_package_and_settings_cleanup() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_remove_append_success_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-success");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("instructions.md"), "REMOVE ME\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-success", "pi": { "extensions": [], "appendSystem": "instructions.md" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+            let settings_path = crate::config::pi_settings_path(true);
+            let append_path = append_system_path(true);
+            append_system_upsert(&append_path, "other", "KEEP").unwrap();
+
+            let removed = remove_pi_extension("pi-append-success", true).unwrap();
+            assert!(removed.iter().any(|path| path == &dest));
+            assert!(removed.iter().any(|path| path == &settings_path));
+            assert!(removed.iter().any(|path| path == &append_path));
+            assert!(!dest.exists());
+            let settings = std::fs::read_to_string(&settings_path).unwrap();
+            assert!(!settings.contains("pi-append-success"));
+            let append = std::fs::read_to_string(&append_path).unwrap();
+            assert!(!append.contains("pi-append-success"));
+            assert!(!append.contains("REMOVE ME"));
+            assert!(append.contains("other"));
+            assert!(append.contains("KEEP"));
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
     #[cfg(unix)]
     #[test]
     fn remove_pi_extension_errors_on_unsafe_append_system_without_removing_package_or_settings() {
@@ -2028,6 +2069,49 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
             assert!(dest.is_dir(), "package dir should remain on failure");
             let settings = std::fs::read_to_string(&settings_path).unwrap();
             assert!(settings.contains("pi-append-later"));
+            assert_eq!(
+                std::fs::read_to_string(&append_path).unwrap(),
+                append_before
+            );
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn remove_pi_extension_keeps_append_system_when_settings_cleanup_fails_after_bin_cleanup() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_remove_append_settings_failure_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-settings");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        std::fs::write(source.join("instructions.md"), "KEEP ME\n").unwrap();
+        std::fs::write(source.join("bin/tool.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-settings", "pi": { "extensions": [], "appendSystem": "instructions.md" }, "bin": { "settings-bin": "bin/tool.js" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+            let settings_path = crate::config::pi_settings_path(true);
+            let append_path = append_system_path(true);
+            let append_before = std::fs::read_to_string(&append_path).unwrap();
+            let bin_link = crate::config::pi_bin_dir(true).join("settings-bin");
+            assert!(bin_link.is_symlink());
+            std::fs::remove_file(&settings_path).unwrap();
+            std::fs::create_dir_all(&settings_path).unwrap();
+
+            let err = remove_pi_extension("pi-append-settings", true).unwrap_err();
+            let message = format!("{err:#}");
+            assert!(message.contains("settings.json"), "{message}");
+            assert!(!bin_link.exists(), "bin cleanup should have already run");
+            assert!(!dest.exists(), "package cleanup should have already run");
             assert_eq!(
                 std::fs::read_to_string(&append_path).unwrap(),
                 append_before
