@@ -40,7 +40,7 @@ skill-templates/         Templates for new skills
 - **Discovered dynamically.** CLI scans `agents/`, `skills/`, `hooks/`, `pi-extensions/` at runtime. No hardcoded lists.
 - **Canonical source is harness-agnostic.** Translation happens in `cli/src/harness/`.
 - **Agent `role` drives access control.** `analyst` → planning/research/recon artifacts. `reviewer` → report-only/subagent (may write reports, not product code). `engineer` → full access/primary. `manager` → analysis/report artifacts.
-- **Skill dependencies use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md.
+- **Skill dependencies and ownership use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md. Shipped VStack skills also declare `metadata.source`, `metadata.repository`, and `metadata.bugs` so agents can route upstream failures only to the owning project.
 - **Hooks diverge by harness.** Claude Code: native shell hooks + settings.json + agent frontmatter. Cursor: safety `.mdc` rules. OpenCode: `.opencode/agents/*.md` + instructions. Codex: native shell hooks under `<scope>/.codex/hooks/` registered in `<scope>/.codex/hooks.json` with `[features] hooks = true` in `config.toml` — events without a codex equivalent (e.g. Claude's `TaskCompleted`) fall back to inline prose in `developer_instructions`. Pi: native TS implementations in the `@vanillagreen/pi-hooks` extension, listening on `tool_call`/`tool_result`/`turn_end`; each hook independently toggleable in pi-extension-manager.
 - **Pi extensions are npm-shaped.** vstack copies them to `<scope>/packages/<name>`, runs `npm install --omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund` there when `package.json` has `dependencies` or `optionalDependencies`, and registers the path in Pi's `settings.json` `packages` array.
 - **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install; users add/remove and refresh. Markdown-based harnesses get `skills:` frontmatter; Codex agents get a "Required Skills" instruction section.
@@ -68,7 +68,15 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [linear, github, worktree]
+metadata:
+  author: vanillagreen
+  source: vstack
+  repository: "https://github.com/vanillagreencom/vstack"
+  bugs: "https://github.com/vanillagreencom/vstack/issues"
+  version: "1.0.0"
 ```
+
+Use the ownership fields only when the skill is shipped by VStack. Non-VStack skills should point at their own upstream instead of `vanillagreencom/vstack`.
 
 Optional skill settings template (`skills/*/vstack.settings.toml.example`):
 ```toml

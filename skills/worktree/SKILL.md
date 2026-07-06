@@ -6,6 +6,9 @@ user-invocable: true
 argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] | list | remove <ID|path>"
 metadata:
   author: vanillagreen
+  source: vstack
+  repository: "https://github.com/vanillagreencom/vstack"
+  bugs: "https://github.com/vanillagreencom/vstack/issues"
   version: "1.0.0"
 ---
 

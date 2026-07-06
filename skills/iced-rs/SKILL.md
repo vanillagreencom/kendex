@@ -5,6 +5,9 @@ license: MIT
 user-invocable: true
 metadata:
   author: vanillagreen
+  source: vstack
+  repository: "https://github.com/vanillagreencom/vstack"
+  bugs: "https://github.com/vanillagreencom/vstack/issues"
   version: "3.0.0"
 ---
 

@@ -6,6 +6,9 @@ dependencies:
   required: [iced-rs]
 metadata:
   author: vanillagreen
+  source: vstack
+  repository: "https://github.com/vanillagreencom/vstack"
+  bugs: "https://github.com/vanillagreencom/vstack/issues"
   version: "1.0.0"
 ---
 

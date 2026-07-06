@@ -8,6 +8,9 @@ dependencies:
   optional: [linear]
 metadata:
   author: vanillagreen
+  source: vstack
+  repository: "https://github.com/vanillagreencom/vstack"
+  bugs: "https://github.com/vanillagreencom/vstack/issues"
   version: "2.0.0"
 ---
 

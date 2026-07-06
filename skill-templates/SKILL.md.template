@@ -7,7 +7,10 @@ user-invocable: true
 #   required: [skill-a, skill-b]
 #   optional: [skill-c]
 metadata:
-  author: vanillagreen
+  author: your-name
+  # source: your-project
+  # repository: "https://github.com/owner/repo"
+  # bugs: "https://github.com/owner/repo/issues"
   version: "1.0.0"
 ---
 
