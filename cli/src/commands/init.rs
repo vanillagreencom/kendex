@@ -82,13 +82,17 @@ fn init_skill(name: &str) -> Result<()> {
         return Ok(());
     }
     std::fs::create_dir_all(&dir)?;
-    let body = format!(
-        "---\nname: {name}\ndescription: TODO — describe this skill\nlicense: MIT\n---\n\n# {title}\n\nTODO — skill instructions.\n",
-        title = title_case(name),
-    );
+    let body = skill_body(name);
     std::fs::write(dir.join("SKILL.md"), body)?;
     eprintln!("Created skill: {}/SKILL.md", dir.display());
     Ok(())
+}
+
+fn skill_body(name: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: TODO — describe this skill\nlicense: MIT\nuser-invocable: true\n# dependencies:\n#   required: [skill-a, skill-b]\n#   optional: [skill-c]\nmetadata:\n  author: your-name\n  # source: your-project\n  # repository: \"https://github.com/owner/repo\"\n  # bugs: \"https://github.com/owner/repo/issues\"\n  version: \"1.0.0\"\n---\n\n# {title}\n\nTODO — skill instructions.\n",
+        title = title_case(name),
+    )
 }
 
 fn init_hook(name: &str) -> Result<()> {
@@ -145,6 +149,17 @@ mod tests {
         assert_eq!(title_case("foo-bar"), "Foo Bar");
         assert_eq!(title_case("rust"), "Rust");
         assert_eq!(title_case(""), "");
+    }
+
+    #[test]
+    fn skill_scaffold_includes_ownership_metadata_guidance() {
+        let body = skill_body("my-skill");
+
+        assert!(body.contains("user-invocable: true"));
+        assert!(body.contains("metadata:\n  author: your-name"));
+        assert!(body.contains("  # source: your-project"));
+        assert!(body.contains("  # repository: \"https://github.com/owner/repo\""));
+        assert!(body.contains("  # bugs: \"https://github.com/owner/repo/issues\""));
     }
 
     #[test]
