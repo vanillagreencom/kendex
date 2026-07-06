@@ -632,6 +632,14 @@ fn remove_from_source_index(name: &str, global: bool) -> Result<()> {
 pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
     let dest = checked_pi_package_path(name, global)?;
+    let append_path = append_system_path(global);
+
+    crate::path_safety::ensure_file_write_target_safe(&append_path).with_context(|| {
+        format!(
+            "checking APPEND_SYSTEM.md before removing {name}: {}",
+            append_path.display()
+        )
+    })?;
 
     // Read package.json BEFORE deleting the dir so we know which bin
     // symlinks to clean up. Best-effort: if the package.json is gone or
@@ -657,13 +665,21 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     if unregister_from_pi_settings(name, &dest, global)? {
         removed.push(crate::config::pi_settings_path(global));
     }
-    let _ = remove_from_source_index(name, global);
     match remove_append_system_for(name, global) {
         Ok(AppendSystemRemoveOutcome::Updated | AppendSystemRemoveOutcome::Deleted) => {
-            removed.push(append_system_path(global));
+            removed.push(append_path.clone());
         }
-        Ok(AppendSystemRemoveOutcome::NoOp) | Err(_) => {}
+        Ok(AppendSystemRemoveOutcome::NoOp) => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "removing appendSystem block for {name} from {}",
+                    append_path.display()
+                )
+            });
+        }
     }
+    let _ = remove_from_source_index(name, global);
     Ok(removed)
 }
 
@@ -1856,6 +1872,54 @@ printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
             let after: serde_json::Value =
                 serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
             assert!(after.get("packages").is_none());
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_pi_extension_errors_on_unsafe_append_system_without_removing_package_or_settings() {
+        use std::os::unix::fs::symlink;
+
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_remove_append_symlink_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-append-remove");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("instructions.md"), "REMOVE ME\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{ "name": "pi-append-remove", "pi": { "extensions": [], "appendSystem": "instructions.md" } }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+            let settings_path = crate::config::pi_settings_path(true);
+            let append_path = append_system_path(true);
+            let append_before = std::fs::read_to_string(&append_path).unwrap();
+            let outside = sandbox.join("outside-append.md");
+            std::fs::write(&outside, &append_before).unwrap();
+            std::fs::remove_file(&append_path).unwrap();
+            symlink(&outside, &append_path).unwrap();
+
+            let err = remove_pi_extension("pi-append-remove", true).unwrap_err();
+            let message = format!("{err:#}");
+            assert!(message.contains("APPEND_SYSTEM.md"), "{message}");
+            assert!(
+                message.contains("refusing to write through symlink"),
+                "{message}"
+            );
+            assert!(dest.is_dir(), "package dir should remain on failure");
+            let settings = std::fs::read_to_string(&settings_path).unwrap();
+            assert!(settings.contains("pi-append-remove"));
+            assert_eq!(std::fs::read_to_string(&outside).unwrap(), append_before);
+            assert!(append_path.is_symlink());
         });
 
         let _ = std::fs::remove_dir_all(&sandbox);
