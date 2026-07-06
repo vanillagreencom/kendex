@@ -2,7 +2,7 @@ use crate::config;
 use std::path::PathBuf;
 
 /// Resolve source directories from lock file entries.
-/// Handles local paths, "." (walks up from CWD), and remote shorthand (cached clones).
+/// Handles absolute local paths, "." (walks up from CWD), and remote shorthand (cached clones).
 pub(crate) fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
     let mut sources: Vec<PathBuf> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -53,7 +53,7 @@ pub(crate) fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
 }
 
 pub(crate) fn resolve_single_source(source: &str) -> Option<PathBuf> {
-    // Absolute or relative path that exists
+    // Absolute local path that exists.
     let p = std::path::Path::new(source);
     if p.is_absolute() && p.is_dir() && crate::resolve::is_vstack_source(p) {
         return Some(p.to_path_buf());

@@ -582,6 +582,14 @@ mod tests {
         }
     }
 
+    fn agent_frontmatter(content: &str) -> &str {
+        content
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(frontmatter, _)| frontmatter)
+            .expect("frontmatter present")
+    }
+
     fn tmpdir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -771,5 +779,94 @@ mod tests {
         assert_eq!(report.failed.len(), 1);
         assert!(report.failed[0].contains("rust"));
         assert!(report.failed[0].contains("Cursor"));
+    }
+
+    #[test]
+    fn inline_update_refreshes_hook_config_and_agents() {
+        let root = tmpdir("inline-update-hook");
+        let project = root.join("project");
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("hooks")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[hook-events]\n\"PostCompact:\" = \"all\"\n",
+        )
+        .unwrap();
+
+        let mut agent = agent_fixture("rust");
+        agent.source_path = source.join("agents/rust.md");
+        let mut old_hook = hook_fixture("guard", None);
+        old_hook.source_path = source.join("hooks/guard.sh");
+        old_hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+        let mut new_hook = old_hook.clone();
+        new_hook.event = "PostCompact".into();
+        new_hook.matcher = None;
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "rust".into(),
+            kind: ItemKind::Agent,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(LockEntry {
+            name: "guard".into(),
+            kind: ItemKind::Hook,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        let items = DiscoveredItems {
+            agents: vec![agent.clone()],
+            skills: Vec::new(),
+            hooks: vec![new_hook],
+            pi_extensions: Vec::new(),
+            extras: Vec::new(),
+        };
+
+        crate::test_util::with_project_root(&project, || {
+            crate::installer::install_hook(&old_hook, Harness::ClaudeCode, false, &[]).unwrap();
+            Harness::ClaudeCode
+                .generate_agent(
+                    &agent,
+                    false,
+                    &[],
+                    &[old_hook.clone()],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap();
+
+            let report = perform_inline_update(&["guard".to_string()], &items);
+            assert_eq!(report.completed, 1, "report: {report:?}");
+            assert!(report.failed.is_empty(), "report: {report:?}");
+        });
+
+        let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert!(
+            parsed.pointer("/hooks/PreToolUse").is_none(),
+            "stale PreToolUse settings: {settings}"
+        );
+        assert!(
+            parsed.pointer("/hooks/PostCompact").is_some(),
+            "missing PostCompact settings: {settings}"
+        );
+
+        let agent_body = std::fs::read_to_string(project.join(".claude/agents/rust.md")).unwrap();
+        let frontmatter: serde_json::Value = serde_yaml::from_str(agent_frontmatter(&agent_body))
+            .expect("valid Claude frontmatter after inline update");
+        assert!(frontmatter.pointer("/hooks/PreToolUse").is_none());
+        assert!(frontmatter.pointer("/hooks/PostCompact").is_some());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -15,7 +15,8 @@ cli/src/
 ├── project_config.rs    Project vstack.toml — ProjectConfig, ensure/write/update
 ├── resolve.rs           Shared helpers — skill-pair resolution, hook source attribution/matching, read_existing_extras, is_vstack_source
 ├── installer.rs         Symlink/copy logic, install/remove orchestration
-├── installer/hooks.rs   Hook install/remove/config cleanup for Claude/Codex/OpenCode/Cursor
+├── installer/hooks.rs   Hook install/remove orchestration and shared Claude/Codex/Cursor helpers
+├── installer/hooks/     Hook submodules — OpenCode cleanup/install and focused hook tests
 ├── harness/             (canonical → per-harness translation)
 │   ├── claude.rs        → .claude/agents/*.md (disallowedTools, effort/background/isolation/memory, skills, hooks frontmatter)
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills)

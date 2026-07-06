@@ -466,6 +466,10 @@ pub fn pi_source_index_path(global: bool) -> PathBuf {
 /// Find the project root by walking up from CWD.
 /// Looks for `.vstack-lock.json` or harness config dirs.
 pub fn project_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(root) = crate::test_util::project_root_override() {
+        return root;
+    }
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ROOT.get_or_init(find_project_root).clone()
 }

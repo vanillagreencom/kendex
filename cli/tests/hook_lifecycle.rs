@@ -333,6 +333,73 @@ fn claude_hook_add_preserves_user_handler_with_same_script_basename() {
 }
 
 #[test]
+fn global_claude_hook_install_remove_preserves_user_same_basename_handler() {
+    let sandbox = Sandbox::new("global-claude-hook");
+    let claude_dir = sandbox.home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "bash /usr/local/bin/guard.sh"}]
+      }
+    ]
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--global",
+            "--hook",
+            "guard",
+            "--harness",
+            "claude",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack global add hook");
+
+    let hook_path = sandbox.home.join(".claude/hooks/guard.sh");
+    assert!(hook_path.exists());
+    let expected_command = format!("bash {}", hook_path.display());
+    let settings = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    let entries = parsed
+        .pointer("/hooks/PreToolUse")
+        .and_then(|value| value.as_array())
+        .expect("PreToolUse entries");
+    assert_eq!(
+        entries.len(),
+        2,
+        "global user hook should be preserved: {settings}"
+    );
+    assert!(settings.contains("bash /usr/local/bin/guard.sh"));
+    assert!(settings.contains(&expected_command));
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "guard", "--scope", "global"])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack global remove hook");
+
+    assert!(!hook_path.exists());
+    let settings = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+    assert!(settings.contains("bash /usr/local/bin/guard.sh"));
+    assert!(!settings.contains(&expected_command));
+}
+
+#[test]
 fn refresh_upserts_claude_hook_registration_when_event_changes() {
     let sandbox = Sandbox::new("refresh-claude-hook-upsert");
 

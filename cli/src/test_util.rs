@@ -11,6 +11,7 @@ use std::thread::LocalKey;
 thread_local! {
     static PI_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     static CODEX_HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static PROJECT_ROOT_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn pi_dir_override() -> Option<PathBuf> {
@@ -19,6 +20,10 @@ pub(crate) fn pi_dir_override() -> Option<PathBuf> {
 
 pub(crate) fn codex_home_override() -> Option<PathBuf> {
     CODEX_HOME_OVERRIDE.with(|slot| slot.borrow().clone())
+}
+
+pub(crate) fn project_root_override() -> Option<PathBuf> {
+    PROJECT_ROOT_OVERRIDE.with(|slot| slot.borrow().clone())
 }
 
 /// Run `body` with the global Pi dir redirected to `pi_dir` for the current
@@ -31,6 +36,12 @@ pub(crate) fn with_pi_dir<R>(pi_dir: &Path, body: impl FnOnce() -> R) -> R {
 /// test thread, restoring the previous override afterwards.
 pub(crate) fn with_codex_home<R>(codex_home: &Path, body: impl FnOnce() -> R) -> R {
     with_path_override(&CODEX_HOME_OVERRIDE, codex_home, body)
+}
+
+/// Run `body` with the project root redirected to `project_root` for the
+/// current test thread, restoring the previous override afterwards.
+pub(crate) fn with_project_root<R>(project_root: &Path, body: impl FnOnce() -> R) -> R {
+    with_path_override(&PROJECT_ROOT_OVERRIDE, project_root, body)
 }
 
 fn with_path_override<R>(
