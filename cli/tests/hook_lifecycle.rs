@@ -547,18 +547,29 @@ fn adding_codex_agent_after_fallback_hook_installed_adds_safety_prose() {
 }
 
 #[test]
-fn remove_hook_cleans_claude_artifacts_settings_and_lock() {
+fn remove_hook_cleans_claude_artifacts_settings_agents_and_lock() {
     let sandbox = Sandbox::new("remove-hook");
 
     let output = sandbox
         .vstack()
         .arg("add")
         .arg(&sandbox.source)
-        .args(["--hook", "guard", "--harness", "claude", "--copy", "-y"])
+        .args([
+            "--agent",
+            "rust",
+            "--hook",
+            "guard",
+            "--harness",
+            "claude",
+            "--copy",
+            "-y",
+        ])
         .output()
         .unwrap();
     assert_success(output, "vstack add");
     assert!(sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let agent_before = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    assert!(agent_before.contains(".claude/hooks/guard.sh"));
 
     let output = sandbox
         .vstack()
@@ -568,6 +579,14 @@ fn remove_hook_cleans_claude_artifacts_settings_and_lock() {
     assert_success(output, "vstack remove");
 
     assert!(!sandbox.project.join(".claude/hooks/guard.sh").exists());
+    let agent_after = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    let parsed: serde_json::Value =
+        serde_yaml::from_str(agent_frontmatter(&agent_after)).expect("valid Claude frontmatter");
+    assert!(
+        parsed.get("hooks").is_none(),
+        "stale agent hook frontmatter: {agent_after}"
+    );
+    assert!(!agent_after.contains(".claude/hooks/guard.sh"));
     let settings = fs::read_to_string(sandbox.project.join(".claude/settings.json")).unwrap();
     assert!(!settings.contains("guard.sh"), "stale settings: {settings}");
     let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();

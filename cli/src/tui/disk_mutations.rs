@@ -50,6 +50,21 @@ fn filter_harnesses_for_hook_target(
         .collect()
 }
 
+fn rollback_destination_install(
+    name: &str,
+    kind: ItemKind,
+    harnesses: &[Harness],
+    scope_global: bool,
+) -> String {
+    if harnesses.is_empty() {
+        return String::new();
+    }
+    match crate::installer::remove_item(name, Some(kind), harnesses, scope_global) {
+        Ok(_) => String::new(),
+        Err(err) => format!("; rollback failed: {err:#}"),
+    }
+}
+
 pub(super) fn perform_remove_plans(plans: &[RemovePlan]) -> DiskMutationReport {
     let mut report = DiskMutationReport::new(plans.len());
     for plan in plans {
@@ -86,6 +101,7 @@ fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
     let Some(entry) = lock.entries.get(name).cloned() else {
         return Ok(false);
     };
+    let removed_hook_harnesses = (entry.kind == ItemKind::Hook).then(|| entry.harnesses.clone());
     if entry.kind == ItemKind::PiExtension {
         crate::pi_extension::remove_pi_extension(name, scope_global)?;
     } else {
@@ -98,6 +114,13 @@ fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
     }
     lock.remove(name);
     lock.save(&lock_path)?;
+    if let Some(harnesses) = removed_hook_harnesses.as_deref() {
+        crate::commands::refresh::regenerate_agents_after_hook_removal(
+            scope_global,
+            &lock,
+            harnesses,
+        )?;
+    }
     Ok(true)
 }
 
@@ -280,6 +303,19 @@ pub(super) fn perform_move_plans(
             report.fail(&plan.name, reason);
             continue;
         }
+        if !install_failures.is_empty() {
+            let rollback =
+                rollback_destination_install(&plan.name, entry.kind, &succeeded, to_global);
+            report.fail(
+                &plan.name,
+                format!(
+                    "partial destination failure: {}{}",
+                    install_failures.join("; "),
+                    rollback
+                ),
+            );
+            continue;
+        }
 
         let mut new_entry = entry.clone();
         new_entry.harnesses = succeeded.iter().map(|h| h.id().to_string()).collect();
@@ -384,6 +420,19 @@ fn generate_moved_agents(
             }
             continue;
         }
+        if !failures.is_empty() {
+            let rollback =
+                rollback_destination_install(&intent.name, ItemKind::Agent, &succeeded, to_global);
+            report.fail(
+                &intent.name,
+                format!(
+                    "partial destination failure: {}{}",
+                    failures.join("; "),
+                    rollback
+                ),
+            );
+            continue;
+        }
 
         let mut new_entry = intent.entry.clone();
         new_entry.harnesses = succeeded.iter().map(|h| h.id().to_string()).collect();
@@ -436,6 +485,17 @@ pub(super) fn perform_inline_update(
     let mapping = source_dir
         .map(crate::mapping::MappingConfig::load)
         .unwrap_or_default();
+    let refresh_sources: Vec<crate::commands::refresh::RefreshSource> = source_dir
+        .map(|root| crate::commands::refresh::RefreshSource {
+            root: root.to_path_buf(),
+            mapping: mapping.clone(),
+            agents: items.agents.clone(),
+            skills: items.skills.clone(),
+            hooks: items.hooks.clone(),
+            pi_extensions: items.pi_extensions.clone(),
+        })
+        .into_iter()
+        .collect();
 
     for scope_global in [false, true] {
         let lock_path = config::lock_file_path(scope_global);
@@ -478,16 +538,11 @@ pub(super) fn perform_inline_update(
         };
 
         let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
-        project_config.overlay_source_frontmatter(&mapping);
 
         let stats = crate::commands::refresh::refresh_items_in_scope(
             scope_global,
             &lock,
-            &items.agents,
-            &items.skills,
-            &items.hooks,
-            &items.pi_extensions,
-            &mapping,
+            &refresh_sources,
             &mut project_config,
             &project_root,
             Some(&refresh_names),
@@ -531,6 +586,18 @@ fn source_dir_for_items(items: &DiscoveredItems) -> Option<&std::path::Path> {
         .first()
         .and_then(|a| a.source_path.parent().and_then(|p| p.parent()))
         .or_else(|| items.skills.first().and_then(|s| s.source_dir.parent()))
+        .or_else(|| {
+            items
+                .hooks
+                .first()
+                .and_then(|h| h.source_path.parent().and_then(|p| p.parent()))
+        })
+        .or_else(|| {
+            items
+                .pi_extensions
+                .first()
+                .and_then(|e| e.source_dir.parent())
+        })
 }
 
 #[cfg(test)]
@@ -782,6 +849,62 @@ mod tests {
     }
 
     #[test]
+    fn generate_moved_agents_reports_partial_failure_and_rolls_back_success() {
+        let root = tmpdir("partial-agent-move");
+        let project = root.join("project");
+        std::fs::create_dir_all(project.join(".codex")).unwrap();
+        std::fs::write(project.join(".codex/agents"), "not a directory").unwrap();
+
+        let mut dst_lock = LockFile::default();
+        let entry = LockEntry {
+            name: "rust".into(),
+            kind: ItemKind::Agent,
+            source: "source".into(),
+            harnesses: vec!["claude-code".into(), "codex".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        };
+        let intent = AgentMoveIntent {
+            name: "rust".into(),
+            entry,
+            target_harnesses: vec![Harness::ClaudeCode, Harness::Codex],
+        };
+        let items = DiscoveredItems {
+            agents: vec![agent_fixture("rust")],
+            skills: Vec::new(),
+            hooks: Vec::new(),
+            pi_extensions: Vec::new(),
+            extras: Vec::new(),
+        };
+        let mut report = DiskMutationReport::new(1);
+
+        let moved = crate::test_util::with_project_root(&project, || {
+            generate_moved_agents(
+                &items,
+                &[intent],
+                false,
+                &mut dst_lock,
+                &MappingConfig::default(),
+                &crate::project_config::ProjectConfig::default(),
+                &mut report,
+            )
+        });
+
+        assert!(moved.is_empty());
+        assert!(!dst_lock.entries.contains_key("rust"));
+        assert_eq!(report.failed.len(), 1);
+        assert!(report.failed[0].contains("partial destination failure"));
+        assert!(report.failed[0].contains("Codex"));
+        assert!(
+            !project.join(".claude/agents/rust.md").exists(),
+            "successful Claude write should be rolled back on partial failure"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn inline_update_refreshes_hook_config_and_agents() {
         let root = tmpdir("inline-update-hook");
         let project = root.join("project");
@@ -866,6 +989,85 @@ mod tests {
             .expect("valid Claude frontmatter after inline update");
         assert!(frontmatter.pointer("/hooks/PreToolUse").is_none());
         assert!(frontmatter.pointer("/hooks/PostCompact").is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tui_remove_hook_refreshes_claude_agent_frontmatter() {
+        let root = tmpdir("remove-hook-agent-refresh");
+        let project = root.join("project");
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("hooks")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[hook-events]\n\"PreToolUse:Bash\" = \"all\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("agents/rust.md"),
+            "---\nname: rust\ndescription: rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("hooks/guard.sh"),
+            "# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\n#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+
+        let mut agent = agent_fixture("rust");
+        agent.source_path = source.join("agents/rust.md");
+        let mut hook = hook_fixture("guard", None);
+        hook.source_path = source.join("hooks/guard.sh");
+        hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "rust".into(),
+            kind: ItemKind::Agent,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(LockEntry {
+            name: "guard".into(),
+            kind: ItemKind::Hook,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        crate::test_util::with_project_root(&project, || {
+            crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+            Harness::ClaudeCode
+                .generate_agent(
+                    &agent,
+                    false,
+                    &[],
+                    &[hook.clone()],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap();
+
+            assert!(remove_one("guard", false).unwrap());
+        });
+
+        let agent_body = std::fs::read_to_string(project.join(".claude/agents/rust.md")).unwrap();
+        let frontmatter: serde_json::Value = serde_yaml::from_str(agent_frontmatter(&agent_body))
+            .expect("valid Claude frontmatter after TUI remove");
+        assert!(
+            frontmatter.get("hooks").is_none(),
+            "stale frontmatter: {agent_body}"
+        );
+        assert!(!agent_body.contains(".claude/hooks/guard.sh"));
+        assert!(!project.join(".claude/hooks/guard.sh").exists());
 
         let _ = std::fs::remove_dir_all(root);
     }

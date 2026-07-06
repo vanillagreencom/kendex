@@ -1,4 +1,4 @@
-use crate::config::{self, LockFile};
+use crate::config::{self, ItemKind, LockFile};
 use crate::harness::Harness;
 use crate::installer;
 use crate::scope::ScopeFilter;
@@ -29,6 +29,10 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
         for name in names {
             let lock_entry = lock.entries.get(name.as_str()).cloned();
             let kind = lock_entry.as_ref().map(|entry| entry.kind);
+            let removed_hook_harnesses = lock_entry
+                .as_ref()
+                .filter(|entry| entry.kind == ItemKind::Hook)
+                .map(|entry| entry.harnesses.clone());
             let harnesses: Vec<Harness> = if let Some(ref entry) = lock_entry {
                 entry
                     .harnesses
@@ -73,6 +77,12 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                     }
                     eprintln!("  removed stale lock entry for {name}");
                     lock.remove(name);
+                    if let Some(harnesses) = removed_hook_harnesses.as_deref() {
+                        lock.save(&lock_path)?;
+                        crate::commands::refresh::regenerate_agents_after_hook_removal(
+                            global, &lock, harnesses,
+                        )?;
+                    }
                     scope_removed.push(name.clone());
                 } else {
                     scope_missing.push(name.clone());
@@ -91,6 +101,12 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                     }
                 }
                 lock.remove(name);
+                if let Some(harnesses) = removed_hook_harnesses.as_deref() {
+                    lock.save(&lock_path)?;
+                    crate::commands::refresh::regenerate_agents_after_hook_removal(
+                        global, &lock, harnesses,
+                    )?;
+                }
                 scope_removed.push(name.clone());
             }
         }

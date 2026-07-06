@@ -9,6 +9,103 @@ use crate::pi_extension::PiExtension;
 use crate::project_config::ProjectConfig;
 use crate::skill::Skill;
 use anyhow::Result;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+#[derive(Clone)]
+pub struct RefreshSource {
+    pub root: PathBuf,
+    pub mapping: MappingConfig,
+    pub agents: Vec<Agent>,
+    pub skills: Vec<Skill>,
+    pub hooks: Vec<Hook>,
+    pub pi_extensions: Vec<PiExtension>,
+}
+
+impl RefreshSource {
+    pub fn load(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            mapping: MappingConfig::load(root),
+            agents: crate::agent::discover_agents(&root.join("agents")).unwrap_or_default(),
+            skills: crate::skill::discover_skills(&root.join("skills")).unwrap_or_default(),
+            hooks: crate::hook::discover_hooks(&root.join("hooks")).unwrap_or_default(),
+            pi_extensions: crate::pi_extension::discover_pi_extensions(&root.join("pi-extensions"))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+fn load_refresh_sources(source_dirs: &[PathBuf]) -> Vec<RefreshSource> {
+    source_dirs
+        .iter()
+        .map(|dir| RefreshSource::load(dir))
+        .collect()
+}
+
+fn canonicalish(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    canonicalish(a) == canonicalish(b)
+}
+
+fn refresh_source_for_entry<'a>(
+    sources: &'a [RefreshSource],
+    entry: &config::LockEntry,
+) -> Option<&'a RefreshSource> {
+    if let Some(root) = resolve_single_source(&entry.source) {
+        return sources.iter().find(|source| same_path(&source.root, &root));
+    }
+
+    if sources.len() == 1 {
+        sources.first()
+    } else {
+        None
+    }
+}
+
+fn all_source_hooks(sources: &[RefreshSource]) -> Vec<Hook> {
+    sources
+        .iter()
+        .flat_map(|source| source.hooks.iter().cloned())
+        .collect()
+}
+
+fn all_source_pi_extensions(sources: &[RefreshSource]) -> Vec<PiExtension> {
+    sources
+        .iter()
+        .flat_map(|source| source.pi_extensions.iter().cloned())
+        .collect()
+}
+
+fn resolve_skill_pairs_from_sources(
+    names: &[String],
+    lock: &config::LockFile,
+    sources: &[RefreshSource],
+) -> Vec<(String, String)> {
+    names
+        .iter()
+        .map(|name| {
+            let description = lock
+                .entries
+                .get(name)
+                .filter(|entry| entry.kind == ItemKind::Skill)
+                .and_then(|entry| refresh_source_for_entry(sources, entry))
+                .and_then(|source| source.skills.iter().find(|skill| &skill.name == name))
+                .or_else(|| {
+                    sources
+                        .iter()
+                        .flat_map(|source| source.skills.iter())
+                        .find(|skill| &skill.name == name)
+                })
+                .map(|skill| skill.description.clone())
+                .unwrap_or_else(|| name.clone());
+            (name.clone(), description)
+        })
+        .collect()
+}
 
 fn source_pi_extension_for_lock_name<'a>(
     pi_extensions: &'a [PiExtension],
@@ -20,9 +117,6 @@ fn source_pi_extension_for_lock_name<'a>(
             .find(|e| crate::pi_extension::legacy_names_for(&e.name).contains(&name))
     })
 }
-use std::collections::HashMap;
-use std::path::Path;
-
 /// Result counts from one invocation of [`refresh_items_in_scope`].
 #[derive(Default)]
 pub struct RefreshStats {
@@ -76,26 +170,22 @@ fn merge_upstream<T: Clone>(
 /// `name_filter`) using the supplied source data.
 ///
 /// Both `vstack refresh` and the TUI's inline-update path go through this
-/// helper. Caller is responsible for: source discovery (filling in
-/// `agents`/`skills`/`hooks`/`pi_extensions` and `mapping`), project-config
-/// loading, lock loading, lock-disk reconciliation, hook-harness pruning via
+/// helper. Caller is responsible for: source discovery (filling `sources`),
+/// project-config loading, lock loading, lock-disk reconciliation, hook-harness pruning via
 /// [`prune_hook_harnesses`], and writing the upstream-additions back to disk via
 /// [`crate::project_config::merge_upstream_agent_skills`].
 #[allow(clippy::too_many_arguments)]
 pub fn refresh_items_in_scope(
     global: bool,
     lock: &config::LockFile,
-    agents: &[Agent],
-    skills: &[Skill],
-    hooks: &[Hook],
-    pi_extensions: &[PiExtension],
-    mapping: &MappingConfig,
+    sources: &[RefreshSource],
     project_config: &mut ProjectConfig,
     project_root: &Path,
     name_filter: Option<&[String]>,
 ) -> RefreshStats {
     let mut stats = RefreshStats::default();
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
+    let all_hooks = all_source_hooks(sources);
 
     if lock
         .entries
@@ -120,7 +210,13 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Agent)
         .filter(|(n, _)| pass(n))
     {
-        let Some(agent) = agents.iter().find(|a| &a.name == name) else {
+        let Some(source) = refresh_source_for_entry(sources, entry) else {
+            if name_filter.is_none() {
+                eprintln!("  ! {} — source not found, skipped", name);
+            }
+            continue;
+        };
+        let Some(agent) = source.agents.iter().find(|a| &a.name == name) else {
             if name_filter.is_none() {
                 eprintln!("  ! {} — source not found, skipped", name);
             }
@@ -128,7 +224,10 @@ pub fn refresh_items_in_scope(
         };
 
         // Required skills: project list (if present) merged with source additions.
-        let source_skills = mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills);
+        let source_skills =
+            source
+                .mapping
+                .skills_for_agent(&agent.name, &agent.role, &installed_skills);
         let project_required = project_config.agent_skills_for(&agent.name);
         let (skill_names, added) =
             merge_upstream(project_required.map(|v| &v[..]), &source_skills, |s| {
@@ -143,7 +242,7 @@ pub fn refresh_items_in_scope(
                 .insert(agent.name.clone(), (skill_names.clone(), added));
         }
 
-        let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, skills);
+        let skill_pairs = resolve_skill_pairs_from_sources(&skill_names, lock, sources);
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
@@ -158,15 +257,21 @@ pub fn refresh_items_in_scope(
             }
         }
 
-        let extras =
-            crate::resolve::build_agent_extras(project_config, &agent.name, &agent.role, None);
+        let mut effective_project_config = project_config.clone();
+        effective_project_config.overlay_source_frontmatter(&source.mapping);
+        let extras = crate::resolve::build_agent_extras(
+            &effective_project_config,
+            &agent.name,
+            &agent.role,
+            None,
+        );
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 let matched_hooks = crate::resolve::matched_installed_hooks_for_agent_harness(
                     lock,
-                    hooks,
-                    mapping,
+                    &all_hooks,
+                    &source.mapping,
                     &agent.role,
                     harness.id(),
                 );
@@ -184,7 +289,10 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Skill)
         .filter(|(n, _)| pass(n))
     {
-        let Some(skill) = skills.iter().find(|s| &s.name == name) else {
+        let Some(source) = refresh_source_for_entry(sources, entry) else {
+            continue;
+        };
+        let Some(skill) = source.skills.iter().find(|s| &s.name == name) else {
             continue;
         };
 
@@ -206,7 +314,11 @@ pub fn refresh_items_in_scope(
         .entries
         .iter()
         .filter(|(_, e)| e.kind == ItemKind::Agent)
-        .filter_map(|(name, _)| agents.iter().find(|a| &a.name == name).cloned())
+        .filter_map(|(name, entry)| {
+            refresh_source_for_entry(sources, entry)
+                .and_then(|source| source.agents.iter().find(|agent| &agent.name == name))
+                .cloned()
+        })
         .collect();
 
     for (_name, entry) in lock
@@ -215,7 +327,10 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Hook)
         .filter(|(n, _)| pass(n))
     {
-        let Some(hook) = crate::resolve::source_hook_for_lock_entry(hooks, entry) else {
+        let Some(source) = refresh_source_for_entry(sources, entry) else {
+            continue;
+        };
+        let Some(hook) = source.hooks.iter().find(|hook| hook.name == entry.name) else {
             continue;
         };
         for harness_id in &entry.harnesses {
@@ -230,13 +345,16 @@ pub fn refresh_items_in_scope(
     }
 
     // ── Pi packages ──────────────────────────────────────
-    for (name, _) in lock
+    for (name, entry) in lock
         .entries
         .iter()
         .filter(|(_, e)| e.kind == ItemKind::PiExtension)
         .filter(|(n, _)| pass(n))
     {
-        let Some(ext) = source_pi_extension_for_lock_name(pi_extensions, name) else {
+        let Some(source) = refresh_source_for_entry(sources, entry) else {
+            continue;
+        };
+        let Some(ext) = source_pi_extension_for_lock_name(&source.pi_extensions, name) else {
             continue;
         };
         let _ = crate::pi_extension::install_pi_extension(ext, global);
@@ -307,6 +425,55 @@ pub fn prune_hook_harnesses(
     pruned_any
 }
 
+pub fn regenerate_agents_after_hook_removal(
+    global: bool,
+    lock: &config::LockFile,
+    removed_hook_harnesses: &[String],
+) -> Result<()> {
+    if removed_hook_harnesses.is_empty() {
+        return Ok(());
+    }
+
+    let agent_names: Vec<String> = lock
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.kind == ItemKind::Agent)
+        .filter(|(_, entry)| {
+            entry.harnesses.iter().any(|harness| {
+                removed_hook_harnesses
+                    .iter()
+                    .any(|removed| removed == harness)
+            })
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    if agent_names.is_empty() {
+        return Ok(());
+    }
+
+    let source_dirs = resolve_sources(lock);
+    let sources = load_refresh_sources(&source_dirs);
+    if sources.is_empty() {
+        return Ok(());
+    }
+
+    let project_root = config::project_root();
+    let mut project_config = ProjectConfig::load(&project_root);
+    let stats = refresh_items_in_scope(
+        global,
+        lock,
+        &sources,
+        &mut project_config,
+        &project_root,
+        Some(&agent_names),
+    );
+    if !global {
+        stats.persist_upstream(&project_root);
+    }
+
+    Ok(())
+}
+
 /// Reinstall every item recorded in the selected scopes from current source:
 /// regenerate agent files (re-applying `vstack.toml` customizations),
 /// re-copy skills, hooks, and Pi packages. Use after editing source files
@@ -352,16 +519,14 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     // during resolution; reusing this list avoids duplicate git fetch/reset
     // cycles for pruning and aggregation.
     let source_dirs = resolve_sources(&lock);
+    let sources = load_refresh_sources(&source_dirs);
 
     // Self-heal hook lock entries: drop harness ids the hook no longer
     // applies to (the `harnesses:` allowlist in source may have changed
     // since install). Done up-front so all downstream passes see the
     // pruned state.
     {
-        let source_hooks_for_prune: Vec<crate::hook::Hook> = source_dirs
-            .iter()
-            .flat_map(|dir| crate::hook::discover_hooks(&dir.join("hooks")).unwrap_or_default())
-            .collect();
+        let source_hooks_for_prune = all_source_hooks(&sources);
         if prune_hook_harnesses(global, &mut lock, &source_hooks_for_prune, None) {
             lock.save(&lock_path)?;
         }
@@ -391,37 +556,11 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
     let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
-    // After mapping is loaded below we overlay its frontmatter defaults so
-    // source-level `[agent-frontmatter.<harness>]` entries feed regeneration.
-
-    if source_dirs.is_empty() {
+    if sources.is_empty() {
         eprintln!("Could not locate any package sources. Run `vstack add` to reinstall.");
         return Ok(());
     }
-
-    // Aggregate source data from all resolved sources
-    let mut all_source_agents = Vec::new();
-    let mut all_source_skills = Vec::new();
-    let mut all_source_hooks = Vec::new();
-    let mut mapping = crate::mapping::MappingConfig::default();
-
-    for dir in &source_dirs {
-        mapping = crate::mapping::MappingConfig::load(dir);
-        all_source_agents
-            .extend(crate::agent::discover_agents(&dir.join("agents")).unwrap_or_default());
-        all_source_skills
-            .extend(crate::skill::discover_skills(&dir.join("skills")).unwrap_or_default());
-        all_source_hooks
-            .extend(crate::hook::discover_hooks(&dir.join("hooks")).unwrap_or_default());
-    }
-
-    let mut all_pi_extensions = Vec::new();
-    for dir in &source_dirs {
-        all_pi_extensions.extend(
-            crate::pi_extension::discover_pi_extensions(&dir.join("pi-extensions"))
-                .unwrap_or_default(),
-        );
-    }
+    let all_pi_extensions = all_source_pi_extensions(&sources);
 
     if !global {
         let project_canon = project_root
@@ -431,14 +570,19 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .iter()
             .any(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == project_canon);
         if !project_is_source {
-            let installed_settings_skills: Vec<Skill> = all_source_skills
+            let installed_settings_skills: Vec<Skill> = lock
+                .entries
                 .iter()
-                .filter(|skill| {
-                    lock.entries
-                        .get(&skill.name)
-                        .is_some_and(|entry| entry.kind == ItemKind::Skill)
+                .filter(|(_, entry)| entry.kind == ItemKind::Skill)
+                .filter_map(|(name, entry)| {
+                    refresh_source_for_entry(&sources, entry).and_then(|source| {
+                        source
+                            .skills
+                            .iter()
+                            .find(|skill| &skill.name == name)
+                            .cloned()
+                    })
                 })
-                .cloned()
                 .collect();
             if let Some(result) = crate::project_settings::ensure_skill_settings(
                 &project_root,
@@ -463,29 +607,37 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
                 )
             })
             .collect();
-        let installed_agents: Vec<Agent> = all_source_agents
-            .iter()
-            .filter(|agent| lock.entries.contains_key(&agent.name))
-            .cloned()
-            .collect();
-        crate::project_config::write_agent_frontmatter_defaults(
-            &project_root,
-            &installed_agents,
-            &harnesses_by_agent,
-            &mapping,
-        );
+        for source in &sources {
+            let installed_agents: Vec<Agent> = lock
+                .entries
+                .iter()
+                .filter(|(_, entry)| entry.kind == ItemKind::Agent)
+                .filter(|(_, entry)| {
+                    refresh_source_for_entry(&sources, entry)
+                        .is_some_and(|owner| same_path(&owner.root, &source.root))
+                })
+                .filter_map(|(name, _)| {
+                    source
+                        .agents
+                        .iter()
+                        .find(|agent| &agent.name == name)
+                        .cloned()
+                })
+                .collect();
+            crate::project_config::write_agent_frontmatter_defaults(
+                &project_root,
+                &installed_agents,
+                &harnesses_by_agent,
+                &source.mapping,
+            );
+        }
         project_config = crate::project_config::ProjectConfig::load(&project_root);
     }
-    project_config.overlay_source_frontmatter(&mapping);
 
     let stats = refresh_items_in_scope(
         global,
         &lock,
-        &all_source_agents,
-        &all_source_skills,
-        &all_source_hooks,
-        &all_pi_extensions,
-        &mapping,
+        &sources,
         &mut project_config,
         &project_root,
         None,
@@ -689,8 +841,60 @@ mod tests {
     fn make_source(root: &Path, name: &str) -> PathBuf {
         let source = root.join(name);
         std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("skills/shared")).unwrap();
         std::fs::create_dir_all(source.join("hooks")).unwrap();
+        std::fs::create_dir_all(source.join("pi-extensions/shared")).unwrap();
         source
+    }
+
+    fn write_colliding_source(source: &Path, marker: &str, hook_event: &str, model: &str) {
+        std::fs::write(
+            source.join("vstack.toml"),
+            format!(
+                "[agent-skills]\nrust = [\"shared\"]\n\n[hook-events]\n\"{hook_event}:Bash\" = \"all\"\n\n[agent-frontmatter.claude]\nrust = {{ model = \"{model}\" }}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("agents/rust.md"),
+            format!(
+                "---\nname: rust\ndescription: Rust {marker}\nmodel: sonnet\nrole: engineer\n---\n# Rust\n\nAgent body {marker}.\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("skills/shared/SKILL.md"),
+            format!(
+                "---\nname: shared\ndescription: Shared {marker}\nlicense: MIT\n---\n# Shared\n\nSkill body {marker}.\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("hooks/guard.sh"),
+            format!(
+                "# ---\n# name: guard\n# event: {hook_event}\n# matcher: Bash\n# description: Guard {marker}\n# ---\n#!/usr/bin/env bash\necho {marker}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("pi-extensions/shared/package.json"),
+            format!(
+                "{{\n  \"name\": \"@example/shared\",\n  \"description\": \"Pi {marker}\",\n  \"version\": \"{marker}.0.0\",\n  \"keywords\": [\"pi-package\"],\n  \"pi\": {{ \"extensions\": [] }}\n}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn lock_entry(name: &str, kind: ItemKind, source: &Path, harnesses: Vec<&str>) -> LockEntry {
+        LockEntry {
+            name: name.into(),
+            kind,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: harnesses.into_iter().map(String::from).collect(),
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        }
     }
 
     #[test]
@@ -791,5 +995,95 @@ mod tests {
                 .map(|entry| entry.harnesses.as_slice()),
             Some(&["codex".to_string()][..])
         );
+    }
+
+    #[test]
+    fn refresh_items_use_lock_source_for_colliding_names_and_mapping() {
+        let root = tmpdir("multi-source-refresh");
+        let project = root.join("project");
+        let source_a = make_source(&root, "source-a");
+        let source_b = make_source(&root, "source-b");
+        std::fs::create_dir_all(&project).unwrap();
+        write_colliding_source(&source_a, "1", "PreToolUse", "source-a-model");
+        write_colliding_source(&source_b, "2", "PostCompact", "source-b-model");
+
+        let mut lock = LockFile::default();
+        lock.add(lock_entry(
+            "rust",
+            ItemKind::Agent,
+            &source_b,
+            vec!["claude-code"],
+        ));
+        lock.add(lock_entry(
+            "shared",
+            ItemKind::Skill,
+            &source_b,
+            vec!["claude-code"],
+        ));
+        lock.add(lock_entry(
+            "guard",
+            ItemKind::Hook,
+            &source_b,
+            vec!["claude-code"],
+        ));
+        lock.add(lock_entry(
+            "@example/shared",
+            ItemKind::PiExtension,
+            &source_b,
+            vec!["pi"],
+        ));
+
+        let sources = vec![
+            RefreshSource::load(&source_a),
+            RefreshSource::load(&source_b),
+        ];
+
+        crate::test_util::with_project_root(&project, || {
+            let mut project_config = ProjectConfig::default();
+            let stats =
+                refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+            assert_eq!(stats.agents_refreshed, 1);
+            assert_eq!(stats.skills_refreshed, 1);
+            assert_eq!(stats.hooks_refreshed, 1);
+            assert_eq!(stats.pi_refreshed, 1);
+        });
+
+        let agent = std::fs::read_to_string(project.join(".claude/agents/rust.md")).unwrap();
+        assert!(
+            agent.contains("model: source-b-model"),
+            "wrong mapping: {agent}"
+        );
+        assert!(
+            agent.contains("Agent body 2."),
+            "wrong agent source: {agent}"
+        );
+        assert!(
+            agent.contains("skills: shared"),
+            "missing source skill mapping: {agent}"
+        );
+        assert!(
+            agent.contains("PostCompact") && !agent.contains("PreToolUse"),
+            "wrong hook mapping/source: {agent}"
+        );
+
+        let skill =
+            std::fs::read_to_string(project.join(".claude/skills/shared/SKILL.md")).unwrap();
+        assert!(
+            skill.contains("Skill body 2."),
+            "wrong skill source: {skill}"
+        );
+
+        let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
+        assert!(
+            settings.contains("PostCompact") && !settings.contains("PreToolUse"),
+            "wrong hook settings: {settings}"
+        );
+
+        let package =
+            std::fs::read_to_string(project.join(".pi/packages/@example/shared/package.json"))
+                .unwrap();
+        assert!(package.contains("Pi 2"), "wrong Pi source: {package}");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
