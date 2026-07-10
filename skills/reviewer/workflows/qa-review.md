@@ -43,6 +43,7 @@ Use domain grouping and risk flags to focus review on changed files relevant to 
 ### 2.3 Run Agent Review
 
 Run your agent-specific review. See your agent file for exact commands and Output section for blocker/suggestion mapping.
+Run each validation or read-only check as its own command per the reviewer skill's Harness-Safe Shell rule; do not combine checks into compound or composed shells under Codex `approval=never`.
 Apply the reviewer skill's General Review Ethos and Reviewer Scope Boundaries. Stay within this agent's domain; do not duplicate another specialist unless your domain adds distinct evidence, impact, or remediation.
 
 ### 2.4 Classify Regressions (performance QA agent only)
