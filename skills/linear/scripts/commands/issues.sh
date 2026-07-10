@@ -45,6 +45,19 @@ emit_linear_issue_activity() { return 0; }
 
 emit_linear_relation_activity() { return 0; }
 
+read_description_file() {
+    local description_file="$1"
+    if [[ -z "$description_file" ]]; then
+        echo '{"error": "--description-file requires a non-empty path argument"}' >&2
+        return 1
+    fi
+    if [[ ! -r "$description_file" ]]; then
+        echo "{\"error\": \"--description-file path not readable: $description_file\"}" >&2
+        return 1
+    fi
+    description=$(<"$description_file")
+}
+
 linear_update_activity_type() {
     local normalized="$1"
     local state state_type
@@ -123,6 +136,7 @@ Create Options:
   --title <text>        Issue title (required)
   --team <name>         Team name (default: $LINEAR_TEAM from project config)
   --description <text>  Issue description
+  --description-file <path>  Read description from file (preferred for markdown)
   --label(s) <a,b,c>    Comma-separated label names
   --project <name|uuid> Project (name or UUID, auto-resolved)
   --state <name>        Initial state (case-sensitive, fails with available list)
@@ -138,6 +152,7 @@ Update Options:
   --label(s) <a,b,c>    Replace labels (comma-separated)
   --title <text>        New title
   --description <text>  New description
+  --description-file <path>  Read new description from file (preferred for markdown)
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
@@ -774,6 +789,7 @@ create_issue() {
     local title=""
     local team=""
     local description=""
+    local description_file=""
     local labels=""
     local project=""
     local state=""
@@ -797,6 +813,10 @@ create_issue() {
             ;;
         --description)
             description="$2"
+            shift 2
+            ;;
+        --description-file)
+            description_file="$2"
             shift 2
             ;;
         --labels | --label)
@@ -850,6 +870,14 @@ create_issue() {
         *) break ;;
         esac
     done
+
+    if [[ -n "$description" && -n "$description_file" ]]; then
+        echo '{"error": "--description and --description-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$description_file" ]]; then
+        read_description_file "$description_file"
+    fi
 
     # Apply team default if not specified
     team=$(apply_team_default "$team")
@@ -1062,6 +1090,7 @@ update_issue() {
     local labels=""
     local title=""
     local description=""
+    local description_file=""
     local project=""
     local priority=""
     local assignee=""
@@ -1106,6 +1135,14 @@ update_issue() {
             ;;
         --description=*)
             description="${1#*=}"
+            shift
+            ;;
+        --description-file)
+            description_file="$2"
+            shift 2
+            ;;
+        --description-file=*)
+            description_file="${1#*=}"
             shift
             ;;
         --project)
@@ -1195,6 +1232,14 @@ update_issue() {
         *) break ;;
         esac
     done
+
+    if [[ -n "$description" && -n "$description_file" ]]; then
+        echo '{"error": "--description and --description-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$description_file" ]]; then
+        read_description_file "$description_file"
+    fi
 
     local input_parts=()
 

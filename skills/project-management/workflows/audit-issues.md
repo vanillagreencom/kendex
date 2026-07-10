@@ -561,7 +561,7 @@ Process `create` actions first -- use created IDs to resolve `#N` references in 
 | supersede, combine | workflow-actions § Cancel / Merge / Combine |
 | cancel | workflow-actions § Cancel Obsolete Issues |
 
-**Create template**: Use project-level templates issue-description-template for `--description`. For parent/bundle issues, use project-level templates parent-issue-template. Always heredoc, never inline strings. Every create command must include `--labels "[VALIDATED_FINAL_LABELS]"` from § 7.0.
+**Create template**: Use project-level templates issue-description-template for the description. For parent/bundle issues, use project-level templates parent-issue-template. Write the description body to a file and pass `--description-file` (never inline strings or a heredoc). Every create command must include `--labels "[VALIDATED_FINAL_LABELS]"` from § 7.0.
 
 **Analyzed mode**: When MODE = analyzed, issue creation fields (description, recommendation, location, estimate, priority, agent_label, labels, source_path) come from `issues[].create_fields`. `create_fields.labels[]` is authoritative and required for create; `agent_label` is derived/backward-compatible only. Use `source_path` for `[ORIGIN_CONTEXT]` in issue-description-template. For bundle parents (`create_fields.is_bundle_parent: true`), use parent-issue-template. Top-level `parent_issue` and `research_ref` available for hierarchy fallback and description refs.
 

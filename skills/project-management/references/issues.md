@@ -111,6 +111,8 @@ Use `--parent [ISSUE_ID]` when:
 
 ## CLI Command
 
+Write the multiline description body to a file with the harness file-write tool (e.g. `tmp/issue-description.md`), then pass it via `--description-file` — preferred for markdown and required under `never` approval where heredocs/command-substitution are blocked:
+
 ```bash
 LABELS="agent:[TYPE],[DOMAIN_LABEL],critical-path" # full validated issue-label set
 
@@ -119,13 +121,19 @@ LABELS="agent:[TYPE],[DOMAIN_LABEL],critical-path" # full validated issue-label 
   --project "Phase 1: Foundation" \
   --labels "$LABELS" \
   --estimate 3 \
-  --description "## Summary
+  --description-file tmp/issue-description.md
+```
+
+Where `tmp/issue-description.md` contains, for example:
+
+```markdown
+## Summary
 Auth service for user login and session management.
 
 ## Acceptance Criteria
 - [ ] Login endpoint returns JWT
 - [ ] Token refresh works
-- [ ] Unit tests pass"
+- [ ] Unit tests pass
 ```
 
 ## Cancellation

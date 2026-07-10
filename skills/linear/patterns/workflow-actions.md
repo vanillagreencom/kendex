@@ -44,7 +44,9 @@ scripts/linear.sh issues update [ISSUE_ID] --state "Canceled"
 ## Scope Changes
 
 ```bash
-scripts/linear.sh issues update [ISSUE_ID] --description "[UPDATED_DESCRIPTION]"
+# For a multiline description, write it to a file and use --description-file
+# (preferred for markdown; required under `never` approval where heredocs are blocked).
+scripts/linear.sh issues update [ISSUE_ID] --description-file [DESCRIPTION_PATH]
 scripts/linear.sh comments create [ISSUE_ID] --body "Scope updated: [WHAT_CHANGED]"
 
 scripts/linear.sh issues update [ISSUE_ID] --project "[TARGET_PROJECT]"
@@ -75,7 +77,8 @@ Portable minimum:
 
 ```bash
 scripts/linear.sh cache issues get [PARENT_ID] --with-bundle
-scripts/linear.sh issues update [PARENT_ID] --description "[REGENERATED_DESCRIPTION]"
+# Write the regenerated body to a file, then pass --description-file (preferred for markdown).
+scripts/linear.sh issues update [PARENT_ID] --description-file [DESCRIPTION_PATH]
 ```
 
 ## Fix Relation Violations
