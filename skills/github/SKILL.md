@@ -132,14 +132,17 @@ Resolution rules:
 
 ## Output Formats
 
+`--format` is command-specific, not a global flag. Only the commands listed
+below accept it; others (e.g. `pr-view`, which takes only `--json FIELDS`) do not.
+
 | Format | Description | Commands |
 |--------|-------------|----------|
-| `safe` | DEFAULT. Flat, normalized JSON | All |
+| `safe` | DEFAULT. Flat, normalized JSON | pr-data, pr-threads, pr-list-ready, pr-list-failing, pr-issue, ci-logs, bot-token |
 | `raw` | Original API structure | pr-data, pr-threads |
 | `text` | Plain text extraction | pr-issue, ci-logs, bot-token |
 | `table` | Human-readable table | pr-list-ready, pr-list-failing |
 
-`--json` is accepted as alias for `--format=safe`.
+`--json` is accepted as alias for `--format=safe` on the commands above.
 
 ## Configuration
 

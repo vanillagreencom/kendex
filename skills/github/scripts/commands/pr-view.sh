@@ -67,6 +67,10 @@ Options:
   --json FIELDS    Output specific fields as JSON (e.g., --json number,title)
   --help           Show this help
 
+Note:
+  --format is not supported here. For a normalized safe/raw PR view use
+  'github.sh pr-data [PR] --format=safe|raw'.
+
 Errors:
   Emits structured JSON with status=no_pr, auth_error, token_resolution_failed,
   token_resolution_timeout, token_resolution_unavailable, auth_timeout,
@@ -99,6 +103,13 @@ main() {
             --help|-h)
                 show_help
                 exit 0
+                ;;
+            --format|--format=*)
+                emit_error_result "unsupported_flag" \
+                    "pr-view does not support --format" \
+                    "pr-view accepts only --json FIELDS. For normalized safe/raw PR output use: github.sh pr-data [PR] --format=safe|raw" \
+                    2
+                exit 2
                 ;;
             -*)
                 extra_args+=("$1")

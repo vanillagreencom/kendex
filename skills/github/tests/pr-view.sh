@@ -45,6 +45,8 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf '%s\n' "$*" >>"${STUB_GH_CALLS:-/dev/null}"
+
 _auth_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ "$tok" == op://* ]]; then
@@ -134,6 +136,27 @@ run_pr_view() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        STUB_OP_CALLS="$TMP_ROOT/op.calls" \
        env -u GH_TOKEN -u GITHUB_TOKEN "$@" "$GITHUB_SH" -C "$TMP_ROOT/repo" pr-view --json number,state)
+}
+
+# Invoke pr-view with an unsupported --format=<mode>, logging every gh call to
+# calls_file so tests can prove the flag is not forwarded to gh pr view.
+run_pr_view_format() {
+  local fmt="$1" calls_file="$2"
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_GH_CALLS="$calls_file" \
+       env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" pr-view 42 "--format=$fmt")
+}
+
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  else
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  fi
 }
 
 echo "=== github.sh pr-view ==="
@@ -228,6 +251,46 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "successful pr-view exits 0" "$stderr"
 assert_eq "$(jq -r .number <<<"$output")" "42" "successful pr-view preserves gh JSON" "$stderr"
+
+echo
+echo "=== github.sh pr-view --format rejection ==="
+
+# pr-view advertises only --json FIELDS; --format must be rejected by the
+# wrapper with a clean error, never forwarded to `gh pr view` (which would emit
+# gh's own "unknown flag: --format").
+calls="$TMP_ROOT/gh-format-safe.calls"
+: >"$calls"
+stderr="$TMP_ROOT/format-safe.err"
+set +e
+output=$(run_pr_view_format safe "$calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pr-view --format=safe exits nonzero (wrapper rejects)" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "unsupported_flag" "pr-view --format=safe emits structured status" "$stderr"
+assert_contains "$(cat "$stderr")" "does not support --format" "pr-view --format=safe clean wrapper error"
+assert_contains "$(cat "$stderr")" "pr-data" "pr-view --format=safe points to pr-data"
+assert_not_contains "$(cat "$stderr")" "unknown flag" "pr-view --format=safe suppresses gh unknown flag"
+assert_not_contains "$(cat "$calls")" "--format" "pr-view --format=safe never forwards --format to gh"
+
+calls="$TMP_ROOT/gh-format-raw.calls"
+: >"$calls"
+stderr="$TMP_ROOT/format-raw.err"
+set +e
+output=$(run_pr_view_format raw "$calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pr-view --format=raw exits nonzero (wrapper rejects)" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "unsupported_flag" "pr-view --format=raw emits structured status" "$stderr"
+assert_contains "$(cat "$stderr")" "does not support --format" "pr-view --format=raw clean wrapper error"
+assert_not_contains "$(cat "$stderr")" "unknown flag" "pr-view --format=raw suppresses gh unknown flag"
+assert_not_contains "$(cat "$calls")" "--format" "pr-view --format=raw never forwards --format to gh"
+
+echo
+echo "=== github.sh --help no longer advertises --format globally ==="
+
+help_out="$("$GITHUB_SH" --help)"
+assert_contains "$help_out" "command-specific" "root help marks --format as command-specific"
+assert_not_contains "$help_out" "--format=safe    Flat, normalized structure (DEFAULT)" "root help drops global --format=safe block"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

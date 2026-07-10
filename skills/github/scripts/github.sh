@@ -91,8 +91,18 @@ Commands:
   sticky-comment     Get claude bot sticky comment with verdict
 
 Output Formats:
-  --format=safe    Flat, normalized structure (DEFAULT)
-  --format=raw     Original GitHub API structure
+  --format is command-specific, not a global option. Supported modes
+  (default is safe where applicable):
+    pr-data          safe | raw
+    pr-threads       safe | raw
+    pr-list-ready    safe | table
+    pr-list-failing  safe | table
+    ci-logs          safe | text
+    pr-issue         safe | text
+    bot-token        safe | text
+  Commands not listed above (e.g. pr-view) do not accept --format; see
+  './github.sh <command> --help'. For a normalized safe/raw PR view, use
+  pr-data.
 
 Examples:
   # Get PR data with all threads and comments
