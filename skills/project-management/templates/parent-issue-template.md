@@ -34,6 +34,7 @@ Format for parent/bundle issues that coordinate sub-issues across domains.
 4. **Label**: `agent:multi` if children span 2+ distinct `agent:X` domains
 5. **Blocking relations**: Read [agent-sequencing.md](../../orch/workflows/agent-sequencing.md)
 6. **No implementation detail** — requirements live in children, parent holds only coordination context
+   - Coordination-only parents carry no estimate — clear it with `issues update [ISSUE_ID] --clear-estimate` (or `--estimate 0`). See [issues.md](../references/issues.md) § Sub-Issues.
 7. **Omit empty lines** — drop Research, Decision, Source, Acceptance Criteria lines with no data
 8. **Research/Decision at top** — matches convention in research-complete workflow and audit workflow
 9. **Summary synthesized** — derive from children's descriptions, not repeated from a single child

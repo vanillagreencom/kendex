@@ -70,6 +70,7 @@ Use `--parent [ISSUE_ID]` when:
 - Implementation requirements live in sub-issues, never in parents
 - When sub-issues are created, transfer all parent requirements to children
 - Parents retain: summary, research/decision refs, effort rollup, child cross-references
+- Coordination-only parents carry no estimate (the effort lives in the children). Clear a parent's estimate with `issues update [ISSUE_ID] --clear-estimate` (or the `--estimate 0` alias). Linear stores this as "no estimate"; formatters render it as `0`.
 
 **Grouping**: Deliverable-based, not layer-based.
 - Correct: "User Auth → Login UI, Token Service" (one feature)

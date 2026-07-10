@@ -140,7 +140,8 @@ Update Options:
   --description <text>  New description
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
-  --estimate <1-5>      Effort estimate (points)
+  --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
+  --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
   --assignee <name|me>  Change assignee
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
@@ -181,6 +182,11 @@ Examples:
   # Cycle (sprint) assignment
   issues.sh update PROJ-42 --cycle 864d7ea0-2347-4048-80cd-5be977d904e4
   issues.sh update PROJ-42 --clear-cycle
+
+  # Estimate (1-5 real points; clear for coordination-only parents)
+  issues.sh update PROJ-42 --estimate 3
+  issues.sh update PROJ-42 --clear-estimate      # Unset estimate (coordination parent)
+  issues.sh update PROJ-42 --estimate 0          # Alias for --clear-estimate
 
   # Bulk operations (reduces API calls)
   issues.sh list --project-id <uuid> --with-relations   # Single query with all relations
@@ -514,7 +520,7 @@ bulk_update_issues() {
             update_args+=("$_key" "$_val")
             shift
             ;;
-        --remove-parent | --clear-cycle)
+        --remove-parent | --clear-cycle | --clear-estimate)
             update_args+=("$1")
             shift
             ;;
@@ -1065,6 +1071,7 @@ update_issue() {
     local cycle=""
     local clear_cycle="false"
     local estimate=""
+    local clear_estimate="false"
     local sort_order=""
 
     while [[ $# -gt 0 ]]; do
@@ -1145,6 +1152,10 @@ update_issue() {
             estimate="${1#*=}"
             shift
             ;;
+        --clear-estimate)
+            clear_estimate="true"
+            shift
+            ;;
         --assignee)
             assignee="$2"
             shift 2
@@ -1204,7 +1215,23 @@ update_issue() {
         input_parts+=("\"description\": $escaped_desc")
     fi
     [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
-    [ -n "$estimate" ] && input_parts+=("\"estimate\": $estimate")
+
+    # Handle estimate. Real estimates are 1-5; Linear represents "no estimate" as
+    # null. Clear the estimate via --clear-estimate or the --estimate 0 alias
+    # (used to bring coordination-only parents into the estimate-0 format).
+    if [ "$clear_estimate" = "true" ] && [ -n "$estimate" ] && [ "$estimate" != "0" ]; then
+        echo '{"error": "Use either --estimate <1-5> or --clear-estimate, not both"}' >&2
+        return 1
+    elif [ "$clear_estimate" = "true" ] || [ "$estimate" = "0" ]; then
+        input_parts+=("\"estimate\": null")
+    elif [ -n "$estimate" ]; then
+        if [[ "$estimate" =~ ^[1-5]$ ]]; then
+            input_parts+=("\"estimate\": $estimate")
+        else
+            echo '{"error": "Invalid --estimate: must be an integer 1-5 (use 0 or --clear-estimate to unset)"}' >&2
+            return 1
+        fi
+    fi
 
     # Sort order only meaningful on parent/standalone issues (sub-issues render under parent)
     if [ -n "$sort_order" ]; then
