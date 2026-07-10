@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Deterministically validate a reviewer's on-disk JSON artifact for review-pr
+# acceptance. A reviewer completion is only real when
+# [WORKTREE]/tmp/review-[AGENT]-*.json exists, is newer than the delegation
+# timestamp, and satisfies `jq -e '.verdict'` — return-message prose alone
+# never counts.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 << 'EOF'
+Usage: review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
+
+Checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first and prints JSON:
+  {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
+
+reason meanings when ok=false:
+  missing  no review-[AGENT]-*.json files found
+  stale    newest artifact mtime < delegated_at_epoch
+  invalid  newest fresh artifact fails `jq -e '.verdict'`
+
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+EOF
+}
+
+if [[ $# -ne 3 ]]; then
+  usage
+  exit 2
+fi
+
+worktree="$1"
+agent="$2"
+delegated_at="$3"
+
+if [[ ! -d "$worktree" ]]; then
+  echo "Error: worktree path '$worktree' is not a directory" >&2
+  exit 2
+fi
+if [[ -z "$agent" ]]; then
+  echo "Error: agent_name must be non-empty" >&2
+  exit 2
+fi
+if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+  echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
+  exit 2
+fi
+
+emit() {
+  local ok="$1" path="$2" reason="$3"
+  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
+}
+
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+reason="missing"
+fail_path=""
+
+while IFS= read -r file; do
+  [[ -n "$file" ]] || continue
+  mtime="$(file_mtime "$file")"
+  if (( mtime < delegated_at )); then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="stale"
+    fi
+    continue
+  fi
+  if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="invalid"
+    fi
+    continue
+  fi
+  emit true "$file" "valid"
+  exit 0
+done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
+
+emit false "$fail_path" "$reason"
+exit 1

@@ -53,6 +53,7 @@ Tests stage isolated repos/worktrees with parametrized CLI stubs on `PATH`. Each
 - `bot_review_wait.sh` — review-wait state machine + auth ladder.
 - `ci_wait.sh` — CI-wait state machine + auth ladder.
 - `session_init.sh` — worktree Linear auth diagnostic preservation.
+- `review_artifact_check.sh` — deterministic reviewer artifact acceptance (`review-artifact-check`) + review-pr wiring assertions.
 
 ## Codex App Worktree Routing
 

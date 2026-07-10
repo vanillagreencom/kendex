@@ -89,7 +89,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (bot review/CI loops) |
-| `review_delegated_at` | number | Epoch seconds of last review delegation — gates the § 3 filesystem-fallback watchdog |
+| `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |

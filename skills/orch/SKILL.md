@@ -150,6 +150,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `pr-view-json` | Print PR view JSON and return success for expected `status=no_pr` so workflows can route to PR creation without shell fallback expressions |
 | `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
+| `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`) and print `{ok, path, reason}` — the sole review-pr completion condition |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `bot-review-wait` | Block until bot review posts on a PR — invoked by per-issue agents inside their submit-pr flow |
 | `ci-wait` | Block until CI completes on a PR — same |

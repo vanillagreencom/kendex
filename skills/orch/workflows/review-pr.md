@@ -129,7 +129,7 @@ After launch/reuse, store the active reviewer set:
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
-**Record delegation timestamp immediately before the actual delegation batch** — gates the § 3 watchdog filesystem fallback against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap:
+**Record delegation timestamp immediately before the actual delegation batch** — gates § 3.1 `review-artifact-check` acceptance against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap:
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
@@ -189,14 +189,25 @@ Do NOT shutdown reviewers — needed for re-review in § 4.
 
 ### 3.1 Completion
 
-`OUTSTANDING = [AGENTS] ∪ ({external} if EXTERNAL_REVIEW_REQUESTED)`. An agent completes when *either*:
-- A return message arrives with `Verdict:` and `File:` lines, *or*
-- Latest `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json` with `mtime >= review_delegated_at` validates with `jq -e '.verdict'`
+`OUTSTANDING = [AGENTS] ∪ ({external} if EXTERNAL_REVIEW_REQUESTED)`. An agent completes **only** when its on-disk artifact validates — a return message with `Verdict:`/`File:` lines is never sufficient by itself. Check deterministically:
 
-On completion, append and drop from `OUTSTANDING`:
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
+.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+```
+
+Run `review-artifact-check` on every return message and every watchdog sweep. It prints `{ok, path, reason}` after validating existence, `mtime >= review_delegated_at`, and `jq -e '.verdict'`.
+
+**If `ok == true`** — the agent is complete. Append `path` and drop from `OUTSTANDING`:
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
 ```
+
+**If `ok == false` after a return message** — the return is **incomplete** (even if its `File:` path looks valid or the message body contains JSON). Send that agent **exactly one** re-delegation:
+
+> Your review return is incomplete: `review-artifact-check` reports `[reason]` for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), then return `Verdict:` and `File:` again.
+
+If `review-artifact-check` still reports `ok == false` after the re-delegation return (or the agent hits its § 3.2 deadline), mark the agent `unresponsive` — do not re-delegate a second time.
 
 ### 3.2 Watchdog Rules
 
@@ -208,7 +219,7 @@ Per-agent deadline from `review_delegated_at`:
 
 | Event | Action |
 |-------|--------|
-| Return arrives | Append JSON, remove from `OUTSTANDING`. |
+| Return arrives | Run `review-artifact-check` (§ 3.1). `ok == true` → append `path`, remove from `OUTSTANDING`. `ok == false` → one re-delegation per § 3.1. |
 | 2 min after first return (or 10 min from delegation if zero returns yet) — once per cycle | Send each outstanding agent one ping: `Status check on [ISSUE_ID] review — return your verdict if complete, or report blocker.` |
 | 2 min after ping | Mark each non-perf agent still in `OUTSTANDING` as `unresponsive`. |
 | Per-agent deadline reached | Mark that agent `unresponsive`. |
