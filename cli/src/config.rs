@@ -597,8 +597,9 @@ fn resolve_pi_extension_dir(source_root: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Compute a content hash for a single file.
-fn hash_file_bytes(path: &Path) -> u64 {
+/// Compute a content hash for a single file. Returns 0 when the file is
+/// missing or unreadable, so callers can treat 0 as "absent".
+pub(crate) fn hash_file_bytes(path: &Path) -> u64 {
     match std::fs::read(path) {
         Ok(content) => fnv1a(&content),
         Err(_) => 0,
@@ -607,6 +608,14 @@ fn hash_file_bytes(path: &Path) -> u64 {
 
 /// Compute a content hash for a directory (all files, sorted by relative path).
 fn hash_dir_bytes(dir: &Path) -> u64 {
+    hash_dir_bytes_excluding(dir, &[])
+}
+
+/// Like [`hash_dir_bytes`] but ignores files whose name matches `exclude_files`.
+/// Used to compare installed artifacts while skipping volatile bookkeeping
+/// files (e.g. the per-process `.vstack-refreshed` marker) that change every
+/// run without reflecting a real content change.
+pub(crate) fn hash_dir_bytes_excluding(dir: &Path, exclude_files: &[&str]) -> u64 {
     let mut state = FNV_OFFSET;
     let mut walker = walkdir::WalkDir::new(dir)
         .min_depth(1)
@@ -621,6 +630,12 @@ fn hash_dir_bytes(dir: &Path) -> u64 {
             continue;
         }
         if !entry.file_type().is_file() {
+            continue;
+        }
+        if exclude_files
+            .iter()
+            .any(|name| entry.file_name().to_str() == Some(*name))
+        {
             continue;
         }
         // Read content first; if unreadable, skip the entire entry. Folding

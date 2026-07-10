@@ -25,6 +25,15 @@ pub struct RefreshStats {
     pub failures: Vec<RefreshFailure>,
     /// Map of agent_name → (full merged required-skills list, newly added skill names).
     pub upstream_skill_updates: HashMap<String, (Vec<String>, Vec<String>)>,
+    /// Names of items whose generated/installed on-disk content actually
+    /// changed during this refresh. Distinct from source-hash equality: an
+    /// agent re-renders when the installed skill set (or injected project
+    /// instructions) changes even though the agent's own source hash is
+    /// unchanged, and a rendered skill can differ from its source via injected
+    /// instructions/notice. Tracked for agents and skills (the artifacts that
+    /// derive from external state); hooks and Pi packages rely on source-hash
+    /// equality alone.
+    pub content_changed: HashSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +61,10 @@ impl RefreshStats {
         self.successful_items.insert(name.to_string());
     }
 
+    fn mark_content_changed(&mut self, name: &str) {
+        self.content_changed.insert(name.to_string());
+    }
+
     fn fail(&mut self, item: &str, harness: Option<Harness>, err: impl std::fmt::Display) {
         self.failures.push(RefreshFailure {
             item: item.to_string(),
@@ -63,6 +76,16 @@ impl RefreshStats {
     pub fn has_failures(&self) -> bool {
         !self.failures.is_empty()
     }
+}
+
+/// Content hash of an installed skill directory, resolving a symlinked install
+/// dir to its canonical target and skipping the volatile `.vstack-refreshed`
+/// marker (its per-process PID payload changes every run). Returned value is
+/// only ever compared before-vs-after within a single refresh, so the absolute
+/// value is irrelevant.
+fn hash_installed_skill_dir(path: &Path) -> u64 {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    config::hash_dir_bytes_excluding(&resolved, &[".vstack-refreshed"])
 }
 
 /// Generic upstream-merge: starts with `project_list` if present, else
@@ -195,6 +218,7 @@ pub fn refresh_items_in_scope(
 
         let mut succeeded = 0usize;
         let mut failed = false;
+        let mut content_changed = false;
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 let matched_hooks = crate::resolve::matched_installed_hooks_for_agent_harness(
@@ -204,9 +228,20 @@ pub fn refresh_items_in_scope(
                     &agent.role,
                     harness.id(),
                 );
+                // Compare the bytes actually written to the destination against
+                // what was there before: agent files re-render when the
+                // installed skill set / injected instructions change even
+                // though the agent's own source hash is unchanged.
+                let out_path = harness
+                    .agents_dir(global)
+                    .join(harness.agent_filename(&agent.name));
+                let before = config::hash_file_bytes(&out_path);
                 match harness.generate_agent(agent, global, &skill_pairs, &matched_hooks, &extras) {
                     Ok(_) => {
                         succeeded += 1;
+                        if config::hash_file_bytes(&out_path) != before {
+                            content_changed = true;
+                        }
                         if matches!(harness, Harness::Codex) {
                             regenerated_codex_agents.push(agent.clone());
                         }
@@ -221,6 +256,9 @@ pub fn refresh_items_in_scope(
         if succeeded > 0 && !failed {
             stats.agents_refreshed += 1;
             stats.mark_success(name);
+            if content_changed {
+                stats.mark_content_changed(name);
+            }
         }
     }
 
@@ -236,6 +274,7 @@ pub fn refresh_items_in_scope(
             let error = format!("failed to install Codex hook prose: {err:#}");
             for agent in &regenerated_codex_agents {
                 stats.fail(&agent.name, Some(Harness::Codex), &error);
+                stats.content_changed.remove(&agent.name);
                 if stats.successful_items.remove(&agent.name) && stats.agents_refreshed > 0 {
                     stats.agents_refreshed -= 1;
                 }
@@ -259,11 +298,25 @@ pub fn refresh_items_in_scope(
 
         let mut succeeded = 0usize;
         let mut failed = false;
+        let mut content_changed = false;
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 let skill_instr = project_config.skill_instructions_for(&skill.name);
+                // Snapshot the installed skill content before/after: a rendered
+                // skill can differ from its source (injected instructions/notice)
+                // while the lock's source hash is unchanged.
+                let before = harness
+                    .install_skill(skill, global)
+                    .ok()
+                    .map(|dest| hash_installed_skill_dir(&dest))
+                    .unwrap_or(0);
                 match installer::install_skill(skill, harness, global, entry.method, skill_instr) {
-                    Ok(_) => succeeded += 1,
+                    Ok(result) => {
+                        succeeded += 1;
+                        if hash_installed_skill_dir(&result.path) != before {
+                            content_changed = true;
+                        }
+                    }
                     Err(err) => {
                         failed = true;
                         stats.fail(name, Some(harness), err);
@@ -274,6 +327,9 @@ pub fn refresh_items_in_scope(
         if succeeded > 0 && !failed {
             stats.skills_refreshed += 1;
             stats.mark_success(name);
+            if content_changed {
+                stats.mark_content_changed(name);
+            }
         }
     }
 
@@ -701,6 +757,16 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
     lock.save(&lock_path)?;
 
+    // An item counts as "updated" when its source hash changed OR its
+    // generated/installed on-disk content changed. The latter catches
+    // artifacts that re-render from external state (agents embedding the
+    // installed skill set; skills with injected instructions) whose own source
+    // hash is unchanged — so the summary never reports "0 updated" while
+    // refresh actually rewrote tracked output.
+    let is_updated = |name: &str, old: &str, new: &str| -> bool {
+        old != new || stats.content_changed.contains(name)
+    };
+
     if verbose {
         let kind_w = changes
             .iter()
@@ -713,8 +779,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .max()
             .unwrap_or(0);
         for (_, kind, name, old, new) in &changes {
-            let mark = if old == new { "✓" } else { "!" };
-            let label = if old == new { "unchanged" } else { "changed" };
+            let changed = is_updated(name, old, new);
+            let mark = if changed { "!" } else { "✓" };
+            let label = if changed { "changed" } else { "unchanged" };
             let old_short = if old.is_empty() {
                 "—".to_string()
             } else {
@@ -735,7 +802,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     } else {
         let mut updated_by_kind: HashMap<ItemKind, Vec<String>> = HashMap::new();
         for (kind, _, name, old, new) in &changes {
-            if old != new {
+            if is_updated(name, old, new) {
                 updated_by_kind.entry(*kind).or_default().push(name.clone());
             }
         }
@@ -768,7 +835,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     let count_updated = |kind: ItemKind| -> usize {
         changes
             .iter()
-            .filter(|(k, _, _, old, new)| *k == kind && old != new)
+            .filter(|(k, _, name, old, new)| *k == kind && is_updated(name, old, new))
             .count()
     };
     eprintln!(

@@ -296,6 +296,135 @@ fn refresh_items_use_lock_source_for_colliding_names_and_mapping() {
 }
 
 #[test]
+fn refresh_counts_content_changes_when_source_hashes_are_unchanged() {
+    // Regression for the "0 updated" summary bug: a refresh that re-renders
+    // agent and skill output (via injected project instructions) must be
+    // counted as updated even though neither item's SOURCE hash changed.
+    let root = tmpdir("content-change-count");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&source, "1", "PreToolUse", "model-x");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry("rust", ItemKind::Agent, &source, vec!["claude-code"]));
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &source,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    let agent_path = project.join(".claude/agents/rust.md");
+    let skill_path = project.join(".claude/skills/shared/SKILL.md");
+
+    crate::test_util::with_project_root(&project, || {
+        // First refresh: baseline install, no project instructions.
+        let mut project_config = ProjectConfig::default();
+        let first =
+            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        assert_eq!(first.agents_refreshed, 1);
+        assert_eq!(first.skills_refreshed, 1);
+
+        let agent_before = std::fs::read_to_string(&agent_path).unwrap();
+        let skill_before = std::fs::read_to_string(&skill_path).unwrap();
+
+        // Source hashes as recorded after the baseline install. These must NOT
+        // change across the second refresh — that is the whole point: the old
+        // summary derived "updated" from these alone and reported 0.
+        let agent_hash_before = crate::config::compute_source_hash(&lock.entries["rust"]);
+        let skill_hash_before = crate::config::compute_source_hash(&lock.entries["shared"]);
+
+        // Inject project-level instructions in memory only (never written to
+        // the on-disk vstack.toml that source hashing reads). This re-renders
+        // both the agent file and the skill's SKILL.md.
+        project_config
+            .agent_instructions
+            .insert("rust".into(), "Extra project guidance for rust.".into());
+        project_config
+            .skill_instructions
+            .insert("shared".into(), "Project-specific skill note.".into());
+
+        let second =
+            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+
+        // The generated artifacts actually changed on disk.
+        let agent_after = std::fs::read_to_string(&agent_path).unwrap();
+        let skill_after = std::fs::read_to_string(&skill_path).unwrap();
+        assert_ne!(agent_before, agent_after, "agent file should have changed");
+        assert_ne!(skill_before, skill_after, "skill file should have changed");
+
+        // Source hashes are unchanged, so the old (source-hash-only) counting
+        // would have reported 0 updated for both kinds.
+        let agent_hash_after = crate::config::compute_source_hash(&lock.entries["rust"]);
+        let skill_hash_after = crate::config::compute_source_hash(&lock.entries["shared"]);
+        assert_eq!(
+            agent_hash_before, agent_hash_after,
+            "agent source hash must be unchanged"
+        );
+        assert_eq!(
+            skill_hash_before, skill_hash_after,
+            "skill source hash must be unchanged"
+        );
+
+        // The content-change signal that now feeds the "N updated" counters
+        // reflects the real on-disk writes.
+        assert!(
+            second.content_changed.contains("rust"),
+            "agent content change not tracked: {:?}",
+            second.content_changed
+        );
+        assert!(
+            second.content_changed.contains("shared"),
+            "skill content change not tracked: {:?}",
+            second.content_changed
+        );
+        assert_eq!(second.agents_refreshed, 1);
+        assert_eq!(second.skills_refreshed, 1);
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn refresh_reports_no_content_change_on_idempotent_refresh() {
+    // The inverse guarantee: refreshing twice with no source or config change
+    // must report nothing updated (empty content_changed set).
+    let root = tmpdir("content-change-idempotent");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&source, "1", "PreToolUse", "model-x");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry("rust", ItemKind::Agent, &source, vec!["claude-code"]));
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &source,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        // Prime the install once.
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        // Second refresh with identical inputs must detect no content change.
+        let again =
+            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        assert!(
+            again.content_changed.is_empty(),
+            "idempotent refresh reported content changes: {:?}",
+            again.content_changed
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn refresh_items_reports_agent_write_failure_without_success() {
     let root = tmpdir("agent-write-failure");
     let project = root.join("project");
