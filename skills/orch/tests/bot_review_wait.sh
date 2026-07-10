@@ -167,6 +167,11 @@ case "${1:-}" in
         echo '[{"user":{"login":"vg-claude"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:00Z"}]'
         exit 0
         ;;
+      repos/*/pulls/11/reviews)
+        # PR 11 (#450): claude[bot] formally approves; codex only reacts 👀.
+        echo '[{"user":{"login":"claude[bot]"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]'
+        exit 0
+        ;;
       repos/*/pulls/10/reviews)
         count_file="${FAKE_GH_STATE_DIR:-}/pr10-reviews-count"
         count=0
@@ -227,7 +232,7 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments)
         echo '[]'
         exit 0
         ;;
@@ -248,6 +253,11 @@ JSON
         exit 0
         ;;
       repos/*/issues/5/reactions)
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"eyes"}]'
+        exit 0
+        ;;
+      repos/*/issues/11/reactions)
+        # Codex only acknowledged the PR body with 👀 — never approved.
         echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"eyes"}]'
         exit 0
         ;;
@@ -324,7 +334,7 @@ JSON
   pr)
     case "${2:-}" in
       view)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" || "${3:-}" == "11" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
           exit 0
         fi
@@ -404,6 +414,23 @@ assert_eq "$(jq -r .status <<<"$output")" "complete" "PR-level approved reviewDe
 assert_eq "$(jq -r .verdict <<<"$output")" "approved" "PR-level approved fallback returns approved verdict"
 assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "0" "PR-level approved fallback skips stale sticky checklist wait"
 assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "pr_review_decision:approved" "PR-level approved fallback records signal"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+# #450: a global reviewDecision=APPROVED coming from a DIFFERENT reviewer
+# (claude[bot] formal approval) must not promote an eyes-only reviewer.
+set +e
+output=$(run_wait 11 1 1 --json --reviewers 'claude[bot],chatgpt-codex-connector[bot]')
+code=$?
+set -e
+assert_eq "$code" "1" "eyes-only bot with foreign approval times out pending"
+assert_eq "$(jq -r .status <<<"$output")" "timeout" "eyes-only bot with foreign approval emits timeout JSON"
+assert_eq "$(jq -r .verdict <<<"$output")" "pending" "eyes-only bot keeps overall verdict pending"
+assert_eq "$(jq -r '.approved_reviewers | join(",")' <<<"$output")" "claude[bot]" "formal approver is reported approved"
+assert_eq "$(jq -r '.pending_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "eyes-only bot stays pending, not approved"
+assert_contains "$(jq -c '.reviewers[] | select(.reviewer == "chatgpt-codex-connector[bot]") | .signals' <<<"$output")" "reaction:eyes" "eyes-only bot records reaction:eyes"
+assert_eq "$(jq -r '[.reviewers[] | select(.reviewer == "chatgpt-codex-connector[bot]") | .signals[] | select(. == "pr_review_decision:approved")] | length' <<<"$output")" "0" "eyes-only bot does not inherit pr_review_decision:approved"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

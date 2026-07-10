@@ -347,9 +347,21 @@ apply_pr_terminal_fallback() {
     return 0
   fi
 
+  # The repository-level reviewDecision is a PR-terminal aggregate, not a
+  # per-reviewer verdict — a single approving reviewer can flip it to APPROVED
+  # for the whole PR. Only promote a still-pending reviewer that has posted its
+  # OWN positive review signal (a formal approval, any sticky review summary, or
+  # a 👍 reaction). A reviewer whose only signal is 👀 (reaction:eyes =
+  # acknowledged/looking, never approval) or that has emitted no signal at all
+  # must not inherit another reviewer's approval (vstack#450).
   jq -c '
     map(
-      if .status == "pending" or .status == "unknown" then
+      if (.status == "pending" or .status == "unknown")
+         and ((.signals // []) | any(
+                 (. == "formal_review:approved")
+                 or startswith("sticky:")
+                 or (. == "reaction:+1")))
+      then
         .status = "approved"
         | .signals += ["pr_review_decision:approved", "pr_threads:clear"]
       else
