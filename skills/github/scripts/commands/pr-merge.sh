@@ -26,6 +26,45 @@ source "$SCRIPT_DIR/../lib/pr-branch.sh"
 # CI completes. Callers should `await-mergeable` and retry rather than fix.
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
+# Scope a `gh pr checks` array to the current authoritative run per workflow so
+# stale checks from a SUPERSEDED workflow run don't leak into the current
+# PR/head status (vstack#492). A single canceled prior run left Lint/Integration/
+# etc. as CANCELLED; with no newer instance of those jobs yet created, they were
+# the only copies and were wrongly counted as current failures.
+#
+# Approach: parse each check's owning workflow RUN_ID from its `link`
+# (`.../actions/runs/<RUN_ID>/job/<JOB_ID>`), group run-bearing checks by their
+# `workflow`, and within each workflow keep ONLY the checks belonging to that
+# workflow's LATEST run (max RUN_ID). This (a) drops an old run's checks when a
+# newer run of the same workflow exists, and (b) — the reported case — drops the
+# old canceled job even when the newer run hasn't recreated it yet, leaving it
+# correctly absent (reported as not-yet-created/pending, not failed). Distinct
+# workflows are never collapsed (e.g. a separate "License Key Guard" workflow is
+# preserved). Checks with no parseable run in `link` (external/required contexts,
+# default-setup `.../runs/<CHECK_RUN_ID>` links, or older gh output with no link)
+# are always kept, deduped by name keeping the latest `startedAt`. An all-empty
+# link/startedAt array (older gh) passes through unchanged.
+#
+# This must stay aligned with orch ci-wait's scope_current_run (byte-for-byte).
+scope_current_run() {
+  jq -c '
+    def runid:
+      (.link // "")
+      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
+      | (if . == null then null else tonumber end);
+    map(. + {"_runid": runid})
+    | ([.[] | select(._runid == null)]) as $norun
+    | ([.[] | select(._runid != null)]) as $withrun
+    | ($withrun
+        | group_by(.workflow)
+        | map((map(._runid) | max) as $mx | map(select(._runid == $mx)))
+        | add // []) as $scoped
+    | ($norun | group_by(.name) | map(sort_by(.startedAt // "") | last)) as $norun_deduped
+    | ($scoped + $norun_deduped)
+    | map(del(._runid))
+  '
+}
+
 show_help() {
     cat <<'EOF'
 Merge PR as bot account with safety checks
@@ -95,7 +134,7 @@ run_checks() {
     # 2. Check CI status
     local ci_json
     set +e
-    ci_json=$(gh pr checks "$pr_num" --json name,state,bucket 2>&1)
+    ci_json=$(gh pr checks "$pr_num" --json name,state,bucket,link,startedAt,workflow 2>&1)
     set -e
 
     # `gh pr checks` exits 8 while checks are pending, but still prints usable
@@ -107,8 +146,12 @@ run_checks() {
     elif [ "$(echo "$ci_json" | jq 'length')" -eq 0 ]; then
         warnings+=("ci_unconfigured: No status checks configured")
     else
-        local ci_classification pending failed
-        ci_classification=$(echo "$ci_json" | jq -c '
+        # Drop checks belonging to superseded workflow runs before classifying,
+        # so a prior canceled run can't be reported as a current merge blocker
+        # (vstack#492). Mirrors orch ci-wait's pre-classification scoping.
+        local scoped_ci_json ci_classification pending failed
+        scoped_ci_json=$(echo "$ci_json" | scope_current_run)
+        ci_classification=$(echo "$scoped_ci_json" | jq -c '
             def bucket:
                 (.bucket // (
                     if (.state == "SUCCESS") then "pass"

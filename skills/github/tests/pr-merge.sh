@@ -122,5 +122,49 @@ assert_eq "$(jq -r '.issues | length' <<<"$out")" "0" "successful and skipped ch
 assert_eq "$(jq -r .transient <<<"$out")" "false" "mergeable PR is not transient"
 
 echo
+echo "=== pr-merge --check superseded-run scoping (vstack#492/#494) ==="
+
+# An OLD superseded run (RUN_ID 29098545030) left several CANCELLED named jobs;
+# the NEW authoritative run (RUN_ID 29099680623) on the current head is still
+# in progress ("Changes"). Scoping must drop the superseded run's CANCELLED jobs
+# so they are NOT reported as ci_failed blockers — only the current run's
+# still-pending check gates the merge (transient, retryable).
+checks='[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Linux Integration","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/102","workflow":"CI","startedAt":"2026-07-10T10:00:01Z"},
+  {"name":"macOS","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/103","workflow":"CI","startedAt":"2026-07-10T10:00:02Z"},
+  {"name":"Changes","state":"IN_PROGRESS","bucket":"pending","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"License Key Guard","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_check)
+assert_eq "$(jq -r '[.issues[] | select(startswith("ci_failed:"))] | length' <<<"$out")" "0" "superseded CANCELLED jobs not reported as ci_failed"
+assert_eq "$(jq -r .transient <<<"$out")" "true" "only current run's pending check blocks (transient)"
+assert_contains "$out" "ci_pending: Changes (IN_PROGRESS)" "current run's pending check is the only blocker"
+assert_eq "$(jq -r '.issues | map(select(test("Lint|Linux Integration|macOS"))) | length' <<<"$out")" "0" "no superseded CANCELLED job names leak into issues"
+
+# The current-head run (RUN_ID 29099680623) has RE-CREATED and passed the jobs
+# the old run (29098545030) left CANCELLED. Scoping keeps only the newer run, so
+# the PR is cleanly mergeable — the stale CANCELLED copies must not block.
+checks='[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"Changes","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+out=$(STUB_CHECKS="$checks" run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "true" "superseded-then-replaced run is mergeable"
+assert_eq "$(jq -r '.issues | length' <<<"$out")" "0" "no stale CANCELLED Lint blocks the merge"
+
+# Guard: a genuinely-current cancellation (no newer run exists) must STILL be
+# reported as a failure — scoping only drops superseded runs, it must not mask
+# the latest run's own CANCELLED result.
+checks='[
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"Integration","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "false" "current-run CANCELLED still blocks merge"
+assert_contains "$out" "ci_failed: Integration (CANCELLED)" "current-run CANCELLED reported as ci_failed"
+
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
