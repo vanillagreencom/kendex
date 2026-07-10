@@ -286,11 +286,19 @@ merge. Detach them first.
       gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
       ```
       Use the output as `PR_BRANCH`.
-   2. If `[PR_BRANCH]` exists locally and is not the current branch, delete it:
-      ```bash
-      git -C [MAIN_REPO_ROOT] branch -D "$PR_BRANCH"
-      ```
-   3. Worktree removal is handled by step 6 when § 4.1 captured a cleanup request.
+   2. Delete the local `[PR_BRANCH]` **only when no worktree owns it**:
+
+      - **If § 4.1 captured a worktree-cleanup request** for this PR's issue → **skip** the standalone delete; step 6's `worktree remove` removes the worktree and safely deletes the merged branch. Continue to step 3.
+      - **Otherwise**, list registered worktrees to confirm the branch is free before deleting:
+        ```bash
+        git -C [MAIN_REPO_ROOT] worktree list --porcelain
+        ```
+        | Output condition | Action |
+        |------------------|--------|
+        | A `branch refs/heads/[PR_BRANCH]` line is present | A worktree still has it checked out — do NOT delete (`branch -D` would fail). Leave it for worktree removal or the § 5b maintenance sweep; note in § 7. |
+        | No such line, and `[PR_BRANCH]` exists locally and is not the current branch | Delete it: `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"` |
+        | `[PR_BRANCH]` is absent locally or is the current branch | Nothing to delete. |
+   3. When § 4.1 captured a cleanup request, step 6's `worktree remove` owns branch deletion; the standalone delete above is intentionally skipped.
 
    ### 5b. Project maintenance sweep (explicit only)
 
