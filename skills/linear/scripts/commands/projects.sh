@@ -41,7 +41,10 @@ Actions:
 List Options:
   --state <name>        Filter by state (e.g., "started", "completed")
   --team <name>         Filter by team name
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 50). Values above 50 are fetched
+                        transparently by paginating (per request capped at 50,
+                        the connection maximum).
+  --max                 Fetch ALL matching projects (paginate until exhausted)
   --first               Output just the first project's name (useful for scripts)
   --include-archived    Include archived projects
 
@@ -109,11 +112,17 @@ Examples:
 EOF
 }
 
+# Linear's projects connection rejects large `first` values (query complexity),
+# so a single request can return at most this many projects. Higher --limit
+# values are satisfied by transparently paginating with the endCursor.
+PROJECTS_PAGE_MAX=50
+
 list_projects() {
     local filter_parts=()
-    local first=75
+    local limit=50
     local include_archived="false"
     local first_only="false"
+    local paginate_all="false"
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -128,8 +137,12 @@ list_projects() {
             shift 2
             ;;
         --limit)
-            first="$2"
+            limit="$2"
             shift 2
+            ;;
+        --max)
+            paginate_all="true"
+            shift
             ;;
         --include-archived)
             include_archived="true"
@@ -137,7 +150,7 @@ list_projects() {
             ;;
         --first)
             first_only="true"
-            first=1
+            limit=1
             shift
             ;;
         --format)
@@ -171,8 +184,9 @@ list_projects() {
     fi
 
     local query='
-    query ListProjects($filter: ProjectFilter, $first: Int, $includeArchived: Boolean) {
-        projects(filter: $filter, first: $first, includeArchived: $includeArchived) {
+    query ListProjects($filter: ProjectFilter, $first: Int, $includeArchived: Boolean, $after: String) {
+        projects(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -195,9 +209,48 @@ list_projects() {
         }
     }'
 
-    local variables="{\"filter\": $filter_json, \"first\": $first, \"includeArchived\": $include_archived}"
+    # Fetch pages until we have enough (or all, with --max). Per-request page
+    # size never exceeds PROJECTS_PAGE_MAX so the connection never 400s.
+    local all_nodes="[]"
+    local cursor="null"
+    local page_count=0
+    local max_pages=200 # Safety limit: 200 pages * 50 = 10000 projects max
     local result
-    result=$(graphql_query "$query" "$variables")
+
+    while true; do
+        local page_size=$PROJECTS_PAGE_MAX
+        if [ "$paginate_all" != "true" ]; then
+            local collected
+            collected=$(echo "$all_nodes" | jq 'length')
+            local remaining=$((limit - collected))
+            [ "$remaining" -le 0 ] && break
+            [ "$remaining" -lt "$page_size" ] && page_size=$remaining
+        fi
+
+        local variables="{\"filter\": $filter_json, \"first\": $page_size, \"includeArchived\": $include_archived, \"after\": $cursor}"
+        result=$(graphql_query "$query" "$variables")
+
+        local nodes
+        nodes=$(echo "$result" | jq '.projects.nodes // []')
+        all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
+
+        page_count=$((page_count + 1))
+
+        local has_next
+        has_next=$(echo "$result" | jq -r '.projects.pageInfo.hasNextPage // false')
+        if [ "$has_next" != "true" ] || [ "$page_count" -ge "$max_pages" ]; then
+            break
+        fi
+
+        cursor=$(echo "$result" | jq '.projects.pageInfo.endCursor')
+    done
+
+    # In limited mode, return exactly up to --limit projects.
+    if [ "$paginate_all" != "true" ]; then
+        all_nodes=$(echo "$all_nodes" | jq --argjson n "$limit" '.[0:$n]')
+    fi
+
+    result=$(echo "$all_nodes" | jq '{projects: {nodes: .}}')
 
     # Handle --first: output just the name of first project
     if [ "$first_only" = "true" ]; then
