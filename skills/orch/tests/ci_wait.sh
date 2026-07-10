@@ -135,11 +135,29 @@ case "${1:-}" in
   repo)
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      # Simulate `gh repo view --json nameWithOwner` returning empty so ci-wait
+      # falls back to deriving owner/repo from the origin URL (vstack#476).
+      [[ "${STUB_GH_REPO_VIEW_EMPTY:-0}" == "1" ]] && exit 0
       echo "owner/repo"
       exit 0
     fi
     ;;
   pr)
+    # Capture the --repo slug ci-wait resolved and reject a stale ".git"
+    # suffix the way real gh does ("Could not resolve to a Repository").
+    _repo_arg=""
+    _prev=""
+    for _a in "$@"; do
+      [[ "$_prev" == "--repo" ]] && _repo_arg="$_a"
+      _prev="$_a"
+    done
+    if [[ -n "${STUB_REPO_ARG_FILE:-}" && -n "$_repo_arg" ]]; then
+      printf '%s' "$_repo_arg" > "$STUB_REPO_ARG_FILE"
+    fi
+    if [[ -n "$_repo_arg" && "$_repo_arg" == *.git ]]; then
+      echo "Could not resolve to a Repository with the name '$_repo_arg'." >&2
+      exit 1
+    fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "CLEAN"
@@ -423,6 +441,53 @@ set -e
 assert_eq "$rc" "3" "case14: json auth failure exits 3" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "error" "case14: json auth failure reports status error" "$stderr"
 assert_contains "$(json_field "$output" '.error')" "auth" "case14: json auth failure names auth in error"
+
+echo "=== ci-wait repo-slug fallback (vstack#476) ==="
+
+# When `gh repo view --json nameWithOwner` returns empty (e.g. the transient
+# unknown-merge-state path), ci-wait derives owner/repo from the origin URL.
+# GNU sed / POSIX ERE has no non-greedy quantifier, so the old
+# `[^/]+?(\.git)?$` pattern greedily kept the trailing ".git" and every
+# subsequent `gh --repo owner/repo.git` call failed. The stub records the
+# --repo slug and rejects any `*.git` value like real gh, so a clean pass
+# proves the suffix was stripped. Covers SSH and HTTPS origins, with and
+# without ".git".
+
+# Case 15: SSH origin ending in .git.
+git -C "$TMP_ROOT/repo" remote add origin git@github.com:owner/repo.git
+stderr="$TMP_ROOT/case15.err"
+repo_arg_file="$TMP_ROOT/case15-repo-arg"
+set +e
+output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case15: ssh .git origin fallback exits 0" "$stderr"
+assert_contains "$output" "CI passed" "case15: ci-wait reaches CI passed via ssh origin fallback"
+assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case15: --repo slug drops .git suffix (ssh)" "$stderr"
+
+# Case 16: HTTPS origin ending in .git.
+git -C "$TMP_ROOT/repo" remote set-url origin https://github.com/owner/repo.git
+stderr="$TMP_ROOT/case16.err"
+repo_arg_file="$TMP_ROOT/case16-repo-arg"
+set +e
+output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case16: https .git origin fallback exits 0" "$stderr"
+assert_contains "$output" "CI passed" "case16: ci-wait reaches CI passed via https origin fallback"
+assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case16: --repo slug drops .git suffix (https)" "$stderr"
+
+# Case 17: HTTPS origin WITHOUT a .git suffix must still resolve cleanly and
+# must not lose a trailing path segment.
+git -C "$TMP_ROOT/repo" remote set-url origin https://github.com/owner/repo
+stderr="$TMP_ROOT/case17.err"
+repo_arg_file="$TMP_ROOT/case17-repo-arg"
+set +e
+output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case17: https origin without .git exits 0" "$stderr"
+assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case17: --repo slug preserved without .git" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

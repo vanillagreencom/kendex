@@ -192,7 +192,14 @@ fi
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
 if [ -z "$REPO" ]; then
   origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
-  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+?)(\.git)?$#\1#p')
+  # Capture owner/repo greedily, then strip a trailing ".git" explicitly. GNU
+  # sed / POSIX ERE has no non-greedy quantifier, so a `[^/]+?(\.git)?$` pattern
+  # would greedily swallow ".git" into the slug (vstack#476). Do the suffix
+  # strip with bash parameter expansion instead — portable for both SSH
+  # (git@github.com:owner/repo.git) and HTTPS origins, with or without ".git",
+  # and safe for repo names that merely contain the substring "git".
+  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
+  REPO="${REPO%.git}"
 fi
 if [ -z "$REPO" ]; then
   emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
