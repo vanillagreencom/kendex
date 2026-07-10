@@ -71,26 +71,7 @@ if [[ -n "$_CALLER_GH_BOT_TOKEN_SET" ]]; then
 fi
 unset _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
 
-GIT_HOST_CLI="${GIT_HOST_CLI:-$SKILLS_DIR/github/scripts/github.sh}"
-if [[ ! -x "$GIT_HOST_CLI" ]]; then
-  echo "Error: GIT_HOST_CLI not found at '$GIT_HOST_CLI'. Is the github skill installed?" >&2
-  exit 1
-fi
-
-# Source the github lib for bot_review_status
-GH_LIB="$SKILLS_DIR/github/scripts/lib/github-api.sh"
-if [[ ! -f "$GH_LIB" ]]; then
-  echo "Error: github lib not found at '$GH_LIB'." >&2
-  exit 1
-fi
-# shellcheck source=/dev/null
-source "$GH_LIB"
-
-# Shared GH_TOKEN/GITHUB_TOKEN sanitizer (see lib/gh-auth.sh).
-# shellcheck source=lib/gh-auth.sh
-source "$SCRIPT_DIR/lib/gh-auth.sh"
-
-# --- arg parse ---
+# --- arg parse (before lib/auth checks so every --json exit emits JSON) ---
 JSON_OUTPUT=false
 REVIEWERS_ARG=""
 SKIP_ARG=""
@@ -111,6 +92,78 @@ POLL_INTERVAL="${POSITIONAL[1]:-15}"
 MAX_WAIT="${POSITIONAL[2]:-600}"
 START_TIME="$(date +%s)"
 elapsed=0
+
+# --json contract (vstack#453): every exit path must print a well-formed JSON
+# result on stdout so callers can route status/verdict. emit_result/emit_error
+# are the only emitters and set RESULT_EMITTED; this EXIT trap is the backstop
+# for any early return, auth/lib failure, or unexpected errexit escape, and it
+# also cleans up the established-approvals temp file.
+RESULT_EMITTED=false
+ESTABLISHED_APPROVALS_FILE=""
+finalize() {
+  local ec=$?
+  [[ -n "$ESTABLISHED_APPROVALS_FILE" ]] && rm -f "$ESTABLISHED_APPROVALS_FILE"
+  if [[ "$RESULT_EMITTED" != "true" ]] && $JSON_OUTPUT; then
+    jq -n \
+      --argjson elapsed "${elapsed:-0}" \
+      --arg error "bot-review-wait exited without emitting a result (exit ${ec})" \
+      '{
+        status: "error",
+        verdict: "pending",
+        elapsed_seconds: $elapsed,
+        error: $error,
+        reviewers: [],
+        pending_reviewers: [],
+        approved_reviewers: [],
+        changes_reviewers: [],
+        skipped_reviewers: []
+      }'
+  fi
+}
+trap finalize EXIT
+
+emit_error() {
+  local message="$1"
+  RESULT_EMITTED=true
+  if $JSON_OUTPUT; then
+    jq -n \
+      --arg s "error" \
+      --arg v "pending" \
+      --argjson elapsed "$elapsed" \
+      --arg error "$message" \
+      '{
+        status: $s,
+        verdict: $v,
+        elapsed_seconds: $elapsed,
+        error: $error,
+        reviewers: [],
+        pending_reviewers: [],
+        approved_reviewers: [],
+        changes_reviewers: [],
+        skipped_reviewers: []
+      }'
+  fi
+  echo "Error: $message" >&2
+}
+
+GIT_HOST_CLI="${GIT_HOST_CLI:-$SKILLS_DIR/github/scripts/github.sh}"
+if [[ ! -x "$GIT_HOST_CLI" ]]; then
+  emit_error "GIT_HOST_CLI not found at '$GIT_HOST_CLI'. Is the github skill installed?"
+  exit 3
+fi
+
+# Source the github lib for bot_review_status
+GH_LIB="$SKILLS_DIR/github/scripts/lib/github-api.sh"
+if [[ ! -f "$GH_LIB" ]]; then
+  emit_error "github lib not found at '$GH_LIB'."
+  exit 3
+fi
+# shellcheck source=/dev/null
+source "$GH_LIB"
+
+# Shared GH_TOKEN/GITHUB_TOKEN sanitizer (see lib/gh-auth.sh).
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
 
 update_elapsed() {
   local now
@@ -146,29 +199,6 @@ sleep_until_deadline() {
   fi
   sleep "$requested"
   update_elapsed
-}
-
-emit_error() {
-  local message="$1"
-  if $JSON_OUTPUT; then
-    jq -n \
-      --arg s "error" \
-      --arg v "pending" \
-      --argjson elapsed "$elapsed" \
-      --arg error "$message" \
-      '{
-        status: $s,
-        verdict: $v,
-        elapsed_seconds: $elapsed,
-        error: $error,
-        reviewers: [],
-        pending_reviewers: [],
-        approved_reviewers: [],
-        changes_reviewers: [],
-        skipped_reviewers: []
-      }'
-  fi
-  echo "Error: $message" >&2
 }
 
 ensure_gh_ready() {
@@ -378,7 +408,6 @@ apply_pr_terminal_fallback() {
 # may downgrade an established approval. A file (not a shell variable) because
 # entries are collected inside command substitutions.
 ESTABLISHED_APPROVALS_FILE="$(mktemp)"
-trap 'rm -f "$ESTABLISHED_APPROVALS_FILE"' EXIT
 
 established_approvals_json() {
   jq -R -s -c 'split("\n") | map(select(length > 0))' \
@@ -609,6 +638,7 @@ terminal_posting_done() {
 emit_result() {
   local status="$1"
   local entries="$2"
+  RESULT_EMITTED=true
   local verdict
   verdict=$(aggregate_verdict "$entries")
 

@@ -32,6 +32,19 @@ assert_contains() {
   fi
 }
 
+# Assert stdout is a single parseable JSON object (vstack#453: --json must never
+# finish silently, on any exit path).
+assert_json() {
+  local doc="$1" name="$2"
+  if [[ -n "$doc" ]] && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$doc"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        stdout was not parseable JSON: %s\n' "$name" "$doc"
+  fi
+}
+
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/repo/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -159,7 +172,7 @@ case "${1:-}" in
         echo '[]'
         exit 0
         ;;
-      repos/*/pulls/5/reviews|repos/*/pulls/6/reviews|repos/*/pulls/7/reviews|repos/*/pulls/8/reviews)
+      repos/*/pulls/5/reviews|repos/*/pulls/6/reviews|repos/*/pulls/7/reviews|repos/*/pulls/8/reviews|repos/*/pulls/12/reviews|repos/*/pulls/13/reviews)
         echo '[]'
         exit 0
         ;;
@@ -232,11 +245,11 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments|repos/*/issues/12/comments|repos/*/issues/13/comments)
         echo '[]'
         exit 0
         ;;
-      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/comments/*/reactions)
+      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/12/reactions|repos/*/issues/13/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
         exit 0
         ;;
@@ -336,8 +349,10 @@ JSON
       view)
         if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" || "${3:-}" == "11" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
-          exit 0
+        else
+          echo '{"reviewDecision":"REVIEW_REQUIRED"}'
         fi
+        exit 0
         ;;
       checks)
         if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "8" ]]; then
@@ -531,6 +546,54 @@ assert_eq "$code" "3" "hanging gh auth status exits through bounded preflight"
 assert_eq "$(jq -r .status <<<"$output")" "error" "hanging gh auth status emits JSON error"
 assert_contains "$(cat "$stderr")" "GitHub CLI authentication failed" "hanging gh auth status emits stderr diagnostic"
 assert_eq "$(cat "$auth_status_count_file")" "1" "hanging keyring auth is probed once"
+
+echo "=== bot-review-wait --json always emits JSON (#453) ==="
+
+# Silent path 1: a missing github CLI used to `exit 1` before arg parse, so
+# --json produced no stdout. It must now emit a JSON error object.
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$TMP_ROOT/does-not-exist.sh"
+EOF
+set +e
+output=$(run_wait 12 1 5 --json --reviewers 'review-bot[bot]' 2>/dev/null)
+code=$?
+set -e
+assert_eq "$code" "3" "missing GIT_HOST_CLI exits 3 in --json mode"
+assert_json "$output" "missing GIT_HOST_CLI emits JSON instead of silent exit"
+assert_eq "$(jq -r .status <<<"$output")" "error" "missing GIT_HOST_CLI reports status error"
+assert_contains "$output" "GIT_HOST_CLI not found" "missing GIT_HOST_CLI JSON carries diagnostic"
+
+# Silent path 2: no bot reviewers detected. --json must still emit a result.
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+output=$(run_wait 12 1 5 --json)
+code=$?
+assert_eq "$code" "0" "no reviewers detected exits 0"
+assert_json "$output" "no reviewers path emits parseable JSON"
+assert_eq "$(jq -r .status <<<"$output")" "no_reviewers" "no reviewers path reports no_reviewers status"
+
+# Silent path 3: reviewer configured but no review posted yet (the #453 repro —
+# reviewDecision=REVIEW_REQUIRED, clear threads). --json must emit a timeout
+# result with the reviewer still pending, never finish silently.
+set +e
+output=$(run_wait 13 1 1 --json --reviewers 'chatgpt-codex-connector[bot]')
+code=$?
+set -e
+assert_eq "$code" "1" "pending reviewer at deadline exits 1"
+assert_json "$output" "timeout-with-pending path emits parseable JSON"
+assert_eq "$(jq -r .status <<<"$output")" "timeout" "timeout-with-pending reports timeout status"
+assert_eq "$(jq -r '.pending_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "timeout-with-pending keeps reviewer pending"
+
+# Silent path 4: hard auth failure must emit a parseable JSON error object.
+stderr="$TMP_ROOT/json-err.err"
+set +e
+output=$(FAKE_GH_AUTH_MODE=fail run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
+code=$?
+set -e
+assert_eq "$code" "3" "auth failure exits 3 in --json mode"
+assert_json "$output" "auth failure path emits parseable JSON"
+assert_eq "$(jq -r .status <<<"$output")" "error" "auth failure reports status error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
