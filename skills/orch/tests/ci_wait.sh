@@ -14,6 +14,11 @@
 #                                        -> token preflight wins once
 #   7. no env token + hanging keyring auth
 #                                        -> bounded failure, not hang
+#
+# Plus the deterministic-output contract (vstack#454): ci-wait must always
+# emit a parseable result on stdout — pass/fail/timeout/error — and must
+# report still-pending checks at the deadline as a timeout, never as
+# success or silence (cases 10-14).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -166,6 +171,18 @@ case "${1:-}" in
           exit 8
         fi
       fi
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_always" ]]; then
+        echo '[{"name":"build","state":"IN_PROGRESS"}]'
+        exit 8
+      fi
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "empty" ]]; then
+        echo '[]'
+        exit 0
+      fi
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "failure" ]]; then
+        echo '[{"name":"build","state":"FAILURE"}]'
+        exit 1
+      fi
       echo '[{"name":"build","state":"SUCCESS"}]'
       exit 0
     fi
@@ -196,6 +213,23 @@ run_wait_short() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5)
+}
+
+run_wait_json() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30 --json)
+}
+
+run_wait_json_short() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5 --json)
+}
+
+# jq field extractor for --json output assertions.
+json_field() {
+  jq -r "$2" <<<"$1" 2>/dev/null || echo "UNPARSEABLE"
 }
 
 echo "=== ci-wait auth handling ==="
@@ -312,6 +346,83 @@ set -e
 assert_eq "$rc" "0" "case9: EXPECTED checks are treated as pending" "$stderr"
 assert_contains "$output" "CI passed" "case9: ci-wait reaches CI passed after expected check clears"
 assert_eq "$(cat "$checks_count_file")" "2" "case9: ci-wait polls again after EXPECTED JSON" "$stderr"
+
+echo "=== ci-wait output contract (vstack#454) ==="
+
+# Case 10: --json pass. Result must be a parseable object with
+# status=complete / verdict=pass.
+stderr="$TMP_ROOT/case10.err"
+set +e
+output=$(run_wait_json 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case10: json pass exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case10: json status is complete" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pass" "case10: json verdict is pass" "$stderr"
+assert_eq "$(json_field "$output" '.passed_checks | length')" "1" "case10: json lists passed checks" "$stderr"
+
+# Case 11: checks still IN_PROGRESS at the deadline must report a timeout,
+# never exit 0 or stay silent (the vstack#454 defect).
+stderr="$TMP_ROOT/case11.err"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_MODE=pending_always 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case11: pending checks at deadline exit 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case11: json status is timeout" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case11: json verdict is pending" "$stderr"
+assert_eq "$(json_field "$output" '.pending_checks[0].name')" "build" "case11: json lists pending checks" "$stderr"
+
+# Case 11b: same deadline scenario in text mode still emits a stdout result.
+stderr="$TMP_ROOT/case11b.err"
+set +e
+output=$(run_wait_short STUB_PR_CHECKS_MODE=pending_always 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case11b: text-mode timeout exits 1" "$stderr"
+assert_contains "$output" "CI timeout" "case11b: text-mode timeout prints CI timeout on stdout"
+
+# Case 12: no checks ever registered -> status=error with diagnostic, not
+# a silent exit.
+stderr="$TMP_ROOT/case12.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_MODE=empty 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case12: no registered checks exit 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "error" "case12: json status is error" "$stderr"
+assert_contains "$(json_field "$output" '.error')" "no CI checks" "case12: json error names the cause"
+
+# Case 12b: same in text mode — stdout carries a CI error line.
+stderr="$TMP_ROOT/case12b.err"
+set +e
+output=$(run_wait STUB_PR_CHECKS_MODE=empty 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case12b: text-mode no-checks exit 1" "$stderr"
+assert_contains "$output" "CI error" "case12b: text-mode no-checks prints CI error on stdout"
+
+# Case 13: settled failing check -> status=complete / verdict=fail.
+stderr="$TMP_ROOT/case13.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_MODE=failure 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case13: failed checks exit 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case13: json status is complete" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case13: json verdict is fail" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks[0].name')" "build" "case13: json lists failed checks" "$stderr"
+
+# Case 14: auth failure with --json still yields a parseable error object.
+rm -f "$TMP_ROOT/repo/.env.local"
+stderr="$TMP_ROOT/case14.err"
+set +e
+output=$(run_wait_json GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "3" "case14: json auth failure exits 3" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "error" "case14: json auth failure reports status error" "$stderr"
+assert_contains "$(json_field "$output" '.error')" "auth" "case14: json auth failure names auth in error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

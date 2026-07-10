@@ -357,15 +357,17 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 3. **Wait for CI**:
    ```bash
-   .agents/skills/orch/scripts/ci-wait [PR_NUMBER]
+   .agents/skills/orch/scripts/ci-wait [PR_NUMBER] --json
    ```
+   The result is a JSON object: `status` (`complete`/`timeout`/`error`) plus `verdict` (`pass`/`fail`/`pending`). ci-wait always emits it — no silent completion.
 
 4. **Handle CI result**:
 
    | Result | Action |
    |--------|--------|
-   | ✅ Pass | → § 6 |
-   | ❌ Fail | → § 5 |
+   | ✅ `status=complete`, `verdict=pass` | → § 6 |
+   | ❌ `status=complete`, `verdict=fail` | → § 5 |
+   | ⏱ `status=timeout` or `status=error` | Re-run step 3 once; if it repeats → Ask user: `Skip CI` \| `Retry` \| `Abort` |
 
 ---
 

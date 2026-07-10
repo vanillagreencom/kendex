@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
-# Wait for CI checks to complete, output only on completion or failure
-# Auto-retries transient infrastructure failures (max 1 retry)
+# Wait for CI checks to complete. Always emits a final result on stdout —
+# a "CI passed"/"CI failed"/"CI timeout"/"CI error" line, or a JSON object
+# with --json — so callers can route pass vs fail deterministically
+# (vstack#454). Auto-retries transient infrastructure failures (max 1 retry).
 #
 # Uses JSON-based state detection to avoid false positives from stale checks
 # left by prior workflow runs (e.g., SKIPPED checks from defer-ci runs).
 #
-# Usage: ci-wait <PR#> [poll_interval] [max_wait]
+# Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
+#
+# Exit codes:
+#   0 - CI complete and passing
+#   1 - CI failed, timed out with checks still pending, or a non-auth error
+#       (no checks registered, merge conflicts, repo/API failure)
+#   3 - GitHub auth/CLI error (matches bot-review-wait)
+#
+# JSON output (always when --json):
+#   {
+#     "status": "complete" | "timeout" | "error",
+#     "verdict": "pass" | "fail" | "pending",
+#     "elapsed_seconds": <int>,
+#     "error": <string>,            # only when status == "error"
+#     "pending_checks": [ {name,state} ... ],
+#     "failed_checks":  [ {name,state} ... ],
+#     "passed_checks":  [ {name,state} ... ]
+#   }
+#   Still-pending checks at the deadline report status "timeout", never
+#   silent success.
 #
 # Auth resolution ladder (see vstack#19):
 #   1. Validate the currently selected GH_TOKEN/GITHUB_TOKEN once, if present.
@@ -28,7 +49,88 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 
+# --- arg parse (before auth so error paths can honor --json) ---
+JSON_OUTPUT=false
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON_OUTPUT=true; shift ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+PR_NUM="${POSITIONAL[0]:?Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]}"
+POLL_INTERVAL="${POSITIONAL[1]:-15}"
+MAX_WAIT="${POSITIONAL[2]:-600}"
+START_TIME="$(date +%s)"
+elapsed=0
+
+update_elapsed() {
+  local now
+  now="$(date +%s)"
+  elapsed=$((now - START_TIME))
+}
+
+EMPTY_CLASSES='{"pending":[],"failed":[],"passed":[]}'
+# Last classification seen by the poll loop, so timeout/error results can
+# report the checks that were still outstanding.
+last_check_classes="$EMPTY_CLASSES"
+
+# Emit the final machine-readable result on stdout. Every exit path routes
+# through here (or emit_error) so the script can never finish silently.
+#   status: complete | timeout | error
+#   verdict derives from the classes: pending > fail > pass.
+emit_result() {
+  local status="$1" classes="$2" error_msg="${3:-}"
+  update_elapsed
+  local verdict
+  verdict=$(jq -r '
+    if (.pending | length) > 0 then "pending"
+    elif (.failed | length) > 0 then "fail"
+    elif (.passed | length) > 0 then "pass"
+    else "pending" end' <<<"$classes")
+  if $JSON_OUTPUT; then
+    jq -n \
+      --arg s "$status" \
+      --arg v "$verdict" \
+      --argjson elapsed "$elapsed" \
+      --arg error "$error_msg" \
+      --argjson classes "$(jq -c 'map_values(map({name, state: (.state // .bucket // "UNKNOWN")}))' <<<"$classes")" \
+      '{
+        status: $s,
+        verdict: $v,
+        elapsed_seconds: $elapsed,
+        pending_checks: $classes.pending,
+        failed_checks: $classes.failed,
+        passed_checks: $classes.passed
+      } + (if $error == "" then {} else {error: $error} end)'
+    return 0
+  fi
+  case "$status" in
+    complete)
+      if [[ "$verdict" == "pass" ]]; then
+        echo "CI passed"
+      else
+        echo "CI failed:"
+        jq -r '.failed[] | "  \(.name): \(.state // .bucket // "FAILED")"' <<<"$classes"
+      fi
+      ;;
+    timeout)
+      echo "CI timeout after ${elapsed}s (verdict: $verdict)"
+      jq -r '.pending[]? | "  pending: \(.name)"' <<<"$classes"
+      ;;
+    error)
+      echo "CI error: $error_msg"
+      ;;
+  esac
+}
+
+emit_error() {
+  emit_result "error" "$last_check_classes" "$1"
+}
+
 if ! command -v gh >/dev/null 2>&1; then
+  emit_error "gh CLI not found on PATH"
   echo "ci-wait: gh CLI not found on PATH" >&2
   exit 3
 fi
@@ -77,6 +179,7 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
+  emit_error "no working GitHub auth path"
   {
     echo "ci-wait: no working GitHub auth path."
     echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
@@ -85,10 +188,6 @@ if [[ "$AUTH_READY" != "true" ]]; then
   exit 3
 fi
 
-PR_NUM="${1:?Usage: ci-wait <PR#> [poll_interval] [max_wait]}"
-POLL_INTERVAL="${2:-15}"
-MAX_WAIT="${3:-600}"
-
 # --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
 if [ -z "$REPO" ]; then
@@ -96,6 +195,7 @@ if [ -z "$REPO" ]; then
   REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+?)(\.git)?$#\1#p')
 fi
 if [ -z "$REPO" ]; then
+  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
   echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
   exit 1
 fi
@@ -104,6 +204,7 @@ fi
 merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
 case "$merge_state" in
   DIRTY|CONFLICTING)
+    emit_error "PR #$PR_NUM has merge conflicts (state: $merge_state); CI will not trigger until conflicts are resolved"
     echo "PR #$PR_NUM has merge conflicts (state: $merge_state)" >&2
     echo "CI will not trigger until conflicts are resolved." >&2
     echo "Rebase onto the default branch and force-push to fix." >&2
@@ -195,8 +296,8 @@ classify_checks() {
 checks_stderr=$(mktemp)
 trap 'rm -f "$checks_stderr"' EXIT
 
-elapsed=0
-while [ $elapsed -lt $MAX_WAIT ]; do
+update_elapsed
+while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
   set +e
@@ -204,6 +305,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   checks_status=$?
   set -e
   if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
+    emit_error "gh pr checks failed for PR #$PR_NUM in $REPO"
     echo "gh pr checks failed for PR #$PR_NUM in $REPO:" >&2
     cat "$checks_stderr" >&2
     exit 1
@@ -213,6 +315,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   if [ -z "$checks_json" ] || [ "$checks_json" = "[]" ] || [ "$checks_json" = "null" ]; then
     no_checks_count=$((no_checks_count + 1))
     if [ $no_checks_count -ge $max_no_checks ]; then
+      emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft/defer-ci gating, or webhook delay)"
       echo "No CI checks after ${elapsed}s" >&2
       echo "Possible causes: merge conflicts, draft/defer-ci gating, or webhook delay." >&2
       merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
@@ -222,7 +325,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
       exit 1
     fi
     sleep "$POLL_INTERVAL"
-    elapsed=$((elapsed + POLL_INTERVAL))
+    update_elapsed
     continue
   fi
 
@@ -232,6 +335,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
   # gh output. This must stay aligned with github pr-merge --check.
   check_classes=$(echo "$checks_json" | classify_checks)
+  last_check_classes="$check_classes"
   pending_count=$(echo "$check_classes" | jq '.pending | length')
   failed_count=$(echo "$check_classes" | jq '.failed | length')
   success_count=$(echo "$check_classes" | jq '.passed | length')
@@ -244,7 +348,10 @@ while [ $elapsed -lt $MAX_WAIT ]; do
 
   # Check for failure (only when all checks have settled)
   if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
-    failed_run=$(get_failed_run_id "$PR_NUM")
+    # `gh pr checks` exits nonzero when checks have failed; without the guard
+    # the pipefail status escapes the substitution and errexit kills the
+    # script before any result is emitted (silent-exit class of vstack#454).
+    failed_run=$(get_failed_run_id "$PR_NUM" || true)
 
     # Try auto-retry for transient failures
     if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then
@@ -253,11 +360,11 @@ while [ $elapsed -lt $MAX_WAIT ]; do
       retries=$((retries + 1))
       seen_in_progress=false  # Reset — rerun will produce new checks
       sleep 10
+      update_elapsed
       continue
     fi
 
-    echo "CI failed:"
-    echo "$check_classes" | jq -r '.failed[] | "  \(.name): \(.state // .bucket // "FAILED")"'
+    emit_result "complete" "$check_classes"
     exit 1
   fi
 
@@ -265,7 +372,7 @@ while [ $elapsed -lt $MAX_WAIT ]; do
   if [ "$pending_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
     if [ "$seen_in_progress" = true ]; then
       # We watched checks go from in-progress to complete — reliable
-      echo "CI passed"
+      emit_result "complete" "$check_classes"
       exit 0
     fi
     # Only seeing completed/skipped checks but never saw in-progress.
@@ -274,15 +381,19 @@ while [ $elapsed -lt $MAX_WAIT ]; do
     stale_count=$((stale_count + 1))
     if [ "$stale_count" -ge "$max_stale" ]; then
       # Waited long enough for new checks to appear — genuinely complete
-      echo "CI passed"
+      emit_result "complete" "$check_classes"
       exit 0
     fi
   fi
 
   sleep "$POLL_INTERVAL"
-  elapsed=$((elapsed + POLL_INTERVAL))
+  update_elapsed
 done
 
-echo "CI timeout after ${MAX_WAIT}s"
-gh pr checks "$PR_NUM" --repo "$REPO"
+# Deadline reached with checks still outstanding — report timeout, not
+# success, so callers never mistake in-progress CI for a pass.
+emit_result "timeout" "$last_check_classes"
+if ! $JSON_OUTPUT; then
+  gh pr checks "$PR_NUM" --repo "$REPO" >&2 || true
+fi
 exit 1
