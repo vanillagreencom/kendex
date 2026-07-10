@@ -1,6 +1,6 @@
 ---
 name: decider
-description: "Architectural decision document management: templates, creation, search, supersession tracking, and INDEX maintenance."
+description: "Architecture Decision Record (ADR) and architectural decision document management: templates, creation, search, supersession tracking, and INDEX maintenance."
 license: MIT
 user-invocable: true
 metadata:
@@ -13,7 +13,7 @@ metadata:
 
 # Decider
 
-Architectural decision document management with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
+Manages Architecture Decision Records (ADRs) — represented in this skill as numbered `DXXX` architectural decision documents indexed in `INDEX.md` (by default under `docs/decisions/`) — with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
 
 ```bash
 .agents/skills/decider/scripts/decisions <command> [options]
