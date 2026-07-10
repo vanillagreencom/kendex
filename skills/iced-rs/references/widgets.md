@@ -83,9 +83,15 @@ Never wrap conditionally:
 // WRONG — tree shape changes, breaks event tracking
 if enabled { mouse_area(label).into() } else { label.into() }
 
-// RIGHT — always wrap, conditionally enable
-mouse_area(label).on_press_maybe(if enabled { Some(msg) } else { None })
+// RIGHT — always wrap, conditionally attach the handler
+let mut area = mouse_area(label);
+if enabled {
+    area = area.on_press(msg);
+}
+area
 ```
+
+`MouseArea` has **no `on_press_maybe`** — that method is `button`-specific (see row above). `MouseArea::on_press` takes a plain `Message`, not an `Option`, so gate the `.on_press(...)` call itself while keeping the wrapper unconditional.
 
 ### Overlay / floating content
 

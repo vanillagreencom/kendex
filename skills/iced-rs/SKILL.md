@@ -218,9 +218,15 @@ Iced tracks widgets by tree position. Conditional wrapping changes tree shape an
 // WRONG: conditional wrapping changes tree shape
 if dragging { mouse_area(label).into() } else { label.into() }
 
-// RIGHT: always wrap, conditionally enable
-mouse_area(label).on_press_maybe(if enable { Some(msg) } else { None })
+// RIGHT: always wrap, conditionally attach the handler
+let mut area = mouse_area(label);
+if enable {
+    area = area.on_press(msg);
+}
+area
 ```
+
+`MouseArea` has no `on_press_maybe` — its `on_press` takes a plain `Message`, so gate the call, not the wrapper. (`on_press_maybe(Option<Message>)` is `button`-only.)
 
 ### view() is pure
 

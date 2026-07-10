@@ -422,7 +422,7 @@ Used in `view()` as `my_widget(self.value).width(300).on_press(Message::Tick).in
 
 Non-negotiable — violating causes subtle bugs:
 
-- **Widget tree consistency** — always wrap, conditionally enable. Never `if cond { mouse_area(x).into() } else { x.into() }`. Prefer `mouse_area(x).on_press_maybe(...)`.
+- **Widget tree consistency** — always wrap, conditionally attach the handler. Never `if cond { mouse_area(x).into() } else { x.into() }`. `MouseArea` has **no `on_press_maybe`** (that is `button`-only); its `on_press` takes a plain `Message`, so keep the wrapper unconditional and gate the call: `let mut a = mouse_area(x); if cond { a = a.on_press(msg); } a`.
 - **`view()` is pure** — no side effects, no mutable state. All state in `State`, mutated only in `update()`.
 - **Single message per interaction** — one interaction → one message. Composite actions use a state machine in `update()`.
 - **Overlay state isolation** — overlay layers must not affect base layer widget structure.
