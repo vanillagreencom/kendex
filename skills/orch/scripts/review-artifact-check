@@ -9,19 +9,54 @@ set -euo pipefail
 
 usage() {
   cat >&2 << 'EOF'
-Usage: review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
+Usage:
+  review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
+  review-artifact-check --file <json_path>
 
-Checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first and prints JSON:
+Glob mode: checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first.
+File mode (--file): checks one explicit JSON file (existence + verdict),
+for artifacts written to a known path such as the external review output.
+
+Both modes print JSON:
   {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
 
 reason meanings when ok=false:
-  missing  no review-[AGENT]-*.json files found
-  stale    newest artifact mtime < delegated_at_epoch
-  invalid  newest fresh artifact fails `jq -e '.verdict'`
+  missing  no matching artifact found (glob) / file does not exist (--file)
+  stale    newest artifact mtime < delegated_at_epoch (glob mode only)
+  invalid  artifact fails `jq -e '.verdict'`
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
 }
+
+emit() {
+  local ok="$1" path="$2" reason="$3"
+  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
+}
+
+# --- File mode: validate one explicit JSON path deterministically ---
+if [[ "${1:-}" == "--file" ]]; then
+  if [[ $# -ne 2 ]]; then
+    usage
+    exit 2
+  fi
+  file="$2"
+  if [[ -z "$file" ]]; then
+    echo "Error: --file requires a non-empty path" >&2
+    exit 2
+  fi
+  if [[ ! -f "$file" ]]; then
+    emit false "" "missing"
+    exit 1
+  fi
+  if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
+    emit false "$file" "invalid"
+    exit 1
+  fi
+  emit true "$file" "valid"
+  exit 0
+fi
 
 if [[ $# -ne 3 ]]; then
   usage
@@ -44,12 +79,6 @@ if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
   echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
   exit 2
 fi
-
-emit() {
-  local ok="$1" path="$2" reason="$3"
-  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
-    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
-}
 
 file_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"

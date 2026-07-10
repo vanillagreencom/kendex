@@ -118,6 +118,42 @@ out="$("$CHECK" "$worktree" reviewer-quality "$delegated_at")"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "newest-invalid falls back to older valid artifact"
 assert_eq "$(jq -r '.path' <<<"$out")" "$valid" "fallback selects the older fresh valid artifact"
 
+# --- --file mode: explicit path validation (external review output) ---
+ext_valid="$worktree/tmp/review-external-20260709-050505.json"
+printf '{"verdict":"pass","items":[]}' > "$ext_valid"
+out="$("$CHECK" --file "$ext_valid")"
+rc=$?
+assert_eq "$rc" "0" "--file valid artifact exits 0"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file valid reports ok=true"
+assert_eq "$(jq -r '.path' <<<"$out")" "$ext_valid" "--file valid reports its path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file valid reports reason=valid"
+
+# --file does not apply the staleness gate — an old mtime still validates
+touch -d "@$before" "$ext_valid"
+out="$("$CHECK" --file "$ext_valid")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file ignores mtime (no staleness gate)"
+
+# --file: missing file
+set +e
+out="$("$CHECK" --file "$worktree/tmp/review-external-does-not-exist.json")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file missing artifact exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file missing reports ok=false"
+assert_eq "$(jq -r '.path' <<<"$out")" "null" "--file missing reports null path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "missing" "--file missing reports reason=missing"
+
+# --file: exists but no verdict field
+ext_invalid="$worktree/tmp/review-external-20260709-060606.json"
+printf '{"items":[]}' > "$ext_invalid"
+set +e
+out="$("$CHECK" --file "$ext_invalid")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file missing verdict exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file missing verdict reports reason=invalid"
+assert_eq "$(jq -r '.path' <<<"$out")" "$ext_invalid" "--file invalid reports the file path"
+
 # --- usage errors ---
 set +e
 "$CHECK" "$worktree" reviewer-quality >/dev/null 2>&1
@@ -126,6 +162,8 @@ assert_eq "$?" "2" "missing arguments exit 2"
 assert_eq "$?" "2" "non-numeric delegated_at exits 2"
 "$CHECK" "$TMP_ROOT/does-not-exist" reviewer-quality "$delegated_at" >/dev/null 2>&1
 assert_eq "$?" "2" "nonexistent worktree exits 2"
+"$CHECK" --file >/dev/null 2>&1
+assert_eq "$?" "2" "--file with no path exits 2"
 set -e
 
 # --- review-pr.md wires the deterministic acceptance ---
@@ -135,6 +173,8 @@ assert_file_not_contains "$review_pr" 'A return message arrives with `Verdict:` 
 assert_file_contains "$review_pr" "a return message with \`Verdict:\`/\`File:\` lines is never sufficient by itself" "review-pr states artifact is the only acceptance condition"
 assert_file_contains "$review_pr" "exactly one" "review-pr limits incomplete returns to one re-delegation"
 assert_file_contains "$review_pr" "using your harness file-write tool" "review-pr re-delegation instructs harness file-write tool"
+assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
+assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

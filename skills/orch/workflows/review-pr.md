@@ -171,15 +171,15 @@ mkdir -p [WORKTREE_PATH]/tmp
   --output "$EXTERNAL_OUTPUT"
 ```
 
-**On success** — validate and append:
+**On success** — validate deterministically, then append. `review-artifact-check --file` checks existence and `jq -e '.verdict'` and prints `{ok, path, reason}` — no inline conditional or redirection:
 ```bash
-# Basic schema check: verdict field must exist
-if jq -e '.verdict' "$EXTERNAL_OUTPUT" >/dev/null 2>&1; then
-  .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "$EXTERNAL_OUTPUT"
-else
-  echo "Warning: external review JSON missing verdict field — skipping" >&2
-fi
+.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT"
 ```
+**If `ok == true`** — append the external JSON:
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "$EXTERNAL_OUTPUT"
+```
+**If `ok == false`** — the external JSON is missing or has no `verdict` field. Report the `reason` to the user and skip the append (external review is advisory).
 
 **On failure**: report to user but **continue** — external review is advisory, not blocking.
 
