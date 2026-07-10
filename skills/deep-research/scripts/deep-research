@@ -8,10 +8,15 @@ const deepTypes = new Set(["deep-reasoning", "deep-lite", "deep"]);
 const researchModes = new Set(["lite", "standard", "full"]);
 const formats = new Set(["findings", "markdown", "json"]);
 const MAX_CONTEXT_FILES = 25;
+// Exa /search limits: numResults 1-100 (INVALID_NUM_RESULTS), text.maxCharacters 1-10000,
+// additionalQueries 1-10 items. https://exa.ai/docs/reference/search
+const EXA_MAX_NUM_RESULTS = 100;
+const EXA_MAX_TEXT_CHARACTERS = 10000;
+const EXA_MAX_ADDITIONAL_QUERIES = 10;
 const modeDefaults = {
   lite: { type: "deep-lite", numResults: 15, textMaxCharacters: 10000, timeout: 300 },
-  standard: { type: "deep-reasoning", numResults: 50, textMaxCharacters: 16000, timeout: 600 },
-  full: { type: "deep-reasoning", numResults: 150, textMaxCharacters: 24000, timeout: 1800 },
+  standard: { type: "deep-reasoning", numResults: 50, textMaxCharacters: 10000, timeout: 600 },
+  full: { type: "deep-reasoning", numResults: 100, textMaxCharacters: 10000, timeout: 1800 },
 };
 const defaultOutputSchema = {
   type: "object",
@@ -32,11 +37,12 @@ function fail(message, extra = {}) { jsonOut(process.stderr, { ok: false, error:
 function helpPayload() {
   return {
     ok: true,
-    usage: "deep-research report|json|doctor [query] [flags]",
+    usage: "deep-research report|json|validate|doctor [query|paths] [flags]",
     examples: [
       "deep-research report 'question' --mode standard --output findings.md",
       "deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md",
       "deep-research json 'question' --output raw.json",
+      "deep-research validate findings.md findings.raw.json",
     ],
     modes: modeDefaults,
     flags: [
@@ -59,6 +65,7 @@ function helpPayload() {
       "--timeout <seconds>",
     ],
     sidecar: "report --output findings.md writes findings.raw.json by default unless --raw-output or --no-raw-output is supplied. Raw provider JSON is not embedded in findings.md.",
+    validate: "validate <findings.md> <findings.raw.json> runs deterministic post-run checks and prints {ok, errors, warnings}. Exit 0 = no errors.",
   };
 }
 
@@ -145,6 +152,9 @@ function applyMode(options) {
   options.timeout = options.explicit.has("timeout") ? options.timeout : defaults.timeout;
   if (!deepTypes.has(options.type)) fail(`Invalid --type ${options.type}`);
   if (!formats.has(options.format)) fail(`Invalid --format ${options.format}`);
+  if (!Number.isInteger(options.numResults) || options.numResults < 1 || options.numResults > EXA_MAX_NUM_RESULTS) fail(`Invalid --num-results ${options.numResults}. Exa /search accepts 1-${EXA_MAX_NUM_RESULTS} (INVALID_NUM_RESULTS).`);
+  if (!Number.isInteger(options.textMaxCharacters) || options.textMaxCharacters < 1 || options.textMaxCharacters > EXA_MAX_TEXT_CHARACTERS) fail(`Invalid --text-max-characters ${options.textMaxCharacters}. Exa text.maxCharacters accepts 1-${EXA_MAX_TEXT_CHARACTERS}.`);
+  if (options.additionalQuery.length > EXA_MAX_ADDITIONAL_QUERIES) fail(`Too many --additional-query values (${options.additionalQuery.length}). Exa additionalQueries accepts at most ${EXA_MAX_ADDITIONAL_QUERIES}.`);
   return options;
 }
 
@@ -195,6 +205,13 @@ function synthesized(raw) {
   if (typeof raw?.data?.answer === "string") return raw.data.answer;
   return "Exa returned sources but no synthesized answer field. Review evidence and raw metadata.";
 }
+function hasSynthesis(raw) {
+  return !isGenericNoAnswer(synthesized(raw));
+}
+function structuredOutputContent(raw) {
+  const content = raw?.output?.content;
+  return content && typeof content === "object" && !Array.isArray(content) ? content : undefined;
+}
 function sourcesMarkdown(results) {
   if (!results.length) return "- No source URLs returned by Exa.";
   return results.map((r, i) => `- [${i + 1}] ${r.title || r.url || "Untitled"}${r.url ? ` — ${r.url}` : ""}${r.publishedDate ? ` (${r.publishedDate})` : ""}`).join("\n");
@@ -217,12 +234,24 @@ function fallbackSummary(raw) {
   const themes = results.slice(0, 5).map((r, i) => `(${i + 1}) ${r.title || r.url || "Untitled"}`).join("; ");
   return `Exa returned ${results.length} sources but no synthesized answer field. The strongest source clusters are: ${themes}. Treat the findings below as an evidence brief and validate recommendations against primary sources before committing.`;
 }
-function keyFindings(raw) {
-  const answer = synthesized(raw);
-  if (!isGenericNoAnswer(answer)) return answer;
-  const results = normalizeResults(raw);
+function sourceFindingBullets(results) {
   if (!results.length) return "- No source-backed findings were returned.";
   return results.slice(0, 8).map((r, i) => `- [${i + 1}] ${r.title || r.url || "Untitled"}: ${resultSnippet(r, 260) || "Review source directly."}`).join("\n");
+}
+// Key Findings must not repeat the Executive Summary: prefer the structured
+// keyFindings array; otherwise fall back to per-source bullets.
+function keyFindings(raw) {
+  const content = structuredOutputContent(raw);
+  const findings = Array.isArray(content?.keyFindings) ? content.keyFindings : Array.isArray(content?.findings) ? content.findings : [];
+  const bullets = findings.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).filter((item) => item.trim());
+  if (bullets.length) return bullets.map((item) => `- ${item.trim()}`).join("\n");
+  return sourceFindingBullets(normalizeResults(raw));
+}
+function recommendationMarkdown(raw) {
+  const content = structuredOutputContent(raw);
+  if (typeof content?.recommendation === "string" && content.recommendation.trim()) return content.recommendation.trim();
+  if (hasSynthesis(raw)) return synthesized(raw);
+  return "No synthesized recommendation was returned (evidence brief only). Derive the decision from the evidence above and validate against primary sources before committing.";
 }
 function evidenceMarkdown(results) {
   return results.map((r, i) => {
@@ -231,17 +260,26 @@ function evidenceMarkdown(results) {
   }).join("\n\n");
 }
 function renderFindings(query, raw, metadata = {}, rawOutput) {
-  const answer = fallbackSummary(raw);
+  const content = structuredOutputContent(raw);
+  const summary = typeof content?.executiveSummary === "string" && content.executiveSummary.trim() ? content.executiveSummary.trim() : fallbackSummary(raw);
   const findings = keyFindings(raw);
+  const recommendation = recommendationMarkdown(raw);
   const results = normalizeResults(raw);
+  const additional = Array.isArray(metadata.additionalQueries) ? metadata.additionalQueries : [];
+  const queryLine = additional.length
+    ? `- Queries: ${metadata.queryCount} (1 primary + ${additional.length} additional, applied via ${metadata.additionalQueriesApplied === "local-fan-out" ? "local per-query fan-out" : "Exa additionalQueries"})`
+    : `- Queries: ${metadata.queryCount || 1}`;
   const metadataLines = [
     `- Mode: ${metadata.researchMode || "standard"}`,
     `- Exa type: ${metadata.type || "deep-reasoning"}`,
-    `- Queries: ${metadata.queryCount || 1}`,
+    queryLine,
+    ...additional.map((q) => `  - Additional query: ${q}`),
+    `- Exa requests: ${metadata.requestCount || 1}`,
+    `- Synthesis: ${hasSynthesis(raw) ? "present" : "absent (evidence brief only)"}`,
     `- Sources: ${metadata.uniqueSourceCount ?? results.length} unique${metadata.sourceCount && metadata.sourceCount !== results.length ? ` (${metadata.sourceCount} returned before dedupe)` : ""}`,
     rawOutput ? `- Raw metadata sidecar: ${rawOutput}` : undefined,
   ].filter(Boolean).join("\n");
-  return `# Findings: ${query}\n\n## Research Question\n\n${query}\n\n## Executive Summary\n\n${answer}\n\n## Key Findings\n\n${findings}\n\n## Evidence and Sources\n\n${sourcesMarkdown(results)}\n\n${evidenceMarkdown(results)}\n\n## Tradeoffs / Alternatives\n\n- Compare benefits against implementation cost, operational risk, and project-specific constraints before committing.\n- Prefer primary-source documentation and current release notes when evidence conflicts.\n\n## Recommendation / Decision Criteria\n\n${answer}\n\nUse the source evidence above as decision criteria; validate any project-specific assumptions before irreversible work.\n\n## Risks / Unknowns\n\n- Verify source freshness and applicability.\n- Re-run if upstream APIs, pricing, or release notes change.\n- Treat uncited or snippet-only claims as hypotheses until confirmed by primary sources.\n\n## Revisit Conditions\n\n- New primary-source documentation contradicts these findings.\n- Implementation constraints differ from supplied context.\n- Exa returns materially different source coverage in a later run.\n\n## Research Metadata\n\n${metadataLines}\n`;
+  return `# Findings: ${query}\n\n## Research Question\n\n${query}\n\n## Executive Summary\n\n${summary}\n\n## Key Findings\n\n${findings}\n\n## Evidence and Sources\n\n${sourcesMarkdown(results)}\n\n${evidenceMarkdown(results)}\n\n## Tradeoffs / Alternatives\n\n- Compare benefits against implementation cost, operational risk, and project-specific constraints before committing.\n- Prefer primary-source documentation and current release notes when evidence conflicts.\n\n## Recommendation / Decision Criteria\n\n${recommendation}\n\nUse the source evidence above as decision criteria; validate any project-specific assumptions before irreversible work.\n\n## Risks / Unknowns\n\n- Verify source freshness and applicability.\n- Re-run if upstream APIs, pricing, or release notes change.\n- Treat uncited or snippet-only claims as hypotheses until confirmed by primary sources.\n\n## Revisit Conditions\n\n- New primary-source documentation contradicts these findings.\n- Implementation constraints differ from supplied context.\n- Exa returns materially different source coverage in a later run.\n\n## Research Metadata\n\n${metadataLines}\n`;
 }
 
 function defaultRawOutputPath(outputPath) {
@@ -266,22 +304,35 @@ function dedupeResults(responses) {
   return { results, sourceCount };
 }
 
-function combineResponses(responses, options, elapsedMs) {
+function uniqueQueries(query, options) {
+  return Array.from(new Set([query, ...options.additionalQuery].map((item) => item.trim()).filter(Boolean)));
+}
+
+function combineResponses(responses, options, query, elapsedMs) {
   const { results, sourceCount } = dedupeResults(responses);
   const answers = responses.map((raw, index) => {
     const answer = synthesized(raw);
-    return answer ? `Query ${index + 1}: ${answer}` : undefined;
+    return !isGenericNoAnswer(answer) ? `Query ${index + 1}: ${answer}` : undefined;
   }).filter(Boolean);
   const raw = responses.length === 1
     ? { ...responses[0], results }
-    : { answer: answers.join("\n\n"), results, responses };
+    : { ...(answers.length ? { answer: answers.join("\n\n") } : {}), results, responses };
+  const queries = uniqueQueries(query, options);
+  const additionalQueries = queries.slice(1);
   const metadata = {
     researchMode: options.mode,
     type: options.type,
     numResults: options.numResults,
     textMaxCharacters: options.textMaxCharacters,
     timeoutSeconds: options.timeout,
-    queryCount: responses.length,
+    // queryCount = distinct queries submitted (primary + additional).
+    // requestCount = Exa API calls: full mode fans out one request per query;
+    // other modes send one request carrying additionalQueries (consumed by deep search types).
+    queryCount: queries.length,
+    requestCount: responses.length,
+    additionalQueries,
+    additionalQueriesApplied: !additionalQueries.length ? "none" : options.mode === "full" ? "local-fan-out" : "provider-additional-queries",
+    synthesis: hasSynthesis(raw),
     sourceCount,
     uniqueSourceCount: results.length,
     elapsedMs,
@@ -323,8 +374,8 @@ async function callExa(query, options) {
     type: options.type,
     numResults: options.numResults,
     contents: options.mode === "lite"
-      ? { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 600, numSentences: 3, highlightsPerUrl: 1 } }
-      : { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 900, numSentences: 4, highlightsPerUrl: 2 }, summary: { query: "Summarize source evidence relevant to the research question, preserving concrete facts and tradeoffs." } },
+      ? { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 600 } }
+      : { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 900 }, summary: { query: "Summarize source evidence relevant to the research question, preserving concrete facts and tradeoffs." } },
     outputSchema: options.mode === "lite" ? undefined : defaultOutputSchema,
     systemPrompt: await buildSystemPrompt(options),
     additionalQueries: options.additionalQuery.length ? options.additionalQuery : undefined,
@@ -335,17 +386,100 @@ async function callExa(query, options) {
   };
   Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
   try {
-    const queries = options.mode === "full" ? Array.from(new Set([query, ...options.additionalQuery].map((item) => item.trim()).filter(Boolean))) : [query];
+    const queries = options.mode === "full" ? uniqueQueries(query, options) : [query];
     const responses = [];
     for (const currentQuery of queries) {
       const currentBody = { ...body, query: currentQuery };
       if (options.mode === "full") delete currentBody.additionalQueries;
       responses.push(await callExaBody(currentBody, options, controller));
     }
-    return combineResponses(responses, options, Date.now() - startedAt);
+    return combineResponses(responses, options, query, Date.now() - startedAt);
   } finally {
     clearTimeout(timer);
   }
+}
+
+const requiredReportSections = ["Research Question", "Executive Summary", "Key Findings", "Evidence and Sources", "Tradeoffs / Alternatives", "Recommendation / Decision Criteria", "Risks / Unknowns", "Revisit Conditions", "Research Metadata"];
+const additionalQueriesAppliedValues = new Set(["none", "provider-additional-queries", "local-fan-out"]);
+
+function reportSections(report) {
+  const sections = {};
+  let current;
+  for (const line of report.split(/\r?\n/)) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) { current = heading[1]; sections[current] = []; continue; }
+    if (current) sections[current].push(line);
+  }
+  return Object.fromEntries(Object.entries(sections).map(([name, lines]) => [name, lines.join("\n").trim()]));
+}
+
+function normalizedProse(text) {
+  return String(text || "").toLowerCase().replace(/^[\s>*-]+/gm, "").replace(/[#`_[\]()]/g, "").replace(/\s+/g, " ").trim();
+}
+
+async function validateCommand(options) {
+  const [reportArg, rawArg] = options.positional;
+  if (!reportArg || !rawArg) fail("Usage: deep-research validate <findings.md> <findings.raw.json>");
+  const reportPath = resolvePath(reportArg);
+  const rawPath = resolvePath(rawArg);
+  const errors = [];
+  const warnings = [];
+
+  let report = "";
+  if (!existsSync(reportPath)) errors.push(`Report not found: ${reportPath}`);
+  else {
+    report = await readFile(reportPath, "utf8");
+    if (!report.trim()) errors.push(`Report is empty: ${reportPath}`);
+  }
+
+  let sidecar;
+  if (!existsSync(rawPath)) errors.push(`Raw sidecar not found: ${rawPath}`);
+  else {
+    try { sidecar = JSON.parse(await readFile(rawPath, "utf8")); }
+    catch (parseError) { errors.push(`Raw sidecar is not valid JSON: ${parseError.message}`); }
+  }
+
+  const metadata = sidecar && typeof sidecar.metadata === "object" && sidecar.metadata ? sidecar.metadata : undefined;
+  const payload = sidecar && typeof sidecar.raw === "object" && sidecar.raw ? sidecar.raw : undefined;
+  if (sidecar && !metadata) errors.push("Raw sidecar has no metadata object.");
+  if (sidecar && !payload) errors.push("Raw sidecar has no raw provider payload.");
+
+  const sections = report ? reportSections(report) : {};
+  for (const section of requiredReportSections) {
+    if (report && !(section in sections)) errors.push(`Report is missing required section: ## ${section}`);
+  }
+
+  if (metadata) {
+    if (Array.isArray(metadata.additionalQueries)) {
+      const expected = 1 + metadata.additionalQueries.length;
+      if (metadata.queryCount !== expected) errors.push(`metadata.queryCount is ${metadata.queryCount} but 1 primary + ${metadata.additionalQueries.length} additional queries were recorded (expected ${expected}).`);
+      if (!additionalQueriesAppliedValues.has(metadata.additionalQueriesApplied)) errors.push(`metadata.additionalQueriesApplied is ${JSON.stringify(metadata.additionalQueriesApplied)}; expected one of: ${Array.from(additionalQueriesAppliedValues).join(", ")}.`);
+      else if ((metadata.additionalQueriesApplied === "none") !== (metadata.additionalQueries.length === 0)) errors.push("metadata.additionalQueriesApplied contradicts metadata.additionalQueries.");
+    } else warnings.push("Sidecar does not record how additional queries were applied (metadata.additionalQueries missing — sidecar predates this check or was produced by another tool). Re-run with the current script to verify query expansion.");
+  }
+
+  const synthesis = payload ? hasSynthesis(payload) : false;
+  if (metadata && typeof metadata.synthesis === "boolean" && metadata.synthesis !== synthesis) warnings.push(`metadata.synthesis is ${metadata.synthesis} but the raw payload ${synthesis ? "contains" : "lacks"} a synthesized answer.`);
+  if (payload && !synthesis) {
+    const mode = metadata?.researchMode;
+    if (mode === "standard" || mode === "full") errors.push(`Mode ${mode} requests server-side synthesis (outputSchema) but the raw payload has no synthesized answer. Re-run, or treat the report as an evidence brief only.`);
+    else warnings.push("No synthesized answer in the raw payload — this is an evidence brief. Do not use it as a decision recommendation; re-run with --mode standard or --mode full if the deliverable is a recommendation.");
+  }
+  if (payload && !normalizeResults(payload).length) warnings.push("Raw payload contains zero sources. Re-run with broader terms or fewer filters.");
+
+  const summarySection = normalizedProse(sections["Executive Summary"]);
+  const findingsSection = normalizedProse(sections["Key Findings"]);
+  if (summarySection && findingsSection) {
+    const [shorter, longer] = summarySection.length <= findingsSection.length ? [summarySection, findingsSection] : [findingsSection, summarySection];
+    if (summarySection === findingsSection || (shorter.length > 200 && longer.includes(shorter))) warnings.push("Key Findings duplicates the Executive Summary text. Regenerate, or rewrite Key Findings as distinct claims.");
+  }
+
+  const sidecarRef = report.match(/Raw metadata sidecar:\s*(\S+)/);
+  if (sidecarRef && resolve(sidecarRef[1]) !== rawPath) warnings.push(`Report references sidecar ${sidecarRef[1]} but ${rawPath} was validated.`);
+
+  const ok = errors.length === 0;
+  jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings });
+  process.exit(ok ? 0 : 1);
 }
 
 async function main() {
@@ -359,6 +493,7 @@ async function main() {
     jsonOut(process.stdout, { ok: true, node: process.version, fetch: typeof fetch === "function", exaApiKey: Boolean(process.env.EXA_API_KEY) });
     return;
   }
+  if (options.command === "validate") { await validateCommand(options); return; }
   if (options.command !== "report" && options.command !== "json") fail(`Unknown command: ${options.command}`);
   const query = await resolveQuery(options);
   const { raw, metadata } = await callExa(query, options);

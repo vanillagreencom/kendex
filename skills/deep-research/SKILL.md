@@ -34,7 +34,7 @@ Use this skill for evidence-backed research reports, architectural investigation
 - For workflow-owned research, write `findings.md` to the requested research docs path exactly.
 - Include citations/source URLs in every findings report.
 - Keep `findings.md` clean and human-readable; preserve raw Exa metadata in a sidecar JSON file (`findings.raw.json` by default when `--output findings.md` is used). Evidence excerpts must be sanitized so source Markdown headings do not render as large quoted headings.
-- Once the requested report and raw sidecar exist, validate them and stop. Do not add local reproduction, benchmark, test, code-inspection, or implementation work unless the caller explicitly requested local validation in addition to Exa research.
+- Once the requested report and raw sidecar exist, run `deep-research validate <findings.md> <findings.raw.json>` (see § Validation) and stop. Do not add local reproduction, benchmark, test, code-inspection, or implementation work unless the caller explicitly requested local validation in addition to Exa research.
 - If `EXA_API_KEY` is missing, fail with clear setup instructions. `EXA_API_KEY` may be a direct key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
 - Use `--mode standard` by default. Use `--mode lite` for fast spikes and `--mode full` for strategic/high-risk decisions. Explicit `--type`, `--num-results`, and `--text-max-characters` override mode defaults.
 - Use one adaptive findings format for all modes. The mode changes depth/source volume and Exa content settings, not the required report sections; record mode and source counts in `## Research Metadata`.
@@ -46,16 +46,26 @@ Use this skill for evidence-backed research reports, architectural investigation
 skills/deep-research/scripts/deep-research report "question" --mode standard --output path/to/findings.md
 skills/deep-research/scripts/deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md
 skills/deep-research/scripts/deep-research json "question" --output raw.json
+skills/deep-research/scripts/deep-research validate findings.md findings.raw.json
 skills/deep-research/scripts/deep-research doctor
 ```
 
-Modes:
+Modes (Exa `/search` caps: `numResults` 1-100, `text.maxCharacters` 1-10000, `additionalQueries` max 10):
 
-| Mode | Exa type | Default results | Text cap | Timeout | Notes |
-|---|---|---:|---:|---:|---|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Fast, lower-cost spikes. |
-| `standard` | `deep-reasoning` | 50 | 16k chars/result | 10 min | Default workflow research. |
-| `full` | `deep-reasoning` | 150 | 24k chars/result | 30 min | Runs primary query plus repeated `--additional-query`, then dedupes URLs. |
+| Mode | Exa type | Default results | Text cap | Timeout | Synthesis | Notes |
+|---|---|---:|---:|---:|---|---|
+| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Not requested (no `outputSchema`) — evidence brief only. | Fast, lower-cost spikes. |
+| `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Requested via `outputSchema`. | Default workflow research. |
+| `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Requested via `outputSchema`, per query. | Fans out one Exa request per query (primary + each `--additional-query`), then dedupes URLs. |
+
+`--additional-query` semantics (recorded in metadata — verify with `validate`):
+
+| Mode | How expansions are applied | Sidecar `additionalQueriesApplied` |
+|---|---|---|
+| `lite` / `standard` | Sent as Exa `additionalQueries` in the single request; consumed by deep search types as query variations. | `provider-additional-queries` |
+| `full` | One separate Exa request per query; URLs deduped across responses. | `local-fan-out` |
+
+Sidecar metadata records `queryCount` (distinct queries: 1 primary + additional), `requestCount` (Exa API calls), the `additionalQueries` list, and `synthesis` (whether a synthesized answer came back).
 
 Common flags:
 
@@ -77,6 +87,50 @@ Common flags:
 - `--raw-output <path>` (defaults to `findings.raw.json` next to `--output` for report mode)
 - `--no-raw-output`
 - `--timeout <seconds>`
+
+## Task-Type Recipes
+
+| Research need | Flags | Caveats |
+|---|---|---|
+| Technical decision synthesis (algorithm/library choice needing a recommendation) | `--mode standard` (or `full` for high-risk); name authoritative papers/orgs in the query; 1-2 `--additional-query` variants | Audit the source list for off-topic same-acronym papers and low-signal repos; `validate` cannot catch claim-vs-source contradictions. |
+| Targeted evidence brief (collect primary sources, you synthesize) | `--mode lite --include-domain <host>` per authoritative host, `--num-results 15-25` | `lite` requests no synthesis — expect an evidence brief. Do not use when the deliverable is a recommendation; `validate` warns on this. |
+| Broad landscape / vendor comparison | `--mode full`, one `--additional-query` per vendor/angle (max 10) | Breadth trades precision for coverage; expect marketing pages and duplicates — cut them during review. |
+| Current docs / API research | `--mode standard --include-domain <official-docs-host> --start-date <recent>` | Domain filter plus date window keeps results to current official docs; verify version applicability in the report. |
+
+## Choosing Flag Values
+
+- `--num-results`: more results = more noise exposure, not better synthesis. 10-25 for targeted questions; 50 (standard default) for decision research; 100 only for landscape scans where you will prune sources.
+- `--text-max-characters`: caps extracted text per result (Exa max 10000). Lower it (2000-4000) when many sources are expected and only key claims matter; keep the default for dense primary sources.
+- `--include-domain` is a hard host filter ("results will only come from these domains"), not a quality filter: `--include-domain github.com` admits any repo, not just reputable ones, and excludes everything else. Name authoritative projects/organizations in the query text for quality, use domain filters only to constrain hosts, and audit the resulting source list either way.
+- `--additional-query`: phrase each as a full natural-language question from a different angle (terminology variant, competing approach, failure mode) rather than keyword permutations.
+
+## Validation
+
+After generating a report, run:
+
+```bash
+skills/deep-research/scripts/deep-research validate path/to/findings.md path/to/findings.raw.json
+```
+
+Prints `{ok, errors, warnings, mode, synthesis, queryCount}`; exit 0 means no errors. Deterministic checks:
+
+| Check | Severity |
+|---|---|
+| Report and raw sidecar exist; sidecar parses with `metadata` + `raw` | error |
+| All required report sections present | error |
+| `queryCount` consistent with recorded `additionalQueries` and `additionalQueriesApplied` | error |
+| `standard`/`full` payload has a synthesized answer (modes request `outputSchema`) | error |
+| Missing synthesis in other modes (evidence brief — unsuitable as a recommendation) | warning |
+| Sidecar predates additional-query metadata | warning |
+| Key Findings duplicates Executive Summary text | warning |
+| Zero sources; sidecar path mismatch vs report reference | warning |
+
+Manual review checks (need judgment; `validate` cannot perform them):
+
+- Claims contradicted by the returned sources (e.g. complexity classes, benchmark numbers) — spot-check material claims against the cited source text in the sidecar.
+- Off-topic sources sharing an acronym or name with the research subject.
+- Recommendation assertions with no claim-level support in Evidence and Sources.
+- Results generalized beyond what the source established (e.g. a line-chart result applied to candlesticks).
 
 ## Findings Format
 

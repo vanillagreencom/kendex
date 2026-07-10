@@ -4,15 +4,19 @@ Portable Exa Deep Search skill for producing evidence-backed findings reports in
 
 Run `scripts/deep-research doctor` to verify Node/fetch availability and whether `EXA_API_KEY` is configured.
 
-Report mode defaults:
+Report mode defaults (within Exa `/search` limits: `numResults` 1-100, `text.maxCharacters` 1-10000):
 
-| Mode | Exa type | Results | Text cap | Timeout |
-|---|---|---:|---:|---:|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min |
-| `standard` | `deep-reasoning` | 50 | 16k chars/result | 10 min |
-| `full` | `deep-reasoning` | 150 | 24k chars/result | 30 min |
+| Mode | Exa type | Results | Text cap | Timeout | Synthesis |
+|---|---|---:|---:|---:|---|
+| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | No (evidence brief) |
+| `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Yes (`outputSchema`) |
+| `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Yes, per fanned-out query |
 
 `report --output findings.md` writes clean Markdown and defaults raw metadata to `findings.raw.json`.
+
+Repeated `--additional-query` values are sent as Exa `additionalQueries` in one request (`lite`/`standard`) or fanned out as separate requests with URL dedupe (`full`). The sidecar metadata records the queries and how they were applied.
+
+After generating a report, run `scripts/deep-research validate findings.md findings.raw.json` for deterministic post-run checks (required sections, query-expansion metadata consistency, synthesis presence, duplicated sections). It prints `{ok, errors, warnings}` and exits non-zero on errors.
 
 The findings format is mode-adaptive: `lite`, `standard`, and `full` use the same required sections, while mode/source/query counts are recorded in `## Research Metadata`. This avoids separate templates drifting over time.
 
