@@ -261,11 +261,51 @@ is_transient_failure() {
   return 1
 }
 
+# Scope a `gh pr checks` array to the current authoritative run per workflow so
+# stale checks from a SUPERSEDED workflow run don't leak into the current
+# PR/head status (vstack#492). A single canceled prior run left Lint/Integration/
+# etc. as CANCELLED; with no newer instance of those jobs yet created, they were
+# the only copies and were wrongly counted as current failures.
+#
+# Approach: parse each check's owning workflow RUN_ID from its `link`
+# (`.../actions/runs/<RUN_ID>/job/<JOB_ID>`), group run-bearing checks by their
+# `workflow`, and within each workflow keep ONLY the checks belonging to that
+# workflow's LATEST run (max RUN_ID). This (a) drops an old run's checks when a
+# newer run of the same workflow exists, and (b) — the reported case — drops the
+# old canceled job even when the newer run hasn't recreated it yet, leaving it
+# correctly absent (reported as not-yet-created/pending, not failed). Distinct
+# workflows are never collapsed (e.g. a separate "License Key Guard" workflow is
+# preserved). Checks with no parseable run in `link` (external/required contexts,
+# default-setup `.../runs/<CHECK_RUN_ID>` links, or older gh output with no link)
+# are always kept, deduped by name keeping the latest `startedAt`. An all-empty
+# link/startedAt array (older gh) passes through unchanged.
+scope_current_run() {
+  jq -c '
+    def runid:
+      (.link // "")
+      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
+      | (if . == null then null else tonumber end);
+    map(. + {"_runid": runid})
+    | ([.[] | select(._runid == null)]) as $norun
+    | ([.[] | select(._runid != null)]) as $withrun
+    | ($withrun
+        | group_by(.workflow)
+        | map((map(._runid) | max) as $mx | map(select(._runid == $mx)))
+        | add // []) as $scoped
+    | ($norun | group_by(.name) | map(sort_by(.startedAt // "") | last)) as $norun_deduped
+    | ($scoped + $norun_deduped)
+    | map(del(._runid))
+  '
+}
+
 # Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
+# Scope to the current run first so a rerun never targets a superseded/canceled
+# run (vstack#492).
 get_failed_run_id() {
   local pr="$1"
-  gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link 2>/dev/null | \
+  gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
+    scope_current_run | \
     jq -r '
       def bucket:
         (.bucket // (
@@ -308,7 +348,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
   set +e
-  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state,bucket 2>"$checks_stderr")
+  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>"$checks_stderr")
   checks_status=$?
   set -e
   if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
@@ -338,6 +378,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
 
   # Reset no-checks counter once we see checks
   no_checks_count=0
+
+  # Drop checks belonging to superseded workflow runs before classifying, so a
+  # prior canceled run can't be reported as a current failure (vstack#492).
+  checks_json=$(echo "$checks_json" | scope_current_run)
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
   # gh output. This must stay aligned with github pr-merge --check.

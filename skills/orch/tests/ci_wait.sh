@@ -197,6 +197,40 @@ case "${1:-}" in
         echo '[]'
         exit 0
       fi
+      # vstack#492: an OLD superseded run (RUN_ID 29098545030) left several
+      # CANCELLED named jobs; the NEW authoritative run (RUN_ID 29099680623) on
+      # the current head has only its classifier job IN_PROGRESS and has NOT yet
+      # created Lint/Integration/etc. Scoping to the latest run per workflow must
+      # drop the OLD canceled jobs so they are not reported as current failures.
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "superseded_pending" ]]; then
+        cat <<'JSON'
+[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z","completedAt":"2026-07-10T10:00:30Z"},
+  {"name":"Linux Integration","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/102","workflow":"CI","startedAt":"2026-07-10T10:00:01Z","completedAt":"2026-07-10T10:00:31Z"},
+  {"name":"macOS","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/103","workflow":"CI","startedAt":"2026-07-10T10:00:02Z","completedAt":"2026-07-10T10:00:32Z"},
+  {"name":"Windows","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/104","workflow":"CI","startedAt":"2026-07-10T10:00:03Z","completedAt":"2026-07-10T10:00:33Z"},
+  {"name":"Loom","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/105","workflow":"CI","startedAt":"2026-07-10T10:00:04Z","completedAt":"2026-07-10T10:00:34Z"},
+  {"name":"Bench (iai-callgrind)","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/106","workflow":"CI","startedAt":"2026-07-10T10:00:05Z","completedAt":"2026-07-10T10:00:35Z"},
+  {"name":"Changes","state":"IN_PROGRESS","bucket":"pending","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z","completedAt":""},
+  {"name":"License Key Guard","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z","completedAt":"2026-07-10T11:00:20Z"}
+]
+JSON
+        exit 8
+      fi
+      # vstack#492 (part 2): once the NEW run recreates a named job (Lint on
+      # RUN_ID 29099680623, SUCCESS), that current-head instance must replace the
+      # OLD run's CANCELLED "Lint" (RUN_ID 29098545030) by context name, leaving
+      # no stale CANCELLED entry in failed_checks.
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "superseded_replaced" ]]; then
+        cat <<'JSON'
+[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z","completedAt":"2026-07-10T10:00:30Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z","completedAt":"2026-07-10T11:05:00Z"},
+  {"name":"Changes","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z","completedAt":"2026-07-10T11:00:20Z"}
+]
+JSON
+        exit 0
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "failure" ]]; then
         echo '[{"name":"build","state":"FAILURE"}]'
         exit 1
@@ -488,6 +522,40 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "case17: https origin without .git exits 0" "$stderr"
 assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case17: --repo slug preserved without .git" "$stderr"
+
+echo "=== ci-wait superseded-run scoping (vstack#492) ==="
+
+# Case 18: an OLD canceled run's CANCELLED jobs must NOT be reported as current
+# failures when the NEW authoritative run has only its classifier job pending and
+# has not yet recreated those jobs. Scoping to the latest run per workflow drops
+# the superseded run's checks, so the verdict is pending (waiting on "Changes"),
+# never a false fail on the stale CANCELLED Lint/Integration/etc.
+stderr="$TMP_ROOT/case18.err"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_MODE=superseded_pending 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case18: superseded-run pending exits 1 (timeout)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case18: json status is timeout" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case18: verdict pending, not fail" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case18: no stale CANCELLED jobs in failed_checks" "$stderr"
+assert_contains "$output" '"Changes"' "case18: current classifier job reported as pending" "$stderr"
+assert_not_contains "$output" '"Lint"' "case18: superseded run's Lint dropped from output" "$stderr"
+assert_not_contains "$output" '"Linux Integration"' "case18: superseded run's Integration dropped" "$stderr"
+
+# Case 19: once the NEW run recreates a named job (Lint SUCCESS on the newest
+# RUN_ID), that current-head instance replaces the OLD run's CANCELLED "Lint" by
+# context name — no stale CANCELLED entry survives, verdict passes.
+stderr="$TMP_ROOT/case19.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_MODE=superseded_replaced 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case19: superseded-then-replaced exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pass" "case19: verdict pass after replacement" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case19: no CANCELLED Lint in failed_checks" "$stderr"
+assert_not_contains "$output" '"CANCELLED"' "case19: no stale CANCELLED state survives" "$stderr"
+assert_eq "$(json_field "$output" '[.passed_checks[].name] | map(select(. == "Lint")) | length')" "1" "case19: exactly one current Lint instance kept" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
