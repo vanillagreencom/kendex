@@ -167,6 +167,24 @@ case "${1:-}" in
         echo '[{"user":{"login":"vg-claude"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:00Z"}]'
         exit 0
         ;;
+      repos/*/pulls/10/reviews)
+        count_file="${FAKE_GH_STATE_DIR:-}/pr10-reviews-count"
+        count=0
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+          count="$(cat "$count_file")"
+        fi
+        count=$((count + 1))
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" ]]; then
+          mkdir -p "$FAKE_GH_STATE_DIR"
+          printf '%s' "$count" > "$count_file"
+        fi
+        if [[ "$count" -ge 2 ]]; then
+          echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"state":"COMMENTED","submitted_at":"2026-01-01T00:10:00Z"}]'
+        else
+          echo '[]'
+        fi
+        exit 0
+        ;;
       repos/*/issues/2/comments)
         cat <<'JSON'
 [
@@ -209,7 +227,7 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments)
         echo '[]'
         exit 0
         ;;
@@ -281,6 +299,24 @@ JSON
         ;;
       repos/*/issues/comments/5001/reactions)
         echo '[]'
+        exit 0
+        ;;
+      repos/*/issues/10/reactions)
+        count_file="${FAKE_GH_STATE_DIR:-}/pr10-reactions-count"
+        count=0
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" && -f "$count_file" ]]; then
+          count="$(cat "$count_file")"
+        fi
+        count=$((count + 1))
+        if [[ -n "${FAKE_GH_STATE_DIR:-}" ]]; then
+          mkdir -p "$FAKE_GH_STATE_DIR"
+          printf '%s' "$count" > "$count_file"
+        fi
+        if [[ "$count" -ge 2 ]]; then
+          echo '[]'
+        else
+          echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1"}]'
+        fi
         exit 0
         ;;
     esac
@@ -395,6 +431,19 @@ assert_eq "$(cat "$TMP_ROOT/pr8-state/pr8-reactions-count")" "3" "BOT_CHECK_NAME
 assert_eq "$(jq -r .status <<<"$output")" "complete" "BOT_CHECK_NAME late inline thread emits complete JSON"
 assert_eq "$(jq -r .verdict <<<"$output")" "changes" "BOT_CHECK_NAME late inline thread changes the verdict"
 assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "inline:1" "BOT_CHECK_NAME late inline thread is represented in reviewer signals"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+set +e
+output=$(timeout 15s bash -c 'cd "$1" && PATH="$2:$PATH" FAKE_GH_STATE_DIR="$3" BOT_REVIEW_SETTLE_SECONDS=2 BOT_REVIEW_SETTLE_INTERVAL=1 .agents/skills/orch/scripts/bot-review-wait 10 1 6 --json --reviewers "chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" "$TMP_ROOT/pr10-state")
+code=$?
+set -e
+assert_eq "$code" "0" "established +1 approval survives later formal COMMENTED review"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "COMMENTED after clean +1 emits complete JSON"
+assert_eq "$(jq -r .verdict <<<"$output")" "approved" "COMMENTED after clean +1 keeps approved verdict"
+assert_eq "$(jq -r '.approved_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "COMMENTED after clean +1 keeps Codex approved"
+assert_eq "$(cat "$TMP_ROOT/pr10-state/pr10-reviews-count")" "3" "settle window re-reads reviewer status after COMMENTED regression"
 
 set +e
 output=$(run_wait 4 1 1 --json --reviewers 'vg-claude')

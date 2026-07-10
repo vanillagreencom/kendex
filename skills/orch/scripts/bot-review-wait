@@ -359,6 +359,63 @@ apply_pr_terminal_fallback() {
   ' <<<"$entries"
 }
 
+# Reviewer-own approvals established earlier in this run, one login per line.
+# Codex withdraws its 👍 reaction when it posts a follow-up formal COMMENTED
+# review, which would otherwise recompute the reviewer as unknown/pending and
+# block completion. Only new unresolved threads or a changes-requested signal
+# may downgrade an established approval. A file (not a shell variable) because
+# entries are collected inside command substitutions.
+ESTABLISHED_APPROVALS_FILE="$(mktemp)"
+trap 'rm -f "$ESTABLISHED_APPROVALS_FILE"' EXIT
+
+established_approvals_json() {
+  jq -R -s -c 'split("\n") | map(select(length > 0))' \
+    "$ESTABLISHED_APPROVALS_FILE" 2>/dev/null || printf '[]'
+}
+
+apply_established_approvals() {
+  local entries="$1"
+  local established
+  established=$(established_approvals_json)
+  if [[ "$established" == "[]" ]]; then
+    printf '%s' "$entries"
+    return 0
+  fi
+  jq -c --argjson est "$established" '
+    map(
+      .reviewer as $r |
+      if ($est | index($r))
+         and (.status == "pending" or .status == "unknown")
+         and ((.unresolved_threads // 0) == 0)
+      then
+        .status = "approved"
+        | .signals += ["established_approval:retained"]
+      else
+        .
+      end
+    )
+  ' <<<"$entries"
+}
+
+# Reviewer-own approval signals only — PR-level reviewDecision fallback does
+# not establish an approval for a specific reviewer.
+record_established_approvals() {
+  local entries="$1"
+  local current
+  current=$(established_approvals_json)
+  jq -r --argjson est "$current" '
+    ($est - [.[] | select(.status == "changes") | .reviewer]) as $kept
+    | ($kept + [.[]
+        | select(.status == "approved")
+        | select((.unresolved_threads // 0) == 0)
+        | select((.signals // [])
+            | any(. == "reaction:+1" or . == "formal_review:approved" or . == "sticky:approved"))
+        | .reviewer])
+    | unique
+    | .[]
+  ' <<<"$entries" > "$ESTABLISHED_APPROVALS_FILE"
+}
+
 collect_reviewers_or_exit() {
   local entries
   if ! entries=$(collect_reviewers); then
@@ -366,6 +423,8 @@ collect_reviewers_or_exit() {
     exit 3
   fi
   entries=$(apply_pr_terminal_fallback "$entries")
+  entries=$(apply_established_approvals "$entries")
+  record_established_approvals "$entries"
   printf '%s' "$entries"
 }
 

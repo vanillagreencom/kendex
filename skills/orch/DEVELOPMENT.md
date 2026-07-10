@@ -40,6 +40,8 @@ The emitted reviewer signals include `pr_review_decision:approved` and `pr_threa
 
 Codex-style reaction approvals and PR-level approved fallbacks then run a short terminal settle window (`BOT_REVIEW_SETTLE_SECONDS`, default 180s). The waiter re-reads reviewer status during that window and returns to the normal review loop if late inline threads appear, preventing merge workflows from treating early approval as final while the bot is still posting review comments.
 
+Within a run, a reviewer-own clean approval (`reaction:+1`, `formal_review:approved`, or `sticky:approved` with zero unresolved threads) is remembered as an established approval. Codex withdraws its 👍 reaction when it posts a follow-up formal COMMENTED review, which would otherwise recompute the reviewer as unknown/pending on the next poll; instead the waiter retains the approval and tags the entry `established_approval:retained`. Only new unresolved threads or a changes-requested signal downgrade an established approval (and doing so clears it). PR-level `pr_review_decision:approved` fallback promotions do not establish reviewer-own approvals.
+
 ## Tests
 
 ```bash
