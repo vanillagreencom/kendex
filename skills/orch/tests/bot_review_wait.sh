@@ -57,7 +57,7 @@ cat > "$FAKE_GITHUB_SH" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "sticky-comment" && "${3:-}" == "--body" ]]; then
-  if [[ "${2:-}" == "3" || "${2:-}" == "9" ]]; then
+  if [[ "${2:-}" == "3" || "${2:-}" == "9" || "${2:-}" == "14" ]]; then
     printf '%s\n' '- [ ] stale checklist item'
   fi
   exit 0
@@ -185,6 +185,14 @@ case "${1:-}" in
         echo '[{"user":{"login":"claude[bot]"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]'
         exit 0
         ;;
+      repos/*/pulls/14/reviews)
+        # PR 14 (#487): claude[bot] formal approval; codex 👍 (own reactions),
+        # zero unresolved threads, but a stale sticky "- [ ]" checklist. Both
+        # reviewers are terminal-approved via their OWN signals, so completion
+        # must not block on the checklist drain regardless of MAX_WAIT budget.
+        echo '[{"user":{"login":"claude[bot]"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]'
+        exit 0
+        ;;
       repos/*/pulls/10/reviews)
         count_file="${FAKE_GH_STATE_DIR:-}/pr10-reviews-count"
         count=0
@@ -245,12 +253,17 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments|repos/*/issues/12/comments|repos/*/issues/13/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments|repos/*/issues/12/comments|repos/*/issues/13/comments|repos/*/issues/14/comments)
         echo '[]'
         exit 0
         ;;
       repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/12/reactions|repos/*/issues/13/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
+        exit 0
+        ;;
+      repos/*/issues/14/reactions)
+        # PR 14 (#487): Codex approved the PR body with 👍.
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1"}]'
         exit 0
         ;;
       repos/*/issues/3/reactions|repos/*/issues/comments/3001/reactions)
@@ -347,7 +360,7 @@ JSON
   pr)
     case "${2:-}" in
       view)
-        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" || "${3:-}" == "11" ]]; then
+        if [[ "${3:-}" == "3" || "${3:-}" == "4" || "${3:-}" == "5" || "${3:-}" == "6" || "${3:-}" == "8" || "${3:-}" == "11" || "${3:-}" == "14" ]]; then
           echo '{"reviewDecision":"APPROVED"}'
         else
           echo '{"reviewDecision":"REVIEW_REQUIRED"}'
@@ -523,6 +536,42 @@ assert_eq "$code" "0" "timeout final read observes reviewer terminal state"
 assert_eq "$(jq -r .status <<<"$output")" "complete" "timeout final read emits complete JSON for terminal reviewer"
 assert_eq "$(jq -r .elapsed_seconds <<<"$output")" "1" "timeout final read keeps elapsed capped at max wait"
 assert_contains "$(jq -c '.reviewers[0].signals' <<<"$output")" "reaction:+1" "timeout final read uses refreshed reviewer signals"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+# #487: both reviewers are terminal-approved via their OWN signals (claude[bot]
+# formal APPROVED, codex 👍) with zero unresolved threads, but a stale sticky
+# "- [ ]" checklist never drains. The terminal result must be independent of the
+# MAX_WAIT budget: a long-budget waiter must NOT block on the checklist drain
+# (which, pre-fix, burned up to PHASE3_MAX / remaining budget and then emitted
+# checklist_timeout). Wrapped in `timeout 8s` so a regression that reinstates the
+# unbounded checklist wait would kill the run and fail loudly rather than pass.
+set +e
+long_output=$(timeout 8s bash -c 'cd "$1" && PATH="$2:$PATH" BOT_REVIEW_SETTLE_SECONDS=0 .agents/skills/orch/scripts/bot-review-wait 14 1 600 --json --reviewers "claude[bot],chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin")
+long_code=$?
+set -e
+assert_eq "$long_code" "0" "own-terminal approval + stale checklist completes on long budget (#487)"
+assert_json "$long_output" "own-terminal approval long budget emits parseable JSON"
+assert_eq "$(jq -r .status <<<"$long_output")" "complete" "own-terminal approval emits complete, not checklist_timeout (#487)"
+assert_eq "$(jq -r .verdict <<<"$long_output")" "approved" "own-terminal approval keeps approved verdict (#487)"
+# Must return well under the pre-fix checklist window (PHASE3_MAX=300, capped by
+# the 600s budget); a couple of seconds of stub wall-time is fine, 300+ is not.
+long_elapsed="$(jq -r .elapsed_seconds <<<"$long_output")"
+assert_eq "$([[ "$long_elapsed" =~ ^[0-9]+$ && "$long_elapsed" -lt 30 ]] && echo under || echo "$long_elapsed")" "under" "own-terminal approval does not consume the long budget on the checklist (#487)"
+# Resolution must come from reviewer-own signals, not the PR-level fallback
+# promotion — neither reviewer should carry pr_review_decision:approved.
+assert_eq "$(jq -r '[.reviewers[] | .signals[] | select(. == "pr_review_decision:approved")] | length' <<<"$long_output")" "0" "own-terminal approval resolves without PR-level fallback promotion (#487)"
+
+# Duration independence: the same stubbed state under a short budget yields the
+# identical terminal status/verdict.
+set +e
+short_output=$(timeout 8s bash -c 'cd "$1" && PATH="$2:$PATH" BOT_REVIEW_SETTLE_SECONDS=0 .agents/skills/orch/scripts/bot-review-wait 14 1 10 --json --reviewers "claude[bot],chatgpt-codex-connector[bot]"' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin")
+short_code=$?
+set -e
+assert_eq "$short_code" "0" "own-terminal approval completes on short budget (#487)"
+assert_eq "$(jq -r .status <<<"$short_output")" "$(jq -r .status <<<"$long_output")" "long and short budgets agree on status (#487)"
+assert_eq "$(jq -r .verdict <<<"$short_output")" "$(jq -r .verdict <<<"$long_output")" "long and short budgets agree on verdict (#487)"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

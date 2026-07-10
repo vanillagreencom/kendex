@@ -556,6 +556,32 @@ pr_terminal_fallback_applied() {
   jq -e 'any(.[]?.signals[]?; . == "pr_review_decision:approved")' >/dev/null <<<"$entries"
 }
 
+# True when every effective (non-skipped) reviewer has reached a terminal
+# APPROVED state through its OWN reviewer signal (formal approval, sticky
+# "approved" verdict, or a 👍 reaction) AND no reviewer has unresolved threads.
+# In that case the PR is already reviewer-own-terminal approved and clear, so
+# the sticky "- [ ]" checklist drain must not gate completion (vstack#487): a
+# long-budget waiter would otherwise block on wait_for_checklist for the whole
+# remaining budget while a short waiter over the same state returns promptly.
+# The bounded wait_for_terminal_settle window still runs for Codex-style late
+# inline threads. This deliberately requires a stronger own-approval signal than
+# apply_pr_terminal_fallback's promotion check (which also accepts sticky:pending
+# / eyes-less pending) so a still-pending sticky does NOT skip the checklist.
+reviewers_own_terminal_approved() {
+  local entries="$1"
+  jq -e '
+    [.[] | select(.status != "skipped")] as $eff
+    | ($eff | length > 0)
+      and ($eff | all(
+            .status == "approved"
+            and ((.unresolved_threads // 0) == 0)
+            and ((.signals // []) | any(
+                   . == "formal_review:approved"
+                   or . == "sticky:approved"
+                   or . == "reaction:+1"))))
+  ' >/dev/null <<<"$entries"
+}
+
 requires_terminal_settle() {
   local entries="$1"
   local verdict
@@ -621,10 +647,21 @@ wait_for_terminal_settle() {
 terminal_posting_done() {
   local entries="$1"
 
-  # The PR-level fallback already verified that no unresolved review threads
-  # remain. Still apply the terminal settle window because Codex-style inline
-  # threads may appear shortly after early approval signals.
-  if pr_terminal_fallback_applied "$entries"; then
+  # Skip the sticky "- [ ]" checklist drain when approval is already
+  # terminal-and-clear — either promoted via the PR-level reviewDecision
+  # fallback (pr_terminal_fallback_applied) OR every reviewer is approved
+  # through its own signal with zero unresolved threads
+  # (reviewers_own_terminal_approved, vstack#487). In both cases no unresolved
+  # review threads remain, so the terminal result must not depend on how much
+  # MAX_WAIT budget is left: a long waiter and a short waiter over the same
+  # state converge on the same complete/approved. The bounded terminal settle
+  # window still runs because Codex-style inline threads may appear shortly
+  # after early approval signals.
+  #
+  # The unbounded checklist wait only applies when approval is NOT yet
+  # reviewer-own-terminal (e.g. a still-pending sticky) or the verdict is
+  # changes/pending, so genuine checklist_timeout cases are preserved.
+  if pr_terminal_fallback_applied "$entries" || reviewers_own_terminal_approved "$entries"; then
     wait_for_terminal_settle "$entries"
     return $?
   fi
