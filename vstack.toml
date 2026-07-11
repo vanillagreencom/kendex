@@ -26,10 +26,10 @@ is_source_catalog = true
 # planner = { color = "blue", model = "inherit", effort = "xhigh", deny-tools = ["Agent"], background = false, isolation = "none", memory = "none" }
 #
 # [agent-frontmatter.opencode]
-# planner = { color = "#3b82f6", model = "openai/gpt-5.5", model-reasoning-effort = "xhigh", deny-tools = ["task"], mode = "subagent" }
+# planner = { color = "#3b82f6", model = "openai/gpt-5.6-sol", model-reasoning-effort = "xhigh", deny-tools = ["task"], mode = "subagent" }
 #
 # [agent-frontmatter.codex]
-# planner = { nickname-candidates = ["Planner-Atlas", "Planner-Delta"], model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "workspace-write" }
+# planner = { nickname-candidates = ["Planner-Atlas", "Planner-Delta"], model = "gpt-5.6-sol", model-reasoning-effort = "xhigh", sandbox-mode = "workspace-write" }
 #
 # [agent-frontmatter.pi]
 # planner = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent"], allowed-subagents = ["scout"], pane = true }

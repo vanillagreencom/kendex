@@ -94,10 +94,10 @@ trading-design = "Dark theme, green/red accents."
 rust = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
 
 [agent-frontmatter.opencode]
-rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
+rust = { color = "#f97316", model = "openai/gpt-5.6-sol", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
 
 [agent-frontmatter.codex]
-rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
+rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-sol", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
 rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "question"], allowed-subagents = ["scout"], pane = true }

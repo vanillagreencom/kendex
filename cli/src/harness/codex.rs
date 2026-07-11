@@ -39,7 +39,7 @@ pub fn generate_agent(
 
     let lower = agent.model.to_lowercase();
     let model = match lower.as_str() {
-        "opus" | "sonnet" | "haiku" => "gpt-5.5",
+        "opus" | "sonnet" | "haiku" => "gpt-5.6-sol",
         other => other,
     };
     let model_override = frontmatter.model.as_deref().map(codex_model_for_override);
@@ -192,7 +192,7 @@ fn toml_string_array(values: &[String]) -> String {
 
 fn codex_model_for_override(model: &str) -> String {
     match model.to_lowercase().as_str() {
-        "opus" | "sonnet" | "haiku" => "gpt-5.5".into(),
+        "opus" | "sonnet" | "haiku" => "gpt-5.6-sol".into(),
         other => other.into(),
     }
 }

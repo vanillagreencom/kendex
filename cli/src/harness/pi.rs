@@ -131,7 +131,7 @@ fn pi_model_for_with_effort(model: &str, effort: Option<String>) -> String {
         .map(|effort| format!(":{effort}"))
         .unwrap_or_default();
     match model.to_lowercase().as_str() {
-        "opus" | "sonnet" | "haiku" => format!("openai-codex/gpt-5.5{effort_suffix}"),
+        "opus" | "sonnet" | "haiku" => format!("openai-codex/gpt-5.6-sol{effort_suffix}"),
         other => other.into(),
     }
 }
@@ -285,11 +285,11 @@ mod tests {
         );
         assert_eq!(
             pi_model_for_source_default("sonnet", Some("high".into())),
-            Some("openai-codex/gpt-5.5:high".into())
+            Some("openai-codex/gpt-5.6-sol:high".into())
         );
         assert_eq!(
             pi_model_for_source_default("haiku", Some("medium".into())),
-            Some("openai-codex/gpt-5.5:medium".into())
+            Some("openai-codex/gpt-5.6-sol:medium".into())
         );
         assert_eq!(pi_model_for_override("inherit", Some("xhigh".into())), None);
         assert_eq!(
@@ -528,7 +528,7 @@ mod tests {
         let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("model: openai-codex/gpt-5.5:xhigh"));
+        assert!(content.contains("model: openai-codex/gpt-5.6-sol:xhigh"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -597,7 +597,7 @@ mod tests {
         let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("model: openai-codex/gpt-5.5:high"));
+        assert!(content.contains("model: openai-codex/gpt-5.6-sol:high"));
         assert!(!content.lines().any(|line| line.starts_with("tools:")));
         // Reviewer role keeps the empty allowlist default, so
         // delegate_subagent is denied and not exposed at all.

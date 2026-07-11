@@ -100,7 +100,7 @@ Environment (set in vstack.settings.toml [env] or .env.local):
 Default commands:
   claude: claude -p --no-session-persistence --model opus --effort max
             --allowedTools Bash(read-only:true),Read,Glob,Grep
-  codex:  codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh
+  codex:  codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
 HELP
 }
@@ -331,7 +331,7 @@ EXIT_CODE=0
 
 # Full command templates — override the entire command via project config
 CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep}"
-CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral}"
+CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral}"
 
 case "$TARGET_CLI" in
   claude)

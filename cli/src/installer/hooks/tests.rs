@@ -392,13 +392,13 @@ fn enable_codex_hooks_feature_preserves_user_content() {
     let config = dir.join("config.toml");
     std::fs::write(
         &config,
-        "# user comment\nmodel = \"gpt-5.5\"\n\n[other]\nfoo = 1\n",
+        "# user comment\nmodel = \"gpt-5.6-sol\"\n\n[other]\nfoo = 1\n",
     )
     .unwrap();
     enable_codex_hooks_feature(&config).unwrap();
     let body = std::fs::read_to_string(&config).unwrap();
     assert!(body.contains("# user comment"));
-    assert!(body.contains("model = \"gpt-5.5\""));
+    assert!(body.contains("model = \"gpt-5.6-sol\""));
     assert!(body.contains("[other]"));
     assert!(body.contains("hooks = true"));
     assert!(!body.contains("codex_hooks"));

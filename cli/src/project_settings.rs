@@ -301,7 +301,7 @@ mod tests {
 
 # SECOND OPINION
 SECOND_OPINION_TIMEOUT = "300"
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol"
 "#,
         )
         .unwrap();
@@ -319,7 +319,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5"
         let settings = std::fs::read_to_string(project.join(SETTINGS_FILE)).unwrap();
         assert!(settings.contains("[env]"));
         assert!(settings.contains("SECOND_OPINION_TIMEOUT = \"300\""));
-        assert!(settings.contains("SECOND_OPINION_CODEX_CMD = \"codex exec -m gpt-5.5\""));
+        assert!(settings.contains("SECOND_OPINION_CODEX_CMD = \"codex exec -m gpt-5.6-sol\""));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -334,7 +334,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5"
 
 # SECOND OPINION
 SECOND_OPINION_TIMEOUT = "300"
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol"
 "#,
         )
         .unwrap();
@@ -361,7 +361,7 @@ value = true
         assert_eq!(result.added_keys, vec!["SECOND_OPINION_CODEX_CMD"]);
         let settings = std::fs::read_to_string(project.join(SETTINGS_FILE)).unwrap();
         assert!(settings.contains("SECOND_OPINION_TIMEOUT = \"42\""));
-        assert!(settings.contains("SECOND_OPINION_CODEX_CMD = \"codex exec -m gpt-5.5\""));
+        assert!(settings.contains("SECOND_OPINION_CODEX_CMD = \"codex exec -m gpt-5.6-sol\""));
         assert!(settings.contains("[other]\nvalue = true"));
         let _ = std::fs::remove_dir_all(root);
     }

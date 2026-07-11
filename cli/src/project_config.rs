@@ -1267,7 +1267,7 @@ fn opencode_color_name(color: &str) -> Option<String> {
 
 fn codex_model_name(model: &str) -> String {
     match model.trim().to_ascii_lowercase().as_str() {
-        "opus" | "sonnet" | "haiku" => "gpt-5.5".into(),
+        "opus" | "sonnet" | "haiku" => "gpt-5.6-sol".into(),
         other => other.into(),
     }
 }
@@ -1300,16 +1300,16 @@ fn pi_model_default(
     if agent.model.trim().eq_ignore_ascii_case("opus") {
         let model = model.trim().to_ascii_lowercase();
         if model == "opus"
-            || model == "openai-codex/gpt-5.5"
-            || model.starts_with("openai-codex/gpt-5.5:")
+            || model == "openai-codex/gpt-5.6-sol"
+            || model.starts_with("openai-codex/gpt-5.6-sol:")
         {
             return "inherit".into();
         }
     }
     match model.trim().to_ascii_lowercase().as_str() {
         "opus" | "sonnet" | "haiku" => effort
-            .map(|effort| format!("openai-codex/gpt-5.5:{effort}"))
-            .unwrap_or_else(|| "openai-codex/gpt-5.5".into()),
+            .map(|effort| format!("openai-codex/gpt-5.6-sol:{effort}"))
+            .unwrap_or_else(|| "openai-codex/gpt-5.6-sol".into()),
         other => other.into(),
     }
 }
@@ -2556,7 +2556,7 @@ mod tests {
             "reviewer-error = [\"reviewer\"]\n",
             "\n",
             "[agent-frontmatter.pi]\n",
-            "reviewer-error = { model = \"openai-codex/gpt-5.5:xhigh\" }\n",
+            "reviewer-error = { model = \"openai-codex/gpt-5.6-sol:xhigh\" }\n",
         );
         std::fs::write(&path, content).unwrap();
         repair_project_config_structure(&path);
@@ -2635,7 +2635,7 @@ rust = "Always run clippy before committing."
 researcher = { color = "purple", model = "generic-model", effort = "high", background = false, isolation = "none", memory = "project" }
 
 [agent-frontmatter.pi]
-researcher = { model = "openai-codex/gpt-5.5:xhigh", deny-tools = "bash, question" }
+researcher = { model = "openai-codex/gpt-5.6-sol:xhigh", deny-tools = "bash, question" }
 
 [agent-frontmatter.codex]
 researcher = { nickname-candidates = "Researcher-One, Researcher-Two" }
@@ -2652,7 +2652,7 @@ researcher = { model = "opus[1m]", effort = "xhigh", background = true, isolatio
         assert_eq!(shared.model.as_deref(), Some("generic-model"));
         let pi = config.frontmatter_for("researcher", "pi");
         assert_eq!(pi.color.as_deref(), None);
-        assert_eq!(pi.model.as_deref(), Some("openai-codex/gpt-5.5:xhigh"));
+        assert_eq!(pi.model.as_deref(), Some("openai-codex/gpt-5.6-sol:xhigh"));
         assert_eq!(pi.deny_tools, Some(vec!["bash".into(), "question".into()]));
         let codex = config.frontmatter_for("researcher", "codex");
         assert_eq!(
@@ -2905,7 +2905,7 @@ planner = { background = true }
             "scout should record empty allowed-subagents: {scout_line}"
         );
         assert!(
-            scout_line.contains("model = \"openai-codex/gpt-5.5:medium\""),
+            scout_line.contains("model = \"openai-codex/gpt-5.6-sol:medium\""),
             "scout should keep an explicit cheaper Pi model: {scout_line}"
         );
         assert!(
@@ -3018,7 +3018,7 @@ tpm = { subagent_agents = ["scout"] }
 rust = { model = "opus[1m]", effort = "xhigh", background = false }
 
 [agent-frontmatter.pi]
-rust = { model = "openai-codex/gpt-5.5:xhigh", allowed-subagents = ["scout"], pane = true }
+rust = { model = "openai-codex/gpt-5.6-sol:xhigh", allowed-subagents = ["scout"], pane = true }
 "#,
         )
         .unwrap();
@@ -3063,7 +3063,7 @@ rust = { model = "openai-codex/gpt-5.5:xhigh", allowed-subagents = ["scout"], pa
             .find(|line| line.starts_with("rust =") && line.contains("allowed-subagents"))
             .expect("rust pi frontmatter line");
         assert!(
-            pi_line.contains("model = \"openai-codex/gpt-5.5:xhigh\""),
+            pi_line.contains("model = \"openai-codex/gpt-5.6-sol:xhigh\""),
             "{pi_line}"
         );
 
@@ -3160,7 +3160,7 @@ scout = { pane = false }
         );
 
         let updated = std::fs::read_to_string(&path).unwrap();
-        assert!(updated.contains("rust = { model = \"openai/gpt-5.5\", deny-tools = [\"task\", \"question\"], mode = \"subagent\", model-reasoning-effort = \"xhigh\" }"));
+        assert!(updated.contains("rust = { model = \"openai/gpt-5.6-sol\", deny-tools = [\"task\", \"question\"], mode = \"subagent\", model-reasoning-effort = \"xhigh\" }"));
 
         std::fs::write(
             &path,
@@ -3184,7 +3184,7 @@ scout = { pane = false }
             &crate::mapping::MappingConfig::default(),
         );
         let updated = std::fs::read_to_string(&path).unwrap();
-        assert!(updated.contains("rust = { model = \"openai/gpt-5.5\", deny-tools = [\"task\", \"question\"], mode = \"primary\", model-reasoning-effort = \"xhigh\" }"));
+        assert!(updated.contains("rust = { model = \"openai/gpt-5.6-sol\", deny-tools = [\"task\", \"question\"], mode = \"primary\", model-reasoning-effort = \"xhigh\" }"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

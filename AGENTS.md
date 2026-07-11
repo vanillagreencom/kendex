@@ -158,10 +158,10 @@ rust = "Always run clippy before committing."
 rust = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
 
 [agent-frontmatter.opencode]
-rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
+rust = { color = "#f97316", model = "openai/gpt-5.6-sol", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
 
 [agent-frontmatter.codex]
-rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
+rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-sol", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
 rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
@@ -175,9 +175,9 @@ trading-design = "Dark theme, green/red accents."
 
 | Canonical | Claude Code | OpenCode | Codex | Pi |
 |-----------|-------------|----------|-------|-----|
-| `opus` | `inherit` | `openai/gpt-5.5` | `gpt-5.5` | `inherit` |
-| `sonnet` | `sonnet` | `openai/gpt-5.5` | `gpt-5.5` | `openai-codex/gpt-5.5` |
-| `haiku` | `haiku` | `openai/gpt-5.5` | `gpt-5.5` | `openai-codex/gpt-5.5` |
+| `opus` | `inherit` | `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `inherit` |
+| `sonnet` | `sonnet` | `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `openai-codex/gpt-5.6-sol` |
+| `haiku` | `haiku` | `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `openai-codex/gpt-5.6-sol` |
 
 Each canonical agent declares its own `effort:` in frontmatter. Harnesses write it verbatim after per-harness frontmatter overrides are applied — no cross-harness translation, no derivation from `model`. Valid values: `low`, `medium`, `high`, `xhigh` (and Claude additionally accepts `max`). Claude and Pi `opus` agents inherit the parent model by default; cheaper agents such as `scout` may pin an explicit model. Users can override models in project `[agent-frontmatter.<harness>]` tables.
 

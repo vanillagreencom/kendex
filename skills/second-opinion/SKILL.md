@@ -83,7 +83,7 @@ SECOND_OPINION_CLAUDE_CMD="claude -p --no-session-persistence --model opus --eff
 
 **Codex** (called when running from Claude):
 ```bash
-SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 ```
 
 To customize, copy the full command into `vstack.settings.toml` for shared defaults or `.env.local` for personal overrides and edit any flags. The entire variable is used as-is.
