@@ -22797,6 +22797,8 @@ function managerToConfig(raw) {
   }
   const strictMcpConfig = boolFrom(raw, "strictMcpConfig");
   if (strictMcpConfig !== void 0) provider.strictMcpConfig = strictMcpConfig;
+  const enableConnectors = boolFrom(raw, "enableConnectors");
+  if (enableConnectors !== void 0) provider.enableConnectors = enableConnectors;
   const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
   if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
   const includeAppendSystemPromptMd = boolFrom(raw, "includeAppendSystemPromptMd");
@@ -37985,9 +37987,12 @@ var CLAUDE_BRIDGE_TOOL_ISOLATION = {
   disallowedTools: DISALLOWED_BUILTIN_TOOLS,
   allowedTools: [`mcp__${MCP_SERVER_NAME}__*`]
 };
-function connectorsEnabled() {
+function connectorsEnabledFromEnv() {
   const v2 = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
   return v2 === "1" || v2 === "true" || v2 === "yes" || v2 === "on";
+}
+function connectorsEnabledFor(config2) {
+  return connectorsEnabledFromEnv() || config2?.provider?.enableConnectors === true;
 }
 var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Gmail__*",
@@ -37995,8 +38000,8 @@ var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Google_Drive__*"
 ];
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
-function toolIsolationForQuery() {
-  if (!connectorsEnabled()) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+function toolIsolationForQuery(connectorsEnabled) {
+  if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
   const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t10) => !CONNECTOR_DISCOVERY_TOOLS.includes(t10));
   return {
     disallowedTools,
@@ -39053,13 +39058,14 @@ function streamClaudeAgentSdk(model, context, options) {
   const mcpServers = buildMcpServers(mcpTools, ctx());
   const bridgeConfig = loadConfig(cwd);
   const providerSettings = bridgeConfig.provider ?? {};
+  const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
   const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
   const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : void 0;
   const promptContextAppend = buildPromptContextAppend(context.systemPrompt, cwd, bridgeConfig.promptContext ?? {});
   const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
   const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
-  const settingSources = connectorsEnabled() ? providerSettings.settingSources ?? ["user", "project", "local"] : appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
+  const settingSources = enableCloudMcp ? providerSettings.settingSources ?? ["user", "project", "local"] : appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
@@ -39070,13 +39076,12 @@ function streamClaudeAgentSdk(model, context, options) {
   if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
   if (effort) extraArgs["thinking-display"] = "summarized";
   const fallbackModel = fallbackModelForPrimaryModel(model.id);
-  const enableCloudMcp = connectorsEnabled();
   const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0", DISABLE_AUTO_COMPACT: "1" };
   const queryOptions = {
     cwd,
     model: model.id,
     env: childEnv,
-    ...toolIsolationForQuery(),
+    ...toolIsolationForQuery(enableCloudMcp),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     ...fallbackModel ? { fallbackModel } : {},
@@ -39411,7 +39416,8 @@ export {
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
-  connectorsEnabled,
+  connectorsEnabledFor,
+  connectorsEnabledFromEnv,
   createStreamIdleWatchdog,
   index_default as default,
   formatAllowedRateLimitWarning,

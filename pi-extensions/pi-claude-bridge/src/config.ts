@@ -28,6 +28,14 @@ export interface Config {
 		settingSources?: SettingSource[];
 		strictMcpConfig?: boolean;
 		pathToClaudeCodeExecutable?: string;
+		/**
+		 * Expose the authenticated Claude account's claude.ai cloud MCP
+		 * connectors (Gmail / Google Calendar / Google Drive, etc.) to the model.
+		 * Off by default so Pi owns tool execution and tokens stay lean. Also
+		 * settable via the CLAUDE_BRIDGE_ENABLE_CONNECTORS env var (env OR config
+		 * enables it). See docs/plans/claude-bridge-google-connectors.md.
+		 */
+		enableConnectors?: boolean;
 	};
 	/** Extra Pi context forwarded to Claude Code on top of AGENTS.md + skills. */
 	promptContext?: {
@@ -216,6 +224,8 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 	}
 	const strictMcpConfig = boolFrom(raw, "strictMcpConfig");
 	if (strictMcpConfig !== undefined) provider.strictMcpConfig = strictMcpConfig;
+	const enableConnectors = boolFrom(raw, "enableConnectors");
+	if (enableConnectors !== undefined) provider.enableConnectors = enableConnectors;
 	const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
 	if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
 
