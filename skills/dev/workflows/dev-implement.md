@@ -161,9 +161,10 @@ When work in another domain must happen first (prerequisite issue doesn't exist)
    .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "agent:[AGENT_TYPE],[COMPONENT],blocked"
    ```
 
-2. **Post structured comment** (Linear only):
-   ```bash
-   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "BLOCKED: Cross-domain prerequisite needed.
+2. **Post structured comment** (Linear only). Create `tmp/blocked-[ISSUE_ID].md` with:
+
+   ```markdown
+   BLOCKED: Cross-domain prerequisite needed.
 
    **Required Domain**: [DOMAIN]
    **Suggested Labels**: agent:[DOMAIN], [COMPONENT]
@@ -176,7 +177,13 @@ When work in another domain must happen first (prerequisite issue doesn't exist)
    - [Deliverable 1]
    - [Deliverable 2]
 
-   Requesting orchestrator create prerequisite issue."
+   Requesting orchestrator create prerequisite issue.
+   ```
+
+   Then post it:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file tmp/blocked-[ISSUE_ID].md
    ```
 
 3. **Report to orchestrator**: Final message must state the blocker, domain and labels for the new issue, and that the issue description is ready for creation.
@@ -383,10 +390,17 @@ Check blocking relations:
 ```
 Read `.blocks` from the JSON output.
 
-Post a handoff comment to each downstream issue **only if** this work changed an API, interface, file, or contract the downstream issue depends on:
+Post a handoff comment to each downstream issue **only if** this work changed an API, interface, file, or contract the downstream issue depends on. Create `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` with:
+
+```markdown
+Handoff from [ISSUE_ID]:
+- [RELEVANT_CONTEXT: what changed, what downstream needs to know]
+```
+
+Then post it:
+
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:
-- [RELEVANT_CONTEXT: what changed, what downstream needs to know]"
+.agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md
 ```
 
 Do NOT post handoff to the completed issue — that conflates audiences. Handoff Notes (§ 9.1) are for the next agent in this bundle. Downstream handoff is for agents working on issues this one unblocks.
@@ -437,9 +451,10 @@ Do NOT push or submit PR — orchestrator handles after review passes.
    .agents/skills/linear/scripts/linear.sh issues update [PARENT_ID] --labels "[EXISTING_LABELS],[AGGREGATED_QA_LABELS]"
    ```
 
-2. **Post parent summary** (Linear only, tree format for sub-issues, blocking info shown):
-   ```bash
-   .agents/skills/linear/scripts/linear.sh comments create [PARENT_ID] --body "## Bundle Complete
+2. **Post parent summary** (Linear only, tree format for sub-issues, blocking info shown). Create `tmp/bundle-summary-[PARENT_ID].md` with:
+
+   ```markdown
+   ## Bundle Complete
    **Agent**: [NAME] | **Branch**: [BRANCH]
 
    Sub-issues (tree):
@@ -447,7 +462,13 @@ Do NOT push or submit PR — orchestrator handles after review passes.
    ↳ [SUB_ISSUE_2] ✓ | blocked by: [SUB_ISSUE_1]
       ↳ [SUB_ISSUE_3] ✓  ← nested
    Files: N | Commits: N | QA: [LABELS]
-   [Discovered work: ...]"
+   [Discovered work: ...]
+   ```
+
+   Then post it:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md
    ```
 
 3. Send this result to the orchestrator as an agent-to-agent message. **Posting the parent summary comment is not a return** — the orchestrator does not poll the filesystem or issue tracker, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
