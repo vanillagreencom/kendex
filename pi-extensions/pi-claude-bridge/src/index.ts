@@ -505,6 +505,57 @@ export const CLAUDE_BRIDGE_TOOL_ISOLATION = {
 	allowedTools: [`mcp__${MCP_SERVER_NAME}__*`],
 } satisfies Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools">;
 
+// --- POC: Claude account cloud MCP connectors (Gmail / Calendar / Drive) ---
+//
+// By default the bridge suppresses claude.ai cloud MCP servers (see the
+// ENABLE_CLAUDEAI_MCP_SERVERS="0" note near the query builder) so Pi owns tool
+// execution and tokens stay lean. This opt-in flag lets the authenticated
+// Claude account's authorized Google connectors flow through to the model,
+// exposing Gmail/Calendar/Drive tools the account has connected. Gated so the
+// default behavior is unchanged. See
+// docs/plans/claude-bridge-google-connectors.md.
+export function connectorsEnabled(): boolean {
+	const v = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
+	return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+// Cloud MCP connector tool namespaces auto-allowed when connectors are enabled.
+// Names match Claude Code's claude.ai connector servers.
+export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
+	"mcp__claude_ai_Gmail__*",
+	"mcp__claude_ai_Google_Calendar__*",
+	"mcp__claude_ai_Google_Drive__*",
+];
+
+// Claude Code registers a Claude account's cloud connectors as DEFERRED tools
+// that the model must load via ToolSearch (and enumerate via the MCP-resource
+// tools). The default bridge isolation disallows all three so Pi owns tool
+// discovery — but that hides the connectors from the model entirely. When
+// connectors are enabled we must let these through so Gmail/Calendar/Drive are
+// discoverable. Verified: disallowing ToolSearch reliably yields NO_CONNECTORS.
+export const CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
+
+// Tool isolation for a query. When connectors are enabled we still remove
+// Claude Code's filesystem/shell built-ins (via disallowedTools; Pi owns those)
+// and auto-allow the cloud connector tool namespaces so the model can call
+// Gmail/Calendar/Drive.
+//
+// Critically, we must OMIT `tools: []` in the connector path: an empty --tools
+// allowlist strips the claude.ai cloud MCP connector tools from the model's
+// view (verified — Pi's SDK-injected custom-tools survive it, but connectors do
+// not). Dropping `tools` leaves the connectors visible; disallowedTools still
+// hard-denies the built-ins so Pi keeps ownership of file/shell/web tools.
+export function toolIsolationForQuery(): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools">> {
+	if (!connectorsEnabled()) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+	// Keep ToolSearch + MCP-resource tools available so the model can discover the
+	// deferred cloud connector tools; still block file/shell/web built-ins.
+	const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOLS.includes(t));
+	return {
+		disallowedTools,
+		allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS],
+	};
+}
+
 // --- Session persistence ---
 
 interface SessionState {
@@ -1913,9 +1964,16 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// SDK uses isolation mode and avoids filesystem settings. If users turn that
 	// off, load user/project settings but pass --strict-mcp-config so Claude Code
 	// ignores auto-discovered filesystem MCP servers while Pi owns tool execution.
-	const settingSources: SettingSource[] | undefined = appendSystemPrompt
-		? undefined
-		: providerSettings.settingSources ?? ["user", "project"];
+	// POC: claude.ai cloud MCP connectors only load when Claude Code resolves its
+	// filesystem setting sources. The SDK treats settingSources=undefined as
+	// isolation (no sources), which drops the connectors even with
+	// ENABLE_CLAUDEAI_MCP_SERVERS=1. When connectors are enabled we force the CLI
+	// default source set so Gmail/Calendar/Drive surface.
+	const settingSources: SettingSource[] | undefined = connectorsEnabled()
+		? (providerSettings.settingSources ?? ["user", "project", "local"])
+		: appendSystemPrompt
+			? undefined
+			: providerSettings.settingSources ?? ["user", "project"];
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
 	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
 	const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : undefined;
@@ -1947,12 +2005,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// also autocompact would double-flush the prompt cache and races pi's
 	// threshold with CC's, including CC's anti-thrashing guard (issue #8).
 	// Manual /compact in CC still works (we never invoke it).
-	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
+	// POC: when connectors are enabled, allow claude.ai cloud MCP servers so the
+	// authenticated account's Gmail/Calendar/Drive tools load. Default stays "0".
+	const enableCloudMcp = connectorsEnabled();
+	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0", DISABLE_AUTO_COMPACT: "1" };
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,
 		model: model.id,
 		env: childEnv,
-		...CLAUDE_BRIDGE_TOOL_ISOLATION,
+		...toolIsolationForQuery(),
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		...(fallbackModel ? { fallbackModel } : {}),
@@ -1975,7 +2036,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		`model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
 		`fallback=${fallbackModel ?? "none"}`,
-		`appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true}`,
+		`appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
 		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);
 

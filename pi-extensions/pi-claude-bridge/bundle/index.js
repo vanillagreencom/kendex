@@ -37985,6 +37985,24 @@ var CLAUDE_BRIDGE_TOOL_ISOLATION = {
   disallowedTools: DISALLOWED_BUILTIN_TOOLS,
   allowedTools: [`mcp__${MCP_SERVER_NAME}__*`]
 };
+function connectorsEnabled() {
+  const v2 = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
+  return v2 === "1" || v2 === "true" || v2 === "yes" || v2 === "on";
+}
+var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
+  "mcp__claude_ai_Gmail__*",
+  "mcp__claude_ai_Google_Calendar__*",
+  "mcp__claude_ai_Google_Drive__*"
+];
+var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
+function toolIsolationForQuery() {
+  if (!connectorsEnabled()) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+  const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t10) => !CONNECTOR_DISCOVERY_TOOLS.includes(t10));
+  return {
+    disallowedTools,
+    allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS]
+  };
+}
 var sharedSession = null;
 var extensionApi;
 var piUI;
@@ -39041,7 +39059,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const promptContextAppend = buildPromptContextAppend(context.systemPrompt, cwd, bridgeConfig.promptContext ?? {});
   const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
   const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
-  const settingSources = appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
+  const settingSources = connectorsEnabled() ? providerSettings.settingSources ?? ["user", "project", "local"] : appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
@@ -39052,12 +39070,13 @@ function streamClaudeAgentSdk(model, context, options) {
   if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
   if (effort) extraArgs["thinking-display"] = "summarized";
   const fallbackModel = fallbackModelForPrimaryModel(model.id);
-  const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
+  const enableCloudMcp = connectorsEnabled();
+  const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0", DISABLE_AUTO_COMPACT: "1" };
   const queryOptions = {
     cwd,
     model: model.id,
     env: childEnv,
-    ...CLAUDE_BRIDGE_TOOL_ISOLATION,
+    ...toolIsolationForQuery(),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     ...fallbackModel ? { fallbackModel } : {},
@@ -39081,7 +39100,7 @@ function streamClaudeAgentSdk(model, context, options) {
     `model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
     `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
     `fallback=${fallbackModel ?? "none"}`,
-    `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true}`,
+    `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`
   );
@@ -39381,7 +39400,9 @@ function index_default(pi) {
 }
 export {
   ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD,
+  CLAUDE_AI_CONNECTOR_TOOL_PATTERNS,
   CLAUDE_BRIDGE_TOOL_ISOLATION,
+  CONNECTOR_DISCOVERY_TOOLS,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
   STREAM_IDLE_BACKOFF_HINT_MS,
@@ -39390,6 +39411,7 @@ export {
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
+  connectorsEnabled,
   createStreamIdleWatchdog,
   index_default as default,
   formatAllowedRateLimitWarning,
@@ -39406,6 +39428,7 @@ export {
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,
   streamIdleTimeoutMsFromEnv,
+  toolIsolationForQuery,
   uniqueNonEmptyLines,
   wrapClaudeSpawnErrorForSdk
 };
