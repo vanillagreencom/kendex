@@ -172,6 +172,18 @@ post_reply() {
         is_thread_id="true"
     fi
 
+    # Numeric comment IDs use the legacy REST reply path, which requires an
+    # explicit target PR. Auto-resolving from the current branch
+    # (resolve_pr_number "" -> get_current_pr) silently picked a PR and hit a
+    # REST path that collided with the bot's pending review, surfacing an opaque
+    # "one pending review per pull request" API error. Fail locally with a clear
+    # usage error before any API call, in both --dry-run and real modes. Thread
+    # IDs (PRRT_...) do not need --pr and keep their existing behavior.
+    if [ "$is_thread_id" = "false" ] && [ -z "$pr_ref" ]; then
+        echo '{"error": "Numeric comment ID requires --pr <N> (PRRT_... thread IDs do not). See post-reply --help."}' >&2
+        exit 1
+    fi
+
     # Dry run
     if [ "$dry_run" = "true" ]; then
         if [ "$is_thread_id" = "true" ]; then
