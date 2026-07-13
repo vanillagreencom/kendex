@@ -13,6 +13,14 @@ export type BridgeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 const VALID_EFFORT_LEVELS = new Set<BridgeEffortLevel>(["low", "medium", "high", "xhigh", "max"]);
 
+/**
+ * Per-session control over claude.ai connector WRITE tools when connectors are
+ * enabled. `deny` (default) hides Gmail/Calendar/Drive mutating tools so
+ * connector chat sessions are read-only; `allow` exposes them (used only by the
+ * one-shot approved-write executor). Reads are always available.
+ */
+export type ConnectorWriteMode = "deny" | "allow";
+
 export interface Config {
 	enabled?: boolean;
 	/** Low-level Claude Agent SDK plumbing. Most users won't need these. */
@@ -36,6 +44,19 @@ export interface Config {
 		 * enables it). See docs/plans/claude-bridge-google-connectors.md.
 		 */
 		enableConnectors?: boolean;
+		/**
+		 * When connectors are enabled, whether their WRITE tools
+		 * (create/update/delete/label/etc.) are exposed. Defaults to `deny`
+		 * (read-only), enforced two ways: known write tools are removed from the
+		 * model's context (disallowedTools by exact id), and a PreToolUse hook
+		 * blocks any connector write tool by name prefix at call time (covers
+		 * future write tools). `allow` disables both — intended ONLY for a
+		 * one-shot approved-write executor process. Also settable via
+		 * CLAUDE_BRIDGE_CONNECTOR_WRITE=deny|allow (env wins over config). Any
+		 * value but exact `allow` is treated as `deny`. Ignored when connectors
+		 * are disabled.
+		 */
+		connectorWriteMode?: ConnectorWriteMode;
 	};
 	/** Extra Pi context forwarded to Claude Code on top of AGENTS.md + skills. */
 	promptContext?: {
@@ -163,6 +184,13 @@ function hasOwn(raw: SettingsRecord, key: string): boolean {
 	return Object.prototype.hasOwnProperty.call(raw, key);
 }
 
+export function normalizeConnectorWriteMode(value: unknown): ConnectorWriteMode | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "deny" || normalized === "allow") return normalized;
+	return undefined;
+}
+
 export function normalizeEffortLevel(value: unknown): BridgeEffortLevel | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
@@ -203,6 +231,13 @@ function normalizeProviderConfig(provider: Config["provider"] | undefined): Conf
 	const modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
 	if (modelEffortOverrides) out.modelEffortOverrides = modelEffortOverrides;
 	else delete out.modelEffortOverrides;
+	// Fail closed: legacy config files are merged raw, so an unvalidated
+	// connectorWriteMode (e.g. "Deny", "read-only", true) must not slip through as
+	// a truthy non-"allow" value. Drop anything that isn't exactly deny/allow so
+	// the resolver falls back to the default deny.
+	const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+	if (connectorWriteMode) out.connectorWriteMode = connectorWriteMode;
+	else delete out.connectorWriteMode;
 	return out;
 }
 
@@ -226,6 +261,8 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 	if (strictMcpConfig !== undefined) provider.strictMcpConfig = strictMcpConfig;
 	const enableConnectors = boolFrom(raw, "enableConnectors");
 	if (enableConnectors !== undefined) provider.enableConnectors = enableConnectors;
+	const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+	if (connectorWriteMode) provider.connectorWriteMode = connectorWriteMode;
 	const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
 	if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
 

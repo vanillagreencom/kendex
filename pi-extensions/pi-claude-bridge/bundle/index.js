@@ -22741,6 +22741,12 @@ function stringFrom(raw, key) {
 function hasOwn(raw, key) {
   return Object.prototype.hasOwnProperty.call(raw, key);
 }
+function normalizeConnectorWriteMode(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "deny" || normalized === "allow") return normalized;
+  return void 0;
+}
 function normalizeEffortLevel(value) {
   if (typeof value !== "string") return void 0;
   const normalized = value.trim().toLowerCase();
@@ -22778,6 +22784,9 @@ function normalizeProviderConfig(provider) {
   const modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
   if (modelEffortOverrides) out.modelEffortOverrides = modelEffortOverrides;
   else delete out.modelEffortOverrides;
+  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+  if (connectorWriteMode) out.connectorWriteMode = connectorWriteMode;
+  else delete out.connectorWriteMode;
   return out;
 }
 function managerToConfig(raw) {
@@ -22799,6 +22808,8 @@ function managerToConfig(raw) {
   if (strictMcpConfig !== void 0) provider.strictMcpConfig = strictMcpConfig;
   const enableConnectors = boolFrom(raw, "enableConnectors");
   if (enableConnectors !== void 0) provider.enableConnectors = enableConnectors;
+  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+  if (connectorWriteMode) provider.connectorWriteMode = connectorWriteMode;
   const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
   if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
   const includeAppendSystemPromptMd = boolFrom(raw, "includeAppendSystemPromptMd");
@@ -38000,9 +38011,85 @@ var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Google_Drive__*"
 ];
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
-function toolIsolationForQuery(connectorsEnabled) {
+var CONNECTOR_NS_GMAIL = "mcp__claude_ai_Gmail__";
+var CONNECTOR_NS_CALENDAR = "mcp__claude_ai_Google_Calendar__";
+var CONNECTOR_NS_DRIVE = "mcp__claude_ai_Google_Drive__";
+var CONNECTOR_NAMESPACES = [CONNECTOR_NS_GMAIL, CONNECTOR_NS_CALENDAR, CONNECTOR_NS_DRIVE];
+var CONNECTOR_READ_PREFIXES = [
+  "list_",
+  "search_",
+  "get_",
+  "read_",
+  "fetch_",
+  "find_",
+  "download_",
+  "describe_",
+  "query_",
+  "count_",
+  "view_"
+];
+var CONNECTOR_WRITE_TOOLS = [
+  `${CONNECTOR_NS_GMAIL}create_draft`,
+  `${CONNECTOR_NS_GMAIL}create_label`,
+  `${CONNECTOR_NS_GMAIL}label_message`,
+  `${CONNECTOR_NS_GMAIL}label_thread`,
+  `${CONNECTOR_NS_GMAIL}unlabel_message`,
+  `${CONNECTOR_NS_GMAIL}unlabel_thread`,
+  `${CONNECTOR_NS_GMAIL}apply_sensitive_label`,
+  `${CONNECTOR_NS_GMAIL}remove_sensitive_label`,
+  `${CONNECTOR_NS_CALENDAR}create_event`,
+  `${CONNECTOR_NS_CALENDAR}update_event`,
+  `${CONNECTOR_NS_CALENDAR}delete_event`,
+  `${CONNECTOR_NS_CALENDAR}respond_to_event`,
+  `${CONNECTOR_NS_DRIVE}create_file`,
+  `${CONNECTOR_NS_DRIVE}copy_file`
+];
+function isConnectorWriteTool(name) {
+  const ns2 = CONNECTOR_NAMESPACES.find((n10) => name.startsWith(n10));
+  if (!ns2) return false;
+  const tool = name.slice(ns2.length);
+  return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
+}
+function connectorWriteModeFromEnv() {
+  const v2 = (process.env.CLAUDE_BRIDGE_CONNECTOR_WRITE ?? "").trim().toLowerCase();
+  if (v2 === "allow") return "allow";
+  if (v2 === "deny") return "deny";
+  return void 0;
+}
+function connectorWriteModeFor(config2) {
+  const resolved = connectorWriteModeFromEnv() ?? normalizeConnectorWriteMode(config2?.provider?.connectorWriteMode);
+  return resolved === "allow" ? "allow" : "deny";
+}
+function connectorWriteDenyHook() {
+  return async (input) => {
+    try {
+      if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
+      return connectorWriteDenyOutput(String(input.tool_name));
+    } catch {
+      const toolName = typeof input?.tool_name === "string" ? input.tool_name : "<unknown>";
+      return connectorWriteDenyOutput(toolName);
+    }
+  };
+}
+function connectorWriteDenyOutput(toolName) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through Memsira's gated approval flow.`
+    }
+  };
+}
+function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
+  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
+  if (!connectorsEnabled || writeMode === "allow") return isolation;
+  return { ...isolation, hooks: { PreToolUse: [{ hooks: [connectorWriteDenyHook()] }] } };
+}
+function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
   if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
   const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t10) => !CONNECTOR_DISCOVERY_TOOLS.includes(t10));
+  if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
   return {
     disallowedTools,
     allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS]
@@ -39059,6 +39146,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const bridgeConfig = loadConfig(cwd);
   const providerSettings = bridgeConfig.provider ?? {};
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
+  const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
   const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
   const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : void 0;
@@ -39081,7 +39169,7 @@ function streamClaudeAgentSdk(model, context, options) {
     cwd,
     model: model.id,
     env: childEnv,
-    ...toolIsolationForQuery(enableCloudMcp),
+    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     ...fallbackModel ? { fallbackModel } : {},
@@ -39408,6 +39496,7 @@ export {
   CLAUDE_AI_CONNECTOR_TOOL_PATTERNS,
   CLAUDE_BRIDGE_TOOL_ISOLATION,
   CONNECTOR_DISCOVERY_TOOLS,
+  CONNECTOR_WRITE_TOOLS,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
   STREAM_IDLE_BACKOFF_HINT_MS,
@@ -39416,12 +39505,17 @@ export {
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
+  connectorQueryOptions,
+  connectorWriteDenyHook,
+  connectorWriteModeFor,
+  connectorWriteModeFromEnv,
   connectorsEnabledFor,
   connectorsEnabledFromEnv,
   createStreamIdleWatchdog,
   index_default as default,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
+  isConnectorWriteTool,
   isExtraUsageRequiredMessage,
   mapToolName,
   normalizeRateLimitUtilization,

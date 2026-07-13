@@ -94,6 +94,26 @@ Pi 0.80.6 and newer expose native `max` thinking. Fable 5 bridge metadata forwar
 
 Keys may be bare model IDs (`claude-opus-4-8`), `claude-bridge/<id>`, or `*` for all bridge models. Values are `low`, `medium`, `high`, `xhigh`, or `max`.
 
+### Connectors
+
+The bridge can expose the authenticated Claude account's claude.ai cloud MCP connectors (Gmail, Google Calendar, Google Drive) to the model. These are low-level `provider` options (set in `settings.json` under the extension-manager config, or via env). Off by default so Pi owns tool execution.
+
+| Option (`provider.*`) | Env var | Values | Default | What it does |
+| --- | --- | --- | --- | --- |
+| `enableConnectors` | `CLAUDE_BRIDGE_ENABLE_CONNECTORS` | `true`/`false` | off | Expose the account's Gmail/Calendar/Drive connectors to the model (env OR config enables). |
+| `connectorWriteMode` | `CLAUDE_BRIDGE_CONNECTOR_WRITE` | `deny`/`allow` | `deny` | When connectors are enabled, whether their WRITE tools are exposed. |
+
+For both, the env var wins over config. `connectorWriteMode` only matters when connectors are enabled. Any value other than exactly `allow` is treated as `deny` (fail-closed).
+
+With `connectorWriteMode: "deny"` (the default), connector sessions are **read-only**: search/read/fetch/list tools stay available, but mutating tools (Gmail `create_draft`/labels, Calendar `create_event`/`update_event`/`delete_event`/`respond_to_event`, Drive `create_file`/`copy_file`) are denied. Enforcement is two-layered:
+
+- **Model context:** the known write tools are passed as `disallowedTools` (exact tool ids), so the model does not see them. (Note: the CLI's MCP permission matcher only supports exact tool names or a whole-server `mcp__server__*` glob — partial tool-segment globs are inert — so exact ids are what actually removes today's writes.)
+- **Runtime:** a `PreToolUse` hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is **fail-closed** — a tool on a connector namespace is a write unless its verb is a known read prefix (`list_`, `search_`, `get_`, `read_`, `fetch_`, …). This covers not-yet-known write tools (e.g. a future Gmail `send_message` or Drive `delete_file`) that the static id list can't enumerate.
+
+Set `allow` only for a one-shot write-executor session that has already obtained explicit user approval — never for an interactive connector chat.
+
+> **`allow` is per-process, not global.** Memsira's approved-write executor enables writes by setting `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Do not set `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar — that would make every connector session in that process write-capable, defeating the approval gate.
+
 ### Fable 5 caveat
 
 The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. For Fable 5, the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
