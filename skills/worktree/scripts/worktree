@@ -391,7 +391,9 @@ case "${1:-}" in
       fetch_origin
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
-        if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+          : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
+        elif ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
           git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
           echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts). Resolve manually or delete worktree." >&2
           exit 1
@@ -645,13 +647,16 @@ case "${1:-}" in
     if [[ "$AUTO_REBASE" == true ]]; then
       git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-        if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+          echo "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2
+        elif ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
           git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
           echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
           exit 1
+        else
+          # Rebase can replace symlinks with tracked content — restore them
+          setup_worktree_links "$WT_PATH"
         fi
-        # Rebase can replace symlinks with tracked content — restore them
-        setup_worktree_links "$WT_PATH"
       fi
     fi
 
