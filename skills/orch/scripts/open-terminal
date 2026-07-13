@@ -117,8 +117,20 @@ launched=0
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
-    item="$(printf '%s' "$item" | tr '[:lower:]' '[:upper:]')"
-    [[ "$item" =~ ^$GH_ISSUE_PATTERN$ ]] || { echo "Error: invalid issue id: $raw" >&2; exit 1; }
+    # Validate case-insensitively, then normalize to whichever case the
+    # configured GH_ISSUE_PATTERN accepts, so lowercase-convention projects
+    # (e.g. GH_ISSUE_PATTERN="cc-[0-9]+") work without forcing uppercase.
+    item_upper="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]')"
+    item_lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$item_upper" =~ ^$GH_ISSUE_PATTERN$ ]]; then
+      item="$item_upper"
+    elif [[ "$item_lower" =~ ^$GH_ISSUE_PATTERN$ ]]; then
+      item="$item_lower"
+    elif [[ "$raw" =~ ^$GH_ISSUE_PATTERN$ ]]; then
+      item="$raw"
+    else
+      echo "Error: invalid issue id: $raw" >&2; exit 1
+    fi
     wt="$("$WORKTREE_CLI" create "$item")"
     title="$item"
   else
