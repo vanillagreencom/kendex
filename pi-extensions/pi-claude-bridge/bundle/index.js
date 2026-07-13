@@ -21976,10 +21976,10 @@ function readSession(jsonlPath, projectPath) {
 // src/index.ts
 import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
-import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync6, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
+import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
 import { resolve as pathResolve } from "path";
-import { homedir as homedir5 } from "os";
-import { delimiter, dirname as dirname5, join as join5 } from "path";
+import { homedir as homedir6 } from "os";
+import { delimiter, dirname as dirname5, join as join6 } from "path";
 
 // node_modules/change-case/dist/index.js
 var SPLIT_LOWER_UPPER_RE = new RegExp("([\\p{Ll}\\d])(\\p{Lu})", "gu");
@@ -22840,22 +22840,69 @@ function loadConfig(cwd) {
   };
 }
 
-// src/agents-md.ts
+// src/auth-presence.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
-import { homedir as homedir3 } from "os";
-import { dirname as dirname3, join as join3, resolve as resolve2 } from "path";
-var GLOBAL_AGENTS_PATH = join3(homedir3(), ".pi", "agent", "AGENTS.md");
+import { homedir as homedir3, platform as osPlatform } from "os";
+import { join as join3 } from "path";
+function resolveClaudeConfigDir(env = process.env) {
+  const configured = env.CLAUDE_CONFIG_DIR;
+  if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
+  return join3(homedir3(), ".claude");
+}
+function nonEmptyEnv(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function envTruthy(value) {
+  const v2 = value?.trim().toLowerCase();
+  return v2 === "1" || v2 === "true";
+}
+function hasApiKeyHelper(configDir) {
+  try {
+    const settingsPath = join3(configDir, "settings.json");
+    if (!existsSync4(settingsPath)) return false;
+    const parsed = JSON.parse(readFileSync4(settingsPath, "utf8"));
+    return typeof parsed?.apiKeyHelper === "string" && parsed.apiKeyHelper.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
+  if (nonEmptyEnv(env.CLAUDE_CODE_OAUTH_TOKEN)) return true;
+  if (nonEmptyEnv(env.ANTHROPIC_API_KEY)) return true;
+  if (nonEmptyEnv(env.ANTHROPIC_AUTH_TOKEN)) return true;
+  if (envTruthy(env.CLAUDE_CODE_USE_BEDROCK)) return true;
+  if (envTruthy(env.CLAUDE_CODE_USE_VERTEX)) return true;
+  if (envTruthy(env.CLAUDE_CODE_USE_FOUNDRY)) return true;
+  if (envTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return true;
+  if (envTruthy(env.CLAUDE_CODE_USE_MANTLE)) return true;
+  const configDir = resolveClaudeConfigDir(env);
+  if (existsSync4(join3(configDir, ".credentials.json"))) return true;
+  if (hasApiKeyHelper(configDir)) return true;
+  if (platform === "darwin") return true;
+  return false;
+}
+function decideRegistration(state) {
+  if (!state.isPrimary) return "noop";
+  if (state.credentialed) return state.registered ? "noop" : "register";
+  return "unregister";
+}
+
+// src/agents-md.ts
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
+import { homedir as homedir4 } from "os";
+import { dirname as dirname3, join as join4, resolve as resolve2 } from "path";
+var GLOBAL_AGENTS_PATH = join4(homedir4(), ".pi", "agent", "AGENTS.md");
 function resolveAgentsMdPath() {
   const fromCwd = findAgentsMdInParents(process.cwd());
   if (fromCwd) return fromCwd;
-  if (existsSync4(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
+  if (existsSync5(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
   return void 0;
 }
 function findAgentsMdInParents(startDir) {
   let current = resolve2(startDir);
   while (true) {
-    const candidate = join3(current, "AGENTS.md");
-    if (existsSync4(candidate)) return candidate;
+    const candidate = join4(current, "AGENTS.md");
+    if (existsSync5(candidate)) return candidate;
     const parent = dirname3(current);
     if (parent === current) break;
     current = parent;
@@ -22866,7 +22913,7 @@ function extractAgentsAppend() {
   const agentsPath = resolveAgentsMdPath();
   if (!agentsPath) return void 0;
   try {
-    const content = readFileSync4(agentsPath, "utf-8").trim();
+    const content = readFileSync5(agentsPath, "utf-8").trim();
     if (!content) return void 0;
     const sanitized = sanitizeAgentsContent(content);
     return sanitized.length > 0 ? `# CLAUDE.md
@@ -22886,18 +22933,18 @@ function sanitizeAgentsContent(content) {
 }
 
 // src/prompt-context.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
-import { homedir as homedir4 } from "os";
-import { dirname as dirname4, join as join4, resolve as resolve3 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "fs";
+import { homedir as homedir5 } from "os";
+import { dirname as dirname4, join as join5, resolve as resolve3 } from "path";
 function piUserDir2() {
   const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (configured) return resolve3(configured.replace(/^~(?=\/|$)/, homedir4()));
-  return join4(homedir4(), ".pi", "agent");
+  if (configured) return resolve3(configured.replace(/^~(?=\/|$)/, homedir5()));
+  return join5(homedir5(), ".pi", "agent");
 }
 function readTrimmed(path) {
   try {
-    if (!existsSync5(path)) return void 0;
-    const content = readFileSync5(path, "utf8").trim();
+    if (!existsSync6(path)) return void 0;
+    const content = readFileSync6(path, "utf8").trim();
     return content.length > 0 ? content : void 0;
   } catch {
     return void 0;
@@ -22906,8 +22953,8 @@ function readTrimmed(path) {
 function findProjectAppendSystem(startDir) {
   let current = resolve3(startDir);
   while (true) {
-    const candidate = join4(current, ".pi", "APPEND_SYSTEM.md");
-    if (existsSync5(candidate)) return candidate;
+    const candidate = join5(current, ".pi", "APPEND_SYSTEM.md");
+    if (existsSync6(candidate)) return candidate;
     const parent = dirname4(current);
     if (parent === current) break;
     current = parent;
@@ -22916,7 +22963,7 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join4(piUserDir2(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join5(piUserDir2(), "APPEND_SYSTEM.md") }
   ];
   const projectPath = findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
@@ -37592,8 +37639,8 @@ var _piAi = piAi;
 var getModels = await resolveGetModels(_piAi);
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join5(homedir5(), ".pi", "agent", "claude-bridge.log");
-var DEFAULT_DIAG_LOG_PATH = join5(homedir5(), ".pi", "agent", "claude-bridge-diag.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(homedir6(), ".pi", "agent", "claude-bridge.log");
+var DEFAULT_DIAG_LOG_PATH = join6(homedir6(), ".pi", "agent", "claude-bridge-diag.log");
 function diagLogPath() {
   return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
 }
@@ -37623,7 +37670,7 @@ function debug(...args) {
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join5(dir, name);
+    const candidate = join6(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -37738,7 +37785,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let fileType;
   try {
-    fileType = classifyClaudeExecutableBytes(readFileSync6(realPath).subarray(0, 16));
+    fileType = classifyClaudeExecutableBytes(readFileSync7(realPath).subarray(0, 16));
   } catch (err) {
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
       code: codeValue(err, "EACCES"),
@@ -37835,12 +37882,12 @@ function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
   const seq = nextCliDebugSeq++;
   const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join5(dirname5(DEBUG_LOG_PATH), "cc-cli-logs");
+  const logDir = join6(dirname5(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
     mkdirSync3(logDir, { recursive: true });
   } catch {
   }
-  const debugFile = join5(logDir, `${ts}-${tag}-${seq}.log`);
+  const debugFile = join6(logDir, `${ts}-${tag}-${seq}.log`);
   debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
   return {
     debug: true,
@@ -37950,6 +37997,7 @@ function __testSetBridgeIntegrityState(state) {
 function __testGetBridgeIntegrityState() {
   return { sharedSession };
 }
+var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
 var SDK_TO_PI_TOOL_NAME = {
@@ -39043,6 +39091,58 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
   debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}`);
   return { capturedSessionId };
 }
+function claimPrimaryInstance() {
+  const g2 = globalThis;
+  if (!g2[PRIMARY_INSTANCE_KEY]) g2[PRIMARY_INSTANCE_KEY] = streamClaudeAgentSdk;
+  return g2[PRIMARY_INSTANCE_KEY] === streamClaudeAgentSdk;
+}
+function releaseProviderTokens(event) {
+  const g2 = globalThis;
+  if (g2[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
+    debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
+    g2[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
+  }
+  if (g2[PRIMARY_INSTANCE_KEY] === streamClaudeAgentSdk) {
+    debug(`${event}: clearing PRIMARY_INSTANCE_KEY`);
+    g2[PRIMARY_INSTANCE_KEY] = void 0;
+  }
+}
+function applyProviderRegistration(trigger) {
+  const pi = extensionApi;
+  if (!pi) {
+    debug(`${trigger}: applyProviderRegistration skipped \u2014 no extensionApi`);
+    return;
+  }
+  const g2 = globalThis;
+  const isPrimary = claimPrimaryInstance();
+  const credentialed = hasClaudeCredentials();
+  const registered = g2[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
+  const decision = decideRegistration({ credentialed, isPrimary, registered });
+  debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
+  if (decision === "register") {
+    g2[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+    try {
+      pi.registerProvider(PROVIDER_ID, {
+        baseUrl: "claude-bridge",
+        apiKey: "not-used",
+        api: "claude-bridge",
+        models: MODELS,
+        // Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
+        streamSimple: streamClaudeAgentSdk
+      });
+    } catch (err) {
+      if (g2[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g2[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
+      debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
+    }
+  } else if (decision === "unregister") {
+    try {
+      pi.unregisterProvider(PROVIDER_ID);
+    } catch (err) {
+      debug(`${trigger}: unregisterProvider threw (ignored):`, err);
+    }
+    if (g2[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g2[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
+  }
+}
 function streamClaudeAgentSdk(model, context, options) {
   const stream = newAssistantMessageEventStream();
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
@@ -39112,6 +39212,37 @@ function streamClaudeAgentSdk(model, context, options) {
     queueMicrotask(() => {
       c2.resetTurnState(model);
       stream.push({ type: "done", reason: "stop", message: c2.turnOutput });
+      stream.end();
+    });
+    return stream;
+  }
+  if (!hasClaudeCredentials()) {
+    try {
+      applyProviderRegistration("pre-spawn");
+    } catch {
+    }
+    const message = "Claude account not connected \u2014 connect an account (or run `claude login`) and retry.";
+    debug(`provider: pre-spawn credential check failed; failing fast: ${message}`);
+    const errorOutput = {
+      role: "assistant",
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      stopReason: "error",
+      timestamp: Date.now(),
+      errorMessage: message
+    };
+    queueMicrotask(() => {
+      stream.push({ type: "error", reason: "error", error: errorOutput });
       stream.end();
     });
     return stream;
@@ -39446,11 +39577,6 @@ function index_default(pi) {
   const clearSession = (event) => {
     debug(`${event}: clearing session ${sharedSession?.sessionId?.slice(0, 8) ?? "none"}`);
     sharedSession = null;
-    const g10 = globalThis;
-    if (g10[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
-      debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
-      g10[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
-    }
   };
   pi.on("session_start", (event, ctx2) => {
     recordProjectTrust(ctx2);
@@ -39459,8 +39585,12 @@ function index_default(pi) {
       clearSession(`session_start:${event.reason}`);
     }
     if (event.reason === "startup" || event.reason === "resume") restoreSharedSessionFromPi(ctx2);
+    applyProviderRegistration(`session_start:${event.reason}`);
   });
-  pi.on("session_shutdown", () => clearSession("session_shutdown"));
+  pi.on("session_shutdown", () => {
+    clearSession("session_shutdown");
+    releaseProviderTokens("session_shutdown");
+  });
   pi.on("message_end", (event, ctx2) => {
     const message = event.message;
     if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx2);
@@ -39476,20 +39606,7 @@ function index_default(pi) {
   };
   pi.on("session_compact", () => markRebuild("session_compact"));
   pi.on("session_tree", () => markRebuild("session_tree"));
-  const g2 = globalThis;
-  if (!g2[ACTIVE_STREAM_SIMPLE_KEY]) {
-    g2[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-    pi.registerProvider(PROVIDER_ID, {
-      baseUrl: "claude-bridge",
-      apiKey: "not-used",
-      api: "claude-bridge",
-      models: MODELS,
-      // Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-      streamSimple: streamClaudeAgentSdk
-    });
-  } else {
-    debug(`provider: skipping re-registration, parent instance active (module=${moduleInstanceId})`);
-  }
+  applyProviderRegistration("load");
 }
 export {
   ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD,

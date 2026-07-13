@@ -18,6 +18,7 @@ import { extractAllToolResults as _extractAllToolResults, type McpResult } from 
 import { QueryContext, ctx, stackDepth, pushContext, popContext } from "./query-state.js";
 import { findUnpairedToolUses, summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
 import { loadConfig, normalizeConnectorWriteMode, normalizeEffortLevel, recordProjectTrust, type Config, type ConnectorWriteMode } from "./config.js";
+import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
@@ -456,20 +457,31 @@ export function __testGetBridgeIntegrityState(): { sharedSession: SessionState |
 
 // --- Constants ---
 
-// Global key to prevent re-registration of the provider across module reloads.
+// Two process-global tokens govern provider registration across module reloads.
+// Extensions like pi-subagents spawn a subagent that loads THIS module again as
+// a fresh (non-primary) instance. Two failure modes must be prevented:
+//   (1) a subagent's registerProvider() overwriting the parent's `streamSimple`
+//       in the shared ModelRegistry — the parent would then deliver tool results
+//       through the subagent's empty-state streamSimple and break tool pairing;
+//   (2) a subagent STEALING registration ownership: if the parent loaded
+//       uncredentialed and the user logged in mid-session, a later subagent load
+//       would see credentialed + no-owner and claim ownership + register ITS
+//       streamSimple, split-braining the shared session/ctx.
 //
-// Extensions like pi-subagents spawn a subagent and it loads this module
-// again. Without this guard, the subagent's call to registerProvider() would
-// overwrite the parent's `streamSimple` function reference in the shared
-// ModelRegistry. When the parent later delivers a tool result, it would call
-// the subagent's `streamSimple` (which has empty state) instead of its own.
+// PRIMARY_INSTANCE_KEY — claimed UNCONDITIONALLY (regardless of credentials) by
+// the first-loaded module instance. ONLY the primary instance may ever
+// register, unregister, or claim the stream guard. Non-primary instances
+// (subagents) always no-op. This is the authority token; it closes (2).
 //
-// By storing the active streamSimple in a Symbol.for() global (shared across all
-// module instances), we ensure only the FIRST instance to register takes effect.
-// Subsequent instances wrap the stored function instead of overwriting it.
+// ACTIVE_STREAM_SIMPLE_KEY — holds the registered instance's `streamSimple`.
+// Only the primary claims it, and only while a registration is live. It doubles
+// as the "already registered" flag (guard === our streamSimple) and the routing
+// target for reentrant subagent calls; it closes (1).
 //
-// On session_shutdown (including /reload), clearSession() resets this so a fresh
-// registration can occur for the next session.
+// Both are released on session_shutdown (incl. /reload) by releaseProviderTokens
+// so the next module load starts clean. See applyProviderRegistration for the
+// state machine and auth-presence.ts/decideRegistration for the pure decision.
+const PRIMARY_INSTANCE_KEY = Symbol.for("claude-bridge:primaryInstance");
 const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 const COMMANDS_REGISTERED_KEY = Symbol.for("claude-bridge:commandsRegistered");
 
@@ -1963,6 +1975,92 @@ async function consumeQuery(
 	return { capturedSessionId };
 }
 
+// Claim the primary-instance token for this module instance if unclaimed, and
+// report whether this instance is the primary. First-loaded instance wins,
+// UNCONDITIONALLY (before any credential check), so a later subagent load can
+// never become primary and steal registration ownership.
+function claimPrimaryInstance(): boolean {
+	const g = globalThis as Record<symbol, any>;
+	if (!g[PRIMARY_INSTANCE_KEY]) g[PRIMARY_INSTANCE_KEY] = streamClaudeAgentSdk;
+	return g[PRIMARY_INSTANCE_KEY] === streamClaudeAgentSdk;
+}
+
+// Release both process-global tokens this instance owns. Called on
+// session_shutdown (incl. /reload) so the freshly loaded instance starts clean.
+// NOTE: this does NOT unregister the provider — the ModelRegistry's
+// registeredProviders is a process-lifetime Map that survives module reload, so
+// retraction on logout is handled by applyProviderRegistration's defensive
+// unregister on the next load/session_start, not here.
+function releaseProviderTokens(event: string): void {
+	const g = globalThis as Record<symbol, any>;
+	if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
+		debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
+		g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
+	}
+	if (g[PRIMARY_INSTANCE_KEY] === streamClaudeAgentSdk) {
+		debug(`${event}: clearing PRIMARY_INSTANCE_KEY`);
+		g[PRIMARY_INSTANCE_KEY] = undefined;
+	}
+}
+
+// Conditional (un)registration driven by real credential presence + instance
+// primacy. Run at extension load, on every session_start, and at pre-spawn
+// (fail-fast) so a `claude login` / logout is reflected without a /reload.
+//
+// decideRegistration encodes the pure state machine; this wrapper performs the
+// matching token mutations so tokens and registration never diverge:
+//   - register:   claim the stream guard, THEN registerProvider. If register
+//     throws/queue-fails, release the stream guard (but keep primacy) so a
+//     later re-check can retry cleanly (self-healing); errors are swallowed so
+//     a session_start handler can't crash the dispatch.
+//   - unregister: pi.unregisterProvider (idempotent), THEN release the stream
+//     guard if we own it. Defensive even when we never registered — this is the
+//     only retraction path for a stale registration surviving /reload. At LOAD
+//     the SDK's unregister only filters the pending-registration queue and can't
+//     mutate the persistent registry (loader.js), so the effective retraction
+//     lands on the post-load session_start re-check; the load-time call is a
+//     harmless idempotent no-op that also cancels any same-pass queued register.
+// Non-primary instances (subagents) always decide noop and touch nothing.
+function applyProviderRegistration(trigger: string): void {
+	const pi = extensionApi;
+	if (!pi) { debug(`${trigger}: applyProviderRegistration skipped — no extensionApi`); return; }
+	const g = globalThis as Record<symbol, any>;
+	const isPrimary = claimPrimaryInstance();
+	const credentialed = hasClaudeCredentials();
+	const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
+	const decision = decideRegistration({ credentialed, isPrimary, registered });
+	debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
+	if (decision === "register") {
+		// Claim ordering: stream guard BEFORE registerProvider so a concurrent
+		// subagent can never observe a registered provider without an owner.
+		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+		try {
+			pi.registerProvider(PROVIDER_ID, {
+				baseUrl: "claude-bridge",
+				apiKey: "not-used",
+				api: "claude-bridge",
+				models: MODELS,
+				// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
+				streamSimple: streamClaudeAgentSdk as any,
+			});
+		} catch (err) {
+			// Self-heal: release ONLY the stream guard we just claimed so a later
+			// re-check (primary + credentialed + not-registered → register) retries.
+			// Keep PRIMARY_INSTANCE_KEY: releasing it would reopen the subagent
+			// ownership-steal window, and retry does not need it released.
+			if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
+			debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
+		}
+	} else if (decision === "unregister") {
+		try {
+			pi.unregisterProvider(PROVIDER_ID);
+		} catch (err) {
+			debug(`${trigger}: unregisterProvider threw (ignored):`, err);
+		}
+		if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
+	}
+}
+
 /** Provider entry point. Pi calls this for each new prompt and each tool result.
  *  Two cases: tool result delivery (active query) or fresh query. */
 function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
@@ -2061,6 +2159,34 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	}
 
 	// --- Fresh query ---
+
+	// Fail-fast credential re-check (only for a fresh query — NEVER for
+	// tool-result delivery of an in-flight query, handled above, where creds were
+	// valid at start and failing mid-turn would break tool pairing). This bounds
+	// the retraction-latency window from "next session boundary" to "first use":
+	// if credentials vanished since the last session_start, (a) trigger the same
+	// re-evaluation applyProviderRegistration does (primary-only; retracts the
+	// stale registration), and (b) fail this request with a clear, actionable
+	// message instead of letting the SDK spawn die with a generic error. The
+	// check is cheap (existsSync + env reads only, no credential contents).
+	if (!hasClaudeCredentials()) {
+		try { applyProviderRegistration("pre-spawn"); } catch { /* best effort */ }
+		const message = "Claude account not connected — connect an account (or run `claude login`) and retry.";
+		debug(`provider: pre-spawn credential check failed; failing fast: ${message}`);
+		const errorOutput: AssistantMessage = {
+			role: "assistant", content: [],
+			api: model.api, provider: model.provider, model: model.id,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "error", timestamp: Date.now(),
+			errorMessage: message,
+		};
+		queueMicrotask(() => {
+			stream.push({ type: "error", reason: "error", error: errorOutput });
+			stream.end();
+		});
+		return stream;
+	}
 
 	// 1. Determine reentrancy and push parent context if needed.
 	const isReentrant = ctx().activeQuery !== null;
@@ -2476,20 +2602,15 @@ export default function (pi: ExtensionAPI) {
 		return;
 	}
 
-	// Reset shared session on pi session lifecycle events
+	// Reset shared (Claude) conversation state on pi session lifecycle events.
+	// Registration tokens are managed separately by applyProviderRegistration
+	// (load / session_start / pre-spawn) and releaseProviderTokens (shutdown), so
+	// a mid-session credential flip is handled while token ownership is intact.
 	const clearSession = (event: string) => {
 		debug(`${event}: clearing session ${sharedSession?.sessionId?.slice(0, 8) ?? "none"}`);
 		sharedSession = null;
-
-		// Clear the global streamSimple if this instance registered it.
-		// This allows /reload to work — the old instance clears the flag so
-		// the new instance can register fresh without wrapping stale state.
-		const g = globalThis as Record<symbol, any>;
-		if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
-			debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
-			g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
-		}
 	};
+
 	pi.on("session_start", (event, ctx) => {
 		recordProjectTrust(ctx);
 		piUI = ctx.ui;
@@ -2501,8 +2622,14 @@ export default function (pi: ExtensionAPI) {
 		// them would --resume the parent's Claude jsonl and leak conversation past the
 		// fork point. Letting the first fork turn rebuild is the correct path.
 		if (event.reason === "startup" || event.reason === "resume") restoreSharedSessionFromPi(ctx);
+		// Live availability flip: re-evaluate credential presence every
+		// session_start so login/logout since load is reflected without /reload.
+		applyProviderRegistration(`session_start:${event.reason}`);
 	});
-	pi.on("session_shutdown", () => clearSession("session_shutdown"));
+	pi.on("session_shutdown", () => {
+		clearSession("session_shutdown");
+		releaseProviderTokens("session_shutdown");
+	});
 	pi.on("message_end", (event, ctx) => {
 		const message = (event as { message?: AssistantMessage }).message;
 		if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx);
@@ -2529,30 +2656,14 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Provider ---
 	//
-	// Guard against re-registration when the module is loaded multiple times
-	// (e.g., when spawning subagents). The shared ModelRegistry would otherwise
-	// overwrite the parent's streamSimple, breaking tool result delivery.
-	// See ACTIVE_STREAM_SIMPLE_KEY for the full mechanism.
-
-	const g = globalThis as Record<symbol, any>;
-	if (!g[ACTIVE_STREAM_SIMPLE_KEY]) {
-		// First instance: store our streamSimple and register.
-		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-		pi.registerProvider(PROVIDER_ID, {
-			baseUrl: "claude-bridge",
-			apiKey: "not-used",
-			api: "claude-bridge",
-			models: MODELS,
-			// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-			streamSimple: streamClaudeAgentSdk as any,
-		});
-	} else {
-		// Subsequent instance (subagent session): skip registration entirely.
-		// The subagent already has access to claude-bridge models via the shared
-		// ModelRegistry from the parent's registration. Calls to those models
-		// will route through the parent's streamSimple via the reentrant
-		// QueryContext stack mechanism.
-		debug(`provider: skipping re-registration, parent instance active (module=${moduleInstanceId})`);
-	}
-
+	// Register the provider ONLY when real Claude credentials are present, so
+	// claude-bridge models are never advertised as available/selectable when a
+	// request would fail at spawn time (pi's ModelRegistry.hasConfiguredAuth()
+	// treats the dummy apiKey as "configured", so the gate must live here).
+	//
+	// applyProviderRegistration also claims the primary-instance token (first
+	// load wins) and enforces the multi-instance guard: a non-primary subagent
+	// reload always no-ops, so it never overwrites the parent's streamSimple nor
+	// steals ownership. See PRIMARY_INSTANCE_KEY / ACTIVE_STREAM_SIMPLE_KEY.
+	applyProviderRegistration("load");
 }
