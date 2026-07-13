@@ -329,6 +329,8 @@ Never spawn a fresh agent when the same role/name is alive. Read workflow state,
 
 An agent sends exactly one completion message. If a second return arrives, treat it as a violation: diff against the first, flag unrequested commits. Root cause is usually process leakage in `[FORMATTED_ITEMS]` or extra delegation fields.
 
+**Codex dual-channel completion.** On Codex collaboration agents, one completion can arrive over two channels: a `send_input` `MESSAGE`, immediately followed by a `FINAL_ANSWER` that echoes the same result (same commit, scope, and findings). This is the Codex runtime delivering a single completion twice — dual-channel delivery, not `[FORMATTED_ITEMS]` leakage. Treat the `MESSAGE` and its echoed `FINAL_ANSWER` as **one completion** and deduplicate them on the same delegation; do not flag the pair as a violation. Still diff the `FINAL_ANSWER` against the `MESSAGE`: if it carries a new commit, extra changes, or a different scope, that is a genuine second return and must be flagged per the rule above.
+
 ---
 
 ### Agent Lifecycle
