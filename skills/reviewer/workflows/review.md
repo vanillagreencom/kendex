@@ -19,14 +19,17 @@ Extract from delegation message:
 
 ### 1.1 Diff
 
+If the delegation provided a `Diff-range`, compute the diff directly:
+
 ```bash
-# Use Diff-range from delegation if provided, otherwise diff full branch
-if [[ -n "$DIFF_RANGE" ]]; then
-  git -C [WORKTREE_PATH] diff $DIFF_RANGE
-else
-  .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
-  git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
-fi
+git -C [WORKTREE_PATH] diff [DIFF_RANGE]
+```
+
+Otherwise resolve the base branch, then diff the branch against it (two separate commands, no shell composition):
+
+```bash
+.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 ```
 
 Review for noteworthy findings only — skip minor style issues. Exclude research documents.

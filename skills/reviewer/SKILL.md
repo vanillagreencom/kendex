@@ -87,7 +87,21 @@ Use this table to avoid duplicate findings across parallel reviewers. If domains
 
 ### Harness-Safe Shell
 
-Reviewer agents run under the same strict approval policies as orchestrators (Codex `approval=never`). Run each validation or read-only check as its own command with explicit arguments. Do NOT combine checks with `&&`, `||`, `;`, plumbing pipelines, `$(...)`, or a single multi-file invocation (e.g. `bash -n a b c d`). Batch independent checks as separate tool calls (or parallel independent execs) instead of shell composition — the harness can classify compound or composed shapes as approval-required even when approval is disabled.
+Reviewer agents run under the same strict approval policies as orchestrators (Codex `approval=never`). Run each validation or read-only check as its own command with explicit arguments.
+
+Do NOT combine, compose, or wrap a check with any of these shapes:
+
+- `&&`, `||`, `;`, or plumbing pipelines (`|`);
+- command substitution `$(...)` or backticks;
+- a single multi-file invocation (e.g. `bash -n a b c d`);
+- output or error redirection — `>`, `>>`, `2>`, `&>`, and specifically `>/dev/null` (or `2>/dev/null`);
+- inline conditionals or test-and-run shapes — `if ...; then ... fi`, `[[ ... ]] && ...`.
+
+Codex classifies every one of these shapes as approval-required even when the underlying operation is purely read-only, and rejects the command with `approval required by policy, but AskForApproval is set to Never`. The failure is the command *shape*, not access — the same predicate run as a bare command succeeds.
+
+Validate by exit status, not by redirection. Run the predicate as a bare command and rely on its exit code; the parsed output printed to stdout is harmless, so do NOT suppress it. To check a JSON artifact, run `jq -e <filter> <path>` — its exit status IS the check. For example, `jq -e . tmp/review-x.json` ✓ is correct, whereas `jq -e . tmp/review-x.json >/dev/null` ✗ is rejected under Codex `approval=never` even though it only reads the file.
+
+Batch independent checks as separate tool calls (or parallel independent execs) instead of shell composition.
 
 ## Configuration
 
