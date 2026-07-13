@@ -151,6 +151,12 @@ case "${1:-}" in
           else
             echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
           fi
+        elif [[ "$*" == *"pr=15"* ]]; then
+          # PR 15 (#518): the real GraphQL review-thread author login for a GitHub
+          # App bot is the BARE app slug (no "[bot]" suffix), while the reviewer is
+          # configured/detected as "chatgpt-codex-connector[bot]". Attribution must
+          # normalize both sides or it misses this unresolved inline thread.
+          echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]}}]}}}}}'
         else
           echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
         fi
@@ -191,6 +197,12 @@ case "${1:-}" in
         # reviewers are terminal-approved via their OWN signals, so completion
         # must not block on the checklist drain regardless of MAX_WAIT budget.
         echo '[{"user":{"login":"claude[bot]"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]'
+        exit 0
+        ;;
+      repos/*/pulls/15/reviews)
+        # PR 15 (#518): Codex posts a formal COMMENTED review (which alone sets no
+        # terminal status) alongside an unresolved inline thread it authored.
+        echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"state":"COMMENTED","submitted_at":"2026-01-01T00:10:00Z"}]'
         exit 0
         ;;
       repos/*/pulls/10/reviews)
@@ -253,11 +265,11 @@ JSON
 JSON
         exit 0
         ;;
-      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments|repos/*/issues/12/comments|repos/*/issues/13/comments|repos/*/issues/14/comments)
+      repos/*/issues/5/comments|repos/*/issues/6/comments|repos/*/issues/7/comments|repos/*/issues/8/comments|repos/*/issues/9/comments|repos/*/issues/10/comments|repos/*/issues/11/comments|repos/*/issues/12/comments|repos/*/issues/13/comments|repos/*/issues/14/comments|repos/*/issues/15/comments)
         echo '[]'
         exit 0
         ;;
-      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/12/reactions|repos/*/issues/13/reactions|repos/*/issues/comments/*/reactions)
+      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/12/reactions|repos/*/issues/13/reactions|repos/*/issues/15/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
         exit 0
         ;;
@@ -643,6 +655,75 @@ set -e
 assert_eq "$code" "3" "auth failure exits 3 in --json mode"
 assert_json "$output" "auth failure path emits parseable JSON"
 assert_eq "$(jq -r .status <<<"$output")" "error" "auth failure reports status error"
+
+echo "=== bot-review-wait Codex COMMENTED + unresolved bot thread (#518) ==="
+
+# #518: a Codex reviewer posts a formal COMMENTED review AND leaves an unresolved
+# inline review thread. The thread's GraphQL author login is the bare app slug
+# ("chatgpt-codex-connector") while the reviewer is "chatgpt-codex-connector[bot]".
+# Pre-fix, the exact `author.login == reviewer` match missed the thread, so the
+# reviewer stayed unknown with unresolved_threads:0 and the waiter timed out. The
+# normalized match must attribute the thread, force the reviewer to "changes", and
+# reach a terminal complete/changes result (not unknown/pending, not timeout).
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+set +e
+output=$(run_wait 15 1 1 --json --reviewers 'chatgpt-codex-connector[bot]')
+code=$?
+set -e
+assert_eq "$code" "0" "COMMENTED + unresolved bot thread reaches terminal exit 0 (#518)"
+assert_eq "$(jq -r .status <<<"$output")" "complete" "COMMENTED + unresolved bot thread emits complete JSON (#518)"
+assert_eq "$(jq -r .verdict <<<"$output")" "changes" "COMMENTED + unresolved bot thread yields changes verdict (#518)"
+assert_eq "$(jq -r '.reviewers[] | select(.reviewer == "chatgpt-codex-connector[bot]") | .status' <<<"$output")" "changes" "unresolved bot thread forces reviewer status changes, not unknown/pending (#518)"
+assert_eq "$([[ "$(jq -r '.reviewers[] | select(.reviewer == "chatgpt-codex-connector[bot]") | .unresolved_threads' <<<"$output")" -ge 1 ]] && echo ok)" "ok" "unresolved bot thread is counted (unresolved_threads >= 1) despite [bot]-suffix mismatch (#518)"
+assert_eq "$(jq -r '.changes_reviewers | join(",")' <<<"$output")" "chatgpt-codex-connector[bot]" "Codex reviewer is bucketed under changes (#518)"
+assert_contains "$(jq -c '.reviewers[] | select(.reviewer == "chatgpt-codex-connector[bot]") | .signals' <<<"$output")" "inline:1" "unresolved bot thread records inline:1 signal (#518)"
+
+echo "=== bot-review-wait interrupt exit status (#520) ==="
+
+# #520: an interrupt (Ctrl-C / SIGTERM) delivered while the waiter is parked in a
+# poll sleep must exit the process nonzero AND the EXIT-trap JSON backstop must
+# report the SAME nonzero status. Pre-fix, with no INT/TERM trap, the backstop
+# captured a normalized $?=0 (JSON "exit 0") while the process itself exited
+# 128+signum — the two disagreed. The fix's `trap 'exit 130' INT TERM` makes both
+# deterministically 130. SIGINT is inherited-ignored by background jobs in this
+# harness, so SIGTERM (the other signal the fix traps) is the reliable proxy for
+# the interrupt path; the trap covers both. PR 13 stays pending, so the waiter is
+# guaranteed to be sitting in a poll sleep when the signal arrives.
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+int_out="$TMP_ROOT/int.out"
+int_code_file="$TMP_ROOT/int.code"
+: > "$int_out"
+rm -f "$int_code_file"
+(
+  cd "$TMP_ROOT/repo"
+  # setsid puts the waiter (and its sleep child) in a fresh process group so the
+  # signal reaches the whole group like a terminal Ctrl-C — without hitting this
+  # test's own shell, which stays in its original group.
+  env PATH="$TMP_ROOT/bin:$PATH" setsid .agents/skills/orch/scripts/bot-review-wait 13 10 30 --json --reviewers 'chatgpt-codex-connector[bot]' >"$int_out" 2>/dev/null &
+  wpid=$!
+  sleep 3
+  wpgid=$(ps -o pgid= -p "$wpid" 2>/dev/null | tr -d ' ')
+  [[ -n "$wpgid" ]] && kill -TERM -"$wpgid" 2>/dev/null || true
+  # Capture the waiter's exit without letting `set -e` abort on its nonzero
+  # (interrupted) status before we record it.
+  set +e
+  wait "$wpid"
+  wcode=$?
+  set -e
+  printf '%s' "$wcode" > "$int_code_file"
+)
+int_code="$(cat "$int_code_file" 2>/dev/null || echo MISSING)"
+int_json="$(cat "$int_out" 2>/dev/null || echo '')"
+reported_exit="$(jq -r '.error // ""' <<<"$int_json" 2>/dev/null | grep -oE 'exit [0-9]+' | grep -oE '[0-9]+' | head -1)"
+assert_eq "$int_code" "130" "interrupt makes the process exit 130 (#520)"
+assert_json "$int_json" "interrupt still emits a parseable JSON backstop (#520)"
+assert_eq "$(jq -r .status <<<"$int_json")" "error" "interrupt backstop reports status error (#520)"
+assert_eq "$reported_exit" "130" "interrupt backstop JSON reports exit 130, not a normalized 0 (#520)"
+assert_eq "$reported_exit" "$int_code" "interrupt backstop JSON exit matches the real process exit (#520)"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

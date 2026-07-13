@@ -122,6 +122,18 @@ finalize() {
 }
 trap finalize EXIT
 
+# vstack#520: interrupt handling. Without an INT/TERM trap, a Ctrl-C (or a
+# SIGTERM) delivered while the script is blocked in a poll `sleep` terminates
+# the process with 128+signum, but the EXIT-trap backstop above captured a
+# normalized `$?` of 0 — so the emitted JSON reported "exit 0" while the process
+# itself exited nonzero, and the two disagreed. Trapping the interrupt to a
+# deterministic `exit 130` (128+SIGINT) makes the process exit 130 AND drives
+# finalize's `local ec=$?` to 130, so the backstop JSON and the real process
+# status agree. Installed right after the EXIT trap so it covers every poll
+# sleep. Normal-path emitters (emit_result/emit_error) call `exit` directly and
+# are unaffected — this fires only on an actual interrupt.
+trap 'exit 130' INT TERM
+
 emit_error() {
   local message="$1"
   RESULT_EMITTED=true

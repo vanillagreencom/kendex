@@ -647,13 +647,24 @@ bot_review_status_compute() {
     fi
 
     # --- unresolved review threads authored by this reviewer ---
+    # Match the thread author to the configured reviewer robustly (vstack#518).
+    # The reviewer login is discovered from REST (reviews/comments/reactions) and
+    # carries the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]"), while the
+    # GraphQL review-thread author login for the SAME GitHub App bot is the bare
+    # app slug ("chatgpt-codex-connector"). An exact `==` match therefore missed a
+    # bot's unresolved inline thread, leaving the reviewer unknown/pending with
+    # unresolved_threads:0 until timeout. Normalize BOTH sides — lowercase and
+    # strip a trailing "[bot]" — before comparing so attribution is stable across
+    # the REST/GraphQL identity mismatch and login casing.
     local unresolved
     unresolved=$(jq --arg u "$reviewer" '
-        [.[]
-         | select((.isResolved // false) == false)
-         | select((.isOutdated // false) == false)
-         | select([.comments.nodes[]?.author.login // empty] | any(. == $u))
-        ] | length
+        def norm: ascii_downcase | sub("\\[bot\\]$"; "");
+        ($u | norm) as $ru
+        | [.[]
+           | select((.isResolved // false) == false)
+           | select((.isOutdated // false) == false)
+           | select([.comments.nodes[]?.author.login // empty | norm] | any(. == $ru))
+          ] | length
     ' <<<"$threads_json" 2>/dev/null || echo 0)
     [[ -z "$unresolved" || "$unresolved" == "null" ]] && unresolved=0
     if [[ "$unresolved" -gt 0 ]]; then
