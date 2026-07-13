@@ -258,7 +258,14 @@ cmd_exists() {
 
 cmd_help() {
     cat << 'EOF'
-Usage: workflow-state <command> <issue_id> [args...]
+Usage: workflow-state [--state-dir <path>] <command> <issue_id> [args...]
+
+Global options (before the subcommand):
+  --state-dir <path>            Override state directory for all subcommands.
+                                Takes precedence over ORCH_STATE_DIR. Prefer this
+                                flag over the ORCH_STATE_DIR=… env prefix from
+                                worktree sessions: a plain flag is classifier-safe
+                                under Codex approval=never.
 
 Commands:
   init <issue_id> [options]     Create new state file
@@ -291,15 +298,43 @@ Examples:
   workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
   workflow-state set-now PROJ-123 review_delegated_at
   workflow-state update PROJ-123 '.fixed_items | map(select(.source == "qa-review"))'
+  workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 
 Environment:
-  ORCH_STATE_DIR    Override state directory (default: tmp)
+  ORCH_STATE_DIR    Override state directory (default: tmp). Fallback for
+                    --state-dir; the flag wins when both are set.
 
 Dependencies:
   jq               JSON processing
   flock             File locking (util-linux)
 EOF
 }
+
+# Global options may precede the subcommand. --state-dir <path> (or
+# --state-dir=<path>) overrides the state directory for EVERY subcommand and
+# takes precedence over ORCH_STATE_DIR (which stays supported as a fallback).
+# Prefer this flag from worktree sessions: a plain flag is classifier-safe under
+# Codex approval=never, whereas an `ORCH_STATE_DIR=… workflow-state …`
+# env-assignment prefix is rejected as a flagged command shape.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --state-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --state-dir requires a path argument" >&2
+                exit 2
+            fi
+            STATE_DIR="$2"
+            shift 2
+            ;;
+        --state-dir=*)
+            STATE_DIR="${1#--state-dir=}"
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 # Main dispatch
 case "${1:-help}" in

@@ -46,7 +46,7 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ORCH_STATE_DIR` | State file directory | `tmp` |
+| `ORCH_STATE_DIR` | State file directory (env fallback for the `--state-dir` flag, which wins) | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache | `.cache/orch` |
 | `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | current `gh` auth |
 | `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
@@ -77,6 +77,8 @@ Use `skills/orch/scripts/git-context branch|head|issue-from-branch|repo-root|com
 Use `skills/orch/scripts/workflow-state exists --json ISSUE_ID` when a workflow needs structured existence status without relying on shell exit-code capture.
 
 Use `skills/orch/scripts/workflow-state set-git-head ISSUE_ID FIELD [WORKTREE_PATH]` and `set-now ISSUE_ID FIELD` for common state writes that would otherwise require nested `$(git ...)` or `$(date ...)` snippets.
+
+To target a canonical state directory from a worktree, pass the global `skills/orch/scripts/workflow-state --state-dir PATH SUBCOMMAND ...` flag before the subcommand rather than an `ORCH_STATE_DIR=… workflow-state …` env prefix. The env-assignment prefix is rejected under Codex `approval=never` (a flagged command shape); the plain flag is classifier-safe. `--state-dir` takes precedence over the `ORCH_STATE_DIR` environment fallback, which stays supported.
 
 Use `skills/orch/scripts/pr-view-json WORKTREE_PATH --json number,state` when a workflow needs to inspect the current branch's PR. It prints the structured `status=no_pr` JSON with exit code 0 so `submit-pr` can route to PR creation without shell fallback expressions.
 

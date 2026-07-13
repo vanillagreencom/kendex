@@ -168,10 +168,15 @@ Both `bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps t
 
 ### `workflow-state` actions
 
-`ORCH_STATE_DIR` overrides state directory (default: `tmp`). Put non-secret workflow settings in committed `vstack.settings.toml` under `[env]`; `.env.local` remains supported for secrets and personal overrides.
+To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand: it applies to every action and takes precedence over `ORCH_STATE_DIR`. Prefer the flag over an `ORCH_STATE_DIR=… workflow-state …` env prefix — the env-assignment prefix is rejected under Codex `approval=never` as a flagged command shape, while a plain flag is classifier-safe. `ORCH_STATE_DIR` remains supported as an environment fallback (default: `tmp`). Put non-secret workflow settings in committed `vstack.settings.toml` under `[env]`; `.env.local` remains supported for secrets and personal overrides.
+
+```bash
+.agents/skills/orch/scripts/workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
+```
 
 | Action | Purpose |
 |--------|---------|
+| `--state-dir <path>` (global, before subcommand) | Override state directory for every action; precedence over `ORCH_STATE_DIR` |
 | `init <ID> --agent <name> --worktree <path> [--branch <b>] [--team <t>]` | Initialize state file |
 | `exists [--json] <ID>` | Check state file exists; `--json` prints `{issue_id,path,exists}` and exits 0 |
 | `path <ID>` | Print state file path |
@@ -196,7 +201,7 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ORCH_STATE_DIR` | Override state file directory | `tmp` |
+| `ORCH_STATE_DIR` | Override state file directory (env fallback for the `--state-dir` flag, which wins when both are set) | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
 | `BOT_REVIEWERS` | Comma-separated bot usernames to wait for | Auto-detects |
@@ -390,7 +395,7 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes, including `set-git-head` and `set-now` instead of inline command-substitution state-write snippets.
 
-Location: `$ORCH_STATE_DIR/workflow-state-[ID].json` (default: `tmp/`)
+Location: `<state-dir>/workflow-state-[ID].json` — `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`. From a worktree, prefer `--state-dir` over an `ORCH_STATE_DIR=…` env prefix (rejected under Codex `approval=never`).
 
 #### Compaction Recovery Protocol
 
