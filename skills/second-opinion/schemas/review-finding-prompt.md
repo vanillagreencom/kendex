@@ -1,4 +1,6 @@
-Output ONLY valid JSON — no markdown fences, no explanation before or after:
+Output ONLY valid JSON — no markdown fences, no explanation before or after.
+
+This is a single fresh session with no prior turns and no session history. Output the COMPLETE JSON object in THIS response — do NOT claim the JSON was "already delivered", "above", or "previously", because there is no earlier message. If you have nothing to report, still emit the full JSON object below with an empty `blockers` array and verdict "pass":
 
 {
   "agent": "external-TARGET",

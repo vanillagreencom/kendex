@@ -322,7 +322,11 @@ trap 'rm -f "$PROMPT_TMP"' EXIT
 printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
 STDERR_TMP=$(mktemp)
-trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP"' EXIT
+# RETRY_PROMPT_TMP is created only when extraction fails and a retry runs; keep
+# it in the cleanup trap. Sidecar files written by preserve_raw_and_fail are
+# deliberately NOT tracked here — they are the durable record of a lost response.
+RETRY_PROMPT_TMP=""
+trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP"' EXIT
 
 # --- Invoke external CLI ------------------------------------------------------
 
@@ -333,26 +337,33 @@ EXIT_CODE=0
 CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep}"
 CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral}"
 
-case "$TARGET_CLI" in
-  claude)
-    echo "→ cmd: timeout ${TIMEOUT}s $CLAUDE_CMD" >&2
-    # shellcheck disable=SC2086
-    RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
-      $CLAUDE_CMD \
-      < "$PROMPT_TMP" 2>"$STDERR_TMP") || EXIT_CODE=$?
-    ;;
-  codex)
-    echo "→ cmd: timeout ${TIMEOUT}s $CODEX_CMD" >&2
-    # shellcheck disable=SC2086
-    RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
-      $CODEX_CMD \
-      < "$PROMPT_TMP" 2>"$STDERR_TMP") || EXIT_CODE=$?
-    ;;
-  *)
-    echo "{\"error\": \"Unknown target: $TARGET_CLI\"}" >&2
-    exit 1
-    ;;
-esac
+# Invoke the resolved target CLI with a prompt file on stdin. Echoes the CLI's
+# stdout on our stdout and returns its exit code (124 on timeout). Reused for
+# the retry on JSON-extraction failure, so it stays side-effect-free beyond
+# writing the CLI's stderr to STDERR_TMP.
+run_target_cli() {
+  local prompt_file="$1"
+  local rc=0
+  case "$TARGET_CLI" in
+    claude)
+      echo "→ cmd: timeout ${TIMEOUT}s $CLAUDE_CMD" >&2
+      # shellcheck disable=SC2086
+      (cd "$CWD" && timeout "$TIMEOUT" $CLAUDE_CMD < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+      ;;
+    codex)
+      echo "→ cmd: timeout ${TIMEOUT}s $CODEX_CMD" >&2
+      # shellcheck disable=SC2086
+      (cd "$CWD" && timeout "$TIMEOUT" $CODEX_CMD < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+      ;;
+    *)
+      echo "{\"error\": \"Unknown target: $TARGET_CLI\"}" >&2
+      rc=2
+      ;;
+  esac
+  return "$rc"
+}
+
+RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
 
 if [[ $EXIT_CODE -eq 124 ]]; then
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
@@ -429,14 +440,103 @@ extract_json() {
   return 1
 }
 
+# --- Retry + raw-preservation helpers (review/audit) --------------------------
+
+# Build the follow-up prompt for the one-shot retry: the raw first response plus
+# the canonical JSON schema and an instruction to serialize it now. The schema
+# file is the shared source of the JSON structure for both review and audit, so
+# re-reading it here works regardless of which mode produced the first response.
+build_retry_prompt() {
+  local raw="$1"
+  local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
+  local schema=""
+  if [[ -f "$schema_file" ]]; then
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
+  fi
+  cat <<RETRY
+Your previous response did not contain a parseable JSON object. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Serialize your review as the COMPLETE JSON object now, in THIS response, without changing any of your findings. Output ONLY the JSON object — no prose before or after.
+
+--- Your previous response ---
+${raw}
+--- End of your previous response ---
+
+Emit exactly this JSON structure:
+${schema}
+RETRY
+}
+
+# Persist the raw (and optional retry) response so a lost review is auditable,
+# emit an error JSON that carries the sidecar path(s), then exit 1.
+preserve_raw_and_fail() {
+  local raw="$1"
+  local retry="${2:-}"
+  local raw_path retry_path=""
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    raw_path="${OUTPUT_PATH}.raw.txt"
+    printf '%s\n' "$raw" > "$raw_path"
+    if [[ -n "$retry" ]]; then
+      retry_path="${OUTPUT_PATH}.retry.txt"
+      printf '%s\n' "$retry" > "$retry_path"
+    fi
+  else
+    raw_path=$(mktemp)
+    printf '%s\n' "$raw" > "$raw_path"
+    if [[ -n "$retry" ]]; then
+      retry_path=$(mktemp)
+      printf '%s\n' "$retry" > "$retry_path"
+    fi
+  fi
+
+  if [[ -n "$retry_path" ]]; then
+    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" \
+      --arg rawpath "$raw_path" --arg retrypath "$retry_path" \
+      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath, retry_response: $retrypath}' >&2
+    echo "→ retry response preserved: $retry_path" >&2
+  else
+    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" --arg rawpath "$raw_path" \
+      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath}' >&2
+  fi
+  echo "→ raw response preserved: $raw_path" >&2
+  echo "--- First 30 lines of raw response ---" >&2
+  printf '%s\n' "$raw" | head -30 >&2
+  exit 1
+}
+
 if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
-  JSON=$(extract_json "$RESULT") || {
-    echo "{\"error\": \"Failed to extract JSON from $TARGET_CLI response\", \"raw_length\": ${#RESULT}}" >&2
-    echo "--- First 30 lines of raw response ---" >&2
-    printf '%s\n' "$RESULT" | head -30 >&2
-    exit 1
-  }
-  RESULT="$JSON"
+  if JSON=$(extract_json "$RESULT"); then
+    RESULT="$JSON"
+  else
+    # The one-shot reviewer sometimes returns prose claiming the JSON was
+    # "already delivered above" — but with --no-session-persistence /
+    # --ephemeral there is no prior turn. Retry ONCE, feeding the raw response
+    # back with the schema so it serializes the findings it already produced.
+    echo "→ extract_json failed on first response; retrying once with captured response" >&2
+    RETRY_PROMPT_TMP=$(mktemp)
+    build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
+
+    RETRY_RESULT=""
+    RETRY_EXIT=0
+    RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP") || RETRY_EXIT=$?
+
+    if [[ $RETRY_EXIT -eq 124 ]]; then
+      echo "→ retry timed out after ${TIMEOUT}s" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif [[ $RETRY_EXIT -ne 0 ]]; then
+      echo "→ retry exited with code $RETRY_EXIT" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif [[ ${#RETRY_RESULT} -eq 0 ]]; then
+      echo "→ retry returned an empty response" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif JSON=$(extract_json "$RETRY_RESULT"); then
+      echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
+      RESULT="$JSON"
+    else
+      echo "→ retry response still not parseable" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    fi
+  fi
 fi
 
 # --- Output -------------------------------------------------------------------
