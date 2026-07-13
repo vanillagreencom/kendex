@@ -74,10 +74,14 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    - Otherwise: from workflow state or issue labels
      ```bash
      .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+     ```
+     ```bash
      .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
+     ```
+     ```bash
      .agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
      ```
-     If state exists, use the second output as `AGENT`; otherwise leave `AGENT` empty. Use the tracker output as `TRACKER`.
+     Run each block as its own tool call. If state exists, use the second output as `AGENT`; otherwise leave `AGENT` empty. Use the tracker output as `TRACKER`.
 
      If `AGENT` is empty and `TRACKER` is `linear`, look up the Linear agent label:
 
@@ -118,14 +122,16 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
 5. **Wait for completion.** Parse return: item decisions (Applied/Skipped/Blocked), commits, validation status.
 
-6. **Update state**:
+6. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash
    # For each applied item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
-
+   ```
+   ```bash
    # For each escalated/skipped item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","source":"[SOURCE]"}'
-
+   ```
+   ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 

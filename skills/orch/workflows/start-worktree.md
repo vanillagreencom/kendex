@@ -107,15 +107,9 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 1. **Read final state**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.fixes | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length)}'
    ```
-   Use the outputs as `CYCLES`, `FIXED_COUNT`, `ESCALATED_COUNT`, `PR_ITERATIONS`, `PR_FIXES`, `PR_ISSUES`, and `AUDIT_ISSUES`.
+   Read `cycles` as `CYCLES`, `fixed_count` as `FIXED_COUNT`, `escalated_count` as `ESCALATED_COUNT`, `pr_iterations` as `PR_ITERATIONS`, `pr_fixes` as `PR_FIXES`, `pr_issues` as `PR_ISSUES`, and `audit_issues` as `AUDIT_ISSUES` from the JSON object.
 
 2. **Output session summary**:
 

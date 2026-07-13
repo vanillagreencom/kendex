@@ -63,11 +63,9 @@ Collect decision IDs and summaries from the JSON output. If decisions found: inc
 ### 1.2 Check for Re-Review Context
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.cycles // 0'
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items // []'
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items // []'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0), fixed_items: (.fixed_items // []), escalated_items: (.escalated_items // [])}'
 ```
-Use the outputs as `CYCLES`, `FIXED`, and `ESCALATED`.
+Read `cycles` as `CYCLES`, `fixed_items` as `FIXED`, and `escalated_items` as `ESCALATED` from the JSON object.
 
 If `CYCLES > 0`: include the "Previous review cycle context" section in the delegation prompt, populated from `FIXED` and `ESCALATED`.
 
@@ -92,11 +90,9 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 Before any spawn, read existing reviewer state:
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agents // []'
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agent_ids // {}'
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_agent_runtime_types // {}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
 ```
-Use the outputs as `EXISTING_REVIEW_AGENTS`, `EXISTING_REVIEW_AGENT_IDS`, and `EXISTING_REVIEW_AGENT_RUNTIME_TYPES`.
+Read `review_agents` as `EXISTING_REVIEW_AGENTS`, `review_agent_ids` as `EXISTING_REVIEW_AGENT_IDS`, and `review_agent_runtime_types` as `EXISTING_REVIEW_AGENT_RUNTIME_TYPES` from the JSON object.
 
 For each reviewer in `[AGENTS]`: classify it as reusable, missing, closed, or confirmed-stuck. Reuse by exact name when `review_agent_ids` points to a live/recoverable session. If only `review_agents` exists, attempt one recovery/resume, then treat as missing. Add only missing, closed, or confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`. Do not respawn already-live reviewers. When a reviewer is reusable, carry forward any `EXISTING_REVIEW_AGENT_RUNTIME_TYPES[reviewer-name]` entry into `AGENT_RUNTIME_TYPE_MAP_JSON` instead of rebuilding runtime metadata only from newly spawned reviewers.
 
@@ -124,9 +120,7 @@ Prepare internal reviewer sessions before the coordinated delegation step:
 
 After launch/reuse, store the active reviewer set:
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[AGENT_LIST_JSON]'
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_ids '[AGENT_ID_MAP_JSON]'
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
 **Record delegation timestamp immediately before the actual delegation batch** — gates § 3.1 `review-artifact-check` acceptance against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap:
@@ -336,8 +330,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 
 1. **Shutdown review agents** — terminate all agents in state `review_agents`.
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[]'
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agent_ids '{}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {}'
    ```
 
 2. **Check skip_qa flag**:

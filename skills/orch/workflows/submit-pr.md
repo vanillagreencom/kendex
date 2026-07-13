@@ -194,17 +194,20 @@ Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEW
    - `issue_id`: `[ISSUE_ID]`
    - `worktree`: `[WORKTREE_PATH]`
 
-3. **Update state**:
+3. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash
    # For each fixed item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.fixes '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
-
+   ```
+   ```bash
    # For each issue created:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.issues_created "[CREATED_ISSUE_ID]"
-
+   ```
+   ```bash
    # For each skipped item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
-
+   ```
+   ```bash
    # Increment iteration count
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
    ```
@@ -228,20 +231,22 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
    ```
    Use the output as `ITERATIONS`. If `ITERATIONS >= 3`, go to § 4.
 
-2. **Wait for bot re-review** after fixes pushed:
+2. **Wait for bot re-review** after fixes pushed. Run each block as its own tool call (the `.last_ts` read uses `// empty`, which can't be folded into a combined object without collapsing it):
    ```bash
-   # 1. Wait for bot to update review
    .agents/skills/orch/scripts/bot-review-wait [PR_NUMBER]
-
-   # 2. Read baseline from state
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0'
-   # Use the outputs as LAST_TS_FROM_PREVIOUS_COMMAND and LAST_THREADS_FROM_PREVIOUS_COMMAND.
-
-   # 3. Check status against baseline
-   .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "[LAST_TS_FROM_PREVIOUS_COMMAND]" --baseline-threads "[LAST_THREADS_FROM_PREVIOUS_COMMAND]"
-   # Save output to tmp/pr_status_[PR_NUMBER].json with the harness file-write tool.
    ```
+   Read the baseline from state:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
+   ```
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0'
+   ```
+   Use the outputs as `LAST_TS_FROM_PREVIOUS_COMMAND` and `LAST_THREADS_FROM_PREVIOUS_COMMAND`, then check status against the baseline:
+   ```bash
+   .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "[LAST_TS_FROM_PREVIOUS_COMMAND]" --baseline-threads "[LAST_THREADS_FROM_PREVIOUS_COMMAND]"
+   ```
+   Save the output to tmp/pr_status_[PR_NUMBER].json with the harness file-write tool.
 
 3. **Route based on status**:
 
@@ -253,19 +258,22 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflow
    | `true` | `has_threads` | `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
    | `true` | `verdict_not_approved` | `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
 
-4. **Update state** after `workflows/review-pr-comments.md` — if no fixes applied → § 4. Otherwise:
+4. **Update state** after `workflows/review-pr-comments.md` — if no fixes applied → § 4. Otherwise run each block as its own tool call:
    ```bash
    # Increment iteration count
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
-
-   # Add fixes/issues/skipped (same as § 3.1 step 3)
-
-   # Update baseline
+   ```
+   Add fixes/issues/skipped (same as § 3.1 step 3). Read the new baseline values:
+   ```bash
    jq -r '.sticky_updated_at' tmp/pr_status_[PR_NUMBER].json
+   ```
+   ```bash
    jq -r '.unresolved_threads' tmp/pr_status_[PR_NUMBER].json
+   ```
+   Use the two `jq` outputs as `NEW_TS_FROM_PREVIOUS_COMMAND` and `NEW_THREADS_FROM_PREVIOUS_COMMAND`, then update the baseline:
+   ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_ts":"[NEW_TS_FROM_PREVIOUS_COMMAND]","last_threads":[NEW_THREADS_FROM_PREVIOUS_COMMAND]}'
    ```
-   Use the two `jq` outputs as `NEW_TS_FROM_PREVIOUS_COMMAND` and `NEW_THREADS_FROM_PREVIOUS_COMMAND`.
 
 5. **Max iterations exceeded**: Report to user with status, recommendation, and proceed to § 4.
 

@@ -60,9 +60,11 @@ Collect decision IDs and summaries from JSON output.
 **Detect team context:**
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+```
+```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.team_name // empty'
 ```
-If state does not exist, use an empty `TEAM`.
+Run each block as its own tool call. If state does not exist, use an empty `TEAM`.
 
 **Determine agent list**:
 ```bash

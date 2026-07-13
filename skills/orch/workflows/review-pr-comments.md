@@ -541,14 +541,16 @@ If user requests fixes for skipped items → delegate via § 6.1 (single item), 
 
 ## 8. Update State & Return
 
-1. **Update state** with cumulative results:
+1. **Update state** with cumulative results — run each block as its own tool call; each append runs once per item, so they can't be folded into a single expression:
    ```bash
    # For each fixed item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.fixes '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
-
+   ```
+   ```bash
    # For each issue created:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.issues_created "[CREATED_ISSUE_ID]"
-
+   ```
+   ```bash
    # For each skipped item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
    ```

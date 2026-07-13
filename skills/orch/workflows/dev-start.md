@@ -55,9 +55,11 @@ If `.exists` is `true`, read the parent team and worktree:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [PARENT_ID] '.team_name // empty'
+```
+```bash
 .agents/skills/orch/scripts/workflow-state get [PARENT_ID] '.worktree // empty'
 ```
-Use the outputs as `TEAM` and `WT_PATH`.
+Run each block as its own tool call (a `// empty` default can't be folded into a combined object without collapsing it). Use the outputs as `TEAM` and `WT_PATH`.
 
 Then initialize child state with the inherited context:
 
@@ -211,8 +213,7 @@ Handoff from prior agents:
 
 4. **Store QA state**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_labels '[QA_LABELS_ARRAY]'
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] sub_issues '[SUB_ISSUE_IDS_ARRAY]'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'
    ```
 
 5. **If validate failures reported**: Investigate, suggest sub-issue (summary, steps, agent). Ask user before creating.

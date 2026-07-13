@@ -35,13 +35,9 @@ Use the first output as `ISSUE_ID` and the tracker output as `TRACKER`. Use curr
 
 1. **Read state**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.fixed_items | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.escalated_items | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.audit_issues_created | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.issues_created | length'
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .cycles
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles}'
    ```
-   Use the outputs as `FIXED_COUNT`, `ESCALATED_COUNT`, `AUDIT_ISSUES`, `PR_ISSUES`, and `CYCLES`.
+   Read `fixed_count` as `FIXED_COUNT`, `escalated_count` as `ESCALATED_COUNT`, `audit_issues` as `AUDIT_ISSUES`, `pr_issues` as `PR_ISSUES`, and `cycles` as `CYCLES` from the JSON object.
 
 2. **Skip if** `FIXED_COUNT == 0` AND `AUDIT_ISSUES == 0` AND `PR_ISSUES == 0` AND `ESCALATED_COUNT == 0`. → § 2
 

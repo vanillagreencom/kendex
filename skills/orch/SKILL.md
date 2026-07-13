@@ -250,9 +250,11 @@ In a worktree, never create, switch to, or act on a different worktree or branch
 
 Generated workflow commands must be safe for strict harness command policies. Prefer one simple command per tool call with explicit arguments. Avoid inline `$(...)`, shell `for`/`while` loops, array-building snippets, heredocs, pipelines used only for value plumbing, and redirected writes to `tmp/`; Codex can classify those helper shapes as approval-required even when approval policy is `never`.
 
+**Run exactly one command per tool call.** Multiple commands batched into a single call — newline-separated or `;`-separated — are themselves rejected under Codex `approval=never`, even with no redirection, substitution, or pipeline; the multi-command shape alone triggers the block. Never emit a fenced block that stacks several commands for one call. When related `workflow-state` operations belong together, fold reads into one `workflow-state get '{...}'` (a jq object returning every field) and writes into one `workflow-state update '... | ...'` (a piped jq expression applying every mutation atomically) rather than emitting a multi-command block. Split anything that genuinely can't collapse into one expression — `set-git-head`/`set-now` (they compute their value internally), a read mixed with a write, a `// empty` default that would collapse a combined object, or a per-item loop — into separate one-command blocks, each its own tool call.
+
 Use helper scripts instead of shell plumbing:
 - `git-context` for branch/head/timestamp/issue values.
-- `workflow-state set-git-head`, `set-now`, `get`, and `append` for state writes.
+- `workflow-state` for state: `get '{...}'` combines related reads into one call, `update '... | ...'` combines related writes into one atomic call, and `set-git-head`/`set-now`/`append`/`increment` cover git-, clock-, and per-item writes.
 - Harness file-write/edit tools, or `apply_patch`, for Markdown/JSON bodies and completion summaries.
 
 When a workflow needs several files read, issue separate read commands for each file or use the harness file-read tool; do not wrap required reads in a shell loop. When an optional environment variable affects a command, either omit the option and let the script auto-detect, or first read the value with `printenv VAR` and then run a second command with a literal value. Do not include unset-variable expansions such as `"$BOT_REVIEWERS"` in required command examples.
