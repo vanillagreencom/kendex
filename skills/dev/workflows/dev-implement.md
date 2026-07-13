@@ -433,8 +433,8 @@ Summary: [ISSUE_ID] ✓
 
 **If bundled**: Mark task completed. Next sub-issue is a separate task, or proceed to § 11 if none remain.
 
-**Linear sub-issue of a parent** → mark issue Done (`.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "Done"`).
-**Parent or standalone issue** → do NOT mark Done (handled by PR merge workflow and issue tracker sync).
+**Bundled Linear sub-issue** (a sub-issue processed under its parent in the § 4-10 loop) → mark issue Done (`.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "Done"`). The parent session aggregates these in § 11.
+**Managed session-root issue** (this single delegation is the top-level managed issue of the worktree — whether or not it has a parent) → do NOT mark Done. It follows the managed lifecycle and stays In Progress/In Review until PR merge (handled by the PR merge workflow and issue tracker sync; see orch `start-worktree.md` § 5.3).
 **GitHub/ad-hoc** → do not close the issue here; PR body/merge handles closure when appropriate.
 
 Do NOT push or submit PR — orchestrator handles after review passes.

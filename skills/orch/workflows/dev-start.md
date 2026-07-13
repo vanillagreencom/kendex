@@ -205,6 +205,8 @@ Handoff from prior agents:
    | `.results[].state_ok` | `true` | Re-delegate § 2 |
    | `.results[].has_summary` | `true` | Re-delegate § 2 with retry instructions |
 
+   `state_ok` checks the per-role managed state: bundle-expanded sub-issues (from `--include-children-of`) must be `Done`, while the primary target — the managed session-root issue, **whether or not it has a parent** — must be in a pre-merge state (`In Progress` or `In Review`, per `start-worktree.md` § 5.3). Do not expect `Done` for the session root before merge.
+
 3. **On failure**: Do NOT proceed. Re-delegate to the same agent with retry instructions specifying the missing step(s). Never proceed with "may have a different format" or similar excuses.
 
 4. **Store QA state**:

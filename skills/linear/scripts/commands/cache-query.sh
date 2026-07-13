@@ -494,6 +494,9 @@ cache_list_relations() {
 
 cache_validate_completion() {
     local issue_ids=()
+    # Roles parallel issue_ids: positional targets are managed session roots;
+    # bundle-expanded children (below) are bundle sub-issues.
+    local roles=()
     local include_children_of=""
 
     while [[ $# -gt 0 ]]; do
@@ -508,6 +511,7 @@ cache_validate_completion() {
             ;;
         *)
             issue_ids+=("$1")
+            roles+=("session-root")
             shift
             ;;
         esac
@@ -533,13 +537,17 @@ cache_validate_completion() {
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type | IN("completed", "canceled") | not) | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
             issue_ids+=("$child_id")
+            roles+=("bundle-child")
         done
     fi
 
     local results="[]"
     local all_ok="true"
 
-    for issue_id in "${issue_ids[@]}"; do
+    local i
+    for i in "${!issue_ids[@]}"; do
+        local issue_id="${issue_ids[$i]}"
+        local role="${roles[$i]}"
         local issue
         issue=$(jq --arg id "$issue_id" '.[] | select(.identifier == $id or .id == $id)' \
             "$CACHE_DIR/issues.json" 2>/dev/null)
@@ -557,7 +565,7 @@ cache_validate_completion() {
         fi
 
         local result
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary")
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role")
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"

@@ -2215,6 +2215,9 @@ complete_issue() {
 # Supports multiple issues for bundle validation
 validate_completion() {
     local issue_ids=()
+    # Roles parallel issue_ids: positional targets are managed session roots;
+    # bundle-expanded children (below) are bundle sub-issues.
+    local roles=()
     local include_children_of=""
 
     # Parse arguments
@@ -2230,6 +2233,7 @@ validate_completion() {
             ;;
         *)
             issue_ids+=("$1")
+            roles+=("session-root")
             shift
             ;;
         esac
@@ -2255,13 +2259,17 @@ validate_completion() {
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type | IN("completed", "canceled") | not) | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
             issue_ids+=("$child_id")
+            roles+=("bundle-child")
         done
     fi
 
     local results="[]"
     local all_ok="true"
 
-    for issue_id in "${issue_ids[@]}"; do
+    local i
+    for i in "${!issue_ids[@]}"; do
+        local issue_id="${issue_ids[$i]}"
+        local role="${roles[$i]}"
         # Get issue state
         local issue
         issue=$(get_issue "$issue_id")
@@ -2277,7 +2285,7 @@ validate_completion() {
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
 
         local result
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary")
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role")
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"
