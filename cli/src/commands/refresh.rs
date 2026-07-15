@@ -429,6 +429,40 @@ fn refresh_project_owned_skill_instructions(
     stats: &mut RefreshStats,
 ) {
     let skills_dir = project_root.join(".agents/skills");
+    let project_root_canon = match project_root.canonicalize() {
+        Ok(path) => path,
+        Err(err) => {
+            stats.fail(
+                ".agents/skills",
+                None,
+                format!("failed to resolve project root: {err}"),
+            );
+            return;
+        }
+    };
+    let skills_dir_canon = match skills_dir.canonicalize() {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            stats.fail(
+                ".agents/skills",
+                None,
+                format!("failed to resolve project-owned skills: {err}"),
+            );
+            return;
+        }
+    };
+    if !skills_dir_canon.starts_with(&project_root_canon) {
+        stats.fail(
+            ".agents/skills",
+            None,
+            format!(
+                "refusing project-owned skills path outside project root: {}",
+                skills_dir.display()
+            ),
+        );
+        return;
+    }
     let entries = match std::fs::read_dir(&skills_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
@@ -442,9 +476,17 @@ fn refresh_project_owned_skill_instructions(
         }
     };
     let mut skill_dirs = Vec::new();
-    for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            skill_dirs.push(entry.path());
+    for entry in entries {
+        match entry {
+            Ok(entry) => skill_dirs.push(entry.path()),
+            Err(err) => {
+                stats.fail(
+                    ".agents/skills",
+                    None,
+                    format!("failed to enumerate project-owned skills: {err}"),
+                );
+                return;
+            }
         }
     }
     skill_dirs.sort();
@@ -459,8 +501,47 @@ fn refresh_project_owned_skill_instructions(
         if crate::path_safety::validate_item_name(name).is_err() {
             continue;
         }
+        let skill_dir_canon = match skill_dir.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                stats.fail(
+                    name,
+                    None,
+                    format!("failed to resolve project-owned skill directory: {err}"),
+                );
+                continue;
+            }
+        };
+        if !skill_dir_canon.starts_with(&skills_dir_canon) {
+            stats.fail(
+                name,
+                None,
+                format!(
+                    "refusing project-owned skill directory outside skills root: {}",
+                    skill_dir.display()
+                ),
+            );
+            continue;
+        }
+        if !skill_dir_canon.is_dir() {
+            continue;
+        }
         let skill_md = skill_dir.join("SKILL.md");
-        if !skill_md.is_file() {
+        let Ok(skill_md_metadata) = std::fs::symlink_metadata(&skill_md) else {
+            continue;
+        };
+        if skill_md_metadata.file_type().is_symlink() {
+            stats.fail(
+                name,
+                None,
+                format!(
+                    "refusing project-owned skill file symlink: {}",
+                    skill_md.display()
+                ),
+            );
+            continue;
+        }
+        if !skill_md_metadata.is_file() {
             continue;
         }
 
@@ -576,7 +657,11 @@ pub fn regenerate_agents_after_hook_removal(
     }
 
     let project_root = config::project_root();
-    let mut project_config = ProjectConfig::load(&project_root);
+    let mut project_config = if global {
+        ProjectConfig::load(&project_root)
+    } else {
+        ProjectConfig::load_strict(&project_root)?
+    };
     let stats = refresh_items_in_scope(
         global,
         lock,
@@ -632,6 +717,12 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     let lock_path = config::lock_file_path(global);
     let lock_existed = lock_path.exists();
     let mut lock = config::LockFile::load(&lock_path)?;
+    let project_root = config::project_root();
+    let mut project_config = if global {
+        crate::project_config::ProjectConfig::load(&project_root)
+    } else {
+        crate::project_config::ProjectConfig::load_strict(&project_root)?
+    };
 
     // Reconcile lock with disk before refreshing (recovers orphaned entries)
     let source_hint = lock
@@ -665,8 +756,6 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         }
     }
 
-    let project_root = config::project_root();
-
     if !global && !lock.entries.is_empty() {
         let agent_names: Vec<String> = lock
             .entries
@@ -681,8 +770,8 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .map(|(n, _)| n.clone())
             .collect();
         crate::project_config::ensure_project_config(&project_root, &agent_names, &skill_names);
+        project_config = crate::project_config::ProjectConfig::load_strict(&project_root)?;
     }
-    let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
     if !lock.entries.is_empty() && sources.is_empty() {
         eprintln!("Could not locate any package sources. Run `vstack add` to reinstall.");
@@ -758,7 +847,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
                 &source.mapping,
             );
         }
-        project_config = crate::project_config::ProjectConfig::load(&project_root);
+        project_config = crate::project_config::ProjectConfig::load_strict(&project_root)?;
     }
 
     let stats = refresh_items_in_scope(

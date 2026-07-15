@@ -176,6 +176,9 @@ canonical project-owned `.agents/skills/<name>/SKILL.md` files without lock
 entries. For project-owned skills, only the vstack-marked project-instructions
 block is managed; repeated refreshes, updates, and removals preserve all other
 skill content and unrelated project files.
+Mutating refresh paths load project configuration strictly and reject a
+project-owned `.agents/skills` tree whose canonical path escapes the selected
+project root, including through a symlinked ancestor.
 
 ## Per-Harness Model Mapping
 

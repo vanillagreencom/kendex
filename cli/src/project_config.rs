@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -181,16 +182,27 @@ impl ProjectConfig {
     /// Load project config from a directory's `vstack.toml`.
     /// Returns default (empty) if the file is missing or unparseable.
     pub fn load(project_root: &Path) -> Self {
+        Self::load_strict(project_root).unwrap_or_default()
+    }
+
+    /// Load project config without hiding read or parse failures.
+    ///
+    /// Mutating workflows must use this entry point so a damaged config
+    /// cannot be mistaken for an intentional empty configuration. A missing
+    /// config remains equivalent to the default configuration.
+    pub fn load_strict(project_root: &Path) -> Result<Self> {
         let path = project_config_path(project_root);
-        if !path.exists() {
-            return Self::default();
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", path.display()));
+            }
         };
-        let mut parsed: Self = toml::from_str(&content).unwrap_or_default();
+        let mut parsed: Self =
+            toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
         parsed.load_agent_frontmatter_tables(&content);
-        parsed
+        Ok(parsed)
     }
 
     fn load_agent_frontmatter_tables(&mut self, content: &str) {

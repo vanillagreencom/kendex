@@ -561,6 +561,96 @@ fn refresh_command_applies_project_owned_skill_instructions_without_creating_a_l
 }
 
 #[test]
+fn refresh_command_rejects_malformed_config_without_modifying_project_owned_skill() {
+    let root = tmpdir("project-owned-malformed-config");
+    let project = root.join("project");
+    let skill_dir = project.join(".agents/skills/benchmark");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_path = skill_dir.join("SKILL.md");
+    let original = b"---\nname: benchmark\ndescription: Local benchmark\n---\n\n<!-- vstack:project-instructions:start -->\n## Project Instructions\n\nKeep this rule.\n<!-- vstack:project-instructions:end -->\n\n# Benchmark\n\nOriginal body.\n";
+    std::fs::write(&skill_path, original).unwrap();
+    std::fs::write(
+        project.join("vstack.toml"),
+        "[skill-instructions\nbenchmark = \"broken\"\n",
+    )
+    .unwrap();
+
+    let err = crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap_err()
+    });
+
+    assert!(err.to_string().contains("parsing"), "{err:#}");
+    assert_eq!(std::fs::read(&skill_path).unwrap(), original);
+    assert!(!project.join(".vstack-lock.json").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn refresh_command_rejects_unreadable_config_without_modifying_project_owned_skill() {
+    let root = tmpdir("project-owned-unreadable-config");
+    let project = root.join("project");
+    let skill_dir = project.join(".agents/skills/benchmark");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::create_dir(project.join("vstack.toml")).unwrap();
+    let skill_path = skill_dir.join("SKILL.md");
+    let original = b"---\nname: benchmark\ndescription: Local benchmark\n---\n\n<!-- vstack:project-instructions:start -->\n## Project Instructions\n\nKeep this rule.\n<!-- vstack:project-instructions:end -->\n\n# Benchmark\n\nOriginal body.\n";
+    std::fs::write(&skill_path, original).unwrap();
+
+    let err = crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap_err()
+    });
+
+    assert!(err.to_string().contains("reading"), "{err:#}");
+    assert_eq!(std::fs::read(&skill_path).unwrap(), original);
+    assert!(!project.join(".vstack-lock.json").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_rejects_symlinked_agents_ancestor_before_reading_outside_skill() {
+    use std::os::unix::fs::symlink;
+
+    let root = tmpdir("project-owned-symlinked-agents");
+    let project = root.join("project");
+    let outside_agents = root.join("outside-agents");
+    let outside_skill_dir = outside_agents.join("skills/benchmark");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&outside_skill_dir).unwrap();
+    symlink(&outside_agents, project.join(".agents")).unwrap();
+    std::fs::write(
+        project.join("vstack.toml"),
+        "[skill-instructions]\nbenchmark = \"Do not escape.\"\n",
+    )
+    .unwrap();
+    let outside_skill = outside_skill_dir.join("SKILL.md");
+    let outside_bytes = [0xff, 0xfe, 0xfd, b'\n'];
+    std::fs::write(&outside_skill, outside_bytes).unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig::load_strict(&project).unwrap();
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+
+    assert_eq!(stats.failures.len(), 1);
+    assert_eq!(stats.failures[0].item, ".agents/skills");
+    assert!(stats.failures[0].error.contains("outside project root"));
+    assert!(stats.project_owned_skills.is_empty());
+    assert_eq!(std::fs::read(&outside_skill).unwrap(), outside_bytes);
+
+    let err = crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap_err()
+    });
+    assert!(err.to_string().contains("failed to refresh"), "{err:#}");
+    assert_eq!(std::fs::read(&outside_skill).unwrap(), outside_bytes);
+    assert!(!project.join(".vstack-lock.json").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn refresh_items_reports_agent_write_failure_without_success() {
     let root = tmpdir("agent-write-failure");
     let project = root.join("project");

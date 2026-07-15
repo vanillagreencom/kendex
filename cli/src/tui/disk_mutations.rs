@@ -527,6 +527,21 @@ pub(super) fn perform_inline_update(
         if !names.iter().any(|n| lock.entries.contains_key(n)) {
             continue;
         }
+        let mut project_config = if scope_global {
+            crate::project_config::ProjectConfig::load(&project_root)
+        } else {
+            match crate::project_config::ProjectConfig::load_strict(&project_root) {
+                Ok(config) => config,
+                Err(err) => {
+                    for name in names {
+                        if lock.entries.contains_key(name) {
+                            report.fail(name, format!("failed to load project config: {err:#}"));
+                        }
+                    }
+                    continue;
+                }
+            }
+        };
         let updates_hooks = names.iter().any(|name| {
             lock.entries
                 .get(name)
@@ -558,8 +573,6 @@ pub(super) fn perform_inline_update(
         } else {
             names.to_vec()
         };
-
-        let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
         let stats = crate::commands::refresh::refresh_items_in_scope(
             scope_global,
