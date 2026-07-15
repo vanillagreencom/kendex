@@ -58,9 +58,9 @@ remote commits.
 
 When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
 
-Bare `create <ID>` is a new-work claim, not a discovery command. If the issue already has a worktree, local/remote branch, or open PR, it exits 75 with the ownership signals and leaves all local branches unchanged. Inspect or monitor that work instead of spawning a second implementer. Run issue creates as separate commands and check each result; do not batch them in a shell loop whose final successful command can hide an earlier active-work exit.
+Bare `create <ID>` is a new-work claim, not a discovery command. Every new-branch mode, including `--from`, checks the normalized issue branch, an explicit requested branch, and `BOT_NAME/<issue>` across worktrees, local/remote refs, and open PRs. Existing ownership exits 75 and leaves local branches unchanged. Remote-head or GitHub PR discovery failure exits 1 before worktree config, branch, or target-path mutation; never interpret an outage as absence. A repository-local normalized-issue claim lock holds the final repeated discovery through `git worktree add`, so concurrent claims cannot both mutate. Inspect or monitor owned work instead of spawning a second implementer. Run issue creates as separate commands and check each result; do not batch them in a shell loop whose final successful command can hide an earlier active-work exit.
 
-An existing owner may opt in with `create <ID> --reuse`, which refreshes setup after rebasing onto `origin/<default>`. Use `--restack` only to pause that intentional rebase in a conflict state. To inspect an open PR whose worktree is absent, use `create <ID> --pr <N>` explicitly.
+An existing owner may opt in with `create <ID> --reuse`, which refreshes setup after rebasing onto `origin/<default>`. Reuse/restack requires the target's exact canonical path to be registered to this repository's common Git directory; incomplete directories are preserved and exit 75. Use `--restack` only to pause that intentional rebase in a conflict state. To inspect existing remote work whose issue worktree is absent, use `create <ID> --pr <N>` or `--base <branch>` explicitly.
 
 ### Codex Desktop hooks
 
@@ -78,7 +78,7 @@ For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before o
 | Flag | Effect |
 |------|--------|
 | `--base BRANCH` | Checkout an existing remote branch into the worktree |
-| `--from REF` | Create a new branch (named after ID) starting from REF (branch, tag, or commit) |
+| `--from REF` | Create a new branch (named after ID) starting from REF after the normal ownership claim gate |
 | `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
 | `--reuse` | Explicitly reuse an existing issue worktree and rebase it onto `origin/<default>` |
 | `--restack` | When reusing an existing worktree and its rebase onto `origin/<default>` conflicts, stop in the conflict state for resolution instead of aborting |
@@ -91,6 +91,13 @@ Bare `create` never rebases an existing worktree. After the owning session opts 
 2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
 
 With no conflict, `--restack` completes the same intentional rebase as `--reuse`.
+
+## System Dependencies
+
+- `git`
+- authenticated `gh` for new-work PR ownership discovery
+- `flock` for repository-local per-issue claim serialization
+- Bash 4+
 
 ## Configuration
 

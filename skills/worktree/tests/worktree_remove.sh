@@ -517,10 +517,22 @@ assert_eq "$config_local_path" "$CONFIG_ROOT/from-local/issue-config" ".env.loca
 # create uses the configured worktree parent directory, not only the path helper.
 CREATE_ROOT="$TMP_ROOT/create-custom"
 make_repo "$CREATE_ROOT/main"
+git init -q --bare "$CREATE_ROOT/origin.git"
+git -C "$CREATE_ROOT/main" remote add origin "$CREATE_ROOT/origin.git"
+git -C "$CREATE_ROOT/main" push -q -u origin main
+mkdir -p "$CREATE_ROOT/bin"
+cat >"$CREATE_ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  pr:list) ;;
+esac
+STUB
+chmod +x "$CREATE_ROOT/bin/gh"
 cat > "$CREATE_ROOT/main/.env" <<'ENV'
 WORKTREE_BASE_DIR="../custom-trees"
 ENV
-custom_create_out=$(cd "$CREATE_ROOT/main" && "$WORKTREE_SCRIPT" create ISSUE-CUSTOM --from main)
+custom_create_out=$(cd "$CREATE_ROOT/main" && PATH="$CREATE_ROOT/bin:$PATH" "$WORKTREE_SCRIPT" create ISSUE-CUSTOM --from main)
 assert_eq "$custom_create_out" "$CREATE_ROOT/custom-trees/issue-custom" "create reports configured WORKTREE_BASE_DIR path"
 assert_git_worktree "$CREATE_ROOT/custom-trees/issue-custom" "create writes worktree under configured WORKTREE_BASE_DIR"
 

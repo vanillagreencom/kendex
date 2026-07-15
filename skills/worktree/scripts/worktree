@@ -43,6 +43,28 @@ if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
   PROJECT_ROOT="$(cd "$PROJECT_ROOT" && cd "$(dirname "$_git_common_dir")" && pwd)"
 fi
 
+canonical_existing_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  (cd "$path" && pwd -P)
+}
+
+git_common_dir_path() {
+  local checkout="$1" common_dir=""
+  common_dir="$(git -C "$checkout" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  if [[ "$common_dir" == /* ]]; then
+    canonical_existing_dir "$common_dir"
+  else
+    canonical_existing_dir "$checkout/$common_dir"
+  fi
+}
+
+PROJECT_COMMON_GIT_DIR="$(git_common_dir_path "$PROJECT_ROOT")"
+if [[ -z "$PROJECT_COMMON_GIT_DIR" ]]; then
+  echo "Error: Could not resolve the repository common Git directory" >&2
+  exit 1
+fi
+
 # Load project config and secrets. .env.local still wins for compatibility.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/vstack-env.sh
@@ -167,9 +189,44 @@ detect_default_branch() {
 }
 DEFAULT_BRANCH="$(detect_default_branch)"
 
-# Fetch origin to update tracking refs. Never touches local branches.
+# Refresh one remote for ownership discovery. New-work claims must never treat
+# an outage or stale remote-tracking refs as proof that a branch is unowned.
+fetch_ownership_remote() {
+  local remote="$1" output=""
+  if output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune "$remote" 2>&1)"; then
+    return 0
+  fi
+  echo "Error: Could not refresh remote '$remote' for authoritative worktree ownership discovery." >&2
+  [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+  return 1
+}
+
+declare -a OWNERSHIP_REMOTES=()
+declare -A OWNERSHIP_REMOTE_HEADS=()
+
+discover_ownership_remote_heads() {
+  mapfile -t OWNERSHIP_REMOTES < <(git -C "$PROJECT_ROOT" remote)
+  if [[ ! " ${OWNERSHIP_REMOTES[*]} " =~ [[:space:]]origin[[:space:]] ]]; then
+    echo "Error: Remote 'origin' is required for authoritative worktree ownership discovery." >&2
+    return 1
+  fi
+
+  OWNERSHIP_REMOTE_HEADS=()
+  local remote output=""
+  for remote in "${OWNERSHIP_REMOTES[@]}"; do
+    [[ -n "$remote" ]] || continue
+    if ! output="$(git_with_github_https_auth -C "$PROJECT_ROOT" ls-remote --heads "$remote" 2>&1)"; then
+      echo "Error: Could not query remote '$remote' for authoritative worktree ownership discovery." >&2
+      [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+      return 1
+    fi
+    OWNERSHIP_REMOTE_HEADS["$remote"]="$output"
+  done
+}
+
+# Explicit owner reuse still requires a fresh origin before rebasing.
 fetch_origin() {
-  git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
+  fetch_ownership_remote origin
 }
 
 worktree_path() {
@@ -370,6 +427,44 @@ is_git_worktree_path() {
   [[ -f "$wt/.git" || -d "$wt/.git" ]]
 }
 
+registered_worktree_path() {
+  local target="$1" target_real="" line="" registered="" registered_real=""
+  target_real="$(canonical_existing_dir "$target" 2>/dev/null)" || return 1
+
+  while IFS= read -r -d '' line; do
+    [[ "$line" == worktree\ * ]] || continue
+    registered="${line#worktree }"
+    registered_real="$(canonical_existing_dir "$registered" 2>/dev/null || true)"
+    if [[ -n "$registered_real" && "$registered_real" == "$target_real" ]]; then
+      printf '%s\n' "$registered_real"
+      return 0
+    fi
+  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  return 1
+}
+
+is_registered_project_worktree() {
+  local target="$1" registered="" common_dir=""
+  registered="$(registered_worktree_path "$target")" || return 1
+  common_dir="$(git_common_dir_path "$registered" 2>/dev/null)" || return 1
+  [[ "$common_dir" == "$PROJECT_COMMON_GIT_DIR" ]]
+}
+
+worktree_for_branch() {
+  local branch="$1" line="" current_path=""
+  while IFS= read -r -d '' line; do
+    case "$line" in
+      worktree\ *) current_path="${line#worktree }" ;;
+      "branch refs/heads/$branch")
+        [[ -n "$current_path" ]] && printf '%s\n' "$current_path"
+        return 0
+        ;;
+      '') current_path="" ;;
+    esac
+  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  return 1
+}
+
 rebase_in_progress() {
   local wt="$1" state path
   for state in rebase-merge rebase-apply; do
@@ -384,12 +479,142 @@ rebase_in_progress() {
 
 open_pr_for_branch() {
   local branch="$1"
-  local result=""
+  local result="" output=""
   [[ -n "$branch" ]] || return 0
-  command -v gh >/dev/null 2>&1 || return 0
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: gh is required for authoritative pull-request ownership discovery." >&2
+    return 1
+  fi
 
-  result="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>/dev/null || true)"
+  if ! output="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
+    echo "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  result="$output"
   printf '%s\n' "$result"
+}
+
+resolve_pr_branch() {
+  local pr="$1" output=""
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: gh is required to resolve PR #$pr" >&2
+    return 1
+  fi
+  if ! output="$(gh pr view "$pr" --json headRefName -q .headRefName 2>&1)"; then
+    echo "Error: Could not find branch for PR #$pr" >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  if [[ -z "$output" ]]; then
+    echo "Error: Could not find branch for PR #$pr" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+}
+
+declare -a CANDIDATE_BRANCHES=()
+declare -A CANDIDATE_OPEN_PRS=()
+
+add_candidate_branch() {
+  local branch="$1" existing=""
+  [[ -n "$branch" ]] || return 0
+  for existing in "${CANDIDATE_BRANCHES[@]}"; do
+    [[ "$existing" == "$branch" ]] && return 0
+  done
+  CANDIDATE_BRANCHES+=("$branch")
+}
+
+build_candidate_branches() {
+  local issue="$1" requested_branch="$2" issue_lower=""
+  issue_lower="$(issue_branch_name "$issue")"
+  CANDIDATE_BRANCHES=()
+  add_candidate_branch "${requested_branch:-$issue_lower}"
+  add_candidate_branch "$issue_lower"
+  if [[ -n "${BOT_NAME:-}" ]]; then
+    add_candidate_branch "$BOT_NAME/$issue_lower"
+  fi
+}
+
+discover_candidate_ownership() {
+  discover_ownership_remote_heads || return 1
+  CANDIDATE_OPEN_PRS=()
+
+  local branch pr_details
+  for branch in "${CANDIDATE_BRANCHES[@]}"; do
+    if ! pr_details="$(open_pr_for_branch "$branch")"; then
+      return 1
+    fi
+    CANDIDATE_OPEN_PRS["$branch"]="$pr_details"
+  done
+}
+
+remote_ref_for_branch() {
+  local branch="$1" remote="" oid="" ref=""
+  for remote in "${OWNERSHIP_REMOTES[@]}"; do
+    while read -r oid ref; do
+      if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
+        printf '%s/%s\n' "$remote" "$branch"
+        return 0
+      fi
+    done <<<"${OWNERSHIP_REMOTE_HEADS[$remote]:-}"
+  done
+  return 1
+}
+
+remote_branch_discovered() {
+  local remote="$1" branch="$2" oid="" ref=""
+  while read -r oid ref; do
+    [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]] && return 0
+  done <<<"${OWNERSHIP_REMOTE_HEADS[$remote]:-}"
+  return 1
+}
+
+scan_candidate_ownership() {
+  local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
+  for branch in "${CANDIDATE_BRANCHES[@]}"; do
+    existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
+    if [[ -n "$existing_wt" ]]; then
+      refuse_existing_worktree "$issue" "$existing_wt"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    pr_details="${CANDIDATE_OPEN_PRS[$branch]:-}"
+    if [[ -n "$pr_details" ]]; then
+      pr_number="${pr_details%%$'\t'*}"
+      refuse_existing_branch "$issue" "$branch" "open pull request" "#$pr_number"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      refuse_existing_branch "$issue" "$branch" "existing local branch"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
+    if [[ -n "$remote_ref" ]]; then
+      refuse_existing_branch "$issue" "$branch" "existing remote branch" "$remote_ref"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+  done
+  return 0
+}
+
+acquire_issue_claim_lock() {
+  local issue="$1" normalized_issue="" claim_key="" lock_path=""
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "Error: flock is required to serialize worktree claims." >&2
+    return 1
+  fi
+  normalized_issue="$(issue_branch_name "$issue")"
+  claim_key="$(printf '%s' "$normalized_issue" | git hash-object --stdin)"
+  lock_path="$PROJECT_COMMON_GIT_DIR/vstack-worktree-claim-$claim_key.lock"
+  exec {ISSUE_CLAIM_FD}>"$lock_path"
+  flock -x "$ISSUE_CLAIM_FD"
+}
+
+release_issue_claim_lock() {
+  if [[ -n "${ISSUE_CLAIM_FD:-}" ]]; then
+    flock -u "$ISSUE_CLAIM_FD" 2>/dev/null || true
+    exec {ISSUE_CLAIM_FD}>&-
+  fi
 }
 
 worktree_lock_reason() {
@@ -406,7 +631,7 @@ worktree_lock_reason() {
 refuse_existing_worktree() {
   local issue="$1" wt="$2"
   local branch="" dirty="clean" upstream="" counts="" behind="0" ahead="0"
-  local lock_reason="" pr_details="" pr_number="" pr_url=""
+  local lock_reason="" pr_details="" pr_number="" pr_url="" pr_lookup_failed=false
 
   branch="$(git -C "$wt" branch --show-current 2>/dev/null || true)"
   if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null || true)" ]]; then
@@ -424,7 +649,10 @@ refuse_existing_worktree() {
         read -r behind ahead <<<"$counts"
       fi
     fi
-    pr_details="$(open_pr_for_branch "$branch")"
+    if ! pr_details="$(open_pr_for_branch "$branch")"; then
+      pr_lookup_failed=true
+      pr_details=""
+    fi
   fi
   lock_reason="$(worktree_lock_reason "$wt" || true)"
 
@@ -441,6 +669,8 @@ refuse_existing_worktree() {
     pr_number="${pr_details%%$'\t'*}"
     pr_url="${pr_details#*$'\t'}"
     echo "  Open PR: #$pr_number $pr_url" >&2
+  elif [[ "$pr_lookup_failed" == true ]]; then
+    echo "  Open PR: lookup unavailable (local worktree ownership is already sufficient)" >&2
   fi
   if [[ -n "$lock_reason" ]]; then
     echo "  Worktree lock: ${lock_reason:-locked}" >&2
@@ -469,11 +699,27 @@ refuse_existing_branch() {
   return "$ACTIVE_WORK_EXIT"
 }
 
+refuse_incomplete_worktree() {
+  local issue="$1" wt="$2"
+  echo "Active or incomplete worktree path already exists for '$issue': $wt" >&2
+  echo "The exact path is not a registered worktree of $PROJECT_ROOT." >&2
+  echo "Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." >&2
+  return "$ACTIVE_WORK_EXIT"
+}
+
+guard_new_target_path() {
+  local issue="$1" wt="$2"
+  [[ -e "$wt" || -L "$wt" ]] || return 0
+  if is_registered_project_worktree "$wt"; then
+    refuse_existing_worktree "$issue" "$wt"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  refuse_incomplete_worktree "$issue" "$wt"
+  return "$ACTIVE_WORK_EXIT"
+}
+
 case "${1:-}" in
   create)
-    # Ensure worktreeConfig is enabled (required for per-worktree git config)
-    git -C "$PROJECT_ROOT" config extensions.worktreeConfig true 2>/dev/null || true
-
     ISSUE="${2:?Error: create requires an issue ID}"
     shift 2
     BASE=""
@@ -493,17 +739,24 @@ case "${1:-}" in
       esac
     done
     WT_PATH="$(worktree_path "$ISSUE")"
-    mkdir -p "$TREES_DIR"
 
     # 1. Existing work is an ownership signal. Bare create is only for claiming
     # new work; reuse must be explicit so discovery cannot rewrite another
     # session's branch (#571). Exit 75 distinguishes active work from a broken
     # repository or invalid arguments.
-    if [[ -d "$WT_PATH" ]] && git -C "$WT_PATH" rev-parse --git-dir &>/dev/null; then
+    if [[ -d "$WT_PATH" ]] && is_registered_project_worktree "$WT_PATH"; then
       if [[ "$REUSE" != true && "$RESTACK" != true ]]; then
         refuse_existing_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fi
-      fetch_origin
+
+      # Network/ref discovery must succeed before the claim lock or any setup
+      # mutation. Repeat it under the per-issue lock immediately before reuse.
+      discover_ownership_remote_heads || exit 1
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      if ! is_registered_project_worktree "$WT_PATH"; then
+        refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fi
+      fetch_origin || exit 1
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
@@ -548,17 +801,17 @@ case "${1:-}" in
         fi
       fi
       # Refresh setup (rebase may have replaced symlinks with tracked content)
+      release_issue_claim_lock
       setup_codex_worktree "$WT_PATH"
       echo "$WT_PATH"
       exit 0
     fi
 
-    # 1b. A directory without a .git pointer may belong to a concurrent or
-    # interrupted creator. Never delete it as an implicit discovery side effect.
-    if [[ -d "$WT_PATH" ]]; then
-      echo "Active or incomplete worktree directory already exists for '$ISSUE': $WT_PATH" >&2
-      echo "Refusing to delete or replace it automatically. Inspect it, then remove it explicitly if abandoned." >&2
-      exit "$ACTIVE_WORK_EXIT"
+    # A directory is reusable only when its exact canonical path is registered
+    # to this repository's common Git directory. Never let `git -C` discover a
+    # parent checkout and mistake an incomplete in-repository target for main.
+    if [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
+      refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
     fi
 
     if [[ "$REUSE" == true || "$RESTACK" == true ]]; then
@@ -566,10 +819,20 @@ case "${1:-}" in
       exit 1
     fi
 
-    # 2. If --from specified, create a new branch starting from that ref
+    # 2. --from still creates a new issue branch, so it uses the same complete
+    # candidate ownership scan as bare create. Discovery runs once before any
+    # lock/config/directory mutation, then again while the claim lock is held.
     if [[ -n "$FROM" ]]; then
-      fetch_origin
-      BRANCH="${BRANCH:-$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')}"
+      build_candidate_branches "$ISSUE" "$BRANCH"
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fetch_origin || exit 1
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+
+      BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
       # Resolve: try origin/$FROM first (remote branch), then $FROM directly (local branch/tag/commit)
       if git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
         START_POINT="origin/$FROM"
@@ -579,73 +842,67 @@ case "${1:-}" in
         echo "Error: Cannot resolve ref '$FROM'" >&2
         exit 1
       fi
+      mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
-      # Set upstream tracking if a remote branch matches the new branch name
-      _REMOTE="${BOT_REMOTE_NAME:-origin}"
-      if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$BRANCH" &>/dev/null; then
-        git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$BRANCH" "$BRANCH" >/dev/null 2>&1 || true
-        git -C "$WT_PATH" merge --ff-only "$_REMOTE/$BRANCH" >/dev/null 2>&1 || true
-      fi
+      release_issue_claim_lock
       setup_codex_worktree "$WT_PATH"
       echo "$WT_PATH"
       exit 0
     fi
 
-    # 3. If --pr specified, look up the branch from the PR (implies --base)
-    if [[ -n "$PR" ]] && command -v gh &>/dev/null; then
-      BASE=$(gh pr view "$PR" --json headRefName -q .headRefName 2>/dev/null)
-      if [[ -z "$BASE" ]]; then
-        echo "Error: Could not find branch for PR #$PR" >&2
-        exit 1
-      fi
-    fi
-
-    # 4. Auto-detect existing PRs as ownership signals. Bare create must stop
-    # instead of silently checking out work that another session already owns.
-    # Best-effort — if gh auth is broken (e.g. unresolved op:// token in
-    # GH_TOKEN) the command-substitution would otherwise kill the script
-    # under set -e and silently exit 1 with no output (#3).
-    if [[ -z "$BASE" ]] && command -v gh &>/dev/null; then
-      ISSUE_LOWER=$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')
-      USER_BRANCH="${BRANCH:-$ISSUE_LOWER}"
-      DETECTED_PR="$(open_pr_for_branch "$USER_BRANCH")"
-      if [[ -n "$DETECTED_PR" ]]; then
-        DETECTED_PR_NUMBER="${DETECTED_PR%%$'\t'*}"
-        refuse_existing_branch "$ISSUE" "$USER_BRANCH" "open pull request" "#$DETECTED_PR_NUMBER" || exit "$ACTIVE_WORK_EXIT"
-      elif [[ -n "${BOT_NAME:-}" ]]; then
-        BOT_BRANCH="$BOT_NAME/$ISSUE_LOWER"
-        DETECTED_PR="$(open_pr_for_branch "$BOT_BRANCH")"
-        if [[ -n "$DETECTED_PR" ]]; then
-          DETECTED_PR_NUMBER="${DETECTED_PR%%$'\t'*}"
-          refuse_existing_branch "$ISSUE" "$BOT_BRANCH" "open pull request" "#$DETECTED_PR_NUMBER" || exit "$ACTIVE_WORK_EXIT"
-        fi
-      fi
+    # 3. Explicit --pr/--base remain inspection modes rather than new-work
+    # claims. Their authoritative branch/ref lookup still must succeed before
+    # mutation, and the issue lock serializes their final check plus add.
+    if [[ -n "$PR" ]]; then
+      BASE="$(resolve_pr_branch "$PR")" || exit 1
     fi
 
     if [[ -n "$BASE" ]]; then
-      # Check if worktree already exists on this branch
-      EXISTING_WT=$(git -C "$PROJECT_ROOT" worktree list --porcelain | grep -B2 "branch refs/heads/$BASE$" | grep "^worktree " | cut -d' ' -f2 || true)
+      discover_ownership_remote_heads || exit 1
+      if ! remote_branch_discovered origin "$BASE"; then
+        echo "Error: Cannot resolve remote branch 'origin/$BASE'" >&2
+        exit 1
+      fi
+      EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
       if [[ -n "$EXISTING_WT" ]]; then
         refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
       fi
-      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "$BASE" >/dev/null 2>&1 || true
+
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      if [[ -n "$PR" ]]; then
+        BASE="$(resolve_pr_branch "$PR")" || exit 1
+      fi
+      fetch_origin || exit 1
+      discover_ownership_remote_heads || exit 1
+      if ! remote_branch_discovered origin "$BASE"; then
+        echo "Error: Cannot resolve remote branch 'origin/$BASE'" >&2
+        exit 1
+      fi
+      EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
+      if [[ -n "$EXISTING_WT" ]]; then
+        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
+      fi
+
+      mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
         git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
     else
-      fetch_origin
-      BRANCH="${BRANCH:-$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')}"
-      EXISTING_WT=$(git -C "$PROJECT_ROOT" worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH$" | grep "^worktree " | cut -d' ' -f2 || true)
-      if [[ -n "$EXISTING_WT" ]]; then
-        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
-      fi
-      if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-        refuse_existing_branch "$ISSUE" "$BRANCH" "existing local branch" || exit "$ACTIVE_WORK_EXIT"
-      fi
-      if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-        refuse_existing_branch "$ISSUE" "$BRANCH" "existing remote branch" "origin/$BRANCH" || exit "$ACTIVE_WORK_EXIT"
-      fi
+      build_candidate_branches "$ISSUE" "$BRANCH"
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fetch_origin || exit 1
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+
+      BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
+      mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
     fi
+
+    release_issue_claim_lock
 
     # Set upstream tracking if remote branch exists
     CREATED_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
@@ -913,7 +1170,9 @@ case "${1:-}" in
       exit 0
     fi
 
-    fetch_origin
+    # Preserve Codex Desktop's historical best-effort normalization behavior;
+    # fail-closed ownership discovery is specific to `create` claims.
+    git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
     _REMOTE="${BOT_REMOTE_NAME:-origin}"
     if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
       git -C "$WT_PATH" switch "$TARGET_BRANCH" >/dev/null 2>&1 || {
