@@ -1932,21 +1932,19 @@ add_relation() {
         chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
         id_chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .id')
         id_chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .id')
+
+        # A full eager selection may hide one more parent edge. Prove both
+        # chains terminate at explicit validated roots before any same-parent
+        # shortcut can accept the relation. Shallow chains return unchanged.
+        chain1=$(extend_ancestor_chain "$chain1" "$id_chain1") || return 1
+        chain2=$(extend_ancestor_chain "$chain2" "$id_chain2") || return 1
         parent1_id=$(sed -n '2p' <<<"$chain1")
         parent2_id=$(sed -n '2p' <<<"$chain2")
 
         if ! blocking_level_ok "$parent1_id" "$parent2_id"; then
-            # The accept/reject decision above only needs direct parents, which
-            # the initial fetch always covers. Remediation (ancestor detection,
-            # LCA hoisting) needs COMPLETE chains: extend both to a proven root
-            # first, and fail closed — reject without a derived prescription —
-            # when a full chain cannot be established.
             local violation_message
-            if chain1=$(extend_ancestor_chain "$chain1" "$id_chain1") \
-                && chain2=$(extend_ancestor_chain "$chain2" "$id_chain2"); then
-                violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
-                echo "{\"error\": \"$violation_message\"}" >&2
-            fi
+            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
+            echo "{\"error\": \"$violation_message\"}" >&2
             return 1
         fi
     fi

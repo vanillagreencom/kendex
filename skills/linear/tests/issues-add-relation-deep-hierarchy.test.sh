@@ -12,6 +12,8 @@
 #   CC-9000 (root) <- CC-9001 <- ... <- CC-9120                  (121 levels)
 #   CC-850 <- CC-851 <- ... <- CC-855 <- CC-856 <- CC-857 <- CC-852
 #                                                    (cross-chunk parent cycle)
+#   CC-860, CC-861 -> P -> A -> B -> C -> D -> A
+#                    (same-parent cycle hidden beyond the eager selection)
 
 set -euo pipefail
 
@@ -49,6 +51,9 @@ parent_of() {
   CC-850) echo CC-851 ;; CC-851) echo CC-852 ;; CC-852) echo CC-853 ;;
   CC-853) echo CC-854 ;; CC-854) echo CC-855 ;; CC-855) echo CC-856 ;;
   CC-856) echo CC-857 ;; CC-857) echo CC-852 ;;
+  CC-860 | CC-861) echo CC-870 ;; CC-870) echo CC-871 ;;
+  CC-871) echo CC-872 ;; CC-872) echo CC-873 ;; CC-873) echo CC-874 ;;
+  CC-874) echo CC-871 ;;
   CC-9???)
     local n="${1#CC-}"
     if [ "$n" -gt 9000 ]; then printf 'CC-%d' "$((n - 1))"; fi
@@ -148,7 +153,7 @@ for args in "CC-708 --blocks CC-701" "CC-701 --blocks CC-708"; do
   fi
 done
 
-# --- deep-but-valid siblings: accepted, no follow-up ancestor queries needed ---
+# --- deep-but-valid siblings: accepted after their root is proven ---
 if ! run_add_relation "$TMP_ROOT/payloads.jsonl" CC-708 --blocks CC-709 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"; then
   echo "FAIL deep siblings: expected acceptance, got rejection:"
   cat "$TMP_ROOT/err"
@@ -158,8 +163,8 @@ if ! jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/pa
   echo "FAIL deep siblings: accepted relation never sent issueRelationCreate"
   exit 1
 fi
-if jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL deep siblings: accept path should not need AncestorChunk queries"
+if ! jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
+  echo "FAIL deep siblings: full-depth accept path did not prove its root"
   cat "$TMP_ROOT/payloads.jsonl"
   exit 1
 fi
@@ -229,6 +234,29 @@ if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
 fi
 if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
   echo "FAIL cross-chunk cycle: rejected relation still sent issueRelationCreate"
+  exit 1
+fi
+
+# --- same-parent cycle hidden beyond eager selection: fail before shortcut ---
+set +e
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-860 --blocks CC-861 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL hidden same-parent cycle: expected rejection, got success"
+  exit 1
+fi
+if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
+  echo "FAIL hidden same-parent cycle: missing cycle diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+if ! jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
+  echo "FAIL hidden same-parent cycle: no root-proof query was sent"
+  exit 1
+fi
+if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
+  echo "FAIL hidden same-parent cycle: rejected relation still sent issueRelationCreate"
   exit 1
 fi
 
