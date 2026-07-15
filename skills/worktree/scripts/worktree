@@ -5,6 +5,7 @@
 #     --base BRANCH   Checkout an existing remote branch into the worktree
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
 #     --pr NUMBER     Look up the branch from a PR number (implies --base)
+#     --reuse         Explicitly reuse and update an existing issue worktree
 #     --restack       When reusing an existing worktree and the rebase onto
 #                     origin/<default> conflicts, stop in the conflict state
 #                     for resolution instead of aborting the rebase
@@ -26,6 +27,8 @@
 #   BOT_REMOTE_URL           - URL for bot remote (added on create if set)
 
 set -euo pipefail
+
+readonly ACTIVE_WORK_EXIT=75
 
 # Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too)
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
@@ -379,6 +382,93 @@ rebase_in_progress() {
   return 1
 }
 
+open_pr_for_branch() {
+  local branch="$1"
+  local result=""
+  [[ -n "$branch" ]] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+
+  result="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>/dev/null || true)"
+  printf '%s\n' "$result"
+}
+
+worktree_lock_reason() {
+  local wt="$1"
+  local lock_path="" reason=""
+  lock_path="$(git -C "$wt" rev-parse --git-path locked 2>/dev/null || true)"
+  [[ -n "$lock_path" ]] || return 1
+  [[ "$lock_path" == /* ]] || lock_path="$wt/$lock_path"
+  [[ -f "$lock_path" ]] || return 1
+  reason="$(head -n 1 "$lock_path" 2>/dev/null || true)"
+  printf '%s\n' "${reason:-locked}"
+}
+
+refuse_existing_worktree() {
+  local issue="$1" wt="$2"
+  local branch="" dirty="clean" upstream="" counts="" behind="0" ahead="0"
+  local lock_reason="" pr_details="" pr_number="" pr_url=""
+
+  branch="$(git -C "$wt" branch --show-current 2>/dev/null || true)"
+  if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null || true)" ]]; then
+    dirty="dirty"
+  fi
+
+  if [[ -n "$branch" ]]; then
+    upstream="$(git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+    if [[ -z "$upstream" ]] && git -C "$wt" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+      upstream="origin/$branch"
+    fi
+    if [[ -n "$upstream" ]]; then
+      counts="$(git -C "$wt" rev-list --left-right --count "$upstream...HEAD" 2>/dev/null || true)"
+      if [[ -n "$counts" ]]; then
+        read -r behind ahead <<<"$counts"
+      fi
+    fi
+    pr_details="$(open_pr_for_branch "$branch")"
+  fi
+  lock_reason="$(worktree_lock_reason "$wt" || true)"
+
+  echo "Active work already exists for '$issue'; refusing implicit reuse." >&2
+  echo "  Worktree: $wt" >&2
+  echo "  Branch: ${branch:-detached}" >&2
+  echo "  Working tree: $dirty" >&2
+  if [[ -n "$upstream" ]]; then
+    echo "  Upstream: $upstream (ahead $ahead, behind $behind)" >&2
+  elif [[ -n "$branch" ]]; then
+    echo "  Upstream: none (branch is unpublished or not tracking a remote)" >&2
+  fi
+  if [[ -n "$pr_details" ]]; then
+    pr_number="${pr_details%%$'\t'*}"
+    pr_url="${pr_details#*$'\t'}"
+    echo "  Open PR: #$pr_number $pr_url" >&2
+  fi
+  if [[ -n "$lock_reason" ]]; then
+    echo "  Worktree lock: ${lock_reason:-locked}" >&2
+  fi
+  echo "No local branch was rebased or modified." >&2
+  echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
+  echo "If this session owns the worktree, opt in explicitly:" >&2
+  echo "  $0 create $issue --reuse" >&2
+  echo "Use --restack instead only when intentionally resolving a rebase conflict." >&2
+  return "$ACTIVE_WORK_EXIT"
+}
+
+refuse_existing_branch() {
+  local issue="$1" branch="$2" signal="$3" details="${4:-}"
+
+  echo "Active work already exists for '$issue'; refusing to create a duplicate worktree." >&2
+  echo "  Branch: $branch" >&2
+  echo "  Signal: $signal${details:+ ($details)}" >&2
+  echo "No worktree was created and no local branch was rebased or modified." >&2
+  echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
+  if [[ "$signal" == "open pull request" ]]; then
+    echo "To inspect that PR in a worktree intentionally, pass --pr <number>." >&2
+  else
+    echo "To check out that branch intentionally, pass --base $branch." >&2
+  fi
+  return "$ACTIVE_WORK_EXIT"
+}
+
 case "${1:-}" in
   create)
     # Ensure worktreeConfig is enabled (required for per-worktree git config)
@@ -390,12 +480,14 @@ case "${1:-}" in
     BRANCH=""
     FROM=""
     PR=""
+    REUSE=false
     RESTACK=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
+        --reuse) REUSE=true; shift ;;
         --restack) RESTACK=true; shift ;;
         *) BRANCH="$1"; shift ;;
       esac
@@ -403,8 +495,14 @@ case "${1:-}" in
     WT_PATH="$(worktree_path "$ISSUE")"
     mkdir -p "$TREES_DIR"
 
-    # 1. If worktree already exists at path, reuse it after updating
+    # 1. Existing work is an ownership signal. Bare create is only for claiming
+    # new work; reuse must be explicit so discovery cannot rewrite another
+    # session's branch (#571). Exit 75 distinguishes active work from a broken
+    # repository or invalid arguments.
     if [[ -d "$WT_PATH" ]] && git -C "$WT_PATH" rev-parse --git-dir &>/dev/null; then
+      if [[ "$REUSE" != true && "$RESTACK" != true ]]; then
+        refuse_existing_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fi
       fetch_origin
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
@@ -430,7 +528,7 @@ case "${1:-}" in
             echo "  1. Edit each conflicting file to remove the conflict markers." >&2
             echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
             echo "  3. GIT_EDITOR=true git -C \"$WT_PATH\" rebase --continue    (repeat if it stops again)" >&2
-            echo "  4. $0 create $ISSUE    (finish worktree setup)" >&2
+            echo "  4. $0 create $ISSUE --reuse    (finish worktree setup)" >&2
             echo "To back out instead: git -C \"$WT_PATH\" rebase --abort" >&2
             exit 1
           fi
@@ -455,11 +553,17 @@ case "${1:-}" in
       exit 0
     fi
 
-    # 1b. Orphan directory exists (no .git pointer) — clean up before fresh create
+    # 1b. A directory without a .git pointer may belong to a concurrent or
+    # interrupted creator. Never delete it as an implicit discovery side effect.
     if [[ -d "$WT_PATH" ]]; then
-      echo "Warning: Removing orphan directory at $WT_PATH (not a git worktree)" >&2
-      rm -rf "$WT_PATH"
-      git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
+      echo "Active or incomplete worktree directory already exists for '$ISSUE': $WT_PATH" >&2
+      echo "Refusing to delete or replace it automatically. Inspect it, then remove it explicitly if abandoned." >&2
+      exit "$ACTIVE_WORK_EXIT"
+    fi
+
+    if [[ "$REUSE" == true || "$RESTACK" == true ]]; then
+      echo "Error: --reuse/--restack requires an existing worktree at $WT_PATH" >&2
+      exit 1
     fi
 
     # 2. If --from specified, create a new branch starting from that ref
@@ -496,21 +600,24 @@ case "${1:-}" in
       fi
     fi
 
-    # 4. Auto-detect: check if PR exists with expected branch patterns.
+    # 4. Auto-detect existing PRs as ownership signals. Bare create must stop
+    # instead of silently checking out work that another session already owns.
     # Best-effort — if gh auth is broken (e.g. unresolved op:// token in
     # GH_TOKEN) the command-substitution would otherwise kill the script
     # under set -e and silently exit 1 with no output (#3).
     if [[ -z "$BASE" ]] && command -v gh &>/dev/null; then
       ISSUE_LOWER=$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')
-      USER_BRANCH="$ISSUE_LOWER"
-      DETECTED_PR=$(gh pr list --head "$USER_BRANCH" --json number -q '.[0].number' 2>/dev/null || true)
+      USER_BRANCH="${BRANCH:-$ISSUE_LOWER}"
+      DETECTED_PR="$(open_pr_for_branch "$USER_BRANCH")"
       if [[ -n "$DETECTED_PR" ]]; then
-        BASE="$USER_BRANCH"
+        DETECTED_PR_NUMBER="${DETECTED_PR%%$'\t'*}"
+        refuse_existing_branch "$ISSUE" "$USER_BRANCH" "open pull request" "#$DETECTED_PR_NUMBER" || exit "$ACTIVE_WORK_EXIT"
       elif [[ -n "${BOT_NAME:-}" ]]; then
         BOT_BRANCH="$BOT_NAME/$ISSUE_LOWER"
-        DETECTED_PR=$(gh pr list --head "$BOT_BRANCH" --json number -q '.[0].number' 2>/dev/null || true)
+        DETECTED_PR="$(open_pr_for_branch "$BOT_BRANCH")"
         if [[ -n "$DETECTED_PR" ]]; then
-          BASE="$BOT_BRANCH"
+          DETECTED_PR_NUMBER="${DETECTED_PR%%$'\t'*}"
+          refuse_existing_branch "$ISSUE" "$BOT_BRANCH" "open pull request" "#$DETECTED_PR_NUMBER" || exit "$ACTIVE_WORK_EXIT"
         fi
       fi
     fi
@@ -519,8 +626,7 @@ case "${1:-}" in
       # Check if worktree already exists on this branch
       EXISTING_WT=$(git -C "$PROJECT_ROOT" worktree list --porcelain | grep -B2 "branch refs/heads/$BASE$" | grep "^worktree " | cut -d' ' -f2 || true)
       if [[ -n "$EXISTING_WT" ]]; then
-        echo "$EXISTING_WT"
-        exit 0
+        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
       fi
       git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "$BASE" >/dev/null 2>&1 || true
       git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
@@ -528,6 +634,16 @@ case "${1:-}" in
     else
       fetch_origin
       BRANCH="${BRANCH:-$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')}"
+      EXISTING_WT=$(git -C "$PROJECT_ROOT" worktree list --porcelain | grep -B2 "branch refs/heads/$BRANCH$" | grep "^worktree " | cut -d' ' -f2 || true)
+      if [[ -n "$EXISTING_WT" ]]; then
+        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
+      fi
+      if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        refuse_existing_branch "$ISSUE" "$BRANCH" "existing local branch" || exit "$ACTIVE_WORK_EXIT"
+      fi
+      if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+        refuse_existing_branch "$ISSUE" "$BRANCH" "existing remote branch" "origin/$BRANCH" || exit "$ACTIVE_WORK_EXIT"
+      fi
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
     fi
 

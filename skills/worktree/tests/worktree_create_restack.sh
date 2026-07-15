@@ -161,7 +161,7 @@ default_pre_head="$(git -C "$DEFAULT_WT" rev-parse HEAD)"
 set +e
 (
   cd "$DEFAULT_ROOT/main" && \
-    "$WORKTREE_SCRIPT" create issue-default >"$DEFAULT_ROOT/create.out" 2>"$DEFAULT_ROOT/create.err"
+    "$WORKTREE_SCRIPT" create issue-default --reuse >"$DEFAULT_ROOT/create.out" 2>"$DEFAULT_ROOT/create.err"
 )
 default_code=$?
 set -e
@@ -201,7 +201,7 @@ assert_contains "$restack_err" "rebase --abort" "--restack error documents the a
 printf 'resolved\n' > "$RESTACK_WT/file.txt"
 git -C "$RESTACK_WT" add file.txt
 GIT_EDITOR=true git -C "$RESTACK_WT" rebase --continue >/dev/null 2>&1
-resolved_out=$(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" create issue-restack 2>"$RESTACK_ROOT/resolved.err")
+resolved_out=$(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" create issue-restack --reuse 2>"$RESTACK_ROOT/resolved.err")
 assert_eq "$resolved_out" "$RESTACK_WT" "create after resolved restack finishes setup and prints the path"
 assert_is_ancestor "$RESTACK_WT" origin/main HEAD "resolved restack branch contains origin/main"
 assert_eq "$(cat "$RESTACK_WT/file.txt")" "resolved" "resolved restack keeps the manual resolution"
@@ -222,7 +222,7 @@ git -C "$CLEAN_ROOT/main" add main-advanced.txt
 git -C "$CLEAN_ROOT/main" commit -q -m 'advance main'
 git -C "$CLEAN_ROOT/main" push -q origin main
 clean_pre_head="$(git -C "$CLEAN_WT" rev-parse HEAD)"
-clean_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-clean 2>"$CLEAN_ROOT/create.err")
+clean_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-clean --reuse 2>"$CLEAN_ROOT/create.err")
 assert_eq "$clean_out" "$CLEAN_WT" "clean reuse still prints the worktree path"
 assert_ne "$(git -C "$CLEAN_WT" rev-parse HEAD)" "$clean_pre_head" "clean reuse rebased HEAD onto advanced origin/main"
 assert_path_exists "$CLEAN_WT/main-advanced.txt" "clean reuse pulled in the advanced main content"

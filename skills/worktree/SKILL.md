@@ -3,7 +3,7 @@ name: worktree
 description: "Git worktree management: create, list, remove isolated working copies with env/config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--restack] | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack] | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: vstack
@@ -26,7 +26,7 @@ Resolves project root via `git rev-parse`, detects default branch automatically,
 
 | Command | Description |
 |---------|-------------|
-| `create` | Create worktree for issue. Reuses existing (with rebase). Auto-detects PR branches via `gh`. |
+| `create` | Claim a new issue worktree. Refuses implicit reuse when a worktree, branch, or PR already exists. |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |
 | `cleanup` | Remove worktrees whose branches are merged |
@@ -58,6 +58,10 @@ remote commits.
 
 When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
 
+Bare `create <ID>` is a new-work claim, not a discovery command. If the issue already has a worktree, local/remote branch, or open PR, it exits 75 with the ownership signals and leaves all local branches unchanged. Inspect or monitor that work instead of spawning a second implementer. Run issue creates as separate commands and check each result; do not batch them in a shell loop whose final successful command can hide an earlier active-work exit.
+
+An existing owner may opt in with `create <ID> --reuse`, which refreshes setup after rebasing onto `origin/<default>`. Use `--restack` only to pause that intentional rebase in a conflict state. To inspect an open PR whose worktree is absent, use `create <ID> --pr <N>` explicitly.
+
 ### Codex Desktop hooks
 
 Let Codex Desktop own app-created worktree creation and deletion. Configure project setup/cleanup hooks to run:
@@ -76,16 +80,17 @@ For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before o
 | `--base BRANCH` | Checkout an existing remote branch into the worktree |
 | `--from REF` | Create a new branch (named after ID) starting from REF (branch, tag, or commit) |
 | `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
+| `--reuse` | Explicitly reuse an existing issue worktree and rebase it onto `origin/<default>` |
 | `--restack` | When reusing an existing worktree and its rebase onto `origin/<default>` conflicts, stop in the conflict state for resolution instead of aborting |
 
 ### Reuse rebase conflicts
 
-Reusing an existing worktree rebases its branch onto `origin/<default>` first. If that rebase conflicts, the default run aborts the rebase and exits 1 — the worktree is left clean on its pre-rebase state, so there is no conflict left to resolve in place. The error lists the conflicting files (captured before the abort) and the two supported recovery paths:
+Bare `create` never rebases an existing worktree. After the owning session opts in with `--reuse`, the branch rebases onto `origin/<default>`. If that rebase conflicts, the run aborts the rebase and exits 1 — the worktree is left clean on its pre-rebase state, so there is no conflict left to resolve in place. The error lists the conflicting files (captured before the abort) and the two supported recovery paths:
 
-1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, run `GIT_EDITOR=true git -C <path> rebase --continue` (repeat if it stops again), then re-run `create <ID>` to finish worktree setup. `git -C <path> rebase --abort` backs out to the clean pre-rebase state. This is the supported exception to the no-raw-`git rebase` rule: only `--continue`/`--abort` on the paused rebase, never starting one by hand.
+1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, run `GIT_EDITOR=true git -C <path> rebase --continue` (repeat if it stops again), then re-run `create <ID> --reuse` to finish worktree setup. `git -C <path> rebase --abort` backs out to the clean pre-rebase state. This is the supported exception to the no-raw-`git rebase` rule: only `--continue`/`--abort` on the paused rebase, never starting one by hand.
 2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
 
-With no conflict, `--restack` is a no-op and reuse behaves as usual.
+With no conflict, `--restack` completes the same intentional rebase as `--reuse`.
 
 ## Configuration
 

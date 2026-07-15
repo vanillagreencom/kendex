@@ -67,7 +67,13 @@ If the issue is not open, stop and ask for a different item.
    .agents/skills/worktree/scripts/worktree check
    ```
 2. Resolve dirty main repo state with the user before creating worktrees.
-3. Create/reuse worktree:
+3. Check whether the issue worktree already exists:
+   ```bash
+   .agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+   .agents/skills/worktree/scripts/worktree path [ISSUE_ID]
+   ```
+   If it exists, treat it as active ownership: inspect its branch/PR and monitor or coordinate with the existing owner. Do not spawn a second implementer. Only the confirmed owning session may run `create [ISSUE_ID] --reuse`.
+4. When no issue worktree exists, create it with one command whose exit status is checked directly:
    ```bash
    # Linear
    .agents/skills/worktree/scripts/worktree create [ISSUE_ID]
@@ -75,7 +81,7 @@ If the issue is not open, stop and ask for a different item.
    # GitHub
    .agents/skills/worktree/scripts/worktree create issue-[N]
    ```
-   Use the create output as `WT_PATH`.
+   Exit 75 means a branch or open PR already owns the issue even though the configured path was absent; inspect/monitor it instead of delegating. Use the successful create output as `WT_PATH`.
 
 ## 5. Handoff Or Continue
 
