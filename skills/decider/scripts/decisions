@@ -13,6 +13,12 @@
 #   DECISIONS_DIR    Path to decision documents directory (required)
 #                    Example: docs/decisions
 #
+# Missing directory:
+#   Read-only lookups (search, list) treat an absent decisions directory as
+#   "no decisions recorded": they emit an empty JSON array, note it on stderr,
+#   and exit 0. Commands that feed the creation workflow (next-id, get) still
+#   require an initialized directory and fail hard without one.
+#
 # Options:
 #   --limit N        Max results for search (default: 5)
 #
@@ -87,22 +93,50 @@ if [[ -z "${DECISIONS_DIR:-}" ]]; then
   unset _dir _candidate
 fi
 
+# An absent directory (unset and undiscovered, or a configured path that does
+# not exist) is not an error by itself: read-only lookups treat it as "no
+# decisions recorded" while creation-workflow commands still require it. A
+# configured path that exists but is not a directory is always a hard error.
+DECISIONS_DIR_ABSENT=0
+
 if [[ -z "${DECISIONS_DIR:-}" ]]; then
-  echo "Error: Could not find decisions directory. Set DECISIONS_DIR or create docs/decisions/INDEX.md" >&2
+  DECISIONS_DIR=""
+  DECISIONS_DIR_ABSENT=1
+elif [[ ! -e "$DECISIONS_DIR" ]]; then
+  DECISIONS_DIR_ABSENT=1
+elif [[ ! -d "$DECISIONS_DIR" ]]; then
+  echo "Error: DECISIONS_DIR '$DECISIONS_DIR' is not a directory" >&2
   exit 1
 fi
 
-if [[ ! -d "$DECISIONS_DIR" ]]; then
-  echo "Error: DECISIONS_DIR '$DECISIONS_DIR' does not exist" >&2
-  exit 1
+INDEX_FILE=""
+if [[ "$DECISIONS_DIR_ABSENT" -eq 0 ]]; then
+  INDEX_FILE="$DECISIONS_DIR/INDEX.md"
+  if [[ ! -f "$INDEX_FILE" ]]; then
+    echo "Error: INDEX.md not found in '$DECISIONS_DIR'" >&2
+    exit 1
+  fi
 fi
 
-INDEX_FILE="$DECISIONS_DIR/INDEX.md"
-
-if [[ ! -f "$INDEX_FILE" ]]; then
-  echo "Error: INDEX.md not found in '$DECISIONS_DIR'" >&2
+# Hard requirement for commands that feed the creation workflow.
+require_decisions_dir() {
+  [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]] || return 0
+  if [[ -n "$DECISIONS_DIR" ]]; then
+    echo "Error: DECISIONS_DIR '$DECISIONS_DIR' does not exist" >&2
+  else
+    echo "Error: Could not find decisions directory. Set DECISIONS_DIR or create docs/decisions/INDEX.md" >&2
+  fi
   exit 1
-fi
+}
+
+# Empty-result diagnostic for read-only lookups when no directory exists.
+note_missing_decisions_dir() {
+  if [[ -n "$DECISIONS_DIR" ]]; then
+    echo "note: decisions directory '$DECISIONS_DIR' not present — no decisions recorded" >&2
+  else
+    echo "note: no decisions directory found — no decisions recorded" >&2
+  fi
+}
 
 PCRE_GREP="$(resolve_pcre_grep || true)"
 if [[ -z "$PCRE_GREP" ]]; then
@@ -184,6 +218,8 @@ Search scoring:
 
 Environment:
   DECISIONS_DIR    Path to decision documents directory (required)
+                   Absent directory: search/list emit [] and exit 0 (note on
+                   stderr); next-id/get still error until it is initialized.
 
 Examples:
   decisions search "FFI error handling"    # Top decisions about FFI errors
@@ -212,6 +248,17 @@ search_decisions() {
     esac
   done
 
+  if [[ -z "$issue" && -z "$query" ]]; then
+    echo '{"error": "Provide a search query or --issue ID"}' >&2
+    return 1
+  fi
+
+  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then
+    note_missing_decisions_dir
+    echo '[]'
+    return 0
+  fi
+
   local all
   all=$(parse_index)
 
@@ -222,7 +269,7 @@ search_decisions() {
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
       {id, decision, path}
     ]'
-  elif [[ -n "$query" ]]; then
+  else
     # Check if query contains regex operators — if so, use raw regex mode
     if echo "$query" | grep -qE '[|()\\]'; then
       echo "$all" | jq --arg q "$query" --argjson limit "$limit" '[
@@ -257,13 +304,16 @@ search_decisions() {
         ] | sort_by(-.score) | .[:$limit]
       '
     fi
-  else
-    echo '{"error": "Provide a search query or --issue ID"}' >&2
-    return 1
   fi
 }
 
 list_decisions() {
+  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then
+    note_missing_decisions_dir
+    echo '[]'
+    return 0
+  fi
+
   local all
   all=$(parse_index)
   echo "$all" | jq '[.[] | select(.status | startswith("Active")) | {id, decision, path}]'
@@ -325,9 +375,11 @@ case "$action" in
     list_decisions
     ;;
   next-id)
+    require_decisions_dir
     cmd_next_id
     ;;
   get)
+    require_decisions_dir
     cmd_get "$@"
     ;;
   help|--help|-h)

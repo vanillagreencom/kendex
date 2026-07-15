@@ -38,6 +38,8 @@ EOF
 
 Optionally set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` to override auto-discovery (searches `docs/decisions/`, `decisions/`, `doc/decisions/`, `adr/`). Existing `.env.local` overrides still work.
 
+Before the directory is initialized, `search` and `list` return an empty result (`[]`, exit 0) with a note on stderr; `next-id` and `get` error until it exists.
+
 ## Decision Templates
 
 | Template | Lines | When to Use |

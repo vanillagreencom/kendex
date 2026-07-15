@@ -31,7 +31,7 @@ Searches INDEX.md Research column for exact issue reference match (with negative
 [{"id":"D017","decision":"Storage Trait Design","path":"docs/decisions/D017-storage-trait-design.md"}]
 ```
 
-**If no matches**: Empty array `[]`.
+**If no matches**: Empty array `[]`. The same empty array (exit 0, with a stderr note) is returned when the project has no decisions directory yet — treat it as "no decisions recorded", not a failure.
 
 ---
 
