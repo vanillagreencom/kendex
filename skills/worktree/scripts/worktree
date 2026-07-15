@@ -434,13 +434,19 @@ case "${1:-}" in
             echo "To back out instead: git -C \"$WT_PATH\" rebase --abort" >&2
             exit 1
           fi
-          git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
+          ABORT_OK=true
+          git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || ABORT_OK=false
           echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
           if [[ -n "$CONFLICT_FILES" ]]; then
             echo "Conflicting files:" >&2
             sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
           fi
-          echo "The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve." >&2
+          if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
+            echo "The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve." >&2
+          else
+            echo "Automatic abort of the failed rebase did NOT complete; the worktree may still hold rebase state." >&2
+            echo "Back it out manually first: git -C \"$WT_PATH\" rebase --abort" >&2
+          fi
           echo "Recovery options:" >&2
           echo "  1. Redo the rebase and stop in the conflict state to resolve it:" >&2
           echo "       $0 create $ISSUE --restack" >&2

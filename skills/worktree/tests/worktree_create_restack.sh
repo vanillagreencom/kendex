@@ -88,7 +88,7 @@ assert_is_ancestor() {
 rebase_state_exists() {
   local wt="$1" state path
   for state in rebase-merge rebase-apply; do
-    path="$(git -C "$wt" rev-parse --git-path "$state")"
+    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
     [[ "$path" == /* ]] || path="$wt/$path"
     if [[ -d "$path" ]]; then
       return 0
