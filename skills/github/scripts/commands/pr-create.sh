@@ -74,14 +74,23 @@ run_safety_checks() {
         echo "  ✓ Head branch is not main/master" >&2
     fi
 
-    # 2. Check branch has commits ahead
+    # 2. Check branch has commits ahead of the base the PR will actually
+    #    target: the REMOTE base. Counting against local $base inflates the
+    #    number when local $base is stale (behind origin/$base), reporting
+    #    already-merged commits as "ahead" (#537).
+    git fetch --quiet origin "$base" 2>/dev/null || true
+    local base_ref="$base" base_label="local $base (origin unreachable; count may be stale)"
+    if git rev-parse --verify --quiet "origin/$base" >/dev/null 2>&1; then
+        base_ref="origin/$base"
+        base_label="origin/$base"
+    fi
     local ahead
-    ahead=$(git rev-list --count "$base..$head" 2>/dev/null || echo "0")
+    ahead=$(git rev-list --count "$base_ref..$head" 2>/dev/null || echo "0")
     if [ "$ahead" = "0" ]; then
-        echo "  ✗ ERROR: No commits ahead of $base" >&2
+        echo "  ✗ ERROR: No commits ahead of $base_label" >&2
         all_passed=false
     else
-        echo "  ✓ $ahead commit(s) ahead of $base" >&2
+        echo "  ✓ $ahead commit(s) ahead of $base_label" >&2
     fi
 
     # 3. Check branch is pushed
