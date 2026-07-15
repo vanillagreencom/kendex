@@ -173,15 +173,20 @@ source_root_for_path() {
   fi
 }
 
-declare -A seen_candidates=()
-declare -a unique_candidates=()
-for path in "${candidates[@]}"; do
-  if [[ -z "${seen_candidates[$path]+x}" ]]; then
-    seen_candidates["$path"]=1
-    unique_candidates+=("$path")
-  fi
+# Dedup with a linear scan over an indexed array: associative arrays are
+# Bash 4+ and this skill must run under macOS system Bash 3.2.
+unique_candidates=()
+for path in ${candidates[@]+"${candidates[@]}"}; do
+  duplicate=false
+  for existing in ${unique_candidates[@]+"${unique_candidates[@]}"}; do
+    if [[ "$existing" == "$path" ]]; then
+      duplicate=true
+      break
+    fi
+  done
+  [[ "$duplicate" == true ]] || unique_candidates+=("$path")
 done
-candidates=("${unique_candidates[@]}")
+candidates=(${unique_candidates[@]+"${unique_candidates[@]}"})
 
 mode="repository"
 if [[ "$force_docs_only" == true ]]; then
@@ -200,16 +205,15 @@ elif [[ ${#candidates[@]} -gt 0 ]]; then
   done
 fi
 
-declare -A seen_roots=()
-declare -a source_roots=()
+source_roots=()
 
 add_source_root() {
-  local root="$1"
+  local root="$1" existing
   [[ -n "$root" && "$root" != "." ]] || root="."
-  if [[ -z "${seen_roots[$root]+x}" ]]; then
-    seen_roots["$root"]=1
-    source_roots+=("$root")
-  fi
+  for existing in ${source_roots[@]+"${source_roots[@]}"}; do
+    [[ "$existing" == "$root" ]] && return 0
+  done
+  source_roots+=("$root")
 }
 
 if [[ "$mode" == "repository" ]]; then
