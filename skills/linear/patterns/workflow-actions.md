@@ -17,8 +17,11 @@ For the underlying command syntax, use the main `linear` skill command docs firs
 scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT]
 scripts/linear.sh issues block [ISSUE_ID] --by [BLOCKER_ID] --reason "[REASON]"
 scripts/linear.sh issues unblock [ISSUE_ID]
+scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 scripts/linear.sh issues update [ISSUE_ID] --state "Done"
 ```
+
+`activate --agent` applies the exclusive `agent:[AGENT]` label together with the "In Progress" transition and fails without changing state when the label does not exist. `complete` posts the completion summary comment before transitioning to "Done", so a failed post leaves the state unchanged.
 
 ## Cancel / Merge / Combine
 

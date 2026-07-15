@@ -36,6 +36,10 @@ Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachmen
 
 Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-line comments. Inline `--body` is intended for short plain strings.
 
+Use `issues activate ISSUE --agent NAME` to claim an issue: it sets "In Progress" and applies the exclusive `agent:NAME` label in a single update (replacing any existing `agent:*` label), and fails without changing state when the label does not exist.
+
+Use `issues complete ISSUE --summary-file tmp/summary.md` (or `--summary "text"`) to post the completion summary comment and then transition to "Done". The comment is posted first, so a failed post leaves the issue state unchanged; unknown or trailing arguments are rejected before any mutation.
+
 Use `issues create --parent PROJ-42` to create a sub-issue. The command resolves the parent identifier to a UUID, sends `parentId` on create, and verifies the returned issue is linked. If Linear ignores the create-time parent, the command repairs the link with `issueUpdate`; if that cannot be verified, it exits nonzero.
 
 `issues bulk-update` applies each issue update independently. If one update fails after earlier items changed, the command emits a JSON summary with `partial: true`, per-issue success/error entries, and exits nonzero.

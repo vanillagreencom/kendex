@@ -39,7 +39,7 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 
 | Resource | Actions |
 |----------|---------|
-| `issues` | list, get, create, update, children, list-relations, add-relation, remove-relation, bulk-get, bulk-update |
+| `issues` | list, get, create, update, children, list-relations, add-relation, remove-relation, bulk-get, bulk-update, activate (`--agent <name>` applies the exclusive `agent:<name>` label), block, unblock, complete (`--summary <text>` / `--summary-file <path>` post the completion comment before the Done transition), validate-completion |
 | `comments` | list, create (`--body` or `--body-file`) |
 | `projects` | list, get, create, update, list-dependencies, add-dependency, remove-dependency, post-update, list-updates |
 | `initiatives` | list, get, create, add-project |
@@ -139,6 +139,9 @@ sortOrder → sort_order  # Manual sort position
 - State names are case-sensitive and team-specific — verify with `linear.sh statuses list`
 - Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled")
 - `agent:*` labels are mutually exclusive (only one per issue)
+- `issues activate ISSUE --agent NAME` applies `agent:NAME` in the same update as the "In Progress" transition, replacing any existing `agent:*` label; it fails without changing state when the label does not exist
+- `issues complete ISSUE --summary-file PATH` posts the completion summary comment first and only then transitions to "Done"; a failed post leaves the state unchanged
+- `issues validate-completion` is a pre-merge check: session-root targets are expected in "In Progress"/"In Review" (Done fails `state_ok` — managed roots stay pre-merge until PR merge), while `--include-children-of` bundle children are expected in "Done"
 - `--labels` replaces the full issue-label set on update. Workflow callers must fetch current labels, compute the final set, validate against `cache labels list --format=safe`, then call update with the full final set.
 - `cache labels list --format=safe` returns issue labels with `id`, `name`, `team`, `parent`, and `is_group` so workflows can reject parent/group labels before mutation.
 - `issues bulk-update` is non-atomic. If one item fails after earlier updates succeeded, it emits a JSON summary with `partial: true`, per-issue results, and exits nonzero.

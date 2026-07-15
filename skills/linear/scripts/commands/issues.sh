@@ -92,11 +92,12 @@ Actions:
   remove-relation Delete an issue relation
 
 Workflow Actions (composite operations for dev):
-  activate       Claim issue: set "In Progress"
+  activate       Claim issue: set "In Progress" (--agent applies agent:<name> label)
   block          Block issue: add label + relation + comment
   unblock        Unblock issue: remove label + comment
-  complete       Complete issue: set "Done"
-  validate-completion  Check state + summary (--include-children-of <ID> for bundles)
+  complete       Complete issue: post optional summary comment, then set "Done"
+  validate-completion  Pre-merge check: state + summary comment
+                 (--include-children-of <ID> for bundles)
 
 Output Formats (all query commands):
   --format=safe         Flat, null-safe array (DEFAULT)
@@ -171,6 +172,27 @@ Relation Options (add-relation):
   --related <id>        Mark as related
   --duplicate <id>      Mark as duplicate
 
+Activate Options:
+  --agent <name>        Apply the exclusive agent:<name> issue label together
+                        with the "In Progress" transition (replaces any existing
+                        agent:* label, preserves other labels). Fails without
+                        changing state when the label does not exist.
+
+Complete Options:
+  --summary <text>       Post a completion summary comment, then set "Done"
+  --summary-file <path>  Read the summary from a file (preferred for markdown)
+  The comment is posted BEFORE the state transition; if posting fails the issue
+  state is unchanged. Text lacking a "Completion Summary"/"Bundle Complete"
+  marker is prefixed with a "## Completion Summary" heading so
+  validate-completion detects it.
+
+Validate-Completion:
+  Pre-merge validation. Session-root issues (positional targets) are expected
+  in "In Progress" or "In Review" — "Done" fails state_ok because managed
+  session roots stay pre-merge until PR merge. Bundle children expanded via
+  --include-children-of are expected in "Done". Each issue must also have a
+  comment containing "Completion Summary" or "Bundle Complete".
+
 Examples:
   # Basic operations
   issues.sh list --label "backend" --state "Todo"
@@ -208,10 +230,11 @@ Examples:
   issues.sh bulk-get PROJ-184 PROJ-185 PROJ-186 PROJ-187    # Multiple issues with full details
 
   # Workflow actions (dev shortcuts)
-  issues.sh activate PROJ-42 --agent rust        # Claim issue for work
+  issues.sh activate PROJ-42 --agent rust        # In Progress + agent:rust label
   issues.sh block PROJ-42 --by PROJ-41 --reason "Need market data types first"
   issues.sh unblock PROJ-42                      # Resume after blocker resolved
   issues.sh complete PROJ-42                     # Mark done
+  issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Bundle validation
 
   # Bundle operations (single API call)
@@ -1996,6 +2019,9 @@ remove_relation() {
 
 # Activate an issue: set state to "In Progress"
 # Usage: activate_issue CC-XXX [--agent <name>]
+# --agent applies the exclusive agent:<name> issue label in the same
+# issueUpdate mutation as the state change. The label is validated before any
+# mutation, so an unknown agent fails without touching issue state.
 activate_issue() {
     local issue_id="$1"
     shift
@@ -2024,9 +2050,33 @@ activate_issue() {
         esac
     done
 
-    # Update state to In Progress
+    local final_labels=""
+    if [ -n "$agent" ]; then
+        local agent_label="agent:$agent"
+        # Fail before the state change when the agent label doesn't resolve —
+        # update_issue's own label handling is warn+skip, which would silently
+        # activate without the label.
+        local agent_label_id
+        if ! agent_label_id=$(resolve_label_id "$agent_label") || [ -z "$agent_label_id" ]; then
+            echo "{\"error\": \"Agent label not found: '$agent_label'. Issue state unchanged. Verify agent labels with 'linear.sh cache labels list --format=safe'.\"}" >&2
+            return 1
+        fi
+
+        # Agent labels are exclusive: replace any existing agent:* label and
+        # preserve all other labels (--labels replaces the full set).
+        local issue_result
+        issue_result=$(get_issue "$issue_id" --format=raw)
+        final_labels=$(echo "$issue_result" | jq -r --arg agent_label "$agent_label" \
+            '[.issue.labels.nodes[].name | select(startswith("agent:") | not)] + [$agent_label] | join(",")')
+    fi
+
+    # Update state to In Progress (single mutation carries the label set too)
     local update_result
-    update_result=$(update_issue "$issue_id" --state "In Progress")
+    if [ -n "$agent" ]; then
+        update_result=$(update_issue "$issue_id" --state "In Progress" --labels "$final_labels")
+    else
+        update_result=$(update_issue "$issue_id" --state "In Progress")
+    fi
     local update_success
     update_success=$(echo "$update_result" | jq -r '.success // false')
 
@@ -2037,7 +2087,11 @@ activate_issue() {
 
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
-    echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\"}"
+    if [ -n "$agent" ]; then
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\", \"agent\": \"$agent\"}"
+    else
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\"}"
+    fi
 }
 
 # Block an issue: add blocked label, create blocked-by relation, post comment
@@ -2188,25 +2242,127 @@ unblock_issue() {
 }
 
 # Complete an issue: set state to "Done"
-# Usage: complete_issue CC-XXX
+# Usage: complete_issue CC-XXX [--summary <text> | --summary-file <path>]
+# The summary comment is posted BEFORE the state transition so a failed post
+# never yields a Done issue without a completion summary. Unknown or trailing
+# arguments are rejected before any mutation.
 complete_issue() {
     local issue_id="$1"
+    shift
+
+    local summary=""
+    local summary_file=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --summary)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                summary="$2"
+                shift 2
+            else
+                echo '{"error": "--summary requires a text value"}' >&2
+                return 1
+            fi
+            ;;
+        --summary=*)
+            summary="${1#*=}"
+            if [ -z "$summary" ]; then
+                echo '{"error": "--summary requires a text value"}' >&2
+                return 1
+            fi
+            shift
+            ;;
+        --summary-file)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                summary_file="$2"
+                shift 2
+            else
+                echo '{"error": "--summary-file requires a path argument"}' >&2
+                return 1
+            fi
+            ;;
+        --summary-file=*)
+            summary_file="${1#*=}"
+            if [ -z "$summary_file" ]; then
+                echo '{"error": "--summary-file requires a path argument"}' >&2
+                return 1
+            fi
+            shift
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            return 1
+            ;;
+        *)
+            echo "{\"error\": \"Unexpected argument: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            return 1
+            ;;
+        esac
+    done
+
+    if [[ -n "$summary" && -n "$summary_file" ]]; then
+        echo '{"error": "--summary and --summary-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$summary_file" ]]; then
+        if [[ ! -r "$summary_file" ]]; then
+            echo "{\"error\": \"--summary-file path not readable: $summary_file\"}" >&2
+            return 1
+        fi
+        summary=$(<"$summary_file")
+        if [ -z "$summary" ]; then
+            echo "{\"error\": \"--summary-file is empty: $summary_file\"}" >&2
+            return 1
+        fi
+    fi
+
+    if [ -n "$summary" ]; then
+        # validate-completion detects the summary by these markers; prefix the
+        # canonical heading when the caller's text carries neither.
+        if [[ "$summary" != *"Completion Summary"* && "$summary" != *"Bundle Complete"* ]]; then
+            summary="## Completion Summary"$'\n\n'"$summary"
+        fi
+
+        # Post the comment first: a posting failure must leave state unchanged
+        local comment_result=""
+        local comment_rc=0
+        set +e
+        comment_result=$("$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$summary")
+        comment_rc=$?
+        set -e
+        if [ "$comment_rc" -ne 0 ] || [ "$(echo "$comment_result" | jq -r '.success // false')" != "true" ]; then
+            echo "{\"error\": \"Completion summary comment failed for $issue_id. Issue state unchanged.\"}" >&2
+            return 1
+        fi
+    fi
 
     local update_result
+    local update_rc=0
+    set +e
     update_result=$(update_issue "$issue_id" --state "Done")
+    update_rc=$?
+    set -e
 
     local update_success
     update_success=$(echo "$update_result" | jq -r '.success // false')
 
-    if [ "$update_success" != "true" ]; then
-        echo "$update_result"
+    if [ "$update_rc" -ne 0 ] || [ "$update_success" != "true" ]; then
+        if [ -n "$summary" ]; then
+            echo "{\"error\": \"State transition to Done failed after the summary comment was posted. Rerun 'issues.sh complete $issue_id' without summary flags to avoid a duplicate comment.\"}" >&2
+        fi
+        if [ -n "$update_result" ]; then
+            echo "$update_result"
+        fi
         return 1
     fi
 
     # Return result
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
-    echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\"}"
+    if [ -n "$summary" ]; then
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\", \"summary_posted\": true}"
+    else
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\"}"
+    fi
 }
 
 # Validate issue completion: check state is "In Progress" and has Completion Summary comment
