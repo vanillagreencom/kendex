@@ -8,12 +8,20 @@ Input file for issue audit workflows — transforms review agent findings into t
 
 ```json
 {
-  "source": "review|pr-comments|research|roadmap",
-  "parent_issue": "PROJ-123",
+  "source": "review|pr-comments|research-complete|roadmap",
+  "parent_issue": "PROJ-456",
   "worktree": "/path/to/worktree",
   "blocked_issues": ["PROJ-456"],
   "research_ref": "docs/research/PROJ-123/findings.md",
   "decision_ref": "D017",
+  "hierarchy_contract": {
+    "mode": "decompose-under-parent",
+    "parent_issue": "PROJ-456",
+    "child_indexes": [1, 2],
+    "sequencing": [
+      {"blocker": 1, "blocked": 2, "reason": "core types before consumers"}
+    ]
+  },
   "items": [
     {
       "index": 1,
@@ -46,6 +54,7 @@ Input file for issue audit workflows — transforms review agent findings into t
 | `blocked_issues` | No | Issue IDs blocked by research |
 | `research_ref` | No | Path to research findings |
 | `decision_ref` | No | Decision document reference |
+| `hierarchy_contract` | No | Binding decomposition directive — see § Hierarchy Contract. Required when research-complete decomposes a single blocked issue into per-domain sub-issues (research-complete § 6.5). |
 | `items[]` | Yes | Array of items to audit |
 
 ### Item Fields
@@ -67,6 +76,23 @@ Input file for issue audit workflows — transforms review agent findings into t
 | `blocked_by_items` | No | Indexes of items that block this item |
 | `blocks_issues` | No | Existing issue IDs this item blocks |
 | `blocked_by_issues` | No | Existing issue IDs that block this item |
+
+## Hierarchy Contract
+
+`hierarchy_contract` is a **binding directive, not a hint**. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when `hierarchy_contract` is present, placement for the covered items is fixed by the producer, and the TPM's ordinary duplicate/hierarchy inference is bypassed for those items (tpm-audit.md § 7.0 and § 10.2).
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `mode` | Yes | Only `"decompose-under-parent"` is defined. |
+| `parent_issue` | Yes | The blocked implementation issue that becomes the coordination-only parent. Never a research issue. |
+| `child_indexes` | Yes | `items[].index` values covered by the contract — one per domain sub-issue. Items not listed (e.g. `origin: "discovered"` refactors) are audited normally. |
+| `sequencing` | No | `{blocker, blocked, reason}` entries between covered items (by `index`). Emitted as `blocks` relations between the created children. |
+
+**`decompose-under-parent` semantics** — for every item whose `index` is in `child_indexes`:
+
+- MUST be created as a sub-issue of `hierarchy_contract.parent_issue`, in the parent's project: `action: "create"` with `hierarchy: {"action": "make_child", "parent": [hierarchy_contract.parent_issue]}`.
+- MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate/overlap analysis. If an existing issue (including `parent_issue` itself) already carries scope belonging to a covered item, that scope moves into the new domain child — record it via the child's `supersedes[]` (full coverage) or a `related` relation (partial overlap), never by updating the existing issue in place of the child create.
+- `parent_issue` is converted to a coordination-only parent by the producer (research-complete § 6.6) — it must not be treated as one domain's implementation leaf nor recommended as an `update`/`expand` target for covered-item scope.
 
 ## Building from Review Agent JSONs
 

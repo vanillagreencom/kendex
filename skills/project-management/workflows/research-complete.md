@@ -329,8 +329,9 @@ Count distinct domains across merged requirements from § 6.4. If 2+ domains, de
    - `research_issue`: `[ISSUE_ID]` (the research issue being completed)
    - `research_ref`: `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`
    - `decision_ref`: `[DECISION_ID]`
+   - `hierarchy_contract` (required when `parent_issue` is non-null): binding decomposition directive per schema § Hierarchy Contract — `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` values of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the blocking order from step 4. This makes the decomposition binding: the TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its leaf or spin it off standalone. Omit only when `parent_issue` is null (multiple blocked issues) — then `blocked_issues` hints apply.
    - Each `items[]` entry includes `labels[]` with the full validated issue-label set.
-7. **Include refactors**: Add agent-reported refactors as additional items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`. TPM routes to appropriate project (typically Tech Debt) via § 6.3.
+7. **Include refactors**: Add agent-reported refactors as additional items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`, and NOT listed in `hierarchy_contract.child_indexes`. TPM routes to appropriate project (typically Tech Debt) via § 6.3.
 8. **Write file**: `tmp/audit-research-YYYYMMDD-HHMMSS.json`
 9. **Run Workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.6`
 

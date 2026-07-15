@@ -16,7 +16,7 @@ Analyze issues for proper configuration: relations, agent labels, hierarchy, pro
 
 **ISSUE mode file schema**: Defined in `schemas/audit-issues-input.md` (this skill).
 
-File contains all context — read with Read tool. Optional fields for research-complete: `blocked_issues`, `research_ref`, `decision_ref`.
+File contains all context — read with Read tool. Optional fields for research-complete: `blocked_issues`, `research_ref`, `decision_ref`, `hierarchy_contract` (binding — § 7.0).
 
 ---
 
@@ -37,6 +37,7 @@ Parse arguments → set `MODE` (project | issues).
 - `RESEARCH_ISSUE` from `research_issue` field (optional, research-complete only)
 - `RESEARCH_REF` from `research_ref` field (optional, research-complete only)
 - `DECISION_REF` from `decision_ref` field (optional, research-complete only)
+- `HIERARCHY_CONTRACT` from `hierarchy_contract` field (optional, research-complete only — a binding directive, not a hint; enforced in § 7.0 and § 10.2)
 
 ### 1.2 Load Issue Label Policy
 
@@ -398,9 +399,23 @@ For each input issue, compare against ALL project definitions from 1.6:
 
 ## 7. Hierarchy Analysis
 
+### 7.0 Hierarchy Contract (Binding)
+
+**Skip if** input has no `hierarchy_contract`.
+
+`HIERARCHY_CONTRACT` is a directive, not a hint. For every item whose `index` is in `HIERARCHY_CONTRACT.child_indexes`:
+
+- Ordinary hierarchy inference (§§ 7.1-7.2) and duplicate/overlap action downgrades (§ 6.1) are BYPASSED for the item's action and placement. Still run § 6.1 for evidence — it populates `supersedes[]`/`related` — but it never changes the action.
+- The output MUST be `action: "create"` with `hierarchy: {"action": "make_child", "parent": [HIERARCHY_CONTRACT.parent_issue]}` and `project.recommended` = the contract parent's project.
+- The item MUST NOT resolve to `skip`, `expand`, `update`, `combine`, or `cancel`. If an existing issue (including the contract parent) already carries scope belonging to the item, move that scope into the new domain child: record `supersedes[]` on the created child (full coverage) or a `related` relation (partial overlap), and note the move in `reason` — never emit an update of the existing issue in place of the child create.
+- The contract parent becomes a coordination-only parent (the caller converts it per research-complete § 6.6) — never treat it as one domain's implementation leaf or recommend it as an `update`/`expand` target for covered-item scope.
+- Apply `HIERARCHY_CONTRACT.sequencing[]` as `blocks` relations between the corresponding created children (`add_relations.blocks` with `#N` batch references).
+
+Items NOT listed in `child_indexes` (e.g. `origin: "discovered"` refactors) are audited normally per §§ 6-7 and § 10.
+
 ### 7.1 Identify Candidates
 
-**From caller context** (hints, not directives):
+**From caller context** (hints, not directives — except `hierarchy_contract`, which is binding per § 7.0):
 - `parent_issue`: Issue being worked on — in-scope items become children
 - `blocked_issues`: Hierarchy hints (research-complete only) — consider if scope is strict subset
 
@@ -572,6 +587,8 @@ For each proposed issue, check actionability — ensure it has clear scope, test
 - All criteria pass → 10.2
 - Any criterion fails → `skip` with reason: `"Too vague — [missing criterion]"`
 
+**Hierarchy-contract items** (§ 7.0) are never `skip`: if actionability fails for a `child_indexes` item, keep `action: "create"` per the contract and flag the gap in `reason` for the caller to resolve.
+
 ### 10.2 Assign Actions
 
 For each input issue, assign action based on analysis:
@@ -586,6 +603,8 @@ For each input issue, assign action based on analysis:
 | `supersede` | Cancel existing, create new (scope changed) | issue to cancel |
 | `combine` | Absorb into existing issue | issue to absorb into |
 | `cancel` | Cancel — obsolete | null |
+
+**Hierarchy contract override (MUST)**: If the item's `index` is in `HIERARCHY_CONTRACT.child_indexes`, assign `create` with `hierarchy: {"action": "make_child", "parent": [HIERARCHY_CONTRACT.parent_issue]}` per § 7.0 and skip steps 1-6 below — a contract item never resolves to `skip`, `expand`, `update`, `combine`, or `cancel`, regardless of duplicate/overlap findings.
 
 **Action determination logic**:
 1. If actionability check failed (10.1) → `skip` (reason = vague description)
@@ -642,6 +661,7 @@ For each input issue, assign action based on analysis:
 
 - [ ] 10.1: Actionability validated for every proposed issue
 - [ ] 10.2: Action assigned to every input issue
+- [ ] 7.0/10.2: Every `hierarchy_contract.child_indexes` item has `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, and no contract item was downgraded to `skip`/`expand`/`update`/`combine`/`cancel`
 
 **If any check was skipped, go back and complete it now.**
 

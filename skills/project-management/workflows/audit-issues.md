@@ -19,6 +19,8 @@ Audit tracked issues and projects for relations, hierarchy, project placement, d
 
 **Hierarchy**: TPM determines final placement using `parent_issue` from file + per-item analysis.
 
+**Exception — hierarchy contract**: When the input file carries `hierarchy_contract` (research-complete decomposition; schema § Hierarchy Contract), placement for the covered items is fixed by the contract, not by TPM inference: every `child_indexes` item MUST come back as `action: create` with `hierarchy.action: make_child` under the contract parent, in the parent's project. § 4.2 enforces compliance before any presentation or execution.
+
 **Note**: Research issues should NEVER appear in `parent_issue`.
 
 ---
@@ -265,6 +267,10 @@ TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit
    - If inline JSON is present, ensure `tmp/` exists and write the inline JSON exactly to the resolved path.
    - If inline JSON is absent, use the resolved path only when it already exists and is readable.
    - Read the resulting file. If neither write nor readable-file fallback is possible, halt and request a TPM rerun with inline JSON.
+
+3. **Enforce hierarchy contract** (ISSUE mode only; skip when the input file has no `hierarchy_contract`):
+   - For every item whose `index` is in `hierarchy_contract.child_indexes`, verify the TPM output has `action: "create"`, `hierarchy.action: "make_child"`, and `hierarchy.parent` equal to `hierarchy_contract.parent_issue` (or `null`, which § 7.2 resolves to `parent_issue`), with the recommended project matching the contract parent's project.
+   - If any covered item was downgraded to `skip`/`expand`/`update`/`combine`/`cancel`, left with `hierarchy.action: none`, or parented elsewhere, the output is non-compliant: do NOT present or execute it. Halt and request a TPM rerun citing tpm-audit.md § 7.0 and listing the violating items.
 
 ---
 
@@ -554,7 +560,7 @@ Process `create` actions first -- use created IDs to resolve `#N` references in 
 
 | Action | Reference |
 |--------|-----------|
-| create | See **Create template** below -- use `--parent` per `hierarchy` field. Child must be in same project as parent; if not, create standalone with `related`. If `hierarchy.parent` is null and action is `make_child`, resolve to `parent_issue` from audit input file. |
+| create | See **Create template** below -- use `--parent` per `hierarchy` field. Child must be in same project as parent; if not, create standalone with `related`. If `hierarchy.parent` is null and action is `make_child`, resolve to `parent_issue` from audit input file. For `hierarchy_contract` items (§ 4.2 step 3) the standalone fallback is not permitted: create the child in the contract parent's project -- never downgrade to standalone. |
 | skip | No action required |
 | valid | No action required (relation corrections via add/remove_relations) |
 | expand, update, project move | workflow-actions § Scope Changes |
