@@ -54,10 +54,13 @@ assert_contains "$row" 'numeric' "post-reply row distinguishes numeric comment I
 # 3. The row states that --pr is required for numeric comment IDs.
 assert_contains "$row" 'REQUIRED for numeric' "post-reply row marks --pr REQUIRED for numeric IDs"
 
-# 4. The blanket auto-detect note carries the post-reply exception.
-autodetect=$(grep -A 2 'auto-detect from the current branch' "$SKILL_MD" || true)
-assert_contains "$autodetect" 'post-reply' "auto-detect note names the post-reply exception"
-assert_contains "$autodetect" '--pr' "auto-detect exception mentions --pr"
+# 4. The blanket auto-detect note carries the post-reply exception. Match the
+# exception sentence itself rather than a fixed line window after the blanket
+# note, so reflowing either paragraph cannot silently break the assertion.
+exception=$(grep -E 'Exception.*post-reply|post-reply.*never auto-detects' "$SKILL_MD" || true)
+assert_contains "$exception" 'post-reply' "auto-detect note names the post-reply exception"
+autodetect_block=$(sed -n '/auto-detect from the current branch/,/^$/p' "$SKILL_MD")
+assert_contains "$autodetect_block" '--pr' "auto-detect exception mentions --pr"
 
 # 5. The script's own --help still declares the same requirement, so the
 #    SKILL.md wording above stays pinned to a real contract.
