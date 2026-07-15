@@ -124,8 +124,12 @@ hierarchy_chain_contains() {
 # share no ancestor). Callers must have excluded ancestor/descendant pairs.
 hoist_to_lca_child() {
 	local chain="$1" other="$2"
+	# Bash 3.2 (macOS system bash) lacks the array-read builtin.
 	local -a entries=()
-	mapfile -t entries <<<"$chain"
+	local line
+	while IFS= read -r line; do
+		entries+=("$line")
+	done <<<"$chain"
 
 	local i parent
 	for ((i = 0; i < ${#entries[@]}; i++)); do
@@ -163,11 +167,16 @@ blocking_level_violation_message() {
 		return 0
 	fi
 
-	local -a hoist1=() hoist2=()
-	mapfile -t hoist1 < <(hoist_to_lca_child "$chain1" "$chain2")
-	mapfile -t hoist2 < <(hoist_to_lca_child "$chain2" "$chain1")
-	local cand1="${hoist1[0]:-}" cand1_parent="${hoist1[1]:-}"
-	local cand2="${hoist2[0]:-}" cand2_parent="${hoist2[1]:-}"
+	# hoist_to_lca_child prints "candidate\nparent"; command substitution
+	# strips the trailing newline of an empty parent line (Bash 3.2 compatible).
+	local hoist1 hoist2
+	hoist1=$(hoist_to_lca_child "$chain1" "$chain2")
+	hoist2=$(hoist_to_lca_child "$chain2" "$chain1")
+	local cand1 cand1_parent cand2 cand2_parent
+	cand1=$(sed -n '1p' <<<"$hoist1")
+	cand1_parent=$(sed -n '2p' <<<"$hoist1")
+	cand2=$(sed -n '1p' <<<"$hoist2")
+	cand2_parent=$(sed -n '2p' <<<"$hoist2")
 
 	if [[ -n "$cand1" && -n "$cand2" && "$cand1" != "$cand2" ]] \
 		&& blocking_level_ok "$cand1_parent" "$cand2_parent"; then

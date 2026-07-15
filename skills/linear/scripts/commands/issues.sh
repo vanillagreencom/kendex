@@ -1725,6 +1725,65 @@ list_relations() {
     esac
 }
 
+# Parent levels selected per ancestor query. A chain that comes back with
+# exactly this many parents may be cut off by the query depth rather than
+# rooted; extend_ancestor_chain keeps fetching until a short chunk proves a
+# true root (null parent).
+ANCESTOR_FETCH_DEPTH=5
+ANCESTOR_FETCH_MAX_CHUNKS=20
+
+# build_parent_selection DEPTH — nested GraphQL parent selection, DEPTH levels
+build_parent_selection() {
+    local depth="$1" selection="" i
+    for ((i = 0; i < depth; i++)); do
+        selection="parent { identifier $selection }"
+    done
+    printf '%s' "$selection"
+}
+
+# extend_ancestor_chain CHAIN
+# Complete a possibly-truncated ancestor chain (newline-separated identifiers,
+# self first). A chain shorter than ANCESTOR_FETCH_DEPTH+1 entries already
+# ends at a true root; a full-length chain may instead be cut off by the
+# query depth, so follow up with chunked ancestor queries for the deepest
+# entry until a chunk comes back short. Prints the completed chain. Fails
+# (error on stderr) when the hierarchy exceeds the chunk bound or a lookup
+# misbehaves — callers must treat failure as "do not derive remediation",
+# never as "chain is complete".
+extend_ancestor_chain() {
+    local chain="$1"
+    local full=$((ANCESTOR_FETCH_DEPTH + 1))
+    local chunks=0
+    local segment="$chain"
+    local deepest chunk_result rest
+
+    while [ "$(printf '%s\n' "$segment" | grep -c '')" -ge "$full" ]; do
+        chunks=$((chunks + 1))
+        if [ "$chunks" -gt "$ANCESTOR_FETCH_MAX_CHUNKS" ]; then
+            echo "{\"error\": \"Hierarchy too deep to validate: no root issue within $((ANCESTOR_FETCH_DEPTH + ANCESTOR_FETCH_MAX_CHUNKS * ANCESTOR_FETCH_DEPTH)) ancestor levels. Refusing to validate the blocking relation against a truncated ancestor chain.\"}" >&2
+            return 1
+        fi
+        deepest=$(printf '%s\n' "$chain" | tail -n 1)
+        local chunk_query="
+        query AncestorChunk(\$id: String!) {
+            issue(id: \$id) { identifier $(build_parent_selection "$ANCESTOR_FETCH_DEPTH") }
+        }"
+        chunk_result=$(graphql_query "$chunk_query" "{\"id\": \"$deepest\"}") || return 1
+        segment=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .identifier')
+        if [ "$(printf '%s\n' "$segment" | sed -n '1p')" != "$deepest" ]; then
+            echo "{\"error\": \"Ancestor lookup for $deepest returned an unexpected issue; refusing to validate the blocking relation against an incomplete ancestor chain.\"}" >&2
+            return 1
+        fi
+        rest=$(printf '%s\n' "$segment" | tail -n +2)
+        if [ -n "$rest" ]; then
+            chain="$chain
+$rest"
+        fi
+    done
+
+    printf '%s\n' "$chain"
+}
+
 add_relation() {
     local issue_ref="$1"
     shift
@@ -1814,13 +1873,15 @@ add_relation() {
     # Validation for blocking relations: same-project + blocking-level rule
     # (blocking relations connect peers of one bundle — see issue-validation.sh)
     if [ "$relation_type" = "blocks" ]; then
-        # Parent chain fetched 5 levels deep so the remediation can locate the
-        # lowest common ancestor of nested hierarchies.
-        local validation_query='
-        query ValidateBlocking($id1: String!, $id2: String!) {
-            issue1: issue(id: $id1) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
-            issue2: issue(id: $id2) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
-        }'
+        # The parent chain is fetched ANCESTOR_FETCH_DEPTH levels per query and
+        # extended chunk-by-chunk to a proven root when remediation needs it.
+        local ancestor_selection
+        ancestor_selection=$(build_parent_selection "$ANCESTOR_FETCH_DEPTH")
+        local validation_query="
+        query ValidateBlocking(\$id1: String!, \$id2: String!) {
+            issue1: issue(id: \$id1) { identifier project { id name } $ancestor_selection }
+            issue2: issue(id: \$id2) { identifier project { id name } $ancestor_selection }
+        }"
         local validation_result
         validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
 
@@ -1850,9 +1911,17 @@ add_relation() {
         parent2_id=$(sed -n '2p' <<<"$chain2")
 
         if ! blocking_level_ok "$parent1_id" "$parent2_id"; then
+            # The accept/reject decision above only needs direct parents, which
+            # the initial fetch always covers. Remediation (ancestor detection,
+            # LCA hoisting) needs COMPLETE chains: extend both to a proven root
+            # first, and fail closed — reject without a derived prescription —
+            # when a full chain cannot be established.
             local violation_message
-            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
-            echo "{\"error\": \"$violation_message\"}" >&2
+            if chain1=$(extend_ancestor_chain "$chain1") \
+                && chain2=$(extend_ancestor_chain "$chain2"); then
+                violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
+                echo "{\"error\": \"$violation_message\"}" >&2
+            fi
             return 1
         fi
     fi
