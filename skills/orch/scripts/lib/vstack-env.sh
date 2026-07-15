@@ -13,6 +13,20 @@
 #   WORKTREE_BASE_DIR = "../trees"
 #   ORCH_STATE_DIR = "tmp"
 
+# Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
+# bash) has no associative arrays, so the snapshot is a pair of parallel
+# indexed arrays scanned linearly. Populated only by vstack_load_project_env;
+# the guarded expansion below keeps standalone vstack_load_settings_file calls
+# working when the snapshot was never taken (empty-array expansion is an
+# unbound variable under Bash 3.2 with set -u).
+vstack_parent_env_has() {
+  local name="$1" snapshot_name
+  for snapshot_name in ${_VSTACK_PARENT_ENV_NAMES[@]+"${_VSTACK_PARENT_ENV_NAMES[@]}"}; do
+    [[ "$snapshot_name" == "$name" ]] && return 0
+  done
+  return 1
+}
+
 vstack_source_env_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
@@ -72,12 +86,10 @@ vstack_load_settings_file() {
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
     value="$(vstack_unquote_value "$value")"
 
-    # Parent-process values win over project [env] tables. The snapshot array is
-    # only present when called via vstack_load_project_env; `declare -p`
-    # short-circuits (without erroring under set -u) when it is undeclared, e.g.
-    # a standalone call, so the assoc-array key subscript is only evaluated once
-    # the array is known to exist.
-    if declare -p _VSTACK_PARENT_ENV >/dev/null 2>&1 && [[ -v "_VSTACK_PARENT_ENV[$key]" ]]; then
+    # Parent-process values win over project [env] tables. The snapshot is
+    # only populated when called via vstack_load_project_env; standalone calls
+    # see an empty snapshot and load every key.
+    if vstack_parent_env_has "$key"; then
       continue
     fi
 
@@ -95,11 +107,14 @@ vstack_load_project_env() {
   # over project files). compgen -e lists only exported names (the environment),
   # excluding this function's locals, and is captured before any file loads so
   # it holds parent env only — not values set by .env below. The stored value is
-  # used to re-assert parent precedence after loading.
-  declare -gA _VSTACK_PARENT_ENV=()
+  # used to re-assert parent precedence after loading. Assigning without
+  # `local` makes the snapshot arrays global from inside this function.
+  _VSTACK_PARENT_ENV_NAMES=()
+  _VSTACK_PARENT_ENV_VALUES=()
   local _vstack_name
   while IFS= read -r _vstack_name; do
-    _VSTACK_PARENT_ENV["$_vstack_name"]="${!_vstack_name-}"
+    _VSTACK_PARENT_ENV_NAMES+=("$_vstack_name")
+    _VSTACK_PARENT_ENV_VALUES+=("${!_vstack_name-}")
   done < <(compgen -e)
 
   # Load order (lowest to highest among project files): .env, then settings,
@@ -114,11 +129,13 @@ vstack_load_project_env() {
   # the .env < settings < .env.local order is preserved for non-parent keys.
   # Only changed keys are rewritten; a readonly var can never differ from its
   # snapshot, so this never attempts to assign one.
-  for _vstack_name in "${!_VSTACK_PARENT_ENV[@]}"; do
-    if [[ "${!_vstack_name-}" != "${_VSTACK_PARENT_ENV[$_vstack_name]}" ]]; then
-      export "$_vstack_name=${_VSTACK_PARENT_ENV[$_vstack_name]}"
+  local _vstack_i
+  for ((_vstack_i = 0; _vstack_i < ${#_VSTACK_PARENT_ENV_NAMES[@]}; _vstack_i++)); do
+    _vstack_name="${_VSTACK_PARENT_ENV_NAMES[$_vstack_i]}"
+    if [[ "${!_vstack_name-}" != "${_VSTACK_PARENT_ENV_VALUES[$_vstack_i]}" ]]; then
+      export "$_vstack_name=${_VSTACK_PARENT_ENV_VALUES[$_vstack_i]}"
     fi
   done
 
-  unset _VSTACK_PARENT_ENV
+  unset _VSTACK_PARENT_ENV_NAMES _VSTACK_PARENT_ENV_VALUES
 }
