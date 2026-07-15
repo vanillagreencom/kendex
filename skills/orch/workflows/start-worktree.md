@@ -96,7 +96,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 2. **Skip if** `TRACKER=github` (GitHub issues close via PR merge keywords). → § 5.4
 
-3. **Move to review**. After PR submission, bot/CI review, fix reconciliation, and final comments are complete, move the managed Linear issue into review ownership:
+3. **Move to review**. After PR submission, CI, comment triage, fix reconciliation, and final comments are complete, move the managed Linear issue into review ownership:
    ```bash
    .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
    ```
@@ -135,7 +135,8 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
    | PR comment fixes | [PR_FIXES] |
    | PR comment issues | [PR_ISSUES] |
    | CI | ✅ passing |
-   | Bot | ✅ approved |
+   | Approval | ✅ approved / ⏳ pending / forced |
+   | Unresolved threads | 0 |
 
    ### Issues Created
 
@@ -160,7 +161,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 ### 5.6 Offer Merge
 
-**Skip if** no PR created (§ 4) or CI not passing.
+**Skip if** no PR created (§ 4), CI not passing, or the § 4 merge gates report `MERGE_READY = false` (unresolved review comments or no approval verdict).
 
 → Ask user: `orch merge-pr [PR_NUMBER]` | `Skip`
 

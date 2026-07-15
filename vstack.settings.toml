@@ -5,7 +5,6 @@
 BOT_EMAIL = ""
 BOT_NAME = ""
 BOT_REMOTE_NAME = ""
-BOT_REVIEWERS = ""
 DECISIONS_DIR = "docs/decisions"
 GH_BOT_USERNAME = ""
 GH_ISSUE_PATTERN = "cc-[0-9]+"

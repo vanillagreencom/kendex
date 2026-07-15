@@ -34,18 +34,9 @@ On any `gh` or `.agents/skills/github/scripts/github.sh` failure: halt, report e
 
 ## 1. Fetch & Parse PR Data
 
-### 1.1 Wait for All Bot Reviews
+### 1.1 Async Bot Review Policy
 
-Multiple bots may review on different timelines. Wait for all configured or detected reviewers before triaging.
-
-```bash
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json
-```
-Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
-
-This is the preferred harness-safe path. `bot-review-wait` automatically honors configured `BOT_REVIEWERS` and `BOT_SKIPPED_REVIEWERS` from the environment or project settings, and auto-detects reviewers when no explicit configuration exists. Use literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` or `--skip "[BOT_LOGIN]"` only for intentional ad-hoc overrides.
-
-**Polling behavior**: per reviewer, status is `pending|approved|changes|skipped|unknown`. Claude-style comments parse `✅ Approved` / `Changes requested`; Codex-style signals use 👀 = pending, 👍 = approved, inline threads = changes. Returns `status=complete` only when no reviewer is pending. If `status=timeout`, ask the user `Wait` | `Skip pending bot` (configure via `BOT_SKIPPED_REVIEWERS`) | `Proceed without`. Late arrivals are caught in § 6.3.
+Bot reviews are asynchronous. Triage what exists on the PR **right now** — never block triage on a bot reaching terminal status first. Bot prose is never parsed as a gate: emoji reactions, sticky comments, and checklist text carry no gating weight. Comments that arrive after this pass are caught by a later triage pass or by the caller's merge gates (`submit-pr.md` § 6.1: zero unresolved comments plus a GitHub-native approval verdict, polled via `approval-wait`).
 
 ### 1.2 Fetch Actionable Data
 
@@ -83,13 +74,12 @@ Output: `threads` (inline) + `comments` (PR-level).
 
    **Keep**: All reviewer comments (human + bot) with actionable content + unresolved, current threads.
 
-3. **Collect bot review comments** — from ALL review bots (not just one):
+3. **Collect bot review comments** — from ALL review bots that have posted so far (not just one):
    ```bash
    .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
    ```
-   Get the review-summary comment from each bot reviewer by running the command once per bot with the literal bot login. `--review-summary` picks, in order: "View job" sticky, review-section comment, then the bot's earliest comment (Codex-style submission post). Do not use a shell `for` loop or `IFS` split for required comment collection in Codex.
-   If no bot reviews found AND no bot reactions on the PR body: ask user `Wait` | `Skip triage`.
-   (Reaction-only bots like Codex may have no summary comment yet — check `.reactions` from `pr-data` to confirm presence.)
+   Derive bot logins from the authors present in `PR_DATA`: thread/comment authors ending in `[bot]`, plus reaction-only bots via `.reactions`. Get the review-summary comment from each such bot by running the command once per bot with the literal bot login. `--review-summary` picks, in order: "View job" sticky, review-section comment, then the bot's earliest comment (Codex-style submission post). Do not use a shell `for` loop or `IFS` split for required comment collection in Codex.
+   If no bot has posted anything yet, that is normal in the async model — continue with the human and inline comments that exist; do not wait for bots.
 
 ### 1.4 Extract Comment Data
 
@@ -379,9 +369,9 @@ Issue suggestions: [N] items → § 6.2 audit
 2. **Write file**: `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`
 3. **Invoke workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`
 
-### 6.3 Wait for New Comments & Re-Triage
+### 6.3 Check for New Comments & Re-Triage
 
-After fixes are pushed, bots re-review. Wait for new comments, then loop.
+After fixes are pushed, do **not** wait for bots to re-review — re-review rounds are asynchronous, and late findings are caught by the merge gates (zero unresolved comments plus the approval verdict poll). Check once for comments that arrived while fixes were being applied, then loop or exit.
 
 1. **Update iteration count**:
    ```bash
@@ -395,12 +385,7 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
    Use the output as `ITERATIONS`.
    **If** `ITERATIONS >= 5` → § 7.
 
-3. **Wait 5 minutes** for bot re-reviews:
-   ```bash
-   sleep 300
-   ```
-
-4. **Check for new comments**:
+3. **Check for new comments**:
    ```bash
    # Count unresolved threads + new PR-level comments since last triage
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
@@ -408,21 +393,21 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
    ```
    Use the workflow-state output as `LAST_TS_FROM_PREVIOUS_COMMAND`. Read `.count` from the threads JSON output as `NEW_THREADS_FROM_PREVIOUS_COMMAND`.
 
-5. **Route**:
+4. **Route**:
 
    | `NEW_THREADS_FROM_PREVIOUS_COMMAND` | Action |
    |---------------|--------|
    | `0` | → § 7 |
    | `> 0` | Update baseline, loop to § 1 |
 
-6. **Update baseline** (before looping):
+5. **Update baseline** (before looping):
    ```bash
    date -u +%Y-%m-%dT%H:%M:%SZ
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_ts":"[NOW_FROM_PREVIOUS_COMMAND]","last_threads":[NEW_THREADS_FROM_PREVIOUS_COMMAND]}'
    ```
    Use the date output as `NOW_FROM_PREVIOUS_COMMAND`.
 
-7. **Loop**: Return to § 1.2 (skip § 1.1 bot-wait on re-triage — comments already arrived).
+6. **Loop**: Return to § 1.2 (§ 1.1 is policy only — the comments to triage already arrived).
 
 ---
 

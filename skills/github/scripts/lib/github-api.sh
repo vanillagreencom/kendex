@@ -379,7 +379,7 @@ get_formal_review_verdict() {
 # Comment bodies that look like bot review/status output rather than generic
 # automation comments (for example Linear linkbacks). Keep this broad enough for
 # Claude sticky comments, but narrow enough that unrelated bot comments do not
-# become reviewers and block bot-review-wait.
+# become reviewers and block review-status consumers.
 _review_signal_comment_regex() {
     printf '%s' 'Claude finished|View job|### PR Review|### Review Summary|## Review|### Inline|### Recommendation|Recommendation:|Verdict:|Status:'
 }
@@ -743,7 +743,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
 
 # Auto-detect bot reviewers that have emitted review-specific signals. Generic
 # automation comments (Linear linkbacks, release notes, etc.) are intentionally
-# excluded so they do not block bot-review-wait as unknown reviewers.
+# excluded so they do not surface as unknown reviewers in review-status output.
 detect_bot_reviewers_from_inputs() {
     local reviews_json="${1:-[]}"
     local comments_json="${2:-[]}"

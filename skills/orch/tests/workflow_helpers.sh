@@ -127,6 +127,32 @@ for workflow in "$submit_workflow" "$comments_workflow"; do
   assert_file_not_contains "$workflow" 'printenv BOT_REVIEWERS' "$workflow_name avoids optional reviewer probing"
 done
 
+# vstack#538 — bot reviews are async and bot-review-wait is RETIRED: no
+# workflow may reference it, and bot-SPECIFIC prose (emoji reactions, sticky
+# comments, checklist text) is never parsed as a gate. Local second-opinion
+# review pre-PR drains bot-class findings at local speed; merge gates are
+# internal review + CI green + zero unresolved comments + a GitHub-native
+# approval verdict (reviewDecision / latestReviews) polled by approval-wait,
+# with a 15-minute force-merge prompt when no verdict arrives.
+for workflow in "$REPO_ROOT"/skills/orch/workflows/*.md; do
+  workflow_name="$(basename "$workflow")"
+  assert_file_not_contains "$workflow" 'bot-review-wait' "$workflow_name does not reference the retired bot-review-wait"
+done
+assert_file_not_contains "$orch_skill" 'bot-review-wait' "orch SKILL.md scripts docs drop the retired bot-review-wait"
+assert_file_not_contains "$submit_workflow" 'defer-ci' "submit-pr no longer queues bot review via the defer-ci label"
+assert_file_not_contains "$submit_workflow" 'Wait for Bot Review' "submit-pr drops the blocking bot review section"
+assert_file_not_contains "$submit_workflow" 'checklist_timeout' "submit-pr drops bot checklist timeout routing"
+assert_file_contains "$submit_workflow" '.agents/skills/second-opinion/scripts/second-opinion review' "submit-pr runs the local pre-PR review via second-opinion"
+assert_file_contains "$submit_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json' "submit-pr polls the approval gate via approval-wait"
+assert_file_contains "$submit_workflow" 'reviewDecision == "APPROVED"' "submit-pr approval gate reads the GitHub-native reviewDecision"
+assert_file_contains "$submit_workflow" 'latest review is APPROVED' "submit-pr approval gate documents the latestReviews fallback"
+assert_file_contains "$submit_workflow" 'No approval verdict' "submit-pr prompts the user when no approval verdict arrives"
+assert_file_contains "$submit_workflow" 'Force merge' "submit-pr offers an explicit force-merge override"
+assert_file_contains "$submit_workflow" 'pr-threads [PR_NUMBER] --unresolved' "submit-pr merge gate checks unresolved threads deterministically"
+assert_file_contains "$submit_workflow" '`status=complete`, `verdict=pass`' "submit-pr merge gate requires green CI"
+assert_file_not_contains "$comments_workflow" 'Wait for All Bot Reviews' "review-pr-comments drops the bot completion pre-check"
+assert_file_not_contains "$comments_workflow" 'sleep 300' "review-pr-comments does not sleep-wait for bot re-review"
+
 assert_file_not_contains "$merge_workflow" "fetch --all --prune" "merge-pr avoids all-remote fetch during sync"
 assert_file_not_contains "$merge_workflow" "git-https-auth -C [MAIN_REPO_ROOT] pull" "merge-pr avoids pull during post-merge sync"
 assert_file_not_contains "$merge_workflow" "git -C [MAIN_REPO_ROOT] pull" "merge-pr avoids plain git pull during post-merge sync"
@@ -140,6 +166,7 @@ assert_file_contains "$merge_workflow" 'git-https-auth -C [MAIN_REPO_ROOT] fetch
 assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards to quoted fetched origin base branch with plain git"
 assert_file_not_contains "$merge_workflow" 'branch -D "$PR_BRANCH"' "merge-pr § 5a no longer force-deletes the PR branch unconditionally"
 assert_file_contains "$merge_workflow" 'branch refs/heads/[PR_BRANCH]' "merge-pr § 5a guards branch delete against worktree checkout"
+assert_file_contains "$merge_workflow" '`not_approved` — a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate, not advice"
 
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"

@@ -85,6 +85,7 @@ git commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
 | `pr-review` | "Address PR review - [brief description]" |
 | `qa-review` | "Address QA review - [brief description]" |
 | `review` | "Address review - [brief description]" |
+| `local-review` | "Address local pre-PR review - [brief description]" |
 | `suggestions` | "Address review suggestions" |
 
 If validation failures exist, append: `[validate: FAILING_CHECK]`

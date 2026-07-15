@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests for bot_review_status_compute (the multi-bot review-signal
-# abstraction) and the bot-review-wait aggregation logic that consumes it.
+# abstraction) and the multi-reviewer verdict aggregation built on it (used
+# by pr-review-status consumers).
 #
 # All tests are fixture-driven — they call bot_review_status_compute with
 # preloaded JSON inputs and assert on the returned status/signals. No `gh`
@@ -130,12 +131,12 @@ out=$(bot_review_status_compute \
     "$(fx empty.json)")
 assert_eq "$(echo "$out" | jq -r .status)" "unknown" "7 status=unknown"
 
-# --- Aggregation tests (mirrors bot-review-wait's verdict logic) ---
+# --- Aggregation tests (multi-reviewer verdict over compute entries) ---
 echo
 echo "=== aggregation (verdict + completion) ==="
 
-# Inline copy of bot-review-wait's aggregate_verdict so this script does not
-# need to source the wait wrapper (which would also pull in .env loading).
+# Reference aggregate_verdict implementation kept inline so this script does not
+# need to source any wrapper (which would also pull in .env loading).
 agg() {
     jq -r '
         [.[] | select(.status != "skipped")] as $effective |

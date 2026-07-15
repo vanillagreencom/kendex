@@ -1,6 +1,6 @@
 # Submit PR Workflow
 
-Push changes, create/update PR, handle bot review, triage PR comments, and trigger CI.
+Run a local pre-PR review, push changes, create/update the PR with CI running immediately, triage review comments asynchronously, and verify merge gates.
 
 ## Inputs
 
@@ -40,36 +40,90 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
 
 ---
 
-## 1. Push and Submit PR
+## 1. Preflight and Local Review
 
-1. **Preflight committed work**:
+### 1.1 Preflight Committed Work
+
+```bash
+.agents/skills/orch/scripts/resolve-base-branch "[WORKTREE_PATH]"
+.agents/skills/orch/scripts/git-context branch "[WORKTREE_PATH]"
+git -C "[WORKTREE_PATH]" status --porcelain
+git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
+```
+
+Stop before pushing if any condition is true:
+- The current branch output is empty (detached HEAD).
+- The current branch output equals the base branch output.
+- `git status --porcelain` is not empty.
+- The committed diff against the base branch output is empty.
+
+In managed lifecycle, return to the caller with the failed preflight so the dev agent can normalize the branch and commit or clean the worktree. Do not create a PR from dirty or detached state.
+
+### 1.2 Local Pre-PR Review
+
+Bot reviews are **asynchronous** in this workflow: GitHub review bots post on their own timeline and never block submission. Drain what a bot would surface *before* the PR exists — review the branch diff locally via the second-opinion skill and fix findings at local speed, with no bot round-trip latency or provider quota coupling.
+
+**Skip if** any of:
+- `lifecycle` is `"managed"` — the caller's review cycle (`review-pr.md` § 2.1-2.2) already ran the external second-opinion review of this branch diff.
+- A PR number argument was provided — the PR already exists; arrived comments are triaged in § 3.
+- `.agents/skills/second-opinion/scripts/second-opinion` does not exist (skill not installed).
+
+1. **Check pass budget** (max 2 local review passes per submission):
    ```bash
-   .agents/skills/orch/scripts/resolve-base-branch "[WORKTREE_PATH]"
-   .agents/skills/orch/scripts/git-context branch "[WORKTREE_PATH]"
-   git -C "[WORKTREE_PATH]" status --porcelain
-   git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_local_review.passes // 0'
+   ```
+   Use the output as `LOCAL_PASSES`. If `LOCAL_PASSES >= 2` → § 2.
+
+2. **Run the local review** (advisory — on script failure, report and continue to § 2):
+   ```bash
+   mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp compact
+   # Use [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json as LOCAL_OUTPUT.
+   .agents/skills/second-opinion/scripts/second-opinion review \
+     --cwd [WORKTREE_PATH] \
+     --output "$LOCAL_OUTPUT"
    ```
 
-   Stop before pushing if any condition is true:
-   - The current branch output is empty (detached HEAD).
-   - The current branch output equals the base branch output.
-   - `git status --porcelain` is not empty.
-   - The committed diff against the base branch output is empty.
+3. **Validate the artifact**:
+   ```bash
+   .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT"
+   ```
+   Count the pass:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_local_review.passes
+   ```
+   If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker.
 
-   In managed lifecycle, return to the caller with the failed preflight so the dev agent can normalize the branch and commit or clean the worktree. Do not create a PR from dirty or detached state.
+4. **Route findings** from the JSON (`../../reviewer/schemas/review-finding.md` schema):
+   - No `blockers[]` and no `suggestions[]` with `category: "fix"` → § 2 (diff drained).
+   - `blockers[]` and `suggestions[]` with `category: "fix"` → delegate now:
 
-2. **Push branch**:
+     **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 step 5` with context:
+     - `worktree`: [WORKTREE_PATH]
+     - `lifecycle`: `"managed"`
+     - `issue_id`: [ISSUE_ID]
+     - `items`: formatted blockers + fix-category suggestions
+     - `source`: `local-review`
+   - `suggestions[]` with `category: "issue"` → build the audit-input file and invoke `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 1.2 step 5` (same path as `review-pr-comments.md` § 6.2). Include created issue IDs in the PR body (§ 2 step 3).
+
+5. **Re-verify after fixes**: if dev-fix applied commits, return to step 1 for one confirming pass over the updated diff. If nothing was applied, → § 2.
+
+---
+
+## 2. Push and Submit PR
+
+1. **Push branch**:
    ```bash
    .agents/skills/worktree/scripts/worktree push "[WORKTREE_PATH]" --set-upstream
    ```
 
-3. **Check for existing PR**:
+2. **Check for existing PR**:
    ```bash
    .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state
    ```
-   Use the JSON output as `PR_VIEW`. If `status` is `no_pr`, create a new PR in step 5. For auth, token, timeout, or unparseable errors, stop and report the JSON error.
+   Use the JSON output as `PR_VIEW`. If `status` is `no_pr`, create a new PR in step 4. For auth, token, timeout, or unparseable errors, stop and report the JSON error.
 
-4. **Build PR body** from current workflow state using the template below (omit empty sections).
+3. **Build PR body** from current workflow state using the template below (omit empty sections).
 
    **PR body MUST be written to a file** — inline bodies with backticks or fenced code blocks corrupt under shell command substitution. Prefer your harness's file-write tool:
 
@@ -105,12 +159,12 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
    ```
 
    - **Completed Issues**: Use `Closes` keyword for issue tracker linkage. Indent sub-issues.
-   - **Created Issues**: Include if issues created during review.
+   - **Created Issues**: Include if issues created during local review or comment triage.
    - **QA Metrics**: Include if QA agents ran. Format is project-configurable based on which QA agent types are active.
 
-5. **Create or update PR**:
+4. **Create or update PR**. CI runs immediately from the moment the PR exists — never defer, queue, or gate it behind bot review activity.
 
-   **No existing PR** → create with `defer-ci` label. Always pass the body via `--body-file`:
+   **No existing PR** → create. Always pass the body via `--body-file`:
    ```bash
    # Linear
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
@@ -121,75 +175,30 @@ Use the first output as `ISSUE_ID`. For no-arg standalone flow, prefer the curre
 
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create \
      --title "[PREFIX]([ISSUE_ID]): $ISSUE_TITLE" \
-     --body-file "$BODY_FILE" \
-     --label defer-ci
+     --body-file "$BODY_FILE"
    ```
 
-   **Existing PR** (`$PR_NUM` set) → update body and ensure label:
+   **Existing PR** (`$PR_NUM` set) → update body:
    ```bash
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body "$PR_NUM" --body-file "$BODY_FILE"
-   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" label-add "$PR_NUM" defer-ci --reason "queue for bot review before CI"
    ```
-   If either command fails because the PR no longer exists or the label is already present, report the failure and continue only when the state is understood.
+   If the command fails because the PR no longer exists, report the failure and continue only when the state is understood.
 
 ---
 
-## 2. Wait for Bot Review
+## 3. Async Comment Triage
 
-Wait for bot review to complete (sticky comment with verdict). CI is deferred via label.
+Bot reviews are asynchronous: review bots may post minutes or hours after the PR opens. **Bot prose is never a gate signal** — emoji reactions, sticky comments, and checklist text are never parsed for gating. Triage whatever review comments exist right now and move on; the merge gates (§ 6.1) later require every comment replied to and resolved plus a GitHub-native approval verdict, and findings that arrive after merge get an immediate follow-up fix or an explicit tracking issue. Every bot comment still gets a reply and resolution — the hygiene standard is unchanged.
 
-```bash
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 15 600 --json
-```
-Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
+### 3.1 Opportunistic Triage
 
-This is the preferred harness-safe path. `bot-review-wait` automatically honors configured `BOT_REVIEWERS` and `BOT_SKIPPED_REVIEWERS` from the environment or project settings, and auto-detects reviewers when no explicit configuration exists. Max wait 600s. Use literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` or `--skip "[BOT_LOGIN]"` only for intentional ad-hoc overrides. Understands Claude-style (formal review + sticky verdict comment) and Codex-style (reactions + inline threads) signaling. Unrelated automation comments do not block. `status=complete` only when no reviewer is pending. If sticky prose is stale but GitHub reports `reviewDecision=APPROVED`, any configured `BOT_CHECK_NAME` has passed, and no unresolved review threads remain, `bot-review-wait` can return approved with `pr_review_decision:approved` and `pr_threads:clear` signals without waiting on the stale checklist; Codex-style approval still gets a short settle/re-check window for late inline threads.
-
-**Route result**:
-
-| `status` | `verdict` | Action |
-|----------|-----------|--------|
-| `complete` | `approved` or `changes` | → § 3 |
-| `timeout` | `approved` or `changes` | → § 3 (terminal verdict, safe) |
-| `timeout` | `pending` | Show `pending_reviewers`; extended poll below, then ask user `Wait` \| `Skip pending bot` \| `Abort` |
-| `checklist_timeout` | `approved` or `changes` | Ask user (see below) |
-| `no_reviewers` | `pending` | No bot signal at all — ask user `Wait` \| `Proceed without bot review` |
-
-**`checklist_timeout` with terminal verdict** — the bot submitted its review but is still posting inline threads. Prompt the user:
-
-> Ask user: "Bot review verdict is **[BOT_VERDICT]** but it is still posting inline threads (checklist items unchecked). Options:"
-> - **Wait 5 min** — poll again for up to 300s, then re-route
-> - **Proceed** — skip remaining threads and move to comment triage now (may miss late threads)
-
-```bash
-# "Wait 5 min" path: extend checklist wait
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json
-```
-Use the returned JSON status and pending reviewer fields to re-route. If it still reports checklist timeout or pending reviewers, ask the user `Wait` | `Skip pending bot` | `Abort`; otherwise continue to § 3.
-
-**Extended poll** (timeout + pending only):
-```bash
-.agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 300 --json
-# Proceed to § 3 if complete/terminal; otherwise ask with pending reviewers.
-```
-If the user chooses to skip a pending bot, run a second explicit command with `--skip "[BOT_LOGIN]"`. Use literal `--reviewers "[COMMA_SEPARATED_REVIEWERS]"` only for an intentional ad-hoc override; normal configured reviewers are already honored by the simple command.
-Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
-
----
-
-## 3. Comment Triage
-
-### 3.1 Initial Triage
-
-1. **Bot completion pre-check** — ensure all configured/detected bot reviewers have terminal status before triaging:
+1. **Check what has already arrived**:
    ```bash
-   .agents/skills/orch/scripts/bot-review-wait [PR_NUMBER] 30 180 --json
-   # Proceed if complete/terminal; if still pending, include PENDING_REVIEWERS in triage notes.
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
    ```
-   Configured reviewers and skipped reviewers from environment/project settings are already honored. Use literal `--reviewers` / `--skip` arguments only for intentional ad-hoc overrides.
-   Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEWERS`.
+   Read `.unresolved_count` from the JSON output and use it as `UNRESOLVED_FROM_PREVIOUS_COMMAND`. If it is `0` → § 3.5 (nothing to triage yet — later arrivals are handled at the § 6.1 gate).
 
-2. **Run Workflow**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.1` with context:
+2. **Run Workflow**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.1 step 3` with context:
    - `lifecycle`: `"managed"`
    - `issue_id`: `[ISSUE_ID]`
    - `worktree`: `[WORKTREE_PATH]`
@@ -214,97 +223,38 @@ Use the returned JSON fields as `BOT_STATUS`, `BOT_VERDICT`, and `PENDING_REVIEW
 
 4. **Route**:
 
-   **If issues created** → § 3.3
+   **If issues created** → § 3.2
 
-   **If fixes applied** (no issues) → § 3.2 (re-review loop)
+   **Otherwise** → § 3.5. Fixes pushed during triage were already replied to and their threads resolved by `review-pr-comments.md`. Do not wait for a bot re-review round — any re-review comments land in existing or new threads and are caught at the § 6.1 gate.
 
-   **If no items fixed** AND no issues created → § 4
+### 3.2 Implement Created Issues
 
-### 3.2 Re-Review Loop
-
-After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflows/review-pr-comments.md` until approved or stable.
-
-1. **Check iteration count**:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pr_comment_review.iterations
-   # Max 3 iterations
-   ```
-   Use the output as `ITERATIONS`. If `ITERATIONS >= 3`, go to § 4.
-
-2. **Wait for bot re-review** after fixes pushed. Run each block as its own tool call (the `.last_ts` read uses `// empty`, which can't be folded into a combined object without collapsing it):
-   ```bash
-   .agents/skills/orch/scripts/bot-review-wait [PR_NUMBER]
-   ```
-   Read the baseline from state:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_ts // empty'
-   ```
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review_baseline.last_threads // 0'
-   ```
-   Use the outputs as `LAST_TS_FROM_PREVIOUS_COMMAND` and `LAST_THREADS_FROM_PREVIOUS_COMMAND`, then check status against the baseline:
-   ```bash
-   .agents/skills/github/scripts/github.sh pr-review-status [PR_NUMBER] --baseline-ts "[LAST_TS_FROM_PREVIOUS_COMMAND]" --baseline-threads "[LAST_THREADS_FROM_PREVIOUS_COMMAND]"
-   ```
-   Save the output to tmp/pr_status_[PR_NUMBER].json with the harness file-write tool.
-
-3. **Route based on status**:
-
-   | `needs_action` | `reason` | Action |
-   |----------------|----------|--------|
-   | `false` | `no_sticky` | Ask user: `Wait` \| `Skip` |
-   | `false` | `no_change` | → § 4 (nothing new) |
-   | `false` | `approved_clean` | → § 4 (success) |
-   | `true` | `has_threads` | `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
-   | `true` | `verdict_not_approved` | `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
-
-4. **Update state** after `workflows/review-pr-comments.md` — if no fixes applied → § 4. Otherwise run each block as its own tool call:
-   ```bash
-   # Increment iteration count
-   .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
-   ```
-   Add fixes/issues/skipped (same as § 3.1 step 3). Read the new baseline values:
-   ```bash
-   jq -r '.sticky_updated_at' tmp/pr_status_[PR_NUMBER].json
-   ```
-   ```bash
-   jq -r '.unresolved_threads' tmp/pr_status_[PR_NUMBER].json
-   ```
-   Use the two `jq` outputs as `NEW_TS_FROM_PREVIOUS_COMMAND` and `NEW_THREADS_FROM_PREVIOUS_COMMAND`, then update the baseline:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_ts":"[NEW_TS_FROM_PREVIOUS_COMMAND]","last_threads":[NEW_THREADS_FROM_PREVIOUS_COMMAND]}'
-   ```
-
-5. **Max iterations exceeded**: Report to user with status, recommendation, and proceed to § 4.
-
-### 3.3 Implement Created Issues
-
-Sub-issues created during comment triage need implementation before CI.
+Sub-issues created during local review or comment triage need implementation before merge.
 
 1. **Check cycle count**:
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.submit_cycles // 0'
    ```
    Use the output as `SUBMIT_CYCLES`.
-   **If** `SUBMIT_CYCLES >= 2` → § 4 with note: "Max re-submit cycles reached, created issues may need manual implementation."
+   **If** `SUBMIT_CYCLES >= 2` → § 3.5 with note: "Max re-submit cycles reached, created issues may need manual implementation."
 
 2. **Increment**:
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] submit_cycles
    ```
 
-3. **Implement**: `⤵ workflows/dev-start.md § 1-4 → § 3.3 step 4` with context:
+3. **Implement**: `⤵ workflows/dev-start.md § 1-4 → § 3.2 step 4` with context:
    - `worktree`: [WORKTREE_PATH]
    - `lifecycle`: `"managed"`
    - `issue_id`: [ISSUE_ID]
 
-4. **Review**: `⤵ workflows/review-pr.md § 1-11 → § 3.3 step 5` with context:
+4. **Review**: `⤵ workflows/review-pr.md § 1-11 → § 3.2 step 5` with context:
    - `worktree`: [WORKTREE_PATH]
    - `lifecycle`: `"managed"`
    - `dev_agent`: from dev-start return
    - `issue_id`: [ISSUE_ID]
 
-5. **Re-submit** → § 1 (push updated code, update PR body with new `Closes` lines, re-trigger bot review)
+5. **Re-submit** → § 2 (push updated code, update PR body with new `Closes` lines)
 
 ---
 
@@ -332,59 +282,32 @@ If `design` label present:
 
 ---
 
-## 4. Trigger CI
+## 4. Verify CI
 
-All bot review comments resolved (or max iterations). Verify no late-arriving threads, then remove `defer-ci` label to trigger CI.
+CI has been running since the PR was created or updated in § 2 — there is no bot gate in front of it.
 
-1. **Thread propagation delay** — bot may still be posting inline threads after sticky verdict:
-   ```bash
-   # Wait for late-arriving threads (bot posts inline comments after sticky update)
-   sleep 15
-   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
-   # Read `.unresolved_count` from the JSON output and use it as UNRESOLVED_FROM_PREVIOUS_COMMAND.
-   # If UNRESOLVED_FROM_PREVIOUS_COMMAND is 0, sleep 15 and run the same command again to double-check.
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.ci_gate_rerouted // false'
-   ```
-   Use the workflow-state output as `CI_GATE_REROUTED_FROM_PREVIOUS_COMMAND`.
-
-   | `UNRESOLVED_FROM_PREVIOUS_COMMAND` | `CI_GATE_REROUTED_FROM_PREVIOUS_COMMAND` | Action |
-   |--------------|---------------------|--------|
-   | `0` | any | → step 2 (remove label) |
-   | `>0` | `false` | Set `ci_gate_rerouted=true`, → § 3.1 (one triage pass) |
-   | `>0` | `true` | Ask user: "Bot posted N unresolved threads after iteration limit" — `Triage now` \| `Skip and trigger CI` \| `Abort` |
-
-   For `>0` plus `false`, run this explicit command, then route to § 3.1:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_comment_review.ci_gate_rerouted true
-   ```
-
-2. **Remove label**:
-   ```bash
-   .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" label-remove [PR_NUMBER] defer-ci --reason "bot review approved; running CI"
-   ```
-
-3. **Wait for CI**:
+1. **Wait for CI**:
    ```bash
    .agents/skills/orch/scripts/ci-wait [PR_NUMBER] --json
    ```
    The result is a JSON object: `status` (`complete`/`timeout`/`error`) plus `verdict` (`pass`/`fail`/`pending`). ci-wait always emits it — no silent completion.
 
-4. **Handle CI result**:
+2. **Handle CI result**:
 
    | Result | Action |
    |--------|--------|
    | ✅ `status=complete`, `verdict=pass` | → § 6 |
    | ❌ `status=complete`, `verdict=fail` | → § 5 |
-   | ⏱ `status=timeout` or `status=error` | Re-run step 3 once; if it repeats → Ask user: `Skip CI` \| `Retry` \| `Abort` |
+   | ⏱ `status=timeout` or `status=error` | Re-run step 1 once; if it repeats → Ask user: `Skip CI` \| `Retry` \| `Abort` |
 
 ---
 
 ## 5. CI Failure Recovery
 
-1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5`
+1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`
 
 2. **After ci-fix returns**:
-   - If fix applied → add `defer-ci` label, push, wait for bot re-review (§ 3.2 with iteration check)
+   - If fix applied → ci-fix already pushed and re-verified CI (its § 5); treat its final CI result as the § 4 result and re-route via the § 4 step 2 table.
    - If fix not possible → Ask user: `Skip CI` | `Retry` | `Abort`
 
 3. **Max 2 ci-fix cycles** per PR submission.
@@ -393,7 +316,69 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 ---
 
-## 6. Standalone Summary
+## 6. Merge Gates and Standalone Summary
+
+### 6.1 Merge Gates
+
+A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are never parsed for gating; the approval gate reads only GitHub-native review verdicts, from any reviewer — human or bot.
+
+| # | Gate | Check |
+|---|------|-------|
+| 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass` before this workflow. Standalone: workflow state `json_paths` is non-empty |
+| 2 | CI green | § 4 result is `status=complete`, `verdict=pass` (equivalently: `gh pr checks [PR_NUMBER]` shows all checks passing) |
+| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
+| 4 | GitHub-native approval verdict | `reviewDecision == "APPROVED"`, or — when `reviewDecision` is empty (no required-review protection) — at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED |
+
+1. **Gate 1** — standalone only (managed callers reach this workflow only after `review-pr.md` passed):
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{json_paths: (.json_paths // []), cycles: (.cycles // 0)}'
+   ```
+   If `json_paths` is empty, no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]` before merge.
+
+2. **Gate 2** — from § 4: met when the final CI result was `status=complete`, `verdict=pass`.
+
+3. **Gate 3**:
+   ```bash
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
+   ```
+   Read `.unresolved_count` from the JSON output.
+
+   | `unresolved_count` | Action |
+   |--------------------|--------|
+   | `0` | Gate met |
+   | `> 0` | → step 4's triage row — the approval wait loop owns comment routing from here |
+
+4. **Gate 4 — approval wait loop.** Poll for a GitHub-native approval verdict and new review comments together:
+   ```bash
+   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json
+   ```
+   The result is a JSON object: `status` (`approved`/`changes_requested`/`comments`/`timeout`/`error`) plus `review_decision`, `approvals`, `changes_requested`, and `unresolved_count`. approval-wait always emits it — no silent completion. Detection uses `gh pr view --json reviewDecision,latestReviews` (either signal: the branch-protection aggregate, or the latest-review-per-reviewer fallback when no protection is configured); any reviewer counts, human or bot.
+
+   Route on `status`:
+
+   | `status` | Action |
+   |----------|--------|
+   | `approved`, `unresolved_count == 0` | Gates 3 and 4 met → step 5 |
+   | `approved`, `unresolved_count > 0` | Approval recorded; run the triage pass below to clear gate 3, then re-run the gate 3 command once — do not re-wait for approval |
+   | `changes_requested` or `comments` | New review feedback: run the triage pass below, then restart step 4 |
+   | `timeout` | No approval verdict after 15 min → Ask user: "No approval verdict on PR #[PR_NUMBER] after [ELAPSED] min" — `Force merge` \| `Keep waiting` \| `Stop here` |
+   | `error` | Re-run step 4 once; if it repeats, report the error and ask user: `Keep waiting` \| `Stop here` |
+
+   **Triage pass** (bounded by `pr_comment_review.iterations`, max 5 — read it before each pass; at the cap, present the remaining feedback and ask user: `Triage again` \| `Force merge` \| `Stop here`):
+   - `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 4` with managed context — fixes real findings, replies to and resolves every comment. Pushed fix commits re-trigger CI and reviewer re-review automatically.
+   - If the pass pushed new commits, re-run § 4 to re-verify gate 2 before restarting the approval wait.
+
+   **User choices on `timeout`:**
+   - `Keep waiting` → restart step 4.
+   - `Force merge` → record the override, then treat gate 4 as met (gates 1-3 must still hold):
+     ```bash
+     .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true
+     ```
+   - `Stop here` → § 6.2 with gate 4 unmet (`MERGE_READY = false`); the PR stays open awaiting approval.
+
+5. **Record results**: `MERGE_READY = true` only when all four gates are met (gate 4 by verdict or recorded force).
+
+### 6.2 Standalone Summary
 
 **If managed**: Skip → § 7
 
@@ -401,7 +386,7 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 1. **Reconcile fixes**:
 
-   Run Workflow: `⤵ workflows/fix-reconcile.md § 1-9 → § 6 step 2` with context:
+   Run Workflow: `⤵ workflows/fix-reconcile.md § 1-9 → § 6.2 step 2` with context:
    - `issue_id`: [ISSUE_ID]
    - `pr_number`: [PR_NUMBER]
 
@@ -445,14 +430,16 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
    |--------|-------|
    | PR | #[PR_NUMBER] |
    | CI | ✅ passing / ❌ failing |
-   | Bot | ✅ approved / ⚠️ changes |
+   | Approval | ✅ approved / ⏳ pending / forced |
+   | Unresolved threads | [N] |
+   | Local review passes | [N] |
    | Comment iterations | [N] |
    | Fixes applied | [N] |
    | Issues created | [N] |
 
    </output_format>
 
-4. **Offer merge** — skip if CI not passing:
+4. **Offer merge** — skip unless `MERGE_READY` (§ 6.1):
 
    → Ask user: `orch merge-pr [PR_NUMBER]` | `Skip`
 
@@ -465,6 +452,6 @@ All bot review comments resolved (or max iterations). Verify no late-arriving th
 
 ## 7. Return State
 
-**If managed**: Return to the parent workflow's next section.
+**If managed**: Return to the parent workflow's next section with the § 6.1 gate results (`MERGE_READY`, approval status, unresolved thread count, CI verdict).
 
-**If standalone**: Session complete — PR submitted. Summary presented in § 6.
+**If standalone**: Session complete — PR submitted. Summary presented in § 6.2.

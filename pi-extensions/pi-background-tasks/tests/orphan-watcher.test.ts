@@ -20,13 +20,13 @@ import type { LifecycleHooks } from "../extensions/lifecycle.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../extensions/types.js";
 
 function fakeIdent(pid: number, overrides: Partial<ProcessIdentity> = {}): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "bot-review-wait", ...overrides };
+	return { pid, startToken: `start-${pid}`, comm: "approval-wait", ...overrides };
 }
 
 function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	const defaultPid = overrides.pid ?? 2409160;
 	return {
-		command: "bot-review-wait 81",
+		command: "approval-wait 81",
 		cwd: "/tmp/worktree",
 		exitCode: null,
 		exitNotified: false,
@@ -183,7 +183,7 @@ describe("createOrphanWatcher.checkOnce", () => {
 		const tasks = [orphanTask({
 			id: "bg-3",
 			pid: 12345,
-			command: "bot-review-wait 81",
+			command: "approval-wait 81",
 			procIdent: fakeIdent(12345),
 		})];
 		let seenReason: string | null = null;

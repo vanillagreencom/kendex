@@ -130,6 +130,13 @@ PR #N ready with warnings:
 ```
 → Ask user: `Merge anyway` | `Review first`
 
+Two of the warnings are merge gates, not advice:
+
+- `unresolved_threads` — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first; merge past unresolved threads only on explicit user override.
+- `not_approved` — a GitHub-native approval verdict is required: `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED (any reviewer counts, human or bot). Without it, do not auto-merge: poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json` or ask the user; merge past a missing approval only on explicit user override (`Force merge`).
+
+Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates; only the GitHub-native approval verdict and thread resolution count.
+
 ## 4. Prepare for Merge
 
 ### 4.1 Check Worktree Cleanup

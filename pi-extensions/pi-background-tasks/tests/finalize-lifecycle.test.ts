@@ -10,14 +10,14 @@ import { restoredTaskFromSnapshot, selectMissedExits } from "../extensions/snaps
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../extensions/types.js";
 
 function fakeIdent(pid: number): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "bot-review-wait" };
+	return { pid, startToken: `start-${pid}`, comm: "approval-wait" };
 }
 const probeDead = () => null;
 const probeAlive = (pid: number) => fakeIdent(pid);
 
 function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	return {
-		command: "bot-review-wait 81",
+		command: "approval-wait 81",
 		cwd: "/tmp/worktree",
 		exitCode: null,
 		exitNotified: false,

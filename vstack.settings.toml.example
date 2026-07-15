@@ -45,12 +45,6 @@ BOT_EMAIL = "you+bot@example.com"
 BOT_REMOTE_NAME = "bot-remote"
 # Used by: worktree.
 
-BOT_REVIEWERS = "review-bot-a[bot],review-bot-b[bot]"
-# Used by: github, orch.
-
-BOT_CHECK_NAME = "review-bot"
-# Used by: orch (`bot-review-wait`).
-
 # DECIDER
 
 DECISIONS_DIR = "docs/decisions"
@@ -107,4 +101,4 @@ WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
 # Used by: orch (`open-terminal`).
 
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
-# Used by: orch (`bot-review-wait`, `ci-wait`).
+# Used by: orch (`ci-wait`).

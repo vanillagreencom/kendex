@@ -93,6 +93,8 @@ Edit the full command string to change model, effort level, or tool access. No a
 | `-c model_reasoning_effort=xhigh` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
 | `--ephemeral` | Ephemeral session |
 
-## review-pr Integration
+## orch Integration
 
 The orch skill's `review-pr` workflow optionally offers an external review at § 2.1. If accepted, the script produces review-finding JSON (same schema as internal review agents) that flows through the standard blocker/suggestion/issue pipeline.
+
+The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the branch diff (standalone lifecycle), draining bot-class findings at local speed instead of blocking on asynchronous GitHub review bots.

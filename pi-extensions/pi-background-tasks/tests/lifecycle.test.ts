@@ -3,12 +3,12 @@ import { restoredTaskFromSnapshot, selectMissedExits, taskSnapshot } from "../ex
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "../extensions/types.js";
 
 function fakeIdent(pid: number, overrides: Partial<ProcessIdentity> = {}): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "bot-review-wait", ...overrides };
+	return { pid, startToken: `start-${pid}`, comm: "approval-wait", ...overrides };
 }
 
 function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	return {
-		command: "bot-review-wait 81",
+		command: "approval-wait 81",
 		cwd: "/tmp/worktree",
 		exitCode: null,
 		exitNotified: false,

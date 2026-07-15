@@ -101,4 +101,4 @@ On script failure (non-zero exit), stderr contains a JSON error object:
 | 1 | CLI not found, missing prompt, invalid JSON response | Report error to user, suggest checking CLI installation |
 | 124 | Timeout (default 300s) | Report timeout, suggest `--timeout` increase or narrower `--range` |
 
-If the script fails during the `review-pr` workflow, **continue** — external review is advisory.
+If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue** — external review is advisory.

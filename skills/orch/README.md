@@ -20,7 +20,7 @@ Invoke via your AI coding harness (e.g., `/orch <command>` or `/skill:orch <comm
 | `review-codebase [PATH]` | Whole-codebase reviewer fanout |
 | `review-pr [PR_NUMBER]` | Pre-submission review |
 | `review-pr-comments PR_NUMBER` | Triage PR review comments |
-| `submit-pr [PR_NUMBER]` | Push, create PR, bot review, CI |
+| `submit-pr [PR_NUMBER]` | Local review, push, create PR, CI, async triage, approval merge gate |
 | `merge-pr PR_NUMBER \| all` | Verify and merge PR(s) |
 | `parallel-check [ISSUE_IDS]` | Verify parallel work safety |
 
@@ -51,12 +51,8 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 | `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | current `gh` auth |
 | `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
 | `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
-| `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
-| `BOT_CHECK_NAME` | CI check name for early review detection and PR-level approved fallback gating | — |
-| `BOT_REVIEW_SETTLE_SECONDS` | Re-check window after Codex-style approval signals to catch late inline review threads | `180` |
-| `BOT_REVIEW_SETTLE_INTERVAL` | Poll interval during the terminal settle window | `15` |
 
-`bot-review-wait` also handles stale pending bot prose: when GitHub reports `reviewDecision=APPROVED`, the configured bot check has passed if one is set, and no unresolved review threads remain, it can return a terminal approved result instead of continuing to poll the stale status comment or checklist. Codex-style reaction or PR-decision approvals get a short settle/re-check window first so late inline review threads can still flip the verdict to changes.
+Bot reviews are asynchronous: no orch workflow blocks PR submission on bot-specific signals — emoji reactions, sticky comments, and checklist prose are never parsed as gates. Merges gate on internal review, green CI, zero unresolved review comments (every bot comment replied to and resolved), and a GitHub-native approval verdict from any reviewer — human or bot — polled by `approval-wait` via `reviewDecision`, with a latest-review-per-reviewer fallback when no required-review protection exists. If no approval verdict arrives within 15 minutes, the workflow prompts the user to force merge, keep waiting, or stop.
 
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for GitHub auth fallback details and the test runner.
 

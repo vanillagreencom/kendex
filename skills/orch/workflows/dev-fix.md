@@ -16,7 +16,7 @@ Delegate fix items to a specialist dev agent. Works standalone (user-initiated) 
 - `dev_agent` (optional): name of alive dev agent for fix delegation. If absent, determine from state/labels.
 - `issue_id` (optional): Issue ID. If absent, extracted from branch.
 - `items` (optional): formatted review items. If absent, build from conversation context.
-- `source` (optional): `pr-review` | `qa-review` | `review`. Default: `conversation`.
+- `source` (optional): `pr-review` | `qa-review` | `review` | `local-review`. Default: `conversation`.
 - `qa_agent` (optional): QA agent name (for qa-review source).
 
 **Standalone init** (`lifecycle: "self"` only):

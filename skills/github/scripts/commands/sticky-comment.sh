@@ -143,7 +143,7 @@ if [[ -z "$STICKY" || "$STICKY" == "null" ]] || ! echo "$STICKY" | jq -e '.id an
 fi
 
 # Helper: detect verdict from body text. Delegates to github-api.sh so
-# sticky-comment, pr-review-status, and bot-review-wait share one parser.
+# sticky-comment and pr-review-status share one parser.
 get_verdict() {
   local body="$1"
   compute_sticky_verdict_from_body "$body"

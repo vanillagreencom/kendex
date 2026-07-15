@@ -4,7 +4,7 @@ Implementation details and contributor notes. End-user setup: [`README.md`](./RE
 
 ## GitHub Auth Fallback
 
-`bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Each candidate source is probed at most once during startup:
+`approval-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Each candidate source is probed at most once during startup:
 
 1. **Selected env token.** If `GH_TOKEN` or `GITHUB_TOKEN` is set, validate it with bounded `gh api user`.
 2. **Keyring fallback.** If that env token fails, try `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status` once. If it succeeds, warn on stderr and unset the stale env token.
@@ -27,20 +27,14 @@ Do not use `git fetch --all --prune` for current-PR closure. Secondary remotes
 may be useful for a project but optional for syncing `origin` after merge, and
 their SSH failures should not block branch cleanup or tracker closure.
 
-## Bot Review Terminal Fallback
+## Approval Wait
 
-`bot-review-wait` primarily trusts per-reviewer signals from formal reviews, sticky comments, reactions, and unresolved threads. Some bot runs can leave a sticky comment looking pending after GitHub has already moved the PR to `reviewDecision=APPROVED`. In that case the waiter promotes pending/unknown reviewers to approved only when:
+`approval-wait` replaced `bot-review-wait` in #538. The old waiter parsed bot-specific signals — sticky-comment verdicts, checklist state, emoji reactions — which coupled the merge path to each bot's signaling dialect and provider quota. The new poller reads only GitHub-native review state:
 
-- no reviewer has an explicit `changes` status,
-- `gh pr view --json reviewDecision` reports `APPROVED`,
-- `BOT_CHECK_NAME` is unset or the matching check line is `pass`, and
-- the PR has zero unresolved review threads.
+- `gh pr view --json reviewDecision,latestReviews` — approved when `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty because no required-review branch protection exists, when at least one reviewer's latest review is APPROVED and none is CHANGES_REQUESTED. `REVIEW_REQUIRED` never falls back to `latestReviews` — branch protection is still waiting on required approvals. COMMENTED and DISMISSED latest reviews neither approve nor block. Any reviewer counts — human or bot — as long as it posts a formal GitHub review.
+- A `reviewThreads` GraphQL count of unresolved threads, emitted with every result and used for a `status: "comments"` early return so callers triage new feedback instead of idling to the deadline.
 
-The emitted reviewer signals include `pr_review_decision:approved` and `pr_threads:clear` so callers can distinguish this fallback from a direct sticky/comment verdict.
-
-Codex-style reaction approvals and PR-level approved fallbacks then run a short terminal settle window (`BOT_REVIEW_SETTLE_SECONDS`, default 180s). The waiter re-reads reviewer status during that window and returns to the normal review loop if late inline threads appear, preventing merge workflows from treating early approval as final while the bot is still posting review comments.
-
-Within a run, a reviewer-own clean approval (`reaction:+1`, `formal_review:approved`, or `sticky:approved` with zero unresolved threads) is remembered as an established approval. Codex withdraws its 👍 reaction when it posts a follow-up formal COMMENTED review, which would otherwise recompute the reviewer as unknown/pending on the next poll; instead the waiter retains the approval and tags the entry `established_approval:retained`. Only new unresolved threads or a changes-requested signal downgrade an established approval (and doing so clears it). PR-level `pr_review_decision:approved` fallback promotions do not establish reviewer-own approvals.
+Statuses: `approved` (exit 0); `changes_requested`, `comments`, `timeout` (exit 1); `error` (exit 1, or 3 on auth failure — same auth contract as `ci-wait`). Every exit path emits a final stdout result; `--json` always prints one well-formed object.
 
 ## Tests
 
@@ -52,7 +46,7 @@ bash skills/orch/tests/run-all.sh session_init
 
 Tests stage isolated repos/worktrees with parametrized CLI stubs on `PATH`. Each `tests/*.sh` is self-contained and prints `pass: N fail: M`. Suites:
 
-- `bot_review_wait.sh` — review-wait state machine + auth ladder.
+- `approval_wait.sh` — GitHub-native approval verdict detection + output contract.
 - `ci_wait.sh` — CI-wait state machine + auth ladder.
 - `session_init.sh` — worktree Linear auth diagnostic preservation.
 - `review_artifact_check.sh` — deterministic reviewer artifact acceptance (`review-artifact-check`) + review-pr wiring assertions.

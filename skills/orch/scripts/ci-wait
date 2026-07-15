@@ -13,7 +13,7 @@
 #   0 - CI complete and passing
 #   1 - CI failed, timed out with checks still pending, or a non-auth error
 #       (no checks registered, merge conflicts, repo/API failure)
-#   3 - GitHub auth/CLI error (matches bot-review-wait)
+#   3 - GitHub auth/CLI error (matches approval-wait)
 #
 # JSON output (always when --json):
 #   {
@@ -36,7 +36,7 @@
 #   4. Validate the loaded bot token once, or keyring once when no env token
 #      was present at startup.
 #   5. If no auth path works after that, exit 3 with a clear diagnostic.
-#      Exit 3 matches bot-review-wait's auth-error exit so callers can
+#      Exit 3 matches approval-wait's auth-error exit so callers can
 #      treat the two consistently.
 #
 # Environment:

@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# Wait for a GitHub-native review approval verdict on a PR. Always emits a
+# final result on stdout — an "Approval ..." line, or a JSON object with
+# --json — so callers can route approved vs changes-requested vs timeout
+# deterministically (vstack#538).
+#
+# Approval detection is GitHub-native ONLY, either signal:
+#   - reviewDecision == "APPROVED" (branch-protection aggregate), or
+#   - when reviewDecision is empty/null (no required-review protection):
+#     at least one reviewer whose LATEST review is APPROVED and no reviewer
+#     whose latest review is CHANGES_REQUESTED.
+# Any reviewer counts — human or bot — as long as it posts a formal GitHub
+# review. Emoji reactions, sticky comments, and checklist prose are never
+# parsed. A reviewDecision of REVIEW_REQUIRED never falls back to
+# latestReviews: branch protection is still waiting on required approvals.
+#
+# The poller also returns early (status "comments") when unresolved review
+# threads exist without an approval verdict, so callers can triage new
+# comments instead of idling out the full timeout.
+#
+# Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
+#   poll_interval default 15s, max_wait default 900s (15 min).
+#
+# Exit codes:
+#   0 - approved
+#   1 - changes requested, unresolved comments pending, timeout, or a
+#       non-auth error
+#   3 - GitHub auth/CLI error (matches ci-wait)
+#
+# JSON output (always when --json):
+#   {
+#     "status": "approved" | "changes_requested" | "comments" | "timeout" | "error",
+#     "review_decision": <string>,  # raw reviewDecision ("" when unset)
+#     "approvals": <int>,           # reviewers whose latest review is APPROVED
+#     "changes_requested": <int>,   # reviewers whose latest review is CHANGES_REQUESTED
+#     "unresolved_count": <int>,    # unresolved review threads at emit time
+#     "elapsed_seconds": <int>,
+#     "error": <string>             # only when status == "error"
+#   }
+#
+# Auth resolution ladder (see vstack#19):
+#   1. Validate the currently selected GH_TOKEN/GITHUB_TOKEN once, if present.
+#   2. If that env token fails, try keyring auth once with env tokens removed.
+#   3. If keyring does not recover, unset the stale env token and load a
+#      GH_BOT_TOKEN candidate from project config/secrets.
+#   4. Validate the loaded bot token once, or keyring once when no env token
+#      was present at startup.
+#   5. If no auth path works after that, exit 3 with a clear diagnostic.
+#      Exit 3 matches ci-wait's auth-error exit so callers can treat the two
+#      consistently.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+# --- arg parse (before auth so error paths can honor --json) ---
+JSON_OUTPUT=false
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON_OUTPUT=true; shift ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+PR_NUM="${POSITIONAL[0]:?Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]}"
+POLL_INTERVAL="${POSITIONAL[1]:-15}"
+MAX_WAIT="${POSITIONAL[2]:-900}"
+START_TIME="$(date +%s)"
+elapsed=0
+
+update_elapsed() {
+  local now
+  now="$(date +%s)"
+  elapsed=$((now - START_TIME))
+}
+
+# Last review snapshot seen by the poll loop, so timeout/error results can
+# report the review state that was still outstanding.
+last_review_decision=""
+last_approvals=0
+last_changes=0
+last_unresolved=0
+
+# Emit the final machine-readable result on stdout. Every exit path routes
+# through here (or emit_error) so the script can never finish silently.
+#   status: approved | changes_requested | comments | timeout | error
+emit_result() {
+  local status="$1" error_msg="${2:-}"
+  update_elapsed
+  if $JSON_OUTPUT; then
+    jq -n \
+      --arg s "$status" \
+      --arg decision "$last_review_decision" \
+      --argjson approvals "$last_approvals" \
+      --argjson changes "$last_changes" \
+      --argjson unresolved "$last_unresolved" \
+      --argjson elapsed "$elapsed" \
+      --arg error "$error_msg" \
+      '{
+        status: $s,
+        review_decision: $decision,
+        approvals: $approvals,
+        changes_requested: $changes,
+        unresolved_count: $unresolved,
+        elapsed_seconds: $elapsed
+      } + (if $error == "" then {} else {error: $error} end)'
+    return 0
+  fi
+  case "$status" in
+    approved)
+      echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
+      ;;
+    changes_requested)
+      echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
+      ;;
+    comments)
+      echo "Approval: $last_unresolved unresolved review thread(s) pending triage, no approval verdict yet"
+      ;;
+    timeout)
+      echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
+      ;;
+    error)
+      echo "Approval error: $error_msg"
+      ;;
+  esac
+}
+
+emit_error() {
+  emit_result "error" "$1"
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  emit_error "gh CLI not found on PATH"
+  echo "approval-wait: gh CLI not found on PATH" >&2
+  exit 3
+fi
+
+AUTH_READY=false
+KEYRING_PROBED=false
+
+if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  auth_status=0
+  if orch_github_auth_status; then
+    AUTH_READY=true
+  else
+    auth_status=$?
+    if [[ "$auth_status" -ne 124 && "${VSTACK_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
+      KEYRING_PROBED=true
+      if orch_github_keyring_auth_status; then
+        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        unset GH_TOKEN GITHUB_TOKEN
+        export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
+        AUTH_READY=true
+      else
+        unset GH_TOKEN GITHUB_TOKEN
+      fi
+    else
+      unset GH_TOKEN GITHUB_TOKEN
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  orch_load_env_bot_token "$PROJECT_ROOT" || true
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    if orch_github_auth_status; then
+      AUTH_READY=true
+    fi
+  elif [[ "$KEYRING_PROBED" != "true" ]]; then
+    KEYRING_PROBED=true
+    if orch_github_auth_status; then
+      export VSTACK_GITHUB_AUTH_FALLBACK="keyring"
+      AUTH_READY=true
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  emit_error "no working GitHub auth path"
+  {
+    echo "approval-wait: no working GitHub auth path."
+    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
+    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+  } >&2
+  exit 3
+fi
+
+# --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+if [ -z "$REPO" ]; then
+  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
+  # Strip a trailing ".git" with parameter expansion, not the ERE (vstack#476).
+  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
+  REPO="${REPO%.git}"
+fi
+if [ -z "$REPO" ]; then
+  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
+  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  exit 1
+fi
+
+OWNER="${REPO%%/*}"
+REPO_NAME="${REPO#*/}"
+
+THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) { nodes { isResolved } }
+    }
+  }
+}'
+
+update_elapsed
+while true; do
+  # --- review verdict snapshot ---
+  view_status=0
+  set +e
+  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews 2>/dev/null)
+  view_status=$?
+  set -e
+  if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+    emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
+    echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
+    exit 1
+  fi
+
+  last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
+  # latestReviews already holds the latest review per reviewer; count formal
+  # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
+  last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
+  last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
+
+  # --- unresolved review threads snapshot ---
+  threads_status=0
+  set +e
+  threads_json=$(gh api graphql \
+    -f query="$THREADS_QUERY" \
+    -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>/dev/null)
+  threads_status=$?
+  set -e
+  if [ "$threads_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$threads_json"; then
+    emit_error "review thread query failed for PR #$PR_NUM in $REPO"
+    echo "review thread query failed for PR #$PR_NUM in $REPO" >&2
+    exit 1
+  fi
+  # `gh api graphql` returns the response envelope; tolerate a pre-stripped
+  # object too so stubs and future gh versions both parse.
+  last_unresolved=$(jq '(.data // .)
+    | [.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)]
+    | length' <<<"$threads_json")
+
+  # --- route ---
+  if [ "$last_review_decision" = "APPROVED" ]; then
+    emit_result "approved"
+    exit 0
+  fi
+  if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
+    emit_result "changes_requested"
+    exit 1
+  fi
+  if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
+    emit_result "approved"
+    exit 0
+  fi
+  if [ "$last_unresolved" -gt 0 ]; then
+    emit_result "comments"
+    exit 1
+  fi
+
+  update_elapsed
+  if [ "$elapsed" -ge "$MAX_WAIT" ]; then
+    break
+  fi
+  sleep "$POLL_INTERVAL"
+  update_elapsed
+done
+
+# Deadline reached with no verdict — report timeout, never silent success.
+emit_result "timeout"
+exit 1

@@ -81,7 +81,7 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 | `review-codebase` | `[PATH]` | `workflows/review-codebase.md` | Ad-hoc whole-codebase reviewer fanout |
 | `review-pr` | `[PR_NUMBER]` | `workflows/review-pr.md` | Pre-submission review |
 | `review-pr-comments` | `PR_NUMBER` \| `BRANCH` | `workflows/review-pr-comments.md` | Triage PR comments |
-| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Push, create PR, bot review, CI |
+| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Local review, push, create PR, CI, async triage, approval gate |
 | `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify and merge |
 | `fix-reconcile` | — | `workflows/fix-reconcile.md` | Internal (not user-invocable) |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary comments |
@@ -120,7 +120,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `workflows/review-codebase.md` | `review-codebase` | Whole-codebase reviewer fanout with findings only |
 | `workflows/review-pr.md` | `review-pr` | Pre-submission review with fix handling and QA |
 | `workflows/review-pr-comments.md` | `review-pr-comments` | Triage PR review comments via domain agents |
-| `workflows/submit-pr.md` | `submit-pr` | Push, create PR, bot review, comment triage, CI |
+| `workflows/submit-pr.md` | `submit-pr` | Local pre-PR review, push, create PR, CI, async comment triage, approval merge gates |
 | `workflows/merge-pr.md` | `merge-pr` | Verify conditions and merge PR(s) |
 
 ### Per-Issue Lifecycle
@@ -152,19 +152,19 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
 | `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`) and print `{ok, path, reason}` — the sole review-pr completion condition |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
-| `bot-review-wait` | Block until bot review posts on a PR — invoked by per-issue agents inside their submit-pr flow |
-| `ci-wait` | Block until CI completes on a PR — same |
+| `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr merge-gate poller; never parses bot reactions or sticky prose |
+| `ci-wait` | Block until CI completes on a PR — invoked by per-issue agents inside their submit-pr flow |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
 | `parallel-groups` | Local cache for safe parallel handoff analysis |
 
 `ci-wait --json` returns `{status, verdict, elapsed_seconds, pending_checks, failed_checks, passed_checks}` where `status` is `complete`/`timeout`/`error` and `verdict` is `pass`/`fail`/`pending`. Every exit path emits a final stdout result (a `CI passed`/`CI failed`/`CI timeout`/`CI error` line without `--json`); checks still in progress at the deadline report `status: "timeout"`, never silent success.
 
-`bot-review-wait --json` always prints one well-formed JSON object on stdout before exiting — every path (no reviewers, auth/lib failure, normal timeout, or early return) routes through the emit choke points, so `--json` never finishes silently and callers can always route `status`/`verdict`. It returns `status: "error"` and exits non-zero on GitHub auth/API failures instead of polling until timeout with empty output. If a bot's direct signal remains pending after GitHub reports `reviewDecision=APPROVED`, the waiter treats the reviewer as approved only when any configured `BOT_CHECK_NAME` has passed and there are no unresolved review threads, then skips stale sticky-checklist waiting. The repository-level `reviewDecision=APPROVED` is a PR-terminal aggregate, so it only promotes a reviewer that has posted its OWN positive signal (formal approval, a sticky review summary, or `reaction:+1`); a `reaction:eyes` (👀 = acknowledged/looking, never approval) or no-signal reviewer never inherits another reviewer's approval. Once a reviewer shows a clean reviewer-own approval (e.g. `reaction:+1` with zero unresolved threads), a later formal COMMENTED review does not regress it to pending/unknown within the run — the entry stays approved with signal `established_approval:retained`; only new unresolved threads or a changes-requested signal downgrade it.
+`approval-wait --json` returns `{status, review_decision, approvals, changes_requested, unresolved_count, elapsed_seconds}` where `status` is `approved`/`changes_requested`/`comments`/`timeout`/`error`. Approval is GitHub-native only, either signal: `reviewDecision == "APPROVED"`, or — when `reviewDecision` is empty because no required-review protection exists — at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED. Any reviewer counts, human or bot; emoji reactions, sticky comments, and checklist prose are never parsed. `REVIEW_REQUIRED` never falls back to `latestReviews`. `status: "comments"` is an early return when unresolved review threads exist without a verdict, so callers triage instead of idling to the deadline. Every exit path emits a final stdout result (an `Approval ...` line without `--json`); no verdict at the deadline reports `status: "timeout"`, never silent success.
 
 `session-init --json` reports worktree Linear auth as the structured `linear_auth` object from `linear auth-check`. `linear_auth.error = "not installed"` is reserved for a missing Linear skill command; API key, 1Password, and API failures keep their original auth-check diagnostic.
 
-Both `bot-review-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared auth helpers, for a bounded auth-resolution ladder — see `DEVELOPMENT.md` for the full ladder description. GitHub auth is env-first: already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values from the parent process win before local files are read, and `op read` is only used for the final selected `op://` reference. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. The waiters probe each candidate auth source at most once before moving to the next fallback. The `github.sh` router additionally prefers a resolved `GH_BOT_TOKEN` before a resolved `GITHUB_TOKEN` for bot-capable operations. Exit `3` on hard auth failure; callers treat both scripts consistently.
+Both `approval-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared auth helpers, for a bounded auth-resolution ladder — see `DEVELOPMENT.md` for the full ladder description. GitHub auth is env-first: already-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_BOT_TOKEN` values from the parent process win before local files are read, and `op read` is only used for the final selected `op://` reference. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. The waiters probe each candidate auth source at most once before moving to the next fallback. The `github.sh` router additionally prefers a resolved `GH_BOT_TOKEN` before a resolved `GITHUB_TOKEN` for bot-capable operations. Exit `3` on hard auth failure; callers treat both scripts consistently.
 
 ### `workflow-state` actions
 
@@ -204,10 +204,6 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 | `ORCH_STATE_DIR` | Override state file directory (env fallback for the `--state-dir` flag, which wins when both are set) | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
-| `BOT_REVIEWERS` | Comma-separated bot usernames to wait for | Auto-detects |
-| `BOT_CHECK_NAME` | CI check name to treat as early review signal | — |
-| `BOT_REVIEW_SETTLE_SECONDS` | Extra re-check window after Codex-style approval signals so late inline review threads are caught | `180` |
-| `BOT_REVIEW_SETTLE_INTERVAL` | Poll interval during the terminal settle window | `15` |
 
 ## System Dependencies
 
@@ -257,7 +253,7 @@ Use helper scripts instead of shell plumbing:
 - `workflow-state` for state: `get '{...}'` combines related reads into one call, `update '... | ...'` combines related writes into one atomic call, and `set-git-head`/`set-now`/`append`/`increment` cover git-, clock-, and per-item writes.
 - Harness file-write/edit tools, or `apply_patch`, for Markdown/JSON bodies and completion summaries.
 
-When a workflow needs several files read, issue separate read commands for each file or use the harness file-read tool; do not wrap required reads in a shell loop. When an optional environment variable affects a command, either omit the option and let the script auto-detect, or first read the value with `printenv VAR` and then run a second command with a literal value. Do not include unset-variable expansions such as `"$BOT_REVIEWERS"` in required command examples.
+When a workflow needs several files read, issue separate read commands for each file or use the harness file-read tool; do not wrap required reads in a shell loop. When an optional environment variable affects a command, either omit the option and let the script auto-detect, or first read the value with `printenv VAR` and then run a second command with a literal value. Do not include unset-variable expansions such as `"$OPTIONAL_OVERRIDES"` in required command examples.
 
 #### Tracker Resolution
 

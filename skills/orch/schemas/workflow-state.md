@@ -64,8 +64,13 @@ Persistent state file for orch workflows. Survives context compaction.
     "fixes": [],
     "issues_created": [],
     "skipped": [],
-    "replied": [],
-    "ci_gate_rerouted": false
+    "replied": []
+  },
+  "pr_local_review": {
+    "passes": 0
+  },
+  "pr_approval": {
+    "forced": false
   }
 }
 ```
@@ -88,7 +93,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |
-| `submit_cycles` | number | Submit-PR iteration count (bot review/CI loops) |
+| `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `json_paths` | string[] | Accumulated review JSON file paths |
@@ -96,7 +101,9 @@ Persistent state file for orch workflows. Survives context compaction.
 | `escalated_items` | object[] | Blockers that couldn't be fixed |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |
-| `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered), `ci_gate_rerouted` (CI ran early once) |
+| `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
+| `pr_local_review` | object | Local pre-PR review tracking: `passes` (max 2 per submission) |
+| `pr_approval` | object | Approval merge-gate tracking: `forced` (user chose Force merge past a missing approval verdict) |
 
 ## CLI
 
