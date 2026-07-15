@@ -132,6 +132,60 @@ remote_ref_lease_arg() {
   printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
 }
 
+# Authorized-restack lease state (#578). An intentional `create --reuse` /
+# `--restack` rebase rewrites history, after which push's ancestry check above
+# can no longer prove the remote head is contained locally — so the remote
+# head observed before the rewrite is recorded in the worktree's private git
+# dir and consumed by the next push as an exact --force-with-lease
+# expectation. Git itself validates the expectation against the live remote at
+# push time, so a remote that moved past the recorded head still rejects.
+restack_lease_path() {
+  local wt="$1" path=""
+  path="$(git -C "$wt" rev-parse --git-path worktree-restack-lease 2>/dev/null)" || return 1
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == /* ]] || path="$wt/$path"
+  printf '%s\n' "$path"
+}
+
+# Record the remote head the upcoming intentional rebase is based on. Records
+# only when the remote branch exists and its head is contained in HEAD — the
+# same requirement push enforces today, checked while the pre-rewrite history
+# can still prove it. Skipping the record fails closed to push's ancestry
+# check. Content: "refs/heads/<branch> <OID>".
+record_restack_lease() {
+  local wt="$1" branch="$2"
+  local remote="${BOT_REMOTE_NAME:-origin}" remote_oid="" lease_file=""
+  [[ -n "$branch" && "$branch" != "$DEFAULT_BRANCH" ]] || return 0
+  git -C "$wt" remote get-url "$remote" >/dev/null 2>&1 || remote="origin"
+  remote_oid="$(git -C "$wt" show-ref --verify --hash "refs/remotes/$remote/$branch" 2>/dev/null || true)"
+  [[ -n "$remote_oid" ]] || return 0
+  git -C "$wt" merge-base --is-ancestor "$remote_oid" HEAD 2>/dev/null || return 0
+  lease_file="$(restack_lease_path "$wt")" || return 0
+  printf 'refs/heads/%s %s\n' "$branch" "$remote_oid" > "$lease_file"
+}
+
+# Print the recorded lease OID when the state file exists and names the given
+# branch. A file naming a different branch or holding a malformed OID is
+# ignored (fail closed to the ancestry-checked lease).
+restack_lease_oid_for_branch() {
+  local wt="$1" branch="$2" lease_file="" recorded_ref="" recorded_oid=""
+  lease_file="$(restack_lease_path "$wt")" || return 1
+  [[ -f "$lease_file" ]] || return 1
+  IFS=' ' read -r recorded_ref recorded_oid < "$lease_file" || true
+  [[ "$recorded_ref" == "refs/heads/$branch" ]] || return 1
+  case "$recorded_oid" in
+    ''|*[!0-9a-f]*) return 1 ;;
+  esac
+  [[ "${#recorded_oid}" -eq 40 || "${#recorded_oid}" -eq 64 ]] || return 1
+  printf '%s\n' "$recorded_oid"
+}
+
+clear_restack_lease() {
+  local wt="$1" lease_file=""
+  lease_file="$(restack_lease_path "$wt")" || return 0
+  rm -f "$lease_file" 2>/dev/null || true
+}
+
 strip_trailing_slashes() {
   local path="$1"
   while [[ "$path" != "/" && "$path" == */ ]]; do
@@ -815,15 +869,20 @@ case "${1:-}" in
       fi
       fetch_origin || exit 1
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
-      if [[ -n "$CURRENT_BRANCH" ]]; then
-        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
-          : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
-        elif ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+      if [[ -n "$CURRENT_BRANCH" ]] && ! git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+        # The rebase below rewrites history; record the observed remote head
+        # first so push can still prove this restack was authorized (#578).
+        # Recorded here (not after) because a conflicted --restack rebase
+        # finishes outside this script via `rebase --continue`.
+        record_restack_lease "$WT_PATH" "$CURRENT_BRANCH"
+        if ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
           # Capture conflict details before any abort erases the rebase state.
           CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
           if ! rebase_in_progress "$WT_PATH"; then
             # Rebase never started (e.g. uncommitted changes) — nothing to
-            # abort or resolve; surface git's own message.
+            # abort or resolve; surface git's own message. No history was
+            # rewritten, so the recorded lease is unnecessary.
+            clear_restack_lease "$WT_PATH"
             echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
             sed 's/^/  /' <<<"$REBASE_OUTPUT" >&2
             exit 1
@@ -839,6 +898,7 @@ case "${1:-}" in
             echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
             echo "  3. GIT_EDITOR=true git -C \"$WT_PATH\" rebase --continue    (repeat if it stops again)" >&2
             echo "  4. $0 create $ISSUE --reuse    (finish worktree setup)" >&2
+            echo "  5. $0 push $ISSUE    (publish the restacked branch)" >&2
             echo "To back out instead: git -C \"$WT_PATH\" rebase --abort" >&2
             exit 1
           fi
@@ -850,6 +910,10 @@ case "${1:-}" in
             sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
           fi
           if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
+            # Abort restored pre-rebase history — no rewrite happened, so the
+            # recorded lease is unnecessary. A failed abort keeps it: the user
+            # may still resolve and continue the rebase by hand.
+            clear_restack_lease "$WT_PATH"
             echo "The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve." >&2
           else
             echo "Automatic abort of the failed rebase did NOT complete; the worktree may still hold rebase state." >&2
@@ -1080,6 +1144,8 @@ case "${1:-}" in
       echo ""
       echo "Push worktree branch to remote. Auto-rebases onto origin/$DEFAULT_BRANCH first."
       echo "Auto-rebased pushes use --force-with-lease pinned to the pre-rebase target branch OID."
+      echo "After a create --reuse/--restack rebase, the lease uses the remote head recorded"
+      echo "at restack time instead; the record is deleted once the push succeeds."
       echo "Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to origin."
       echo ""
       echo "Options:"
@@ -1122,8 +1188,15 @@ case "${1:-}" in
 
     CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
     PUSH_LEASE=()
+    RESTACK_LEASE_OID=""
     if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-      if LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
+      if RESTACK_LEASE_OID="$(restack_lease_oid_for_branch "$WT_PATH" "$CURRENT_BRANCH")"; then
+        # An intentional create --reuse/--restack rebase recorded the remote
+        # head it replaced before rewriting history; use it as the exact
+        # lease expectation. Git rejects the push if the remote has since
+        # moved past the recorded head (#578).
+        PUSH_LEASE=("--force-with-lease=refs/heads/${CURRENT_BRANCH}:${RESTACK_LEASE_OID}")
+      elif LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
         PUSH_LEASE=("$LEASE_ARG")
       else
         exit 1
@@ -1152,22 +1225,40 @@ case "${1:-}" in
       [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
     fi
 
+    PUSH_OK=true
     if [[ -n "$SET_UPSTREAM" ]]; then
       # ${arr[@]+...} guard: empty-array expansion is an unbound variable
       # under Bash 3.2 with set -u.
-      if ! git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"; then
-        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-          echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
-        fi
-        exit 1
-      fi
+      git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}" || PUSH_OK=false
     else
-      if ! git_with_github_https_auth -C "$WT_PATH" push ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" HEAD; then
-        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-          echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+      git_with_github_https_auth -C "$WT_PATH" push ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" HEAD || PUSH_OK=false
+    fi
+
+    if [[ "$PUSH_OK" != true ]]; then
+      if [[ -n "$RESTACK_LEASE_OID" ]]; then
+        # Distinguish "remote actually moved" from a transient failure before
+        # touching the recorded authorization. A moved remote can never match
+        # the recorded head again, so the stale record is discarded and the
+        # user is told to integrate; any other failure keeps the record so a
+        # retry still carries the restack authorization.
+        REMOTE_NOW="$(git_with_github_https_auth -C "$WT_PATH" ls-remote "$REMOTE" "refs/heads/$CURRENT_BRANCH" 2>/dev/null | cut -f1 || true)"
+        if [[ -n "$REMOTE_NOW" && "$REMOTE_NOW" != "$RESTACK_LEASE_OID" ]]; then
+          clear_restack_lease "$WT_PATH"
+          echo "Error: Remote '$REMOTE/$CURRENT_BRANCH' moved from $RESTACK_LEASE_OID to $REMOTE_NOW after the restack was recorded." >&2
+          echo "The recorded restack authorization covered only the old remote head, so it was discarded." >&2
+          echo "Fetch and integrate the new remote commits (e.g. git -C \"$WT_PATH\" fetch $REMOTE && git -C \"$WT_PATH\" rebase \"$REMOTE/$CURRENT_BRANCH\"), then run push again." >&2
+        else
+          echo "Error: Push failed with the recorded restack lease. The restack authorization was kept; retry push after resolving the failure above." >&2
         fi
-        exit 1
+      elif [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
+        echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
       fi
+      exit 1
+    fi
+
+    if [[ -n "$RESTACK_LEASE_OID" ]]; then
+      # The authorization is single-use: consumed by the successful push.
+      clear_restack_lease "$WT_PATH"
     fi
     ;;
 

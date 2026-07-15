@@ -54,6 +54,18 @@ runs. If the remote branch has advanced beyond the local branch, `push` aborts
 and asks the user to fetch/rebase/merge first instead of overwriting unseen
 remote commits.
 
+The one exception is the tool's own restack: an intentional `create
+--reuse`/`--restack` rebase records the remote branch head it observed before
+rewriting history into the worktree's private git dir
+(`worktree-restack-lease`), and the next `push` uses that recorded OID as its
+exact `--force-with-lease` expectation — after the rewrite, the ancestry rule
+above could never pass for the tool's own authorized rebase. The record is
+single-use: deleted once the push succeeds. If the remote moved past the
+recorded head, git rejects the push, the stale record is discarded, and the
+error asks for the new remote commits to be fetched and integrated first. A
+record naming a different branch is ignored and the fail-closed lease behavior
+above applies unchanged.
+
 `remove` deletes the worktree before deleting the local branch. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
 
 When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
@@ -87,7 +99,7 @@ For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before o
 
 Bare `create` never rebases an existing worktree. After the owning session opts in with `--reuse`, the branch rebases onto `origin/<default>`. If that rebase conflicts, the run aborts the rebase and exits 1 — the worktree is left clean on its pre-rebase state, so there is no conflict left to resolve in place. The error lists the conflicting files (captured before the abort) and the two supported recovery paths:
 
-1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, run `GIT_EDITOR=true git -C <path> rebase --continue` (repeat if it stops again), then re-run `create <ID> --reuse` to finish worktree setup. `git -C <path> rebase --abort` backs out to the clean pre-rebase state. This is the supported exception to the no-raw-`git rebase` rule: only `--continue`/`--abort` on the paused rebase, never starting one by hand.
+1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, run `GIT_EDITOR=true git -C <path> rebase --continue` (repeat if it stops again), re-run `create <ID> --reuse` to finish worktree setup, then publish with `push <ID>` — the restack recorded the pre-rebase remote head, so the push's force-with-lease succeeds without manual force flags. `git -C <path> rebase --abort` backs out to the clean pre-rebase state. This is the supported exception to the no-raw-`git rebase` rule: only `--continue`/`--abort` on the paused rebase, never starting one by hand.
 2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
 
 With no conflict, `--restack` completes the same intentional rebase as `--reuse`.

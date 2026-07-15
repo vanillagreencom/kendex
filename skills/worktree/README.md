@@ -25,7 +25,7 @@ Defaults: detects branch from `origin/HEAD` (fallback: `main`), creates worktree
 
 Bare `create <ID>` claims new work only. Every new-branch mode, including `--from`, checks the normalized issue branch, an explicit requested branch, and `BOT_NAME/<issue>` for matching worktrees, local/remote refs, and open PRs. Existing ownership exits 75 without rebasing or modifying a branch. Origin remote-head and GitHub PR discovery are authoritative: an outage exits 1 before worktree config, branch, or target-path mutation instead of being treated as absence. Unreachable secondary remotes are skipped with a warning (they cannot hold other sessions' pushes); reachable ones still count as ownership. A repository-local per-issue lock holds the final repeated discovery through `git worktree add`, so concurrent claimers produce one worktree and one exit 75. Inspect or monitor owned work instead of launching another implementer. Run each issue create separately and check its result; do not batch creates in a shell loop whose last success can mask an earlier active-work exit.
 
-The owning session can opt in with `create <ID> --reuse`, which rebases the existing branch onto `origin/<default>` and refreshes its setup. Reuse/restack requires the target's exact canonical path to be registered in this repository's common Git directory; an incomplete directory is preserved and exits 75, even when it sits inside the main checkout. If a reuse rebase conflicts, it aborts back to the clean pre-rebase state and prints the conflicting files plus two recovery paths: `create <ID> --restack` re-runs the rebase and pauses in the conflict state so you can resolve the files, `git -C <path> add` each one, and `GIT_EDITOR=true git -C <path> rebase --continue` (or `rebase --abort` to back out), then re-run `create <ID> --reuse` to finish setup; alternatively `remove <ID>` + `create <ID>` recreates the worktree fresh from `origin/<default>`, discarding the conflicting local commits. Use `create <ID> --pr <N>` or `--base <branch>` to explicitly inspect existing remote work.
+The owning session can opt in with `create <ID> --reuse`, which rebases the existing branch onto `origin/<default>` and refreshes its setup. Reuse/restack requires the target's exact canonical path to be registered in this repository's common Git directory; an incomplete directory is preserved and exits 75, even when it sits inside the main checkout. If a reuse rebase conflicts, it aborts back to the clean pre-rebase state and prints the conflicting files plus two recovery paths: `create <ID> --restack` re-runs the rebase and pauses in the conflict state so you can resolve the files, `git -C <path> add` each one, and `GIT_EDITOR=true git -C <path> rebase --continue` (or `rebase --abort` to back out), then re-run `create <ID> --reuse` to finish setup and `push <ID>` to publish the restacked branch; alternatively `remove <ID>` + `create <ID>` recreates the worktree fresh from `origin/<default>`, discarding the conflicting local commits. Use `create <ID> --pr <N>` or `--base <branch>` to explicitly inspect existing remote work.
 
 `remove` deletes the worktree first, then tries `git branch -d` for the associated local branch. If Git refuses the safe branch delete (for example, the branch is not merged into the current main checkout), the command exits non-zero and prints a diagnostic naming the remaining branch plus the manual `git branch -D` recovery command.
 
@@ -68,6 +68,17 @@ without failing non-fast-forward. If the remote branch has advanced beyond the
 local branch, the command aborts and asks you to fetch/rebase/merge first
 instead of overwriting unseen remote commits. Calls that skip auto-rebase still
 use plain pushes.
+
+When `create --reuse`/`--restack` intentionally rebases a published branch onto
+`origin/<default>`, it records the remote head it observed before rewriting
+history (file `worktree-restack-lease` in the worktree's private git dir). The
+next `worktree push` uses that recorded OID as its exact `--force-with-lease`
+expectation, since the rewritten history can no longer prove the old remote
+head is contained locally. The record is deleted after a successful push. If
+someone pushed to the branch after the restack, git rejects the lease; the
+stale record is discarded and the error asks you to fetch and integrate the new
+remote commits before pushing again. A record naming a different branch is
+ignored, keeping the fail-closed behavior above.
 
 `codex-setup` applies the same env/config symlinks, copies, mkdirs, bot remote, bot git identity, and lightweight dependency bootstrap that `create` applies after creating a worktree. `codex-branch` renames or switches the app-created worktree branch to the lower-case issue branch expected by `orch`. `codex-cleanup` is intentionally a no-op lifecycle hook for this script; Codex owns app-created worktree and branch deletion. Keep project-level teardown such as stopping containers or removing disposable caches in the Codex environment cleanup script after this command, but do not call `worktree remove` from the hook.
 
