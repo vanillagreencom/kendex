@@ -201,26 +201,56 @@ fetch_ownership_remote() {
   return 1
 }
 
-declare -a OWNERSHIP_REMOTES=()
-declare -A OWNERSHIP_REMOTE_HEADS=()
+# Discovered ls-remote --heads output per remote. Bash 3.2 (macOS system
+# bash) has no associative arrays, so the map is a pair of parallel indexed
+# arrays scanned linearly; it stays tiny (one entry per reachable remote).
+OWNERSHIP_REMOTE_HEAD_NAMES=()
+OWNERSHIP_REMOTE_HEAD_REFS=()
+
+ownership_heads_for_remote() {
+  local remote="$1" i
+  for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
+    if [[ "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" == "$remote" ]]; then
+      printf '%s\n' "${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
 
 discover_ownership_remote_heads() {
-  mapfile -t OWNERSHIP_REMOTES < <(git -C "$PROJECT_ROOT" remote)
-  if [[ ! " ${OWNERSHIP_REMOTES[*]} " =~ [[:space:]]origin[[:space:]] ]]; then
+  local remotes=()
+  local remote="" output="" have_origin=false i
+  while IFS= read -r remote; do
+    [[ -n "$remote" ]] || continue
+    remotes+=("$remote")
+    if [[ "$remote" == "origin" ]]; then
+      have_origin=true
+    fi
+  done < <(git -C "$PROJECT_ROOT" remote)
+  if [[ "$have_origin" != true ]]; then
     echo "Error: Remote 'origin' is required for authoritative worktree ownership discovery." >&2
     return 1
   fi
 
-  OWNERSHIP_REMOTE_HEADS=()
-  local remote output=""
-  for remote in "${OWNERSHIP_REMOTES[@]}"; do
-    [[ -n "$remote" ]] || continue
+  OWNERSHIP_REMOTE_HEAD_NAMES=()
+  OWNERSHIP_REMOTE_HEAD_REFS=()
+  for ((i = 0; i < ${#remotes[@]}; i++)); do
+    remote="${remotes[$i]}"
     if ! output="$(git_with_github_https_auth -C "$PROJECT_ROOT" ls-remote --heads "$remote" 2>&1)"; then
-      echo "Error: Could not query remote '$remote' for authoritative worktree ownership discovery." >&2
-      [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
-      return 1
+      if [[ "$remote" == "origin" ]]; then
+        echo "Error: Could not query remote 'origin' for authoritative worktree ownership discovery." >&2
+        [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+        return 1
+      fi
+      # An unreachable secondary remote cannot receive another session's
+      # pushes, so skipping it cannot hide active ownership; only origin is
+      # authoritative for new-work claims.
+      echo "warning: skipping unreachable remote '$remote' for ownership discovery" >&2
+      continue
     fi
-    OWNERSHIP_REMOTE_HEADS["$remote"]="$output"
+    OWNERSHIP_REMOTE_HEAD_NAMES+=("$remote")
+    OWNERSHIP_REMOTE_HEAD_REFS+=("$output")
   done
 }
 
@@ -456,8 +486,12 @@ worktree_for_branch() {
     case "$line" in
       worktree\ *) current_path="${line#worktree }" ;;
       "branch refs/heads/$branch")
-        [[ -n "$current_path" ]] && printf '%s\n' "$current_path"
-        return 0
+        # A stanza without a worktree path is not ownership proof; success
+        # must always carry a usable path for command-substitution callers.
+        if [[ -n "$current_path" ]]; then
+          printf '%s\n' "$current_path"
+          return 0
+        fi
         ;;
       '') current_path="" ;;
     esac
@@ -513,14 +547,30 @@ resolve_pr_branch() {
   printf '%s\n' "$output"
 }
 
-declare -a CANDIDATE_BRANCHES=()
-declare -A CANDIDATE_OPEN_PRS=()
+CANDIDATE_BRANCHES=()
+# Open-PR details per candidate branch; parallel indexed arrays for Bash 3.2
+# (see OWNERSHIP_REMOTE_HEAD_NAMES).
+CANDIDATE_OPEN_PR_BRANCHES=()
+CANDIDATE_OPEN_PR_DETAILS=()
+
+candidate_open_pr_details() {
+  local branch="$1" i
+  for ((i = 0; i < ${#CANDIDATE_OPEN_PR_BRANCHES[@]}; i++)); do
+    if [[ "${CANDIDATE_OPEN_PR_BRANCHES[$i]}" == "$branch" ]]; then
+      printf '%s\n' "${CANDIDATE_OPEN_PR_DETAILS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
 
 add_candidate_branch() {
-  local branch="$1" existing=""
+  local branch="$1" i
   [[ -n "$branch" ]] || return 0
-  for existing in "${CANDIDATE_BRANCHES[@]}"; do
-    [[ "$existing" == "$branch" ]] && return 0
+  # Indexed loop: expanding an empty array with "${arr[@]}" is an unbound
+  # variable under Bash 3.2 with set -u.
+  for ((i = 0; i < ${#CANDIDATE_BRANCHES[@]}; i++)); do
+    [[ "${CANDIDATE_BRANCHES[$i]}" == "$branch" ]] && return 0
   done
   CANDIDATE_BRANCHES+=("$branch")
 }
@@ -538,35 +588,38 @@ build_candidate_branches() {
 
 discover_candidate_ownership() {
   discover_ownership_remote_heads || return 1
-  CANDIDATE_OPEN_PRS=()
+  CANDIDATE_OPEN_PR_BRANCHES=()
+  CANDIDATE_OPEN_PR_DETAILS=()
 
   local branch pr_details
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
     if ! pr_details="$(open_pr_for_branch "$branch")"; then
       return 1
     fi
-    CANDIDATE_OPEN_PRS["$branch"]="$pr_details"
+    CANDIDATE_OPEN_PR_BRANCHES+=("$branch")
+    CANDIDATE_OPEN_PR_DETAILS+=("$pr_details")
   done
 }
 
 remote_ref_for_branch() {
-  local branch="$1" remote="" oid="" ref=""
-  for remote in "${OWNERSHIP_REMOTES[@]}"; do
+  local branch="$1" oid="" ref="" i
+  for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
     while read -r oid ref; do
       if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
-        printf '%s/%s\n' "$remote" "$branch"
+        printf '%s/%s\n' "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" "$branch"
         return 0
       fi
-    done <<<"${OWNERSHIP_REMOTE_HEADS[$remote]:-}"
+    done <<<"${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
   done
   return 1
 }
 
 remote_branch_discovered() {
-  local remote="$1" branch="$2" oid="" ref=""
+  local remote="$1" branch="$2" heads="" oid="" ref=""
+  heads="$(ownership_heads_for_remote "$remote" || true)"
   while read -r oid ref; do
     [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]] && return 0
-  done <<<"${OWNERSHIP_REMOTE_HEADS[$remote]:-}"
+  done <<<"$heads"
   return 1
 }
 
@@ -578,7 +631,7 @@ scan_candidate_ownership() {
       refuse_existing_worktree "$issue" "$existing_wt"
       return "$ACTIVE_WORK_EXIT"
     fi
-    pr_details="${CANDIDATE_OPEN_PRS[$branch]:-}"
+    pr_details="$(candidate_open_pr_details "$branch" || true)"
     if [[ -n "$pr_details" ]]; then
       pr_number="${pr_details%%$'\t'*}"
       refuse_existing_branch "$issue" "$branch" "open pull request" "#$pr_number"
@@ -606,14 +659,18 @@ acquire_issue_claim_lock() {
   normalized_issue="$(issue_branch_name "$issue")"
   claim_key="$(printf '%s' "$normalized_issue" | git hash-object --stdin)"
   lock_path="$PROJECT_COMMON_GIT_DIR/vstack-worktree-claim-$claim_key.lock"
-  exec {ISSUE_CLAIM_FD}>"$lock_path"
-  flock -x "$ISSUE_CLAIM_FD"
+  # Fixed descriptor: Bash 3.2 (macOS system bash) lacks the automatic
+  # file-descriptor allocation redirection added in Bash 4.1.
+  exec 9>"$lock_path"
+  ISSUE_CLAIM_LOCK_HELD=true
+  flock -x 9
 }
 
 release_issue_claim_lock() {
-  if [[ -n "${ISSUE_CLAIM_FD:-}" ]]; then
-    flock -u "$ISSUE_CLAIM_FD" 2>/dev/null || true
-    exec {ISSUE_CLAIM_FD}>&-
+  if [[ "${ISSUE_CLAIM_LOCK_HELD:-false}" == true ]]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+    ISSUE_CLAIM_LOCK_HELD=false
   fi
 }
 
@@ -1096,14 +1153,16 @@ case "${1:-}" in
     fi
 
     if [[ -n "$SET_UPSTREAM" ]]; then
-      if ! git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" "${PUSH_LEASE[@]}" "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"; then
+      # ${arr[@]+...} guard: empty-array expansion is an unbound variable
+      # under Bash 3.2 with set -u.
+      if ! git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"; then
         if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
           echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
         fi
         exit 1
       fi
     else
-      if ! git_with_github_https_auth -C "$WT_PATH" push "${PUSH_LEASE[@]}" "$REMOTE" HEAD; then
+      if ! git_with_github_https_auth -C "$WT_PATH" push ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" HEAD; then
         if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
           echo "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
         fi
