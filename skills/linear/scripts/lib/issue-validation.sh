@@ -83,3 +83,100 @@ build_completion_validation_result() {
 		--argjson ok "$ok" \
 		'{id: $id, state: $state, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}'
 }
+
+# --- Blocking-relation hierarchy guard (add-relation / block) ---
+#
+# Invariant: a blocking relation connects peers of one bundle — two issues
+# with the SAME direct parent, or two top-level issues. An issue never blocks
+# its own ancestor or descendant: the parent-child hierarchy already encodes
+# that dependency. Cross-subtree dependencies are expressed at the level
+# where the subtrees separate (the children of the lowest common ancestor).
+#
+# Ancestor chains are newline-separated identifier lists, self first, root
+# last (e.g. "CC-766\nCC-763\nCC-761").
+
+# blocking_level_ok BLOCKER_PARENT BLOCKED_PARENT
+# The single acceptance predicate for the blocking-level rule. Both the guard
+# and the remediation generator use it, so a prescribed replacement command is
+# accepted by construction.
+blocking_level_ok() {
+	local p1="${1:-}" p2="${2:-}"
+
+	if [[ -z "$p1" && -z "$p2" ]]; then
+		return 0 # both top-level
+	fi
+	if [[ -n "$p1" && "$p1" == "$p2" ]]; then
+		return 0 # siblings under the same parent
+	fi
+	return 1
+}
+
+# hierarchy_chain_contains CHAIN ID — true when ID is an entry of CHAIN.
+hierarchy_chain_contains() {
+	local chain="$1" id="$2"
+	[[ -n "$id" ]] && grep -qxF "$id" <<<"$chain"
+}
+
+# hoist_to_lca_child CHAIN OTHER_CHAIN
+# Print two lines: the entry of CHAIN whose parent is the lowest common
+# ancestor of both chains (the subtree root where the chains separate), then
+# that entry's parent (empty line when the entry is a root, i.e. the chains
+# share no ancestor). Callers must have excluded ancestor/descendant pairs.
+hoist_to_lca_child() {
+	local chain="$1" other="$2"
+	local -a entries=()
+	mapfile -t entries <<<"$chain"
+
+	local i parent
+	for ((i = 0; i < ${#entries[@]}; i++)); do
+		parent="${entries[i + 1]:-}"
+		if [[ -z "$parent" ]] || hierarchy_chain_contains "$other" "$parent"; then
+			printf '%s\n%s\n' "${entries[i]}" "$parent"
+			return 0
+		fi
+	done
+}
+
+# blocking_level_violation_message BLOCKER BLOCKED CHAIN1 CHAIN2
+# Compose the plain-text rejection message for a blocking-level violation.
+# Ancestor/descendant pairs get a single explanation (no replacement command
+# exists). Cross-subtree pairs get the one hoisted pair that satisfies
+# blocking_level_ok; the candidate is re-checked through that same predicate
+# before it is printed, so the prescription is never itself rejected.
+blocking_level_violation_message() {
+	local blocker="$1" blocked="$2" chain1="$3" chain2="$4"
+
+	if [[ "$blocker" == "$blocked" ]]; then
+		printf 'Hierarchy violation: %s cannot block itself.' "$blocker"
+		return 0
+	fi
+
+	local ancestor="" descendant=""
+	if hierarchy_chain_contains "$chain1" "$blocked"; then
+		ancestor="$blocked" descendant="$blocker"
+	elif hierarchy_chain_contains "$chain2" "$blocker"; then
+		ancestor="$blocker" descendant="$blocked"
+	fi
+	if [[ -n "$ancestor" ]]; then
+		printf 'Hierarchy violation: %s is an ancestor of %s — an issue cannot carry a blocking relation against its own ancestor; the parent-child hierarchy already encodes that dependency. No relation is needed while %s stays under %s; use '\''%s --related %s'\'' for traceability. A true sequencing gate belongs between sibling issues at the level that owns the ordering.' \
+			"$ancestor" "$descendant" "$descendant" "$ancestor" "$descendant" "$ancestor"
+		return 0
+	fi
+
+	local -a hoist1=() hoist2=()
+	mapfile -t hoist1 < <(hoist_to_lca_child "$chain1" "$chain2")
+	mapfile -t hoist2 < <(hoist_to_lca_child "$chain2" "$chain1")
+	local cand1="${hoist1[0]:-}" cand1_parent="${hoist1[1]:-}"
+	local cand2="${hoist2[0]:-}" cand2_parent="${hoist2[1]:-}"
+
+	if [[ -n "$cand1" && -n "$cand2" && "$cand1" != "$cand2" ]] \
+		&& blocking_level_ok "$cand1_parent" "$cand2_parent"; then
+		printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). Express the dependency where the subtrees separate: use '\''%s --blocks %s'\'', and '\''%s --related %s'\'' for traceability.' \
+			"$blocker" "$blocked" "$cand1" "$cand2" "$blocker" "$blocked"
+		return 0
+	fi
+
+	# Defensive fallback: no candidate satisfies the guard's own predicate.
+	printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). No replacement pair satisfies the rule; restructure the hierarchy or use '\''%s --related %s'\'' for traceability.' \
+		"$blocker" "$blocked" "$blocker" "$blocked"
+}

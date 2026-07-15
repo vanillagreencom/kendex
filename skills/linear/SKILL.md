@@ -125,6 +125,8 @@ sortOrder → sort_order  # Manual sort position
 | Issue A blocked by Issue B (both in Linear) | Relation: `--blocked-by` |
 | Issue blocked by external factor (vendor, license) | `blocked` label + comment |
 
+Blocking relations must connect peers of one bundle: same direct parent, or both top-level (and same project). An issue cannot block its own ancestor or descendant — the parent-child hierarchy already encodes that dependency; use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate.
+
 ## Common Pitfalls
 
 | Option | Accepts | On failure |

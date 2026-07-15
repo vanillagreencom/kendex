@@ -1811,25 +1811,26 @@ add_relation() {
         related_issue_uuid="$temp"
     fi
 
-    # Validation for blocking relations: same-project + blocking-level (no cross-bundle children)
+    # Validation for blocking relations: same-project + blocking-level rule
+    # (blocking relations connect peers of one bundle — see issue-validation.sh)
     if [ "$relation_type" = "blocks" ]; then
+        # Parent chain fetched 5 levels deep so the remediation can locate the
+        # lowest common ancestor of nested hierarchies.
         local validation_query='
         query ValidateBlocking($id1: String!, $id2: String!) {
-            issue1: issue(id: $id1) { identifier project { id name } parent { identifier } }
-            issue2: issue(id: $id2) { identifier project { id name } parent { identifier } }
+            issue1: issue(id: $id1) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
+            issue2: issue(id: $id2) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
         }'
         local validation_result
         validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
 
-        local project1_id project2_id project1_name project2_name issue1_id issue2_id parent1_id parent2_id
+        local project1_id project2_id project1_name project2_name issue1_id issue2_id
         project1_id=$(echo "$validation_result" | jq -r '.issue1.project.id // empty')
         project2_id=$(echo "$validation_result" | jq -r '.issue2.project.id // empty')
         project1_name=$(echo "$validation_result" | jq -r '.issue1.project.name // "none"')
         project2_name=$(echo "$validation_result" | jq -r '.issue2.project.name // "none"')
         issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
         issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
-        parent1_id=$(echo "$validation_result" | jq -r '.issue1.parent.identifier // empty')
-        parent2_id=$(echo "$validation_result" | jq -r '.issue2.parent.identifier // empty')
 
         # Check 1: Same-project
         if [ "$project1_id" != "$project2_id" ]; then
@@ -1837,21 +1838,22 @@ add_relation() {
             return 1
         fi
 
-        # Check 2: Blocking-level rule — children must not block outside their bundle
+        # Check 2: Blocking-level rule — a blocking relation connects peers of
+        # one bundle: same direct parent, or both top-level. The rejection
+        # message derives its remediation from the same predicate
+        # (blocking_level_ok), so a prescribed command is never itself rejected.
         # issue1 = blocker (from), issue2 = blocked (to)
-        if [ -n "$parent1_id" ] || [ -n "$parent2_id" ]; then
-            # Both are children under the same parent → intra-bundle, allowed
-            if [ -n "$parent1_id" ] && [ -n "$parent2_id" ] && [ "$parent1_id" = "$parent2_id" ]; then
-                : # valid intra-bundle relation
-            # Blocker is a child, blocked is outside that bundle
-            elif [ -n "$parent1_id" ] && [ "$parent1_id" != "$issue2_id" ]; then
-                echo "{\"error\": \"Blocking-level violation: $issue1_id is a child of $parent1_id and cannot block $issue2_id (outside its bundle). Use '$parent1_id --blocks $issue2_id' for the parent-level dependency, and '$issue1_id --related $issue2_id' for traceability.\"}" >&2
-                return 1
-            # Blocked is a child, blocker is outside that bundle
-            elif [ -n "$parent2_id" ] && [ "$parent2_id" != "$issue1_id" ]; then
-                echo "{\"error\": \"Blocking-level violation: $issue2_id is a child of $parent2_id and cannot be blocked by $issue1_id (outside its bundle). Use '$issue1_id --blocks $parent2_id' for the parent-level dependency, and '$issue1_id --related $issue2_id' for traceability.\"}" >&2
-                return 1
-            fi
+        local chain1 chain2 parent1_id parent2_id
+        chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .identifier')
+        chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
+        parent1_id=$(sed -n '2p' <<<"$chain1")
+        parent2_id=$(sed -n '2p' <<<"$chain2")
+
+        if ! blocking_level_ok "$parent1_id" "$parent2_id"; then
+            local violation_message
+            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
+            echo "{\"error\": \"$violation_message\"}" >&2
+            return 1
         fi
     fi
 
