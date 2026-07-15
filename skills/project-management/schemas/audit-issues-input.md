@@ -79,7 +79,11 @@ Input file for issue audit workflows — transforms review agent findings into t
 
 ## Hierarchy Contract
 
-`hierarchy_contract` is a **binding directive, not a hint**. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when `hierarchy_contract` is present, placement for the covered items is fixed by the producer, and the TPM's ordinary duplicate/hierarchy inference is bypassed for those items (tpm-audit.md § 7.0 and § 10.2).
+`hierarchy_contract` is a **binding directive, not a hint**. In
+`decompose-under-parent` mode, `parent_issue` is normally the blocked
+implementation issue itself — the same identifier appears in `blocked_issues`,
+as in the example above — because research-complete § 6.5 converts that blocked
+issue into the coordination-only parent of the new domain children. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when `hierarchy_contract` is present, placement for the covered items is fixed by the producer, and the TPM's ordinary duplicate/hierarchy inference is bypassed for those items (tpm-audit.md § 7.0 and § 10.2).
 
 | Field | Required | Description |
 |-------|----------|-------------|
