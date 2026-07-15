@@ -117,90 +117,32 @@ hierarchy_chain_contains() {
 	[[ -n "$id" ]] && grep -qxF "$id" <<<"$chain"
 }
 
-# fetch_complete_issue_hierarchy ISSUE_ID
-# Walk one parent edge per query until Linear returns an explicit root. This is
-# intentionally iterative: GraphQL has no recursive selection, and a fixed
-# nested parent shape cannot distinguish a real root from query truncation.
-# Prints {identifier, project_id, project_name, chain} on success. Any missing
-# node/identity/project/parent ID or repeated node fails closed before callers
-# can create a relation.
-fetch_complete_issue_hierarchy() {
-	local current_id="$1"
-	local query='
-	query ValidateBlockingIssue($id: String!) {
-		issue(id: $id) {
-			id
-			identifier
-			project { id name }
-			parent { id }
-		}
-	}'
-	local chain="" seen_ids=""
-	local issue_identifier="" project_id="" project_name=""
-
-	while [[ -n "$current_id" ]]; do
-		local result node_id identifier node_project_id node_project_name
-		local parent_state parent_id
-		if ! result=$(graphql_query "$query" "{\"id\": \"$current_id\"}"); then
-			return 1
-		fi
-		parent_state=$(jq -r '
-			if (.issue | type) != "object" then "invalid_issue"
-			elif (.issue | has("parent") | not) then "missing_parent"
-			elif .issue.parent == null then "root"
-			elif ((.issue.parent | type) == "object"
-				and (.issue.parent.id | type) == "string"
-				and (.issue.parent.id | length) > 0) then "edge"
-			else "invalid_parent"
-			end
-		' <<<"$result")
-		if [[ "$parent_state" == "invalid_issue" ]]; then
-			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned non-object issue data for '$current_id'.\"}" >&2
-			return 1
-		fi
-		if [[ "$parent_state" == "missing_parent" || "$parent_state" == "invalid_parent" ]]; then
-			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned an incomplete parent edge for '$current_id'.\"}" >&2
-			return 1
-		fi
-		node_id=$(jq -r '.issue.id // empty' <<<"$result")
-		identifier=$(jq -r '.issue.identifier // empty' <<<"$result")
-		node_project_id=$(jq -r '.issue.project.id // empty' <<<"$result")
-		node_project_name=$(jq -r '.issue.project.name // "none"' <<<"$result")
-		parent_id=""
-		if [[ "$parent_state" == "edge" ]]; then
-			parent_id=$(jq -r '.issue.parent.id' <<<"$result")
-		fi
-
-		if [[ -z "$node_id" || -z "$identifier" ]]; then
-			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned incomplete issue data for '$current_id'.\"}" >&2
-			return 1
-		fi
-		if hierarchy_chain_contains "$seen_ids" "$node_id"; then
-			echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected at '$identifier'.\"}" >&2
-			return 1
-		fi
-
-		if [[ -z "$issue_identifier" ]]; then
-			issue_identifier="$identifier"
-			project_id="$node_project_id"
-			project_name="$node_project_name"
-		fi
-		if [[ -z "$chain" ]]; then
-			chain="$identifier"
-			seen_ids="$node_id"
-		else
-			chain="${chain}"$'\n'"${identifier}"
-			seen_ids="${seen_ids}"$'\n'"${node_id}"
-		fi
-		current_id="$parent_id"
-	done
-
-	jq -n \
-		--arg identifier "$issue_identifier" \
-		--arg project_id "$project_id" \
-		--arg project_name "$project_name" \
-		--arg chain "$chain" \
-		'{identifier: $identifier, project_id: $project_id, project_name: $project_name, chain: $chain}'
+# validate_parent_chain_shape ISSUE_JSON SELECTED_DEPTH CONTEXT
+# A selected parent field is trustworthy only when the current issue is an
+# object and the field is explicitly present. A literal null proves a root;
+# an edge must be an object with non-empty GraphQL id/identifier fields. At
+# SELECTED_DEPTH the query intentionally stops selecting another parent field.
+validate_parent_chain_shape() {
+	local issue_json="$1" selected_depth="$2" context="$3"
+	if ! jq -e --argjson selected_depth "$selected_depth" '
+		def valid_chain($remaining):
+			(type == "object")
+			and ((.id | type) == "string" and (.id | length) > 0)
+			and ((.identifier | type) == "string" and (.identifier | length) > 0)
+			and (
+				if $remaining == 0 then true
+				elif (has("parent") | not) then false
+				elif .parent == null then true
+				elif (.parent | type) == "object" then
+					(.parent | valid_chain($remaining - 1))
+				else false
+				end
+			);
+		valid_chain($selected_depth)
+	' <<<"$issue_json" >/dev/null; then
+		echo "{\"error\": \"Hierarchy validation failed closed: Linear returned incomplete or malformed parent data for '$context'.\"}" >&2
+		return 1
+	fi
 }
 
 # hoist_to_lca_child CHAIN OTHER_CHAIN
@@ -210,18 +152,21 @@ fetch_complete_issue_hierarchy() {
 # share no ancestor). Callers must have excluded ancestor/descendant pairs.
 hoist_to_lca_child() {
 	local chain="$1" other="$2"
-	local child="" parent
-
-	while IFS= read -r parent; do
-		if [[ -n "$child" ]] && hierarchy_chain_contains "$other" "$parent"; then
-			printf '%s\n%s\n' "$child" "$parent"
-			return 0
-		fi
-		child="$parent"
+	# Read the newline-separated chain without an extra subprocess.
+	local -a entries=()
+	local line
+	while IFS= read -r line; do
+		entries+=("$line")
 	done <<<"$chain"
 
-	# No shared ancestor: the root is the candidate and has no parent.
-	[[ -n "$child" ]] && printf '%s\n\n' "$child"
+	local i parent
+	for ((i = 0; i < ${#entries[@]}; i++)); do
+		parent="${entries[i + 1]:-}"
+		if [[ -z "$parent" ]] || hierarchy_chain_contains "$other" "$parent"; then
+			printf '%s\n%s\n' "${entries[i]}" "$parent"
+			return 0
+		fi
+	done
 }
 
 # blocking_level_violation_message BLOCKER BLOCKED CHAIN1 CHAIN2
@@ -250,19 +195,16 @@ blocking_level_violation_message() {
 		return 0
 	fi
 
-	local hoist1 hoist2 cand1 cand1_parent cand2 cand2_parent
+	# hoist_to_lca_child prints "candidate\nparent"; command substitution
+	# strips the trailing newline of an empty parent line.
+	local hoist1 hoist2
 	hoist1=$(hoist_to_lca_child "$chain1" "$chain2")
 	hoist2=$(hoist_to_lca_child "$chain2" "$chain1")
-	cand1="${hoist1%%$'\n'*}"
-	cand2="${hoist2%%$'\n'*}"
-	cand1_parent=""
-	cand2_parent=""
-	if [[ "$hoist1" == *$'\n'* ]]; then
-		cand1_parent="${hoist1#*$'\n'}"
-	fi
-	if [[ "$hoist2" == *$'\n'* ]]; then
-		cand2_parent="${hoist2#*$'\n'}"
-	fi
+	local cand1 cand1_parent cand2 cand2_parent
+	cand1=$(sed -n '1p' <<<"$hoist1")
+	cand1_parent=$(sed -n '2p' <<<"$hoist1")
+	cand2=$(sed -n '1p' <<<"$hoist2")
+	cand2_parent=$(sed -n '2p' <<<"$hoist2")
 
 	if [[ -n "$cand1" && -n "$cand2" && "$cand1" != "$cand2" ]] \
 		&& blocking_level_ok "$cand1_parent" "$cand2_parent"; then

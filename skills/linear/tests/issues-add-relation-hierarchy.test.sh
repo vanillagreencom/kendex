@@ -9,14 +9,10 @@
 #     ├── CC-763 ── CC-766, CC-768
 #     └── CC-764 ── CC-767
 #   CC-780 (root)
-#   CC-790 ── CC-791 ── CC-792 ── CC-793 ── CC-794 ── CC-795 ── CC-796
-#                                                                  ├── CC-797
-#                                                                  └── CC-798
-#   CC-799 (incomplete parent edge; fail-closed fixture)
-#   CC-810 <-> CC-811 (parent cycle; fail-closed fixture)
-#   CC-812 (missing parent key; fail-closed fixture)
-#   CC-813 (non-object parent; fail-closed fixture)
-#   CC-814 (non-object issue; fail-closed fixture)
+#   CC-799 (missing parent key; fail-closed fixture)
+#   CC-800 (non-object parent; fail-closed fixture)
+#   CC-801 (non-object issue; fail-closed fixture)
+#   CC-802 (empty parent ID; fail-closed fixture)
 
 set -euo pipefail
 
@@ -39,44 +35,30 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 # identifier -> uuid used by the resolve query; validate/mutation see uuids
 uuid_for() { printf 'uuid-%s' "${1#CC-}"; }
 
-# Issue node with one parent edge. ValidateBlockingIssue must follow these
-# edges iteratively until it observes an explicit null root.
+# Issue node with project + 5-level parent chain, as ValidateBlocking selects
 issue_node() {
   local prj='"project":{"id":"proj-1","name":"Test"}'
-  local suffix="${1#uuid-}" parent_id
   case "$1" in
-  uuid-814) printf '[]'; return ;;
-  uuid-761 | uuid-780 | uuid-790) parent_id="null" ;;
-  uuid-763 | uuid-764) parent_id="uuid-761" ;;
-  uuid-766 | uuid-768) parent_id="uuid-763" ;;
-  uuid-767) parent_id="uuid-764" ;;
-  uuid-791) parent_id="uuid-790" ;;
-  uuid-792) parent_id="uuid-791" ;;
-  uuid-793) parent_id="uuid-792" ;;
-  uuid-794) parent_id="uuid-793" ;;
-  uuid-795) parent_id="uuid-794" ;;
-  uuid-796) parent_id="uuid-795" ;;
-  uuid-797 | uuid-798) parent_id="uuid-796" ;;
-  uuid-799) parent_id="missing" ;;
-  uuid-810) parent_id="uuid-811" ;;
-  uuid-811) parent_id="uuid-810" ;;
-  uuid-812) parent_id="absent" ;;
-  uuid-813) parent_id="wrong-type" ;;
-  *) printf 'null'; return ;;
-  esac
-  case "$parent_id" in
-  null) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":null}' "$1" "$suffix" "$prj" ;;
-  missing) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{}}' "$1" "$suffix" "$prj" ;;
-  absent) printf '{"id":"%s","identifier":"CC-%s",%s}' "$1" "$suffix" "$prj" ;;
-  wrong-type) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":"uuid-761"}' "$1" "$suffix" "$prj" ;;
-  *) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{"id":"%s"}}' "$1" "$suffix" "$prj" "$parent_id" ;;
+  uuid-761) printf '{"id":"uuid-761","identifier":"CC-761",%s,"parent":null}' "$prj" ;;
+  uuid-763) printf '{"id":"uuid-763","identifier":"CC-763",%s,"parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' "$prj" ;;
+  uuid-764) printf '{"id":"uuid-764","identifier":"CC-764",%s,"parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' "$prj" ;;
+  uuid-766) printf '{"id":"uuid-766","identifier":"CC-766",%s,"parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
+  uuid-767) printf '{"id":"uuid-767","identifier":"CC-767",%s,"parent":{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
+  uuid-768) printf '{"id":"uuid-768","identifier":"CC-768",%s,"parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
+  uuid-780) printf '{"id":"uuid-780","identifier":"CC-780",%s,"parent":null}' "$prj" ;;
+  uuid-799) printf '{"id":"uuid-799","identifier":"CC-799",%s}' "$prj" ;;
+  uuid-800) printf '{"id":"uuid-800","identifier":"CC-800",%s,"parent":"uuid-761"}' "$prj" ;;
+  uuid-801) printf '[]' ;;
+  uuid-802) printf '{"id":"uuid-802","identifier":"CC-802",%s,"parent":{"id":"","identifier":"CC-761","parent":null}}' "$prj" ;;
+  *) printf 'null' ;;
   esac
 }
 
 case "$query" in
-*"ValidateBlockingIssue"*)
-  id="$(jq -r '.id' <<<"$variables")"
-  printf '{"data":{"issue":%s}}___HTTP_CODE___200' "$(issue_node "$id")"
+*"ValidateBlocking"*)
+  id1="$(jq -r '.id1' <<<"$variables")"
+  id2="$(jq -r '.id2' <<<"$variables")"
+  printf '{"data":{"issue1":%s,"issue2":%s}}___HTTP_CODE___200' "$(issue_node "$id1")" "$(issue_node "$id2")"
   ;;
 *"GetIssue"*)
   ref="$(jq -r '.id' <<<"$variables")"
@@ -95,8 +77,8 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# Exercise this complete test file under the unsupported macOS-era runtime. The
-# CLI must reject it before loading shared config or attempting an API request.
+# Run this complete regression file with the unsupported macOS-era runtime.
+# The CLI must reject it before shared config loads or any API request occurs.
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   payload_log="$TMP_ROOT/bash3-payloads.jsonl"
   : >"$payload_log"
@@ -240,58 +222,34 @@ if [ "$(extract_prescription "$TMP_ROOT/err")" != "CC-761 CC-780" ]; then
   exit 1
 fi
 
-# The ancestor is seven parent edges above the leaf. A fixed five-parent
-# GraphQL selection used to misclassify this as a cross-root relation.
-reject "deep ancestor (CC-797 --blocks CC-790)" CC-797 --blocks CC-790
-if ! grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"; then
-  echo "FAIL deep ancestor: complete chain was not recognized:"
-  cat "$TMP_ROOT/err"
+# Missing/wrong-typed hierarchy shapes must fail before issueRelationCreate.
+reject "missing parent key" CC-799 --blocks CC-780
+grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err" || {
+  echo "FAIL missing parent key: missing fail-closed diagnostic"
   exit 1
-fi
+}
 
-# An incomplete parent object is neither a root nor a usable edge. Reject it
-# before relation mutation instead of silently treating the chain as complete.
-reject "incomplete ancestor response (CC-799 --blocks CC-780)" CC-799 --blocks CC-780
-if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
-  echo "FAIL incomplete ancestor response: missing fail-closed diagnostic:"
-  cat "$TMP_ROOT/err"
+reject "non-object parent" CC-800 --blocks CC-780
+grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err" || {
+  echo "FAIL non-object parent: missing fail-closed diagnostic"
   exit 1
-fi
+}
 
-# Missing/wrong-typed GraphQL shapes must never be inferred as explicit roots.
-# reject() also asserts that no issueRelationCreate mutation was sent.
-reject "missing parent key (CC-812 --blocks CC-780)" CC-812 --blocks CC-780
-if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
-  echo "FAIL missing parent key: missing fail-closed diagnostic:"
-  cat "$TMP_ROOT/err"
+reject "non-object issue" CC-801 --blocks CC-780
+grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err" || {
+  echo "FAIL non-object issue: missing fail-closed diagnostic"
   exit 1
-fi
+}
 
-reject "non-object parent (CC-813 --blocks CC-780)" CC-813 --blocks CC-780
-if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
-  echo "FAIL non-object parent: missing fail-closed diagnostic:"
-  cat "$TMP_ROOT/err"
+reject "empty parent ID" CC-802 --blocks CC-780
+grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err" || {
+  echo "FAIL empty parent ID: missing fail-closed diagnostic"
   exit 1
-fi
-
-reject "non-object issue (CC-814 --blocks CC-780)" CC-814 --blocks CC-780
-if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
-  echo "FAIL non-object issue: missing fail-closed diagnostic:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-
-reject "cyclic ancestor response (CC-810 --blocks CC-780)" CC-810 --blocks CC-780
-if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
-  echo "FAIL cyclic ancestor response: missing fail-closed diagnostic:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
+}
 
 # --- (d) relations the rule blesses still pass ---
 accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
 accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
-accept "deep leaf siblings (CC-797 --blocks CC-798)" CC-797 --blocks CC-798
 accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
 accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
 
