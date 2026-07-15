@@ -277,7 +277,13 @@ merge. Detach them first.
    | `OPEN` on a plain auto-merge repo, `autoMergeRequest == null` after `--auto` armed it, or a required check failed (probe: `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 60 --json` → `verdict=fail`) | Auto-merge disarmed by a check failure | Recovery cycle below |
    | Poll bound reached, still queued/armed | Deep queue | Report still-queued: the merge stays armed and fires when checks and protection clear. Skip steps 3-6 (they assume a landed merge) and note in § 7 that sync/cleanup should be re-run via `merge-pr [PR_NUMBER]` once merged |
 
-   **Recovery cycle** — no manual CI-fixing; route the failure back into ci-fix automatically. Max 2 recovery cycles per merge-pr run (a session-scoped count, parallel to ci-fix's own internal cycle cap); at the cap, report the persistent failure, skip steps 3-6, and hand back to the user.
+   **Recovery cycle** — no manual CI-fixing; route the failure back into ci-fix automatically. Before the first recovery cycle, read the budget:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6
+   ```
+
+   The printed value is `MAX_CYCLES` — the effective `CI_FIX_MAX_CYCLES` (process env > `vstack.settings.toml` `[env]` > default 6; non-numeric falls back to 6). Max [MAX_CYCLES] recovery cycles per merge-pr run (a session-scoped count, parallel to ci-fix's own internal cycle cap); at the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 3-6 and hand back to the user.
 
    1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`. For a queue ejection the failing run is the **merge-group** run (workflow event `merge_group`), not necessarily the PR-head run — locate it via the failing run link in the PR's checks or `gh run list --event merge_group --limit 10`, and point ci-fix's log fetching at that run.
    2. **Re-confirm approval** after ci-fix pushed a fix — pushes can dismiss reviewer approvals:

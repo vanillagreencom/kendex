@@ -154,6 +154,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr § 4 approval-gate poller; never parses bot reactions or sticky prose |
 | `ci-wait` | Block until CI completes on a PR — runs after the approval gate; `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds how long it tolerates unregistered checks |
+| `orch-env` | Print the effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > supplied default; numeric defaults reject non-numeric values) — how workflows read `CI_FIX_MAX_CYCLES` |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
 | `parallel-groups` | Local cache for safe parallel handoff analysis |
@@ -204,6 +205,7 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 | `ORCH_STATE_DIR` | Override state file directory (env fallback for the `--state-dir` flag, which wins when both are set) | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
+| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
 
 ## System Dependencies
 

@@ -342,15 +342,23 @@ On always-on repos CI has been running since the PR was created or updated in §
 
 ### 5.2 CI Failure Recovery
 
+On first entry, read the ci-fix cycle budget:
+
+```bash
+.agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6
+```
+
+The printed value is `MAX_CYCLES` — the effective `CI_FIX_MAX_CYCLES` (process env > `vstack.settings.toml` `[env]` > default 6; non-numeric falls back to 6).
+
 1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5.2 step 2`
 
 2. **After ci-fix returns**:
    - If fix applied → ci-fix already pushed and re-verified CI (its § 5); treat its final CI result as the § 5.1 result and re-route via the § 5.1 step 2 table. A recovery push may also dismiss existing reviewer approvals — when ci-fix pushed commits, re-confirm the § 4 approval with a short wait (`approval-wait [PR_NUMBER] 15 300 --json`) before § 6.
    - If fix not possible → Ask user: `Skip CI` | `Retry` | `Abort`
 
-3. **Max 2 ci-fix cycles** per PR submission.
+3. **Max [MAX_CYCLES] ci-fix cycles** per PR submission — keep routing CI failures back into step 1 until CI passes or the budget is spent.
 
-4. **After max cycles** → § 6 with note: "CI failing, may need manual intervention"
+4. **After max cycles** → § 6 with a failure report, never a bare "CI is failing": name the checks still failing (from the last ci-wait/ci-fix result), quote ci-fix's last error summary, and list what each cycle attempted, then note "CI failing after [MAX_CYCLES] ci-fix cycles, may need manual intervention".
 
 ---
 

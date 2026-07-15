@@ -39,6 +39,11 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # checks have registered yet. Raise for repos whose CI dispatches only after a
 # review approval (approval-gated jobs / merge queue) with slow dispatch.
 
+CI_FIX_MAX_CYCLES = "6"
+# Used by: orch (`submit-pr` / `merge-pr`). Max automated ci-fix cycles per PR
+# submission or merge recovery before reporting the persistent CI failure back
+# to the user.
+
 # BOT / COMMIT IDENTITY
 
 BOT_NAME = "automation-bot"

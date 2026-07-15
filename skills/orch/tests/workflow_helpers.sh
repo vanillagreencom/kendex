@@ -186,7 +186,20 @@ assert_file_contains "$merge_workflow" 'isInMergeQueue mergeQueueEntry { state }
 assert_file_contains "$merge_workflow" 'workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2' "merge-pr routes queue ejection / disarmed auto-merge into ci-fix recovery"
 assert_file_contains "$merge_workflow" 'merge-group** run (workflow event `merge_group`)' "merge-pr points ci-fix at the failing merge-group run on ejection"
 assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json' "merge-pr re-confirms approval after a recovery push"
-assert_file_contains "$merge_workflow" 'Max 2 recovery cycles per merge-pr run' "merge-pr bounds queued-merge recovery cycles"
+
+# vstack#543 — the ci-fix cycle caps are configurable via CI_FIX_MAX_CYCLES
+# (default 6), read deterministically through orch-env; at the cap both
+# workflows must report the failing checks and per-cycle attempts, never a
+# bare "CI failing" / "persistent failure".
+assert_file_contains "$merge_workflow" 'orch-env CI_FIX_MAX_CYCLES 6' "merge-pr reads the configurable ci-fix cycle budget via orch-env"
+assert_file_contains "$merge_workflow" 'Max [MAX_CYCLES] recovery cycles per merge-pr run' "merge-pr bounds queued-merge recovery cycles by the configured budget"
+assert_file_contains "$merge_workflow" 'report the failing check names' "merge-pr cap report names the failing checks"
+assert_file_contains "$merge_workflow" 'what each cycle attempted' "merge-pr cap report lists per-cycle attempts"
+assert_file_contains "$submit_workflow" 'orch-env CI_FIX_MAX_CYCLES 6' "submit-pr reads the configurable ci-fix cycle budget via orch-env"
+assert_file_contains "$submit_workflow" 'Max [MAX_CYCLES] ci-fix cycles' "submit-pr bounds ci-fix cycles by the configured budget"
+assert_file_contains "$submit_workflow" 'what each cycle attempted' "submit-pr cap report lists per-cycle attempts"
+assert_file_not_contains "$submit_workflow" 'Max 2 ci-fix cycles' "submit-pr drops the hardcoded ci-fix cycle cap"
+assert_file_not_contains "$merge_workflow" 'Max 2 recovery cycles' "merge-pr drops the hardcoded recovery cycle cap"
 
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"

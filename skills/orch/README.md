@@ -52,6 +52,7 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 | `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
 | `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
 | `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling before failing when no CI checks have registered yet (covers approval-gated CI dispatch latency) | `180` |
+| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission (`submit-pr`) or merge recovery (`merge-pr`) before the workflow reports the persistent CI failure — failing checks, last error, per-cycle attempts — back to the user | `6` |
 
 Bot reviews are asynchronous: no orch workflow blocks PR submission on bot-specific signals — emoji reactions, sticky comments, and checklist prose are never parsed as gates. Merges gate on internal review, green CI, zero unresolved review comments (every bot comment replied to and resolved), and a GitHub-native approval verdict from any reviewer — human or bot — polled by `approval-wait` via `reviewDecision`, with a latest-review-per-reviewer fallback when no required-review protection exists. If no approval verdict arrives within 15 minutes, the workflow prompts the user to force merge, keep waiting, or stop. The approval gate runs before CI verification, so repos that start CI only after an approval (approval-gated jobs or a merge queue) never deadlock; on always-on repos the post-approval CI verify simply returns quickly.
 
@@ -84,6 +85,8 @@ Use `skills/orch/scripts/review-init` to initialize standalone review context an
 Use `skills/orch/scripts/review-artifact-check WORKTREE_PATH AGENT_NAME DELEGATED_AT_EPOCH` to deterministically validate a reviewer's on-disk JSON artifact (existence, `mtime >=` delegation epoch, `jq -e '.verdict'`). It prints `{ok, path, reason}`; review-pr accepts a reviewer completion only when `ok == true`.
 
 Use `skills/orch/scripts/tracker-for-issue ISSUE_ID` when workflow docs need tracker branching without inline shell conditionals.
+
+Use `skills/orch/scripts/orch-env VAR_NAME DEFAULT` to print the effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > default) when a workflow step needs a configurable value without inline shell fallbacks. With a numeric default, a non-numeric effective value falls back to the default — e.g. `orch-env CI_FIX_MAX_CYCLES 6` for the ci-fix cycle budget.
 
 ## System Dependencies
 

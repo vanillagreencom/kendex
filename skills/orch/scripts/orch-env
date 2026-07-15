@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Print the effective value of a vstack [env] setting for workflow steps.
+#
+# Precedence matches lib/vstack-env.sh: parent process env > .env.local >
+# vstack.settings.toml / .vstack/settings.toml [env] > .env > supplied
+# default. When the supplied default is numeric, a non-numeric effective
+# value falls back to the default so workflow bounds always get a usable
+# number.
+#
+# Usage: orch-env VAR_NAME DEFAULT
+#   orch-env CI_FIX_MAX_CYCLES 6
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: orch-env VAR_NAME DEFAULT" >&2
+  exit 2
+fi
+
+VAR_NAME="$1"
+DEFAULT="$2"
+
+if ! [[ "$VAR_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "orch-env: invalid variable name: $VAR_NAME" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck source=lib/vstack-env.sh
+source "$SCRIPT_DIR/lib/vstack-env.sh"
+vstack_load_project_env "$PROJECT_ROOT"
+
+value="${!VAR_NAME-}"
+[[ -n "$value" ]] || value="$DEFAULT"
+if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
+  value="$DEFAULT"
+fi
+printf '%s\n' "$value"
