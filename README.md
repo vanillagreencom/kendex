@@ -103,6 +103,12 @@ rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-so
 rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "question"], allowed-subagents = ["scout"], pane = true }
 ```
 
+`vstack refresh` applies `[skill-instructions]` to both locked skills and
+canonical project-owned skills at `.agents/skills/<name>/SKILL.md`, even when
+the local skill has no lock entry. For project-owned skills, vstack maintains
+only its marked `Project Instructions` block; updates and removals are
+idempotent and leave the rest of the skill and unrelated project files intact.
+
 Key rules:
 
 - **Prefer `deny-tools` over allowlists.** Each harness inherits its normal tool set and blocks only what you list. Claude Code writes it as native `disallowedTools`; OpenCode emits `permission: <tool>: deny`; Pi enforces it via `pi-agents-tmux`. Cursor and Codex don't use per-agent deny lists — Codex subagents use `sandbox-mode`/approval instead.

@@ -34,6 +34,9 @@ pub struct RefreshStats {
     /// derive from external state); hooks and Pi packages rely on source-hash
     /// equality alone.
     pub content_changed: HashSet<String>,
+    /// Canonical project-owned skills managed through `[skill-instructions]`
+    /// despite having no vstack lock entry or upstream package source.
+    pub project_owned_skills: HashSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +134,16 @@ pub fn refresh_items_in_scope(
     let mut stats = RefreshStats::default();
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
     let all_hooks = all_source_hooks(sources);
+
+    if !global {
+        refresh_project_owned_skill_instructions(
+            lock,
+            project_config,
+            project_root,
+            &pass,
+            &mut stats,
+        );
+    }
 
     if lock
         .entries
@@ -408,6 +421,67 @@ pub fn refresh_items_in_scope(
     stats
 }
 
+fn refresh_project_owned_skill_instructions(
+    lock: &config::LockFile,
+    project_config: &ProjectConfig,
+    project_root: &Path,
+    pass: &impl Fn(&str) -> bool,
+    stats: &mut RefreshStats,
+) {
+    let skills_dir = project_root.join(".agents/skills");
+    let entries = match std::fs::read_dir(&skills_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            stats.fail(
+                ".agents/skills",
+                None,
+                format!("failed to read project-owned skills: {err}"),
+            );
+            return;
+        }
+    };
+    let mut skill_dirs = Vec::new();
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            skill_dirs.push(entry.path());
+        }
+    }
+    skill_dirs.sort();
+
+    for skill_dir in skill_dirs {
+        let Some(name) = skill_dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !pass(name) || lock.entries.contains_key(name) {
+            continue;
+        }
+        if crate::path_safety::validate_item_name(name).is_err() {
+            continue;
+        }
+        let skill_md = skill_dir.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+
+        match crate::skill::sync_project_owned_skill_instructions(
+            &skill_md,
+            project_config.skill_instructions_for(name),
+        ) {
+            Ok(None) => {}
+            Ok(Some(changed)) => {
+                stats.skills_refreshed += 1;
+                stats.project_owned_skills.insert(name.to_string());
+                stats.mark_success(name);
+                if changed {
+                    stats.mark_content_changed(name);
+                }
+            }
+            Err(err) => stats.fail(name, None, err),
+        }
+    }
+}
+
 /// Drop hook harness ids that no longer satisfy the source hook `harnesses:`
 /// allowlist, removing the stale harness artifacts/settings before mutating the
 /// lock. Returns true when the lock changed.
@@ -532,11 +606,15 @@ pub fn run(scope: crate::scope::ScopeFilter, verbose: bool) -> Result<()> {
     let mut any_action = false;
     for &global in scope.globals() {
         let lock_path = config::lock_file_path(global);
-        if !lock_path.exists() {
+        let project_root = config::project_root();
+        let project_owned_scope = !global
+            && crate::project_config::project_config_path(&project_root).exists()
+            && project_root.join(".agents/skills").is_dir();
+        if !lock_path.exists() && !project_owned_scope {
             continue;
         }
         let lock = config::LockFile::load(&lock_path).unwrap_or_default();
-        if lock.entries.is_empty() {
+        if lock.entries.is_empty() && !project_owned_scope {
             continue;
         }
         any_action = true;
@@ -552,6 +630,7 @@ pub fn run(scope: crate::scope::ScopeFilter, verbose: bool) -> Result<()> {
 
 fn run_one(global: bool, verbose: bool) -> Result<()> {
     let lock_path = config::lock_file_path(global);
+    let lock_existed = lock_path.exists();
     let mut lock = config::LockFile::load(&lock_path)?;
 
     // Reconcile lock with disk before refreshing (recovers orphaned entries)
@@ -588,12 +667,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
 
     let project_root = config::project_root();
 
-    if lock.entries.is_empty() {
-        eprintln!("Nothing installed. Run `vstack add` first.");
-        return Ok(());
-    }
-
-    if !global {
+    if !global && !lock.entries.is_empty() {
         let agent_names: Vec<String> = lock
             .entries
             .iter()
@@ -610,13 +684,12 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
     let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
-    if sources.is_empty() {
+    if !lock.entries.is_empty() && sources.is_empty() {
         eprintln!("Could not locate any package sources. Run `vstack add` to reinstall.");
-        return Ok(());
     }
     let all_pi_extensions = all_source_pi_extensions(&sources);
 
-    if !global {
+    if !global && !lock.entries.is_empty() {
         let project_canon = project_root
             .canonicalize()
             .unwrap_or_else(|_| project_root.clone());
@@ -755,7 +828,18 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             entry.source_hash.clone(),
         ));
     }
-    lock.save(&lock_path)?;
+    for name in &stats.project_owned_skills {
+        changes.push((
+            ItemKind::Skill,
+            ItemKind::Skill.label_short().to_string(),
+            name.clone(),
+            "project-owned".to_string(),
+            "project-owned".to_string(),
+        ));
+    }
+    if lock_existed || !lock.entries.is_empty() {
+        lock.save(&lock_path)?;
+    }
 
     // An item counts as "updated" when its source hash changed OR its
     // generated/installed on-disk content changed. The latter catches

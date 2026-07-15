@@ -307,7 +307,12 @@ fn refresh_counts_content_changes_when_source_hashes_are_unchanged() {
     write_colliding_source(&source, "1", "PreToolUse", "model-x");
 
     let mut lock = LockFile::default();
-    lock.add(lock_entry("rust", ItemKind::Agent, &source, vec!["claude-code"]));
+    lock.add(lock_entry(
+        "rust",
+        ItemKind::Agent,
+        &source,
+        vec!["claude-code"],
+    ));
     lock.add(lock_entry(
         "shared",
         ItemKind::Skill,
@@ -398,7 +403,12 @@ fn refresh_reports_no_content_change_on_idempotent_refresh() {
     write_colliding_source(&source, "1", "PreToolUse", "model-x");
 
     let mut lock = LockFile::default();
-    lock.add(lock_entry("rust", ItemKind::Agent, &source, vec!["claude-code"]));
+    lock.add(lock_entry(
+        "rust",
+        ItemKind::Agent,
+        &source,
+        vec!["claude-code"],
+    ));
     lock.add(lock_entry(
         "shared",
         ItemKind::Skill,
@@ -420,6 +430,132 @@ fn refresh_reports_no_content_change_on_idempotent_refresh() {
             again.content_changed
         );
     });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn refresh_manages_project_owned_skill_instructions_without_a_lock_entry() {
+    let root = tmpdir("project-owned-skill-instructions");
+    let project = root.join("project");
+    let benchmark_dir = project.join(".agents/skills/benchmark");
+    let unrelated_dir = project.join(".agents/skills/unrelated");
+    std::fs::create_dir_all(&benchmark_dir).unwrap();
+    std::fs::create_dir_all(&unrelated_dir).unwrap();
+    std::fs::create_dir_all(project.join(".opencode")).unwrap();
+
+    let original = "---\nname: benchmark\ndescription: Local benchmark\n---\n\n# Benchmark\n\nOriginal body.\n\n## Existing Section\n\nKeep this.\n";
+    let unrelated = "---\nname: unrelated\ndescription: Local unrelated\n---\n\n# Unrelated\n\n## Project Instructions\n\nAuthored locally; do not rewrite.\n";
+    let unrelated_config = "{\n  \"sentinel\": true\n}\n";
+    let benchmark_path = benchmark_dir.join("SKILL.md");
+    let unrelated_path = unrelated_dir.join("SKILL.md");
+    let unrelated_config_path = project.join(".opencode/opencode.json");
+    std::fs::write(&benchmark_path, original).unwrap();
+    std::fs::write(&unrelated_path, unrelated).unwrap();
+    std::fs::write(&unrelated_config_path, unrelated_config).unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig::default();
+    project_config
+        .skill_instructions
+        .insert("benchmark".into(), "First project rule.".into());
+    project_config
+        .skill_instructions
+        .insert("unrelated".into(), "   ".into());
+
+    let first = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let first_content = std::fs::read_to_string(&benchmark_path).unwrap();
+    assert!(first.project_owned_skills.contains("benchmark"));
+    assert!(first.content_changed.contains("benchmark"));
+    assert!(first_content.contains("## Project Instructions\n\nFirst project rule."));
+    assert!(first_content.contains("# Benchmark\n\nOriginal body."));
+    assert_eq!(first_content.matches("## Project Instructions").count(), 1);
+    assert_eq!(std::fs::read_to_string(&unrelated_path).unwrap(), unrelated);
+    assert_eq!(
+        std::fs::read_to_string(&unrelated_config_path).unwrap(),
+        unrelated_config
+    );
+
+    let again = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(again.project_owned_skills.contains("benchmark"));
+    let again_content = std::fs::read_to_string(&benchmark_path).unwrap();
+    assert_eq!(again_content, first_content);
+    assert!(
+        again.content_changed.is_empty(),
+        "idempotent project-owned refresh reported changes: {:?}",
+        again.content_changed
+    );
+
+    project_config
+        .skill_instructions
+        .insert("benchmark".into(), "Updated project rule.".into());
+    let updated =
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let updated_content = std::fs::read_to_string(&benchmark_path).unwrap();
+    assert!(updated.content_changed.contains("benchmark"));
+    assert!(updated_content.contains("Updated project rule."));
+    assert!(!updated_content.contains("First project rule."));
+    assert!(updated_content.contains("## Existing Section\n\nKeep this."));
+    assert_eq!(
+        updated_content.matches("## Project Instructions").count(),
+        1
+    );
+
+    project_config.skill_instructions.remove("benchmark");
+    let removed =
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(removed.content_changed.contains("benchmark"));
+    assert_eq!(std::fs::read_to_string(&benchmark_path).unwrap(), original);
+
+    let removed_again =
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(removed_again.project_owned_skills.is_empty());
+    assert!(removed_again.content_changed.is_empty());
+    assert_eq!(std::fs::read_to_string(&unrelated_path).unwrap(), unrelated);
+    assert_eq!(
+        std::fs::read_to_string(&unrelated_config_path).unwrap(),
+        unrelated_config
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn refresh_command_applies_project_owned_skill_instructions_without_creating_a_lock() {
+    let root = tmpdir("project-owned-command-no-lock");
+    let project = root.join("project");
+    let skill_dir = project.join(".agents/skills/benchmark");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_path = skill_dir.join("SKILL.md");
+    let original = "---\nname: benchmark\ndescription: Local benchmark\n---\n\n# Benchmark\n\nOriginal body.\n";
+    let project_config = "# Preserve this comment and formatting.\n\n[skill-instructions]\nbenchmark = \"Run only on the designated benchmark host.\"\n";
+    std::fs::write(&skill_path, original).unwrap();
+    std::fs::write(project.join("vstack.toml"), project_config).unwrap();
+
+    crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap();
+    });
+
+    let refreshed = std::fs::read_to_string(&skill_path).unwrap();
+    assert!(refreshed.contains("Run only on the designated benchmark host."));
+    assert!(refreshed.contains("# Benchmark\n\nOriginal body."));
+    assert_eq!(
+        std::fs::read_to_string(project.join("vstack.toml")).unwrap(),
+        project_config,
+        "refresh must not normalize unrelated project config"
+    );
+    assert!(
+        !project.join(".vstack-lock.json").exists(),
+        "project-owned instruction refresh must not invent lock ownership"
+    );
+
+    let once = refreshed;
+    crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap();
+    });
+    assert_eq!(std::fs::read_to_string(&skill_path).unwrap(), once);
+    assert!(!project.join(".vstack-lock.json").exists());
 
     let _ = std::fs::remove_dir_all(root);
 }

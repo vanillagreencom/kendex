@@ -171,6 +171,12 @@ rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_sub
 trading-design = "Dark theme, green/red accents."
 ```
 
+`vstack refresh` applies `[skill-instructions]` to locked installs and to
+canonical project-owned `.agents/skills/<name>/SKILL.md` files without lock
+entries. For project-owned skills, only the vstack-marked project-instructions
+block is managed; repeated refreshes, updates, and removals preserve all other
+skill content and unrelated project files.
+
 ## Per-Harness Model Mapping
 
 | Canonical | Claude Code | OpenCode | Codex | Pi |

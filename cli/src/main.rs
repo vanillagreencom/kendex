@@ -211,8 +211,9 @@ enum Commands {
 
     /// Reinstall all locked items (agents, skills, hooks, Pi packages) from
     /// current source. Use after editing source files to push changes to the
-    /// install scope. Also re-applies vstack.toml customizations to agents.
-    /// Defaults to all scopes that have a lock file.
+    /// install scope. Also re-applies vstack.toml customizations to agents and
+    /// canonical project-owned skills, even when a skill has no lock entry.
+    /// Defaults to all applicable scopes.
     Refresh {
         /// Shortcut for `--scope global`.
         #[arg(short, long)]

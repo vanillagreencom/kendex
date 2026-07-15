@@ -59,6 +59,8 @@ impl Skill {
 }
 
 const SKILL_INSTRUCTIONS_HEADER: &str = "## Project Instructions";
+const SKILL_INSTRUCTIONS_START: &str = "<!-- vstack:project-instructions:start -->";
+const SKILL_INSTRUCTIONS_END: &str = "<!-- vstack:project-instructions:end -->";
 
 /// Inject a "## Project Instructions" section at the top of a SKILL.md file,
 /// immediately after the YAML frontmatter closing `---`.
@@ -66,29 +68,33 @@ pub fn inject_skill_instructions(skill_md_path: &Path, instructions: &str) {
     let Ok(content) = std::fs::read_to_string(skill_md_path) else {
         return;
     };
+    let new_content = render_skill_instructions(&content, Some(instructions));
+    if new_content != content {
+        let _ = std::fs::write(skill_md_path, new_content);
+    }
+}
 
-    // Strip any existing vstack-injected section
-    let clean = strip_project_instructions(&content);
-    let section = format!(
-        "\n{}\n\n{}\n",
-        SKILL_INSTRUCTIONS_HEADER,
-        instructions.trim()
-    );
+/// Synchronize the reserved project-instructions section in a project-owned
+/// skill. `Ok(None)` means the skill had no configured or previously injected
+/// section and was intentionally left outside vstack ownership. `Ok(Some(x))`
+/// means the section was managed, with `x` indicating whether bytes changed.
+pub(crate) fn sync_project_owned_skill_instructions(
+    skill_md_path: &Path,
+    instructions: Option<&str>,
+) -> Result<Option<bool>> {
+    let content = std::fs::read_to_string(skill_md_path)
+        .with_context(|| format!("reading {}", skill_md_path.display()))?;
+    let instructions = instructions.map(str::trim).filter(|text| !text.is_empty());
+    if instructions.is_none() && !content.contains(SKILL_INSTRUCTIONS_START) {
+        return Ok(None);
+    }
 
-    // Insert after frontmatter closing `---`
-    let new_content = if let Some(pos) = find_frontmatter_end(&clean) {
-        format!(
-            "{}{}\n{}",
-            &clean[..pos],
-            section,
-            clean[pos..].trim_start_matches('\n')
-        )
-    } else {
-        // No frontmatter — prepend
-        format!("{}\n{}", section.trim(), clean)
-    };
-
-    let _ = std::fs::write(skill_md_path, new_content);
+    let new_content = render_skill_instructions(&content, instructions);
+    if new_content == content {
+        return Ok(Some(false));
+    }
+    crate::path_safety::write_file_no_follow(skill_md_path, new_content)?;
+    Ok(Some(true))
 }
 
 /// Inject a do-not-edit notice after frontmatter in a SKILL.md file.
@@ -140,20 +146,74 @@ fn find_frontmatter_end(content: &str) -> Option<usize> {
     }
 }
 
-fn strip_project_instructions(content: &str) -> String {
-    let marker = format!("\n{}", SKILL_INSTRUCTIONS_HEADER);
-    if let Some(start) = content.find(&marker) {
-        let after = &content[start + marker.len()..];
-        // Find the next ## heading or end
-        if let Some(next) = after.find("\n## ") {
-            let end = start + marker.len() + next;
-            format!("{}{}", &content[..start], &content[end..])
-        } else {
-            content[..start].to_string()
-        }
+fn render_skill_instructions(content: &str, instructions: Option<&str>) -> String {
+    let clean = strip_project_instructions(content);
+    let Some(instructions) = instructions.map(str::trim).filter(|text| !text.is_empty()) else {
+        return clean;
+    };
+    let section = format!(
+        "{SKILL_INSTRUCTIONS_START}\n{SKILL_INSTRUCTIONS_HEADER}\n\n{instructions}\n{SKILL_INSTRUCTIONS_END}"
+    );
+
+    if let Some(pos) = find_frontmatter_end(&clean) {
+        join_markdown_blocks(&clean[..pos], &section, &clean[pos..])
     } else {
-        content.to_string()
+        join_markdown_blocks("", &section, &clean)
     }
+}
+
+fn strip_project_instructions(content: &str) -> String {
+    if let Some(start) = content.find(SKILL_INSTRUCTIONS_START)
+        && let Some(relative_end) = content[start..].find(SKILL_INSTRUCTIONS_END)
+    {
+        let end = start + relative_end + SKILL_INSTRUCTIONS_END.len();
+        return join_markdown_blocks(&content[..start], "", &content[end..]);
+    }
+
+    let Some(header_start) = line_start(content, SKILL_INSTRUCTIONS_HEADER) else {
+        return content.to_string();
+    };
+    let after_header = header_start + SKILL_INSTRUCTIONS_HEADER.len();
+    let end = next_markdown_heading(content, after_header).unwrap_or(content.len());
+    join_markdown_blocks(&content[..header_start], "", &content[end..])
+}
+
+fn line_start(content: &str, line: &str) -> Option<usize> {
+    if content.starts_with(line) && content[line.len()..].starts_with(['\n', '\r']) {
+        return Some(0);
+    }
+    content.find(&format!("\n{line}\n")).map(|index| index + 1)
+}
+
+fn next_markdown_heading(content: &str, from: usize) -> Option<usize> {
+    content[from..]
+        .match_indices('\n')
+        .map(|(index, _)| from + index + 1)
+        .find(|&index| {
+            let line = &content[index..];
+            line.starts_with("# ") || line.starts_with("## ")
+        })
+}
+
+fn join_markdown_blocks(first: &str, middle: &str, last: &str) -> String {
+    let mut blocks = Vec::new();
+    let first = first.trim_end_matches(['\n', '\r']);
+    let middle = middle.trim_matches(['\n', '\r']);
+    let last = last.trim_matches(['\n', '\r']);
+    if !first.is_empty() {
+        blocks.push(first);
+    }
+    if !middle.is_empty() {
+        blocks.push(middle);
+    }
+    if !last.is_empty() {
+        blocks.push(last);
+    }
+    let mut joined = blocks.join("\n\n");
+    if !joined.is_empty() {
+        joined.push('\n');
+    }
+    joined
 }
 
 /// Discover all skills in a directory (looks for SKILL.md in subdirs)
@@ -445,5 +505,18 @@ dependencies:
         assert!(expanded.contains(&"decider".to_string()));
         assert!(expanded.contains(&"linear".to_string()));
         assert_eq!(added.len(), 3);
+    }
+
+    #[test]
+    fn legacy_project_instruction_update_preserves_the_skill_body() {
+        let legacy = "---\nname: local\ndescription: Local\n---\n\n## Project Instructions\n\nOld rule.\n\n# Local Skill\n\nBody stays.\n\n## Details\n\nStill here.\n";
+        let updated = render_skill_instructions(legacy, Some("New rule."));
+
+        assert!(updated.contains("## Project Instructions\n\nNew rule."));
+        assert!(!updated.contains("Old rule."));
+        assert!(updated.contains("# Local Skill\n\nBody stays."));
+        assert!(updated.contains("## Details\n\nStill here."));
+        assert_eq!(updated.matches(SKILL_INSTRUCTIONS_START).count(), 1);
+        assert_eq!(updated.matches(SKILL_INSTRUCTIONS_END).count(), 1);
     }
 }
