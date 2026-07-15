@@ -28,7 +28,7 @@ Options:
   --help, -h        Show this help.
 
 Examples:
-  label-remove.sh 44 defer-ci --reason "CI passed; re-enable"
+  label-remove.sh 44 needs-qa --reason "QA review complete"
   label-remove.sh 123 needs-triage --issue
 EOF
 }

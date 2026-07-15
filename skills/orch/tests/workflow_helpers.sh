@@ -150,6 +150,18 @@ assert_file_contains "$submit_workflow" 'No approval verdict' "submit-pr prompts
 assert_file_contains "$submit_workflow" 'Force merge' "submit-pr offers an explicit force-merge override"
 assert_file_contains "$submit_workflow" 'pr-threads [PR_NUMBER] --unresolved' "submit-pr merge gate checks unresolved threads deterministically"
 assert_file_contains "$submit_workflow" '`status=complete`, `verdict=pass`' "submit-pr merge gate requires green CI"
+
+# vstack#541 — the approval gate (§ 4) must run BEFORE CI verification (§ 5):
+# approval-gated repos only start CI once an approval verdict exists, so the
+# reverse order would deadlock. Compare section-header line numbers.
+approval_gate_line="$(grep -n -m1 '^## 4\. Approval Gate' "$submit_workflow" | cut -d: -f1)"
+ci_verify_line="$(grep -n -m1 '^## 5\. Verify CI' "$submit_workflow" | cut -d: -f1)"
+submit_ordering="missing-sections"
+if [[ -n "$approval_gate_line" && -n "$ci_verify_line" && "$approval_gate_line" -lt "$ci_verify_line" ]]; then
+  submit_ordering="approval-before-ci"
+fi
+assert_eq "$submit_ordering" "approval-before-ci" "submit-pr orders the approval gate (§ 4) before CI verify (§ 5)"
+assert_file_contains "$submit_workflow" 'CI_WAIT_NO_CHECKS_GRACE' "submit-pr documents the ci-wait no-checks grace window"
 assert_file_not_contains "$comments_workflow" 'Wait for All Bot Reviews' "review-pr-comments drops the bot completion pre-check"
 assert_file_not_contains "$comments_workflow" 'sleep 300' "review-pr-comments does not sleep-wait for bot re-review"
 
@@ -167,6 +179,14 @@ assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only 
 assert_file_not_contains "$merge_workflow" 'branch -D "$PR_BRANCH"' "merge-pr § 5a no longer force-deletes the PR branch unconditionally"
 assert_file_contains "$merge_workflow" 'branch refs/heads/[PR_BRANCH]' "merge-pr § 5a guards branch delete against worktree checkout"
 assert_file_contains "$merge_workflow" '`not_approved` — a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate, not advice"
+assert_file_contains "$merge_workflow" 'pr-merge [PR_NUMBER] --auto' "merge-pr re-runs check/queue-blocked merges with pr-merge --auto"
+assert_file_contains "$merge_workflow" 'QUEUED FOR AUTO-MERGE' "merge-pr treats pr-merge exit 75 as success-pending"
+assert_file_contains "$merge_workflow" 'gh pr view [PR_NUMBER] --json state,mergedAt' "merge-pr watches queued merges via PR state on a bounded poll"
+assert_file_contains "$merge_workflow" 'isInMergeQueue mergeQueueEntry { state }' "merge-pr watch loop reads queue membership via GraphQL"
+assert_file_contains "$merge_workflow" 'workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2' "merge-pr routes queue ejection / disarmed auto-merge into ci-fix recovery"
+assert_file_contains "$merge_workflow" 'merge-group** run (workflow event `merge_group`)' "merge-pr points ci-fix at the failing merge-group run on ejection"
+assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json' "merge-pr re-confirms approval after a recovery push"
+assert_file_contains "$merge_workflow" 'Max 2 recovery cycles per merge-pr run' "merge-pr bounds queued-merge recovery cycles"
 
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"

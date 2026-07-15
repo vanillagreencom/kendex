@@ -28,7 +28,7 @@ Options:
   --help, -h        Show this help.
 
 Examples:
-  label-add.sh 44 defer-ci --reason "skip heavy CI"
+  label-add.sh 44 needs-qa --reason "ready for QA review"
   label-add.sh 123 needs-triage --issue
 EOF
 }

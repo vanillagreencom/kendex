@@ -52,7 +52,7 @@ Examples:
   EOF
   github.sh pr-create --title "feat: Add feature" --body-file tmp/pr-body.md
 
-  github.sh pr-create --draft --label defer-ci  # Defer CI until ready
+  github.sh pr-create --draft --label needs-qa  # Draft PR with a triage label
   github.sh pr-create --dry-run  # Preview without creating
 EOF
 }

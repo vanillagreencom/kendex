@@ -245,16 +245,46 @@ merge. Detach them first.
    ```
    Use the output as `MAIN_REPO_ROOT`.
 
-2. **Merge** (before cleanup — worktree survives if merge fails):
+2. **Merge** (before cleanup — worktree survives if merge fails). Attempt the immediate merge first:
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force]
    ```
 
-   Exit `75` = queued for auto-merge (fires when CI + branch protection clear). Wait before sync:
+   Exit `0` = MERGED → step 3.
+
+   **If pr-merge reports BLOCKED** (exit `1`) and the block is pending required checks or a merge queue — the issues/stderr mention `ci_pending:`, required checks that have not started yet, or that the base branch requires merges through a merge queue — re-run with `--auto`:
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] await-mergeable [PR_NUMBER]
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto
    ```
-   Never poll `gh pr view --json mergeable` — stays UNKNOWN after merge, loops forever.
+   One flag covers both repo shapes with no detection: on merge-queue repos GitHub enqueues the PR; on plain repos it arms auto-merge to fire when CI and branch protection clear. `--auto` never bypasses the § 3 readiness gates — GitHub still requires the checks and approval to complete before the merge fires. For any other BLOCKED cause (conflicts, `ci_failed:`, `changes_requested:`), do not queue — surface the failure and return to § 3.2.
+
+   Exit `75` = QUEUED FOR AUTO-MERGE — treat as success-pending and run the watch loop below. Ejection is per-PR: a failed merge-group run removes only this PR from the queue while other queued PRs re-test and merge independently, so each session's own merge-pr watch owns recovery for its own PR and parallel sessions never need to coordinate.
+
+   **Watch loop** — each poll runs the two commands below, then routes; `sleep 30` between polls, at most 20 polls (~10 min):
+   ```bash
+   gh pr view [PR_NUMBER] --json state,mergedAt
+   ```
+   ```bash
+   gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { state } autoMergeRequest { enabledAt } } } }' -F owner='{owner}' -F repo='{repo}' -F number=[PR_NUMBER]
+   ```
+   `gh pr view --json` exposes no queue-membership field (verified against gh 2.96.0), so the GraphQL query is required; gh fills the `{owner}`/`{repo}` placeholders from the current repo. Track across polls whether any earlier poll observed the PR queued or armed (`isInMergeQueue == true`, `mergeQueueEntry` non-null, or `autoMergeRequest` non-null) — use that as `WAS_QUEUED`. Never poll `gh pr view --json mergeable` — stays UNKNOWN after merge, loops forever.
+
+   | Observation | Meaning | Action |
+   |-------------|---------|--------|
+   | `state == "MERGED"` | Merge landed | → step 3 |
+   | `OPEN`, still queued or armed, no failed required check | Waiting on checks / queue position | Continue polling |
+   | `OPEN`, `WAS_QUEUED`, now `isInMergeQueue == false` and `mergeQueueEntry == null`, not merged | **Ejected** — the merge-group CI run failed and GitHub removed this PR from the queue | Recovery cycle below |
+   | `OPEN` on a plain auto-merge repo, `autoMergeRequest == null` after `--auto` armed it, or a required check failed (probe: `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 60 --json` → `verdict=fail`) | Auto-merge disarmed by a check failure | Recovery cycle below |
+   | Poll bound reached, still queued/armed | Deep queue | Report still-queued: the merge stays armed and fires when checks and protection clear. Skip steps 3-6 (they assume a landed merge) and note in § 7 that sync/cleanup should be re-run via `merge-pr [PR_NUMBER]` once merged |
+
+   **Recovery cycle** — no manual CI-fixing; route the failure back into ci-fix automatically. Max 2 recovery cycles per merge-pr run (a session-scoped count, parallel to ci-fix's own internal cycle cap); at the cap, report the persistent failure, skip steps 3-6, and hand back to the user.
+
+   1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`. For a queue ejection the failing run is the **merge-group** run (workflow event `merge_group`), not necessarily the PR-head run — locate it via the failing run link in the PR's checks or `gh run list --event merge_group --limit 10`, and point ci-fix's log fetching at that run.
+   2. **Re-confirm approval** after ci-fix pushed a fix — pushes can dismiss reviewer approvals:
+      ```bash
+      .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json
+      ```
+   3. **Re-arm and resume**: re-run `pr-merge [PR_NUMBER] --auto` (command above) and restart the watch loop from the top with a fresh poll budget.
 
 3. **Sync issue tracker cache** — **Linear only** (merged PRs close issues via magic words; cache must reflect done states):
    ```bash

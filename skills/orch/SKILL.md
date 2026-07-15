@@ -81,7 +81,7 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 | `review-codebase` | `[PATH]` | `workflows/review-codebase.md` | Ad-hoc whole-codebase reviewer fanout |
 | `review-pr` | `[PR_NUMBER]` | `workflows/review-pr.md` | Pre-submission review |
 | `review-pr-comments` | `PR_NUMBER` \| `BRANCH` | `workflows/review-pr-comments.md` | Triage PR comments |
-| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Local review, push, create PR, CI, async triage, approval gate |
+| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Local review, push, create PR, async triage, approval gate, CI verify |
 | `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify and merge |
 | `fix-reconcile` | — | `workflows/fix-reconcile.md` | Internal (not user-invocable) |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary comments |
@@ -120,7 +120,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `workflows/review-codebase.md` | `review-codebase` | Whole-codebase reviewer fanout with findings only |
 | `workflows/review-pr.md` | `review-pr` | Pre-submission review with fix handling and QA |
 | `workflows/review-pr-comments.md` | `review-pr-comments` | Triage PR review comments via domain agents |
-| `workflows/submit-pr.md` | `submit-pr` | Local pre-PR review, push, create PR, CI, async comment triage, approval merge gates |
+| `workflows/submit-pr.md` | `submit-pr` | Local pre-PR review, push, create PR, async comment triage, approval gate before CI verify, merge gates |
 | `workflows/merge-pr.md` | `merge-pr` | Verify conditions and merge PR(s) |
 
 ### Per-Issue Lifecycle
@@ -152,8 +152,8 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
 | `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`) and print `{ok, path, reason}` — the sole review-pr completion condition |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
-| `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr merge-gate poller; never parses bot reactions or sticky prose |
-| `ci-wait` | Block until CI completes on a PR — invoked by per-issue agents inside their submit-pr flow |
+| `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr § 4 approval-gate poller; never parses bot reactions or sticky prose |
+| `ci-wait` | Block until CI completes on a PR — runs after the approval gate; `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds how long it tolerates unregistered checks |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
 | `parallel-groups` | Local cache for safe parallel handoff analysis |

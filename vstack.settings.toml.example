@@ -34,6 +34,11 @@ ORCH_STATE_DIR = "tmp"
 ORCH_CACHE_DIR = ".cache/orch"
 # Used by: orch (`parallel-groups`).
 
+CI_WAIT_NO_CHECKS_GRACE = "180"
+# Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
+# checks have registered yet. Raise for repos whose CI dispatches only after a
+# review approval (approval-gated jobs / merge queue) with slow dispatch.
+
 # BOT / COMMIT IDENTITY
 
 BOT_NAME = "automation-bot"

@@ -20,7 +20,7 @@ Invoke via your AI coding harness (e.g., `/orch <command>` or `/skill:orch <comm
 | `review-codebase [PATH]` | Whole-codebase reviewer fanout |
 | `review-pr [PR_NUMBER]` | Pre-submission review |
 | `review-pr-comments PR_NUMBER` | Triage PR review comments |
-| `submit-pr [PR_NUMBER]` | Local review, push, create PR, CI, async triage, approval merge gate |
+| `submit-pr [PR_NUMBER]` | Local review, push, create PR, async triage, approval gate, CI verify, merge gates |
 | `merge-pr PR_NUMBER \| all` | Verify and merge PR(s) |
 | `parallel-check [ISSUE_IDS]` | Verify parallel work safety |
 
@@ -51,8 +51,9 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 | `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | current `gh` auth |
 | `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
 | `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
+| `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling before failing when no CI checks have registered yet (covers approval-gated CI dispatch latency) | `180` |
 
-Bot reviews are asynchronous: no orch workflow blocks PR submission on bot-specific signals — emoji reactions, sticky comments, and checklist prose are never parsed as gates. Merges gate on internal review, green CI, zero unresolved review comments (every bot comment replied to and resolved), and a GitHub-native approval verdict from any reviewer — human or bot — polled by `approval-wait` via `reviewDecision`, with a latest-review-per-reviewer fallback when no required-review protection exists. If no approval verdict arrives within 15 minutes, the workflow prompts the user to force merge, keep waiting, or stop.
+Bot reviews are asynchronous: no orch workflow blocks PR submission on bot-specific signals — emoji reactions, sticky comments, and checklist prose are never parsed as gates. Merges gate on internal review, green CI, zero unresolved review comments (every bot comment replied to and resolved), and a GitHub-native approval verdict from any reviewer — human or bot — polled by `approval-wait` via `reviewDecision`, with a latest-review-per-reviewer fallback when no required-review protection exists. If no approval verdict arrives within 15 minutes, the workflow prompts the user to force merge, keep waiting, or stop. The approval gate runs before CI verification, so repos that start CI only after an approval (approval-gated jobs or a merge queue) never deadlock; on always-on repos the post-approval CI verify simply returns quickly.
 
 See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for GitHub auth fallback details and the test runner.
 

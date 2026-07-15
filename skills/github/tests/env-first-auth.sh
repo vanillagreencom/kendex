@@ -169,33 +169,33 @@ assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router falls back to k
 assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "unresolved GH_TOKEN attempts op once before keyring fallback"
 
 rm -f "$TMP_ROOT/op.calls"
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 defer-ci >/dev/null)
+(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label >/dev/null)
 assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "label-add falls back to keyring for unresolved GH_TOKEN"
 
 rm -f "$TMP_ROOT/op.calls"
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GITHUB_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 defer-ci >/dev/null)
+(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GITHUB_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label >/dev/null)
 assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "label-remove falls back to keyring for unresolved GITHUB_TOKEN"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=ghs_ROUTERBOT123
 ENVEOF
 rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 defer-ci)
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label)
 assert_eq "$output" "updated" "direct label-add loads project GH_BOT_TOKEN"
 assert_file_missing "$TMP_ROOT/op.calls" "direct label-add project direct token avoids op"
 
 rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 defer-ci)
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label)
 assert_eq "$output" "updated" "direct label-remove loads project GH_BOT_TOKEN"
 assert_file_missing "$TMP_ROOT/op.calls" "direct label-remove project direct token avoids op"
 
 rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-add 42 defer-ci)
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-add 42 test-label)
 assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-add"
 assert_file_missing "$TMP_ROOT/op.calls" "label-add project direct token avoids op"
 
 rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-remove 42 defer-ci)
+output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-remove 42 test-label)
 assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-remove"
 assert_file_missing "$TMP_ROOT/op.calls" "label-remove project direct token avoids op"
 

@@ -36,6 +36,15 @@ their SSH failures should not block branch cleanup or tracker closure.
 
 Statuses: `approved` (exit 0); `changes_requested`, `comments`, `timeout` (exit 1); `error` (exit 1, or 3 on auth failure — same auth contract as `ci-wait`). Every exit path emits a final stdout result; `--json` always prints one well-formed object.
 
+## CI Triggering Patterns
+
+The `defer-ci` label pattern is retired — orch never defers, queues, or labels CI. The workflow contract that replaces it: `submit-pr.md` orders the approval gate (§ 4) before CI verification (§ 5), universally and with no repo detection, so CI that only starts after an approval can never deadlock the workflow. Two portable repo-side patterns build on that contract:
+
+- **Approval-gated jobs** (any GitHub plan): trigger the workflow on `pull_request` plus `pull_request_review: types: [submitted]`. A cheap gate job checks the PR's `reviewDecision` (or latest-review approval when no required-review protection exists); heavy jobs declare `needs:` on the gate. Cheap lint/unit jobs can still run unconditionally on `pull_request`.
+- **Merge queue** (GitHub Enterprise / public repos): run heavy CI on `merge_group`, minimal CI on `pull_request`, and require the approval for queue entry via branch protection. `merge-pr.md` § 5 handles the queued merge portably with `pr-merge --auto` (exit 75 = queued/armed), watches queue membership, and on ejection (failed merge-group run) routes back into ci-fix automatically — bounded, per-PR, with no cross-session coordination.
+
+Always-on CI (everything on `pull_request`) needs no change — § 5 just verifies checks that already ran. `ci-wait` tolerates post-approval dispatch latency via `CI_WAIT_NO_CHECKS_GRACE` (default 180s) before reporting "no checks registered". This section is guidance for consuming repos; vstack's own CI is unaffected.
+
 ## Tests
 
 ```bash

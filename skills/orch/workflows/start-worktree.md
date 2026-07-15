@@ -161,7 +161,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 
 ### 5.6 Offer Merge
 
-**Skip if** no PR created (§ 4), CI not passing, or the § 4 merge gates report `MERGE_READY = false` (unresolved review comments or no approval verdict).
+**Skip if** no PR created (§ 4), CI not passing, or the § 4 submit-pr merge gates (`submit-pr.md` § 6.1) report `MERGE_READY = false` (unresolved review comments or no approval verdict).
 
 → Ask user: `orch merge-pr [PR_NUMBER]` | `Skip`
 

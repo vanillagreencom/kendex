@@ -19,6 +19,11 @@
 # emit a parseable result on stdout — pass/fail/timeout/error — and must
 # report still-pending checks at the deadline as a timeout, never as
 # success or silence (cases 10-14).
+#
+# Plus the no-checks registration grace (vstack#541): CI_WAIT_NO_CHECKS_GRACE
+# (default 180s) bounds how long ci-wait polls before failing when no checks
+# have registered. Inside the window the verdict stays pending; past it, the
+# explicit "no CI checks" error fires (cases 12, 12b, 12c).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -434,25 +439,43 @@ set -e
 assert_eq "$rc" "1" "case11b: text-mode timeout exits 1" "$stderr"
 assert_contains "$output" "CI timeout" "case11b: text-mode timeout prints CI timeout on stdout"
 
-# Case 12: no checks ever registered -> status=error with diagnostic, not
-# a silent exit.
+# Case 12: no checks ever registered and the grace window (overridden via
+# CI_WAIT_NO_CHECKS_GRACE) has elapsed -> status=error with diagnostic, not
+# a silent exit. The override also proves the env var drives the cutoff:
+# with the 180s default and this 30s deadline, the error path could never
+# fire (see case 12c).
 stderr="$TMP_ROOT/case12.err"
 set +e
-output=$(run_wait_json STUB_PR_CHECKS_MODE=empty 2>"$stderr")
+output=$(run_wait_json STUB_PR_CHECKS_MODE=empty CI_WAIT_NO_CHECKS_GRACE=3 2>"$stderr")
 rc=$?
 set -e
-assert_eq "$rc" "1" "case12: no registered checks exit 1" "$stderr"
+assert_eq "$rc" "1" "case12: no registered checks past grace exit 1" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "error" "case12: json status is error" "$stderr"
 assert_contains "$(json_field "$output" '.error')" "no CI checks" "case12: json error names the cause"
+assert_contains "$(cat "$stderr")" "grace 3s" "case12: CI_WAIT_NO_CHECKS_GRACE override sets the grace window"
 
 # Case 12b: same in text mode — stdout carries a CI error line.
 stderr="$TMP_ROOT/case12b.err"
 set +e
-output=$(run_wait STUB_PR_CHECKS_MODE=empty 2>"$stderr")
+output=$(run_wait STUB_PR_CHECKS_MODE=empty CI_WAIT_NO_CHECKS_GRACE=3 2>"$stderr")
 rc=$?
 set -e
 assert_eq "$rc" "1" "case12b: text-mode no-checks exit 1" "$stderr"
 assert_contains "$output" "CI error" "case12b: text-mode no-checks prints CI error on stdout"
+
+# Case 12c: no checks registered but still INSIDE the default 180s grace
+# window when the deadline hits -> timeout with verdict pending, never the
+# no-checks error. Approval-gated repos dispatch CI from the
+# pull_request_review event, so registration can legitimately lag this long.
+stderr="$TMP_ROOT/case12c.err"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_MODE=empty 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case12c: no checks inside grace window exit 1 (timeout)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case12c: json status is timeout, not error" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case12c: verdict stays pending inside grace window" "$stderr"
+assert_not_contains "$output" "no CI checks" "case12c: no-checks error suppressed inside grace window"
 
 # Case 13: settled failing check -> status=complete / verdict=fail.
 stderr="$TMP_ROOT/case13.err"

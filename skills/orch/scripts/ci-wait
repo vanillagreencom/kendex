@@ -5,7 +5,8 @@
 # (vstack#454). Auto-retries transient infrastructure failures (max 1 retry).
 #
 # Uses JSON-based state detection to avoid false positives from stale checks
-# left by prior workflow runs (e.g., SKIPPED checks from defer-ci runs).
+# left by prior workflow runs (e.g., SUCCESS/SKIPPED checks from a superseded
+# earlier run).
 #
 # Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
 #
@@ -41,6 +42,13 @@
 #
 # Environment:
 #   GIT_HOST_CLI  - (optional) Path to git host CLI script for enriched output
+#   CI_WAIT_NO_CHECKS_GRACE - (optional) Seconds to keep polling before failing
+#                 when no checks have registered yet (default 180). ci-wait
+#                 runs after the submit-pr approval gate; approval-gated repos
+#                 dispatch CI from the pull_request_review event, so check
+#                 registration can lag. Within the grace window the result
+#                 stays verdict "pending"; past it, the explicit "no checks
+#                 registered" diagnostic fires.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -237,10 +245,23 @@ TRANSIENT_PATTERNS=(
 retries=0
 max_retries=1
 no_checks_count=0
-max_no_checks=4  # Give CI ~60s to register checks before failing
+# Grace window for check registration, in seconds. Approval-gated repos start
+# CI only after a review approval lands (pull_request_review dispatch), so
+# checks can take minutes to register after the approval gate clears. Within
+# the window the loop keeps polling (verdict stays "pending"); past it, the
+# explicit no-checks diagnostic below fires.
+NO_CHECKS_GRACE="${CI_WAIT_NO_CHECKS_GRACE:-180}"
+if ! [[ "$NO_CHECKS_GRACE" =~ ^[0-9]+$ ]]; then
+  NO_CHECKS_GRACE=180
+fi
+max_no_checks=$(((NO_CHECKS_GRACE + POLL_INTERVAL - 1) / POLL_INTERVAL))
+if [ "$max_no_checks" -lt 1 ]; then
+  max_no_checks=1
+fi
 
-# Guard against stale-check race condition: when called right after removing
-# defer-ci label, old run checks (SUCCESS/SKIPPED) may be the only ones visible.
+# Guard against stale-check race condition: when a fresh run was just
+# triggered (new push, review-approval dispatch), checks from an old run
+# (SUCCESS/SKIPPED) may be the only ones visible.
 # Only declare "passed" after we've seen at least one check go through
 # IN_PROGRESS/PENDING, proving a fresh run was observed.
 seen_in_progress=false
@@ -362,9 +383,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   if [ -z "$checks_json" ] || [ "$checks_json" = "[]" ] || [ "$checks_json" = "null" ]; then
     no_checks_count=$((no_checks_count + 1))
     if [ $no_checks_count -ge $max_no_checks ]; then
-      emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft/defer-ci gating, or webhook delay)"
-      echo "No CI checks after ${elapsed}s" >&2
-      echo "Possible causes: merge conflicts, draft/defer-ci gating, or webhook delay." >&2
+      emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay)"
+      echo "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)" >&2
+      echo "Possible causes: merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay." >&2
+      echo "Raise CI_WAIT_NO_CHECKS_GRACE if this repo's CI dispatch is slower." >&2
       merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
       if [ "$merge_state" = "DIRTY" ] || [ "$merge_state" = "CONFLICTING" ]; then
         echo "PR has merge conflicts (state: $merge_state) — CI will not trigger." >&2

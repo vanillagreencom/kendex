@@ -1,6 +1,6 @@
 # Submit PR Workflow
 
-Run a local pre-PR review, push changes, create/update the PR with CI running immediately, triage review comments asynchronously, and verify merge gates.
+Run a local pre-PR review, push changes, create/update the PR, triage review comments asynchronously, wait for the GitHub-native approval verdict, verify CI, and confirm merge gates. The approval gate (§ 4) runs before CI verification (§ 5) so repos that start CI only after an approval never deadlock.
 
 ## Inputs
 
@@ -162,7 +162,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    - **Created Issues**: Include if issues created during local review or comment triage.
    - **QA Metrics**: Include if QA agents ran. Format is project-configurable based on which QA agent types are active.
 
-4. **Create or update PR**. CI runs immediately from the moment the PR exists — never defer, queue, or gate it behind bot review activity.
+4. **Create or update PR**. CI configured on `pull_request` runs from the moment the PR exists — orch never defers, queues, or gates it behind bot review activity. Approval-gated repos start their heavy CI only after the § 4 approval verdict instead; that is repo-side configuration (see orch `DEVELOPMENT.md` § CI Triggering Patterns) and needs no detection here.
 
    **No existing PR** → create. Always pass the body via `--body-file`:
    ```bash
@@ -188,7 +188,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
 
 ## 3. Async Comment Triage
 
-Bot reviews are asynchronous: review bots may post minutes or hours after the PR opens. **Bot prose is never a gate signal** — emoji reactions, sticky comments, and checklist text are never parsed for gating. Triage whatever review comments exist right now and move on; the merge gates (§ 6.1) later require every comment replied to and resolved plus a GitHub-native approval verdict, and findings that arrive after merge get an immediate follow-up fix or an explicit tracking issue. Every bot comment still gets a reply and resolution — the hygiene standard is unchanged.
+Bot reviews are asynchronous: review bots may post minutes or hours after the PR opens. **Bot prose is never a gate signal** — emoji reactions, sticky comments, and checklist text are never parsed for gating. Triage whatever review comments exist right now and move on; the approval gate (§ 4) polls for the GitHub-native approval verdict and new comments together, the merge gates (§ 6.1) require every comment replied to and resolved, and findings that arrive after merge get an immediate follow-up fix or an explicit tracking issue. Every bot comment still gets a reply and resolution — the hygiene standard is unchanged.
 
 ### 3.1 Opportunistic Triage
 
@@ -196,7 +196,7 @@ Bot reviews are asynchronous: review bots may post minutes or hours after the PR
    ```bash
    .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
    ```
-   Read `.unresolved_count` from the JSON output and use it as `UNRESOLVED_FROM_PREVIOUS_COMMAND`. If it is `0` → § 3.5 (nothing to triage yet — later arrivals are handled at the § 6.1 gate).
+   Read `.unresolved_count` from the JSON output and use it as `UNRESOLVED_FROM_PREVIOUS_COMMAND`. If it is `0` → § 3.5 (nothing to triage yet — later arrivals are handled by the § 4 approval gate).
 
 2. **Run Workflow**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3.1 step 3` with context:
    - `lifecycle`: `"managed"`
@@ -225,7 +225,7 @@ Bot reviews are asynchronous: review bots may post minutes or hours after the PR
 
    **If issues created** → § 3.2
 
-   **Otherwise** → § 3.5. Fixes pushed during triage were already replied to and their threads resolved by `review-pr-comments.md`. Do not wait for a bot re-review round — any re-review comments land in existing or new threads and are caught at the § 6.1 gate.
+   **Otherwise** → § 3.5. Fixes pushed during triage were already replied to and their threads resolved by `review-pr-comments.md`. Do not wait for a bot re-review round — any re-review comments land in existing or new threads and are caught by the § 4 approval gate or the § 6.1 gate 3 final check.
 
 ### 3.2 Implement Created Issues
 
@@ -282,9 +282,49 @@ If `design` label present:
 
 ---
 
-## 4. Verify CI
+## 4. Approval Gate
 
-CI has been running since the PR was created or updated in § 2 — there is no bot gate in front of it.
+The approval gate runs **before** CI verification — universally, with no repo detection. Consuming repos may configure CI to start only after an approval verdict exists (approval-gated jobs or a merge queue; see orch `DEVELOPMENT.md` § CI Triggering Patterns), so waiting on CI first would deadlock those repos. On repos whose CI runs immediately from § 2, verifying CI after approval (§ 5) simply returns quickly.
+
+Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are never parsed for gating; this gate reads only GitHub-native review verdicts, from any reviewer — human or bot.
+
+1. **Approval wait loop.** Poll for a GitHub-native approval verdict and new review comments together:
+   ```bash
+   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json
+   ```
+   The result is a JSON object: `status` (`approved`/`changes_requested`/`comments`/`timeout`/`error`) plus `review_decision`, `approvals`, `changes_requested`, and `unresolved_count`. approval-wait always emits it — no silent completion. Detection uses `gh pr view --json reviewDecision,latestReviews` (either signal: the branch-protection aggregate `reviewDecision == "APPROVED"`, or the latest-review-per-reviewer fallback when no protection is configured); any reviewer counts, human or bot.
+
+   Route on `status`:
+
+   | `status` | Action |
+   |----------|--------|
+   | `approved`, `unresolved_count == 0` | Approval verdict recorded → step 2 |
+   | `approved`, `unresolved_count > 0` | Approval recorded; run the triage pass below to clear the comments. If the pass pushed no commits, the approval stands → step 2 (thread hygiene is re-confirmed at the § 6.1 gate 3 final check); if it pushed commits, restart step 1 |
+   | `changes_requested` or `comments` | New review feedback: run the triage pass below, then restart step 1 |
+   | `timeout` | No approval verdict after 15 min → Ask user: "No approval verdict on PR #[PR_NUMBER] after [ELAPSED] min" — `Force merge` \| `Keep waiting` \| `Stop here` |
+   | `error` | Re-run step 1 once; if it repeats, report the error and ask user: `Keep waiting` \| `Stop here` |
+
+   **Triage pass** (bounded by `pr_comment_review.iterations`, max 5 — read it before each pass; at the cap, present the remaining feedback and ask user: `Triage again` \| `Force merge` \| `Stop here`):
+   - `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context — fixes real findings, replies to and resolves every comment.
+   - Pushes made by a triage pass may dismiss or refresh existing reviewer approvals (stale-review dismissal) and re-trigger reviewer re-review — restarting step 1 already handles re-approval; no separate re-check is needed.
+
+   **User choices on `timeout`:**
+   - `Keep waiting` → restart step 1.
+   - `Force merge` → record the override, then treat the approval gate as met and continue to step 2 (the § 6.1 gates still apply):
+     ```bash
+     .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true
+     ```
+   - `Stop here` → § 6 with the approval gate unmet (`MERGE_READY = false`); the PR stays open awaiting approval. Skip § 5 — on approval-gated repos CI cannot start until the approval lands.
+
+2. **Record the result** for the § 6.1 gate 4 check — approval status (`approved`, or forced via `pr_approval.forced`) and the `unresolved_count` at approval time — then → § 5.
+
+---
+
+## 5. Verify CI
+
+On always-on repos CI has been running since the PR was created or updated in § 2. On approval-gated repos, checks register only after the § 4 approval gate completes — which is why this section runs after § 4. Neither case needs detecting: ci-wait treats "no checks yet" as pending within its registration grace window (`CI_WAIT_NO_CHECKS_GRACE`, default 180s) and fails with an explicit diagnostic only past it.
+
+### 5.1 Wait for CI
 
 1. **Wait for CI**:
    ```bash
@@ -297,17 +337,15 @@ CI has been running since the PR was created or updated in § 2 — there is no 
    | Result | Action |
    |--------|--------|
    | ✅ `status=complete`, `verdict=pass` | → § 6 |
-   | ❌ `status=complete`, `verdict=fail` | → § 5 |
+   | ❌ `status=complete`, `verdict=fail` | → § 5.2 |
    | ⏱ `status=timeout` or `status=error` | Re-run step 1 once; if it repeats → Ask user: `Skip CI` \| `Retry` \| `Abort` |
 
----
+### 5.2 CI Failure Recovery
 
-## 5. CI Failure Recovery
-
-1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`
+1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5.2 step 2`
 
 2. **After ci-fix returns**:
-   - If fix applied → ci-fix already pushed and re-verified CI (its § 5); treat its final CI result as the § 4 result and re-route via the § 4 step 2 table.
+   - If fix applied → ci-fix already pushed and re-verified CI (its § 5); treat its final CI result as the § 5.1 result and re-route via the § 5.1 step 2 table. A recovery push may also dismiss existing reviewer approvals — when ci-fix pushed commits, re-confirm the § 4 approval with a short wait (`approval-wait [PR_NUMBER] 15 300 --json`) before § 6.
    - If fix not possible → Ask user: `Skip CI` | `Retry` | `Abort`
 
 3. **Max 2 ci-fix cycles** per PR submission.
@@ -320,14 +358,14 @@ CI has been running since the PR was created or updated in § 2 — there is no 
 
 ### 6.1 Merge Gates
 
-A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are never parsed for gating; the approval gate reads only GitHub-native review verdicts, from any reviewer — human or bot.
+A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are never parsed for gating; the approval gate reads only GitHub-native review verdicts, from any reviewer — human or bot. Gates 2 and 4 **verify results already recorded** by § 5 and § 4 — do not re-run the waits here; gate 3 is a final live check.
 
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass` before this workflow. Standalone: workflow state `json_paths` is non-empty |
-| 2 | CI green | § 4 result is `status=complete`, `verdict=pass` (equivalently: `gh pr checks [PR_NUMBER]` shows all checks passing) |
+| 2 | CI green | § 5 result is `status=complete`, `verdict=pass` (equivalently: `gh pr checks [PR_NUMBER]` shows all checks passing) |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
-| 4 | GitHub-native approval verdict | `reviewDecision == "APPROVED"`, or — when `reviewDecision` is empty (no required-review protection) — at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED |
+| 4 | GitHub-native approval verdict | § 4 ended `approved` — `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED — or `pr_approval.forced` is recorded |
 
 1. **Gate 1** — standalone only (managed callers reach this workflow only after `review-pr.md` passed):
    ```bash
@@ -335,9 +373,9 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    ```
    If `json_paths` is empty, no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]` before merge.
 
-2. **Gate 2** — from § 4: met when the final CI result was `status=complete`, `verdict=pass`.
+2. **Gate 2** — verify the recorded § 5 result: met when the final CI result was `status=complete`, `verdict=pass`. Do not re-run ci-wait.
 
-3. **Gate 3**:
+3. **Gate 3 — final live check**:
    ```bash
    .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
    ```
@@ -346,35 +384,9 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    | `unresolved_count` | Action |
    |--------------------|--------|
    | `0` | Gate met |
-   | `> 0` | → step 4's triage row — the approval wait loop owns comment routing from here |
+   | `> 0` | Run ONE triage pass: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 3` with managed context (bounded by `pr_comment_review.iterations`, max 5). If that pass pushed commits, re-run § 5 and re-confirm approval per § 4 with a short approval-wait (`approval-wait [PR_NUMBER] 15 300 --json`). Then re-run the gate 3 command once; if threads remain, present them and ask user: `Triage again` \| `Force merge` \| `Stop here` |
 
-4. **Gate 4 — approval wait loop.** Poll for a GitHub-native approval verdict and new review comments together:
-   ```bash
-   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json
-   ```
-   The result is a JSON object: `status` (`approved`/`changes_requested`/`comments`/`timeout`/`error`) plus `review_decision`, `approvals`, `changes_requested`, and `unresolved_count`. approval-wait always emits it — no silent completion. Detection uses `gh pr view --json reviewDecision,latestReviews` (either signal: the branch-protection aggregate, or the latest-review-per-reviewer fallback when no protection is configured); any reviewer counts, human or bot.
-
-   Route on `status`:
-
-   | `status` | Action |
-   |----------|--------|
-   | `approved`, `unresolved_count == 0` | Gates 3 and 4 met → step 5 |
-   | `approved`, `unresolved_count > 0` | Approval recorded; run the triage pass below to clear gate 3, then re-run the gate 3 command once — do not re-wait for approval |
-   | `changes_requested` or `comments` | New review feedback: run the triage pass below, then restart step 4 |
-   | `timeout` | No approval verdict after 15 min → Ask user: "No approval verdict on PR #[PR_NUMBER] after [ELAPSED] min" — `Force merge` \| `Keep waiting` \| `Stop here` |
-   | `error` | Re-run step 4 once; if it repeats, report the error and ask user: `Keep waiting` \| `Stop here` |
-
-   **Triage pass** (bounded by `pr_comment_review.iterations`, max 5 — read it before each pass; at the cap, present the remaining feedback and ask user: `Triage again` \| `Force merge` \| `Stop here`):
-   - `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 4` with managed context — fixes real findings, replies to and resolves every comment. Pushed fix commits re-trigger CI and reviewer re-review automatically.
-   - If the pass pushed new commits, re-run § 4 to re-verify gate 2 before restarting the approval wait.
-
-   **User choices on `timeout`:**
-   - `Keep waiting` → restart step 4.
-   - `Force merge` → record the override, then treat gate 4 as met (gates 1-3 must still hold):
-     ```bash
-     .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true
-     ```
-   - `Stop here` → § 6.2 with gate 4 unmet (`MERGE_READY = false`); the PR stays open awaiting approval.
+4. **Gate 4** — verify the recorded § 4 result: met when the approval wait ended `approved`, or when `pr_approval.forced` was recorded by an explicit user override. Do not re-run the approval wait here — the gate 3 escape hatch above already re-confirms approval after any late pushes.
 
 5. **Record results**: `MERGE_READY = true` only when all four gates are met (gate 4 by verdict or recorded force).
 
@@ -452,6 +464,6 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
 
 ## 7. Return State
 
-**If managed**: Return to the parent workflow's next section with the § 6.1 gate results (`MERGE_READY`, approval status, unresolved thread count, CI verdict).
+**If managed**: Return to the parent workflow's next section with the § 6.1 gate results (`MERGE_READY`, the § 4 approval status, unresolved thread count, the § 5 CI verdict).
 
 **If standalone**: Session complete — PR submitted. Summary presented in § 6.2.
