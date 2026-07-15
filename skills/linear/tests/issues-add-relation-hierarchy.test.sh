@@ -14,6 +14,9 @@
 #                                                                  └── CC-798
 #   CC-799 (incomplete parent edge; fail-closed fixture)
 #   CC-810 <-> CC-811 (parent cycle; fail-closed fixture)
+#   CC-812 (missing parent key; fail-closed fixture)
+#   CC-813 (non-object parent; fail-closed fixture)
+#   CC-814 (non-object issue; fail-closed fixture)
 
 set -euo pipefail
 
@@ -42,6 +45,7 @@ issue_node() {
   local prj='"project":{"id":"proj-1","name":"Test"}'
   local suffix="${1#uuid-}" parent_id
   case "$1" in
+  uuid-814) printf '[]'; return ;;
   uuid-761 | uuid-780 | uuid-790) parent_id="null" ;;
   uuid-763 | uuid-764) parent_id="uuid-761" ;;
   uuid-766 | uuid-768) parent_id="uuid-763" ;;
@@ -56,11 +60,15 @@ issue_node() {
   uuid-799) parent_id="missing" ;;
   uuid-810) parent_id="uuid-811" ;;
   uuid-811) parent_id="uuid-810" ;;
+  uuid-812) parent_id="absent" ;;
+  uuid-813) parent_id="wrong-type" ;;
   *) printf 'null'; return ;;
   esac
   case "$parent_id" in
   null) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":null}' "$1" "$suffix" "$prj" ;;
   missing) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{}}' "$1" "$suffix" "$prj" ;;
+  absent) printf '{"id":"%s","identifier":"CC-%s",%s}' "$1" "$suffix" "$prj" ;;
+  wrong-type) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":"uuid-761"}' "$1" "$suffix" "$prj" ;;
   *) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{"id":"%s"}}' "$1" "$suffix" "$prj" "$parent_id" ;;
   esac
 }
@@ -87,11 +95,32 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# `mapfile`/`readarray` are Bash 4 additions. Keep the hierarchy path runnable
-# under macOS system Bash 3.2 by preventing either command from reappearing.
-if grep -Eq '^[[:space:]]*(mapfile|readarray)([[:space:]]|$)' "$SKILL_DIR/scripts/lib/issue-validation.sh"; then
-  echo "FAIL hierarchy validation uses a Bash 4-only line-reader"
-  exit 1
+# Exercise this complete test file under the unsupported macOS-era runtime. The
+# CLI must reject it before loading shared config or attempting an API request.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  payload_log="$TMP_ROOT/bash3-payloads.jsonl"
+  : >"$payload_log"
+  set +e
+  output=$(PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_API_KEY=test-token \
+    CURL_PAYLOAD_LOG="$payload_log" \
+    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
+      issues add-relation CC-763 --blocks CC-764 2>&1)
+  rc=$?
+  set -e
+  expected="Error: Linear CLI requires Bash 4.0 or newer; found Bash $BASH_VERSION. Install Bash 4+ and invoke linear.sh with that executable."
+  if [ "$rc" -eq 0 ] || [ "$output" != "$expected" ]; then
+    echo "FAIL Bash 3 runtime contract: expected a clear Bash 4+ diagnostic"
+    printf 'exit=%s\noutput=%s\n' "$rc" "$output"
+    exit 1
+  fi
+  if [ -s "$payload_log" ]; then
+    echo "FAIL Bash 3 runtime contract: CLI attempted an API request"
+    cat "$payload_log"
+    exit 1
+  fi
+  echo "all pass (unsupported Bash 3 runtime rejected before hierarchy validation)"
+  exit 0
 fi
 
 run_add_relation() {
@@ -225,6 +254,29 @@ fi
 reject "incomplete ancestor response (CC-799 --blocks CC-780)" CC-799 --blocks CC-780
 if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
   echo "FAIL incomplete ancestor response: missing fail-closed diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
+# Missing/wrong-typed GraphQL shapes must never be inferred as explicit roots.
+# reject() also asserts that no issueRelationCreate mutation was sent.
+reject "missing parent key (CC-812 --blocks CC-780)" CC-812 --blocks CC-780
+if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
+  echo "FAIL missing parent key: missing fail-closed diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
+reject "non-object parent (CC-813 --blocks CC-780)" CC-813 --blocks CC-780
+if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
+  echo "FAIL non-object parent: missing fail-closed diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
+reject "non-object issue (CC-814 --blocks CC-780)" CC-814 --blocks CC-780
+if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
+  echo "FAIL non-object issue: missing fail-closed diagnostic:"
   cat "$TMP_ROOT/err"
   exit 1
 fi

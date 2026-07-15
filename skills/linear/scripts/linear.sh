@@ -1,10 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Linear GraphQL API - Main Entry Point
 # Usage: ./linear.sh <resource> <action> [options]
 
-set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/bash-version.sh
+source "$SCRIPT_DIR/lib/bash-version.sh"
+linear_require_supported_bash || exit $?
+
+set -euo pipefail
 
 show_help() {
     cat << 'EOF'
@@ -55,6 +58,7 @@ Examples:
   ./linear.sh milestones create --project <id> --name "Alpha" --target-date 2025-02-15
 
 Environment:
+  Runtime         Bash 4.0 or newer. macOS system Bash 3.2 is unsupported.
   LINEAR_API_KEY  Required. Set in .env.local or export directly.
                   Non-secret defaults such as LINEAR_TEAM can be set in vstack.settings.toml.
 
@@ -85,15 +89,15 @@ esac
 
 case "$resource" in
     sync)
-        exec bash "$SCRIPT_DIR/commands/sync.sh" "$@"
+        exec "$BASH" "$SCRIPT_DIR/commands/sync.sh" "$@"
         ;;
     cache)
-        exec bash "$SCRIPT_DIR/commands/cache-query.sh" "$@"
+        exec "$BASH" "$SCRIPT_DIR/commands/cache-query.sh" "$@"
         ;;
     issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|session-status|auth-check)
         script="$SCRIPT_DIR/commands/${resource}.sh"
         if [ -f "$script" ]; then
-            exec bash "$script" "$@"
+            exec "$BASH" "$script" "$@"
         else
             echo "Error: Command script not found: $script" >&2
             exit 1

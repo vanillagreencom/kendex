@@ -63,7 +63,7 @@ get_session_status() {
     # Auto-sync guard: ensure cache is reasonably fresh
     if ! cache_is_fresh 15; then
         echo "Cache stale or missing, syncing..." >&2
-        bash "$SCRIPT_DIR/sync.sh" 2>&1 | while read -r line; do echo "  $line" >&2; done
+        "$BASH" "$SCRIPT_DIR/sync.sh" 2>&1 | while read -r line; do echo "  $line" >&2; done
     fi
 
     # Calculate date threshold for research

@@ -11,6 +11,7 @@ skills/linear/
 │   ├── linear.sh               # Entry point (resource router)
 │   ├── commands/               # Individual resource scripts
 │   └── lib/
+│       ├── bash-version.sh      # Bash 4+ runtime preflight
 │       ├── common.sh           # Auth, GraphQL, formatting
 │       ├── cache.sh            # Cache management
 │       ├── formatters.sh       # Output formatters (safe, table, ids, raw)
@@ -22,8 +23,9 @@ skills/linear/
 
 ## Setup
 
-1. Add `LINEAR_API_KEY` to `.env.local` for live API commands and sync
-2. Optionally set non-secret defaults such as `LINEAR_TEAM`, `LINEAR_FORMAT`, and `LINEAR_TEAM_PREFIX` in committed `vstack.settings.toml`
+1. Install Bash 4.0 or newer. macOS system Bash 3.2 is unsupported; invoke `linear.sh` with the newer Bash executable.
+2. Add `LINEAR_API_KEY` to `.env.local` for live API commands and sync
+3. Optionally set non-secret defaults such as `LINEAR_TEAM`, `LINEAR_FORMAT`, and `LINEAR_TEAM_PREFIX` in committed `vstack.settings.toml`
 
 ```bash
 ./scripts/linear.sh auth-check
@@ -67,5 +69,6 @@ Keep `LINEAR_API_KEY` in `.env.local`. Shared non-secret defaults can live in `v
 
 ## Dependencies
 
+- Bash 4.0 or newer
 - `curl`
 - `jq`

@@ -140,23 +140,39 @@ fetch_complete_issue_hierarchy() {
 
 	while [[ -n "$current_id" ]]; do
 		local result node_id identifier node_project_id node_project_name
-		local parent_present parent_id
+		local parent_state parent_id
 		if ! result=$(graphql_query "$query" "{\"id\": \"$current_id\"}"); then
+			return 1
+		fi
+		parent_state=$(jq -r '
+			if (.issue | type) != "object" then "invalid_issue"
+			elif (.issue | has("parent") | not) then "missing_parent"
+			elif .issue.parent == null then "root"
+			elif ((.issue.parent | type) == "object"
+				and (.issue.parent.id | type) == "string"
+				and (.issue.parent.id | length) > 0) then "edge"
+			else "invalid_parent"
+			end
+		' <<<"$result")
+		if [[ "$parent_state" == "invalid_issue" ]]; then
+			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned non-object issue data for '$current_id'.\"}" >&2
+			return 1
+		fi
+		if [[ "$parent_state" == "missing_parent" || "$parent_state" == "invalid_parent" ]]; then
+			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned an incomplete parent edge for '$current_id'.\"}" >&2
 			return 1
 		fi
 		node_id=$(jq -r '.issue.id // empty' <<<"$result")
 		identifier=$(jq -r '.issue.identifier // empty' <<<"$result")
 		node_project_id=$(jq -r '.issue.project.id // empty' <<<"$result")
 		node_project_name=$(jq -r '.issue.project.name // "none"' <<<"$result")
-		parent_present=$(jq -r 'if .issue.parent == null then "false" else "true" end' <<<"$result")
-		parent_id=$(jq -r '.issue.parent.id // empty' <<<"$result")
+		parent_id=""
+		if [[ "$parent_state" == "edge" ]]; then
+			parent_id=$(jq -r '.issue.parent.id' <<<"$result")
+		fi
 
 		if [[ -z "$node_id" || -z "$identifier" ]]; then
 			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned incomplete issue data for '$current_id'.\"}" >&2
-			return 1
-		fi
-		if [[ "$parent_present" == "true" && -z "$parent_id" ]]; then
-			echo "{\"error\": \"Hierarchy validation failed closed: Linear returned an incomplete parent edge for '$identifier'.\"}" >&2
 			return 1
 		fi
 		if hierarchy_chain_contains "$seen_ids" "$node_id"; then

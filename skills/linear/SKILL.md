@@ -156,5 +156,6 @@ Blocking relations must connect peers of one bundle: same direct parent, or both
 
 ## Dependencies
 
+- Bash 4.0 or newer (macOS system Bash 3.2 is unsupported; install a newer Bash and invoke `linear.sh` with it)
 - `curl`
 - `jq`
