@@ -643,9 +643,57 @@ fn refresh_rejects_symlinked_agents_ancestor_before_reading_outside_skill() {
     let err = crate::test_util::with_project_root(&project, || {
         run(crate::scope::ScopeFilter::Project, false).unwrap_err()
     });
-    assert!(err.to_string().contains("failed to refresh"), "{err:#}");
+    assert!(err.to_string().contains("outside project root"), "{err:#}");
     assert_eq!(std::fs::read(&outside_skill).unwrap(), outside_bytes);
     assert!(!project.join(".vstack-lock.json").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_preflight_keeps_populated_lock_and_outside_skill_byte_identical() {
+    use std::os::unix::fs::symlink;
+
+    let root = tmpdir("project-owned-populated-lock-escape");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    let outside_agents = root.join("outside-agents");
+    let outside_skill_dir = outside_agents.join("skills/benchmark");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&outside_skill_dir).unwrap();
+    symlink(&outside_agents, project.join(".agents")).unwrap();
+    std::fs::write(project.join("vstack.toml"), "[skill-instructions]\n").unwrap();
+
+    let outside_skill = outside_skill_dir.join("SKILL.md");
+    let outside_bytes = b"---\nname: benchmark\ndescription: Outside\n---\n\nKeep outside bytes.\n";
+    std::fs::write(&outside_skill, outside_bytes).unwrap();
+    std::fs::create_dir_all(source.join("skills/benchmark")).unwrap();
+    std::fs::write(
+        source.join("skills/benchmark/SKILL.md"),
+        "---\nname: benchmark\ndescription: Source\n---\n\nReplacement bytes.\n",
+    )
+    .unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "benchmark",
+        ItemKind::Skill,
+        &source,
+        vec!["codex"],
+    ));
+    let lock_path = project.join(".vstack-lock.json");
+    lock.save(&lock_path).unwrap();
+    let lock_bytes = std::fs::read(&lock_path).unwrap();
+
+    let err = crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false).unwrap_err()
+    });
+
+    assert!(err.to_string().contains("outside project root"), "{err:#}");
+    assert_eq!(std::fs::read(&outside_skill).unwrap(), outside_bytes);
+    assert_eq!(std::fs::read(&lock_path).unwrap(), lock_bytes);
+    assert!(!project.join(".codex/config.toml").exists());
 
     let _ = std::fs::remove_dir_all(root);
 }

@@ -12,7 +12,7 @@ use crate::refresh_sources::{
 use crate::skill::Skill;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Result counts from one invocation of [`refresh_items_in_scope`].
 #[derive(Default)]
@@ -135,11 +135,23 @@ pub fn refresh_items_in_scope(
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
     let all_hooks = all_source_hooks(sources);
 
-    if !global {
+    let project_owned_skills_root = if global {
+        None
+    } else {
+        match resolve_project_owned_skills_root(project_root) {
+            Ok(root) => root,
+            Err(err) => {
+                stats.fail(".agents/skills", None, err);
+                return stats;
+            }
+        }
+    };
+
+    if let Some(skills_root) = project_owned_skills_root.as_ref() {
         refresh_project_owned_skill_instructions(
             lock,
             project_config,
-            project_root,
+            skills_root,
             &pass,
             &mut stats,
         );
@@ -421,51 +433,102 @@ pub fn refresh_items_in_scope(
     stats
 }
 
+#[derive(Debug)]
+struct ProjectOwnedSkillsRoot {
+    path: PathBuf,
+    canonical: PathBuf,
+}
+
+/// Validate the ownership boundary used by all project refresh writes.
+///
+/// This must run before lock reconciliation, hook pruning, or installation.
+/// Codex and Pi both write project skills through `.agents/skills`, so even a
+/// refresh that is not applying local `[skill-instructions]` must reject an
+/// existing `.agents` ancestor that resolves outside the selected project.
+pub fn preflight_project_refresh(project_root: &Path) -> Result<()> {
+    resolve_project_owned_skills_root(project_root).map(|_| ())
+}
+
+fn resolve_project_owned_skills_root(
+    project_root: &Path,
+) -> Result<Option<ProjectOwnedSkillsRoot>> {
+    let project_root_canon = project_root
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve project root: {err}"))?;
+    let agents_dir = project_root.join(".agents");
+    let skills_dir = agents_dir.join("skills");
+
+    match std::fs::symlink_metadata(&skills_dir) {
+        Ok(_) => {
+            let skills_dir_canon = skills_dir
+                .canonicalize()
+                .map_err(|err| anyhow::anyhow!("failed to resolve project-owned skills: {err}"))?;
+            if !skills_dir_canon.starts_with(&project_root_canon) {
+                anyhow::bail!(
+                    "refusing project-owned skills path outside project root: {}",
+                    skills_dir.display()
+                );
+            }
+            if !skills_dir_canon.is_dir() {
+                anyhow::bail!(
+                    "project-owned skills path is not a directory: {}",
+                    skills_dir.display()
+                );
+            }
+            return Ok(Some(ProjectOwnedSkillsRoot {
+                path: skills_dir,
+                canonical: skills_dir_canon,
+            }));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed to inspect project-owned skills: {err}"
+            ));
+        }
+    }
+
+    // `.agents/skills` may not exist yet, but installers can create it. Check
+    // the nearest managed ancestor now so creation cannot follow an escaped or
+    // dangling `.agents` symlink later in this refresh.
+    match std::fs::symlink_metadata(&agents_dir) {
+        Ok(_) => {
+            let agents_dir_canon = agents_dir
+                .canonicalize()
+                .map_err(|err| anyhow::anyhow!("failed to resolve .agents directory: {err}"))?;
+            if !agents_dir_canon.starts_with(&project_root_canon) {
+                anyhow::bail!(
+                    "refusing project-owned skills path outside project root: {}",
+                    skills_dir.display()
+                );
+            }
+            if !agents_dir_canon.is_dir() {
+                anyhow::bail!(
+                    "project .agents path is not a directory: {}",
+                    agents_dir.display()
+                );
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed to inspect project .agents directory: {err}"
+            ));
+        }
+    }
+
+    Ok(None)
+}
+
 fn refresh_project_owned_skill_instructions(
     lock: &config::LockFile,
     project_config: &ProjectConfig,
-    project_root: &Path,
+    skills_root: &ProjectOwnedSkillsRoot,
     pass: &impl Fn(&str) -> bool,
     stats: &mut RefreshStats,
 ) {
-    let skills_dir = project_root.join(".agents/skills");
-    let project_root_canon = match project_root.canonicalize() {
-        Ok(path) => path,
-        Err(err) => {
-            stats.fail(
-                ".agents/skills",
-                None,
-                format!("failed to resolve project root: {err}"),
-            );
-            return;
-        }
-    };
-    let skills_dir_canon = match skills_dir.canonicalize() {
-        Ok(path) => path,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
-        Err(err) => {
-            stats.fail(
-                ".agents/skills",
-                None,
-                format!("failed to resolve project-owned skills: {err}"),
-            );
-            return;
-        }
-    };
-    if !skills_dir_canon.starts_with(&project_root_canon) {
-        stats.fail(
-            ".agents/skills",
-            None,
-            format!(
-                "refusing project-owned skills path outside project root: {}",
-                skills_dir.display()
-            ),
-        );
-        return;
-    }
-    let entries = match std::fs::read_dir(&skills_dir) {
+    let entries = match std::fs::read_dir(&skills_root.path) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
         Err(err) => {
             stats.fail(
                 ".agents/skills",
@@ -512,7 +575,7 @@ fn refresh_project_owned_skill_instructions(
                 continue;
             }
         };
-        if !skill_dir_canon.starts_with(&skills_dir_canon) {
+        if !skill_dir_canon.starts_with(&skills_root.canonical) {
             stats.fail(
                 name,
                 None,
@@ -624,10 +687,16 @@ pub fn prune_hook_harnesses(
     pruned_any
 }
 
+/// Re-render affected agents after a hook is removed.
+///
+/// Project callers must strict-load `project_config` and run
+/// [`preflight_project_refresh`] before mutating hook artifacts or lock state.
 pub fn regenerate_agents_after_hook_removal(
     global: bool,
     lock: &config::LockFile,
     removed_hook_harnesses: &[String],
+    project_config: &mut ProjectConfig,
+    project_root: &Path,
 ) -> Result<()> {
     if removed_hook_harnesses.is_empty() {
         return Ok(());
@@ -656,22 +725,16 @@ pub fn regenerate_agents_after_hook_removal(
         return Ok(());
     }
 
-    let project_root = config::project_root();
-    let mut project_config = if global {
-        ProjectConfig::load(&project_root)
-    } else {
-        ProjectConfig::load_strict(&project_root)?
-    };
     let stats = refresh_items_in_scope(
         global,
         lock,
         &sources,
-        &mut project_config,
-        &project_root,
+        project_config,
+        project_root,
         Some(&agent_names),
     );
     if !global {
-        stats.persist_upstream(&project_root);
+        stats.persist_upstream(project_root);
     }
     if stats.has_failures() {
         anyhow::bail!(
@@ -723,6 +786,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     } else {
         crate::project_config::ProjectConfig::load_strict(&project_root)?
     };
+    if !global {
+        preflight_project_refresh(&project_root)?;
+    }
 
     // Reconcile lock with disk before refreshing (recovers orphaned entries)
     let source_hint = lock

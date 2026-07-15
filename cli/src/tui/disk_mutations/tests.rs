@@ -852,3 +852,126 @@ fn tui_remove_hook_refreshes_claude_agent_frontmatter() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[derive(Clone, Copy)]
+enum BrokenRemovalConfig {
+    Malformed,
+    Unreadable,
+}
+
+fn assert_tui_hook_removal_rejects_broken_config(kind: BrokenRemovalConfig) {
+    let root = tmpdir(match kind {
+        BrokenRemovalConfig::Malformed => "remove-hook-malformed-config",
+        BrokenRemovalConfig::Unreadable => "remove-hook-unreadable-config",
+    });
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(source.join("agents")).unwrap();
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        source.join("vstack.toml"),
+        "[hook-events]\n\"PreToolUse:Bash\" = \"all\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source.join("agents/rust.md"),
+        "---\nname: rust\ndescription: rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source.join("hooks/guard.sh"),
+        "# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\n#!/usr/bin/env bash\nexit 0\n",
+    )
+    .unwrap();
+
+    let mut agent = agent_fixture("rust");
+    agent.source_path = source.join("agents/rust.md");
+    let mut hook = hook_fixture("guard", None);
+    hook.source_path = source.join("hooks/guard.sh");
+    hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "rust".into(),
+        kind: ItemKind::Agent,
+        source: source.to_string_lossy().into_owned(),
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-15T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.add(LockEntry {
+        name: "guard".into(),
+        kind: ItemKind::Hook,
+        source: source.to_string_lossy().into_owned(),
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-15T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    let lock_path = project.join(".vstack-lock.json");
+    lock.save(&lock_path).unwrap();
+
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+        Harness::ClaudeCode
+            .generate_agent(
+                &agent,
+                false,
+                &[],
+                &[hook.clone()],
+                &crate::agent::AgentExtras::default(),
+            )
+            .unwrap();
+    });
+
+    let hook_path = project.join(".claude/hooks/guard.sh");
+    let settings_path = project.join(".claude/settings.json");
+    let agent_path = project.join(".claude/agents/rust.md");
+    let hook_bytes = std::fs::read(&hook_path).unwrap();
+    let settings_bytes = std::fs::read(&settings_path).unwrap();
+    let agent_bytes = std::fs::read(&agent_path).unwrap();
+    let lock_bytes = std::fs::read(&lock_path).unwrap();
+
+    match kind {
+        BrokenRemovalConfig::Malformed => {
+            std::fs::write(project.join("vstack.toml"), "[agent-skills\n").unwrap();
+        }
+        BrokenRemovalConfig::Unreadable => {
+            std::fs::create_dir(project.join("vstack.toml")).unwrap();
+        }
+    }
+
+    let plan = RemovePlan {
+        name: "guard".into(),
+        kind_label: "hook".into(),
+        from_project: true,
+        from_global: false,
+    };
+    let report = crate::test_util::with_project_root(&project, || perform_remove_plans(&[plan]));
+
+    assert_eq!(report.completed, 0, "report: {report:?}");
+    assert_eq!(report.failed.len(), 1, "report: {report:?}");
+    let expected = match kind {
+        BrokenRemovalConfig::Malformed => "parsing",
+        BrokenRemovalConfig::Unreadable => "reading",
+    };
+    assert!(report.failed[0].contains(expected), "report: {report:?}");
+    assert_eq!(std::fs::read(&hook_path).unwrap(), hook_bytes);
+    assert_eq!(std::fs::read(&settings_path).unwrap(), settings_bytes);
+    assert_eq!(std::fs::read(&agent_path).unwrap(), agent_bytes);
+    assert_eq!(std::fs::read(&lock_path).unwrap(), lock_bytes);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn tui_hook_removal_keeps_state_on_malformed_project_config() {
+    assert_tui_hook_removal_rejects_broken_config(BrokenRemovalConfig::Malformed);
+}
+
+#[test]
+fn tui_hook_removal_keeps_state_on_unreadable_project_config() {
+    assert_tui_hook_removal_rejects_broken_config(BrokenRemovalConfig::Unreadable);
+}

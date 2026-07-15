@@ -101,6 +101,19 @@ fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
         return Ok(false);
     };
     let removed_hook_harnesses = (entry.kind == ItemKind::Hook).then(|| entry.harnesses.clone());
+    let project_root = config::project_root();
+    let mut project_config = if entry.kind == ItemKind::Hook {
+        if scope_global {
+            Some(crate::project_config::ProjectConfig::load(&project_root))
+        } else {
+            crate::commands::refresh::preflight_project_refresh(&project_root)?;
+            Some(crate::project_config::ProjectConfig::load_strict(
+                &project_root,
+            )?)
+        }
+    } else {
+        None
+    };
     if entry.kind == ItemKind::PiExtension {
         crate::pi_extension::remove_pi_extension(name, scope_global)?;
     } else {
@@ -118,6 +131,10 @@ fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
             scope_global,
             &lock,
             harnesses,
+            project_config
+                .as_mut()
+                .expect("hook-removal config preloaded"),
+            &project_root,
         )?;
     }
     Ok(true)
@@ -542,6 +559,16 @@ pub(super) fn perform_inline_update(
                 }
             }
         };
+        if !scope_global
+            && let Err(err) = crate::commands::refresh::preflight_project_refresh(&project_root)
+        {
+            for name in names {
+                if lock.entries.contains_key(name) {
+                    report.fail(name, format!("failed project refresh preflight: {err:#}"));
+                }
+            }
+            continue;
+        }
         let updates_hooks = names.iter().any(|name| {
             lock.entries
                 .get(name)
