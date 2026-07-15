@@ -12,8 +12,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-DECISIONS="$REPO_ROOT/skills/decider/scripts/decisions"
+SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+DECISIONS="$SKILL_DIR/scripts/decisions"
 
 PASS=0
 FAIL=0
