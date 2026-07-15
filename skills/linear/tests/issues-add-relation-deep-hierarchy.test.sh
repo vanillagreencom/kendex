@@ -10,6 +10,8 @@
 #   CC-701 (root) <- CC-702 <- ... <- CC-707 <- CC-708, CC-709   (8 levels)
 #   CC-701 <- CC-751 <- CC-752 <- ... <- CC-757                  (second branch)
 #   CC-9000 (root) <- CC-9001 <- ... <- CC-9120                  (121 levels)
+#   CC-850 <- CC-851 <- ... <- CC-855 <- CC-856 <- CC-857 <- CC-852
+#                                                    (cross-chunk parent cycle)
 
 set -euo pipefail
 
@@ -44,6 +46,9 @@ parent_of() {
   CC-751) echo CC-701 ;; CC-752) echo CC-751 ;; CC-753) echo CC-752 ;;
   CC-754) echo CC-753 ;; CC-755) echo CC-754 ;; CC-756) echo CC-755 ;;
   CC-757) echo CC-756 ;;
+  CC-850) echo CC-851 ;; CC-851) echo CC-852 ;; CC-852) echo CC-853 ;;
+  CC-853) echo CC-854 ;; CC-854) echo CC-855 ;; CC-855) echo CC-856 ;;
+  CC-856) echo CC-857 ;; CC-857) echo CC-852 ;;
   CC-9???)
     local n="${1#CC-}"
     if [ "$n" -gt 9000 ]; then printf 'CC-%d' "$((n - 1))"; fi
@@ -205,6 +210,25 @@ if [ "$(wc -l <"$TMP_ROOT/err")" -ne 1 ] || ! jq -e '.error' "$TMP_ROOT/err" >/d
 fi
 if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
   echo "FAIL chunk bound: rejected relation still sent issueRelationCreate"
+  exit 1
+fi
+
+# --- cycle crossing a chunk boundary: reject before relation mutation ---
+set +e
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-850 --blocks CC-701 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL cross-chunk cycle: expected rejection, got success"
+  exit 1
+fi
+if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
+  echo "FAIL cross-chunk cycle: missing cycle diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
+  echo "FAIL cross-chunk cycle: rejected relation still sent issueRelationCreate"
   exit 1
 fi
 

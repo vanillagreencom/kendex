@@ -1741,7 +1741,7 @@ build_parent_selection() {
     printf '%s' "$selection"
 }
 
-# extend_ancestor_chain CHAIN
+# extend_ancestor_chain IDENTIFIER_CHAIN ID_CHAIN
 # Complete a possibly-truncated ancestor chain (newline-separated identifiers,
 # self first). A chain shorter than ANCESTOR_FETCH_DEPTH+1 entries already
 # ends at a true root; a full-length chain may instead be cut off by the
@@ -1752,10 +1752,11 @@ build_parent_selection() {
 # never as "chain is complete".
 extend_ancestor_chain() {
     local chain="$1"
+    local id_chain="$2"
     local full=$((ANCESTOR_FETCH_DEPTH + 1))
     local chunks=0
     local segment="$chain"
-    local deepest chunk_result rest
+    local deepest deepest_id chunk_result rest segment_ids rest_ids
 
     while [ "$(printf '%s\n' "$segment" | grep -c '')" -ge "$full" ]; do
         chunks=$((chunks + 1))
@@ -1764,6 +1765,7 @@ extend_ancestor_chain() {
             return 1
         fi
         deepest=$(printf '%s\n' "$chain" | tail -n 1)
+        deepest_id=$(printf '%s\n' "$id_chain" | tail -n 1)
         local chunk_query="
         query AncestorChunk(\$id: String!) {
             issue(id: \$id) { id identifier $(build_parent_selection "$ANCESTOR_FETCH_DEPTH") }
@@ -1773,14 +1775,24 @@ extend_ancestor_chain() {
         chunk_issue=$(echo "$chunk_result" | jq -c '.issue')
         validate_parent_chain_shape "$chunk_issue" "$ANCESTOR_FETCH_DEPTH" "$deepest" || return 1
         segment=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .identifier')
-        if [ "$(printf '%s\n' "$segment" | sed -n '1p')" != "$deepest" ]; then
+        segment_ids=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .id')
+        if [ "$(printf '%s\n' "$segment" | sed -n '1p')" != "$deepest" ] \
+            || [ "$(printf '%s\n' "$segment_ids" | sed -n '1p')" != "$deepest_id" ]; then
             echo "{\"error\": \"Ancestor lookup for $deepest returned an unexpected issue; refusing to validate the blocking relation against an incomplete ancestor chain.\"}" >&2
             return 1
         fi
         rest=$(printf '%s\n' "$segment" | tail -n +2)
+        rest_ids=$(printf '%s\n' "$segment_ids" | tail -n +2)
+        if hierarchy_chains_overlap "$rest" "$chain" \
+            || hierarchy_chains_overlap "$rest_ids" "$id_chain"; then
+            echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected while extending '$deepest'.\"}" >&2
+            return 1
+        fi
         if [ -n "$rest" ]; then
             chain="$chain
 $rest"
+            id_chain="$id_chain
+$rest_ids"
         fi
     done
 
@@ -1893,12 +1905,14 @@ add_relation() {
         issue2_json=$(echo "$validation_result" | jq -c '.issue2')
         validate_parent_chain_shape "$issue1_json" "$ANCESTOR_FETCH_DEPTH" "$issue_id" || return 1
         validate_parent_chain_shape "$issue2_json" "$ANCESTOR_FETCH_DEPTH" "$related_issue_uuid" || return 1
+        validate_issue_project_shape "$issue1_json" "$issue_id" || return 1
+        validate_issue_project_shape "$issue2_json" "$related_issue_uuid" || return 1
 
         local project1_id project2_id project1_name project2_name issue1_id issue2_id
-        project1_id=$(echo "$validation_result" | jq -r '.issue1.project.id // empty')
-        project2_id=$(echo "$validation_result" | jq -r '.issue2.project.id // empty')
-        project1_name=$(echo "$validation_result" | jq -r '.issue1.project.name // "none"')
-        project2_name=$(echo "$validation_result" | jq -r '.issue2.project.name // "none"')
+        project1_id=$(echo "$validation_result" | jq -r 'if .issue1.project == null then "__NO_PROJECT__" else .issue1.project.id end')
+        project2_id=$(echo "$validation_result" | jq -r 'if .issue2.project == null then "__NO_PROJECT__" else .issue2.project.id end')
+        project1_name=$(echo "$validation_result" | jq -r 'if .issue1.project == null then "none" else .issue1.project.name end')
+        project2_name=$(echo "$validation_result" | jq -r 'if .issue2.project == null then "none" else .issue2.project.name end')
         issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
         issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
 
@@ -1913,9 +1927,11 @@ add_relation() {
         # message derives its remediation from the same predicate
         # (blocking_level_ok), so a prescribed command is never itself rejected.
         # issue1 = blocker (from), issue2 = blocked (to)
-        local chain1 chain2 parent1_id parent2_id
+        local chain1 chain2 id_chain1 id_chain2 parent1_id parent2_id
         chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .identifier')
         chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
+        id_chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .id')
+        id_chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .id')
         parent1_id=$(sed -n '2p' <<<"$chain1")
         parent2_id=$(sed -n '2p' <<<"$chain2")
 
@@ -1926,8 +1942,8 @@ add_relation() {
             # first, and fail closed — reject without a derived prescription —
             # when a full chain cannot be established.
             local violation_message
-            if chain1=$(extend_ancestor_chain "$chain1") \
-                && chain2=$(extend_ancestor_chain "$chain2"); then
+            if chain1=$(extend_ancestor_chain "$chain1" "$id_chain1") \
+                && chain2=$(extend_ancestor_chain "$chain2" "$id_chain2"); then
                 violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
                 echo "{\"error\": \"$violation_message\"}" >&2
             fi

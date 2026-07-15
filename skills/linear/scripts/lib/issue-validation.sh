@@ -117,6 +117,18 @@ hierarchy_chain_contains() {
 	[[ -n "$id" ]] && grep -qxF "$id" <<<"$chain"
 }
 
+# hierarchy_chains_overlap CANDIDATES EXISTING — true when any non-empty
+# candidate is already present in the existing newline-separated chain.
+hierarchy_chains_overlap() {
+	local candidates="$1" existing="$2" candidate
+	while IFS= read -r candidate; do
+		if [[ -n "$candidate" ]] && hierarchy_chain_contains "$existing" "$candidate"; then
+			return 0
+		fi
+	done <<<"$candidates"
+	return 1
+}
+
 # validate_parent_chain_shape ISSUE_JSON SELECTED_DEPTH CONTEXT
 # A selected parent field is trustworthy only when the current issue is an
 # object and the field is explicitly present. A literal null proves a root;
@@ -141,6 +153,38 @@ validate_parent_chain_shape() {
 		valid_chain($selected_depth)
 	' <<<"$issue_json" >/dev/null; then
 		echo "{\"error\": \"Hierarchy validation failed closed: Linear returned incomplete or malformed parent data for '$context'.\"}" >&2
+		return 1
+	fi
+	if ! jq -e '
+		def unique_chain_field($field):
+			[recurse(.parent; . != null) | .[$field]] as $values
+			| ($values | length) == ($values | unique | length);
+		unique_chain_field("id") and unique_chain_field("identifier")
+	' <<<"$issue_json" >/dev/null; then
+		echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected from repeated ancestor identity for '$context'.\"}" >&2
+		return 1
+	fi
+}
+
+# validate_issue_project_shape ISSUE_JSON CONTEXT
+# The top-level validation query selects project explicitly. Literal null is a
+# supported no-project value; otherwise the project must carry the fields used
+# by the same-project check and its diagnostic.
+validate_issue_project_shape() {
+	local issue_json="$1" context="$2"
+	if ! jq -e '
+		(type == "object")
+		and has("project")
+		and (
+			.project == null
+			or (
+				(.project | type) == "object"
+				and ((.project.id | type) == "string" and (.project.id | length) > 0)
+				and ((.project.name | type) == "string" and (.project.name | length) > 0)
+			)
+		)
+	' <<<"$issue_json" >/dev/null; then
+		echo "{\"error\": \"Hierarchy validation failed closed: Linear returned missing or malformed project data for '$context'.\"}" >&2
 		return 1
 	fi
 }

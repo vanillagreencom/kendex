@@ -106,7 +106,7 @@ scripts/linear.sh issues remove-relation [ISSUE_ID] --blocked-by [OTHER_ID]
 scripts/linear.sh cache issues list-relations [ISSUE_ID]
 ```
 
-`--blocks`/`--blocked-by` are guarded: both issues must be in the same project, and a blocking relation must connect peers of one bundle — two issues with the same direct parent, or two top-level issues. An issue never blocks its own ancestor or descendant; the parent-child hierarchy already encodes that dependency (use `--related` for traceability). The guard accepts only explicit null roots or well-formed parent edges and rejects incomplete or malformed hierarchy responses before mutation. When a cross-subtree pair is rejected, the error prescribes the one replacement pair at the level where the subtrees separate (the children of the lowest common ancestor); the prescribed command is validated against the same rule, so it always passes.
+`--blocks`/`--blocked-by` are guarded: both issues must be in the same project, and a blocking relation must connect peers of one bundle — two issues with the same direct parent, or two top-level issues. An issue never blocks its own ancestor or descendant; the parent-child hierarchy already encodes that dependency (use `--related` for traceability). The guard accepts only explicit null roots or well-formed parent edges with unique IDs/identifiers, and requires an explicit null or well-formed project value; incomplete, cyclic, or malformed hierarchy responses are rejected before mutation. When a cross-subtree pair is rejected, the error prescribes the one replacement pair at the level where the subtrees separate (the children of the lowest common ancestor); the prescribed command is validated against the same rule, so it always passes.
 
 ## Priority Updates
 
