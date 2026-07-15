@@ -6,9 +6,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-SECOND_OPINION="$REPO_ROOT/skills/second-opinion/scripts/second-opinion"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+# Hermetic copy: the script resolves PROJECT_ROOT from its own location and
+# loads that project's settings files, so running the in-repo copy leaks the
+# repository's committed vstack.settings.toml (e.g. SECOND_OPINION_TIMEOUT)
+# into a test that pins the BUILT-IN default (vstack#580). Copy the skill to
+# a temp root with no git repo and no settings so only defaults + caller env
+# apply.
+mkdir -p "$TMP_ROOT/proj/skills"
+git init -q "$TMP_ROOT/proj"
+cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
+SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/work"
 
