@@ -1814,23 +1814,20 @@ add_relation() {
     # Validation for blocking relations: same-project + blocking-level rule
     # (blocking relations connect peers of one bundle — see issue-validation.sh)
     if [ "$relation_type" = "blocks" ]; then
-        # Parent chain fetched 5 levels deep so the remediation can locate the
-        # lowest common ancestor of nested hierarchies.
-        local validation_query='
-        query ValidateBlocking($id1: String!, $id2: String!) {
-            issue1: issue(id: $id1) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
-            issue2: issue(id: $id2) { identifier project { id name } parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }
-        }'
-        local validation_result
-        validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
+        # GraphQL cannot recursively select parents. Walk each chain to an
+        # explicit root so deep hierarchies cannot be mistaken for truncated
+        # roots; incomplete/cyclic data fails before relation mutation.
+        local hierarchy1 hierarchy2
+        hierarchy1=$(fetch_complete_issue_hierarchy "$issue_id") || return 1
+        hierarchy2=$(fetch_complete_issue_hierarchy "$related_issue_uuid") || return 1
 
         local project1_id project2_id project1_name project2_name issue1_id issue2_id
-        project1_id=$(echo "$validation_result" | jq -r '.issue1.project.id // empty')
-        project2_id=$(echo "$validation_result" | jq -r '.issue2.project.id // empty')
-        project1_name=$(echo "$validation_result" | jq -r '.issue1.project.name // "none"')
-        project2_name=$(echo "$validation_result" | jq -r '.issue2.project.name // "none"')
-        issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
-        issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
+        project1_id=$(jq -r '.project_id' <<<"$hierarchy1")
+        project2_id=$(jq -r '.project_id' <<<"$hierarchy2")
+        project1_name=$(jq -r '.project_name' <<<"$hierarchy1")
+        project2_name=$(jq -r '.project_name' <<<"$hierarchy2")
+        issue1_id=$(jq -r '.identifier' <<<"$hierarchy1")
+        issue2_id=$(jq -r '.identifier' <<<"$hierarchy2")
 
         # Check 1: Same-project
         if [ "$project1_id" != "$project2_id" ]; then
@@ -1844,8 +1841,8 @@ add_relation() {
         # (blocking_level_ok), so a prescribed command is never itself rejected.
         # issue1 = blocker (from), issue2 = blocked (to)
         local chain1 chain2 parent1_id parent2_id
-        chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .identifier')
-        chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
+        chain1=$(jq -r '.chain' <<<"$hierarchy1")
+        chain2=$(jq -r '.chain' <<<"$hierarchy2")
         parent1_id=$(sed -n '2p' <<<"$chain1")
         parent2_id=$(sed -n '2p' <<<"$chain2")
 

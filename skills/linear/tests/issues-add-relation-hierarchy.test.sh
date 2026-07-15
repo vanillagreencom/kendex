@@ -9,6 +9,11 @@
 #     ├── CC-763 ── CC-766, CC-768
 #     └── CC-764 ── CC-767
 #   CC-780 (root)
+#   CC-790 ── CC-791 ── CC-792 ── CC-793 ── CC-794 ── CC-795 ── CC-796
+#                                                                  ├── CC-797
+#                                                                  └── CC-798
+#   CC-799 (incomplete parent edge; fail-closed fixture)
+#   CC-810 <-> CC-811 (parent cycle; fail-closed fixture)
 
 set -euo pipefail
 
@@ -31,26 +36,39 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 # identifier -> uuid used by the resolve query; validate/mutation see uuids
 uuid_for() { printf 'uuid-%s' "${1#CC-}"; }
 
-# Issue node with project + 5-level parent chain, as ValidateBlocking selects
+# Issue node with one parent edge. ValidateBlockingIssue must follow these
+# edges iteratively until it observes an explicit null root.
 issue_node() {
   local prj='"project":{"id":"proj-1","name":"Test"}'
+  local suffix="${1#uuid-}" parent_id
   case "$1" in
-  uuid-761) printf '{"identifier":"CC-761",%s,"parent":null}' "$prj" ;;
-  uuid-763) printf '{"identifier":"CC-763",%s,"parent":{"identifier":"CC-761","parent":null}}' "$prj" ;;
-  uuid-764) printf '{"identifier":"CC-764",%s,"parent":{"identifier":"CC-761","parent":null}}' "$prj" ;;
-  uuid-766) printf '{"identifier":"CC-766",%s,"parent":{"identifier":"CC-763","parent":{"identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-767) printf '{"identifier":"CC-767",%s,"parent":{"identifier":"CC-764","parent":{"identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-768) printf '{"identifier":"CC-768",%s,"parent":{"identifier":"CC-763","parent":{"identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-780) printf '{"identifier":"CC-780",%s,"parent":null}' "$prj" ;;
-  *) printf 'null' ;;
+  uuid-761 | uuid-780 | uuid-790) parent_id="null" ;;
+  uuid-763 | uuid-764) parent_id="uuid-761" ;;
+  uuid-766 | uuid-768) parent_id="uuid-763" ;;
+  uuid-767) parent_id="uuid-764" ;;
+  uuid-791) parent_id="uuid-790" ;;
+  uuid-792) parent_id="uuid-791" ;;
+  uuid-793) parent_id="uuid-792" ;;
+  uuid-794) parent_id="uuid-793" ;;
+  uuid-795) parent_id="uuid-794" ;;
+  uuid-796) parent_id="uuid-795" ;;
+  uuid-797 | uuid-798) parent_id="uuid-796" ;;
+  uuid-799) parent_id="missing" ;;
+  uuid-810) parent_id="uuid-811" ;;
+  uuid-811) parent_id="uuid-810" ;;
+  *) printf 'null'; return ;;
+  esac
+  case "$parent_id" in
+  null) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":null}' "$1" "$suffix" "$prj" ;;
+  missing) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{}}' "$1" "$suffix" "$prj" ;;
+  *) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":{"id":"%s"}}' "$1" "$suffix" "$prj" "$parent_id" ;;
   esac
 }
 
 case "$query" in
-*"ValidateBlocking"*)
-  id1="$(jq -r '.id1' <<<"$variables")"
-  id2="$(jq -r '.id2' <<<"$variables")"
-  printf '{"data":{"issue1":%s,"issue2":%s}}___HTTP_CODE___200' "$(issue_node "$id1")" "$(issue_node "$id2")"
+*"ValidateBlockingIssue"*)
+  id="$(jq -r '.id' <<<"$variables")"
+  printf '{"data":{"issue":%s}}___HTTP_CODE___200' "$(issue_node "$id")"
   ;;
 *"GetIssue"*)
   ref="$(jq -r '.id' <<<"$variables")"
@@ -68,6 +86,13 @@ case "$query" in
 esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
+
+# `mapfile`/`readarray` are Bash 4 additions. Keep the hierarchy path runnable
+# under macOS system Bash 3.2 by preventing either command from reappearing.
+if grep -Eq '^[[:space:]]*(mapfile|readarray)([[:space:]]|$)' "$SKILL_DIR/scripts/lib/issue-validation.sh"; then
+  echo "FAIL hierarchy validation uses a Bash 4-only line-reader"
+  exit 1
+fi
 
 run_add_relation() {
   local payload_log="$1"
@@ -186,9 +211,35 @@ if [ "$(extract_prescription "$TMP_ROOT/err")" != "CC-761 CC-780" ]; then
   exit 1
 fi
 
+# The ancestor is seven parent edges above the leaf. A fixed five-parent
+# GraphQL selection used to misclassify this as a cross-root relation.
+reject "deep ancestor (CC-797 --blocks CC-790)" CC-797 --blocks CC-790
+if ! grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"; then
+  echo "FAIL deep ancestor: complete chain was not recognized:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
+# An incomplete parent object is neither a root nor a usable edge. Reject it
+# before relation mutation instead of silently treating the chain as complete.
+reject "incomplete ancestor response (CC-799 --blocks CC-780)" CC-799 --blocks CC-780
+if ! grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"; then
+  echo "FAIL incomplete ancestor response: missing fail-closed diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
+reject "cyclic ancestor response (CC-810 --blocks CC-780)" CC-810 --blocks CC-780
+if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
+  echo "FAIL cyclic ancestor response: missing fail-closed diagnostic:"
+  cat "$TMP_ROOT/err"
+  exit 1
+fi
+
 # --- (d) relations the rule blesses still pass ---
 accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
 accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
+accept "deep leaf siblings (CC-797 --blocks CC-798)" CC-797 --blocks CC-798
 accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
 accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
 
