@@ -18,11 +18,13 @@ Unit + integration tests:
 cargo test
 ```
 
-Integration test against this repo's source tree (writes into a temp dir, then exits — does not mutate the working copy):
+Integration check — installs everything from this repo into a throwaway temp project and verifies the printed `Scope:` line points there:
 
 ```bash
-cargo run -- add .. --all --copy
+scripts/integration-check.sh
 ```
+
+Do not validate by running `cargo run -- add .. --all --copy` from inside this checkout: `vstack add` resolves PROJECT scope by walking up from the current directory to the nearest project root, which is this checkout itself — so that command installs every item into the source working copy, not a temp dir.
 
 ## Skill / Pi extension test surfaces
 

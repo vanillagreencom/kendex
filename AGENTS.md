@@ -192,7 +192,7 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 
 - **No project-specific references.** Zero mentions of specific apps, crate names, paths, or tools in `agents/`, `skills/`, `hooks/`.
 - **Validate ctx7 IDs.** Every library ID in SKILL.md ctx7 tables must resolve via `npx ctx7@latest docs <id> "test"`.
-- **Test after CLI changes.** `cd cli && cargo test`. Integration: `cargo run -- add .. --all --copy` into a temp dir.
+- **Test after CLI changes.** `cd cli && cargo test`. Integration: `cli/scripts/integration-check.sh` — installs into a throwaway temp project and verifies the scope. Running `cargo run -- add .. --all --copy` from inside the checkout installs into the checkout itself (project scope = nearest project root from CWD), so it is not the validation path.
 - **Hooks must be portable.** No hardcoded paths.
 - **Child workflows return JSON to parent.** Subagent workflows output JSON in `<output_format>` tags; the calling primary agent writes files.
 - **Workflow shell examples must be harness-safe.** Use simple commands with explicit arguments. Avoid inline `$(...)`, shell loops, heredocs, array-building snippets, and redirected writes in required workflow steps; Codex may classify those helper shapes as approval-required under `never` approval. Use helper scripts (`git-context`, `workflow-state`) for derived values, use harness file-write/edit tools or `apply_patch` for tmp Markdown/JSON files, and read multiple required docs with separate file reads instead of a shell `for` loop.
@@ -247,7 +247,7 @@ Worktree/feature branch dev: test via local project Pi settings for that checkou
 ```bash
 cd cli && cargo build                    # build
 cd cli && cargo test                     # unit + integration tests
-cd cli && cargo run -- add .. --all -y   # integration test against this repo
+cli/scripts/integration-check.sh         # integration check in a throwaway temp project
 ```
 
 ## Publishing & Releases
