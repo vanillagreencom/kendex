@@ -118,6 +118,18 @@ qa_workflow="$REPO_ROOT/skills/reviewer/workflows/qa-review.md"
 assert_file_contains "$orch_skill" "#### Harness-Safe Shell" "orch skill documents Harness-Safe Shell section"
 assert_file_contains "$orch_skill" 'Avoid inline `$(...)`, shell `for`/`while` loops' "Harness-Safe Shell section bans unsafe shell helper shapes"
 
+# vstack#548 — runtime guidance for Codex never-approval shell-shape rejections:
+# the Codex runtime block in the orch skill must pin the exact rejection string,
+# the rewrite instruction (one simple command per tool call), and the
+# ci-wait / approval-wait replacements for polling loops; the dev skill carries
+# the one-line runtime pointer for dev agents that hit the same rejection.
+dev_skill="$REPO_ROOT/skills/dev/SKILL.md"
+assert_file_contains "$orch_skill" 'approval required by policy, but AskForApproval is set to Never' "orch skill pins the exact Codex never-approval rejection string"
+assert_file_contains "$orch_skill" 'rewrite as one simple command per tool call' "orch skill tells runtime agents to rewrite rejected shapes as single commands"
+assert_file_contains "$orch_skill" 'Replace polling loops with `ci-wait`' "orch skill routes CI polling loops to ci-wait"
+assert_file_contains "$orch_skill" '`approval-wait` (review approval)' "orch skill routes approval polling to approval-wait"
+assert_file_contains "$dev_skill" 'approval required by policy, but AskForApproval is set to Never' "dev skill carries the never-approval runtime pointer"
+
 for workflow in "$submit_workflow" "$comments_workflow"; do
   workflow_name="$(basename "$workflow")"
   assert_file_not_contains "$workflow" 'BOT_WAIT_ARGS' "$workflow_name avoids bot wait arrays"
