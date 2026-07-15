@@ -58,7 +58,7 @@ assert_contains "$row" 'REQUIRED for numeric' "post-reply row marks --pr REQUIRE
 # exception sentence itself rather than a fixed line window after the blanket
 # note, so reflowing either paragraph cannot silently break the assertion.
 exception=$(grep -E 'Exception.*post-reply|post-reply.*never auto-detects' "$SKILL_MD" || true)
-assert_contains "$exception" 'post-reply' "auto-detect note names the post-reply exception"
+assert_contains "$exception" 'Exception' "auto-detect note frames post-reply as an explicit exception"
 autodetect_block=$(sed -n '/auto-detect from the current branch/,/^$/p' "$SKILL_MD")
 assert_contains "$autodetect_block" '--pr' "auto-detect exception mentions --pr"
 
