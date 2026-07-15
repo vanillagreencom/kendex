@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { complete, type Message } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
+import { complete } from "./pi-ai-compat.js";
 import { convertToLlm, serializeConversation, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_BUDGET_GUARD_PERCENT,

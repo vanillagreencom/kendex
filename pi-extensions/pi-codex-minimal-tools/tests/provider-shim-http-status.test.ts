@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
+import { zstdDecompressSync } from "node:zlib";
 import { registerOpenAICodexCustomProvider, withHttpStatusPrefix } from "../src/provider-shim.js";
 
 const originalFetch = globalThis.fetch;
@@ -56,7 +57,7 @@ function mockFetch(factories: FetchFactory[]): () => number {
 	return () => calls;
 }
 
-async function runCodexProvider(streamOptions: Record<string, unknown> = {}): Promise<any> {
+async function runCodexProvider(streamOptions: Record<string, unknown> = {}, modelOverrides: Record<string, unknown> = {}): Promise<any> {
 	const provider = createCodexProvider();
 	const stream = provider.streamSimple(
 		{
@@ -68,6 +69,7 @@ async function runCodexProvider(streamOptions: Record<string, unknown> = {}): Pr
 			input: ["text"],
 			reasoning: false,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			...modelOverrides,
 		},
 		{
 			systemPrompt: "",
@@ -94,6 +96,30 @@ function successSseResponse(): Response {
 	};
 	return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
+
+test("SSE transport sends compressed tool choice and applies nullable header overrides", async () => {
+	let captured: RequestInit | undefined;
+	globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+		captured = init;
+		return successSseResponse();
+	}) as typeof fetch;
+
+	const result = await runCodexProvider(
+		{ toolChoice: "required", headers: { "x-added": "stream", "x-remove": null } },
+		{ headers: { "x-model": "model", "x-remove": "model" } },
+	);
+
+	assert.equal(result.stopReason, "stop");
+	assert.ok(captured);
+	const headers = new Headers(captured.headers);
+	assert.equal(headers.get("content-encoding"), "zstd");
+	assert.equal(headers.get("x-added"), "stream");
+	assert.equal(headers.get("x-model"), "model");
+	assert.equal(headers.has("x-remove"), false);
+	assert.ok(captured.body instanceof Uint8Array);
+	const payload = JSON.parse(zstdDecompressSync(captured.body).toString("utf8"));
+	assert.equal(payload.tool_choice, "required");
+});
 
 test("withHttpStatusPrefix adds status once", () => {
 	assert.equal(withHttpStatusPrefix(503, "Service unavailable"), "HTTP 503: Service unavailable");

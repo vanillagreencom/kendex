@@ -5,6 +5,9 @@
 #     --base BRANCH   Checkout an existing remote branch into the worktree
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
 #     --pr NUMBER     Look up the branch from a PR number (implies --base)
+#     --restack       When reusing an existing worktree and the rebase onto
+#                     origin/<default> conflicts, stop in the conflict state
+#                     for resolution instead of aborting the rebase
 #
 # Layout: project/main (repo) + project/trees/{id} (worktrees by default)
 # Config: reads .env, vstack.settings.toml, then .env.local for optional settings (see below)
@@ -364,6 +367,18 @@ is_git_worktree_path() {
   [[ -f "$wt/.git" || -d "$wt/.git" ]]
 }
 
+rebase_in_progress() {
+  local wt="$1" state path
+  for state in rebase-merge rebase-apply; do
+    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
+    [[ "$path" == /* ]] || path="$wt/$path"
+    if [[ -d "$path" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 case "${1:-}" in
   create)
     # Ensure worktreeConfig is enabled (required for per-worktree git config)
@@ -375,11 +390,13 @@ case "${1:-}" in
     BRANCH=""
     FROM=""
     PR=""
+    RESTACK=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
+        --restack) RESTACK=true; shift ;;
         *) BRANCH="$1"; shift ;;
       esac
     done
@@ -393,9 +410,42 @@ case "${1:-}" in
       if [[ -n "$CURRENT_BRANCH" ]]; then
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
-        elif ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        elif ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+          # Capture conflict details before any abort erases the rebase state.
+          CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
+          if ! rebase_in_progress "$WT_PATH"; then
+            # Rebase never started (e.g. uncommitted changes) — nothing to
+            # abort or resolve; surface git's own message.
+            echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
+            sed 's/^/  /' <<<"$REBASE_OUTPUT" >&2
+            exit 1
+          fi
+          if [[ "$RESTACK" == true ]]; then
+            echo "Error: Rebase onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
+            if [[ -n "$CONFLICT_FILES" ]]; then
+              echo "Conflicting files:" >&2
+              sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+            fi
+            echo "The rebase is paused in the worktree so the conflicts can be resolved:" >&2
+            echo "  1. Edit each conflicting file to remove the conflict markers." >&2
+            echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
+            echo "  3. GIT_EDITOR=true git -C \"$WT_PATH\" rebase --continue    (repeat if it stops again)" >&2
+            echo "  4. $0 create $ISSUE    (finish worktree setup)" >&2
+            echo "To back out instead: git -C \"$WT_PATH\" rebase --abort" >&2
+            exit 1
+          fi
           git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
-          echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts). Resolve manually or delete worktree." >&2
+          echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
+          if [[ -n "$CONFLICT_FILES" ]]; then
+            echo "Conflicting files:" >&2
+            sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+          fi
+          echo "The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve." >&2
+          echo "Recovery options:" >&2
+          echo "  1. Redo the rebase and stop in the conflict state to resolve it:" >&2
+          echo "       $0 create $ISSUE --restack" >&2
+          echo "  2. Discard local divergence and recreate fresh from origin/$DEFAULT_BRANCH:" >&2
+          echo "       $0 remove $ISSUE && $0 create $ISSUE" >&2
           exit 1
         fi
       fi

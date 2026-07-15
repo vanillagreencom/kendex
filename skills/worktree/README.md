@@ -23,6 +23,8 @@ Run from the main checkout of a git repo with an `origin` remote. Optionally add
 
 Defaults: detects branch from `origin/HEAD` (fallback: `main`), creates worktrees under sibling `trees/`, then applies configured symlinks and copies. Set `WORKTREE_BASE_DIR` to use another parent directory; relative paths resolve from the main checkout, absolute paths are used as-is.
 
+`create` on an already-existing worktree reuses it after rebasing its branch onto `origin/<default>`. If that rebase conflicts, the default run aborts the rebase (the worktree stays clean on its pre-rebase state) and prints the conflicting files plus the two supported recovery paths: `create <ID> --restack` re-runs the rebase and pauses in the conflict state so you can resolve the files, `git -C <path> add` each one, and `GIT_EDITOR=true git -C <path> rebase --continue` (or `rebase --abort` to back out), then re-run `create <ID>` to finish setup; alternatively `remove <ID>` + `create <ID>` recreates the worktree fresh from `origin/<default>`, discarding the conflicting local commits.
+
 `remove` deletes the worktree first, then tries `git branch -d` for the associated local branch. If Git refuses the safe branch delete (for example, the branch is not merged into the current main checkout), the command exits non-zero and prints a diagnostic naming the remaining branch plus the manual `git branch -D` recovery command.
 
 ## Codex Desktop

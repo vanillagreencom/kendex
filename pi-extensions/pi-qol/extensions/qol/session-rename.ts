@@ -1,4 +1,5 @@
-import { complete, type Message } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
+import { complete } from "./pi-ai-compat.js";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { textFromContent } from "./agent-end.js";
 import { oneLine } from "./ansi.js";

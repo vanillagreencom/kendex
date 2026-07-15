@@ -344,7 +344,7 @@ export function convertResponsesMessages<TApi extends Api>(
 								image_url: `data:${block.mimeType};base64,${block.data}`,
 							})),
 					]
-				: sanitizeSurrogates(hasText ? textResult : "(see attached image)");
+				: sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)");
 			messages.push({ type: "function_call_output", call_id: callId, output });
 		}
 		msgIndex++;

@@ -534,7 +534,7 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 		}
 		if (doneExists && !outboxExists && !archiveExists) {
 			nextStatus = "needs_completion";
-			add(`Task turn ended but no completion record was found. Expected outbox: ${paths.outboxFile}`);
+			add(`Task fully settled but no completion record was found. Expected outbox: ${paths.outboxFile}`);
 		}
 		if (outboxExists) {
 			const parsed = await readPaneCompletionFile(paths.outboxFile);

@@ -39,17 +39,19 @@ function formatModelName(ctx: ExtensionContext): string {
 	return name;
 }
 
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-const THINKING_TOKEN: Record<ThinkingLevel, "thinkingOff" | "thinkingMinimal" | "thinkingLow" | "thinkingMedium" | "thinkingHigh" | "thinkingXhigh"> = {
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type ThinkingThemeToken = "thinkingOff" | "thinkingMinimal" | "thinkingLow" | "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax";
+const THINKING_TOKEN: Record<ThinkingLevel, ThinkingThemeToken> = {
 	off: "thinkingOff",
 	minimal: "thinkingMinimal",
 	low: "thinkingLow",
 	medium: "thinkingMedium",
 	high: "thinkingHigh",
 	xhigh: "thinkingXhigh",
+	max: "thinkingMax",
 };
 
-function normalizeThinkingLevel(value: string | undefined): ThinkingLevel {
+export function normalizeThinkingLevel(value: string | undefined): ThinkingLevel {
 	switch ((value ?? "").toLowerCase()) {
 		case "off": return "off";
 		case "minimal": return "minimal";
@@ -57,8 +59,13 @@ function normalizeThinkingLevel(value: string | undefined): ThinkingLevel {
 		case "medium": return "medium";
 		case "high": return "high";
 		case "xhigh": return "xhigh";
+		case "max": return "max";
 		default: return "off";
 	}
+}
+
+export function thinkingThemeToken(value: string | undefined): ThinkingThemeToken {
+	return THINKING_TOKEN[normalizeThinkingLevel(value)];
 }
 
 function formatWindow(tokens: number | undefined): string {
@@ -207,9 +214,10 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 	const rightPlain = subagentMarker ? `${percentPlain} ${subagentMarker.plain}` : percentPlain;
 	const percentColor = percent === null ? "muted" : percent <= 15 ? "error" : percent <= 30 ? "warning" : "success";
 	const separatorColored = theme.fg("muted", statusSeparator);
+	const thinkingToken = thinkingThemeToken(thinkingLevel) as Parameters<Theme["fg"]>[0];
 	const leftColored = caveman
-		? `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(THINKING_TOKEN[thinkingLevel], thinkingChunk)}${separatorColored}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("muted", contextSeparator)}${theme.fg("accent", contextChunk.trimStart())}`
-		: `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(THINKING_TOKEN[thinkingLevel], thinkingChunk)}${theme.fg("accent", contextChunk)}`;
+		? `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${separatorColored}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("muted", contextSeparator)}${theme.fg("accent", contextChunk.trimStart())}`
+		: `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${theme.fg("accent", contextChunk)}`;
 	const right = subagentMarker ? `${theme.fg(percentColor, percentPlain)} ${subagentMarker.styled}` : theme.fg(percentColor, percentPlain);
 	const minimumGap = 1;
 	const gapWidth = Math.max(minimumGap, width - visibleWidth(leftPlain) - visibleWidth(rightPlain) - 2);

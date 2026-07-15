@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { complete, type Message } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
+import { complete } from "./pi-ai-compat.js";
 import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { acquireVstackModalLock } from "./bridges.js";
 import { serializeMessagesForSummary } from "./compaction.js";

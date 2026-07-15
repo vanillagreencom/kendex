@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type * as NodeOs from "node:os";
+import type * as NodeZlib from "node:zlib";
 import { glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
@@ -8,7 +10,6 @@ import {
 	appendAssistantMessageDiagnostic,
 	clampThinkingLevel,
 	createAssistantMessageDiagnostic,
-	getEnvApiKey,
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
@@ -16,6 +17,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import * as piAi from "@earendil-works/pi-ai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import {
 	convertResponsesMessages,
@@ -37,17 +39,53 @@ const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reac
 const CODEX_RESPONSE_STATUSES = new Set(["completed", "incomplete", "failed", "cancelled", "queued", "in_progress"]);
 const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
+const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const dynamicImport = (specifier: string) => import(specifier);
-let _os: { platform(): string; release(): string; arch(): string } | null = null;
 
-if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-	dynamicImport("node:os")
-		.then((module) => {
-			_os = module;
-		})
-		.catch(() => {
-			_os = null;
+export async function getEnvApiKeyCompat(
+	provider: string,
+	deps: { root?: any; loadCompat?: () => Promise<any> } = {},
+): Promise<string | undefined> {
+	const rootGetEnvApiKey = (deps.root ?? piAi as any).getEnvApiKey;
+	if (typeof rootGetEnvApiKey === "function") return rootGetEnvApiKey(provider);
+	const compat = deps.loadCompat ? await deps.loadCompat() : await dynamicImport("@earendil-works/pi-ai/compat") as any;
+	return typeof compat.getEnvApiKey === "function" ? compat.getEnvApiKey(provider) : undefined;
+}
+
+type ProcessWithOsBuiltinModule = typeof process & {
+	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
+};
+
+type ProcessWithZlibBuiltinModule = typeof process & {
+	getBuiltinModule?: (id: "node:zlib") => typeof NodeZlib;
+};
+
+function loadNodeOs(): typeof NodeOs | null {
+	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) return null;
+	return (process as ProcessWithOsBuiltinModule).getBuiltinModule?.("node:os") ?? null;
+}
+
+function loadNodeZlib(): typeof NodeZlib | null {
+	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) return null;
+	return (process as ProcessWithZlibBuiltinModule).getBuiltinModule?.("node:zlib") ?? null;
+}
+
+export function buildCodexUserAgent(): string {
+	const os = loadNodeOs();
+	return os ? `pi (${os.platform()} ${os.release()}; ${os.arch()})` : "pi (browser)";
+}
+
+export function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
+	const zlib = loadNodeZlib();
+	if (!zlib || typeof zlib.zstdCompressSync !== "function") return null;
+	try {
+		const compressed = zlib.zstdCompressSync(bodyJson, {
+			params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
 		});
+		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+	} catch {
+		return null;
+	}
 }
 
 interface SavedGeneratedImage {
@@ -145,7 +183,7 @@ interface ResponsesBody {
 	text: { verbosity: string };
 	include: string[];
 	prompt_cache_key?: string;
-	tool_choice: "auto";
+	tool_choice: "auto" | "none" | "required";
 	parallel_tool_calls: boolean;
 	temperature?: number;
 	service_tier?: string;
@@ -437,26 +475,29 @@ function createCodexRequestId(): string {
 }
 
 function buildBaseCodexHeaders(
-	modelHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	modelHeaders: Record<string, string | null | undefined> | undefined,
+	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 ): Headers {
-	const headers = new Headers(modelHeaders);
-	for (const [key, value] of Object.entries(additionalHeaders ?? {})) {
-		headers.set(key, value);
+	const headers = new Headers();
+	for (const source of [modelHeaders, additionalHeaders]) {
+		for (const [key, value] of Object.entries(source ?? {})) {
+			if (value == null) headers.delete(key);
+			else headers.set(key, value);
+		}
 	}
 
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
 	headers.set("originator", "pi");
-	headers.set("User-Agent", _os ? `pi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "pi (browser)");
+	headers.set("User-Agent", buildCodexUserAgent());
 	return headers;
 }
 
 function buildSSEHeaders(
-	modelHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	modelHeaders: Record<string, string | null | undefined> | undefined,
+	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 	sessionId: string | undefined,
@@ -475,8 +516,8 @@ function buildSSEHeaders(
 }
 
 function buildWebSocketHeaders(
-	modelHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	modelHeaders: Record<string, string | null | undefined> | undefined,
+	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 	requestId: string,
@@ -530,7 +571,7 @@ function resolveCodexServiceTier(responseServiceTier: ServiceTier, requestServic
 	return responseServiceTier ?? requestServiceTier;
 }
 
-function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): ResponsesBody {
+export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): ResponsesBody {
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 	});
@@ -544,7 +585,7 @@ function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: Context
 		text: { verbosity: ((options as { textVerbosity?: string } | undefined)?.textVerbosity ?? "low") as string },
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: options?.sessionId,
-		tool_choice: "auto",
+		tool_choice: (options as { toolChoice?: "auto" | "none" | "required" } | undefined)?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
 
@@ -1633,7 +1674,7 @@ function createCodexStream<TApi extends Api>(
 		const requestPrompt = getLatestUserText(context);
 
 		try {
-			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+			const apiKey = options?.apiKey || await getEnvApiKeyCompat(model.provider) || "";
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
@@ -1709,6 +1750,9 @@ function createCodexStream<TApi extends Api>(
 			let lastError: Error | undefined;
 			const sseUrl = resolveCodexUrl(model.baseUrl);
 			const sseDispatcher = await proxyDispatcherForUrl(sseUrl);
+			const compressedBody = compressRequestBodyZstd(bodyJson);
+			if (compressedBody) sseHeaders.set("content-encoding", "zstd");
+			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
 
 			for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 				if (options?.signal?.aborted) {
@@ -1719,7 +1763,7 @@ function createCodexStream<TApi extends Api>(
 					response = await fetchWithResponseHeaderTimeout(sseUrl, {
 						method: "POST",
 						headers: sseHeaders,
-						body: bodyJson,
+						body: sseBody,
 						...(sseDispatcher ? { dispatcher: sseDispatcher } : {}),
 					} as RequestInit, options?.signal, responseHeaderTimeoutMs);
 

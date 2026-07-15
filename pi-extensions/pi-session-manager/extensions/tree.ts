@@ -17,8 +17,17 @@ export function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 		else roots.push(node);
 	}
 
+	const latestActivity = new Map<SessionTreeNode, number>();
+	const updateLatestActivity = (node: SessionTreeNode): number => {
+		let latest = node.session.modified.getTime();
+		for (const child of node.children) latest = Math.max(latest, updateLatestActivity(child));
+		latestActivity.set(node, latest);
+		return latest;
+	};
+	for (const root of roots) updateLatestActivity(root);
+
 	const sortNodes = (nodes: SessionTreeNode[]) => {
-		nodes.sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
+		nodes.sort((a, b) => (latestActivity.get(b) ?? 0) - (latestActivity.get(a) ?? 0));
 		for (const node of nodes) sortNodes(node.children);
 	};
 	sortNodes(roots);

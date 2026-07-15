@@ -36,6 +36,7 @@ import {
 	normalizeAgentDashboardVisibility,
 } from "./dashboard-visibility.js";
 import { isFileLockTimeoutError } from "./file-lock.js";
+import { registerSettledHandler } from "./settled-handler.js";
 import {
 	addArtifactPathSection,
 	addSectionHeading,
@@ -421,11 +422,11 @@ export default function (pi: ExtensionAPI) {
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
 
-	// Agent-end watchdog (vstack#66): rides on `pi.on("agent_end")` for tasks
-	// delivered without an inbox file (bridge follow-ups). The existing handler
+	// Missing-completion watchdog (vstack#66): rides on `pi.on("agent_settled")`
+	// for tasks delivered without an inbox file (bridge follow-ups). The handler
 	// above already covers the childCurrentTaskFile path; this watchdog covers
 	// active task records for the same agent that lack a processing file.
-	let lastChildAgentEndCtx: ExtensionContext | undefined;
+	let lastChildLifecycleCtx: ExtensionContext | undefined;
 	const agentEndWatchdog = createAgentEndWatchdog({
 		graceMs: watchdogGraceMsFromEnv(),
 		now: () => Date.now(),
@@ -439,7 +440,7 @@ export default function (pi: ExtensionAPI) {
 		outboxExists: defaultOutboxExists,
 		isPaneIdle: async () => {
 			try {
-				return lastChildAgentEndCtx?.isIdle?.() ?? true;
+				return lastChildLifecycleCtx?.isIdle?.() ?? true;
 			} catch {
 				return true;
 			}
@@ -459,7 +460,7 @@ export default function (pi: ExtensionAPI) {
 	// Rate-limit watchdog (vstack#108): rides on `pi.on("message_end")` for
 	// the canonical Claude / pi-coding-agent rate-limit error shape.
 	// Schedules a retry-with-backoff steer via pi.sendUserMessage and
-	// gates the agent-end watchdog so its synthetic needs_completion
+	// gates the settled-run watchdog so its synthetic needs_completion
 	// outbox does not race the recovery.
 	const rateLimitWatchdog = createSubagentRateLimitWatchdog({
 		now: () => Date.now(),
@@ -472,8 +473,8 @@ export default function (pi: ExtensionAPI) {
 			emitSubagentEvent(pi, eventName, payload);
 		},
 		onExhausted: (_paneId, attempt, reason) => {
-			// Fall through to the existing agent-end watchdog: clearing the
-			// retry state lets the next agent_end handler run the synthetic
+			// Fall through to the settled-run watchdog: clearing the retry
+			// state lets the next agent_settled handler run the synthetic
 			// needs_completion outbox flow without further interference.
 			console.warn(`rate-limit-watchdog: exhausted after ${attempt} attempt(s) — falling back to needs_completion (${reason})`);
 		},
@@ -481,7 +482,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Idle-stall watchdog (vstack#63 workaround): polls active tasks for
-	// pi-core post-compaction stalls where agent_end never fires. Reuses
+	// pi-core post-compaction stalls where no terminal lifecycle event fires. Reuses
 	// the W5 O_EXCL writer so a racing real complete_subagent always wins.
 
 	const idleStallWatchdog = createIdleStallWatchdog({
@@ -1379,7 +1380,7 @@ export default function (pi: ExtensionAPI) {
 	// vstack#108: rate-limit-watchdog rides on message_end so it can
 	// observe the canonical Claude rate-limit signature (assistant turn
 	// with stopReason==="error" + "temporarily limiting requests" prose)
-	// before agent_end fires its existing missing-completion path. The
+	// before agent_settled fires the missing-completion path. The
 	// pane id passed downstream is the child agent name — each subagent
 	// pane runs its own Pi instance with a single in-pane child so a
 	// per-agent counter is the right granularity.
@@ -1395,11 +1396,26 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	const scheduleActiveMissingCompletionChecks = async (ctx: ExtensionContext): Promise<void> => {
+		if (!childAgentName || rateLimitWatchdog.isAwaitingRetry(childAgentName)) return;
+		try {
+			const runtimeRoot = runtimeDirForContext(ctx);
+			const records = await readTaskRegistry(runtimeRoot);
+			for (const record of Object.values(records)) {
+				if (!record?.taskId || record.agent !== childAgentName) continue;
+				if (isTerminalTaskStatus(record.status) || record.status === "needs_completion") continue;
+				agentEndWatchdog.onAgentEnd({ runtimeRoot, agentName: childAgentName, taskId: record.taskId });
+			}
+		} catch (err) {
+			console.warn(`settled-run watchdog: scan failed: ${(err as Error)?.message ?? err}`);
+		}
+	};
+
+	const handleChildSettled = async (ctx: ExtensionContext): Promise<void> => {
 		if (!childAgentName) return;
-		lastChildAgentEndCtx = ctx;
+		lastChildLifecycleCtx = ctx;
 		// vstack#108: when the rate-limit watchdog has a retry scheduled for
-		// this pane, skip the agent-end-watchdog's needs_completion path so
+		// this pane, skip the missing-completion watchdog path so
 		// the steer can race the synthetic outbox.
 		let rateLimitAwaitingRetry = rateLimitWatchdog.isAwaitingRetry(childAgentName);
 		if (childCurrentTaskFile) {
@@ -1409,7 +1425,7 @@ export default function (pi: ExtensionAPI) {
 			const outboxFile = completionPath(runtimeRoot, childAgentName, taskId);
 			const pendingMatches = pendingChildCompletion?.taskId === taskId;
 			let manualCompletionOk = false;
-			let missingDiagnostic = `Task turn ended but ${childAgentName} did not call complete_subagent. Expected completion outbox: ${outboxFile}`;
+			let missingDiagnostic = `Task fully settled but ${childAgentName} did not call complete_subagent. Expected completion outbox: ${outboxFile}`;
 			if (!pendingMatches) {
 				const parsed = await readPaneCompletionFile(outboxFile);
 				if (parsed.completion) manualCompletionOk = true;
@@ -1501,18 +1517,10 @@ export default function (pi: ExtensionAPI) {
 		// in flight for this pane — otherwise the synthetic outbox races the
 		// scheduled steer and the parent gets a misleading 'needs completion'.
 		if (rateLimitAwaitingRetry) return;
-		try {
-			const runtimeRoot = runtimeDirForContext(ctx);
-			const records = await readTaskRegistry(runtimeRoot);
-			for (const record of Object.values(records)) {
-				if (!record?.taskId || record.agent !== childAgentName) continue;
-				if (isTerminalTaskStatus(record.status) || record.status === "needs_completion") continue;
-				agentEndWatchdog.onAgentEnd({ runtimeRoot, agentName: childAgentName, taskId: record.taskId });
-			}
-		} catch (err) {
-			console.warn(`agent-end watchdog: scan failed: ${(err as Error)?.message ?? err}`);
-		}
-	});
+		await scheduleActiveMissingCompletionChecks(ctx);
+	};
+
+	registerSettledHandler(pi, handleChildSettled);
 
 	pi.on("session_shutdown", () => {
 		if (completionPoller) clearInterval(completionPoller);
@@ -1521,6 +1529,7 @@ export default function (pi: ExtensionAPI) {
 		completionPoller = undefined;
 		childInboxPoller = undefined;
 		dashboardCtx = undefined;
+
 		idleStallWatchdog.stop();
 		currentRuntimeRoot = undefined;
 	});

@@ -1,12 +1,13 @@
 /**
- * Agent-end watchdog (vstack#66).
+ * Settled-run missing-completion watchdog (vstack#66).
  *
  * Detects the silent-abandonment case where a subagent's turn ends — pane goes
  * idle, transcript settles — but no complete_subagent outbox JSON was written.
  * The parent's existing wake/poll mechanism only notices via completion files,
  * so without this watchdog the parent waits indefinitely while the child sits
- * idle. The watchdog rides on `agent_end` bridge events: when one fires for a
- * tracked subagent task that is still active, it waits a grace period and then
+ * idle. Pi 0.80.4 added `agent_settled`, which fires only after retry,
+ * compaction retry, and queued continuations are exhausted. The child invokes
+ * this watchdog from that safe lifecycle point, waits a grace period, and then
  * — if no outbox JSON has appeared and the child pane is confirmed idle —
  * synthesizes a needs_completion outbox so the existing wake handler kicks in.
  *
@@ -89,12 +90,12 @@ export function buildSyntheticOutbox(agentName: string, taskId: string): Synthet
 		taskId,
 		status: "needs_completion",
 		summary:
-			"Agent turn ended without calling complete_subagent. Pane may be idle but task was not closed.",
+			"Agent fully settled without calling complete_subagent. Pane is idle but task was not closed.",
 		filesChanged: [],
 		validation: [],
 		reason: WATCHDOG_REASON,
 		synthetic: true,
-		notes: "Synthesized by agent-end watchdog (vstack#66). Treat as needs_completion; the child agent did not write a real outbox.",
+		notes: "Synthesized by settled-run watchdog (vstack#66). Treat as needs_completion; the child agent did not write a real outbox.",
 	};
 }
 
@@ -126,19 +127,19 @@ export function createAgentEndWatchdog(deps: AgentEndWatchdogDeps): AgentEndWatc
 				const code = (err as NodeJS.ErrnoException)?.code;
 				if (code === "EEXIST") return { fired: false, skipped: "outbox-present" };
 				const message = (err as Error)?.message ?? String(err);
-				deps.logWarn(`agent-end watchdog: writeSyntheticOutbox failed for ${agentName}/${taskId}: ${message}`);
+				deps.logWarn(`settled-run watchdog: writeSyntheticOutbox failed for ${agentName}/${taskId}: ${message}`);
 				return { fired: false, error: message };
 			}
 			fired.add(taskId);
 			try {
 				await deps.markFired(runtimeRoot, agentName, taskId, payload);
 			} catch (err) {
-				deps.logWarn(`agent-end watchdog: markFired failed for ${agentName}/${taskId}: ${(err as Error)?.message ?? err}`);
+				deps.logWarn(`settled-run watchdog: markFired failed for ${agentName}/${taskId}: ${(err as Error)?.message ?? err}`);
 			}
 			return { fired: true };
 		} catch (err) {
 			const message = (err as Error)?.message ?? String(err);
-			deps.logWarn(`agent-end watchdog: unexpected error for ${agentName}/${taskId}: ${message}`);
+			deps.logWarn(`settled-run watchdog: unexpected error for ${agentName}/${taskId}: ${message}`);
 			return { fired: false, error: message };
 		}
 	}
@@ -152,7 +153,7 @@ export function createAgentEndWatchdog(deps: AgentEndWatchdogDeps): AgentEndWatc
 			const handle = deps.scheduleAfter(Math.max(0, deps.graceMs), () => {
 				pending.delete(args.taskId);
 				runCheck(args).catch((err) => {
-					deps.logWarn(`agent-end watchdog: runCheck threw for ${args.agentName}/${args.taskId}: ${(err as Error)?.message ?? err}`);
+					deps.logWarn(`settled-run watchdog: runCheck threw for ${args.agentName}/${args.taskId}: ${(err as Error)?.message ?? err}`);
 				});
 			});
 			pending.set(args.taskId, handle);

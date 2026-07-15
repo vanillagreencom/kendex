@@ -85,8 +85,8 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 
 | Setting | What it does |
 | --- | --- |
-| Newline-insert binding | Insert a newline instead of submitting. |
-| Fallback newline binding | Alternate binding for terminals that can't send the primary one. |
+| shift+enter inserts newline | Insert a newline instead of submitting. |
+| Fallback newline key | Alternate binding for terminals that can't send the primary one. |
 | Style pending queue preview | Highlight Pi's pending-queue preview with a green left bar. |
 | Style image chips | Render `[Image #N]` placeholders as distinct chips. |
 | Show attachment count | Show a status badge when the draft has image placeholders. |

@@ -175,7 +175,7 @@ There is one execution-concurrency knob — `maxConcurrency` — and it caps con
 | Dashboard max items | Maximum agent rows shown. |
 | Dashboard collapsed by default | Start collapsed. |
 | Animate spinners | Animate running-agent spinner frames; disable for a static gear icon to reduce terminal flickering. |
-| Tree connector style | `unicode` or `ascii`. |
+| Legacy tree connector style | Fallback `unicode` or `ascii` tree connectors when Glyph style and pi-tool-renderer's global override are unset. Prefer Glyph style. |
 | Collapsed item count | Items shown in collapsed agent results. |
 
 ### Output

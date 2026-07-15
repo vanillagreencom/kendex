@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
-import { completeSimple, type ThinkingLevel, type UserMessage } from "@earendil-works/pi-ai";
+import type { ThinkingLevel, UserMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { GENERATE_SKILL_SYSTEM_PROMPT } from "./constants.js";
 import { frontmatterToRaw, getTargetDir, normalizeSkillName, parseSkillDocument } from "./format.js";
 import { isDeletableSkill } from "./registry.js";
 import { settingBoolean } from "./settings.js";
 import type { ParsedSkillDocument, SkillCreationAnswers, SkillEntry, SkillGenerationOptions } from "./types.js";
+import { completeSimple } from "./pi-ai-compat.js";
 
 function buildFallbackSkill(answers: SkillCreationAnswers): string {
 	const frontmatter: Record<string, unknown> = { name: answers.name, description: answers.description };

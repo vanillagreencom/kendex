@@ -22,10 +22,10 @@
  *      the per-pane counter.
  *   5. After VSTACK_RATE_LIMIT_MAX_ATTEMPTS scheduled retries, emits
  *      agent.rate_limit_exhausted and calls onExhausted so the existing
- *      agent-end-watchdog can fall back to its synthetic
+ *      missing-completion watchdog can fall back to its synthetic
  *      needs_completion outbox path.
  *
- * The watchdog also exposes isAwaitingRetry(paneId) so the agent-end
+ * The watchdog also exposes isAwaitingRetry(paneId) so the agent_settled
  * handler in subagent/index.ts can skip its grace-timeout schedule
  * while a pane is mid-recovery — without that gate the synthetic
  * needs_completion outbox would race the steer.

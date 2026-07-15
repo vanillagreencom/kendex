@@ -5,7 +5,7 @@ var __export = (target, all) => {
 };
 
 // src/index.ts
-import { calculateCost, getModels } from "@earendil-works/pi-ai";
+import { calculateCost } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 
 // node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
@@ -22257,7 +22257,7 @@ var FALLBACK_MODELS = {
     id: FABLE_MODEL_ID,
     name: "Claude Fable 5",
     reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh" },
+    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     input: ["text", "image"],
     contextWindow: 1e6,
     maxTokens: 128e3
@@ -37565,8 +37565,18 @@ function jsonSchemaToZodShape(schema) {
   return shape;
 }
 
+// src/pi-ai-compat.ts
+var dynamicImport = (specifier) => import(specifier);
+async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendil-works/pi-ai/compat")) {
+  if (typeof root?.getModels === "function") return root.getModels;
+  const compat = await loadCompat();
+  if (typeof compat?.getModels !== "function") throw new Error("pi-ai getModels API is unavailable");
+  return compat.getModels;
+}
+
 // src/index.ts
 var _piAi = piAi;
+var getModels = await resolveGetModels(_piAi);
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join5(homedir5(), ".pi", "agent", "claude-bridge.log");

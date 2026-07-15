@@ -3,7 +3,7 @@ name: worktree
 description: "Git worktree management: create, list, remove isolated working copies with env/config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--restack] | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: vstack
@@ -76,6 +76,16 @@ For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before o
 | `--base BRANCH` | Checkout an existing remote branch into the worktree |
 | `--from REF` | Create a new branch (named after ID) starting from REF (branch, tag, or commit) |
 | `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
+| `--restack` | When reusing an existing worktree and its rebase onto `origin/<default>` conflicts, stop in the conflict state for resolution instead of aborting |
+
+### Reuse rebase conflicts
+
+Reusing an existing worktree rebases its branch onto `origin/<default>` first. If that rebase conflicts, the default run aborts the rebase and exits 1 — the worktree is left clean on its pre-rebase state, so there is no conflict left to resolve in place. The error lists the conflicting files (captured before the abort) and the two supported recovery paths:
+
+1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, run `GIT_EDITOR=true git -C <path> rebase --continue` (repeat if it stops again), then re-run `create <ID>` to finish worktree setup. `git -C <path> rebase --abort` backs out to the clean pre-rebase state. This is the supported exception to the no-raw-`git rebase` rule: only `--continue`/`--abort` on the paused rebase, never starting one by hand.
+2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
+
+With no conflict, `--restack` is a no-op and reuse behaves as usual.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-qol",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Pi quality-of-life extension: compact statusline/π prompt, reliable multiline input, styled pasted-image chips, session naming/search/context import, scheduled prompts, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
   "license": "MIT",
   "keywords": [

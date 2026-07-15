@@ -86,7 +86,7 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | Model effort overrides | JSON object mapping model IDs to Claude Code efforts, e.g. `{"claude-opus-4-8":"max"}`. Per-model entries beat the global force setting. |
 | Claude executable path | Explicit `claude` binary path; empty auto-detects. |
 
-Pi does not have a native `max` thinking level; it exposes up to `xhigh`, and each provider's model metadata maps Pi levels to provider values. To use Claude Code `max` effort only for Opus 4.8 through the bridge, set **Model effort overrides** to:
+Pi 0.80.6 and newer expose native `max` thinking. Fable 5 bridge metadata forwards both `xhigh` and `max`; **Force Claude effort** and **Model effort overrides** remain available when one bridge model needs a different fixed effort. For example, to force only Opus 4.8 to `max`:
 
 ```json
 {"claude-opus-4-8":"max"}

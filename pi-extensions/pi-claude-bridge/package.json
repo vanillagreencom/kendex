@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-claude-bridge",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Pi provider bridge that runs Claude Code through the Claude Agent SDK, with opt-in forwarding for Pi prompt context.",
   "type": "module",
   "keywords": [
@@ -15,7 +15,7 @@
     "extensions": [
       "./bundle/index.js"
     ],
-    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/claude-bridge1.png"
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png"
   },
   "vstack": {
     "extensionManager": {
@@ -106,7 +106,7 @@
         {
           "key": "forceEffort",
           "label": "Force Claude effort",
-          "description": "Override Pi's thinking-level mapping for all claude-bridge requests. Use max to reach Claude Code max effort even though Pi has no max thinking level. none keeps Pi's selected level.",
+          "description": "Override Pi's thinking-level mapping for all claude-bridge requests. Pi 0.80.6 and newer can select max natively; none keeps Pi's selected level.",
           "type": "enum",
           "enumValues": [
             "none",

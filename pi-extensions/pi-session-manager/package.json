@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-session-manager",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Polished Pi session manager overlay for browsing, searching, resuming, renaming, and safely deleting sessions.",
   "license": "MIT",
   "keywords": [
@@ -14,7 +14,10 @@
     "extensions": [
       "./extensions/session-manager.ts"
     ],
-    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-session-manager/assets/session-manager.png"
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-session-manager/assets/session-manager.gif"
+  },
+  "scripts": {
+    "test": "bun test ./tests"
   },
   "vstack": {
     "extensionManager": {

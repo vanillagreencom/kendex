@@ -140,7 +140,7 @@ test("agent_end without complete_subagent writes synthetic needs_completion outb
 	assert.equal(payload.status, "needs_completion");
 	assert.equal(payload.reason, WATCHDOG_REASON);
 	assert.equal(payload.synthetic, true);
-	assert.match(payload.summary, /Agent turn ended/);
+	assert.match(payload.summary, /Agent fully settled/);
 	assert.ok(existsSync(harness.outboxFile), "outbox file present on disk");
 	const onDisk = JSON.parse(readFileSync(harness.outboxFile, "utf-8"));
 	assert.equal(onDisk.reason, WATCHDOG_REASON);

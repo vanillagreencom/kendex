@@ -35,7 +35,7 @@ const FALLBACK_MODELS: Record<string, BridgeModelMetadata> = {
 		id: FABLE_MODEL_ID,
 		name: "Claude Fable 5",
 		reasoning: true,
-		thinkingLevelMap: { xhigh: "xhigh" },
+		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
 		input: ["text", "image"],
 		contextWindow: 1000000,
 		maxTokens: 128000,
