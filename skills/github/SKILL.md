@@ -43,13 +43,15 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review |
 | `resolve-thread <PRRT_...>` | Mark thread(s) resolved |
 | `unresolve-thread <PRRT_...>` | Reopen thread(s) |
-| `post-reply <id> [body \| --body-file PATH]` | Reply to review comment. Prefer `--body-file` for Markdown with backticks; inline body is safe only for plain strings. |
+| `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. Prefer `--body-file` for Markdown with backticks; inline body is safe only for plain strings. |
 | `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. Same body-file preference as `post-reply`. |
 | `find-comment <PR> --pattern <regex>` | Find comment by pattern/author |
 | `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. Same body-file preference as `post-reply`. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
 Most commands accept no PR number to auto-detect from the current branch.
+Exception: `post-reply` with a numeric comment ID never auto-detects — it
+requires an explicit `--pr <N>` (thread `PRRT_...` IDs need no PR number).
 
 ### Git HTTPS Auth Helper
 
