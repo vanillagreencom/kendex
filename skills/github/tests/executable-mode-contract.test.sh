@@ -5,8 +5,10 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-FAIL=0
-COUNT=0
+TRACKED_FAIL=0
+TRACKED_COUNT=0
+FIXTURE_FAIL=0
+FIXTURE_COUNT=0
 
 effective_tracked_mode() {
     local repo_root="$1"
@@ -39,6 +41,7 @@ assert_fixture_contract() {
     local label="$2"
     local actual="reject"
 
+    FIXTURE_COUNT=$((FIXTURE_COUNT + 1))
     if contract_accepts_script "$FIXTURE_REPO" "$FIXTURE_RELATIVE"; then
         actual="accept"
     fi
@@ -46,7 +49,7 @@ assert_fixture_contract() {
         printf 'ok - %s\n' "$label"
     else
         printf 'FAIL: %s (expected %s, got %s)\n' "$label" "$expected" "$actual" >&2
-        FAIL=$((FAIL + 1))
+        FIXTURE_FAIL=$((FIXTURE_FAIL + 1))
     fi
 }
 
@@ -55,17 +58,18 @@ assert_fixture_index_mode() {
     local label="$2"
     local actual
 
+    FIXTURE_COUNT=$((FIXTURE_COUNT + 1))
     actual="$(git -C "$FIXTURE_REPO" ls-files -s -- "$FIXTURE_RELATIVE" | awk 'NR == 1 { print $1 }')"
     if [ "$actual" = "$expected" ]; then
         printf 'ok - %s\n' "$label"
     else
         printf 'FAIL: %s (expected %s, got %s)\n' "$label" "$expected" "${actual:-missing}" >&2
-        FAIL=$((FAIL + 1))
+        FIXTURE_FAIL=$((FIXTURE_FAIL + 1))
     fi
 }
 
 while IFS= read -r test_script; do
-    COUNT=$((COUNT + 1))
+    TRACKED_COUNT=$((TRACKED_COUNT + 1))
     mode="$(effective_tracked_mode "$REPO_ROOT" "$test_script")"
     if ! contract_accepts_script "$REPO_ROOT" "$test_script" "$mode"; then
         if [ "$mode" != "100755" ]; then
@@ -73,7 +77,7 @@ while IFS= read -r test_script; do
         else
             printf 'FAIL: %s is not executable in the worktree\n' "$test_script" >&2
         fi
-        FAIL=$((FAIL + 1))
+        TRACKED_FAIL=$((TRACKED_FAIL + 1))
         continue
     fi
     printf 'ok - %s is directly executable\n' "$test_script"
@@ -101,11 +105,12 @@ chmod 0755 "$FIXTURE_SCRIPT"
 assert_fixture_contract "accept" "unstaged 100644 to 100755 mode change is accepted"
 assert_fixture_index_mode "100644" "unstaged executable validation preserves the 100644 index mode"
 git -C "$FIXTURE_REPO" diff --cached --binary -- "$FIXTURE_RELATIVE" >"$FIXTURE_INDEX_AFTER"
+FIXTURE_COUNT=$((FIXTURE_COUNT + 1))
 if cmp -s "$FIXTURE_INDEX_BEFORE" "$FIXTURE_INDEX_AFTER"; then
     printf 'ok - unstaged executable validation leaves the cached diff byte-identical\n'
 else
     printf 'FAIL: unstaged executable validation changed the cached diff\n' >&2
-    FAIL=$((FAIL + 1))
+    FIXTURE_FAIL=$((FIXTURE_FAIL + 1))
 fi
 
 git -C "$FIXTURE_REPO" add -- "$FIXTURE_RELATIVE"
@@ -113,14 +118,19 @@ assert_fixture_index_mode "100755" "explicit staging records the executable mode
 chmod 0644 "$FIXTURE_SCRIPT"
 assert_fixture_contract "reject" "unstaged 100755 to 100644 mode change is rejected"
 
-if [ "$COUNT" -eq 0 ]; then
+if [ "$TRACKED_COUNT" -eq 0 ]; then
     printf 'FAIL: no tracked GitHub shell tests found\n' >&2
     exit 1
 fi
 
-if [ "$FAIL" -ne 0 ]; then
-    printf 'fail: %d of %d GitHub shell tests violate executable mode contract\n' "$FAIL" "$COUNT" >&2
+if [ "$TRACKED_FAIL" -ne 0 ] || [ "$FIXTURE_FAIL" -ne 0 ]; then
+    if [ "$TRACKED_FAIL" -ne 0 ]; then
+        printf 'fail: %d of %d tracked GitHub shell tests violate executable mode contract\n' "$TRACKED_FAIL" "$TRACKED_COUNT" >&2
+    fi
+    if [ "$FIXTURE_FAIL" -ne 0 ]; then
+        printf 'fail: %d of %d executable-mode fixture assertions failed\n' "$FIXTURE_FAIL" "$FIXTURE_COUNT" >&2
+    fi
     exit 1
 fi
 
-printf 'all pass: %d GitHub shell tests are directly executable\n' "$COUNT"
+printf 'all pass: %d tracked GitHub shell tests are directly executable, %d fixture assertions passed\n' "$TRACKED_COUNT" "$FIXTURE_COUNT"
