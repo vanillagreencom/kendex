@@ -147,6 +147,8 @@ Create Options:
   --parent <id>         Parent issue ID (creates sub-issue)
   --milestone <name|uuid> Project milestone (name or UUID)
   --cycle <id>          Cycle (sprint) ID
+  --format=ids          Print ONLY the created issue identifier (for capture;
+                        default output is the full JSON create response)
 
 Update Options:
   --state <name>        New state
@@ -198,6 +200,7 @@ Examples:
   issues.sh list --label "backend" --state "Todo"
   issues.sh get PROJ-42
   issues.sh create --title "New task" --labels "backend,priority:high"
+  issues.sh create --title "Bundle" --project "Phase 2" --format=ids  # Print only the new identifier
   issues.sh update PROJ-42 --state "In Progress"
   issues.sh archive PROJ-42
 
@@ -823,12 +826,21 @@ create_issue() {
     local cycle=""
     local estimate=""
     local requested_parent_id=""
+    local output_format=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --title)
             title="$2"
             shift 2
+            ;;
+        --format)
+            output_format="$2"
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#--format=}"
+            shift
             ;;
         --team)
             team="$2"
@@ -1102,7 +1114,14 @@ create_issue() {
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
     emit_linear_issue_activity "linear.issue_created" "info" "$normalized"
-    echo "$normalized"
+    # --format=ids mirrors the query-command contract: print ONLY the created
+    # identifier (one per line, nothing else) so workflows can capture it
+    # deterministically. Any other/absent format keeps the default JSON output.
+    if [ "$output_format" = "ids" ]; then
+        echo "$normalized" | jq -r '.identifier // empty'
+    else
+        echo "$normalized"
+    fi
 }
 
 update_issue() {
