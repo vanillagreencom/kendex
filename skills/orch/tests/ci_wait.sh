@@ -24,6 +24,11 @@
 # (default 180s) bounds how long ci-wait polls before failing when no checks
 # have registered. Inside the window the verdict stays pending; past it, the
 # explicit "no CI checks" error fires (cases 12, 12b, 12c).
+#
+# Plus approval-gated run/status correlation (vstack#607): a later all-skipped
+# COMMENTED run cannot hide the active substantive APPROVED run, and the old
+# pre-approval CI Required failure remains pending until the approved run
+# publishes its replacement status (cases 20-24).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -170,6 +175,10 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "checks" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ -n "${STUB_PR_CHECKS_FIXTURE:-}" ]]; then
+        cat "$STUB_PR_CHECKS_FIXTURE"
+        exit "${STUB_PR_CHECKS_EXIT:-0}"
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_once" ]]; then
         count=0
         if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
@@ -579,6 +588,76 @@ assert_eq "$(json_field "$output" '.verdict')" "pass" "case19: verdict pass afte
 assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case19: no CANCELLED Lint in failed_checks" "$stderr"
 assert_not_contains "$output" '"CANCELLED"' "case19: no stale CANCELLED state survives" "$stderr"
 assert_eq "$(json_field "$output" '[.passed_checks[].name] | map(select(. == "Lint")) | length')" "1" "case19: exactly one current Lint instance kept" "$stderr"
+
+echo "=== ci-wait approval-gated run/status correlation (vstack#607) ==="
+
+# Case 20: CI Required is still red from the unapproved run. A newer approved
+# run is active, followed by a still-newer COMMENTED run whose jobs all skipped.
+# The all-skipped run is not authoritative; the approved run and stale aggregate
+# status both remain pending instead of producing an immediate terminal fail.
+stderr="$TMP_ROOT/case20.err"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-active-approved.json" STUB_PR_CHECKS_EXIT=8 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case20: active approved run exits 1 only at timeout" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case20: active approved run remains pending" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case20: stale red status is not terminal" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case20: stale CI Required removed from failures" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case20: stale CI Required rewritten as expected" "$stderr"
+assert_contains "$output" '"Build"' "case20: substantive approved run remains visible" "$stderr"
+assert_not_contains "$output" '"SKIPPED"' "case20: later COMMENTED no-op run does not supersede" "$stderr"
+
+# Case 21: with no newer substantive run, an all-skipped COMMENTED dispatch is
+# not evidence of approved CI. The original pre-approval failure stays terminal.
+stderr="$TMP_ROOT/case21.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-no-fresh-run.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case21: no fresh substantive run exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case21: original failure is terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case21: no fresh run fails closed" "$stderr"
+assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case21: CI Required remains failed" "$stderr"
+
+# Case 22: a newer substantive run that itself fails must fail immediately;
+# stale-status suppression cannot hide a real current-run failure.
+stderr="$TMP_ROOT/case22.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-fresh-failed.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case22: failed approved run exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case22: current run failure is terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case22: failed approved run fails closed" "$stderr"
+assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "Build")][0].state')" "FAILURE" "case22: current failed job is reported" "$stderr"
+
+# Case 23: all approved-run jobs passed, but the aggregate status never moved
+# off the old red run. Keep waiting for the replacement and hit the bounded
+# timeout rather than silently passing or immediately consuming stale failure.
+stderr="$TMP_ROOT/case23.err"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-status-lag.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case23: missing replacement status exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case23: missing replacement reaches bounded timeout" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case23: status lag stays pending until timeout" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case23: lagging aggregate status is expected" "$stderr"
+
+# Case 24: once the newer substantive run publishes CI Required against its own
+# run ID, the stale pre-approval checks and later no-op dispatch are discarded
+# and the current proof passes normally.
+stderr="$TMP_ROOT/case24.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/approved-status-replaced.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case24: replacement status exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case24: replacement status completes" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pass" "case24: replacement status passes" "$stderr"
+assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case24: current aggregate status is reported" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case24: stale pre-approval failures are absent" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

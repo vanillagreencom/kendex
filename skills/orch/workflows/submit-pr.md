@@ -322,7 +322,7 @@ Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are
 
 ## 5. Verify CI
 
-On always-on repos CI has been running since the PR was created or updated in § 2. On approval-gated repos, checks register only after the § 4 approval gate completes — which is why this section runs after § 4. Neither case needs detecting: ci-wait treats "no checks yet" as pending within its registration grace window (`CI_WAIT_NO_CHECKS_GRACE`, default 180s) and fails with an explicit diagnostic only past it.
+On always-on repos CI has been running since the PR was created or updated in § 2. On approval-gated repos, checks register only after the § 4 approval gate completes — which is why this section runs after § 4. Neither case needs detecting: ci-wait treats "no checks yet" as pending within its registration grace window (`CI_WAIT_NO_CHECKS_GRACE`, default 180s), keeps a stale pre-approval aggregate failure pending while the current-head approved run is active, and fails closed when the fresh run fails or never publishes its replacement status.
 
 ### 5.1 Wait for CI
 
