@@ -147,6 +147,54 @@ assert_eq "$merged_out" "Removed: $MERGED_ROOT/trees/issue-merged" "merged branc
 assert_path_absent "$MERGED_ROOT/trees/issue-merged" "merged branch worktree removed"
 assert_branch_absent "$MERGED_ROOT/main" "issue-merged" "merged branch deleted"
 
+# remove --help / -h print usage, exit 0, and never delete or report a removal.
+HELP_ROOT="$TMP_ROOT/help"
+make_repo "$HELP_ROOT/main"
+git -C "$HELP_ROOT/main" worktree add -q -b issue-help "$HELP_ROOT/trees/issue-help" main
+set +e
+help_out=$(cd "$HELP_ROOT/main" && "$WORKTREE_SCRIPT" remove --help 2>"$HELP_ROOT/help.err")
+help_code=$?
+set -e
+assert_eq "$help_code" "0" "remove --help exits 0"
+assert_contains "$help_out" "Usage: " "remove --help prints usage"
+if grep -qF -- "Removed:" <<<"$help_out"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n' "remove --help does not report a removal"
+else
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "remove --help does not report a removal"
+fi
+assert_path_exists "$HELP_ROOT/trees/issue-help" "remove --help does not delete the worktree"
+assert_branch_exists "$HELP_ROOT/main" "issue-help" "remove --help does not delete the branch"
+
+set +e
+help_short_out=$(cd "$HELP_ROOT/main" && "$WORKTREE_SCRIPT" remove -h 2>"$HELP_ROOT/help-short.err")
+help_short_code=$?
+set -e
+assert_eq "$help_short_code" "0" "remove -h exits 0"
+assert_contains "$help_short_out" "Usage: " "remove -h prints usage"
+assert_path_exists "$HELP_ROOT/trees/issue-help" "remove -h does not delete the worktree"
+
+# Unknown option-looking argument fails with nonzero exit and no removal.
+BOGUS_ROOT="$TMP_ROOT/bogus"
+make_repo "$BOGUS_ROOT/main"
+git -C "$BOGUS_ROOT/main" worktree add -q -b issue-bogus "$BOGUS_ROOT/trees/issue-bogus" main
+set +e
+bogus_out=$(cd "$BOGUS_ROOT/main" && "$WORKTREE_SCRIPT" remove --bogus 2>"$BOGUS_ROOT/bogus.err")
+bogus_code=$?
+set -e
+assert_eq "$bogus_code" "1" "remove --bogus exits nonzero"
+assert_contains "$(cat "$BOGUS_ROOT/bogus.err")" "unknown option '--bogus'" "remove --bogus reports unknown option"
+if grep -qF -- "Removed:" <<<"$bogus_out"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n' "remove --bogus does not report a removal"
+else
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "remove --bogus does not report a removal"
+fi
+assert_path_exists "$BOGUS_ROOT/trees/issue-bogus" "remove --bogus does not delete an unrelated worktree"
+assert_path_absent "$BOGUS_ROOT/trees/--bogus" "remove --bogus never computes a trees/--bogus path"
+
 # Unmerged branch: worktree is removed, branch remains, exit 1 includes diagnostic.
 UNMERGED_ROOT="$TMP_ROOT/unmerged"
 make_repo "$UNMERGED_ROOT/main"

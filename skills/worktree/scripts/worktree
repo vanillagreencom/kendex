@@ -1430,7 +1430,23 @@ case "${1:-}" in
     ;;
 
   remove)
+    if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+      echo "Usage: $0 remove [ID|/path]"
+      echo ""
+      echo "Remove a worktree and delete its local branch when it is safely merged."
+      echo "Accepts an issue ID (resolved to trees/<id>) or a direct worktree path."
+      exit 0
+    fi
     ARG="${2:?Error: remove requires an issue ID or path}"
+    # Reject stray option-looking arguments before they are treated as an
+    # identifier and turned into a trees/<id> path. Otherwise `remove --help`
+    # (or any typo'd flag) would compute trees/--help and falsely report a
+    # removal, risking deletion of an oddly-named path/ref (#619).
+    if [[ "$ARG" == -* ]]; then
+      echo "Error: unknown option '$ARG' for remove" >&2
+      echo "Run: $0 remove --help" >&2
+      exit 1
+    fi
     # Accept either issue ID or direct path
     if [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
