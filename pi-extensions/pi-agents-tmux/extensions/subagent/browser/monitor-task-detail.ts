@@ -95,6 +95,16 @@ export function monitorFooterHint(theme: Theme): string {
 	return `${ansiYellow("tab")} ${theme.fg("dim", "switch · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "open/toggle")}${theme.fg("dim", " · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 }
 
+// The number of navigable subtabs for the currently-selected task. Detail
+// navigation must clamp to the *actual* rendered subtab count — which includes
+// the conditional "Transcript" tab (index 2) whenever the record has a
+// transcriptPath — not the static MONITOR_SUBTAB_LABELS placeholder length
+// (Summary/Completion only). Before the trace items load, fall back to the
+// placeholder count so navigation stays bounded (vstack#611).
+export function monitorSubtabCount(entry: MonitorDetailEntry | undefined): number {
+	return entry?.items?.length ?? MONITOR_SUBTAB_LABELS.length;
+}
+
 export function renderMonitorDetail(
 	record: PaneTaskRecord | undefined,
 	cache: Map<string, MonitorDetailEntry>,

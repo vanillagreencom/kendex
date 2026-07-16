@@ -13,6 +13,7 @@ import {
 	clampMonitorUiToRows,
 	isAgentFrontmatterEditShortcut,
 	monitorFooterHint,
+	monitorSubtabCount,
 	monitorTreeRows,
 	renderMonitorDetail,
 	renderAgentBrowserTabs,
@@ -1034,6 +1035,48 @@ test("Monitor tab task rendering still exposes task trace metadata", async () =>
 	assert.equal(items[2]!.label, "Transcript");
 	assert.equal(items[2]!.path, "/tmp/planner-transcript.jsonl");
 	assert.match(items[2]!.text, /Transcript file could not be read\./);
+});
+
+test("Monitor detail navigation can reach the Transcript subtab (vstack#611)", async () => {
+	const taskId = "planner-1700000120-transcript";
+	const taskRecord = record("planner", taskId, "2026-05-14T05:02:00.000Z", {
+		summary: "completed planner summary",
+		completionSourcePath: "/tmp/planner-source.json",
+		transcriptPath: "/tmp/planner-transcript.jsonl",
+	});
+	const items = await traceViewerItems(taskRecord, 1, { agents: [agent("planner", true)] });
+
+	// Three subtabs exist when a transcript is present: Summary, Completion, Transcript.
+	assert.equal(items.length, 3);
+	assert.equal(items[2]!.label, "Transcript");
+
+	// The right-arrow navigation clamp must derive its bound from the actual
+	// rendered subtab count, not the static MONITOR_SUBTAB_LABELS length (2).
+	// Before the fix the clamp stopped at index 1, leaving Transcript (index 2)
+	// permanently unreachable.
+	const entry = { items };
+	const reachableCount = monitorSubtabCount(entry);
+	assert.equal(reachableCount, 3);
+	const maxReachableIndex = reachableCount - 1;
+	assert.equal(maxReachableIndex, 2);
+
+	// Rendering the detail at the last reachable subtab shows the Transcript tab
+	// active with its content, proving the tab is navigable end to end.
+	const rendered = renderMonitorDetail(
+		taskRecord,
+		new Map([[taskId, entry]]),
+		uiState({ tab: "monitor", pane: "inspector", monitorSubtab: maxReachableIndex }),
+		120,
+		40,
+		ansiTheme as any,
+	).join("\n");
+	assert.match(rendered, /Transcript/);
+	assert.match(rendered, /Transcript file could not be read\./);
+});
+
+test("monitorSubtabCount falls back to the placeholder count before items load", () => {
+	assert.equal(monitorSubtabCount(undefined), 2);
+	assert.equal(monitorSubtabCount({ loading: true }), 2);
 });
 
 test("Monitor trace labels delivery mode and humanizes input transcript events", async () => {

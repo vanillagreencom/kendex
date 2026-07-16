@@ -16,7 +16,6 @@ import {
 	AGENTS_BROWSER_WIDTH,
 	AGENTS_LEFT_MAX_WIDTH,
 	AGENTS_LEFT_MIN_WIDTH,
-	MONITOR_SUBTAB_LABELS,
 	type AgentBrowserAction,
 	type AgentBrowserLayout,
 	type AgentBrowserUiState,
@@ -50,6 +49,7 @@ import {
 } from "./browser/monitor-tree.js";
 import {
 	monitorFooterHint,
+	monitorSubtabCount,
 	renderMonitorDetail,
 	traceViewerItems,
 } from "./browser/monitor-task-detail.js";
@@ -87,6 +87,7 @@ export {
 export { type MonitorSessionType } from "./task-records.js";
 export {
 	monitorFooterHint,
+	monitorSubtabCount,
 	renderMonitorDetail,
 	traceViewerItems,
 } from "./browser/monitor-task-detail.js";
@@ -342,7 +343,9 @@ function createAgentsBrowserComponent(
 				return;
 			}
 			if (ui.tab === "monitor" && ui.pane === "inspector") {
-				const total = MONITOR_SUBTAB_LABELS.length;
+				const selectedRow = selectedMonitorRow(currentMonitorRows(), ui);
+				const entry = selectedRow?.kind === "task" ? monitorCache.get(selectedRow.record.taskId) : undefined;
+				const total = monitorSubtabCount(entry);
 				if (ui.monitorSubtab < total - 1) {
 					ui.monitorSubtab += 1;
 					ui.inspectorScroll = 0;
