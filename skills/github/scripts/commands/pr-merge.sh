@@ -7,6 +7,11 @@
 #   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
 #   1   BLOCKED                — checks failed; no merge attempted, none queued
 #
+# `--auto` is idempotent for merge-queue repositories: a re-invocation on a PR
+# that is already enrolled reports QUEUED (75) from the authoritative post-call
+# snapshot, not BLOCKED, even though `gh pr merge --auto` exits nonzero when the
+# PR is already queued (vstack#616).
+#
 # When BLOCKED, stderr distinguishes TRANSIENT issues (mergeable UNKNOWN,
 # ci pending — caller should `await-mergeable` and retry) from PERMANENT
 # issues (conflicts, ci_failed, changes_requested — caller must fix and re-push).
@@ -473,25 +478,20 @@ main() {
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 
-    if [ "$merge_exit" -ne 0 ]; then
-        # Merge command itself failed. Surface as BLOCKED with raw output.
-        local fail_args=(
-            --severity error
-            --importance important
-            --summary "PR #$pr_num merge blocked"
-            --pr-number "$pr_num"
-            --details-json "$(jq -cn --arg output "$merge_output" '{merge_output: $output, transient: false}')"
-        )
-        [ -n "$pr_branch" ] && fail_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${fail_args[@]}" || true
-        echo "BLOCKED PR #$pr_num — gh pr merge failed" >&2
-        printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
-        exit 1
-    fi
-
-    # Determine outcome from one authenticated post-call snapshot. GitHub's
-    # required merge queue can return success while the PR stays OPEN and
-    # autoMergeRequest stays null; an active queue entry is authoritative.
+    # Determine outcome from one authenticated post-call snapshot, taken
+    # REGARDLESS of gh's exit code. gh's exit status is not authoritative for
+    # merge-queue repositories:
+    #   - a required queue can return SUCCESS while the PR stays OPEN with a
+    #     null autoMergeRequest (vstack#608), and
+    #   - a re-invocation of `--auto` on an ALREADY-QUEUED PR returns NONZERO
+    #     even though GitHub still reports it queued, isInMergeQueue: true
+    #     (vstack#616).
+    # Only the GraphQL snapshot (state + mergeQueueEntry) is authoritative, so
+    # take it first and classify from it. This deliberately does not gate on
+    # gh's "already queued" stderr wording — that text is a version- and
+    # API-dependent GraphQL error and cannot be pinned reliably. The snapshot
+    # decides, and it is fail-closed: a genuine failure leaves no active queue
+    # entry.
     local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
     post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
     post_state=$(jq -r '.state' <<<"$post_snapshot")
@@ -506,6 +506,32 @@ main() {
     # or auto-merge state to the commit we attempted.
     if [ -n "$post_head" ] && [ "$post_head" != "$expected_head" ]; then
         echo "BLOCKED PR #$pr_num — head changed during merge attempt (expected=$expected_head, actual=$post_head)" >&2
+        exit 1
+    fi
+
+    # A NONZERO `gh pr merge` exit is only benign when the authoritative
+    # snapshot proves a real success state: an already-enrolled merge queue
+    # entry (vstack#616), classic auto-merge already enabled, or an already
+    # merged PR. Anything else — conflicts, auth failure, CI, no enrollment —
+    # leaves no such proof and stays BLOCKED with the raw gh output. When the
+    # snapshot does prove success, fall through to the shared classification
+    # below so the outcome (MERGED / QUEUED / AUTO-MERGE) is reported once.
+    if [ "$merge_exit" -ne 0 ] \
+        && [ "$post_state" != "MERGED" ] \
+        && [ "$post_in_queue" != "true" ] \
+        && [ "$post_queue_entry" != "true" ] \
+        && [ "$post_auto" != "true" ]; then
+        local fail_args=(
+            --severity error
+            --importance important
+            --summary "PR #$pr_num merge blocked"
+            --pr-number "$pr_num"
+            --details-json "$(jq -cn --arg output "$merge_output" '{merge_output: $output, transient: false}')"
+        )
+        [ -n "$pr_branch" ] && fail_args+=(--branch "$pr_branch")
+        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${fail_args[@]}" || true
+        echo "BLOCKED PR #$pr_num — gh pr merge failed" >&2
+        printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
         exit 1
     fi
 

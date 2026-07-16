@@ -127,8 +127,12 @@ case "${1:-}" in
                     echo "missing effective token for merge" >&2
                     exit 44
                 fi
+                if [[ "${STUB_MERGE_EXIT:-0}" != "0" ]]; then
+                    printf '%s\n' "${STUB_MERGE_STDERR:-failed to run merge}" >&2
+                    exit "${STUB_MERGE_EXIT}"
+                fi
                 echo "merge command accepted"
-                exit "${STUB_MERGE_EXIT:-0}"
+                exit 0
                 ;;
             checks)
                 printf '%s\n' "${STUB_CHECKS:?}"
@@ -310,6 +314,50 @@ status=$?
 set -e
 assert_eq "$status" "75" "classic auto-merge survives queue-query fallback"
 assert_contains "$out" "AUTO-MERGE ENABLED PR #123" "fallback preserves classic output"
+
+echo
+echo "=== pr-merge already-queued idempotency (vstack#616) ==="
+
+# A SECOND `--auto` call on a PR already enrolled in a required merge queue:
+# `gh pr merge --auto` returns NONZERO with GitHub's already-queued error, but
+# the authoritative post-call snapshot still reports an active mergeQueueEntry
+# (isInMergeQueue: true). The wrapper must take that snapshot instead of
+# short-circuiting to BLOCKED, and report the queued/exit-75 contract.
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_HEAD="already-queued-head" \
+    STUB_MERGE_EXIT=1 \
+    STUB_MERGE_STDERR="failed to run merge: GraphQL: Pull request Pull request is already queued to merge (enablePullRequestAutoMerge)" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=true \
+    STUB_POST_QUEUE_ENTRY_JSON='{"state":"QUEUED"}' \
+    STUB_POST_QUEUE_STATE=QUEUED \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "75" "already-queued --auto re-invocation is queued, not blocked"
+assert_contains "$out" "QUEUED IN MERGE QUEUE PR #123" "already-queued re-invocation reports merge-queue outcome"
+assert_contains "$out" "queueState=QUEUED" "already-queued re-invocation preserves queue state"
+
+# Fail-closed guard: a GENUINE `gh pr merge` failure — nonzero exit with NO
+# active queue entry, no auto-merge, PR still OPEN — must stay BLOCKED and
+# surface the raw gh output. The nonzero-exit path must not swallow real
+# failures just because it now takes the snapshot.
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_MERGE_EXIT=1 \
+    STUB_MERGE_STDERR="failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "genuine gh pr merge failure stays blocked"
+assert_contains "$out" "BLOCKED PR #123 — gh pr merge failed" "genuine failure reports gh pr merge failed"
+assert_contains "$out" "base branch policy prohibits the merge" "genuine failure surfaces raw gh output"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
