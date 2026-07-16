@@ -111,9 +111,17 @@ parsing stderr:
 
 | Exit | Meaning | Stderr line | When |
 |------|---------|-------------|------|
-| `0`  | MERGED                | `MERGED PR #N`               | Merge completed immediately |
-| `75` | QUEUED FOR AUTO-MERGE | `QUEUED FOR AUTO-MERGE PR #N`| `--auto` enabled GitHub auto-merge; fires when CI + branch protection clear |
-| `1`  | BLOCKED               | `BLOCKED PR #N`              | Checks failed; nothing merged, nothing queued |
+| `0`  | MERGED | `MERGED PR #N` | Merge completed immediately |
+| `75` | MERGE PENDING | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry |
+| `75` | MERGE PENDING | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears |
+| `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
+
+Before mutating merge state, `pr-merge` resolves the exact PR head and passes
+it through `--match-head-commit`. After a successful `gh` call it reads queue
+membership with GraphQL because `gh pr view --json` does not expose
+`mergeQueueEntry`. An `OPEN` PR with no `autoMergeRequest` is therefore still a
+successful exit `75` when its required merge-queue entry is active; an `OPEN`
+PR with neither queue nor auto-merge proof fails closed.
 
 A BLOCKED outcome is further classified on stderr as **transient** (mergeable
 UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should

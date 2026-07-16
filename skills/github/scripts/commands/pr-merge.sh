@@ -4,7 +4,7 @@
 #
 # Outcomes (distinct exit codes + messages):
 #   0   MERGED                 — merge completed immediately
-#   75  QUEUED FOR AUTO-MERGE  — --auto enabled, merge fires when CI/branch-protection clears
+#   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
 #   1   BLOCKED                — checks failed; no merge attempted, none queued
 #
 # When BLOCKED, stderr distinguishes TRANSIENT issues (mergeable UNKNOWN,
@@ -91,7 +91,7 @@ Modes:
 
 Exit codes:
   0    MERGED                 — merge completed immediately
-  75   QUEUED FOR AUTO-MERGE  — --auto enabled, will fire when CI clears
+  75   QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
   1    BLOCKED                — checks failed; nothing queued
 
 Examples:
@@ -262,6 +262,71 @@ print_blocked() {
     echo "Use --auto to queue for auto-merge, or --force to merge anyway." >&2
 }
 
+# Run gh with the same effective identity used for the merge mutation. Keep the
+# token scoped to the subprocess so the caller's environment is never changed.
+gh_with_token() {
+    local auth_token="${1:-}"
+    shift
+
+    if [ -n "$auth_token" ]; then
+        GH_TOKEN="$auth_token" gh "$@"
+    else
+        gh "$@"
+    fi
+}
+
+# Read one authoritative post-mutation snapshot. `gh pr view --json` does not
+# expose merge-queue membership, so required-queue repositories need GraphQL.
+# Fall back to the classic `gh pr view` fields when the queue query itself is
+# unavailable; queue membership remains false in that fail-closed fallback.
+post_merge_snapshot() {
+    local pr_num="$1"
+    local auth_token="$2"
+    local snapshot=""
+
+    if snapshot=$(gh_with_token "$auth_token" api graphql \
+        -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }' \
+        -F owner='{owner}' -F repo='{repo}' -F number="$pr_num" 2>/dev/null) && \
+        jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 <<<"$snapshot"; then
+        jq -c '
+            .data.repository.pullRequest
+            | {
+                state: (.state // "UNKNOWN"),
+                head: (.headRefOid // ""),
+                head_branch: (.headRefName // ""),
+                merge_commit: (.mergeCommit.oid // ""),
+                auto_merge: (.autoMergeRequest != null),
+                in_merge_queue: (.isInMergeQueue == true),
+                merge_queue_entry: (.mergeQueueEntry != null),
+                queue_state: (.mergeQueueEntry.state // ""),
+                source: "graphql"
+            }
+        ' <<<"$snapshot"
+        return 0
+    fi
+
+    if snapshot=$(gh_with_token "$auth_token" pr view "$pr_num" \
+        --json state,headRefOid,headRefName,mergeCommit,autoMergeRequest 2>/dev/null) && \
+        jq -e 'type == "object"' >/dev/null 2>&1 <<<"$snapshot"; then
+        jq -c '
+            {
+                state: (.state // "UNKNOWN"),
+                head: (.headRefOid // ""),
+                head_branch: (.headRefName // ""),
+                merge_commit: (.mergeCommit.oid // ""),
+                auto_merge: (.autoMergeRequest != null),
+                in_merge_queue: false,
+                merge_queue_entry: false,
+                queue_state: "",
+                source: "pr-view-fallback"
+            }
+        ' <<<"$snapshot"
+        return 0
+    fi
+
+    jq -cn '{state:"UNKNOWN",head:"",head_branch:"",merge_commit:"",auto_merge:false,in_merge_queue:false,merge_queue_entry:false,queue_state:"",source:"unavailable"}'
+}
+
 main() {
     local pr_num="" method="--squash" delete_branch=true
     local check_only=false force=false dry_run=false auto=false
@@ -386,18 +451,26 @@ main() {
         exit 0
     fi
 
+    # Resolve and guard the exact head before mutating merge state. This prevents
+    # a review/CI race from queuing or merging a newer, unverified commit.
+    local expected_head
+    if ! expected_head=$(gh_with_token "$token" pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$expected_head" ]; then
+        echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
+        exit 1
+    fi
+
     # Build merge command. --auto enables GitHub's auto-merge — it queues the
     # merge to fire when CI + branch protection clear, returning success now.
     # Without --auto, gh attempts an immediate merge and fails if blocked.
-    local -a cmd=(gh pr merge "$pr_num" "$method")
+    local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
 
     local merge_output merge_exit=0
     if [ -n "$token" ]; then
-        merge_output=$(GH_TOKEN="$token" "${cmd[@]}" 2>&1) || merge_exit=$?
+        merge_output=$(gh_with_token "$token" "${cmd[@]}" 2>&1) || merge_exit=$?
     else
         echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
-        merge_output=$("${cmd[@]}" 2>&1) || merge_exit=$?
+        merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 
     if [ "$merge_exit" -ne 0 ]; then
@@ -416,17 +489,30 @@ main() {
         exit 1
     fi
 
-    # Determine outcome by re-reading PR state. With --auto, gh exits 0 in
-    # both the merged-immediately case (CI was already green) and the queued
-    # case — only the post-call state distinguishes them.
-    local post_state post_auto
-    post_state=$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-    post_auto=$(gh pr view "$pr_num" --json autoMergeRequest --jq '.autoMergeRequest != null' 2>/dev/null || echo "false")
+    # Determine outcome from one authenticated post-call snapshot. GitHub's
+    # required merge queue can return success while the PR stays OPEN and
+    # autoMergeRequest stays null; an active queue entry is authoritative.
+    local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
+    post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
+    post_state=$(jq -r '.state' <<<"$post_snapshot")
+    post_auto=$(jq -r '.auto_merge' <<<"$post_snapshot")
+    post_head=$(jq -r '.head' <<<"$post_snapshot")
+    post_in_queue=$(jq -r '.in_merge_queue' <<<"$post_snapshot")
+    post_queue_entry=$(jq -r '.merge_queue_entry' <<<"$post_snapshot")
+    post_queue_state=$(jq -r '.queue_state' <<<"$post_snapshot")
+
+    # The mutation itself was match-head guarded. Also reject a post-call
+    # snapshot that belongs to a different head instead of crediting its queue
+    # or auto-merge state to the commit we attempted.
+    if [ -n "$post_head" ] && [ "$post_head" != "$expected_head" ]; then
+        echo "BLOCKED PR #$pr_num — head changed during merge attempt (expected=$expected_head, actual=$post_head)" >&2
+        exit 1
+    fi
 
     if [ "$post_state" = "MERGED" ]; then
         echo "MERGED PR #$pr_num" >&2
         local merge_commit
-        merge_commit=$(gh pr view "$pr_num" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null || true)
+        merge_commit=$(jq -r '.merge_commit' <<<"$post_snapshot")
         local merged_args=(
             --severity success
             --importance important
@@ -440,24 +526,38 @@ main() {
         # fails inside worktrees). Best-effort — branch may already be gone.
         if [ "$delete_branch" = true ]; then
             local branch
-            branch=$(gh pr view "$pr_num" --json headRefName --jq '.headRefName' 2>/dev/null || true)
+            branch=$(jq -r '.head_branch' <<<"$post_snapshot")
             if [ -n "$branch" ]; then
-                gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$branch" 2>/dev/null || true
+                gh_with_token "$token" api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$branch" 2>/dev/null || true
             fi
         fi
         exit 0
     fi
 
-    if [ "$auto" = true ] && [ "$post_auto" = "true" ]; then
+    if [ "$post_in_queue" = "true" ] || [ "$post_queue_entry" = "true" ]; then
         local queued_args=(
             --severity info
             --importance normal
-            --summary "PR #$pr_num queued for auto-merge"
+            --summary "PR #$pr_num queued in merge queue"
             --pr-number "$pr_num"
         )
         [ -n "$pr_branch" ] && queued_args+=(--branch "$pr_branch")
         bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_queued "${queued_args[@]}" || true
-        echo "QUEUED FOR AUTO-MERGE PR #$pr_num — will fire when CI + branch protection clear" >&2
+        echo "QUEUED IN MERGE QUEUE PR #$pr_num — queueState=${post_queue_state:-active}" >&2
+        echo "  Track with: github.sh await-mergeable $pr_num" >&2
+        exit 75
+    fi
+
+    if [ "$post_auto" = "true" ]; then
+        local auto_args=(
+            --severity info
+            --importance normal
+            --summary "PR #$pr_num auto-merge enabled"
+            --pr-number "$pr_num"
+        )
+        [ -n "$pr_branch" ] && auto_args+=(--branch "$pr_branch")
+        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_queued "${auto_args[@]}" || true
+        echo "AUTO-MERGE ENABLED PR #$pr_num — will fire when CI + branch protection clear" >&2
         echo "  Track with: github.sh await-mergeable $pr_num" >&2
         exit 75
     fi
@@ -473,7 +573,7 @@ main() {
     )
     [ -n "$pr_branch" ] && blocked_args+=(--branch "$pr_branch")
     bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${blocked_args[@]}" || true
-    echo "BLOCKED PR #$pr_num — gh reported success but state=$post_state, autoMerge=$post_auto" >&2
+    echo "BLOCKED PR #$pr_num — gh reported success but state=$post_state, autoMerge=$post_auto, mergeQueue=false" >&2
     printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
     exit 1
 }

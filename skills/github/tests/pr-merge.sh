@@ -55,6 +55,27 @@ case "${1:-}" in
         ;;
     api)
         if [[ "${2:-}" == "graphql" ]]; then
+            if [[ "$*" == *"mergeQueueEntry"* ]]; then
+                if [[ "${STUB_POST_GRAPHQL_FAIL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"queue fields unavailable"}]}'
+                    exit 1
+                fi
+                if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
+                    echo "missing effective token for post-merge GraphQL" >&2
+                    exit 41
+                fi
+                jq -cn \
+                    --arg state "${STUB_POST_STATE:-OPEN}" \
+                    --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \
+                    --arg branch "${STUB_HEAD_BRANCH:-issue-123}" \
+                    --arg commit "${STUB_MERGE_COMMIT:-}" \
+                    --arg queue_state "${STUB_POST_QUEUE_STATE:-}" \
+                    --argjson auto "${STUB_POST_AUTO_JSON:-null}" \
+                    --argjson in_queue "${STUB_POST_IN_QUEUE:-false}" \
+                    --argjson queue_entry "${STUB_POST_QUEUE_ENTRY_JSON:-null}" \
+                    '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
+                exit 0
+            fi
             echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
             exit 0
         fi
@@ -66,6 +87,18 @@ case "${1:-}" in
                     echo '{"title":"Test PR"}'
                     exit 0
                 fi
+                if [[ "$*" == *"--json headRefName"* ]]; then
+                    echo "${STUB_HEAD_BRANCH:-issue-123}"
+                    exit 0
+                fi
+                if [[ "$*" == *"--json headRefOid"* ]]; then
+                    if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
+                        echo "missing effective token for head guard" >&2
+                        exit 42
+                    fi
+                    echo "${STUB_HEAD:-test-head}"
+                    exit 0
+                fi
                 if [[ "$*" == *"--json mergeable"* ]]; then
                     echo "MERGEABLE"
                     exit 0
@@ -74,6 +107,28 @@ case "${1:-}" in
                     echo '{"reviewDecision":"APPROVED","latestReviews":[{"state":"APPROVED"}]}'
                     exit 0
                 fi
+                if [[ "$*" == *"--json state,headRefOid,headRefName,mergeCommit,autoMergeRequest"* ]]; then
+                    jq -cn \
+                        --arg state "${STUB_POST_STATE:-OPEN}" \
+                        --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \
+                        --arg branch "${STUB_HEAD_BRANCH:-issue-123}" \
+                        --arg commit "${STUB_MERGE_COMMIT:-}" \
+                        --argjson auto "${STUB_POST_AUTO_JSON:-null}" \
+                        '{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto}'
+                    exit 0
+                fi
+                ;;
+            merge)
+                if [[ "$*" != *"--match-head-commit ${STUB_HEAD:-test-head}"* ]]; then
+                    echo "missing exact --match-head-commit guard" >&2
+                    exit 43
+                fi
+                if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
+                    echo "missing effective token for merge" >&2
+                    exit 44
+                fi
+                echo "merge command accepted"
+                exit "${STUB_MERGE_EXIT:-0}"
                 ;;
             checks)
                 printf '%s\n' "${STUB_CHECKS:?}"
@@ -90,6 +145,10 @@ chmod +x "$TMPDIR/bin/gh"
 
 run_check() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --check)
+}
+
+run_merge() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --auto --keep-branch)
 }
 
 echo "=== pr-merge --check CI classification ==="
@@ -164,6 +223,93 @@ checks='[
 out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_check)
 assert_eq "$(jq -r .can_merge <<<"$out")" "false" "current-run CANCELLED still blocks merge"
 assert_contains "$out" "ci_failed: Integration (CANCELLED)" "current-run CANCELLED reported as ci_failed"
+
+echo
+echo "=== pr-merge post-mutation outcomes (vstack#608) ==="
+
+checks='[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]'
+
+# Exact Hyprtrade PR #263 false-negative shape at head
+# 28132e9b990a595417f79f4e213b4e984bf676fd: gh accepted the guarded
+# mutation, the PR remained OPEN, autoMergeRequest was null, and the active
+# mergeQueueEntry was authoritative proof that the operation succeeded.
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_HEAD="28132e9b990a595417f79f4e213b4e984bf676fd" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON='{"state":"QUEUED"}' \
+    STUB_POST_QUEUE_STATE=QUEUED \
+    STUB_REQUIRE_TOKEN=true \
+    GH_BOT_TOKEN=ghp_test_token \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "75" "active mergeQueueEntry is success-pending"
+assert_contains "$out" "QUEUED IN MERGE QUEUE PR #123" "merge-queue outcome is explicit"
+assert_contains "$out" "queueState=QUEUED" "merge-queue state is preserved"
+
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON='{"enabledAt":"2026-07-15T00:00:00Z"}' \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "75" "classic auto-merge remains success-pending"
+assert_contains "$out" "AUTO-MERGE ENABLED PR #123" "classic auto-merge outcome is distinct"
+
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_POST_STATE=MERGED \
+    STUB_MERGE_COMMIT=merged-oid \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "0" "immediate direct merge remains success"
+assert_contains "$out" "MERGED PR #123" "merged outcome remains explicit"
+
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "OPEN and genuinely unqueued remains blocked"
+assert_contains "$out" "mergeQueue=false" "blocked outcome names absent queue proof"
+
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_HEAD=guarded-head \
+    STUB_POST_HEAD=newer-unreviewed-head \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_IN_QUEUE=true \
+    STUB_POST_QUEUE_ENTRY_JSON='{"state":"QUEUED"}' \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "post-call head drift fails closed"
+assert_contains "$out" "head changed during merge attempt" "head drift has clear diagnostic"
+
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_POST_GRAPHQL_FAIL=true \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON='{"enabledAt":"2026-07-15T00:00:00Z"}' \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "75" "classic auto-merge survives queue-query fallback"
+assert_contains "$out" "AUTO-MERGE ENABLED PR #123" "fallback preserves classic output"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
