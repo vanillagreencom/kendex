@@ -384,6 +384,58 @@ assert_path_exists "$RACE_ROOT/trees/issue-race/.git" "concurrent claim creates 
 assert_eq "$(git -C "$RACE_ROOT/main" worktree list --porcelain | grep -c '^branch refs/heads/issue-race$')" "1" "concurrent claim registers the issue branch once"
 assert_eq "$(git -C "$RACE_ROOT/main" config --get extensions.worktreeConfig)" "true" "concurrent loser does not prevent successful setup"
 
+echo "=== worktree create option/help parsing (#621) ==="
+
+# --help / -h print create-specific usage, exit 0, and create nothing. This is
+# the sibling of the remove --help fix (#619) at both create parse sites.
+CREATE_HELP_ROOT="$TMP_ROOT/create-help"
+make_repo "$CREATE_HELP_ROOT"
+export GH_STATE="$CREATE_HELP_ROOT/gh-state"
+set +e
+create_help_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create --help 2>"$CREATE_HELP_ROOT/help.err")
+create_help_code=$?
+set -e
+assert_eq "$create_help_code" "0" "create --help exits 0"
+assert_contains "$create_help_out" "Usage: " "create --help prints usage"
+assert_contains "$create_help_out" "--restack" "create --help lists the create-specific options"
+assert_path_absent "$CREATE_HELP_ROOT/trees" "create --help creates no worktree tree"
+
+set +e
+create_help_short_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create -h 2>"$CREATE_HELP_ROOT/help-short.err")
+create_help_short_code=$?
+set -e
+assert_eq "$create_help_short_code" "0" "create -h exits 0"
+assert_contains "$create_help_short_out" "Usage: " "create -h prints usage"
+assert_path_absent "$CREATE_HELP_ROOT/trees" "create -h creates no worktree tree"
+
+# Parse site 1: an option-looking first positional ($2) must fail, not become
+# the ISSUE and a trees/<id> path.
+set +e
+create_optid_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create --bogus 2>"$CREATE_HELP_ROOT/optid.err")
+create_optid_code=$?
+set -e
+assert_eq "$create_optid_code" "1" "create --bogus (option-looking issue ID) exits nonzero"
+assert_contains "$(cat "$CREATE_HELP_ROOT/optid.err")" "unknown option '--bogus'" "option-looking issue ID reports unknown option"
+assert_path_absent "$CREATE_HELP_ROOT/trees/--bogus" "option-looking issue ID never computes a trees/--bogus path"
+
+# Parse site 2: an unknown --flag in the option loop must fail, not be silently
+# captured as a branch name.
+set +e
+create_flag_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create issue-flagcheck --bogus 2>"$CREATE_HELP_ROOT/flag.err")
+create_flag_code=$?
+set -e
+assert_eq "$create_flag_code" "1" "create <id> --bogus exits nonzero"
+assert_contains "$(cat "$CREATE_HELP_ROOT/flag.err")" "unknown option '--bogus'" "unknown flag in the option loop reports unknown option"
+assert_path_absent "$CREATE_HELP_ROOT/trees/issue-flagcheck" "unknown flag creates no worktree"
+assert_branch_absent "$CREATE_HELP_ROOT/main" "issue-flagcheck" "unknown flag creates no branch"
+
+# Over-rejection guard: a legitimate positional branch name (not leading with
+# '-') must STILL be accepted alongside the issue ID.
+create_branch_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create issue-legit custom-branch-name)
+assert_eq "$create_branch_out" "$CREATE_HELP_ROOT/trees/issue-legit" "create <id> <branch> returns the worktree path"
+assert_path_exists "$CREATE_HELP_ROOT/trees/issue-legit/.git" "create <id> <branch> registers the worktree"
+assert_eq "$(git -C "$CREATE_HELP_ROOT/trees/issue-legit" branch --show-current)" "custom-branch-name" "create <id> <branch> uses the positional branch name"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

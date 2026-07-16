@@ -1196,7 +1196,30 @@ case "${1:-}" in
     ;;
 
   create)
+    if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+      echo "Usage: $0 create <ID> [BRANCH] [options]"
+      echo ""
+      echo "Create a worktree for an issue ID (resolved to trees/<id>), optionally with an"
+      echo "explicit branch-name positional."
+      echo ""
+      echo "Options:"
+      echo "  --base BRANCH   Checkout an existing remote branch into the worktree"
+      echo "  --from REF      Create a new branch starting from REF (branch, tag, or commit)"
+      echo "  --pr NUMBER     Look up the branch from a PR number (implies --base)"
+      echo "  --reuse         Explicitly reuse and update an existing issue worktree"
+      echo "  --restack       When reusing, stop in the conflict state for resolution"
+      echo "                  instead of aborting the rebase"
+      exit 0
+    fi
     ISSUE="${2:?Error: create requires an issue ID}"
+    # Reject an option-looking issue ID before it becomes the ISSUE and a
+    # trees/<id> path. Otherwise `create --typo` would compute trees/--typo and
+    # proceed to attempt creation instead of failing clearly (#621).
+    if [[ "$ISSUE" == -* ]]; then
+      echo "Error: unknown option '$ISSUE' for create" >&2
+      echo "Run: $0 create --help" >&2
+      exit 1
+    fi
     shift 2
     BASE=""
     BRANCH=""
@@ -1211,6 +1234,14 @@ case "${1:-}" in
         --pr) PR="$2"; shift 2 ;;
         --reuse) REUSE=true; shift ;;
         --restack) RESTACK=true; shift ;;
+        # An unknown --flag must fail rather than be silently captured as a
+        # branch name. A legitimate positional branch name (not leading with
+        # '-') still falls through to the permissive arm below (#621).
+        -*)
+          echo "Error: unknown option '$1' for create" >&2
+          echo "Run: $0 create --help" >&2
+          exit 1
+          ;;
         *) BRANCH="$1"; shift ;;
       esac
     done
