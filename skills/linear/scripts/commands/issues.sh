@@ -167,6 +167,9 @@ Update Options:
   --cycle <id>          Set cycle (sprint) ID
   --clear-cycle         Remove cycle assignment
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
+  --format <fmt>        Output format for the updated issue: safe | compact | ids |
+                        raw. When omitted, emits the mutation summary
+                        ({success, identifier, url, data}) as before.
 
 Relation Options (add-relation):
   --blocks <id>         This issue blocks another
@@ -1144,9 +1147,18 @@ update_issue() {
     local estimate=""
     local clear_estimate="false"
     local sort_order=""
+    local output_format=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --format)
+            output_format="$2"
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#--format=}"
+            shift
+            ;;
         --state | --status)
             state="$2"
             shift 2
@@ -1460,7 +1472,43 @@ update_issue() {
         read -r activity_type activity_severity < <(linear_update_activity_type "$normalized")
         emit_linear_issue_activity "$activity_type" "$activity_severity" "$normalized"
     fi
-    echo "$normalized"
+
+    # Output format. Default (no --format) preserves the historical mutation
+    # summary so existing callers that parse .success/.identifier/.data keep
+    # working. When --format is passed explicitly, emit the updated issue in the
+    # documented read format (safe is the README default), consistent with the
+    # query actions. `safe`/`compact` reuse the shared formatters by wrapping the
+    # mutation's issue in {issue: ...}; a response that omitted the issue object
+    # falls back to the mutation summary.
+    local wrapped_issue=""
+    if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
+        wrapped_issue=$(jq -n --argjson i "$updated_issue" '{issue: $i}')
+    fi
+    case "$output_format" in
+    safe)
+        if [[ -n "$wrapped_issue" ]]; then
+            format_issue_single "$wrapped_issue"
+        else
+            echo "$normalized"
+        fi
+        ;;
+    compact)
+        if [[ -n "$wrapped_issue" ]]; then
+            format_issue_compact "$wrapped_issue"
+        else
+            echo "$normalized"
+        fi
+        ;;
+    ids)
+        echo "$normalized" | jq -r '.identifier // empty'
+        ;;
+    raw)
+        echo "$result"
+        ;;
+    "" | *)
+        echo "$normalized"
+        ;;
+    esac
 }
 
 archive_issue() {
