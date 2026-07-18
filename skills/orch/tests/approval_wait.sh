@@ -33,6 +33,14 @@
 #  21. review mode text output names the review gate for reviewed,
 #      changes-requested, comments, timeout, and error — never "Approval"
 #      (vstack#649)
+#  check1-8: PR_REVIEW_CHECK check-run evidence (vstack#654) — a "success"
+#      conclusion of the configured check name on the CURRENT head opens the
+#      review gate (newest run of that name wins; review_evidence "check");
+#      stale-sha and failure conclusions do not; unresolved threads and a
+#      standing CHANGES_REQUESTED still block; empty PR_REVIEW_CHECK ignores
+#      check-runs entirely; the review-object path still works with the
+#      feature on (review_evidence "review"); text mode names the check-run
+#      and its app slug
 #  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
@@ -101,6 +109,11 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   Nudges: `pr comment` bodies and requested_reviewers POSTs append to
 #   STUB_NUDGE_LOG so tests can count them; STUB_REVIEW_REQUESTS=some makes
 #   `pr view --json reviewRequests` report one requested reviewer.
+#   Check-runs: `api repos/*/commits/<sha>/check-runs` answers per the sha in
+#   the URL — STUB_CHECKS_MODE=success_at_head/failure_at_head publishes a
+#   "Review Bot" run (older failure + newer terminal run, plus an unrelated
+#   "Other Check") on headsha1 only; success_stale publishes it on oldsha
+#   only, so the current-head query finds nothing.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -191,6 +204,25 @@ case "${1:-}" in
           echo '[]'
           ;;
       esac
+      exit 0
+    fi
+    if [[ "${2:-}" == repos/*/commits/*/check-runs ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      sha="${2##*/commits/}"
+      sha="${sha%/check-runs}"
+      mode="${STUB_CHECKS_MODE:-none}"
+      run_sha="headsha1"
+      [[ "$mode" == "success_stale" ]] && run_sha="oldsha"
+      conclusion="success"
+      [[ "$mode" == "failure_at_head" ]] && conclusion="failure"
+      if [[ "$mode" != "none" && "$sha" == "$run_sha" ]]; then
+        # Older same-name failure + newer terminal run of "Review Bot" (the
+        # newest of the name must win) + an unrelated always-green check (the
+        # name filter must exclude it).
+        printf '{"total_count":3,"check_runs":[{"name":"Review Bot","conclusion":"failure","started_at":"2026-01-01T00:00:00Z","app":{"slug":"review-bot"}},{"name":"Review Bot","conclusion":"%s","started_at":"2026-01-02T00:00:00Z","app":{"slug":"review-bot"}},{"name":"Other Check","conclusion":"success","started_at":"2026-01-03T00:00:00Z","app":{"slug":"other-app"}}]}\n' "$conclusion"
+      else
+        echo '{"total_count":0,"check_runs":[]}'
+      fi
       exit 0
     fi
     if [[ "${2:-}" == "graphql" ]]; then
@@ -632,6 +664,103 @@ rc=$?
 set -e
 assert_eq "$rc" "3" "case21e: text-mode review auth failure exits 3" "$stderr"
 assert_contains "$output" "Review error: no working GitHub auth path" "case21e: review-mode error names the review gate"
+
+echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
+
+# Check 1: with PR_REVIEW_CHECK set and no review object anywhere, a "success"
+# conclusion of that check name on the current head opens the gate. The stub
+# payload also pins newest-of-name selection (an older failed "Review Bot" run
+# precedes the success) and name filtering (an unrelated green check exists).
+stderr="$TMP_ROOT/check1.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "check1: trusted check success at head exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "reviewed" "check1: status reviewed via check evidence" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence')" "check" "check1: review_evidence pinned to check" "$stderr"
+assert_eq "$(json_field "$output" '.reviews_at_head')" "0" "check1: no review object at head" "$stderr"
+assert_eq "$(json_field "$output" '.head_sha')" "headsha1" "check1: head_sha reported" "$stderr"
+
+# Check 2: a check success on a STALE sha never opens the gate — the query
+# targets the current head's check-runs, which report nothing.
+stderr="$TMP_ROOT/check2.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_stale \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "check2: stale-sha check success exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "check2: stale-sha check success times out" "$stderr"
+
+# Check 3: a non-success conclusion of the configured check is not evidence.
+stderr="$TMP_ROOT/check3.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=failure_at_head \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "check3: failed check conclusion exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "check3: failed check conclusion times out" "$stderr"
+
+# Check 4: unresolved threads still block — check evidence routes to the same
+# "comments" early return as a review object would.
+stderr="$TMP_ROOT/check4.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head \
+  PR_REVIEW_CHECK="Review Bot" STUB_THREADS_UNRESOLVED=2 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "check4: check success + open threads exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "comments" "check4: status comments despite check success" "$stderr"
+assert_eq "$(json_field "$output" '.unresolved_count')" "2" "check4: unresolved_count reported" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 3')" "true" "check4: comments returns early, not at deadline" "$stderr"
+
+# Check 5: a standing CHANGES_REQUESTED still blocks despite check success.
+stderr="$TMP_ROOT/check5.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=changes_standing STUB_CHECKS_MODE=success_at_head \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "check5: standing CHANGES_REQUESTED exits 1 despite check success" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "changes_requested" "check5: status changes_requested despite check success" "$stderr"
+
+# Check 6: empty PR_REVIEW_CHECK ignores check-runs entirely — the published
+# success must not leak into the gate when the feature is off.
+stderr="$TMP_ROOT/check6.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "check6: empty PR_REVIEW_CHECK exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "check6: empty PR_REVIEW_CHECK ignores check-runs" "$stderr"
+
+# Check 7: the review-object path still works with the feature on, and wins
+# the review_evidence label when a review is pinned to the head.
+stderr="$TMP_ROOT/check7.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=commented_at_head STUB_CHECKS_MODE=none \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "check7: review object still opens the gate with the feature on" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "reviewed" "check7: status reviewed via review object" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence')" "review" "check7: review_evidence pinned to review" "$stderr"
+assert_eq "$(json_field "$output" '.reviews_at_head')" "1" "check7: reviews_at_head counted" "$stderr"
+
+# Check 8: text mode names the satisfying check-run and its app slug.
+stderr="$TMP_ROOT/check8.err"
+set +e
+output=$(run_review_text STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "check8: text-mode check evidence exits 0" "$stderr"
+assert_contains "$output" "Review: reviewed" "check8: text mode still prints the reviewed line" "$stderr"
+assert_contains "$output" "check-run 'Review Bot'" "check8: text mode names the check-run" "$stderr"
+assert_contains "$output" "app: review-bot" "check8: text mode records the publishing app slug" "$stderr"
 
 echo "=== approval-wait --resolve-mode precedence ==="
 
