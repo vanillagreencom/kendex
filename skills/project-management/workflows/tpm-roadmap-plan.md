@@ -72,12 +72,12 @@ For each proposed issue:
 
 ### 1.5 Fetch All Issues
 
-1. **Fetch issues** for each project:
+1. **Fetch issues** across ALL projects in ONE command (never loop `--project` per project — restricted harness approval policies reject loop-shaped commands):
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress,In Review,Done" --max
+   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
    ```
 
-2. **Store** for comparison: `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]`.
+2. **Store** for comparison: `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]`. Each row already carries its `project` name.
 
 ### 1.6 Read Research Context
 

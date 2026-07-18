@@ -75,6 +75,7 @@ Reads go through `cache`. Writes go through live commands (auto-update cache via
 ```bash
 # READS → cache (fast, no API calls)
 linear.sh cache issues list --project "Phase 2" --state "Todo,In Progress"
+linear.sh cache issues list --all-projects --state "Backlog,Todo" --max --format=compact
 linear.sh cache issues get ABC-100 --with-bundle
 
 # WRITES → live (hit API, auto-update cache)
@@ -85,6 +86,8 @@ linear.sh issues update ABC-100 --state "Done"
 linear.sh sync --reconcile      # Incremental + reconcile archived
 linear.sh sync --full           # Full re-sync
 ```
+
+`cache issues list --all-projects` enumerates every project in ONE command — each row carries its `project` name, and other filters (`--state`, `--max`, `--format`) compose. Use it for cross-project comparison sets instead of looping `--project` per project; restricted harness approval policies reject loop-shaped commands. Mutually exclusive with `--project`.
 
 ## Output Formats
 

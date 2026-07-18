@@ -22,9 +22,14 @@ Linear Cache Query - Read from local cache
 Usage: cache-query.sh <resource> <action> [options]
 
 Issues:
-  issues list [--project X] [--state Y] [--label Z] [--cycle N|UUID|current|previous|next]
+  issues list [--project X | --all-projects] [--state Y] [--label Z]
+              [--cycle N|UUID|current|previous|next]
               [--updated-since Nd] [--search REGEX] [--max] [--include-archived]
               [--format=safe|compact|ids|table]
+              --all-projects enumerates every project in ONE command (each row
+              carries its project name; rows without a project carry ""). Use it
+              instead of looping per project — restricted harnesses reject loop
+              shapes. Mutually exclusive with --project.
   issues get <ID> [--with-bundle] [--format=safe|compact|raw]
   issues children <ID> [--recursive] [--pending] [--format=safe|ids]
   issues list-relations <ID>
@@ -57,6 +62,7 @@ All output uses the same formatters as live API commands.
 
 Examples:
   cache-query.sh issues list --project "Phase 2" --format=compact
+  cache-query.sh issues list --all-projects --state "Backlog,Todo" --max --format=compact
   cache-query.sh issues get PROJ-100 --with-bundle
   cache-query.sh projects list --state started
   cache-query.sh status
@@ -70,6 +76,7 @@ EOF
 cache_list_issues() {
     local project="" state="" label="" updated_since="" search="" cycle=""
     local include_archived="false" paginate_all="false" limit="75"
+    local all_projects="false"
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -82,6 +89,13 @@ cache_list_issues() {
             project="$2"
             shift 2
             ;; # treated same — filter by project.id or project.name
+        --all-projects)
+            # Explicit batch enumeration across every project in one command.
+            # Harness approval classifiers reject per-project shell loops, so
+            # audit workflows load the full comparison set through this flag.
+            all_projects="true"
+            shift
+            ;;
         --state | --status)
             state="$2"
             shift 2
@@ -139,6 +153,11 @@ cache_list_issues() {
         *) shift ;;
         esac
     done
+
+    if [[ "$all_projects" == "true" && -n "$project" ]]; then
+        echo '{"error": "--all-projects cannot be combined with --project/--project-id: it already enumerates every project"}' >&2
+        return 1
+    fi
 
     # Build jq filter chain
     local jq_filter='.'

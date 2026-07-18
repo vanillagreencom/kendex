@@ -98,12 +98,12 @@ For proposed issues, use provided fields directly.
 
 ### 1.5 Fetch Comparison Set
 
-**Linear (TRACKER=linear)** — fetch issues from ALL projects (from 1.3) for duplicate/obsolete/fit checking:
+**Linear (TRACKER=linear)** — fetch issues from ALL projects for duplicate/obsolete/fit checking in ONE command:
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress,In Review,Done" --max
+.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
-Run for each project. Store all issues for comparison in 6.
+Each row carries its `project` name. Never loop `--project` over the projects from 1.3 — restricted harness approval policies reject loop-shaped commands, and the single `--all-projects` call returns the same rows. Store all issues for comparison in 6.
 
 **Why all projects**: Cross-project duplicate detection, obsolete checking against completed work, and project fit evaluation all require visibility into the full backlog.
 
