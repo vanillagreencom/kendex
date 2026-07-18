@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { gitCommitTargets, nearestCargoManifestDir, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
+import { gitCommitTargets, isBareCd, nearestCargoManifestDir, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
 
 function runGit(args: string[], cwd: string): void {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -377,5 +377,21 @@ describe("nearestCargoManifestDir", () => {
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("bare cd detection", () => {
+	test("matches a bare cd but not a scoped or chained one", () => {
+		expect(isBareCd("cd /tmp")).toBe(true);
+		expect(isBareCd("  cd sub/dir")).toBe(true);
+		expect(isBareCd("(cd /tmp && ls)")).toBe(false);
+		expect(isBareCd("cd /tmp && ls")).toBe(false);
+	});
+
+	test("read-only searches with backtick-bearing patterns are never bare cd (vstack#668)", () => {
+		expect(isBareCd('rg -n "`vstack refresh`" skills/')).toBe(false);
+		expect(isBareCd("rg -n '`vstack refresh`' skills/")).toBe(false);
+		expect(isBareCd("rg -n '\\x60vstack refresh\\x60' skills/")).toBe(false);
+		expect(isBareCd("rg -n '[\\x60]jq' skills/")).toBe(false);
 	});
 });

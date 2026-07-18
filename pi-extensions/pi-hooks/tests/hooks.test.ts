@@ -397,3 +397,29 @@ describe("pi-hooks pre-commit tool_call", () => {
 		});
 	});
 });
+
+describe("pi-hooks bash guard passthrough", () => {
+	test("passes reviewer searches whose patterns contain backticks (vstack#668)", async () => {
+		const project = initCleanRustRepo("pi-hooks-project-");
+		try {
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: 'rg -n "`vstack refresh`" skills/' } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "rg -n '\\x60vstack refresh\\x60' skills/" } }, { cwd: project })).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("still blocks a bare cd", async () => {
+		const project = initCleanRustRepo("pi-hooks-project-");
+		try {
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "cd /tmp" } }, { cwd: project })).toEqual({
+				block: true,
+				reason: "Bare 'cd' changes working directory permanently across tool calls. Use a subshell instead: (cd /path && command)",
+			});
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});

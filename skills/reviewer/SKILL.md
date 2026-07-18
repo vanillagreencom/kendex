@@ -101,6 +101,12 @@ Codex classifies every one of these shapes as approval-required even when the un
 
 Validate by exit status, not by redirection. Run the predicate as a bare command and rely on its exit code; the parsed output printed to stdout is harmless, so do NOT suppress it. To check a JSON artifact, run `jq -e <filter> <path>` — its exit status IS the check. For example, `jq -e . tmp/review-x.json` ✓ is correct, whereas `jq -e . tmp/review-x.json >/dev/null` ✗ is rejected under Codex `approval=never` even though it only reads the file.
 
+Searching backtick-bearing text (e.g. Markdown inline code) must not put a literal backtick in the command: command-shape guards classify any backtick as command substitution and reject the command before it runs, even for a read-only search — inside double quotes the substitution would be real. Write the pattern with the regex hex escape `\x60` in single quotes instead; it matches a backtick without one appearing in the command (inside a bracket expression, use `[\x60]`). Fixed-string mode (`rg -F`) has no escapes and would need a literal backtick, so use regex mode:
+
+```bash
+rg -n '\x60vstack refresh\x60' skills/
+```
+
 Batch independent checks as separate tool calls (or parallel independent execs) instead of shell composition.
 
 ## Configuration
