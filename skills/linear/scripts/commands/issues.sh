@@ -2765,6 +2765,13 @@ main() {
         echo "  linear.sh cache comments list [ISSUE_ID]" >&2
         exit 1
         ;;
+    view | show)
+        echo "Error: Unknown action '$action' — supported issue lookups:" >&2
+        echo "  linear.sh issues get [ISSUE_ID]" >&2
+        echo "  linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2]   # live state (post-mutation verification)" >&2
+        echo "  linear.sh cache issues get [ISSUE_ID]                 # cache read" >&2
+        exit 1
+        ;;
     help | --help | -h)
         show_help
         ;;

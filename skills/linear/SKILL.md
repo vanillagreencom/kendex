@@ -57,6 +57,8 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 
 Compatibility aliases: `issues relations` maps to `issues list-relations`, and `projects dependencies` maps to `projects list-dependencies`. Prefer the explicit action names in new workflows.
 
+There is no `view` or `show` action. Single-issue lookups are `issues get <ID>` (live) or `cache issues get <ID>` (cache); multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`. For post-mutation verification, use live `issues bulk-get` — it returns fresh state for every mutated issue in one command.
+
 ## Hierarchy
 
 ```

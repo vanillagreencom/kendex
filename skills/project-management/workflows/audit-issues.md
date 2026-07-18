@@ -774,7 +774,27 @@ For each issue canceled during § 7.1 or § 7.2 (superseded, obsolete, or duplic
    - GitHub: `gh issue edit [N] --repo [OWNER/REPO] --title "[UPDATED]"` and the § 7.2 body-edit route for descriptions
    - Comment (either tracker): `"Updated: [OLD] → [NEW] per [DECISION_ID]"`
 
-### 7.5 Relation Direction Reference
+### 7.5 Post-Mutation Verification
+
+After executing the approved actions, re-fetch every mutated issue with a supported read-only command and confirm the changes landed (state, labels, parent, project, relations, description) before presenting § 8. Use only the commands below -- the Linear CLI has no `view` action; do not improvise one.
+
+**Linear (TRACKER=linear)** -- one live fetch returns fresh post-mutation state for all mutated issues:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe
+```
+
+For a single issue, `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]` is also supported -- mutations write through to the cache.
+
+**GitHub (TRACKER=github)** -- per mutated issue:
+
+```bash
+gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels,state,url
+```
+
+Report any mismatch between an approved action and the re-fetched state in § 8 -- do not silently accept it.
+
+### 7.6 Relation Direction Reference
 
 **Project mode**: `from` → relation → `to` (from `findings.add_relations[]`)
 

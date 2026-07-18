@@ -1078,6 +1078,10 @@ main() {
         validate-completion) cache_validate_completion "$@" ;;
         bulk-get) cache_bulk_get_issues "$@" ;;
         --help | -h) show_help ;;
+        view | show)
+            echo "{\"error\": \"Unknown issues action: $action. Cache lookups are 'cache issues get [ISSUE_ID]' or 'cache issues bulk-get [ID_1] [ID_2]'; live lookups are 'issues get' / 'issues bulk-get'.\"}" >&2
+            return 1
+            ;;
         *)
             echo "{\"error\": \"Unknown issues action: $action\"}" >&2
             return 1
