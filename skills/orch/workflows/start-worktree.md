@@ -135,7 +135,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
    | PR comment fixes | [PR_FIXES] |
    | PR comment issues | [PR_ISSUES] |
    | CI | ✅ passing |
-   | Approval | ✅ approved / ⏳ pending / forced |
+   | Approval | ✅ approved / ⏳ pending / forced / off (no reviewer policy) |
    | Unresolved threads | 0 |
 
    ### Issues Created

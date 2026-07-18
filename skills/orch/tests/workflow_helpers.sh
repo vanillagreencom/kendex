@@ -139,6 +139,16 @@ for workflow in "$submit_workflow" "$comments_workflow"; do
   assert_file_not_contains "$workflow" 'printenv BOT_REVIEWERS' "$workflow_name avoids optional reviewer probing"
 done
 
+# vstack#638 — PR_APPROVAL_GATE: reviewer-less repos can disable the approval
+# merge gate explicitly; the workflows must read the toggle via orch-env and
+# document the off semantics (skip wait, not-applicable gate, informational
+# not_approved). Auto-detection is forbidden by design.
+assert_file_contains "$submit_workflow" 'orch-env PR_APPROVAL_GATE on' "submit-pr reads the approval-gate toggle via orch-env"
+assert_file_contains "$submit_workflow" 'pr_approval.gate' "submit-pr records the off gate as not applicable"
+assert_file_contains "$submit_workflow" 'no auto-detection' "submit-pr states the toggle is explicit config only"
+assert_file_contains "$merge_workflow" 'orch-env PR_APPROVAL_GATE on' "merge-pr reads the approval-gate toggle"
+assert_file_contains "$merge_workflow" 'informational only' "merge-pr demotes not_approved when the gate is off"
+
 # vstack#538 — bot reviews are async and bot-review-wait is RETIRED: no
 # workflow may reference it, and bot-SPECIFIC prose (emoji reactions, sticky
 # comments, checklist text) is never parsed as a gate. Local second-opinion
@@ -190,7 +200,7 @@ assert_file_contains "$merge_workflow" 'git-https-auth -C [MAIN_REPO_ROOT] fetch
 assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards to quoted fetched origin base branch with plain git"
 assert_file_not_contains "$merge_workflow" 'branch -D "$PR_BRANCH"' "merge-pr § 5a no longer force-deletes the PR branch unconditionally"
 assert_file_contains "$merge_workflow" 'branch refs/heads/[PR_BRANCH]' "merge-pr § 5a guards branch delete against worktree checkout"
-assert_file_contains "$merge_workflow" '`not_approved` — a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate, not advice"
+assert_file_contains "$merge_workflow" 'Otherwise a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate when the toggle is on"
 assert_file_contains "$merge_workflow" 'pr-merge [PR_NUMBER] --auto' "merge-pr re-runs check/queue-blocked merges with pr-merge --auto"
 assert_file_contains "$merge_workflow" 'QUEUED FOR AUTO-MERGE' "merge-pr treats pr-merge exit 75 as success-pending"
 assert_file_contains "$merge_workflow" 'gh pr view [PR_NUMBER] --json state,mergedAt' "merge-pr watches queued merges via PR state on a bounded poll"

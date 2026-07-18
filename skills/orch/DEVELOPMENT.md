@@ -29,6 +29,8 @@ their SSH failures should not block branch cleanup or tracker closure.
 
 ## Approval Wait
 
+`PR_APPROVAL_GATE` (project `vstack.settings.toml` `[env]`, default `on`) governs whether the approval verdict gates merges at all: `off` is for repos with no review bots and no reviewer policy — submit-pr § 4 skips the wait and records the gate as not applicable, and merge-pr demotes `not_approved` to informational. Explicit configuration only: an empty requested-reviewer list cannot distinguish "no review bot" from "bot has not reviewed yet," so the tool never auto-detects.
+
 `approval-wait` replaced `bot-review-wait` in #538. The old waiter parsed bot-specific signals — sticky-comment verdicts, checklist state, emoji reactions — which coupled the merge path to each bot's signaling dialect and provider quota. The new poller reads only GitHub-native review state:
 
 - `gh pr view --json reviewDecision,latestReviews` — approved when `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty because no required-review branch protection exists, when at least one reviewer's latest review is APPROVED and none is CHANGES_REQUESTED. `REVIEW_REQUIRED` never falls back to `latestReviews` — branch protection is still waiting on required approvals. COMMENTED and DISMISSED latest reviews neither approve nor block. Any reviewer counts — human or bot — as long as it posts a formal GitHub review.

@@ -133,7 +133,7 @@ PR #N ready with warnings:
 Two of the warnings are merge gates, not advice:
 
 - `unresolved_threads` — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first; merge past unresolved threads only on explicit user override.
-- `not_approved` — a GitHub-native approval verdict is required: `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED (any reviewer counts, human or bot). Without it, do not auto-merge: poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json` or ask the user; merge past a missing approval only on explicit user override (`Force merge`).
+- `not_approved` — first read the project policy with `.agents/skills/orch/scripts/orch-env PR_APPROVAL_GATE on`; when it prints `off` (reviewer-less repo), `not_approved` is informational only — do not gate on it. Otherwise a GitHub-native approval verdict is required: `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED (any reviewer counts, human or bot). Without it, do not auto-merge: poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json` or ask the user; merge past a missing approval only on explicit user override (`Force merge`).
 
 Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates; only the GitHub-native approval verdict and thread resolution count.
 
@@ -286,7 +286,7 @@ merge. Detach them first.
    The printed value is `MAX_CYCLES` — the effective `CI_FIX_MAX_CYCLES` (process env > `vstack.settings.toml` `[env]` > default 6; non-numeric falls back to 6). Max [MAX_CYCLES] recovery cycles per merge-pr run (a session-scoped count, parallel to ci-fix's own internal cycle cap); at the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 3-6 and hand back to the user.
 
    1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`. For a queue ejection the failing run is the **merge-group** run (workflow event `merge_group`), not necessarily the PR-head run — locate it via the failing run link in the PR's checks or `gh run list --event merge_group --limit 10`, and point ci-fix's log fetching at that run.
-   2. **Re-confirm approval** after ci-fix pushed a fix — pushes can dismiss reviewer approvals:
+   2. **Re-confirm approval** after ci-fix pushed a fix — pushes can dismiss reviewer approvals (skip when `PR_APPROVAL_GATE` is `off`):
       ```bash
       .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json
       ```

@@ -40,6 +40,11 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # review approval (approval-gated jobs / merge queue) with slow dispatch.
 
 CI_FIX_MAX_CYCLES = "6"
+
+# Approval merge gate: "on" requires a GitHub-native review approval before
+# merge (orch submit-pr/merge-pr). Set "off" ONLY for repos with no review
+# bots and no reviewer policy — the approval wait is skipped entirely.
+PR_APPROVAL_GATE = "on"
 # Used by: orch (`submit-pr` / `merge-pr`). Max automated ci-fix cycles per PR
 # submission or merge recovery before reporting the persistent CI failure back
 # to the user.

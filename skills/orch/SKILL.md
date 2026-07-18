@@ -156,6 +156,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr § 4 approval-gate poller; never parses bot reactions or sticky prose |
 | `ci-wait` | Block until CI completes on a PR — runs after the approval gate; correlates the current-head substantive run with custom aggregate status, and `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds unregistered checks |
+| `PR_APPROVAL_GATE` | `on` requires the GitHub-native approval verdict (gate 4); `off` = reviewer-less repo, approval wait skipped and gate recorded not-applicable (default `on`) |
 | `orch-env` | Print the effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > supplied default; numeric defaults reject non-numeric values) — how workflows read `CI_FIX_MAX_CYCLES` |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
