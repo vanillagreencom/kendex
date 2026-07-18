@@ -158,6 +158,11 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 ### 5.5 Shutdown Team
 
 1. Terminate all still-active agents from `child_sessions` in workflow state.
+2. Retire the terminated records so reviewer slot accounting (`review-pr.md` § 2) stops counting them:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
+   ```
 
 ### 5.6 Offer Merge
 

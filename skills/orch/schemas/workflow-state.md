@@ -90,7 +90,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `branch` | string | Git branch name |
 | `team_name` | string | Agent team name (optional, for recovery) |
 | `qa_labels` | string[] | QA trigger labels from dev return |
-| `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}` |
+| `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}`. `status` is `"active"` while the session is live (`dev-start.md` § 2 stamps it at spawn) and `"closed"` once the caller's shutdown step retires it (`start-worktree.md` § 5.5). Reviewer slot accounting treats a record with a missing `status` field as active — legacy records predate the field (vstack#698) |
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, fallback}}`; records Codex `worker` fallback without changing logical keys |

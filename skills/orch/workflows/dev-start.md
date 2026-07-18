@@ -104,8 +104,10 @@ Before each implementation delegation, capture the current `HEAD`:
 
 **After each spawn**, persist the agent session:
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
 ```
+
+`"status": "active"` marks the session live for reviewer slot accounting (`review-pr.md` § 2 counts active child sessions when computing wave sizes) — omitting it makes a live dev agent free a phantom reviewer slot (vstack#698). Only the caller's finalization step retires the record (`start-worktree.md` § 5.5 sets `status` to `"closed"`).
 
 ### If Single Issue
 

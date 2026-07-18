@@ -364,7 +364,7 @@ Re-delegate for review fix, QA fix, comment fix, or CI fix cycles. Each re-deleg
 
 #### Review Agent Lifecycle Management
 
-Reviewer persistence is budget-conditional: persistent when the budget allows, waves when it does not. `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's total concurrent agent-session budget, counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 (primary) − live persistent agent sessions (`child_sessions` entries with status `active`), minimum 1. Recompute at every review-cycle start — live sessions change between cycles.
+Reviewer persistence is budget-conditional: persistent when the budget allows, waves when it does not. `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's total concurrent agent-session budget, counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 (primary) − live persistent agent sessions (`child_sessions` entries with status `active`; a record with no `status` field counts as active — legacy records predate the status stamp), minimum 1. Recompute at every review-cycle start — live sessions change between cycles.
 
 **Persistent mode** (unlimited budget, or the reviewer set fits the available slots) — review agents persist across fix → re-review cycles:
 - Read `review_agents` and `review_agent_ids` before spawning.

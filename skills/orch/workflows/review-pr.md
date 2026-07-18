@@ -103,8 +103,10 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: `4`). If `SLOT_BUDGET` is `0`, use **persistent mode** — today's semantics: every reviewer launches before the coordinated delegation batch and stays alive through fix/re-review cycles. Otherwise count the live persistent agent sessions:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.child_sessions // {} | [to_entries[] | select(.value.status == "active")] | length'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length'
 ```
+
+A record with no `status` field counts as active — legacy child-session records written before the `status` stamp (vstack#698) persist in workflow-state files, and an unretired record means a live dev/QA session holding a slot.
 
 Use the output as `LIVE_AGENTS`, then compute `REVIEWER_SLOTS = SLOT_BUDGET - 1 - LIVE_AGENTS` (minimum `1`; the `1` is this primary session). If the `[AGENTS]` count fits within `REVIEWER_SLOTS`, use persistent mode. If it exceeds `REVIEWER_SLOTS`, use **wave mode**: run reviewers in sequential waves of up to `REVIEWER_SLOTS` (§ 2.2), retiring each completed session to release its slot. One policy, two modes: persistent when the budget allows, waves when it does not. Recompute the mode at every § 2 entry — live sessions change between cycles.
 

@@ -368,6 +368,27 @@ assert_file_contains "$reviewer_review_workflow" 'decision-path provenance rule'
 assert_file_contains "$reviewer_review_workflow" 'do not hunt for the intended file' "reviewer review workflow stops reviewers from burning a cycle on bad paths"
 assert_file_contains "$reviewer_review_workflow" 'decisions search "[RELEVANT_KEYWORDS]"' "reviewer review workflow routes recovery through the decider CLI"
 
+# vstack#698 — dev-session status in reviewer slot accounting: the dev-start
+# persistence write recorded child_sessions without a status field while the
+# review-pr live-session query counted only status == "active", so a live
+# persistent dev agent freed a phantom slot and reviewer fan-out hit the
+# runtime thread limit. Both sides are fixed for defense in depth: the writer
+# stamps status "active", the reader defaults a missing status to active
+# (legacy records persist in workflow-state files across sessions), the
+# schema documents the back-compat rule, and the start-worktree shutdown
+# step retires records to "closed".
+dev_start_workflow="$REPO_ROOT/skills/orch/workflows/dev-start.md"
+start_worktree_workflow="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
+assert_file_contains "$dev_start_workflow" '.child_sessions["[AGENT_TYPE]"] = {"status": "active"' "dev-start persistence write stamps status active"
+assert_file_contains "$dev_start_workflow" 'marks the session live for reviewer slot accounting' "dev-start explains why the status stamp matters"
+assert_file_contains "$review_pr_workflow" '(.value.status // "active") == "active"' "review-pr live-session count defaults a missing status to active"
+assert_file_not_contains "$review_pr_workflow" 'select(.value.status == "active")' "review-pr drops the strict status match that missed legacy records"
+assert_file_contains "$review_pr_workflow" 'record with no `status` field counts as active' "review-pr documents the legacy-record back-compat rule"
+assert_file_contains "$state_schema" 'missing `status` field as active' "workflow-state schema documents missing-status-means-active"
+assert_file_contains "$state_schema" '"status": "active"' "workflow-state schema example shows an active child session"
+assert_file_contains "$start_worktree_workflow" '.value.status = "closed"' "start-worktree shutdown retires child sessions to closed"
+assert_file_contains "$orch_skill" 'a record with no `status` field counts as active' "orch skill slot-accounting note carries the back-compat rule"
+
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
 assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"
