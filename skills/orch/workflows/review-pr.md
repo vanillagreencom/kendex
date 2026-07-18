@@ -86,6 +86,22 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
+**Resolve the reviewer slot budget** — some runtimes cap concurrent agent threads, so the full reviewer set may not fit alongside the primary and persistent dev/QA sessions:
+
+```bash
+.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
+```
+
+The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: `4`). If `SLOT_BUDGET` is `0`, use **persistent mode** — today's semantics: every reviewer launches before the coordinated delegation batch and stays alive through fix/re-review cycles. Otherwise count the live persistent agent sessions:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.child_sessions // {} | [to_entries[] | select(.value.status == "active")] | length'
+```
+
+Use the output as `LIVE_AGENTS`, then compute `REVIEWER_SLOTS = SLOT_BUDGET - 1 - LIVE_AGENTS` (minimum `1`; the `1` is this primary session). If the `[AGENTS]` count fits within `REVIEWER_SLOTS`, use persistent mode. If it exceeds `REVIEWER_SLOTS`, use **wave mode**: run reviewers in sequential waves of up to `REVIEWER_SLOTS` (§ 2.2), retiring each completed session to release its slot. One policy, two modes: persistent when the budget allows, waves when it does not. Recompute the mode at every § 2 entry — live sessions change between cycles.
+
+**Invariant (both modes)**: review state lives in on-disk report artifacts and workflow state, never in reviewer session memory. Retiring a completed reviewer loses nothing; a recreated reviewer re-reads the current diff and its prior report artifact, and `review_delegated_at` freshness gating is unchanged.
+
 **Codex runtime agent type rule**: When § 2.2 launches a reviewer, first call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys: persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason.
 
 Before any spawn, read existing reviewer state:
@@ -118,19 +134,31 @@ Prepare internal reviewer sessions before the coordinated delegation step:
 - For each reviewer in `REVIEWERS_TO_LAUNCH`, spawn it now. Follow the Codex runtime agent type rule above when running in Codex.
 - When writing `review_agent_runtime_types`, include preserved entries for reused reviewers and new/updated entries for reviewers launched in this step.
 
+**Wave mode** (§ 2 selected it) — do not launch the full set. On entry from § 2.1 (a new review cycle), reset the per-cycle wave tracking:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_wave_done '[]'
+```
+
+On re-entry from § 3.2 (next wave of the same cycle), skip the reset. Then:
+- `WAVE` = the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not listed in `review_wave_done`. Restrict this section's launch, state-write, and delegation steps to `[WAVE]`.
+- A retired reviewer has no session to reuse — recreate it fresh (`REVIEWERS_TO_LAUNCH = [WAVE]`), and write `review_agents`/`review_agent_ids`/`review_agent_runtime_types` with the live wave only.
+- If a spawn still fails with the runtime thread-limit error (Codex: `collab spawn failed: agent thread limit reached`), the budget is set too high for the live session count: continue with the reviewers that did spawn, fold the failed reviewer into a later wave, and use that smaller wave size for the rest of the cycle. If nothing spawned, report the misconfigured `REVIEWER_SLOT_BUDGET` to the user and stop.
+- A re-review delegation to a recreated reviewer MUST include the fresh-session block in the delegation prompt below — the recreated session has no memory of earlier cycles; state lives in artifacts, not session memory.
+
 After launch/reuse, store the active reviewer set:
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
-**Record delegation timestamp immediately before the actual delegation batch** — gates § 3.1 `review-artifact-check` acceptance against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap:
+**Record delegation timestamp immediately before the actual delegation batch** — gates § 3.1 `review-artifact-check` acceptance against stale JSONs from earlier cycles and output produced during reviewer spawn/bootstrap. In wave mode, re-stamp immediately before each wave's delegation batch — every prior-wave artifact is already validated and appended, so the fresh boundary gates only the in-flight wave:
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
 Start the coordinated delegation batch:
-- Delegate to each active reviewer in `[AGENTS]` in parallel.
-- **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the same parallel batch.
+- Delegate to each active reviewer in `[AGENTS]` in parallel. **Wave mode**: the active set is `[WAVE]` — delegate to each reviewer in the wave in parallel.
+- **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review in the same parallel batch. It is a shell command, not an agent session — it consumes no slot; in wave mode it joins only the first wave of the cycle.
 
 **Harness-specific batching:**
 - **Claude Code / Codex / OpenCode**: spawn reviewers via the harness sub-agent task API; run the external review shell command in the same delegation step.
@@ -152,7 +180,12 @@ Re-review cycle [N]. Already resolved — do NOT re-report:
 - Fixed: [For each fixed_item: "[DESCRIPTION] — fixed in [COMMIT_SHA]"]
 - Escalated: [For each escalated_item: "[DESCRIPTION] — [REASON]"]
 </if>
+<if re-review cycle and this reviewer session was recreated fresh (wave mode or respawn)>
+Fresh session — you have no memory of earlier cycles. Read your prior report [PRIOR_REPORT_PATH] and re-read the current diff before reviewing.
+</if>
 </delegation_format>
+
+`[PRIOR_REPORT_PATH]` is the reviewer's most recent `review-[AGENT]-*.json` path from state `json_paths`.
 
 **External review execution** (only if `EXTERNAL_REVIEW_REQUESTED=true`; default timeout: `SECOND_OPINION_TIMEOUT` env var or 300s):
 
@@ -180,11 +213,11 @@ mkdir -p [WORKTREE_PATH]/tmp
 
 ## 3. Collect Results (Watchdog)
 
-Do NOT shutdown reviewers — needed for re-review in § 4.
+**Persistent mode**: do NOT shutdown reviewers — needed for re-review in § 4. **Wave mode**: retire each reviewer as soon as its artifact validates (§ 3.1) so the slot frees for the next wave — § 2.2 recreates reviewers fresh for re-review; state lives in artifacts, not sessions.
 
 ### 3.1 Completion
 
-`OUTSTANDING = [AGENTS] ∪ ({external} if EXTERNAL_REVIEW_REQUESTED)`. An agent completes **only** when its on-disk artifact validates — a return message with `Verdict:`/`File:` lines is never sufficient by itself. Check deterministically:
+`OUTSTANDING = [AGENTS] ∪ ({external} if EXTERNAL_REVIEW_REQUESTED)`. **Wave mode**: `OUTSTANDING = [WAVE]` (∪ `{external}` in the cycle's first wave). An agent completes **only** when its on-disk artifact validates — a return message with `Verdict:`/`File:` lines is never sufficient by itself. Check deterministically:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
@@ -196,6 +229,11 @@ Run `review-artifact-check` on every return message and every watchdog sweep. It
 **If `ok == true`** — the agent is complete. Append `path` and drop from `OUTSTANDING`:
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
+```
+
+**Wave mode** — use this combined write instead, then shut the reviewer's session down (retiring each completed reviewer releases its slot for the next wave):
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.json_paths += ["[PATH]"] | .review_wave_done += ["[AGENT]"]'
 ```
 
 **If `ok == false` after a return message** — the return is **incomplete** (even if its `File:` path looks valid or the message body contains JSON). Send that agent **exactly one** re-delegation:
@@ -215,11 +253,16 @@ Per-agent deadline from `review_delegated_at`:
 | Event | Action |
 |-------|--------|
 | Return arrives | Run `review-artifact-check` (§ 3.1). `ok == true` → append `path`, remove from `OUTSTANDING`. `ok == false` → one re-delegation per § 3.1. |
-| 2 min after first return (or 10 min from delegation if zero returns yet) — once per cycle | Send each outstanding agent one ping: `Status check on [ISSUE_ID] review — return your verdict if complete, or report blocker.` |
+| 2 min after first return (or 10 min from delegation if zero returns yet) — once per cycle (wave mode: once per wave) | Send each outstanding agent one ping: `Status check on [ISSUE_ID] review — return your verdict if complete, or report blocker.` |
 | 2 min after ping | Mark each non-perf agent still in `OUTSTANDING` as `unresponsive`. |
 | Per-agent deadline reached | Mark that agent `unresponsive`. |
 
-Exit to § 3.3 when `OUTSTANDING` is empty (`unresponsive` counts as resolved).
+**Wave mode**: shut down an `unresponsive` reviewer's session as well, and record it — the slot must be released and the reviewer must not relaunch this cycle:
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] review_wave_done "[AGENT]"
+```
+
+When `OUTSTANDING` is empty (`unresponsive` counts as resolved): persistent mode → § 3.3. Wave mode → if any reviewer in `[AGENTS]` is missing from `review_wave_done`, return to § 2.2 for the next wave; otherwise → § 3.3.
 
 ### 3.3 Present Results
 
@@ -327,11 +370,13 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    b. Shutdown non-reporting agents. Keep reporting agents alive for potential fix cycles.
    c. Update state: `.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[REPORTERS_ONLY]'`
 
+   **Wave mode**: every reviewer session is already retired (§ 3.1) — skip step b; run steps a and c unchanged, and § 2.2 recreates reviewers fresh in waves on re-entry.
+
 ## 5. Verdict Pass
 
-1. **Shutdown review agents** — terminate all agents in state `review_agents`.
+1. **Shutdown review agents** — terminate all agents in state `review_agents`. (Wave mode: sessions are already retired — just clear the state.)
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {} | .review_wave_done = []'
    ```
 
 2. **Check skip_qa flag**:

@@ -32,6 +32,8 @@ Load IN ORDER before anything else. Do not proceed if any fails.
 >
 > Spawn generated vstack agents with `agent_type` set to the actual generated agent name and `fork_context: false`. Reviewers returned by `list-review-agents` must first spawn as `agent_type=<reviewer-name>`; dev agents selected from `agent:X` labels must first spawn as `agent_type=X`. Use `worker` only for an intentional generic-worker fallback, when no matching generated agent exists, when the selected agent is deliberately generic, or after the generated-agent spawn is attempted and the Codex spawn API rejects or does not expose that generated `agent_type`. In fallback, preserve the logical selected agent name in reports and workflow-state keys (`child_sessions[agent]`, `review_agent_ids[reviewer-name]`); record the runtime `agent_type=worker` and fallback reason separately in status and workflow state. Two-step pattern: (1) spawn the selected runtime agent with the `<bootstrap_format>` message, (2) `send_input` a `DELEGATION:` prefixed message containing exactly the filled `<delegation_format>` content — nothing more.
 >
+> The Codex collaboration runtime also caps concurrent agent threads — four total, counting this primary session; a spawn beyond the cap fails with `collab spawn failed: agent thread limit reached`. Set `REVIEWER_SLOT_BUDGET = "4"` in `vstack.settings.toml` `[env]` so review workflows compute the available reviewer slots and run reviewers in bounded waves when the set does not fit — see [Review Agent Lifecycle Management](#review-agent-lifecycle-management).
+>
 > For **Codex Desktop app handoff**, invoke `workflows/handoff.md` with `harness=codex-app`. When `handoff` receives multiple issues and the runtime exposes Codex app thread tools, default to `harness=codex-app` unless the user explicitly selected another harness. Before creating child threads, run the Codex app agent preflight to check whether tracked `.codex/agents/*.toml` files are present in the saved project branch, because setup hooks run too late for subagent type discovery. If preflight reports a warning, present the exact message and continue only after explicit user acceptance of the risk that child sessions may fall back to `worker`; stop only on a preflight `severity=error` or if the user declines. Create one Codex app thread per issue with `codex_app.create_thread`, target a worktree environment whose `startingState` is `type="branch"` with `branchName` set to the resolved base branch, start it with exactly `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID. Do not use a `working-tree` starting state for orch app handoff unless the user explicitly requests a dirty local snapshot; that path can start the child before generated Codex agents are visible and force `worker` fallback. Do not silently create degraded child threads; the user must accept the warning first. If the runtime separates thread creation from prompting, call `codex_app.send_message_to_thread` once with that same start prompt. The Codex CLI does not expose these tools; do not emulate app handoff with terminal launch, `codex debug app-server`, raw `codex app-server`, or manual app-thread instructions.
 
 > If you are running in **OpenCode**: The persistent identity of a spawned sub-agent is the `task_id` returned by `functions.task`. On first spawn, store that `task_id` in workflow state (`child_sessions[agent].agent_id` for dev/QA, `review_agent_ids[reviewer-name]` for reviewers). On re-delegation (fix cycles, re-review), call `functions.task(task_id=<stored_id>)` — never spawn a fresh task when a stored ID exists. Fresh spawn only if: no stored ID, one resume attempt fails, or the prior task is confirmed dead.
@@ -211,6 +213,7 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
+| `REVIEWER_SLOT_BUDGET` | Total concurrent agent-session budget of the runtime, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`). `0` = unlimited: all reviewers launch up front and persist. When the reviewer set exceeds the available slots (budget − primary − live dev/QA sessions), review workflows run reviewers in bounded waves. Codex collaboration runtime: `4` | `0` |
 
 ## System Dependencies
 
@@ -358,12 +361,19 @@ Re-delegate for review fix, QA fix, comment fix, or CI fix cycles. Each re-deleg
 
 #### Review Agent Lifecycle Management
 
-Review agents persist across fix → re-review cycles:
+Reviewer persistence is budget-conditional: persistent when the budget allows, waves when it does not. `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's total concurrent agent-session budget, counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 (primary) − live persistent agent sessions (`child_sessions` entries with status `active`), minimum 1. Recompute at every review-cycle start — live sessions change between cycles.
+
+**Persistent mode** (unlimited budget, or the reviewer set fits the available slots) — review agents persist across fix → re-review cycles:
 - Read `review_agents` and `review_agent_ids` before spawning.
 - Reuse the same reviewer by exact name if alive or recoverable.
 - Spawn only the missing/stuck subset — do not restart the full pool.
 - After fixes: selectively shut down non-reporting agents for low-risk changes; keep all if risk flags present.
 - Full shutdown when review passes; clear review agents state.
+
+**Wave mode** (the reviewer set exceeds the available slots) — reviewers run in sequential waves of up to the available slots:
+- Launch up to the available slots, wait for each validated report artifact, retire the completed session to release its slot, launch the next wave.
+- Re-review cycles reuse the same wave mechanics: a retired reviewer is recreated fresh, and its delegation must point it at the current diff and its prior report artifact.
+- **Invariant**: review state lives in on-disk report artifacts and workflow state, never in reviewer session memory. Retiring a completed reviewer loses nothing, and `review_delegated_at` + `review-artifact-check` freshness gating is unchanged (the timestamp is re-stamped per wave).
 
 QA agents spawn and shut down per-agent.
 

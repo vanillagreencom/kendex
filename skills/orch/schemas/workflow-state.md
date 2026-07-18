@@ -29,6 +29,7 @@ Persistent state file for orch workflows. Survives context compaction.
     "security-review": { "agent_type": "security-review", "fallback": null },
     "doc-review": { "agent_type": "worker", "fallback": "spawn_rejected_or_unavailable" }
   },
+  "review_wave_done": ["security-review"],
   "pre_delegate_sha": "abc123f",
   "skip_qa": false,
   "cycles": 0,
@@ -88,9 +89,10 @@ Persistent state file for orch workflows. Survives context compaction.
 | `team_name` | string | Agent team name (optional, for recovery) |
 | `qa_labels` | string[] | QA trigger labels from dev return |
 | `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}` |
-| `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles |
+| `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, fallback}}`; records Codex `worker` fallback without changing logical keys |
+| `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave (`review-pr.md` § 2.2); the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |

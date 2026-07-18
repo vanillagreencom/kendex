@@ -47,6 +47,8 @@ If no agents are found, report `No reviewer-* agents installed; cannot run codeb
 
 Delegate to each reviewer in `[AGENTS]` in parallel with the prompt below.
 
+**Slot-capped runtimes**: read the budget with `.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0`. When the value is greater than zero and the `[AGENTS]` count exceeds the available slots (the budget minus this session minus live persistent agent sessions), delegate in sequential waves per `review-pr.md` § 2 — launch up to the available slots, collect each reviewer's return, shut the completed session down, continue with the next wave. There are no re-review cycles here, so waves change scheduling only.
+
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md
 

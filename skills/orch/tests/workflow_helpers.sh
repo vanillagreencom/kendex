@@ -260,6 +260,60 @@ assert_file_contains "$submit_workflow" 'what each cycle attempted' "submit-pr c
 assert_file_not_contains "$submit_workflow" 'Max 2 ci-fix cycles' "submit-pr drops the hardcoded ci-fix cycle cap"
 assert_file_not_contains "$merge_workflow" 'Max 2 recovery cycles' "merge-pr drops the hardcoded recovery cycle cap"
 
+# vstack#644 — bounded reviewer waves under an agent-slot budget:
+# REVIEWER_SLOT_BUDGET (default 0 = unlimited/persistent) is read via
+# orch-env; when the reviewer set exceeds the available slots (budget minus
+# the primary minus live persistent dev/QA sessions), review workflows run
+# reviewers in sequential waves — launch up to the available slots, validate
+# each report artifact, retire the completed session to release its slot,
+# launch the next wave. Re-review recreates retired reviewers fresh and
+# points them at the current diff plus their prior report artifact; the
+# invariant is that review state lives in on-disk artifacts and workflow
+# state, never in reviewer session memory. The all-reviewers-persistent
+# mandate is budget-conditional, not absolute.
+review_pr_workflow="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+review_workflow="$REPO_ROOT/skills/orch/workflows/review.md"
+codebase_workflow="$REPO_ROOT/skills/orch/workflows/review-codebase.md"
+orch_readme="$REPO_ROOT/skills/orch/README.md"
+orch_development="$REPO_ROOT/skills/orch/DEVELOPMENT.md"
+state_schema="$REPO_ROOT/skills/orch/schemas/workflow-state.md"
+
+assert_file_contains "$review_pr_workflow" 'orch-env REVIEWER_SLOT_BUDGET 0' "review-pr reads the reviewer slot budget via orch-env"
+assert_file_contains "$review_pr_workflow" 'REVIEWER_SLOTS = SLOT_BUDGET - 1 - LIVE_AGENTS' "review-pr derives available slots from budget minus primary minus live sessions"
+assert_file_contains "$review_pr_workflow" 'sequential waves of up to `REVIEWER_SLOTS`' "review-pr documents bounded sequential waves"
+assert_file_contains "$review_pr_workflow" 'persistent when the budget allows, waves when it does not' "review-pr states the single budget-conditional policy"
+assert_file_contains "$review_pr_workflow" 'never in reviewer session memory' "review-pr states the artifact-state invariant"
+assert_file_contains "$review_pr_workflow" "re-stamp immediately before each wave's delegation batch" "review-pr re-stamps the freshness boundary per wave"
+assert_file_contains "$review_pr_workflow" '.review_wave_done += ["[AGENT]"]' "review-pr records wave completion in workflow state"
+assert_file_contains "$review_pr_workflow" 'shut the reviewer'"'"'s session down (retiring each completed reviewer releases its slot for the next wave)' "review-pr retires each completed reviewer in wave mode"
+assert_file_contains "$review_pr_workflow" 'return to § 2.2 for the next wave' "review-pr loops back to launch the next wave"
+assert_file_contains "$review_pr_workflow" 'recreate it fresh' "review-pr recreates retired reviewers fresh on re-review"
+assert_file_contains "$review_pr_workflow" 'Read your prior report [PRIOR_REPORT_PATH] and re-read the current diff before reviewing.' "review-pr delegation points recreated reviewers at diff and prior report"
+assert_file_contains "$review_pr_workflow" 'collab spawn failed: agent thread limit reached' "review-pr names the runtime thread-limit error for spawn fallback"
+assert_file_not_contains "$review_pr_workflow" 'Do NOT shutdown reviewers — needed for re-review in § 4.' "review-pr drops the unconditional persistent-reviewer mandate"
+
+assert_file_contains "$review_workflow" 'orch-env REVIEWER_SLOT_BUDGET 0' "review reads the reviewer slot budget via orch-env"
+assert_file_contains "$review_workflow" 'sequential waves of up to the available slots' "review documents bounded sequential waves"
+assert_file_contains "$review_workflow" 'never in reviewer session memory' "review states the artifact-state invariant"
+
+assert_file_contains "$codebase_workflow" 'orch-env REVIEWER_SLOT_BUDGET 0' "review-codebase honors the reviewer slot budget"
+
+assert_file_contains "$orch_skill" 'orch-env REVIEWER_SLOT_BUDGET 0' "orch skill documents the slot-budget read"
+assert_file_contains "$orch_skill" 'persistent when the budget allows, waves when it does not' "orch skill states the budget-conditional lifecycle policy"
+assert_file_contains "$orch_skill" 'never in reviewer session memory' "orch skill states the artifact-state invariant"
+assert_file_contains "$orch_skill" 'collab spawn failed: agent thread limit reached' "orch skill Codex note names the thread-limit error"
+assert_file_contains "$orch_skill" 'REVIEWER_SLOT_BUDGET = "4"' "orch skill Codex note sets the four-slot budget"
+assert_file_contains "$orch_readme" 'REVIEWER_SLOT_BUDGET' "orch README documents the reviewer slot budget setting"
+assert_file_contains "$orch_development" '## Reviewer Slot Budget' "orch DEVELOPMENT carries the slot-budget design rationale"
+assert_file_contains "$state_schema" 'review_wave_done' "workflow-state schema documents wave completion tracking"
+
+# The root settings example ships only in the vstack source checkout, not in
+# downstream installs — assert on it only when present.
+settings_example="$REPO_ROOT/vstack.settings.toml.example"
+if [[ -f "$settings_example" ]]; then
+  assert_file_contains "$settings_example" 'REVIEWER_SLOT_BUDGET = "0"' "settings example documents the reviewer slot budget default"
+fi
+
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
 assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"

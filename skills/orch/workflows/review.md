@@ -72,6 +72,12 @@ Run each block as its own tool call. If state does not exist, use an empty `TEAM
 ```
 Use the output as `AGENTS`.
 
+**Resolve the reviewer slot budget** (same contract as `review-pr.md` § 2):
+```bash
+.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
+```
+`0` (default) = unlimited: delegate to every reviewer in one parallel batch. When the value is greater than zero and the `[AGENTS]` count exceeds the available slots (the budget minus this session minus live persistent agent sessions), run reviewers in sequential waves of up to the available slots: delegate a wave, wait for each reviewer's return, shut the completed session down to release its slot, then launch the next wave. Review state lives in the returned report artifacts, never in reviewer session memory.
+
 **Codex runtime agent type rule**: For each reviewer in `AGENTS`, first call the harness spawn API with `agent_type` equal to that reviewer name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys. If workflow state exists, persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason. Report the fallback in status.
 
 Delegate to each review agent in parallel:
@@ -90,7 +96,7 @@ Decisions:
 
 ## 3. Collect & Present Results
 
-Wait for all review agents to complete. Do NOT shutdown — agents needed for potential fix delegation in § 4.
+Wait for all review agents to complete. Unlimited-budget runs: do NOT shutdown — agents needed for potential fix delegation in § 4. Wave runs: completed reviewers are already shut down as each wave drains; their findings live in the report JSONs.
 
 Extract `Report` path and `Verdict` from each agent's return. If any agent fails to return the expected format, halt and report error.
 
@@ -221,7 +227,7 @@ Ask user (omit categories with no items):
 
 ## 6. Summary
 
-**Shutdown review agents.**
+**Shutdown review agents.** (Wave runs: already done per wave — nothing left to terminate.)
 
 <output_format>
 

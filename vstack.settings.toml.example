@@ -44,6 +44,16 @@ CI_FIX_MAX_CYCLES = "6"
 # submission or merge recovery before reporting the persistent CI failure back
 # to the user.
 
+REVIEWER_SLOT_BUDGET = "0"
+# Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
+# agent-session budget of the harness runtime, counting the primary
+# orchestrator session. "0" = unlimited: every reviewer launches up front and
+# persists through fix/re-review cycles. When the reviewer set exceeds the
+# available slots (budget minus the primary minus live dev/QA sessions),
+# review workflows run reviewers in bounded sequential waves, retiring each
+# completed session to release its slot. The Codex collaboration runtime
+# allows four total agent threads -> set "4".
+
 # Reviewer merge gate mode: "approval" requires a GitHub-native review
 # approval before merge (orch submit-pr/merge-pr); "review" requires a formal
 # review of the current head from a non-author reviewer plus zero unresolved
