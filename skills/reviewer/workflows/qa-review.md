@@ -10,11 +10,34 @@ QA agents are review-only. They are never assigned as issue owners.
 
 ## 1. Set Up
 
-### 1.1 Read Context
+### 1.1 Resolve Tracker
+
+Resolve tracker context once, before any tracker command. Every later tracker-specific read routes through it. Precedence:
+
+1. **Delegation context**: an explicit `Tracker:` value in the delegation prompt (with `[OWNER/REPO]` for `github`).
+2. **Inference fallback**: `[ISSUE_ID]` starting with `issue-` → `github`; otherwise `linear`. The GitHub issue number `[N]` is `[ISSUE_ID]` without the `issue-` prefix (orch key normalization). For `github` with no repository value, resolve it in the worktree:
+
+   ```bash
+   gh repo view --json nameWithOwner --jq .nameWithOwner
+   ```
+
+Store the result as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
+
+**GitHub reviews must not run Linear commands**: when `TRACKER=github`, no `sync`, Linear cache read, or Linear mutation may run anywhere in this workflow. A missing Linear cache is not an error for a GitHub-tracked review — read live GitHub context instead (§ 1.2). If a tracker read fails on the resolved route, report the gap in your review output; do not silently fall back to the other tracker.
+
+### 1.2 Read Context
+
+**Linear route (TRACKER=linear)**:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
+```
+
+**GitHub route (TRACKER=github)** — read the live issue body and comments in one command:
+
+```bash
+gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,url
 ```
 
 Extract from delegation prompt:
@@ -136,7 +159,7 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
 ## Constraints
 
 **Do NOT**:
-- Claim the issue (`.agents/skills/linear/scripts/linear.sh issues activate`)
+- Claim the issue (Linear `issues activate`, GitHub self-assign)
 - Modify issue tracker state (labels, status)
 - Mark issue done
 - Create commits for code changes or push changes

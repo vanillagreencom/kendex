@@ -419,6 +419,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    Follow workflow: .agents/skills/reviewer/workflows/qa-review.md
 
    Issue: [ISSUE_ID]
+   Tracker: [TRACKER] [OWNER/REPO]
    Branch: [BRANCH]
    Worktree: [WORKTREE_PATH]
    Trigger: [needs-* label]
@@ -432,6 +433,8 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    - Escalated (accepted): [For each escalated_item with source "qa-review": "[DESCRIPTION] — [REASON]"]
    - Do NOT re-report fixed or escalated items. Only report NEW issues or regressions introduced by the fixes.
    </delegation_format>
+
+   Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 4. **Wait for completion.**
 
