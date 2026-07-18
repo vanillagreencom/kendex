@@ -35,12 +35,22 @@
 #      (vstack#649)
 #  check1-8: PR_REVIEW_CHECK check-run evidence (vstack#654) — a "success"
 #      conclusion of the configured check name on the CURRENT head opens the
-#      review gate (newest run of that name wins; review_evidence "check");
-#      stale-sha and failure conclusions do not; unresolved threads and a
-#      standing CHANGES_REQUESTED still block; empty PR_REVIEW_CHECK ignores
+#      review gate (newest run of that name wins; review_evidence "check",
+#      review_evidence_surface "check_run"); stale-sha and failure
+#      conclusions do not; unresolved threads and a standing
+#      CHANGES_REQUESTED still block; empty PR_REVIEW_CHECK ignores
 #      check-runs entirely; the review-object path still works with the
 #      feature on (review_evidence "review"); text mode names the check-run
 #      and its app slug
+#  status1-8: PR_REVIEW_CHECK commit-status evidence (vstack#681) — with no
+#      matching check-run, a "success" commit status with the configured
+#      context on the CURRENT head opens the gate (newest of the context
+#      wins; review_evidence "check", review_evidence_surface "status"); a
+#      matching check-run wins first and skips the status query entirely;
+#      pending/failure/error states are not evidence; stale-sha statuses
+#      never count; empty PR_REVIEW_CHECK ignores both surfaces; a review
+#      object still takes precedence (no surface field); unresolved threads
+#      still block; text mode names the status context and its creator
 #  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
@@ -114,6 +124,13 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   "Review Bot" run (older failure + newer terminal run, plus an unrelated
 #   "Other Check") on headsha1 only; success_stale publishes it on oldsha
 #   only, so the current-head query finds nothing.
+#   Commit statuses: `api repos/*/commits/<sha>/status` (combined status)
+#   answers likewise — STUB_STATUS_MODE=success_at_head/pending_at_head/
+#   failure_at_head/error_at_head publishes a "Review Bot" context (older
+#   pending entry + newer terminal status, plus an unrelated "Other Status")
+#   on headsha1 only; success_stale publishes it on oldsha only. Each status
+#   query appends to STUB_STATUS_LOG (when set) so tests can assert the
+#   fallback is skipped once a check-run matches.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -222,6 +239,32 @@ case "${1:-}" in
         printf '{"total_count":3,"check_runs":[{"name":"Review Bot","conclusion":"failure","started_at":"2026-01-01T00:00:00Z","app":{"slug":"review-bot"}},{"name":"Review Bot","conclusion":"%s","started_at":"2026-01-02T00:00:00Z","app":{"slug":"review-bot"}},{"name":"Other Check","conclusion":"success","started_at":"2026-01-03T00:00:00Z","app":{"slug":"other-app"}}]}\n' "$conclusion"
       else
         echo '{"total_count":0,"check_runs":[]}'
+      fi
+      exit 0
+    fi
+    if [[ "${2:-}" == repos/*/commits/*/status ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ -n "${STUB_STATUS_LOG:-}" ]]; then
+        echo "status:$2" >> "$STUB_STATUS_LOG"
+      fi
+      sha="${2##*/commits/}"
+      sha="${sha%/status}"
+      mode="${STUB_STATUS_MODE:-none}"
+      run_sha="headsha1"
+      [[ "$mode" == "success_stale" ]] && run_sha="oldsha"
+      state="success"
+      case "$mode" in
+        pending_at_head) state="pending" ;;
+        failure_at_head) state="failure" ;;
+        error_at_head) state="error" ;;
+      esac
+      if [[ "$mode" != "none" && "$sha" == "$run_sha" ]]; then
+        # Older same-context pending entry + newer terminal status of
+        # "Review Bot" (the newest of the context must win) + an unrelated
+        # always-green context (the context filter must exclude it).
+        printf '{"state":"pending","total_count":3,"statuses":[{"context":"Review Bot","state":"pending","updated_at":"2026-01-01T00:00:00Z","creator":{"login":"review-bot[bot]"}},{"context":"Review Bot","state":"%s","updated_at":"2026-01-02T00:00:00Z","creator":{"login":"review-bot[bot]"}},{"context":"Other Status","state":"success","updated_at":"2026-01-03T00:00:00Z","creator":{"login":"other-bot"}}]}\n' "$state"
+      else
+        echo '{"state":"pending","total_count":0,"statuses":[]}'
       fi
       exit 0
     fi
@@ -680,6 +723,7 @@ set -e
 assert_eq "$rc" "0" "check1: trusted check success at head exits 0" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "reviewed" "check1: status reviewed via check evidence" "$stderr"
 assert_eq "$(json_field "$output" '.review_evidence')" "check" "check1: review_evidence pinned to check" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence_surface')" "check_run" "check1: review_evidence_surface pinned to check_run" "$stderr"
 assert_eq "$(json_field "$output" '.reviews_at_head')" "0" "check1: no review object at head" "$stderr"
 assert_eq "$(json_field "$output" '.head_sha')" "headsha1" "check1: head_sha reported" "$stderr"
 
@@ -748,6 +792,7 @@ set -e
 assert_eq "$rc" "0" "check7: review object still opens the gate with the feature on" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "reviewed" "check7: status reviewed via review object" "$stderr"
 assert_eq "$(json_field "$output" '.review_evidence')" "review" "check7: review_evidence pinned to review" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence_surface')" "null" "check7: no surface field for review-object evidence" "$stderr"
 assert_eq "$(json_field "$output" '.reviews_at_head')" "1" "check7: reviews_at_head counted" "$stderr"
 
 # Check 8: text mode names the satisfying check-run and its app slug.
@@ -761,6 +806,131 @@ assert_eq "$rc" "0" "check8: text-mode check evidence exits 0" "$stderr"
 assert_contains "$output" "Review: reviewed" "check8: text mode still prints the reviewed line" "$stderr"
 assert_contains "$output" "check-run 'Review Bot'" "check8: text mode names the check-run" "$stderr"
 assert_contains "$output" "app: review-bot" "check8: text mode records the publishing app slug" "$stderr"
+
+echo "=== approval-wait --mode review commit-status evidence (vstack#681) ==="
+
+# Status 1: with PR_REVIEW_CHECK set, no review object, and no check-run of
+# that name anywhere, a "success" commit status with that context on the
+# current head opens the gate. The stub payload also pins newest-of-context
+# selection (an older pending entry precedes the success) and context
+# filtering (an unrelated green context exists).
+stderr="$TMP_ROOT/status1.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=success_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "status1: trusted status success at head exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "reviewed" "status1: status reviewed via status evidence" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence')" "check" "status1: review_evidence stays check" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence_surface')" "status" "status1: review_evidence_surface pinned to status" "$stderr"
+assert_eq "$(json_field "$output" '.reviews_at_head')" "0" "status1: no review object at head" "$stderr"
+assert_eq "$(json_field "$output" '.head_sha')" "headsha1" "status1: head_sha reported" "$stderr"
+
+# Status 2: a matching check-run wins first — the status endpoint is never
+# queried, so bots that use check-runs cost no extra API call.
+stderr="$TMP_ROOT/status2.err"
+status_log="$TMP_ROOT/status2-status.log"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head \
+  STUB_STATUS_MODE=success_at_head STUB_STATUS_LOG="$status_log" \
+  PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "status2: check-run match still exits 0 with a status present" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence_surface')" "check_run" "status2: check-run surface wins over status" "$stderr"
+assert_eq "$([[ -f "$status_log" ]] && wc -l < "$status_log" | tr -d ' ' || echo 0)" "0" "status2: status endpoint never queried when a check-run matches" "$stderr"
+
+# Status 3a-3c: non-success status states are not evidence — pending,
+# failure, and error all keep waiting to the timeout.
+stderr="$TMP_ROOT/status3a.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=pending_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status3a: pending status exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "status3a: pending status times out" "$stderr"
+
+stderr="$TMP_ROOT/status3b.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=failure_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status3b: failure status exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "status3b: failure status times out" "$stderr"
+
+stderr="$TMP_ROOT/status3c.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=error_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status3c: error status exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "status3c: error status times out" "$stderr"
+
+# Status 4: a status success on a STALE sha never opens the gate — the query
+# targets the current head's combined status, which reports nothing.
+stderr="$TMP_ROOT/status4.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=success_stale PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status4: stale-sha status success exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "status4: stale-sha status success times out" "$stderr"
+
+# Status 5: empty PR_REVIEW_CHECK ignores BOTH surfaces — neither the
+# published check-run success nor the status success leaks into the gate,
+# and the status endpoint is never queried.
+stderr="$TMP_ROOT/status5.err"
+status_log="$TMP_ROOT/status5-status.log"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=success_at_head \
+  STUB_STATUS_MODE=success_at_head STUB_STATUS_LOG="$status_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status5: empty PR_REVIEW_CHECK exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "status5: empty PR_REVIEW_CHECK ignores both surfaces" "$stderr"
+assert_eq "$([[ -f "$status_log" ]] && wc -l < "$status_log" | tr -d ' ' || echo 0)" "0" "status5: status endpoint never queried with the feature off" "$stderr"
+
+# Status 6: a review object pinned to the head still takes precedence over a
+# status success — review_evidence "review", no surface field.
+stderr="$TMP_ROOT/status6.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=commented_at_head STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=success_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "status6: review object still opens the gate over a status" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence')" "review" "status6: review_evidence pinned to review" "$stderr"
+assert_eq "$(json_field "$output" '.review_evidence_surface')" "null" "status6: no surface field for review-object evidence" "$stderr"
+
+# Status 7: unresolved threads still block — status evidence routes to the
+# same "comments" early return as a review object or check-run would.
+stderr="$TMP_ROOT/status7.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=success_at_head PR_REVIEW_CHECK="Review Bot" \
+  STUB_THREADS_UNRESOLVED=2 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "status7: status success + open threads exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "comments" "status7: status comments despite status success" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 3')" "true" "status7: comments returns early, not at deadline" "$stderr"
+
+# Status 8: text mode names the satisfying status context and its creator.
+stderr="$TMP_ROOT/status8.err"
+set +e
+output=$(run_review_text STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=none \
+  STUB_STATUS_MODE=success_at_head PR_REVIEW_CHECK="Review Bot" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "status8: text-mode status evidence exits 0" "$stderr"
+assert_contains "$output" "Review: reviewed" "status8: text mode still prints the reviewed line" "$stderr"
+assert_contains "$output" "via status 'Review Bot'" "status8: text mode names the status context" "$stderr"
+assert_contains "$output" "creator: review-bot[bot]" "status8: text mode records the publishing creator" "$stderr"
 
 echo "=== approval-wait --resolve-mode precedence ==="
 

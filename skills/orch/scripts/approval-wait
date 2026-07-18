@@ -22,17 +22,22 @@
 #       (a) a submitted review pinned to the head (REST commit_id ==
 #           headRefOid), not DISMISSED/PENDING, and not the PR author's own —
 #           any state counts; an approval is also a review; or
-#       (b) PR_REVIEW_CHECK is non-empty and the newest check-run with
-#           exactly that name on the head concluded "success" (vstack#654) —
-#           for review bots that submit a review object only when they have
-#           findings, whose clean re-analyses would otherwise never satisfy
-#           the gate;
+#       (b) PR_REVIEW_CHECK is non-empty and the current head carries a
+#           successful signal of exactly that name on EITHER evidence
+#           surface (vstack#654, vstack#681): the newest check-run with
+#           that name concluding "success", or — consulted only when no
+#           check-run matched — the head's combined commit status carrying
+#           a context of that name at state "success". For review bots
+#           that submit a review object only when they have findings,
+#           whose clean re-analyses would otherwise never satisfy the
+#           gate; some such bots publish commit STATUSES (statuses API),
+#           not check-runs, so both surfaces are matched;
 #   - no non-author reviewer's latest submitted review stands at
 #     CHANGES_REQUESTED (dismissal or a newer review clears it);
 #   - zero unresolved review threads.
 # The head SHA is re-read every poll, so a force-push resets the wait: a
-# review of a superseded commit never satisfies the gate, and check-runs are
-# only ever queried on the current head.
+# review of a superseded commit never satisfies the gate, and check-runs and
+# commit statuses are only ever queried on the current head.
 #
 # The poller also returns early (status "comments") when unresolved review
 # threads exist without the mode's verdict, so callers can triage new
@@ -78,7 +83,10 @@
 #     "reviews_at_head": <int>,     # review mode only: non-author reviews of head
 #     "review_evidence": <string>,  # review mode only, when the gate passes:
 #                                   # "review" (review object) or "check"
-#                                   # (PR_REVIEW_CHECK check-run success)
+#                                   # (PR_REVIEW_CHECK success on either surface)
+#     "review_evidence_surface": <string>,  # review mode only, alongside
+#                                   # review_evidence "check": "check_run" or
+#                                   # "status" — the API surface that matched
 #     "error": <string>             # only when status == "error"
 #   }
 #
@@ -166,15 +174,19 @@ elapsed=0
 NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
 NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 
-# Review-check evidence (vstack#654): PR_REVIEW_CHECK names the check-run the
-# repo's review bot publishes on analyzed heads; review mode accepts a
-# "success" conclusion of that check on the current head as an alternative to
-# a review object. SECURITY: check-runs are matched by NAME only, and any
-# GitHub App or Actions workflow can publish a check-run under any name — the
-# setting must name a check produced by the TRUSTED review bot. Like
-# PR_REVIEW_NUDGE, the trust model is user configuration; no bot names are
-# baked in, and the matched run's app slug is reported (not filtered on) so
-# operators can audit which app satisfied the gate. Empty disables check
+# Review-check evidence (vstack#654, vstack#681): PR_REVIEW_CHECK names the
+# check the repo's review bot publishes on analyzed heads; review mode accepts
+# a successful signal of that name on the current head as an alternative to a
+# review object, on EITHER surface — a check-run concluding "success"
+# (check-runs API), or a commit status context at state "success" (combined
+# status API), because some review bots publish statuses rather than
+# check-runs. SECURITY: both surfaces are matched by NAME/context only, and
+# any GitHub App, Actions workflow, or token holder with statuses scope can
+# publish under any name — the setting must name a signal produced by the
+# TRUSTED review bot. Like PR_REVIEW_NUDGE, the trust model is user
+# configuration; no bot names are baked in, and the matched check-run's app
+# slug (or the matched status's creator login) is reported (not filtered on)
+# so operators can audit who satisfied the gate. Empty disables check
 # evidence entirely.
 REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 
@@ -193,7 +205,9 @@ last_unresolved=0
 last_head_sha=""
 last_reviews_at_head=0
 last_review_evidence=""
+last_check_surface=""
 last_check_app=""
+last_check_creator=""
 
 # Nudge bookkeeping: the clock restarts when the head changes, and each head
 # SHA is nudged at most once ("__none__" so an unknown head still gets one).
@@ -214,14 +228,19 @@ emit_result() {
     mode_fields='{}'
     if [[ "$MODE" == "review" ]]; then
       # review_evidence appears only when the gate passed — "review" for a
-      # review object at head, "check" for PR_REVIEW_CHECK success (vstack#654).
+      # review object at head, "check" for PR_REVIEW_CHECK success (vstack#654)
+      # on either surface; review_evidence_surface then pins which API surface
+      # matched — "check_run" or "status" (vstack#681).
       mode_fields=$(jq -n \
         --arg mode "$MODE" \
         --arg head "$last_head_sha" \
         --argjson at_head "$last_reviews_at_head" \
         --arg evidence "$last_review_evidence" \
+        --arg surface "$last_check_surface" \
         '{mode: $mode, head_sha: $head, reviews_at_head: $at_head}
-         + (if $evidence == "" then {} else {review_evidence: $evidence} end)')
+         + (if $evidence == "" then {} else {review_evidence: $evidence} end)
+         + (if $evidence == "check" and $surface != ""
+            then {review_evidence_surface: $surface} else {} end)')
     fi
     jq -n \
       --arg s "$status" \
@@ -247,7 +266,9 @@ emit_result() {
       echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
       ;;
     reviewed)
-      if [[ "$last_review_evidence" == "check" ]]; then
+      if [[ "$last_review_evidence" == "check" && "$last_check_surface" == "status" ]]; then
+        echo "Review: reviewed via status '$REVIEW_CHECK_NAME'${last_check_creator:+ (creator: $last_check_creator)} (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
+      elif [[ "$last_review_evidence" == "check" ]]; then
         echo "Review: reviewed via check-run '$REVIEW_CHECK_NAME'${last_check_app:+ (app: $last_check_app)} (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
       else
         echo "Review: reviewed (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head, unresolved threads: $last_unresolved)"
@@ -498,15 +519,20 @@ while true; do
       '[.[] | select((.user.login // "") != $author) | .user.login // empty]
         | unique | .[]' <<<"$reviews_json")
 
-    # --- trusted review-check evidence (vstack#654): consulted only when no
-    # review object is pinned to the current head. The query targets the
-    # CURRENT head's check-runs, so a success on a superseded commit can never
-    # satisfy the gate; when the bot re-analyzed the same head, the newest
-    # run of the configured name wins. Matched by NAME (see the SECURITY note
-    # at REVIEW_CHECK_NAME); app.slug is recorded for the text output, never
-    # filtered on. ---
+    # --- trusted review-check evidence (vstack#654, vstack#681): consulted
+    # only when no review object is pinned to the current head. Both queries
+    # target the CURRENT head, so a success on a superseded commit can never
+    # satisfy the gate. Check-runs first (when the bot re-analyzed the same
+    # head, the newest run of the configured name wins), then — only when no
+    # check-run matched, so bots that use check-runs cost no extra API call —
+    # the head's combined commit status, for review bots that publish
+    # statuses instead of check-runs. Matched by NAME/context (see the
+    # SECURITY note at REVIEW_CHECK_NAME); app.slug / creator.login are
+    # recorded for the text output, never filtered on. ---
     check_at_head=0
+    last_check_surface=""
     last_check_app=""
+    last_check_creator=""
     if [ -n "$REVIEW_CHECK_NAME" ] && [ "$last_reviews_at_head" -eq 0 ] \
       && [ -n "$last_head_sha" ]; then
       checks_status=0
@@ -525,6 +551,31 @@ while true; do
       last_check_app=$(jq -r '.app.slug // ""' <<<"$named_check")
       if [ "$(jq -r '.conclusion // ""' <<<"$named_check")" = "success" ]; then
         check_at_head=1
+        last_check_surface="check_run"
+      fi
+      if [ "$check_at_head" -eq 0 ]; then
+        # The combined status reports the latest status per context; the
+        # newest-wins sort is a guard for paginated or duplicated contexts.
+        # Only state "success" is evidence — pending/failure/error keep
+        # waiting, same as a non-success check-run conclusion.
+        statuses_status=0
+        set +e
+        statuses_json=$(gh api "repos/$REPO/commits/$last_head_sha/status" --paginate 2>/dev/null \
+          | jq -s '[.[].statuses[]?]')
+        statuses_status=$?
+        set -e
+        if [ "$statuses_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$statuses_json"; then
+          emit_error "commit-status listing failed for commit $last_head_sha in $REPO"
+          echo "commit-status listing failed for commit $last_head_sha in $REPO" >&2
+          exit 1
+        fi
+        named_status=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
+          '[.[] | select(.context == $name)] | sort_by(.updated_at // "") | last // {}' <<<"$statuses_json")
+        if [ "$(jq -r '.state // ""' <<<"$named_status")" = "success" ]; then
+          check_at_head=1
+          last_check_surface="status"
+          last_check_creator=$(jq -r '.creator.login // ""' <<<"$named_status")
+        fi
       fi
     fi
   else
