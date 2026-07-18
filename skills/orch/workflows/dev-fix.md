@@ -100,7 +100,13 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```
    Use the output as `TEAM`.
 
-4. **Delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available).
+4. **Gather decision context** (decider skill):
+   ```bash
+   .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
+   ```
+   Collect decision IDs, summaries, and file paths from the JSON output for the `Decisions:` section below. Issue-linked lookup is exactly `decisions search --issue [ISSUE_ID]` — the decisions CLI has no bare `issue` action; never shorten the command in delegation guidance.
+
+5. **Delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available).
 
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix, not procedure steps. The agent owns validate/commit/return per `dev/workflows/dev-fix.md`.
    - ✅ `"Read X from parent state and forward to child — fix in parent so descendants inherit."`
@@ -116,13 +122,17 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    Worktree: [WORKTREE_PATH]
    [If qa_agent:] QA: [QA_AGENT]
 
+   Decisions:
+   [For each matching decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+   [If none: "- No linked decisions found."]
+
    Review items:
    [FORMATTED_ITEMS]
    </delegation_format>
 
-5. **Wait for completion.** Parse return: item decisions (Applied/Skipped/Blocked), commits, validation status.
+6. **Wait for completion.** Parse return: item decisions (Applied/Skipped/Blocked), commits, validation status.
 
-6. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
+7. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash
    # For each applied item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'

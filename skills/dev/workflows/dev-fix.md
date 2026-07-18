@@ -40,7 +40,7 @@ For each item in `Review items:`:
 2. **Apply if**: related to parent issue, no new risks
 
 3. **Skip if** pattern conflicts with existing architecture, would break other functionality, does not follow your defined rules or conventions.
-   - **Before applying** (decider skill): `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` for decisions governing the affected area → if match found, read the full decision file
+   - **Before applying** (decider skill): `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` for decisions governing the affected area; for decisions linked to the issue, `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` (issue lookup is `search --issue` — the CLI has no bare `issue` action) → if match found, read the full decision file
    - If review item contradicts an active decision, skip with decision reference (e.g., "Skipped — contradicts D010")
    - Expanding scope is OK if it relates to the parent issue/PR
 

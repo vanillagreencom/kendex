@@ -385,6 +385,10 @@ case "$action" in
   help|--help|-h)
     show_help
     ;;
+  issue|issues)
+    echo "Error: Unknown action '$action' — issue lookup is: decisions search --issue <ISSUE_ID>" >&2
+    exit 1
+    ;;
   *)
     echo "Error: Unknown action '$action'" >&2
     show_help
