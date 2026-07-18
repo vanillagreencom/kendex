@@ -1,0 +1,59 @@
+name: Skill Tests
+
+# Runs every skill's own test suite on every PR and main push — the same
+# suites fix cycles run locally (orch gate machinery, linear cache, worktree
+# guards, second-opinion artifact gates, doc-contract lint teeth). Upstream
+# gating here is what lets consuming repos drop tracked vendoring: quality is
+# proven at the source, not re-proven per consumer.
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  skill-suites:
+    name: Skill suites (shell + node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: orch suite (run-all)
+        run: bash skills/orch/tests/run-all.sh
+
+      - name: all other skill suites
+        run: |
+          set -u
+          fail=0
+          for t in skills/*/tests/*.sh; do
+            case "$t" in
+              skills/orch/tests/*) continue ;;
+            esac
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: deep-research node suite
+        run: node --test skills/deep-research/tests/deep-research.test.mjs
+
+  cli-tests:
+    name: CLI (cargo test + integration check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+      - name: cargo test
+        run: cargo test --manifest-path cli/Cargo.toml
+      - name: integration check (throwaway temp project)
+        run: cli/scripts/integration-check.sh
