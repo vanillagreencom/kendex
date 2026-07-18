@@ -42,3 +42,4 @@ Rules:
 - estimate: 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
 - category: "fix" (apply in this PR) or "issue" (track separately)
 - Only report genuine issues you are confident about. No speculative warnings. If the code is clean, return verdict "pass" with empty arrays.
+- qa_metadata: {} when you actually reviewed the changes. If you could NOT review them (the diff command failed, the diff is empty, or the scope is otherwise missing), set qa_metadata to {"review_performed": false, "reason": "<short_snake_case_reason>"} and verdict to "action_required" — NEVER report "pass" for changes you did not review.

@@ -20,13 +20,18 @@ when the optional delegated_at_epoch is supplied it ALSO applies glob mode's
 freshness gate against filesystem mtime.
 
 Both modes print JSON:
-  {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
+  {ok: bool, path: string|null,
+   reason: "valid"|"missing"|"stale"|"invalid"|"no_review"}
 
 reason meanings when ok=false:
-  missing  no matching artifact found (glob) / file does not exist (--file)
-  stale    artifact mtime < delegated_at_epoch (glob mode, or --file when the
-           optional boundary is supplied)
-  invalid  artifact fails `jq -e '.verdict'`
+  missing    no matching artifact found (glob) / file does not exist (--file)
+  stale      artifact mtime < delegated_at_epoch (glob mode, or --file when the
+             optional boundary is supplied)
+  invalid    artifact fails `jq -e '.verdict'`
+  no_review  artifact self-reports that no review was performed
+             (qa_metadata.review_performed == false, or qa_metadata.reason is a
+             no-scope/no-review admission) — rejected regardless of verdict.
+             Artifacts without qa_metadata are unaffected.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
@@ -40,6 +45,20 @@ emit() {
 
 file_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# vstack#652: a schema-valid artifact can carry verdict "pass" while its
+# qa_metadata admits no review happened (external second-opinion invoked with
+# no scope). Such a self-reported no-review is rejected regardless of verdict.
+# Artifacts without qa_metadata (internal reviewers) are unaffected.
+self_reports_no_review() {
+  jq -e '
+    (.qa_metadata? // {}) as $qa
+    | (($qa | type) == "object")
+      and (($qa.review_performed == false)
+           or ((($qa.reason // "") | tostring)
+               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+  ' "$1" >/dev/null 2>&1
 }
 
 # --- File mode: validate one explicit JSON path deterministically ---
@@ -75,6 +94,10 @@ if [[ "${1:-}" == "--file" ]]; then
   fi
   if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
     emit false "$file" "invalid"
+    exit 1
+  fi
+  if self_reports_no_review "$file"; then
+    emit false "$file" "no_review"
     exit 1
   fi
   emit true "$file" "valid"
@@ -120,6 +143,13 @@ while IFS= read -r file; do
     if [[ -z "$fail_path" ]]; then
       fail_path="$file"
       reason="invalid"
+    fi
+    continue
+  fi
+  if self_reports_no_review "$file"; then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="no_review"
     fi
     continue
   fi

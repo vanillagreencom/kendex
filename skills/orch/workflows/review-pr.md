@@ -198,7 +198,7 @@ mkdir -p [WORKTREE_PATH]/tmp
   --output "$EXTERNAL_OUTPUT"
 ```
 
-**On success** — validate deterministically, then append. Pass `review_delegated_at` (recorded in § 2.2) as the freshness boundary so a stale or misdated external artifact is rejected the same way glob mode rejects stale reviewer JSONs. `review-artifact-check --file` then checks existence, `mtime >= review_delegated_at`, and `jq -e '.verdict'`, printing `{ok, path, reason}` — no inline conditional or redirection:
+**On success** — validate deterministically, then append. Pass `review_delegated_at` (recorded in § 2.2) as the freshness boundary so a stale or misdated external artifact is rejected the same way glob mode rejects stale reviewer JSONs. `review-artifact-check --file` then checks existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, and that the artifact does not self-report a no-review (`qa_metadata.review_performed: false` → reason `no_review`), printing `{ok, path, reason}` — no inline conditional or redirection:
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
@@ -207,9 +207,9 @@ mkdir -p [WORKTREE_PATH]/tmp
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "$EXTERNAL_OUTPUT"
 ```
-**If `ok == false`** — the external JSON is missing or has no `verdict` field. Report the `reason` to the user and skip the append (external review is advisory).
+**If `ok == false`** — the external JSON is missing, has no `verdict` field, or self-reports that no review was performed (reason `no_review`). Report the `reason` to the user and skip the append (external review is advisory).
 
-**On failure**: report to user but **continue** — external review is advisory, not blocking.
+**On failure**: report to user but **continue** — external review is advisory, not blocking. Exit 3 means the wrapper found no diff scope to review and exit 4 means the external model reported it performed no review (response preserved as `<output>.noreview.json`) — in both cases there is no external verdict; never substitute a pass.
 
 ## 3. Collect Results (Watchdog)
 
@@ -224,7 +224,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-Run `review-artifact-check` on every return message and every watchdog sweep. It prints `{ok, path, reason}` after validating existence, `mtime >= review_delegated_at`, and `jq -e '.verdict'`.
+Run `review-artifact-check` on every return message and every watchdog sweep. It prints `{ok, path, reason}` after validating existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, and the absence of a self-reported no-review (`qa_metadata.review_performed: false` → reason `no_review`).
 
 **If `ok == true`** — the agent is complete. Append `path` and drop from `OUTSTANDING`:
 ```bash

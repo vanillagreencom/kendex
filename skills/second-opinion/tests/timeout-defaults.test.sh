@@ -22,6 +22,17 @@ SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/work"
 
+# The scope gate (vstack#652) needs a git worktree with a non-empty diff, so
+# review runs use `--range HEAD` over an uncommitted change.
+WORK="$TMP_ROOT/work"
+git -C "$WORK" init -q
+git -C "$WORK" config user.email test@example.com
+git -C "$WORK" config user.name test
+printf 'hello\n' > "$WORK/file.txt"
+git -C "$WORK" add file.txt
+git -C "$WORK" -c commit.gpgsign=false commit -q -m init
+printf 'world\n' >> "$WORK/file.txt"
+
 cat > "$TMP_ROOT/bin/codex" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
@@ -44,7 +55,7 @@ default_stderr="$TMP_ROOT/default.stderr"
 PATH="$TMP_ROOT/bin:$PATH" \
   SECOND_OPINION_TARGET=codex \
   SECOND_OPINION_CODEX_CMD=codex \
-  "$SECOND_OPINION" review --cwd "$TMP_ROOT/work" >/dev/null 2>"$default_stderr"
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$default_stderr"
 
 assert_contains "$default_stderr" "timeout=300s" "default timeout resolves to documented 300s"
 assert_contains "$default_stderr" "cmd: timeout 300s codex" "launch log includes explicit default timeout"
@@ -54,7 +65,7 @@ PATH="$TMP_ROOT/bin:$PATH" \
   SECOND_OPINION_TARGET=codex \
   SECOND_OPINION_CODEX_CMD=codex \
   SECOND_OPINION_TIMEOUT=7 \
-  "$SECOND_OPINION" review --cwd "$TMP_ROOT/work" >/dev/null 2>"$override_stderr"
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$override_stderr"
 
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
 assert_contains "$override_stderr" "cmd: timeout 7s codex" "launch log includes explicit override timeout"

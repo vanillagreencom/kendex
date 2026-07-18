@@ -55,6 +55,10 @@ Create the JSON artifact with the active harness file-write/edit tool. In Codex,
 - `action_required`: 1+ items in `blockers[]`
 - `pass`: `blockers[]` empty (suggestions may exist)
 
+## qa_metadata
+
+Per-agent QA payload (see `workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — orch's `review-artifact-check` rejects such artifacts with reason `no_review` regardless of verdict, so a self-reported no-review can never satisfy review acceptance. Artifacts without `qa_metadata` are validated as usual.
+
 ## Arrays
 
 - `blockers[]`: Items that block PR merge — dev must fix (may escalate to issues if unfixable)

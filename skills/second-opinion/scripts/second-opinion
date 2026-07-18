@@ -62,6 +62,12 @@ TIMEOUT="${SECOND_OPINION_TIMEOUT:-300}"
 CWD="."
 RANGE=""
 
+# Distinct exit codes (vstack#652) so callers can tell "there was nothing to
+# review" and "the model reported it performed no review" apart from generic
+# failures (1). Neither path writes the --output artifact.
+EXIT_NO_SCOPE=3
+EXIT_NO_REVIEW=4
+
 # --- Help ---------------------------------------------------------------------
 
 show_help() {
@@ -102,6 +108,13 @@ Default commands:
             --allowedTools Bash(read-only:true),Read,Glob,Grep
   codex:  codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
+
+Exit codes:
+  0  success
+  1  CLI/config failure, timeout, or unrecoverable non-JSON response
+  3  review: derived diff scope is empty or invalid — nothing to review
+  4  review/audit: model self-reported no review was performed
+     (qa_metadata.review_performed=false); response kept as <output>.noreview.json
 HELP
 }
 
@@ -230,21 +243,59 @@ fi
 
 echo "→ second-opinion: target=$TARGET_CLI mode=$MODE cwd=$CWD timeout=${TIMEOUT}s" >&2
 
-# --- Prompt construction (review mode) ----------------------------------------
+# --- Review scope derivation (review mode) ------------------------------------
+# vstack#652: the external model must never be asked to guess its own scope. A
+# no-scope session can answer with a schema-valid `verdict: "pass"` while
+# admitting it reviewed nothing. Derive branch + diff range + changed-file list
+# from the worktree BEFORE invoking the CLI, embed them in the prompt, and fail
+# loudly when the range yields no diff — an empty-scope review is an error, not
+# a pass.
 
-build_review_prompt() {
+REVIEW_BRANCH=""
+REVIEW_RANGE=""
+REVIEW_CHANGED_FILES=""
+REVIEW_DIFFSTAT=""
+
+derive_review_scope() {
   local cwd="$1"
   local range="$2"
 
-  local diff_cmd
-  if [[ -n "$range" ]]; then
-    diff_cmd="git diff $range"
-  else
+  if [[ -z "$range" ]]; then
     local base_branch
     base_branch=${WORKTREE_DEFAULT_BRANCH:-$(git -C "$cwd" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)}
     [[ -n "$base_branch" ]] || base_branch=main
-    diff_cmd="git diff origin/${base_branch}...HEAD"
+    range="origin/${base_branch}...HEAD"
   fi
+  REVIEW_RANGE="$range"
+
+  REVIEW_BRANCH=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+  local git_err diff_files
+  git_err=$(mktemp)
+  # shellcheck disable=SC2086
+  if ! diff_files=$(git -C "$cwd" diff --name-only $range 2>"$git_err"); then
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
+      '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
+    rm -f "$git_err"
+    exit "$EXIT_NO_SCOPE"
+  fi
+  rm -f "$git_err"
+
+  if [[ -z "$diff_files" ]]; then
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg branch "$REVIEW_BRANCH" \
+      '{error: "No review scope: git diff \($range) is empty — nothing to review", cwd: $cwd, branch: $branch}' >&2
+    exit "$EXIT_NO_SCOPE"
+  fi
+
+  REVIEW_CHANGED_FILES="$diff_files"
+  # shellcheck disable=SC2086
+  REVIEW_DIFFSTAT=$(git -C "$cwd" diff --shortstat $range 2>/dev/null || echo "")
+}
+
+# --- Prompt construction (review mode) ----------------------------------------
+
+build_review_prompt() {
+  local diff_cmd="git diff $REVIEW_RANGE"
 
   # Read the schema from the sibling schemas/ directory
   local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
@@ -259,6 +310,13 @@ build_review_prompt() {
 
   cat <<PROMPT
 You are a code reviewer providing a cross-model second opinion. Find real bugs, errors, security issues, and logic problems in the code changes.
+
+Review scope (derived from the worktree by the calling wrapper — this is authoritative; do not ask for scope):
+- Branch: ${REVIEW_BRANCH:-unknown}
+- Diff range: $REVIEW_RANGE
+- Diffstat: ${REVIEW_DIFFSTAT:-n/a}
+- Changed files:
+$REVIEW_CHANGED_FILES
 
 Run this command to see the changes:
   $diff_cmd
@@ -304,7 +362,12 @@ read_prompt() {
 
 PROMPT=""
 case "$MODE" in
-  review)    PROMPT=$(build_review_prompt "$CWD" "$RANGE") ;;
+  review)
+    # Derive scope at top level (not in the $() subshell) so its exit
+    # EXIT_NO_SCOPE aborts the run instead of being captured.
+    derive_review_scope "$CWD" "$RANGE"
+    PROMPT=$(build_review_prompt)
+    ;;
   challenge) PROMPT=$(read_prompt) ;;
   audit)     PROMPT=$(read_prompt) ;;
   quick)     PROMPT=$(read_prompt) ;;
@@ -504,6 +567,44 @@ preserve_raw_and_fail() {
   exit 1
 }
 
+# --- No-review self-report gate (review/audit) --------------------------------
+# vstack#652: a schema-valid response whose qa_metadata admits no review
+# happened (review_performed=false or a no-scope/no-review reason) must never
+# become the --output artifact, regardless of its verdict.
+
+response_reports_no_review() {
+  printf '%s' "$1" | jq -e '
+    (.qa_metadata? // {}) as $qa
+    | (($qa | type) == "object")
+      and (($qa.review_performed == false)
+           or ((($qa.reason // "") | tostring)
+               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+  ' >/dev/null 2>&1
+}
+
+# Persist the self-reported no-review response as a sidecar (durable record),
+# emit an error JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH
+# itself is never written, so no pass artifact can exist for a review that did
+# not happen.
+preserve_no_review_and_fail() {
+  local json="$1"
+  local sidecar reason
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    sidecar="${OUTPUT_PATH}.noreview.json"
+  else
+    sidecar=$(mktemp)
+  fi
+  printf '%s\n' "$json" > "$sidecar"
+
+  reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
+  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
+    '{error: "\($target) self-reported that no review was performed (\($reason)) — refusing to write a review artifact", response: $sidecar}' >&2
+  echo "→ no-review response preserved: $sidecar" >&2
+  exit "$EXIT_NO_REVIEW"
+}
+
 if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   if JSON=$(extract_json "$RESULT"); then
     RESULT="$JSON"
@@ -536,6 +637,12 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       echo "→ retry response still not parseable" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     fi
+  fi
+
+  # Reject a self-reported no-review before the artifact can be written — a
+  # "pass" from a model that admits it reviewed nothing is a false pass.
+  if response_reports_no_review "$RESULT"; then
+    preserve_no_review_and_fail "$RESULT"
   fi
 
   # Stamp the authoritative timestamp ourselves. The reviewing model serializes

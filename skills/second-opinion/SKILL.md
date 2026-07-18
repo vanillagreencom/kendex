@@ -41,6 +41,8 @@ Override with `SECOND_OPINION_TARGET=claude|codex` in committed `vstack.settings
 
 **Timestamp is wrapper-stamped.** In `review` and `audit` modes the JSON `timestamp` field is overwritten by the wrapper with its own UTC wall clock (`date -u`) after the model responds — the schema keeps `ISO_8601` only as a hint. The written value therefore reflects when the wrapper produced the artifact, not a value the reviewing model serialized (which could be stale or fabricated). Downstream freshness checks (`orch review-artifact-check --file <path> [delegated_at]`) validate filesystem mtime, and the stamped `timestamp` stays consistent with it.
 
+**Review scope is wrapper-derived.** In `review` mode the wrapper derives the scope from the worktree before invoking the external CLI — current branch, diff range (`--range` or `origin/BASE...HEAD`), diffstat, and the changed-file list are embedded in the prompt, so the external model is never asked to guess its own scope. An empty or invalid diff range fails with exit 3 and writes no artifact — an empty-scope review is an error, not a pass. A response whose `qa_metadata` self-reports that no review happened (`review_performed: false`, or a no-scope/no-review `reason`) is never written to `--output`: the wrapper preserves it as `<output>.noreview.json` and exits 4. `orch review-artifact-check` independently rejects any such artifact with reason `no_review`, regardless of its verdict.
+
 ## Common Options
 
 All modes accept:
@@ -101,6 +103,8 @@ On script failure (non-zero exit), stderr contains a JSON error object:
 | Exit code | Meaning | Action |
 |-----------|---------|--------|
 | 1 | CLI not found, missing prompt, invalid JSON response | Report error to user, suggest checking CLI installation |
+| 3 | `review`: derived diff scope is empty or invalid — nothing to review | Report; verify the worktree has committed/pending changes or pass an explicit `--range` |
+| 4 | `review`/`audit`: model self-reported no review was performed (`qa_metadata.review_performed: false`) | Report; the response is preserved as `<output>.noreview.json` — never treat it as a pass |
 | 124 | Timeout (default 300s) | Report timeout, suggest `--timeout` increase or narrower `--range` |
 
 If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue** — external review is advisory.

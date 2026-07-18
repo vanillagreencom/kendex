@@ -94,7 +94,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_local_review.passes
    ```
-   If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker.
+   If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened) and script exits 3 (no diff scope) / 4 (model reported no review): none of these is a pass.
 
 4. **Route findings** from the JSON (`../../reviewer/schemas/review-finding.md` schema):
    - No `blockers[]` and no `suggestions[]` with `category: "fix"` → § 2 (diff drained).

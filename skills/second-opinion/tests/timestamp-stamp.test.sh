@@ -75,6 +75,9 @@ git -C "$WORK" config user.name test
 printf 'hello\n' > "$WORK/file.txt"
 git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
+# Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
+# gate (vstack#652) refuses to run a review over an empty diff.
+printf 'world\n' >> "$WORK/file.txt"
 
 mkdir -p "$TMP_ROOT/out"
 OUT="$TMP_ROOT/out/review.json"

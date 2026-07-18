@@ -198,6 +198,71 @@ assert_eq "$rc" "1" "--file missing verdict exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file missing verdict reports reason=invalid"
 assert_eq "$(jq -r '.path' <<<"$out")" "$ext_invalid" "--file invalid reports the file path"
 
+# --- no_review: self-reported no-review artifacts are rejected (vstack#652) ---
+# A schema-valid pass verdict whose qa_metadata admits no review happened must
+# never validate, regardless of verdict.
+noreview="$worktree/tmp/review-external-20260718-010101.json"
+printf '{"verdict":"pass","summary":"No review was actually performed","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' > "$noreview"
+touch -d "@$after" "$noreview"
+set +e
+out="$("$CHECK" --file "$noreview")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file review_performed=false exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file review_performed=false reports ok=false"
+assert_eq "$(jq -r '.path' <<<"$out")" "$noreview" "--file review_performed=false reports its path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "--file review_performed=false reports reason=no_review"
+
+# a no-review reason alone (without review_performed) is also an admission
+noreview_reason="$worktree/tmp/review-external-20260718-020202.json"
+printf '{"verdict":"pass","qa_metadata":{"reason":"no_scope_provided"}}' > "$noreview_reason"
+set +e
+out="$("$CHECK" --file "$noreview_reason")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file no-scope reason alone exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "--file no-scope reason alone reports reason=no_review"
+
+# backward compat: no qa_metadata at all still validates on existence + verdict
+no_qa="$worktree/tmp/review-external-20260718-030303.json"
+printf '{"verdict":"pass","items":[]}' > "$no_qa"
+out="$("$CHECK" --file "$no_qa")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file artifact without qa_metadata still validates"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file artifact without qa_metadata reports reason=valid"
+
+# empty qa_metadata (the schema's performed-review shape) validates
+empty_qa="$worktree/tmp/review-external-20260718-040404.json"
+printf '{"verdict":"pass","qa_metadata":{}}' > "$empty_qa"
+out="$("$CHECK" --file "$empty_qa")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file empty qa_metadata reports reason=valid"
+
+# explicit review_performed=true validates
+performed="$worktree/tmp/review-external-20260718-050505.json"
+printf '{"verdict":"pass","qa_metadata":{"review_performed":true}}' > "$performed"
+out="$("$CHECK" --file "$performed")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file review_performed=true reports reason=valid"
+
+# glob mode applies the same gate: a fresh no-review artifact is rejected...
+glob_noreview="$worktree/tmp/review-reviewer-ext-20260718-060606.json"
+printf '{"verdict":"pass","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' > "$glob_noreview"
+touch -d "@$after" "$glob_noreview"
+set +e
+out="$("$CHECK" "$worktree" reviewer-ext "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob no-review artifact exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "glob no-review artifact reports reason=no_review"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_noreview" "glob no-review report points at the artifact"
+
+# ...and an older fresh valid sibling still wins over a newer no-review one
+glob_valid="$worktree/tmp/review-reviewer-ext-20260718-000000.json"
+printf '{"verdict":"pass","qa_metadata":{}}' > "$glob_valid"
+touch -d "@$after" "$glob_valid"
+touch -d "@$later" "$glob_noreview"
+out="$("$CHECK" "$worktree" reviewer-ext "$delegated_at")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past no-review to older valid artifact"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_valid" "glob fallback selects the valid sibling"
+
 # --- usage errors ---
 set +e
 "$CHECK" "$worktree" reviewer-quality >/dev/null 2>&1
