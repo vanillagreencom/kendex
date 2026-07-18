@@ -133,9 +133,14 @@ PR #N ready with warnings:
 Two of the warnings are merge gates, not advice:
 
 - `unresolved_threads` — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first; merge past unresolved threads only on explicit user override.
-- `not_approved` — first read the project policy with `.agents/skills/orch/scripts/orch-env PR_APPROVAL_GATE on`; when it prints `off` (reviewer-less repo), `not_approved` is informational only — do not gate on it. Otherwise a GitHub-native approval verdict is required: `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED (any reviewer counts, human or bot). Without it, do not auto-merge: poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json` or ask the user; merge past a missing approval only on explicit user override (`Force merge`).
+- `not_approved` — first read the project's reviewer-gate mode with `.agents/skills/orch/scripts/approval-wait --resolve-mode` (`PR_REVIEW_GATE`, with the legacy `PR_APPROVAL_GATE` mapping `on` → `approval` and `off` → `off`; default `approval`). Use the printed value as `GATE_MODE` and route:
+  - `off` (reviewer-less repo) — `not_approved` is informational only; do not gate on it.
+  - `review` — commenting-only reviewers never approve, so `not_approved` is expected; the gate is instead a formal review of the current head commit from a non-author reviewer (any state — COMMENTED counts) plus zero unresolved threads. Poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json --mode review` and treat `reviewed` as the met gate (approval-wait nudges silent reviewers per `PR_REVIEW_NUDGE`/`PR_REVIEW_NUDGE_SECS`, once per head).
+  - `approval` — a GitHub-native approval verdict is required: `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED (any reviewer counts, human or bot). Without it, do not auto-merge: poll with `.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json` or ask the user.
 
-Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates; only the GitHub-native approval verdict and thread resolution count.
+  Merge past a missing gate verdict only on explicit user override (`Force merge`).
+
+Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates; only the GitHub-native review state (approval verdict or review-at-head per `GATE_MODE`) and thread resolution count.
 
 ## 4. Prepare for Merge
 
@@ -285,10 +290,12 @@ merge. Detach them first.
 
    The printed value is `MAX_CYCLES` — the effective `CI_FIX_MAX_CYCLES` (process env > `vstack.settings.toml` `[env]` > default 6; non-numeric falls back to 6). Max [MAX_CYCLES] recovery cycles per merge-pr run (a session-scoped count, parallel to ci-fix's own internal cycle cap); at the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 3-6 and hand back to the user.
 
+   A rerun-in-place (`gh run rerun` / rerun-failed-jobs) re-executes the workflow definition and verifier state pinned at the original triggering event — a PR that changes gate or CI workflow behavior only exhibits its new behavior on a fresh head (new push → attempt-1 run), never via a rerun of an old attempt. Reruns are for flakes and re-gating on unchanged workflows; behavior changes need a new commit and push.
+
    1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`. For a queue ejection the failing run is the **merge-group** run (workflow event `merge_group`), not necessarily the PR-head run — locate it via the failing run link in the PR's checks or `gh run list --event merge_group --limit 10`, and point ci-fix's log fetching at that run.
-   2. **Re-confirm approval** after ci-fix pushed a fix — pushes can dismiss reviewer approvals (skip when `PR_APPROVAL_GATE` is `off`):
+   2. **Re-confirm the review gate** after ci-fix pushed a fix — pushes can dismiss reviewer approvals and move the head past the reviewed commit (skip when the § 3.2 `GATE_MODE` is `off`):
       ```bash
-      .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json
+      .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
       ```
    3. **Re-arm and resume**: re-run `pr-merge [PR_NUMBER] --auto` (command above) and restart the watch loop from the top with a fresh poll budget.
 

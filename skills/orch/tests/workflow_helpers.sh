@@ -139,15 +139,52 @@ for workflow in "$submit_workflow" "$comments_workflow"; do
   assert_file_not_contains "$workflow" 'printenv BOT_REVIEWERS' "$workflow_name avoids optional reviewer probing"
 done
 
-# vstack#638 — PR_APPROVAL_GATE: reviewer-less repos can disable the approval
-# merge gate explicitly; the workflows must read the toggle via orch-env and
-# document the off semantics (skip wait, not-applicable gate, informational
-# not_approved). Auto-detection is forbidden by design.
-assert_file_contains "$submit_workflow" 'orch-env PR_APPROVAL_GATE on' "submit-pr reads the approval-gate toggle via orch-env"
+# vstack#638 + vstack#642 — reviewer gate: PR_REVIEW_GATE selects
+# approval|review|off, with the legacy PR_APPROVAL_GATE mapping on -> approval
+# and off -> off. The derivation is implemented ONCE in
+# `approval-wait --resolve-mode`; workflows must read the mode through it,
+# record pr_review.mode, pass the mode to the wait loop, and document the off
+# semantics (skip wait, not-applicable gate, informational not_approved) and
+# the review-mode obligation (triage, reply, resolve before CI verify).
+# Auto-detection is forbidden by design.
+assert_file_contains "$submit_workflow" 'approval-wait --resolve-mode' "submit-pr resolves the gate mode via approval-wait --resolve-mode"
+assert_file_contains "$submit_workflow" 'PR_REVIEW_GATE' "submit-pr documents the PR_REVIEW_GATE setting"
+assert_file_contains "$submit_workflow" '`on` → `approval` and `off` → `off`' "submit-pr documents the legacy PR_APPROVAL_GATE mapping"
+assert_file_contains "$submit_workflow" 'pr_review.mode' "submit-pr records the resolved gate mode"
 assert_file_contains "$submit_workflow" 'pr_approval.gate' "submit-pr records the off gate as not applicable"
-assert_file_contains "$submit_workflow" 'no auto-detection' "submit-pr states the toggle is explicit config only"
-assert_file_contains "$merge_workflow" 'orch-env PR_APPROVAL_GATE on' "merge-pr reads the approval-gate toggle"
+assert_file_contains "$submit_workflow" 'no auto-detection' "submit-pr states the mode is explicit config only"
+assert_file_contains "$submit_workflow" '--mode [GATE_MODE]' "submit-pr passes the resolved mode to approval-wait"
+assert_file_contains "$submit_workflow" 'commenting-only review bots' "submit-pr names review mode as the commenting-only-bot setting"
+assert_file_contains "$submit_workflow" 'triage every reviewer comment, reply to each thread, and resolve all threads' "submit-pr documents the review-mode triage obligation"
+assert_file_contains "$submit_workflow" '| `reviewed` | Review of the current head recorded' "submit-pr routes the reviewed terminal status"
+assert_file_contains "$submit_workflow" 'a force-push resets the wait' "submit-pr documents head re-read on force-push"
+assert_file_not_contains "$submit_workflow" 'orch-env PR_APPROVAL_GATE' "submit-pr no longer re-derives the gate from orch-env"
+assert_file_contains "$merge_workflow" 'approval-wait --resolve-mode' "merge-pr resolves the gate mode via approval-wait --resolve-mode"
 assert_file_contains "$merge_workflow" 'informational only' "merge-pr demotes not_approved when the gate is off"
+assert_file_contains "$merge_workflow" '--json --mode review' "merge-pr polls review mode with approval-wait --mode review"
+assert_file_contains "$merge_workflow" 'treat `reviewed` as the met gate' "merge-pr treats reviewed as the met review-mode gate"
+assert_file_not_contains "$merge_workflow" 'orch-env PR_APPROVAL_GATE' "merge-pr no longer re-derives the gate from orch-env"
+
+# vstack#642 nudge — approval-wait nudges silent reviewers (once per head,
+# clock reset on push, user-configured PR_REVIEW_NUDGE comment with a
+# GitHub-native re-request fallback); submit-pr documents the settings and
+# the full push -> new review -> resolve -> CI -> merge cycle.
+assert_file_contains "$submit_workflow" 'PR_REVIEW_NUDGE_SECS' "submit-pr documents the nudge window setting"
+assert_file_contains "$submit_workflow" 'PR_REVIEW_NUDGE' "submit-pr documents the nudge comment setting"
+assert_file_contains "$submit_workflow" 'nudged at most once' "submit-pr documents the once-per-head nudge rule"
+assert_file_contains "$submit_workflow" 'wait for a NEW review of the new head' "submit-pr states the push-to-re-review cycle explicitly"
+assert_file_contains "$merge_workflow" 'PR_REVIEW_NUDGE' "merge-pr notes the nudge settings on the review-mode poll"
+
+# drovr migration lesson — reruns re-execute the workflow definition pinned
+# at the original event; gate/CI behavior changes only show on a fresh head.
+assert_file_contains "$submit_workflow" 'pinned at the original triggering event' "submit-pr carries the rerun-pinning caveat"
+assert_file_contains "$merge_workflow" 'pinned at the original triggering event' "merge-pr carries the rerun-pinning caveat"
+
+# vstack#643 — Greptile is gone; orch docs and workflows must stay
+# reviewer-agnostic ('reptile' catches both capitalizations).
+for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$orch_skill" "$REPO_ROOT/skills/orch/README.md" "$REPO_ROOT/skills/orch/DEVELOPMENT.md"; do
+  assert_file_not_contains "$doc" 'reptile' "$(basename "$doc") carries no stale Greptile reference"
+done
 
 # vstack#538 — bot reviews are async and bot-review-wait is RETIRED: no
 # workflow may reference it, and bot-SPECIFIC prose (emoji reactions, sticky
@@ -165,24 +202,24 @@ assert_file_not_contains "$submit_workflow" 'defer-ci' "submit-pr no longer queu
 assert_file_not_contains "$submit_workflow" 'Wait for Bot Review' "submit-pr drops the blocking bot review section"
 assert_file_not_contains "$submit_workflow" 'checklist_timeout' "submit-pr drops bot checklist timeout routing"
 assert_file_contains "$submit_workflow" '.agents/skills/second-opinion/scripts/second-opinion review' "submit-pr runs the local pre-PR review via second-opinion"
-assert_file_contains "$submit_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json' "submit-pr polls the approval gate via approval-wait"
-assert_file_contains "$submit_workflow" 'reviewDecision == "APPROVED"' "submit-pr approval gate reads the GitHub-native reviewDecision"
-assert_file_contains "$submit_workflow" 'latest review is APPROVED' "submit-pr approval gate documents the latestReviews fallback"
-assert_file_contains "$submit_workflow" 'No approval verdict' "submit-pr prompts the user when no approval verdict arrives"
+assert_file_contains "$submit_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json --mode [GATE_MODE]' "submit-pr polls the review gate via approval-wait"
+assert_file_contains "$submit_workflow" 'reviewDecision == "APPROVED"' "submit-pr approval mode reads the GitHub-native reviewDecision"
+assert_file_contains "$submit_workflow" 'latest review is APPROVED' "submit-pr approval mode documents the latestReviews fallback"
+assert_file_contains "$submit_workflow" 'No [GATE_MODE]-gate verdict' "submit-pr prompts the user when no gate verdict arrives"
 assert_file_contains "$submit_workflow" 'Force merge' "submit-pr offers an explicit force-merge override"
 assert_file_contains "$submit_workflow" 'pr-threads [PR_NUMBER] --unresolved' "submit-pr merge gate checks unresolved threads deterministically"
 assert_file_contains "$submit_workflow" '`status=complete`, `verdict=pass`' "submit-pr merge gate requires green CI"
 
-# vstack#541 — the approval gate (§ 4) must run BEFORE CI verification (§ 5):
-# approval-gated repos only start CI once an approval verdict exists, so the
+# vstack#541 — the review gate (§ 4) must run BEFORE CI verification (§ 5):
+# approval-gated repos only start CI once a review verdict exists, so the
 # reverse order would deadlock. Compare section-header line numbers.
-approval_gate_line="$(grep -n -m1 '^## 4\. Approval Gate' "$submit_workflow" | cut -d: -f1)"
+review_gate_line="$(grep -n -m1 '^## 4\. Review Gate' "$submit_workflow" | cut -d: -f1)"
 ci_verify_line="$(grep -n -m1 '^## 5\. Verify CI' "$submit_workflow" | cut -d: -f1)"
 submit_ordering="missing-sections"
-if [[ -n "$approval_gate_line" && -n "$ci_verify_line" && "$approval_gate_line" -lt "$ci_verify_line" ]]; then
-  submit_ordering="approval-before-ci"
+if [[ -n "$review_gate_line" && -n "$ci_verify_line" && "$review_gate_line" -lt "$ci_verify_line" ]]; then
+  submit_ordering="review-before-ci"
 fi
-assert_eq "$submit_ordering" "approval-before-ci" "submit-pr orders the approval gate (§ 4) before CI verify (§ 5)"
+assert_eq "$submit_ordering" "review-before-ci" "submit-pr orders the review gate (§ 4) before CI verify (§ 5)"
 assert_file_contains "$submit_workflow" 'CI_WAIT_NO_CHECKS_GRACE' "submit-pr documents the ci-wait no-checks grace window"
 assert_file_not_contains "$comments_workflow" 'Wait for All Bot Reviews' "review-pr-comments drops the bot completion pre-check"
 assert_file_not_contains "$comments_workflow" 'sleep 300' "review-pr-comments does not sleep-wait for bot re-review"
@@ -200,14 +237,14 @@ assert_file_contains "$merge_workflow" 'git-https-auth -C [MAIN_REPO_ROOT] fetch
 assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards to quoted fetched origin base branch with plain git"
 assert_file_not_contains "$merge_workflow" 'branch -D "$PR_BRANCH"' "merge-pr § 5a no longer force-deletes the PR branch unconditionally"
 assert_file_contains "$merge_workflow" 'branch refs/heads/[PR_BRANCH]' "merge-pr § 5a guards branch delete against worktree checkout"
-assert_file_contains "$merge_workflow" 'Otherwise a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate when the toggle is on"
+assert_file_contains "$merge_workflow" 'a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate in approval mode"
 assert_file_contains "$merge_workflow" 'pr-merge [PR_NUMBER] --auto' "merge-pr re-runs check/queue-blocked merges with pr-merge --auto"
 assert_file_contains "$merge_workflow" 'QUEUED FOR AUTO-MERGE' "merge-pr treats pr-merge exit 75 as success-pending"
 assert_file_contains "$merge_workflow" 'gh pr view [PR_NUMBER] --json state,mergedAt' "merge-pr watches queued merges via PR state on a bounded poll"
 assert_file_contains "$merge_workflow" 'isInMergeQueue mergeQueueEntry { state }' "merge-pr watch loop reads queue membership via GraphQL"
 assert_file_contains "$merge_workflow" 'workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2' "merge-pr routes queue ejection / disarmed auto-merge into ci-fix recovery"
 assert_file_contains "$merge_workflow" 'merge-group** run (workflow event `merge_group`)' "merge-pr points ci-fix at the failing merge-group run on ejection"
-assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json' "merge-pr re-confirms approval after a recovery push"
+assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]' "merge-pr re-confirms the review gate after a recovery push"
 
 # vstack#543 — the ci-fix cycle caps are configurable via CI_FIX_MAX_CYCLES
 # (default 6), read deterministically through orch-env; at the cap both

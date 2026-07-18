@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Wait for a GitHub-native review approval verdict on a PR. Always emits a
-# final result on stdout — an "Approval ..." line, or a JSON object with
-# --json — so callers can route approved vs changes-requested vs timeout
-# deterministically (vstack#538).
+# Wait for the reviewer-gate verdict on a PR. Always emits a final result on
+# stdout — an "Approval ..."/"Review ..." line, or a JSON object with --json —
+# so callers can route approved vs changes-requested vs timeout
+# deterministically (vstack#538, vstack#642).
 #
-# Approval detection is GitHub-native ONLY, either signal:
+# Two wait modes (--mode, default approval):
+#
+# approval — GitHub-native approval detection ONLY, either signal:
 #   - reviewDecision == "APPROVED" (branch-protection aggregate), or
 #   - when reviewDecision is empty/null (no required-review protection):
 #     at least one reviewer whose LATEST review is APPROVED and no reviewer
@@ -14,27 +16,59 @@
 # parsed. A reviewDecision of REVIEW_REQUIRED never falls back to
 # latestReviews: branch protection is still waiting on required approvals.
 #
+# review — for repos whose reviewers post COMMENTED reviews and never approve
+# (vstack#642). Succeeds (status "reviewed") when ALL of:
+#   - at least one submitted review is pinned to the CURRENT head commit
+#     (REST commit_id == headRefOid), is not DISMISSED/PENDING, and is not the
+#     PR author's own — any state counts; an approval is also a review;
+#   - no non-author reviewer's latest submitted review stands at
+#     CHANGES_REQUESTED (dismissal or a newer review clears it);
+#   - zero unresolved review threads.
+# The head SHA is re-read every poll, so a force-push resets the wait: a
+# review of a superseded commit never satisfies the gate.
+#
 # The poller also returns early (status "comments") when unresolved review
-# threads exist without an approval verdict, so callers can triage new
+# threads exist without the mode's verdict, so callers can triage new
 # comments instead of idling out the full timeout.
 #
-# Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
+# Nudging (both modes): when the mode's signal has not arrived within
+# PR_REVIEW_NUDGE_SECS (default 600; 0 disables) of the wait starting or of
+# the head last changing — a push restarts the clock — the poller nudges the
+# reviewer ONCE per head SHA, then keeps waiting inside the existing max_wait
+# bound. The nudge is the user-configured PR_REVIEW_NUDGE comment body posted
+# on the PR (no bot names are baked in); when it is empty the fallback is a
+# GitHub-native re-review request to the PR's requested and past reviewers,
+# or silence when there is nobody to re-request. Both keys read with the
+# orch-env precedence (process env > vstack.settings.toml > default).
+#
+# Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review]
+#        approval-wait --resolve-mode
 #   poll_interval default 15s, max_wait default 900s (15 min).
 #
+# --resolve-mode prints the project's effective reviewer-gate mode and exits:
+# PR_REVIEW_GATE (approval|review|off) when set; otherwise the legacy
+# PR_APPROVAL_GATE maps on → approval and off → off; both unset defaults to
+# approval. Same env > vstack.settings.toml > default precedence as orch-env.
+# This is the single implementation of the back-compat derivation — callers
+# read the mode through it instead of re-deriving the chain.
+#
 # Exit codes:
-#   0 - approved
+#   0 - approved (approval mode) / reviewed (review mode)
 #   1 - changes requested, unresolved comments pending, timeout, or a
 #       non-auth error
 #   3 - GitHub auth/CLI error (matches ci-wait)
 #
 # JSON output (always when --json):
 #   {
-#     "status": "approved" | "changes_requested" | "comments" | "timeout" | "error",
+#     "status": "approved" | "reviewed" | "changes_requested" | "comments" | "timeout" | "error",
 #     "review_decision": <string>,  # raw reviewDecision ("" when unset)
 #     "approvals": <int>,           # reviewers whose latest review is APPROVED
 #     "changes_requested": <int>,   # reviewers whose latest review is CHANGES_REQUESTED
 #     "unresolved_count": <int>,    # unresolved review threads at emit time
 #     "elapsed_seconds": <int>,
+#     "mode": <string>,             # review mode only
+#     "head_sha": <string>,         # review mode only: head at last poll
+#     "reviews_at_head": <int>,     # review mode only: non-author reviews of head
 #     "error": <string>             # only when status == "error"
 #   }
 #
@@ -58,19 +92,69 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
+MODE="approval"
+RESOLVE_MODE=false
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) JSON_OUTPUT=true; shift ;;
+    --resolve-mode) RESOLVE_MODE=true; shift ;;
+    --mode)
+      MODE="${2:?approval-wait: --mode requires a value: approval or review}"
+      shift 2
+      ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done
 
-PR_NUM="${POSITIONAL[0]:?Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]}"
+# --resolve-mode: print the effective reviewer-gate mode and exit. Needs no
+# auth or PR argument — it only reads project configuration, with the same
+# precedence as orch-env (process env > vstack.settings.toml > default).
+if $RESOLVE_MODE; then
+  # shellcheck source=lib/vstack-env.sh
+  source "$SCRIPT_DIR/lib/vstack-env.sh"
+  vstack_load_project_env "$PROJECT_ROOT"
+  mode="${PR_REVIEW_GATE:-}"
+  case "$mode" in
+    approval|review|off) ;;
+    "")
+      # Legacy PR_APPROVAL_GATE derivation: off → off, anything else (or
+      # unset) → approval — the pre-#642 binary gate semantics.
+      if [[ "${PR_APPROVAL_GATE:-}" == "off" ]]; then
+        mode="off"
+      else
+        mode="approval"
+      fi
+      ;;
+    *)
+      echo "approval-wait: unrecognized PR_REVIEW_GATE value '$mode'; using approval" >&2
+      mode="approval"
+      ;;
+  esac
+  printf '%s\n' "$mode"
+  exit 0
+fi
+
+case "$MODE" in
+  approval|review) ;;
+  *)
+    echo "approval-wait: invalid --mode '$MODE' (expected approval or review)" >&2
+    exit 2
+    ;;
+esac
+
+PR_NUM="${POSITIONAL[0]:?Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 MAX_WAIT="${POSITIONAL[2]:-900}"
 START_TIME="$(date +%s)"
 elapsed=0
+
+# Nudge configuration (vstack#642), read through orch-env so the same
+# process env > vstack.settings.toml > default precedence applies without
+# sourcing project env files into this process. The numeric default guard in
+# orch-env keeps NUDGE_SECS usable; 0 disables nudging.
+NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
+NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 
 update_elapsed() {
   local now
@@ -84,14 +168,33 @@ last_review_decision=""
 last_approvals=0
 last_changes=0
 last_unresolved=0
+last_head_sha=""
+last_reviews_at_head=0
+
+# Nudge bookkeeping: the clock restarts when the head changes, and each head
+# SHA is nudged at most once ("__none__" so an unknown head still gets one).
+last_reviewer_logins=""
+nudge_clock="$START_TIME"
+prev_head_sha=""
+last_nudged_sha="__none__"
 
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
-#   status: approved | changes_requested | comments | timeout | error
+#   status: approved | reviewed | changes_requested | comments | timeout | error
 emit_result() {
-  local status="$1" error_msg="${2:-}"
+  local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
   if $JSON_OUTPUT; then
+    # Review-mode fields are additive only, so approval-mode JSON stays
+    # byte-compatible with the pre-#642 contract.
+    mode_fields='{}'
+    if [[ "$MODE" == "review" ]]; then
+      mode_fields=$(jq -n \
+        --arg mode "$MODE" \
+        --arg head "$last_head_sha" \
+        --argjson at_head "$last_reviews_at_head" \
+        '{mode: $mode, head_sha: $head, reviews_at_head: $at_head}')
+    fi
     jq -n \
       --arg s "$status" \
       --arg decision "$last_review_decision" \
@@ -99,6 +202,7 @@ emit_result() {
       --argjson changes "$last_changes" \
       --argjson unresolved "$last_unresolved" \
       --argjson elapsed "$elapsed" \
+      --argjson mode_fields "$mode_fields" \
       --arg error "$error_msg" \
       '{
         status: $s,
@@ -107,21 +211,32 @@ emit_result() {
         changes_requested: $changes,
         unresolved_count: $unresolved,
         elapsed_seconds: $elapsed
-      } + (if $error == "" then {} else {error: $error} end)'
+      } + $mode_fields + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
   case "$status" in
     approved)
       echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
       ;;
+    reviewed)
+      echo "Review: reviewed (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head, unresolved threads: $last_unresolved)"
+      ;;
     changes_requested)
       echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
       ;;
     comments)
-      echo "Approval: $last_unresolved unresolved review thread(s) pending triage, no approval verdict yet"
+      if [[ "$MODE" == "review" ]]; then
+        echo "Review: $last_unresolved unresolved review thread(s) pending triage"
+      else
+        echo "Approval: $last_unresolved unresolved review thread(s) pending triage, no approval verdict yet"
+      fi
       ;;
     timeout)
-      echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
+      if [[ "$MODE" == "review" ]]; then
+        echo "Review timeout after ${elapsed}s (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head)"
+      else
+        echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
+      fi
       ;;
     error)
       echo "Approval error: $error_msg"
@@ -209,69 +324,224 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
-THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) { nodes { isResolved } }
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved }
+      }
     }
   }
 }'
 
+# Count unresolved review threads, following reviewThreads pagination past the
+# first 100. Prints the total; returns nonzero when a page query fails.
+count_unresolved_threads() {
+  local cursor="" total=0 threads_json threads_status page_unresolved has_next
+  while true; do
+    threads_status=0
+    set +e
+    if [ -n "$cursor" ]; then
+      threads_json=$(gh api graphql \
+        -f query="$THREADS_QUERY" \
+        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" \
+        -F cursor="$cursor" 2>/dev/null)
+    else
+      threads_json=$(gh api graphql \
+        -f query="$THREADS_QUERY" \
+        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>/dev/null)
+    fi
+    threads_status=$?
+    set -e
+    if [ "$threads_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$threads_json"; then
+      return 1
+    fi
+    # `gh api graphql` returns the response envelope; tolerate a pre-stripped
+    # object too so stubs and future gh versions both parse.
+    page_unresolved=$(jq '(.data // .)
+      | [.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)]
+      | length' <<<"$threads_json")
+    total=$((total + page_unresolved))
+    has_next=$(jq -r '(.data // .)
+      | .repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$threads_json")
+    [ "$has_next" = "true" ] || break
+    cursor=$(jq -r '(.data // .)
+      | .repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$threads_json")
+    [ -n "$cursor" ] || break
+  done
+  printf '%s\n' "$total"
+  return 0
+}
+
+# Post the nudge for the current head. With PR_REVIEW_NUDGE set, the nudge is
+# that comment body verbatim — the reviewer trigger is user configuration, no
+# bot names are baked in. With it empty, fall back to a GitHub-native
+# re-review request to the PR's requested and past reviewers; with nobody to
+# re-request, keep waiting silently. Failures warn and still count as nudged
+# so a broken nudge path can never flood the PR.
+post_nudge() {
+  local requests_json all_logins payload
+  if [ -n "$NUDGE_BODY" ]; then
+    if ! gh pr comment "$PR_NUM" --repo "$REPO" --body "$NUDGE_BODY" >/dev/null 2>&1; then
+      echo "approval-wait: nudge comment failed for PR #$PR_NUM in $REPO" >&2
+    fi
+    return 0
+  fi
+  requests_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewRequests 2>/dev/null || printf '{}')
+  all_logins=$(printf '%s\n%s\n' \
+    "$(jq -r '[.reviewRequests[]? | .login // empty] | .[]' <<<"$requests_json" 2>/dev/null)" \
+    "$last_reviewer_logins")
+  payload=$(jq -cn --arg logins "$all_logins" \
+    '{reviewers: ($logins | split("\n") | map(select(. != "")) | unique)}')
+  if [ "$(jq '.reviewers | length' <<<"$payload")" -eq 0 ]; then
+    return 0
+  fi
+  if ! gh api -X POST "repos/$REPO/pulls/$PR_NUM/requested_reviewers" --input - >/dev/null 2>&1 <<<"$payload"; then
+    echo "approval-wait: re-review request failed for PR #$PR_NUM in $REPO" >&2
+  fi
+}
+
 update_elapsed
 while true; do
-  # --- review verdict snapshot ---
-  view_status=0
-  set +e
-  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews 2>/dev/null)
-  view_status=$?
-  set -e
-  if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
-    emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
-    echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
-    exit 1
-  fi
+  if [ "$MODE" = "review" ]; then
+    # --- head + author snapshot (re-read every poll: a force-push moves the
+    # head, and only reviews of the CURRENT head satisfy the gate) ---
+    view_status=0
+    set +e
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,author 2>/dev/null)
+    view_status=$?
+    set -e
+    if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+      emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
+      echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
+      exit 1
+    fi
+    last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
+    pr_author=$(jq -r '.author.login // ""' <<<"$view_json")
 
-  last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
-  # latestReviews already holds the latest review per reviewer; count formal
-  # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
-  last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
-  last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
+    # --- submitted reviews snapshot (REST carries commit_id; latestReviews
+    # does not, so head pinning needs the pulls/reviews listing) ---
+    reviews_status=0
+    set +e
+    reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>/dev/null | jq -s 'add // []')
+    reviews_status=$?
+    set -e
+    if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
+      emit_error "review listing failed for PR #$PR_NUM in $REPO"
+      echo "review listing failed for PR #$PR_NUM in $REPO" >&2
+      exit 1
+    fi
+
+    last_review_decision=""
+    # A review counts when it is pinned to the current head, submitted (not
+    # PENDING), not DISMISSED, and not the PR author's own. Any state counts —
+    # COMMENTED and APPROVED alike; an approval is also a review.
+    last_reviews_at_head=$(jq --arg head "$last_head_sha" --arg author "$pr_author" \
+      '[.[] | select(.commit_id == $head
+                     and .state != "DISMISSED" and .state != "PENDING"
+                     and (.user.login // "") != $author)] | length' <<<"$reviews_json")
+    # A CHANGES_REQUESTED verdict stands until the reviewer re-reviews or it
+    # is dismissed — judge each non-author reviewer by their latest submitted
+    # review (the REST listing is in submission order).
+    last_changes=$(jq --arg author "$pr_author" \
+      '[[.[] | select(.state != "DISMISSED" and .state != "PENDING"
+                      and (.user.login // "") != $author)]
+        | group_by(.user.login) | map(.[-1])
+        | .[] | select(.state == "CHANGES_REQUESTED")] | length' <<<"$reviews_json")
+    last_approvals=$(jq --arg author "$pr_author" \
+      '[[.[] | select(.state != "DISMISSED" and .state != "PENDING"
+                      and (.user.login // "") != $author)]
+        | group_by(.user.login) | map(.[-1])
+        | .[] | select(.state == "APPROVED")] | length' <<<"$reviews_json")
+    last_reviewer_logins=$(jq -r --arg author "$pr_author" \
+      '[.[] | select((.user.login // "") != $author) | .user.login // empty]
+        | unique | .[]' <<<"$reviews_json")
+  else
+    # --- review verdict snapshot (headRefOid rides along for the nudge's
+    # once-per-head bookkeeping) ---
+    view_status=0
+    set +e
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid 2>/dev/null)
+    view_status=$?
+    set -e
+    if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+      emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
+      echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
+      exit 1
+    fi
+
+    last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
+    last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
+    # latestReviews already holds the latest review per reviewer; count formal
+    # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
+    last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
+    last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
+    last_reviewer_logins=$(jq -r '[.latestReviews[]? | .author.login // empty]
+      | unique | .[]' <<<"$view_json")
+  fi
 
   # --- unresolved review threads snapshot ---
   threads_status=0
   set +e
-  threads_json=$(gh api graphql \
-    -f query="$THREADS_QUERY" \
-    -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>/dev/null)
+  unresolved_total=$(count_unresolved_threads)
   threads_status=$?
   set -e
-  if [ "$threads_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$threads_json"; then
+  if [ "$threads_status" -ne 0 ]; then
     emit_error "review thread query failed for PR #$PR_NUM in $REPO"
     echo "review thread query failed for PR #$PR_NUM in $REPO" >&2
     exit 1
   fi
-  # `gh api graphql` returns the response envelope; tolerate a pre-stripped
-  # object too so stubs and future gh versions both parse.
-  last_unresolved=$(jq '(.data // .)
-    | [.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)]
-    | length' <<<"$threads_json")
+  last_unresolved="$unresolved_total"
 
   # --- route ---
-  if [ "$last_review_decision" = "APPROVED" ]; then
-    emit_result "approved"
-    exit 0
+  if [ "$MODE" = "review" ]; then
+    if [ "$last_changes" -gt 0 ]; then
+      emit_result "changes_requested"
+      exit 1
+    fi
+    if [ "$last_reviews_at_head" -gt 0 ] && [ "$last_unresolved" -eq 0 ]; then
+      emit_result "reviewed"
+      exit 0
+    fi
+    if [ "$last_unresolved" -gt 0 ]; then
+      emit_result "comments"
+      exit 1
+    fi
+  else
+    if [ "$last_review_decision" = "APPROVED" ]; then
+      emit_result "approved"
+      exit 0
+    fi
+    if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
+      emit_result "changes_requested"
+      exit 1
+    fi
+    if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
+      emit_result "approved"
+      exit 0
+    fi
+    if [ "$last_unresolved" -gt 0 ]; then
+      emit_result "comments"
+      exit 1
+    fi
   fi
-  if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
-    emit_result "changes_requested"
-    exit 1
+
+  # --- nudge when the gate signal is silent past the nudge window ---
+  if [ "$last_head_sha" != "$prev_head_sha" ]; then
+    # A new head restarts the nudge clock; the first observed head keeps the
+    # wait-start clock.
+    if [ -n "$prev_head_sha" ]; then
+      nudge_clock="$(date +%s)"
+    fi
+    prev_head_sha="$last_head_sha"
   fi
-  if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-    emit_result "approved"
-    exit 0
-  fi
-  if [ "$last_unresolved" -gt 0 ]; then
-    emit_result "comments"
-    exit 1
+  nudge_now="$(date +%s)"
+  if [ "$NUDGE_SECS" -gt 0 ] \
+    && [ $((nudge_now - nudge_clock)) -ge "$NUDGE_SECS" ] \
+    && [ "$last_nudged_sha" != "$last_head_sha" ]; then
+    post_nudge
+    last_nudged_sha="$last_head_sha"
   fi
 
   update_elapsed

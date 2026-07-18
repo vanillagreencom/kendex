@@ -36,7 +36,7 @@ On any `gh` or `.agents/skills/github/scripts/github.sh` failure: halt, report e
 
 ### 1.1 Async Bot Review Policy
 
-Bot reviews are asynchronous. Triage what exists on the PR **right now** — never block triage on a bot reaching terminal status first. Bot prose is never parsed as a gate: emoji reactions, sticky comments, and checklist text carry no gating weight. Comments that arrive after this pass are caught by a later triage pass, by the caller's approval gate (`submit-pr.md` § 4: a GitHub-native approval verdict polled via `approval-wait` together with new comments), or by its merge gates (`submit-pr.md` § 6.1: zero unresolved comments as a final live check).
+Bot reviews are asynchronous. Triage what exists on the PR **right now** — never block triage on a bot reaching terminal status first. Bot prose is never parsed as a gate: emoji reactions, sticky comments, and checklist text carry no gating weight. Comments that arrive after this pass are caught by a later triage pass, by the caller's review gate (`submit-pr.md` § 4: the GitHub-native reviewer-gate verdict — approval or review-at-head per the resolved mode — polled via `approval-wait` together with new comments), or by its merge gates (`submit-pr.md` § 6.1: zero unresolved comments as a final live check).
 
 ### 1.2 Fetch Actionable Data
 

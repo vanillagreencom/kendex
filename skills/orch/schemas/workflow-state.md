@@ -104,7 +104,8 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
 | `pr_local_review` | object | Local pre-PR review tracking: `passes` (max 2 per submission) |
-| `pr_approval` | object | Approval merge-gate tracking: `forced` (user chose Force merge past a missing approval verdict), `gate` ("off" when `PR_APPROVAL_GATE` disables the gate for a reviewer-less repo) |
+| `pr_approval` | object | Approval merge-gate tracking: `forced` (user chose Force merge past a missing gate verdict), `gate` (legacy field, still recorded: "off" when the reviewer gate is disabled for a reviewer-less repo) |
+| `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
 
 ## CLI
 

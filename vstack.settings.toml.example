@@ -40,14 +40,30 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # review approval (approval-gated jobs / merge queue) with slow dispatch.
 
 CI_FIX_MAX_CYCLES = "6"
-
-# Approval merge gate: "on" requires a GitHub-native review approval before
-# merge (orch submit-pr/merge-pr). Set "off" ONLY for repos with no review
-# bots and no reviewer policy — the approval wait is skipped entirely.
-PR_APPROVAL_GATE = "on"
 # Used by: orch (`submit-pr` / `merge-pr`). Max automated ci-fix cycles per PR
 # submission or merge recovery before reporting the persistent CI failure back
 # to the user.
+
+# Reviewer merge gate mode: "approval" requires a GitHub-native review
+# approval before merge (orch submit-pr/merge-pr); "review" requires a formal
+# review of the current head from a non-author reviewer plus zero unresolved
+# threads — the right mode for review bots that comment but never approve.
+# Set "off" ONLY for repos with no review bots and no reviewer policy — the
+# review wait is skipped entirely. Legacy PR_APPROVAL_GATE ("on"/"off") is
+# still honored when this key is unset.
+PR_REVIEW_GATE = "approval"
+# Used by: orch (`submit-pr` / `merge-pr`).
+
+PR_REVIEW_NUDGE_SECS = "600"
+# Used by: orch (`approval-wait`). Seconds of reviewer silence for the current
+# head before the wait nudges — once per head SHA; a push restarts the clock.
+# "0" disables nudging.
+
+PR_REVIEW_NUDGE = ""
+# Used by: orch (`approval-wait`). PR comment body posted as the nudge — set
+# it to whatever summons the project's reviewer (e.g. "@your-bot review").
+# Empty = no comment; the nudge falls back to a GitHub-native re-review
+# request to the PR's requested and past reviewers.
 
 # BOT / COMMIT IDENTITY
 
