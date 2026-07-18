@@ -30,6 +30,8 @@ The owning session can opt in with `create <ID> --reuse`, which rebases the exis
 
 The restack control commands fail closed unless the target is a registered worktree and its tool-created state token, recorded remote, branch, observed remote OID, original head, target base, and live Git rebase metadata all match. `continue` and `skip` verify the remote has not moved before and after replay, then authorize only the completed rewritten head. `abort` verifies the same local restack boundary, restores the recorded original head, and clears pending authorization; it remains safe and available if the remote moved while conflict resolution was paused. Published restacks paused by older vstack versions remain recoverable when their complete legacy authorization and sequencer metadata match.
 
+If the harness execution policy rejects top-level `git rebase` itself (for example Codex `approval_policy = never`), use the guarded `create <ID> --reuse` / `--restack` path — each control is a single simple helper command — or, when that is also unavailable, the exact verified replay documented in `SKILL.md` § Policy-blocked rebase (cherry-pick replay fallback).
+
 `remove` deletes the worktree first, then tries `git branch -d` for the associated local branch. If Git refuses the safe branch delete (for example, the branch is not merged into the current main checkout), the command exits non-zero and prints a diagnostic naming the remaining branch plus the manual `git branch -D` recovery command.
 
 ## Codex Desktop

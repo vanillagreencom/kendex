@@ -130,6 +130,16 @@ assert_file_contains "$orch_skill" 'Replace polling loops with `ci-wait`' "orch 
 assert_file_contains "$orch_skill" '`approval-wait` (review approval)' "orch skill routes approval polling to approval-wait"
 assert_file_contains "$dev_skill" 'approval required by policy, but AskForApproval is set to Never' "dev skill carries the never-approval runtime pointer"
 
+# vstack#661 — the same Codex policy also rejects some porcelain verbs (top-level
+# `git rebase`) outright; the runtime block must route that rejection to the
+# worktree skill's guarded restack path and its documented cherry-pick replay
+# fallback instead of improvised history rewrites or force-pushes. The fallback
+# section's own contract is linted in skills/worktree/tests/restack_fallback_doc.sh.
+worktree_skill="$REPO_ROOT/skills/worktree/SKILL.md"
+assert_file_contains "$orch_skill" 'Policy-blocked rebase (cherry-pick replay fallback)' "orch skill routes policy-rejected rebases to the worktree fallback section"
+assert_file_contains "$orch_skill" 'worktree restack continue|skip|abort' "orch skill names the guarded restack controls for policy-rejected rebases"
+assert_file_contains "$worktree_skill" '### Policy-blocked rebase (cherry-pick replay fallback)' "worktree skill carries the fallback section the orch pointer targets"
+
 for workflow in "$submit_workflow" "$comments_workflow"; do
   workflow_name="$(basename "$workflow")"
   assert_file_not_contains "$workflow" 'BOT_WAIT_ARGS' "$workflow_name avoids bot wait arrays"
