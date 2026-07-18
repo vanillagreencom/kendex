@@ -83,6 +83,7 @@ git commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
 | Source | Commit Message |
 |--------|----------------|
 | `pr-review` | "Address PR review - [brief description]" |
+| `pr-comments` | "Address PR comments - [brief description]" |
 | `qa-review` | "Address QA review - [brief description]" |
 | `review` | "Address review - [brief description]" |
 | `local-review` | "Address local pre-PR review - [brief description]" |
