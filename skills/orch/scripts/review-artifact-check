@@ -11,18 +11,21 @@ usage() {
   cat >&2 << 'EOF'
 Usage:
   review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
-  review-artifact-check --file <json_path>
+  review-artifact-check --file <json_path> [delegated_at_epoch]
 
 Glob mode: checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first.
-File mode (--file): checks one explicit JSON file (existence + verdict),
-for artifacts written to a known path such as the external review output.
+File mode (--file): checks one explicit JSON file, for artifacts written to a
+known path such as the external review output. Validates existence + verdict;
+when the optional delegated_at_epoch is supplied it ALSO applies glob mode's
+freshness gate against filesystem mtime.
 
 Both modes print JSON:
   {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
 
 reason meanings when ok=false:
   missing  no matching artifact found (glob) / file does not exist (--file)
-  stale    newest artifact mtime < delegated_at_epoch (glob mode only)
+  stale    artifact mtime < delegated_at_epoch (glob mode, or --file when the
+           optional boundary is supplied)
   invalid  artifact fails `jq -e '.verdict'`
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
@@ -35,20 +38,40 @@ emit() {
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
 }
 
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
 # --- File mode: validate one explicit JSON path deterministically ---
 if [[ "${1:-}" == "--file" ]]; then
-  if [[ $# -ne 2 ]]; then
+  # Accept an OPTIONAL trailing delegated_at_epoch. When present, apply the same
+  # freshness gate as glob mode (artifact mtime < delegated_at → stale); when
+  # omitted, keep the existence + verdict behavior so existing callers do not
+  # break.
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
     usage
     exit 2
   fi
   file="$2"
+  delegated_at="${3:-}"
   if [[ -z "$file" ]]; then
     echo "Error: --file requires a non-empty path" >&2
+    exit 2
+  fi
+  if [[ -n "$delegated_at" ]] && ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+    echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
     exit 2
   fi
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     exit 1
+  fi
+  if [[ -n "$delegated_at" ]]; then
+    mtime="$(file_mtime "$file")"
+    if (( mtime < delegated_at )); then
+      emit false "$file" "stale"
+      exit 1
+    fi
   fi
   if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
     emit false "$file" "invalid"
@@ -79,10 +102,6 @@ if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
   echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
   exit 2
 fi
-
-file_mtime() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
-}
 
 reason="missing"
 fail_path=""

@@ -128,10 +128,54 @@ assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file valid reports ok=true"
 assert_eq "$(jq -r '.path' <<<"$out")" "$ext_valid" "--file valid reports its path"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file valid reports reason=valid"
 
-# --file does not apply the staleness gate — an old mtime still validates
+# --file with NO boundary does not apply the staleness gate — an old mtime still validates
 touch -d "@$before" "$ext_valid"
 out="$("$CHECK" --file "$ext_valid")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file ignores mtime (no staleness gate)"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file without boundary ignores mtime (existence+verdict only)"
+
+# --- --file mode: OPTIONAL delegated_at boundary applies glob mode's freshness gate ---
+# older-than-boundary mtime → stale
+touch -d "@$before" "$ext_valid"
+set +e
+out="$("$CHECK" --file "$ext_valid" "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file with boundary, older mtime exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file stale reports ok=false"
+assert_eq "$(jq -r '.path' <<<"$out")" "$ext_valid" "--file stale reports its path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "stale" "--file older-than-boundary reports reason=stale"
+
+# newer-than-boundary mtime → valid
+touch -d "@$after" "$ext_valid"
+out="$("$CHECK" --file "$ext_valid" "$delegated_at")"
+rc=$?
+assert_eq "$rc" "0" "--file with boundary, newer mtime exits 0"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file fresh (mtime >= boundary) reports ok=true"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file newer-than-boundary reports reason=valid"
+
+# mtime exactly equal to boundary is fresh (not stale) — matches glob mode's >= semantics
+touch -d "@$delegated_at" "$ext_valid"
+out="$("$CHECK" --file "$ext_valid" "$delegated_at")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file mtime == boundary is fresh"
+
+# fresh mtime but missing verdict → invalid (freshness passes, verdict gate fails)
+ext_fresh_noverdict="$worktree/tmp/review-external-20260709-070707.json"
+printf '{"items":[]}' > "$ext_fresh_noverdict"
+touch -d "@$after" "$ext_fresh_noverdict"
+set +e
+out="$("$CHECK" --file "$ext_fresh_noverdict" "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file fresh-but-no-verdict with boundary exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file fresh-but-no-verdict with boundary reports reason=invalid"
+
+# missing file with a boundary still reports missing (existence checked before freshness)
+set +e
+out="$("$CHECK" --file "$worktree/tmp/review-external-nope.json" "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file missing with boundary exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "missing" "--file missing with boundary reports reason=missing"
 
 # --file: missing file
 set +e
@@ -164,6 +208,10 @@ assert_eq "$?" "2" "non-numeric delegated_at exits 2"
 assert_eq "$?" "2" "nonexistent worktree exits 2"
 "$CHECK" --file >/dev/null 2>&1
 assert_eq "$?" "2" "--file with no path exits 2"
+"$CHECK" --file "$ext_valid" not-a-number >/dev/null 2>&1
+assert_eq "$?" "2" "--file non-numeric boundary exits 2"
+"$CHECK" --file "$ext_valid" "$delegated_at" extra-arg >/dev/null 2>&1
+assert_eq "$?" "2" "--file with too many args exits 2"
 set -e
 
 # --- review-pr.md wires the deterministic acceptance ---
@@ -175,6 +223,12 @@ assert_file_contains "$review_pr" "exactly one" "review-pr limits incomplete ret
 assert_file_contains "$review_pr" "using your harness file-write tool" "review-pr re-delegation instructs harness file-write tool"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
 assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
+assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' "review-pr passes review_delegated_at as the --file freshness boundary"
+
+# --- submit-pr.md wires the --file freshness boundary for the local review ---
+submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
+assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

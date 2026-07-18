@@ -98,3 +98,5 @@ Edit the full command string to change model, effort level, or tool access. No a
 The orch skill's `review-pr` workflow optionally offers an external review at § 2.1. If accepted, the script produces review-finding JSON (same schema as internal review agents) that flows through the standard blocker/suggestion/issue pipeline.
 
 The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the branch diff (standalone lifecycle), draining bot-class findings at local speed instead of blocking on asynchronous GitHub review bots.
+
+In `review` and `audit` modes the artifact's `timestamp` field is wrapper-stamped: after the model responds, the script overwrites `timestamp` with its own UTC wall clock (`date -u`), so the recorded time reflects when the wrapper wrote the file rather than a value the reviewing model serialized. Both orch workflows pass a delegated-at boundary to `review-artifact-check --file`, which rejects an artifact whose filesystem mtime predates that boundary — freshness never depends on a model-supplied timestamp.

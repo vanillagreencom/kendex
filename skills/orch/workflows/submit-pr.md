@@ -74,9 +74,11 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```
    Use the output as `LOCAL_PASSES`. If `LOCAL_PASSES >= 2` → § 2.
 
-2. **Run the local review** (advisory — on script failure, report and continue to § 2):
+2. **Run the local review** (advisory — on script failure, report and continue to § 2). Capture an epoch freshness boundary *before* the review writes the artifact so step 3 can reject a stale or misdated file the way glob mode does:
    ```bash
    mkdir -p [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/git-context timestamp epoch
+   # Use the output as LOCAL_STARTED_AT (delegated-at boundary for the freshness check).
    .agents/skills/orch/scripts/git-context timestamp compact
    # Use [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json as LOCAL_OUTPUT.
    .agents/skills/second-opinion/scripts/second-opinion review \
@@ -84,9 +86,9 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
      --output "$LOCAL_OUTPUT"
    ```
 
-3. **Validate the artifact**:
+3. **Validate the artifact** — pass `LOCAL_STARTED_AT` so existence, freshness (`mtime >= LOCAL_STARTED_AT`), and `jq -e '.verdict'` are all checked:
    ```bash
-   .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT"
+   .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]
    ```
    Count the pass:
    ```bash

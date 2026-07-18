@@ -165,9 +165,10 @@ mkdir -p [WORKTREE_PATH]/tmp
   --output "$EXTERNAL_OUTPUT"
 ```
 
-**On success** — validate deterministically, then append. `review-artifact-check --file` checks existence and `jq -e '.verdict'` and prints `{ok, path, reason}` — no inline conditional or redirection:
+**On success** — validate deterministically, then append. Pass `review_delegated_at` (recorded in § 2.2) as the freshness boundary so a stale or misdated external artifact is rejected the same way glob mode rejects stale reviewer JSONs. `review-artifact-check --file` then checks existence, `mtime >= review_delegated_at`, and `jq -e '.verdict'`, printing `{ok, path, reason}` — no inline conditional or redirection:
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT"
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
+.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 **If `ok == true`** — append the external JSON:
 ```bash

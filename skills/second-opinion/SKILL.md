@@ -39,6 +39,8 @@ Override with `SECOND_OPINION_TARGET=claude|codex` in committed `vstack.settings
 | `quick [question]` | [workflows/quick.md](workflows/quick.md) | Text response |
 | `detect` | (built-in) | Target CLI name |
 
+**Timestamp is wrapper-stamped.** In `review` and `audit` modes the JSON `timestamp` field is overwritten by the wrapper with its own UTC wall clock (`date -u`) after the model responds — the schema keeps `ISO_8601` only as a hint. The written value therefore reflects when the wrapper produced the artifact, not a value the reviewing model serialized (which could be stale or fabricated). Downstream freshness checks (`orch review-artifact-check --file <path> [delegated_at]`) validate filesystem mtime, and the stamped `timestamp` stays consistent with it.
+
 ## Common Options
 
 All modes accept:

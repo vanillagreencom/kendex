@@ -537,6 +537,18 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     fi
   fi
+
+  # Stamp the authoritative timestamp ourselves. The reviewing model serializes
+  # a `timestamp` field, but a model-supplied value is unverifiable — it can emit
+  # a stale or fabricated time (vstack#629). Overwrite it with the wrapper's own
+  # UTC wall clock so the artifact's content timestamp is trustworthy and matches
+  # its filesystem mtime. The schema keeps ISO_8601 as a hint; this is the
+  # authoritative value. RESULT is already jq-validated JSON here, so the rewrite
+  # succeeds; if jq unexpectedly fails, keep the extracted JSON unchanged.
+  STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" '.timestamp = $ts' 2>/dev/null); then
+    RESULT="$STAMPED"
+  fi
 fi
 
 # --- Output -------------------------------------------------------------------

@@ -58,7 +58,7 @@ Tests stage isolated repos/worktrees with parametrized CLI stubs on `PATH`. Each
 - `approval_wait.sh` — GitHub-native approval verdict detection + output contract.
 - `ci_wait.sh` — CI-wait state machine + auth ladder.
 - `session_init.sh` — worktree Linear auth diagnostic preservation.
-- `review_artifact_check.sh` — deterministic reviewer artifact acceptance (`review-artifact-check`) + review-pr wiring assertions.
+- `review_artifact_check.sh` — deterministic reviewer artifact acceptance (`review-artifact-check`), including `--file` freshness with an optional delegated-at boundary, plus review-pr and submit-pr `--file` wiring assertions.
 
 All tests discovered by `run-all.sh` are part of the installed orch skill and
 must pass in downstream projects without access to the vstack source checkout.

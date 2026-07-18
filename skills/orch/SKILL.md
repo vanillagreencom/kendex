@@ -152,7 +152,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `pr-view-json` | Print PR view JSON and return success for expected `status=no_pr` so workflows can route to PR creation without shell fallback expressions |
 | `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
-| `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`) and print `{ok, path, reason}` — the sole review-pr completion condition |
+| `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`) and print `{ok, path, reason}` — the sole review-pr completion condition. `--file <path> [delegated_at_epoch]` validates one explicit artifact; the optional boundary applies the same freshness gate so a stale/misdated external review is rejected |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `approval-wait` | Poll for a GitHub-native review approval verdict (`reviewDecision`/`latestReviews`) plus unresolved-thread count — the submit-pr § 4 approval-gate poller; never parses bot reactions or sticky prose |
 | `ci-wait` | Block until CI completes on a PR — runs after the approval gate; correlates the current-head substantive run with custom aggregate status, and `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds unregistered checks |
