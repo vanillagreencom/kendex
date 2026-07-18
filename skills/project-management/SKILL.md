@@ -37,7 +37,7 @@ User-facing wrappers and TPM-execution workflows for project-level planning, aud
 | Workflow | Purpose |
 |----------|---------|
 | [cycle-plan](workflows/cycle-plan.md) | User dialog + Linear actions for cycle planning; delegates analysis to `tpm-cycle-plan` |
-| [audit-issues](workflows/audit-issues.md) | User dialog + Linear actions for issue/project audits; delegates to `tpm-audit` / `tpm-audit-project-order` |
+| [audit-issues](workflows/audit-issues.md) | User dialog + tracker actions (Linear or GitHub) for issue audits; project/project-order audits are Linear-only; delegates to `tpm-audit` / `tpm-audit-project-order` |
 | [roadmap-plan](workflows/roadmap-plan.md) | Specialist consultation + research gating; delegates to `tpm-roadmap-plan` |
 | [roadmap-create](workflows/roadmap-create.md) | Execute a roadmap plan: project + issue creation via audit |
 | [research-spike](workflows/research-spike.md) | User-initiated research with consultation, asset prep, and researcher delegation |
@@ -82,7 +82,7 @@ TPM workflows return JSON recommendations only.
 | Dependencies | [references/dependencies.md](references/dependencies.md) |
 | Prioritization factors | [references/prioritization.md](references/prioritization.md) |
 | Label management | [references/labels.md](references/labels.md) |
-| Issue tracker CLI | Companion issue tracker skill (`.agents/skills/linear/scripts/linear.sh`) |
+| Issue tracker CLI | Companion tracker skills — Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
 
 ## Execution Rules
 
@@ -91,6 +91,7 @@ TPM workflows return JSON recommendations only.
 - When a user-visible `<output_format>` report is followed by an `Ask user`, `AskUserQuestion`, or question-tool step, send the filled report as a normal assistant message first. Then invoke the question tool separately with only a concise question and concise options; do not paste the report into the question text, option labels, or option descriptions unless a short summary is explicitly requested. This keeps Pi question popups focused on the choice instead of the preceding report.
 - Before any issue create or label update, load the live issue-label inventory and project taxonomy, build the full final `labels[]` set, and run the label preflight in `references/labels.md`. Unknown labels, parent/group labels, missing required categories, or exclusivity violations stop the workflow before mutation.
 - In multi-issue audits, resolve and retain repository verification context per issue/contract. A PR, branch, or resolved path set associated with one issue must not scope another issue's checks.
+- Issue-mode audits resolve tracker context once (audit-issues § 1.2.1) and route every preflight, TPM fetch, and mutation through that tracker. GitHub-tracked audits must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, the workflow degrades explicitly (documented note in the audit summary), never silently.
 
 ## Hierarchy
 
@@ -124,6 +125,6 @@ Score = (Critical Path x 3) + (Dependencies x 2) + (Risk x 2) + (Value x 1) - (E
 
 ## Dependencies
 
-- Issue tracker CLI (e.g., `linear` skill)
+- Issue tracker CLI — `linear` skill for Linear-tracked work; `github` skill + `gh` for GitHub-tracked issue audits
 - `git` (repository/change-aware audit verification scope)
 - `jq`

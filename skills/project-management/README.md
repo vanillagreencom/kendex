@@ -36,17 +36,18 @@ skills/project-management/
 
 ## Skill Dependencies
 
-This skill requires an issue tracker CLI for all read/write operations. Configure the `.agents/skills/linear/scripts/linear.sh` variable to point to your issue tracker's CLI tool.
+This skill requires an issue tracker CLI for all read/write operations. Issue-mode audits resolve the tracker per work item: Linear-tracked items use the `linear` skill CLI; GitHub-tracked items use `gh` plus the `github` skill and never require Linear to be installed or authenticated. Project-level workflows (cycle-plan, roadmap, project/project-order audits) are Linear-only.
 
 | Dependency | Purpose | Variable |
 |------------|---------|----------|
-| Issue tracker CLI (e.g., `linear` skill) | Issue CRUD, cache, comments, labels, relations | `.agents/skills/linear/scripts/linear.sh` |
+| Issue tracker CLI (e.g., `linear` skill) | Linear issue CRUD, cache, comments, labels, relations | `.agents/skills/linear/scripts/linear.sh` |
+| GitHub CLI + `github` skill | GitHub issue CRUD, comments, labels for GitHub-tracked audits | `gh` on `PATH`; `.agents/skills/github/scripts/github.sh` |
 | Git | Resolve branch changes and tracked source roots for audit verification | `git` on `PATH` |
 | jq | Emit the verification-scope JSON contract | `jq` on `PATH` |
 
 ## Issue Tracker Setup Expectations
 
-Before using roadmap, audit, research, or cycle-planning workflows, configure the companion issue-tracker skill and sync its cache so issues, projects, relations, and issue labels are readable. The workflows depend on current issue-label inventory from the issue-tracker skill; they should not infer labels from stale docs alone.
+Before using roadmap, audit, research, or cycle-planning workflows, configure the companion issue-tracker skill and sync its cache so issues, projects, relations, and issue labels are readable. The workflows depend on current issue-label inventory from the issue-tracker skill; they should not infer labels from stale docs alone. GitHub-tracked issue audits load their label and issue inventory live via `gh` (no cache/sync step) and represent hierarchy/relations as documented body links, since GitHub has no Linear project, bundle, or typed-relation model in these workflows.
 
 - **Issue labels vs project labels**: Issue creation uses issue labels. Project labels are separate issue-tracker resources and do not satisfy issue-label requirements. See [Label management](references/labels.md) and [Issue creation](references/issues.md).
 - **Agent routing**: If a project routes work by agent, define one exclusive Agent label group/category and document the allowed agent labels in the project's taxonomy. Multi-agent bundle or coordination parents may need a documented multi-agent routing convention, but the exact label/value is project-defined.

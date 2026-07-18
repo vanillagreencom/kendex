@@ -9,10 +9,13 @@ Output path: `tmp/audit-project-YYYYMMDD-HHMMSS.json` or `tmp/audit-issues-YYYYM
   "mode": "project|issue",
   "generated": "ISO timestamp",
   "worktree": "path",
+  "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "projects_analyzed": [{"id": "uuid", "name": "string", "scope": "summary"}],
   "contracts": [{"id": "[ISSUE_ID]", "target": "...", "creates": [], "consumes": [], "problem": "..."}]
 }
 ```
+
+`tracker` echoes the resolved execution tracker from the audit input (audit-issues-input § Tracker) so analyzed-mode consumers route mutations without re-inference; `repository` is set for `github` only. In `github` mode, `projects_analyzed` is empty and all project-placement fields are `null`/omitted (no project inventory).
 
 ## Label Contract
 

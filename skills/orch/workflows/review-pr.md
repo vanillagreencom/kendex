@@ -592,6 +592,7 @@ Issue suggestions: [N] items → § 9 audit
 
 5. **Write file**: `[WORKTREE_PATH]/tmp/audit-start-YYYYMMDD-HHMMSS.json`
    - Schema: `.agents/skills/project-management/schemas/audit-issues-input.md`
+   - Set `tracker.type` to the resolved `TRACKER`; for GitHub items also set `tracker.repository` to `[OWNER/REPO]`. audit-issues executes every preflight and approved action through this tracker — GitHub items complete the audit via `gh`/github-skill commands without Linear.
 
 6. **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 9 step 7`
 

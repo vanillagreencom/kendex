@@ -26,9 +26,10 @@ File contains all context — read with Read tool. Optional fields for research-
 
 Parse arguments → set `MODE` (project | issues).
 
-**PROJECT mode**: Store `WORKTREE` from delegation prompt (default: `.`).
+**PROJECT mode**: Store `WORKTREE` from delegation prompt (default: `.`). PROJECT mode audits Linear projects and is Linear-only (`TRACKER=linear`).
 
 **ISSUES mode**: Read JSON file with Read tool, extract:
+- `TRACKER` (and `REPOSITORY` for github) from the delegation prompt `Tracker:` line or the file's `tracker` field; when absent, infer: `parent_issue` starting with `issue-` → `github`, otherwise `linear`
 - `WORKTREE` from `worktree` field
 - `PARENT_ISSUE` from `parent_issue` field
 - `SOURCE` from `source` field
@@ -41,17 +42,25 @@ Parse arguments → set `MODE` (project | issues).
 
 ### 1.2 Load Issue Label Policy
 
-Load live issue-label inventory and project taxonomy/application rules before validating agent/domain/workflow labels or recommending label changes:
+Load live issue-label inventory and project taxonomy/application rules before validating agent/domain/workflow labels or recommending label changes.
 
+**Linear (TRACKER=linear)**:
 ```bash
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-If the label cache is missing/stale, report that the caller must run `sync --reconcile` before mutation. TPM does not mutate labels, but all `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendations must be expressible against live issue labels and project taxonomy. Use issue labels only; project labels are separate.
+If the label cache is missing/stale, report that the caller must run `sync --reconcile` before mutation.
+
+**GitHub (TRACKER=github)** — live repository labels; no cache or sync involved:
+```bash
+gh label list --repo [REPOSITORY] --limit 200 --json name,description
+```
+
+TPM does not mutate labels, but all `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendations must be expressible against the tracker's live issue labels and project taxonomy. Use issue labels only; project labels are separate.
 
 ### 1.3 Fetch All Projects
 
-Query ALL project states:
+**Linear (TRACKER=linear)** — query ALL project states:
 ```bash
 .agents/skills/linear/scripts/linear.sh cache projects list --state started
 .agents/skills/linear/scripts/linear.sh cache projects list --state planned
@@ -62,6 +71,8 @@ Query ALL project states:
 
 Store project IDs and metadata for cross-project analysis.
 
+**GitHub (TRACKER=github)** — explicit degradation: no project inventory exists in this workflow. Record an empty project set. Project-placement fields (`recommended_project`, `wrong_project`, project moves) must be `null`/omitted with reason "github: no project inventory" — never invent a placement. Duplicate/fit checks scope to the repository backlog from § 1.5 instead.
+
 ### 1.4 Fetch Input Issues
 
 **PROJECT**: Fetch all issues in target project (all states):
@@ -69,17 +80,25 @@ Store project IDs and metadata for cross-project analysis.
 .agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
-**ISSUES**: For existing issues, fetch each:
+**ISSUES**: For existing issues, fetch each.
+
+Linear:
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 Use the returned issue JSON for relation analysis. The supported cache payload includes `blocks`, `blocked_by`, and `related`; do not call a separate relation cache subcommand.
 
+GitHub:
+```bash
+gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url
+```
+There is no relation payload — relation analysis uses body-link references (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`).
+
 For proposed issues, use provided fields directly.
 
 ### 1.5 Fetch Comparison Set
 
-Fetch issues from ALL projects (from 1.3) for duplicate/obsolete/fit checking:
+**Linear (TRACKER=linear)** — fetch issues from ALL projects (from 1.3) for duplicate/obsolete/fit checking:
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
@@ -88,7 +107,14 @@ Run for each project. Store all issues for comparison in 6.
 
 **Why all projects**: Cross-project duplicate detection, obsolete checking against completed work, and project fit evaluation all require visibility into the full backlog.
 
+**GitHub (TRACKER=github)** — fetch the repository backlog, open and closed, for the same duplicate/obsolete checks:
+```bash
+gh issue list --repo [REPOSITORY] --state all --limit 200 --json number,title,state,labels
+```
+
 ### 1.6 Extract Project Definitions
+
+**GitHub (TRACKER=github)**: skip — there are no project definitions; treat the repository as the single scope for fit evaluation.
 
 For EACH project from 1.3, extract from name + description + content:
 

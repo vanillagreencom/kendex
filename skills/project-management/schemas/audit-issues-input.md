@@ -10,6 +10,7 @@ Input file for issue audit workflows — transforms review agent findings into t
 {
   "source": "review|pr-comments|research-complete|roadmap",
   "parent_issue": "PROJ-456",
+  "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "worktree": "/path/to/worktree",
   "blocked_issues": ["PROJ-456"],
   "research_ref": "docs/research/PROJ-123/findings.md",
@@ -50,6 +51,7 @@ Input file for issue audit workflows — transforms review agent findings into t
 |-------|----------|-------------|
 | `source` | Yes | Caller workflow name |
 | `parent_issue` | Yes | Issue being worked on (hierarchy hint) |
+| `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Path to worktree for code analysis |
 | `blocked_issues` | No | Issue IDs blocked by research |
 | `research_ref` | No | Path to research findings |
@@ -77,6 +79,17 @@ Input file for issue audit workflows — transforms review agent findings into t
 | `blocks_issues` | No | Existing issue IDs this item blocks |
 | `blocked_by_issues` | No | Existing issue IDs that block this item |
 
+## Tracker
+
+`tracker` fixes the execution tracker for the whole audit: every inventory preflight, TPM context fetch, and approved mutation routes through it (audit-issues § 1.2, § 7). Callers that already resolved a tracker (e.g. orch `TRACKER`) must set it.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | Yes (when block present) | `linear` or `github`. |
+| `repository` | github only | `owner/repo` the issues live in. |
+
+When the block is absent, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID → `github` (repository resolved via `gh repo view` in the worktree); otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
+
 ## Hierarchy Contract
 
 `hierarchy_contract` is a **binding directive, not a hint**. In
@@ -99,6 +112,8 @@ issue into the coordination-only parent of the new domain children. `parent_issu
 - `parent_issue` is converted to a coordination-only parent by the producer (research-complete § 6.6) — it must not be treated as one domain's implementation leaf nor recommended as an `update`/`expand` target for covered-item scope.
 
 ## Building from Review Agent JSONs
+
+Set top-level `tracker` from the caller's resolved `TRACKER` (plus `repository` for GitHub items) so the audit executes through the correct tracker — review-pr § 9 and review-pr-comments § 6.2 pass it through.
 
 ### Suggestions (category=issue)
 

@@ -13,9 +13,11 @@ Audit tracked issues and projects for relations, hierarchy, project placement, d
 | `audit-issues --issues [file_path]` | `issue` | Proposed issues from JSON file |
 | `audit-issues --analyzed [file_path]` | `analyzed` | Pre-analyzed audit-output JSON (skips TPM) |
 
-**When called by parent workflow** (start, research-complete, review-pr-comments):
+**When called by parent workflow** (start, review-pr, research-complete, review-pr-comments):
 
 `--issues [file_path]` -- JSON file with all context. Schema: [audit-issues-input.md](../schemas/audit-issues-input.md)
+
+The input file's optional `tracker` block fixes the execution tracker for the whole audit (schema § Tracker). Callers with a resolved tracker (e.g. orch `TRACKER`) must set it so GitHub-tracked audits never touch Linear.
 
 **Hierarchy**: TPM determines final placement using `parent_issue` from file + per-item analysis.
 
@@ -40,11 +42,30 @@ Set MODE and TARGET from input:
 | `--issues [file_path]` | MODE=issue, TARGET=file_path |
 | `--analyzed [file_path]` | MODE=analyzed, TARGET=file_path |
 
-**File mode**: Read JSON file, extract `source`, `parent_issue`, `worktree`, `items[]`.
+**File mode**: Read JSON file, extract `source`, `parent_issue`, `tracker`, `worktree`, `items[]`.
 
-**Analyzed mode**: Read pre-analyzed audit output (project-management skill schemas audit-output ISSUE mode format with embedded `create_fields` per issue and top-level `source`, `parent_issue`, `research_ref`, `plan_path`).
+**Analyzed mode**: Read pre-analyzed audit output (project-management skill schemas audit-output ISSUE mode format with embedded `create_fields` per issue and top-level `source`, `parent_issue`, `research_ref`, `plan_path`, and optional `tracker`).
 
-### 1.2 Ensure Cache Fresh & Query Status
+### 1.2 Resolve Tracker & Preflight Inventory
+
+#### 1.2.1 Resolve Tracker
+
+Resolve tracker context once, before any tracker command. Every later preflight, fetch, and mutation routes through it. Precedence:
+
+1. **Input file `tracker`** (file/analyzed modes): use `tracker.type`; for `github`, use `tracker.repository` as `[OWNER/REPO]`.
+2. **Caller context**: a parent workflow's resolved tracker (e.g. orch `TRACKER`) passed with the invocation.
+3. **Inference fallback**: `parent_issue` (or the first target issue ID) starting with `issue-` → `github`; otherwise `linear`. For `github` with no repository value, resolve it in the caller worktree:
+   ```bash
+   gh repo view --json nameWithOwner --jq .nameWithOwner
+   ```
+
+Store the result as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
+
+**Mode constraint**: `project-order` and `project` modes audit Linear projects and are **Linear only**. If `TRACKER=github` and MODE is `project` or `project-order`, halt with: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Do not fall back to a partial audit.
+
+**GitHub mode must not run Linear commands**: when `TRACKER=github`, no `sync`, `session-status`, Linear cache read, or Linear mutation may run anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
+
+#### 1.2.2 Preflight — Linear (TRACKER=linear)
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -53,6 +74,22 @@ Set MODE and TARGET from input:
 ```
 
 Extract `project` field for fallback resolution. Store the issue-label inventory for all create/update preflights. Load project taxonomy/application rules from project configuration/docs (for example `vstack.toml` `[skill-instructions]`). Use issue labels only; never validate issue creates against project labels.
+
+#### 1.2.3 Preflight — GitHub (TRACKER=github)
+
+Load the live repository label inventory:
+
+```bash
+gh label list --repo [OWNER/REPO] --limit 200 --json name,description
+```
+
+Load the open-issue inventory for duplicate checks and backlog context:
+
+```bash
+gh issue list --repo [OWNER/REPO] --state open --limit 200 --json number,title,labels
+```
+
+There is no sync/session-status equivalent — the live API is authoritative, so a fresh query replaces cache freshness. Store the label inventory for all create/update preflights and load project taxonomy/application rules the same way as Linear mode. If the repository declares no label taxonomy, validate proposed labels against the live repository label list only — never invent labels, and never auto-create missing ones.
 
 ### 1.3 Route by Mode
 
@@ -68,6 +105,8 @@ Extract `project` field for fallback resolution. Store the issue-label inventory
 ---
 
 ## 2. Project Order Audit
+
+**Linear only** (project mode — § 1.2.1 halts GitHub sessions before this point).
 
 **Skip if** MODE = project OR MODE = issue.
 
@@ -185,6 +224,8 @@ Output: "Project order verified. No changes needed." → **END**
 
 ## 3. Resolve Target
 
+**Linear only** (project mode — § 1.2.1 halts GitHub sessions before this point).
+
 **Skip if** MODE = issue.
 
 ### 3.1 Resolve Project Target
@@ -248,7 +289,10 @@ Worktree: [WORKTREE_PATH] (empty if main repo)
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --issues [FILE_PATH]
+Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
+
+Omit `[OWNER/REPO]` when TRACKER=linear.
 
 TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit-issues-input.md)
 
@@ -453,6 +497,8 @@ Action:
 
 **Reason column**: 2-3 sentences explaining why this action, what evidence supports it, and impact.
 
+**GitHub mode**: the Project column shows `—` (no project inventory); Structure/Relations columns show the body-link representation from § 7.2 (e.g. `Parent: #N`, `Blocked by: #N`).
+
 ---
 
 ## 6. Confirm Changes with User
@@ -513,26 +559,36 @@ Before any approved mutation that creates an issue or changes labels:
    - `agent_mismatch`: `replace_category` for taxonomy category `agent`.
    - `label_cooccurrence`: `add` the missing label/category label.
    - Any `set_labels[]`/metadata update: use its explicit mode (`add`, `replace_category`, or `replace_all`) and target category when present.
-2. **For existing issues**, fetch current labels and compute the full final set:
+2. **For existing issues**, fetch current labels and compute the full final set.
+
+   **Linear**:
    ```bash
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
    ```
+
+   **GitHub**:
+   ```bash
+   gh issue view [N] --repo [OWNER/REPO] --json labels
+   ```
+
    Preserve unrelated labels. Replace only labels in the target taxonomy category unless the action explicitly says `replace_all_labels: true`.
 3. **Validate final labels** with the inventory/taxonomy loaded in § 1.2 per [labels.md](../references/labels.md).
-4. **Halt before mutation** on unknown labels, parent/group labels, missing required categories, or exclusivity violations. Report the failing label set and ask the user. If a required taxonomy label is missing from Linear, request explicit authorization before creating it; never create labels automatically.
-5. **Use only validated final labels** in `issues create --labels` or `issues update --labels`.
+4. **Halt before mutation** on unknown labels, parent/group labels, missing required categories, or exclusivity violations. Report the failing label set and ask the user. If a required taxonomy label is missing from the tracker's live label inventory, request explicit authorization before creating it; never create labels automatically (GitHub: `gh label create` only after explicit authorization).
+5. **Use only validated final labels** — Linear: `issues create --labels` / `issues update --labels`; GitHub: `gh issue create --label` and the github skill's `label-add`/`label-remove` commands.
 
 Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
 
 Do not run `issues update --labels "agent:new"` or any other partial label replacement unless the validated final label set really contains only that label.
 
-For each approved change:
+For each approved change that routes through a workflow-actions reference (Linear routes only -- GitHub routes carry their commands inline in § 7.2):
 
-1. **Read the referenced section** from the issue tracker CLI's workflow-actions patterns.
+1. **Read the referenced section** from the Linear CLI's workflow-actions patterns.
 
 2. **Execute the pattern** exactly as documented.
 
 ### 7.1 Execute Project Actions
+
+**Linear only** (project mode -- § 1.2.1 halts GitHub sessions before this point).
 
 **Skip if** MODE = issue.
 
@@ -558,6 +614,10 @@ For each approved change:
 
 Process `create` actions first -- use created IDs to resolve `#N` references in subsequent actions.
 
+Action semantics are tracker-agnostic; the mutation route is selected by `TRACKER` from § 1.2.1. Never mix routes within one audit.
+
+**Linear route (TRACKER=linear)**:
+
 | Action | Reference |
 |--------|-----------|
 | create | See **Create template** below -- use `--parent` per `hierarchy` field. Child must be in same project as parent; if not, create standalone with `related`. If `hierarchy.parent` is null and action is `make_child`, resolve to `parent_issue` from audit input file. For `hierarchy_contract` items (§ 4.2 step 3) the standalone fallback is not permitted: create the child in the contract parent's project -- never downgrade to standalone. |
@@ -567,7 +627,20 @@ Process `create` actions first -- use created IDs to resolve `#N` references in 
 | supersede, combine | workflow-actions § Cancel / Merge / Combine |
 | cancel | workflow-actions § Cancel Obsolete Issues |
 
-**Create template**: Use project-level templates issue-description-template for the description. For parent/bundle issues, use project-level templates parent-issue-template. Write the description body to a file and pass `--description-file` (never inline strings or a heredoc). Every create command must include `--labels "[VALIDATED_FINAL_LABELS]"` from § 7.0.
+**GitHub route (TRACKER=github)** -- issue mutations use `gh issue` against `[OWNER/REPO]` from § 1.2.1; label mutations on existing issues go through the github skill's `label-add`/`label-remove` commands (its bot-token conventions apply):
+
+| Action | Execution |
+|--------|-----------|
+| create | Write the description (see **Create template** below) to a tmp file, then run `gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body-file [BODY_FILE] --label "[VALIDATED_FINAL_LABELS]"`. Represent hierarchy per **GitHub hierarchy & relations** below. |
+| skip | No action required |
+| valid | No action required |
+| expand, update | Body: fetch with `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`, apply edits in a tmp file, then run `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`. Title: `gh issue edit [N] --repo [OWNER/REPO] --title "[TITLE]"`. Labels: `.agents/skills/github/scripts/github.sh label-add [N] "[LABEL]" --issue` / `.agents/skills/github/scripts/github.sh label-remove [N] "[LABEL]" --issue`. |
+| supersede, combine | Comment then close -- see **Superseded issues -- GitHub** below |
+| cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[CANCEL_REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
+
+**GitHub hierarchy & relations (explicit degradation)**: GitHub items in this workflow have no Linear parent/child bundle or typed relation objects. Represent structure in issue bodies instead: `hierarchy.action: make_child` → a `Parent: #[PARENT_NUMBER]` line at the top of the child body plus a `gh issue comment` on the parent noting the new sub-item; `blocks`/`blocked_by`/`related` → `Blocks: #N` / `Blocked by: #N` / `Related: #N` body lines (added to existing issues via the body-edit route above). These are documented representations, not enforced tracker semantics -- cascade-cancel, cross-project constraints, and bundle queries do not apply. Do not silently drop an approved hierarchy or relation action: either record its body representation or report it as not executed and why.
+
+**Create template**: Use project-level templates issue-description-template for the description. For parent/bundle issues, use project-level templates parent-issue-template. Write the description body to a file and pass it by file (Linear: `--description-file`; GitHub: `--body-file`) -- never inline strings or a heredoc. Every create command must include the validated final labels from § 7.0 (Linear: `--labels "[VALIDATED_FINAL_LABELS]"`; GitHub: `--label "[VALIDATED_FINAL_LABELS]"`).
 
 **Analyzed mode**: When MODE = analyzed, issue creation fields (description, recommendation, location, estimate, priority, agent_label, labels, source_path) come from `issues[].create_fields`. `create_fields.labels[]` is authoritative and required for create; `agent_label` is derived/backward-compatible only. Use `source_path` for `[ORIGIN_CONTEXT]` in issue-description-template. For bundle parents (`create_fields.is_bundle_parent: true`), use parent-issue-template. Top-level `parent_issue` and `research_ref` available for hierarchy fallback and description refs.
 
@@ -575,12 +648,23 @@ Process `create` actions first -- use created IDs to resolve `#N` references in 
 
 **Superseded issues**: After creating issues (which resolves `#N` → `[ISSUE_ID]`), for each approved supersession from `supersedes[]`:
 
+**Superseded issues -- Linear**:
+
 1. **Fetch children**: `.agents/skills/linear/scripts/linear.sh cache issues children [SUPERSEDED_ID]`
 2. **Detach** any children with independent scope (not covered by replacement): `.agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --remove-parent`
 3. **Comment** on superseded issue: `"Superseded by [ISSUE_ID] (DXXX). Scope fully covered."`
 4. **Cancel**: `.agents/skills/linear/scripts/linear.sh issues update [SUPERSEDED_ID] --state "Canceled"` -- remaining children cascade-canceled by issue tracker
 
+**Superseded issues -- GitHub** (explicit degradation -- no bundle model, no cascade):
+
+1. **Comment**: `gh issue comment [N] --repo [OWNER/REPO] --body "Superseded by #[NEW_NUMBER]. Scope fully covered."`
+2. **Close**: `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"`
+
+There is no child detach/cascade step. If the superseded issue body lists sub-items (`Parent: #N` back-references or a task list), enumerate them in the close comment so scope is not silently lost.
+
 #### 7.2.1 Position in Active Project
+
+**Linear only.** Skip if `TRACKER=github` -- GitHub repositories have no project state or Todo sort-order model in this workflow. Record the skip as `positioning: n/a (github)` in the § 8 summary; do not silently omit it.
 
 After each `create` action, determine whether the new issue should be moved to Todo with a sort position.
 
@@ -620,9 +704,16 @@ After each `create` action, determine whether the new issue should be moved to T
 
 For each approved `research_refs` issue:
 
-1. **Get current description**:
+1. **Get current description**.
+
+   **Linear**:
    ```bash
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] | jq -r '.description'
+   ```
+
+   **GitHub**:
+   ```bash
+   gh issue view [N] --repo [OWNER/REPO] --json body --jq .body
    ```
 
 2. **Check existing**: If `[RESEARCH_REF]` path already exists, skip.
@@ -634,17 +725,23 @@ For each approved `research_refs` issue:
 4. **Add Decision** if `decision_ref` present AND not already in description:
    - Add `**Decision [DECISION_ID]**: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` after Research block
 
-5. **Propagate to children**:
+   Apply the updated description -- Linear: `issues update [ISSUE_ID] --description-file [BODY_FILE]`; GitHub: `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`.
+
+5. **Propagate to children**.
+
+   **Linear**:
    ```bash
    .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'
    ```
    For each child: repeat steps 1-4. Skip if reference already present.
 
+   **GitHub** (explicit degradation -- no recursive child query): propagate only to issues created in this audit whose body carries `Parent: #[N]` for the target issue; repeat steps 1-4 for each. Report any deeper propagation as not performed.
+
 ### 7.4 Post-Cancellation Cleanup
 
 For each issue canceled during § 7.1 or § 7.2 (superseded, obsolete, or duplicate):
 
-**Relations**:
+**Relations -- Linear**:
 
 1. **Fetch relations**: `.agents/skills/linear/scripts/linear.sh issues list-relations [CANCELED_ID]`
 2. **Remove `blocks` relations** to non-canceled issues:
@@ -655,20 +752,27 @@ For each issue canceled during § 7.1 or § 7.2 (superseded, obsolete, or duplic
 
 `related` relations are preserved as historical record.
 
+**Relations -- GitHub**: there are no tracked relation objects to remove. Scan the § 1.2.3 open-issue inventory plus issues touched in this audit for body lines referencing the closed number (`Blocked by: #[CLOSED_NUMBER]`, `Blocks: #[CLOSED_NUMBER]`); update those bodies via the § 7.2 body-edit route, or note the stale reference in a comment on the affected issue. Then run the same "Add blocker?" presentation as Linear mode for issues whose only blocker reference was the closed number.
+
 **Stale references** (decision-eliminated or superseded cancellations only):
 
 1. **Identify old pattern**: From `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason`
-2. **Check parent and siblings**:
+2. **Check related issues**.
+
+   **Linear** (parent and siblings):
    ```bash
    .agents/skills/linear/scripts/linear.sh cache issues get [PARENT_ID]
    .agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID]
    ```
+
+   **GitHub**: check the audited item set and the § 1.2.3 open-issue inventory titles (no cache or children queries exist).
 3. **Flag matches**: Non-canceled issues where title or description references the old pattern
 4. **Present**: "Update stale references? #N: [ISSUE_ID]: [OLD] → [NEW]"
 5. **Execute approved**:
-   - Title: `.agents/skills/linear/scripts/linear.sh issues update [ID] --title "[UPDATED]"`
-   - Description: `.agents/skills/linear/scripts/linear.sh issues update [ID] --description "[UPDATED]"`
-   - Comment: `"Updated: [OLD] → [NEW] per [DECISION_ID]"`
+   - Linear title: `.agents/skills/linear/scripts/linear.sh issues update [ID] --title "[UPDATED]"`
+   - Linear description: `.agents/skills/linear/scripts/linear.sh issues update [ID] --description "[UPDATED]"`
+   - GitHub: `gh issue edit [N] --repo [OWNER/REPO] --title "[UPDATED]"` and the § 7.2 body-edit route for descriptions
+   - Comment (either tracker): `"Updated: [OLD] → [NEW] per [DECISION_ID]"`
 
 ### 7.5 Relation Direction Reference
 
@@ -687,6 +791,8 @@ For each issue canceled during § 7.1 or § 7.2 (superseded, obsolete, or duplic
 
 ### ✅ AUDIT COMPLETE
 
+**Tracker**: [linear|github ([OWNER/REPO])]
+
 **Issues**:
 - ✨ Created: N ([ISSUE_ID], ...)
 - 🔄 Modified: N (expand/update/supersede/combine)
@@ -697,8 +803,11 @@ For each issue canceled during § 7.1 or § 7.2 (superseded, obsolete, or duplic
 - 📚 Research refs: N
 - 👾 Gap issues created: N
 - ⏭️ Skipped: N
+- ⚠️ Degraded (github): [positioning n/a, hierarchy/relations as body links | —]
 
 </output_format>
+
+The Degraded line appears only for `TRACKER=github`: list every audit obligation executed through a documented degradation (§ 7.2 hierarchy/relations representation, § 7.2.1 positioning, § 7.3 child propagation, § 7.4 relation cleanup) so nothing is silently skipped.
 
 ---
 
