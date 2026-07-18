@@ -43,7 +43,7 @@ Standard review-finding JSON — same schema used by all internal review agents:
 }
 ```
 
-`questions` is always empty (no PR comment context). `qa_metadata` is empty (`{}`) for a performed review; if the model instead self-reports `{"review_performed": false, "reason": ...}`, the script refuses to write the artifact, preserves the response as `<output>.noreview.json`, and exits 4.
+`questions` is always empty (no PR comment context). `qa_metadata` is required — empty (`{}`) for a performed review; if the model instead self-reports `{"review_performed": false, "reason": ...}` or omits `qa_metadata` entirely, the script refuses to write the artifact, preserves the response as `<output>.noreview.json`, and exits 4.
 
 The script derives the review scope itself (branch, diff range, diffstat, changed files) and embeds it in the prompt. If the requested or default range yields an empty diff, it exits 3 without invoking the external CLI — report "nothing to review" instead of presenting a verdict.
 

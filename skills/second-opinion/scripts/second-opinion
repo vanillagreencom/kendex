@@ -64,7 +64,8 @@ RANGE=""
 
 # Distinct exit codes (vstack#652) so callers can tell "there was nothing to
 # review" and "the model reported it performed no review" apart from generic
-# failures (1). Neither path writes the --output artifact.
+# failures (1). A response missing the required qa_metadata object is rejected
+# the same way (vstack#672). Neither path writes the --output artifact.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 
@@ -114,7 +115,8 @@ Exit codes:
   1  CLI/config failure, timeout, or unrecoverable non-JSON response
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
-     (qa_metadata.review_performed=false); response kept as <output>.noreview.json
+     (qa_metadata.review_performed=false) or omitted the required qa_metadata
+     object entirely; response kept as <output>.noreview.json
 HELP
 }
 
@@ -505,10 +507,14 @@ extract_json() {
 
 # --- Retry + raw-preservation helpers (review/audit) --------------------------
 
-# Build the follow-up prompt for the one-shot retry: the raw first response plus
-# the canonical JSON schema and an instruction to serialize it now. The schema
-# file is the shared source of the JSON structure for both review and audit, so
-# re-reading it here works regardless of which mode produced the first response.
+# Build the follow-up prompt for the one-shot retry: the FULL original request,
+# the raw first response, and the canonical JSON schema with an instruction to
+# serialize now. The retry runs in a fresh session (--no-session-persistence /
+# --ephemeral), so it must carry the complete original prompt — scope block
+# included — or the model has nothing to review and can only produce a
+# context-free verdict (vstack#672). The schema file is the shared source of
+# the JSON structure for both review and audit, so re-reading it here works
+# regardless of which mode produced the first response.
 build_retry_prompt() {
   local raw="$1"
   local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
@@ -517,7 +523,11 @@ build_retry_prompt() {
     schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
   fi
   cat <<RETRY
-Your previous response did not contain a parseable JSON object. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Serialize your review as the COMPLETE JSON object now, in THIS response, without changing any of your findings. Output ONLY the JSON object — no prose before or after.
+Your previous response to the request below did not contain a parseable JSON object. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
+
+--- Original request ---
+${PROMPT}
+--- End of original request ---
 
 --- Your previous response ---
 ${raw}
@@ -582,13 +592,30 @@ response_reports_no_review() {
   ' >/dev/null 2>&1
 }
 
-# Persist the self-reported no-review response as a sidecar (durable record),
-# emit an error JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH
-# itself is never written, so no pass artifact can exist for a review that did
-# not happen.
+# vstack#672: the schema REQUIRES a qa_metadata object ({} for a performed
+# review), so a response with no qa_metadata key cannot attest that any review
+# happened — non-conforming, structurally detected, no prose parsing. Catches
+# in particular a retried response that dropped the field along with the rest
+# of its context. (orch review-artifact-check stays tolerant of absent
+# qa_metadata for internal reviewers; this gate is producer-side only.)
+response_missing_qa_metadata() {
+  ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1
+}
+
+# Persist the rejected response as a sidecar (durable record), emit an error
+# JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH itself is never
+# written, so no pass artifact can exist for a review that did not verifiably
+# happen. The optional second arg overrides the error message; the default
+# describes the qa_metadata self-report.
 preserve_no_review_and_fail() {
   local json="$1"
+  local errmsg="${2:-}"
   local sidecar reason
+
+  if [[ -z "$errmsg" ]]; then
+    reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
+    errmsg="self-reported that no review was performed ($reason)"
+  fi
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
@@ -598,9 +625,8 @@ preserve_no_review_and_fail() {
   fi
   printf '%s\n' "$json" > "$sidecar"
 
-  reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
-  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
-    '{error: "\($target) self-reported that no review was performed (\($reason)) — refusing to write a review artifact", response: $sidecar}' >&2
+  jq -n --arg target "$TARGET_CLI" --arg errmsg "$errmsg" --arg sidecar "$sidecar" \
+    '{error: "\($target) \($errmsg) — refusing to write a review artifact", response: $sidecar}' >&2
   echo "→ no-review response preserved: $sidecar" >&2
   exit "$EXIT_NO_REVIEW"
 }
@@ -640,9 +666,14 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   fi
 
   # Reject a self-reported no-review before the artifact can be written — a
-  # "pass" from a model that admits it reviewed nothing is a false pass.
+  # "pass" from a model that admits it reviewed nothing is a false pass. These
+  # gates run on whichever response became RESULT: first or retried.
   if response_reports_no_review "$RESULT"; then
     preserve_no_review_and_fail "$RESULT"
+  fi
+  if response_missing_qa_metadata "$RESULT"; then
+    preserve_no_review_and_fail "$RESULT" \
+      "returned non-conforming JSON with no qa_metadata object (missing_qa_metadata)"
   fi
 
   # Stamp the authoritative timestamp ourselves. The reviewing model serializes
