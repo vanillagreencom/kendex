@@ -604,6 +604,18 @@ fn is_legacy_pi_extra_deny_tools(tools: &[String]) -> bool {
     tools == ["get_subagent_result", "steer_subagent", "stop_subagent"]
 }
 
+fn is_generated_opencode_subagent_deny_tools(tools: &[String]) -> bool {
+    tools == ["task"] || tools == ["task", "question"]
+}
+
+fn inline_mode_is_primary(fields: &[(String, String)]) -> bool {
+    fields
+        .iter()
+        .find(|(field, _)| field == "mode")
+        .map(|(_, value)| value.trim().trim_matches('"').eq_ignore_ascii_case("primary"))
+        .unwrap_or(false)
+}
+
 fn render_inline_table_fields(fields: &[(String, String)]) -> String {
     let preferred = [
         "color",
@@ -1093,11 +1105,12 @@ fn opencode_frontmatter_defaults(
     if let Some(effort) = openai_reasoning_effort(agent, frontmatter) {
         fields.push(("model-reasoning-effort".into(), toml_inline_string(&effort)));
     }
+    let mode = opencode_mode_default(frontmatter);
     fields.push((
         "deny-tools".into(),
-        toml_inline_array(&opencode_default_deny_tools(agent)),
+        toml_inline_array(&opencode_default_deny_tools(agent, &mode)),
     ));
-    fields.push(("mode".into(), toml_inline_string("subagent")));
+    fields.push(("mode".into(), toml_inline_string(&mode)));
     fields
 }
 
@@ -1227,7 +1240,18 @@ fn claude_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
     tools
 }
 
-fn opencode_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
+fn opencode_mode_default(frontmatter: &crate::agent::AgentFrontmatterOverrides) -> String {
+    match frontmatter.mode.as_deref() {
+        Some(mode) if mode.trim().eq_ignore_ascii_case("all") => "subagent".into(),
+        Some(mode) if !mode.trim().is_empty() => mode.trim().into(),
+        _ => "subagent".into(),
+    }
+}
+
+fn opencode_default_deny_tools(agent: &crate::agent::Agent, mode: &str) -> Vec<String> {
+    if !mode.eq_ignore_ascii_case("subagent") {
+        return Vec::new();
+    }
     let mut tools = vec!["task".into()];
     if !agent.name.eq_ignore_ascii_case("planner") {
         tools.push("question".into());
@@ -1438,6 +1462,24 @@ fn upsert_missing_inline_table_fields(
                     {
                         let existing_tools = parse_toml_array_strings(existing_value);
                         if is_legacy_pi_extra_deny_tools(&existing_tools) {
+                            *existing_value = value.clone();
+                        }
+                    } else {
+                        fields.push((key.clone(), value.clone()));
+                    }
+                    continue;
+                }
+                if section == "[agent-frontmatter.opencode]" && key == "deny-tools" {
+                    let mode_is_primary = inline_mode_is_primary(&fields);
+                    if let Some((_, existing_value)) =
+                        fields.iter_mut().find(|(field, _)| field == key)
+                    {
+                        let existing_tools = parse_toml_array_strings(existing_value);
+                        let replacement_tools = parse_toml_array_strings(value);
+                        if mode_is_primary
+                            && replacement_tools.is_empty()
+                            && is_generated_opencode_subagent_deny_tools(&existing_tools)
+                        {
                             *existing_value = value.clone();
                         }
                     } else {
@@ -3196,7 +3238,7 @@ scout = { pane = false }
             &crate::mapping::MappingConfig::default(),
         );
         let updated = std::fs::read_to_string(&path).unwrap();
-        assert!(updated.contains("rust = { model = \"openai/gpt-5.6-sol\", deny-tools = [\"task\", \"question\"], mode = \"primary\", model-reasoning-effort = \"xhigh\" }"));
+        assert!(updated.contains("rust = { model = \"openai/gpt-5.6-sol\", deny-tools = [], mode = \"primary\", model-reasoning-effort = \"xhigh\" }"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

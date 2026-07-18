@@ -45,7 +45,7 @@ pub fn generate_agent(
         output.push_str("  textVerbosity: medium\n");
     }
 
-    let denied_permissions = opencode_denied_permissions_for(agent, &frontmatter);
+    let denied_permissions = opencode_denied_permissions_for(agent, &frontmatter, mode);
     if !denied_permissions.is_empty() {
         output.push_str("permission:\n");
         for permission in denied_permissions {
@@ -153,8 +153,9 @@ fn opencode_color_name(color: &str) -> Option<String> {
 fn opencode_denied_permissions_for(
     agent: &Agent,
     frontmatter: &agent::AgentFrontmatterOverrides,
+    mode: &str,
 ) -> Vec<String> {
-    let mut tools = opencode_default_deny_tools_for(agent);
+    let mut tools = opencode_default_deny_tools_for(agent, mode);
     if let Some(deny_tools) = &frontmatter.deny_tools {
         tools.extend(deny_tools.clone());
     }
@@ -166,7 +167,10 @@ fn opencode_denied_permissions_for(
     )
 }
 
-fn opencode_default_deny_tools_for(agent: &Agent) -> Vec<String> {
+fn opencode_default_deny_tools_for(agent: &Agent, mode: &str) -> Vec<String> {
+    if !mode.eq_ignore_ascii_case("subagent") {
+        return Vec::new();
+    }
     let mut tools = vec!["task".into()];
     if !agent.name.eq_ignore_ascii_case("planner") {
         tools.push("question".into());
@@ -268,6 +272,9 @@ mod tests {
         let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: primary\n"));
+        assert!(!content.contains("permission:\n"));
+        assert!(!content.contains("  task: deny\n"));
+        assert!(!content.contains("  question: deny\n"));
 
         let extras = AgentExtras {
             frontmatter: agent::AgentFrontmatterOverrides {
@@ -279,6 +286,8 @@ mod tests {
         let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: subagent\n"));
+        assert!(content.contains("  task: deny\n"));
+        assert!(content.contains("  question: deny\n"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
