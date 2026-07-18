@@ -222,7 +222,11 @@ emit_result() {
       echo "Review: reviewed (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head, unresolved threads: $last_unresolved)"
       ;;
     changes_requested)
-      echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
+      if [[ "$MODE" == "review" ]]; then
+        echo "Review: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
+      else
+        echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
+      fi
       ;;
     comments)
       if [[ "$MODE" == "review" ]]; then
@@ -239,7 +243,11 @@ emit_result() {
       fi
       ;;
     error)
-      echo "Approval error: $error_msg"
+      if [[ "$MODE" == "review" ]]; then
+        echo "Review error: $error_msg"
+      else
+        echo "Approval error: $error_msg"
+      fi
       ;;
   esac
 }

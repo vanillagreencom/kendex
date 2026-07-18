@@ -19,7 +19,8 @@
 #                                                reported for the caller's gate
 #   9. verdict arriving on a later poll       -> approved after polling
 #  10. auth failure with --json               -> parseable error object, exit 3
-#  11. text mode always prints a result line
+#  11. text mode always prints a result line; approval-mode lines for
+#      changes-requested, comments, and error pinned verbatim (vstack#649)
 #  12. review mode: COMMENTED at head, 0 threads -> reviewed, exit 0
 #  13. review mode: review at head + threads     -> comments early return
 #  14. review mode: review at stale commit only  -> timeout (head pinning)
@@ -29,7 +30,9 @@
 #  18. review mode: CHANGES_REQUESTED superseded by COMMENTED -> reviewed
 #  19. review mode: APPROVED counts as a review  -> reviewed, exit 0
 #  20. review mode: review arriving on a later poll -> reviewed after polling
-#  21. review mode text output prints "Review: reviewed"
+#  21. review mode text output names the review gate for reviewed,
+#      changes-requested, comments, timeout, and error — never "Approval"
+#      (vstack#649)
 #  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
@@ -459,6 +462,32 @@ set -e
 assert_eq "$rc" "0" "case11b: text-mode approval exits 0" "$stderr"
 assert_contains "$output" "Approval: approved" "case11b: text-mode approval prints result on stdout"
 
+# Cases 11c-11e: approval-mode text lines are pinned verbatim — the
+# review-mode labeling fix (vstack#649) must not touch them.
+stderr="$TMP_ROOT/case11c.err"
+set +e
+output=$(run_wait_text_short STUB_APPROVAL_MODE=changes 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case11c: text-mode changes requested exits 1" "$stderr"
+assert_contains "$output" "Approval: changes requested (1 reviewer(s), unresolved threads: 0)" "case11c: approval-mode changes-requested line unchanged"
+
+stderr="$TMP_ROOT/case11d.err"
+set +e
+output=$(run_wait_text_short STUB_APPROVAL_MODE=none STUB_THREADS_UNRESOLVED=2 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case11d: text-mode pending comments exits 1" "$stderr"
+assert_contains "$output" "Approval: 2 unresolved review thread(s) pending triage, no approval verdict yet" "case11d: approval-mode comments line unchanged"
+
+stderr="$TMP_ROOT/case11e.err"
+set +e
+output=$(run_wait_text_short GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "3" "case11e: text-mode auth failure exits 3" "$stderr"
+assert_contains "$output" "Approval error: no working GitHub auth path" "case11e: approval-mode error line unchanged"
+
 echo "=== approval-wait --mode review gating ==="
 
 # Case 12: a COMMENTED review pinned to the current head with zero unresolved
@@ -569,6 +598,40 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "case21: text-mode reviewed exits 0" "$stderr"
 assert_contains "$output" "Review: reviewed" "case21: text-mode reviewed prints result on stdout"
+
+# Cases 21b-21e: every review-mode text line names the review gate, never the
+# approval gate (vstack#649).
+stderr="$TMP_ROOT/case21b.err"
+set +e
+output=$(run_review_text STUB_REVIEWS_MODE=changes_standing 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case21b: text-mode review changes requested exits 1" "$stderr"
+assert_contains "$output" "Review: changes requested (1 reviewer(s), unresolved threads: 0)" "case21b: review-mode changes-requested names the review gate"
+
+stderr="$TMP_ROOT/case21c.err"
+set +e
+output=$(run_review_text STUB_REVIEWS_MODE=commented_at_head STUB_THREADS_UNRESOLVED=2 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case21c: text-mode review comments exits 1" "$stderr"
+assert_contains "$output" "Review: 2 unresolved review thread(s) pending triage" "case21c: review-mode comments names the review gate"
+
+stderr="$TMP_ROOT/case21d.err"
+set +e
+output=$(run_review_text STUB_REVIEWS_MODE=none 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case21d: text-mode review timeout exits 1" "$stderr"
+assert_contains "$output" "Review timeout after" "case21d: review-mode timeout names the review gate"
+
+stderr="$TMP_ROOT/case21e.err"
+set +e
+output=$(run_review_text GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "3" "case21e: text-mode review auth failure exits 3" "$stderr"
+assert_contains "$output" "Review error: no working GitHub auth path" "case21e: review-mode error names the review gate"
 
 echo "=== approval-wait --resolve-mode precedence ==="
 
