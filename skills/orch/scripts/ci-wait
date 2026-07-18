@@ -6,7 +6,9 @@
 #
 # Uses JSON-based state detection to avoid false positives from stale checks
 # left by prior workflow runs (e.g., SUCCESS/SKIPPED checks from a superseded
-# earlier run).
+# earlier run). A settled failure attributable only to superseded runs is
+# additionally correlated with the head's Actions run list before it can
+# terminate the wait (vstack#650); see superseding_run_state below.
 #
 # Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
 #
@@ -404,6 +406,71 @@ get_failed_run_id() {
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
 
+# Decide whether a settled failure verdict is genuinely terminal (vstack#650).
+# `gh pr checks` builds on the head commit's check-suite rollup, and GitHub
+# omits some dispatch events' suites from that rollup entirely — observed on a
+# pull_request_review_comment run whose same-second pull_request_review sibling
+# was cancelled by concurrency: only the cancelled sibling's checks and the
+# stale `CI Required` status pointing at it stayed visible, while the newer
+# substantive run never appeared. Correlate the failing checks' runs against
+# the Actions run list for the current head instead:
+#   active     - the failing run is re-running, or a newer queued/in-progress
+#                substantive-event run of the same workflow exists on this
+#                head; the failure is provisional, keep waiting.
+#   superseded - the newest such run completed successfully; the stale
+#                failures will never update, drop them and let the surviving
+#                statuses decide.
+#   terminal   - no newer substantive run, the newest one itself failed or was
+#                cancelled, or a failure cannot be attributed to a run.
+# Substantive events are the PR-driving dispatches: pull_request,
+# pull_request_review, pull_request_review_comment, merge_group. Anything
+# unattributable stays terminal so the waiter still fails closed, and a
+# cancelled run with no newer sibling remains a terminal failure as before.
+superseding_run_state() {
+  local classes="$1" head_sha runs_json
+  head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
+    echo "terminal"
+    return 0
+  fi
+  runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>/dev/null || true)
+  if ! jq -e '(.workflow_runs? | type) == "array"' >/dev/null 2>&1 <<<"$runs_json"; then
+    echo "terminal"
+    return 0
+  fi
+  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id}]' <<<"$runs_json")" '
+    def runid:
+      (.link // "")
+      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
+      | (if . == null then null else tonumber end);
+    [ .failed[]
+      | runid as $rid
+      | if $rid == null then "terminal"
+        else
+          ([$runs[] | select(.id == $rid)] | .[0]) as $own
+          | if $own == null then "terminal"
+            elif ($own.status // "") != "completed" then "active"
+            else
+              ([$runs[]
+                | select(.id > $rid
+                         and .workflow_id == $own.workflow_id
+                         and ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group")))]
+               | max_by(.id)) as $newest
+              | if $newest == null then "terminal"
+                elif ($newest.status // "") != "completed" then "active"
+                elif ($newest.conclusion // "") == "success" then "superseded"
+                else "terminal"
+                end
+            end
+        end
+    ]
+    | if any(.[]; . == "terminal") then "terminal"
+      elif any(.[]; . == "active") then "active"
+      else "superseded"
+      end
+  ' <<<"$classes"
+}
+
 classify_checks() {
   jq -c '
     def bucket:
@@ -481,26 +548,59 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     stale_count=0
   fi
 
-  # Check for failure (only when all checks have settled)
+  # Check for failure (only when all checks have settled). Before declaring
+  # the failure terminal, correlate it with the head's Actions runs: a verdict
+  # built entirely from superseded runs must wait for the newest substantive
+  # run instead (vstack#650). The correlation only runs when every failed
+  # check links to an Actions run; anything unattributable fails closed.
   if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
-    # `gh pr checks` exits nonzero when checks have failed; without the guard
-    # the pipefail status escapes the substitution and errexit kills the
-    # script before any result is emitted (silent-exit class of vstack#454).
-    failed_run=$(get_failed_run_id "$PR_NUM" || true)
-
-    # Try auto-retry for transient failures
-    if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then
-      echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
-      gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
-      retries=$((retries + 1))
-      seen_in_progress=false  # Reset — rerun will produce new checks
-      sleep 10
-      update_elapsed
-      continue
+    supersede_state="terminal"
+    if jq -e 'all(.failed[]; (.link // "") | test("/actions/runs/[0-9]+"))' >/dev/null 2>&1 <<<"$check_classes"; then
+      supersede_state=$(superseding_run_state "$check_classes" || echo "terminal")
     fi
+    case "$supersede_state" in
+      active)
+        # A newer same-head substantive run is still executing (or the failing
+        # run is re-running); its outcome — not the superseded failure — must
+        # decide the wait. Report the stale failures as EXPECTED/pending, the
+        # same shape scope_current_run gives a stale aggregate status.
+        check_classes=$(jq -c '.pending += (.failed | map(.state = "EXPECTED" | .bucket = "pending")) | .failed = []' <<<"$check_classes")
+        last_check_classes="$check_classes"
+        seen_in_progress=true
+        stale_count=0
+        sleep "$POLL_INTERVAL"
+        update_elapsed
+        continue
+        ;;
+      superseded)
+        # The newest substantive run succeeded. The stale failures will never
+        # update (their check suites are frozen); drop them and let the
+        # surviving checks/statuses drive the normal completion logic below.
+        check_classes=$(jq -c '.failed = []' <<<"$check_classes")
+        last_check_classes="$check_classes"
+        ;;
+      *)
+        # `gh pr checks` exits nonzero when checks have failed; without the
+        # guard the pipefail status escapes the substitution and errexit kills
+        # the script before any result is emitted (silent-exit class of
+        # vstack#454).
+        failed_run=$(get_failed_run_id "$PR_NUM" || true)
 
-    emit_result "complete" "$check_classes"
-    exit 1
+        # Try auto-retry for transient failures
+        if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then
+          echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
+          gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
+          retries=$((retries + 1))
+          seen_in_progress=false  # Reset — rerun will produce new checks
+          sleep 10
+          update_elapsed
+          continue
+        fi
+
+        emit_result "complete" "$check_classes"
+        exit 1
+        ;;
+    esac
   fi
 
   # Check if all complete (no pending)

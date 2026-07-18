@@ -29,6 +29,16 @@
 # COMMENTED run cannot hide the active substantive APPROVED run, and the old
 # pre-approval CI Required failure remains pending until the approved run
 # publishes its replacement status (cases 20-24).
+#
+# Plus superseded-run failure correlation (vstack#650): GitHub's check-suite
+# rollup can omit a newer same-head run entirely (observed for a
+# pull_request_review_comment dispatch whose same-second pull_request_review
+# sibling was cancelled by concurrency), leaving only the cancelled run's
+# checks and its stale aggregate status visible to `gh pr checks`. A settled
+# failure attributable only to superseded runs is correlated against the
+# head's Actions run list: an active newer substantive run keeps the wait
+# pending, a successful one discards the stale failures, and a failed newest
+# run — or no newer run at all — stays terminal (cases 25-28).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -128,6 +138,20 @@ case "${1:-}" in
     fi
     ;;
   api)
+    # vstack#650: superseded-failure correlation queries the head's Actions
+    # runs. Record the query when asked so tests can prove head-sha scoping.
+    if [[ "${2:-}" == repos/*/actions/runs* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ -n "${STUB_ACTIONS_RUNS_QUERY_FILE:-}" ]]; then
+        printf '%s' "$2" > "$STUB_ACTIONS_RUNS_QUERY_FILE"
+      fi
+      if [[ -n "${STUB_ACTIONS_RUNS_FIXTURE:-}" ]]; then
+        cat "$STUB_ACTIONS_RUNS_FIXTURE"
+      else
+        echo '{"workflow_runs":[]}'
+      fi
+      exit 0
+    fi
     if [[ "${2:-}" == "user" ]]; then
       if [[ -n "${STUB_GH_API_USER_COUNT_FILE:-}" ]]; then
         count=0
@@ -170,6 +194,14 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      # vstack#650: `--json headRefOid` asks for the head sha the superseded-
+      # failure correlation scopes its Actions-runs query to.
+      for _a in "$@"; do
+        if [[ "$_a" == "headRefOid" ]]; then
+          echo "${STUB_HEAD_SHA:-737bce791577e140436490e0fed5751bb5144a61}"
+          exit 0
+        fi
+      done
       echo "CLEAN"
       exit 0
     fi
@@ -658,6 +690,65 @@ assert_eq "$(json_field "$output" '.status')" "complete" "case24: replacement st
 assert_eq "$(json_field "$output" '.verdict')" "pass" "case24: replacement status passes" "$stderr"
 assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case24: current aggregate status is reported" "$stderr"
 assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case24: stale pre-approval failures are absent" "$stderr"
+
+echo "=== ci-wait superseded-run failure correlation (vstack#650) ==="
+
+# Case 25: the rollup shows only a concurrency-cancelled pull_request_review
+# run (cancelled jobs, CI Gate Publisher failure, stale CI Required status)
+# while its same-second pull_request_review_comment sibling — invisible to the
+# rollup — is still in progress. The cancellation-produced failure must stay
+# pending until the sibling's outcome, never terminate the wait on its own.
+stderr="$TMP_ROOT/case25.err"
+runs_query_file="$TMP_ROOT/case25-runs-query"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-active.json" STUB_ACTIONS_RUNS_QUERY_FILE="$runs_query_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case25: active newer sibling exits 1 only at timeout" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case25: cancelled run stays pending while sibling is active" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case25: cancellation-produced failure is not terminal" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case25: superseded failures removed from failed_checks" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case25: stale aggregate status reported as expected" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Gate Publisher")][0].state')" "EXPECTED" "case25: cancelled run's gate failure reported as expected" "$stderr"
+assert_contains "$(cat "$runs_query_file")" "head_sha=737bce791577e140436490e0fed5751bb5144a61" "case25: correlation queries Actions runs for the current head" "$stderr"
+
+# Case 26: the sibling run completed successfully and republished CI Required
+# against its own run ID. The cancelled run's frozen checks will never update;
+# they are discarded and the surviving aggregate status passes the wait.
+stderr="$TMP_ROOT/case26.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-status-replaced.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-success.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case26: successful newer sibling exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case26: successful sibling completes the wait" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pass" "case26: successful sibling passes" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case26: superseded cancelled checks are discarded" "$stderr"
+assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case26: replacement aggregate status is reported" "$stderr"
+
+# Case 27: the sibling run completed with a genuine failure. Supersession must
+# not blunt fail-fast: the settled failure is terminal immediately.
+stderr="$TMP_ROOT/case27.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-failure.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case27: failed newer sibling exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case27: failed sibling is terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case27: failed sibling fails closed" "$stderr"
+assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case27: aggregate failure is reported" "$stderr"
+
+# Case 28: a cancelled run with NO newer same-head run keeps today's behavior:
+# the cancellation is a terminal failure (fail closed, nothing to wait for).
+stderr="$TMP_ROOT/case28.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-cancelled-alone.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case28: cancelled run without newer sibling exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case28: lone cancelled run is terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case28: lone cancelled run fails closed" "$stderr"
+assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Gate Publisher")][0].state')" "FAILURE" "case28: cancelled run's gate failure is reported" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
