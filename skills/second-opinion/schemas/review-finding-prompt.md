@@ -35,6 +35,7 @@ This is a single fresh session with no prior turns and no session history. Outpu
 }
 
 Rules:
+- Every key shown above is REQUIRED in every response: verdict, and the blockers, suggestions, and questions arrays (emit [] when empty) plus the qa_metadata object. A response missing any of them is rejected as incomplete.
 - verdict: "action_required" if 1+ items in blockers[], "pass" if blockers[] is empty
 - Suggestions may exist even when verdict is "pass"
 - location: file path with function/struct names in backticks — NO line numbers (they go stale)

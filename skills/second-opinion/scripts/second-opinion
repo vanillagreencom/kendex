@@ -64,8 +64,9 @@ RANGE=""
 
 # Distinct exit codes (vstack#652) so callers can tell "there was nothing to
 # review" and "the model reported it performed no review" apart from generic
-# failures (1). A response missing the required qa_metadata object is rejected
-# the same way (vstack#672). Neither path writes the --output artifact.
+# failures (1). A response missing the required qa_metadata object (vstack#672)
+# or still structurally incomplete after the one-shot retry (vstack#678) is
+# rejected the same way. None of these paths writes the --output artifact.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 
@@ -116,7 +117,10 @@ Exit codes:
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata
-     object entirely; response kept as <output>.noreview.json
+     object entirely (response kept as <output>.noreview.json); or the response
+     was still structurally incomplete after the one-shot retry — missing
+     verdict or the blockers/suggestions/questions arrays (response kept as
+     <output>.incomplete.json)
 HELP
 }
 
@@ -514,16 +518,20 @@ extract_json() {
 # included — or the model has nothing to review and can only produce a
 # context-free verdict (vstack#672). The schema file is the shared source of
 # the JSON structure for both review and audit, so re-reading it here works
-# regardless of which mode produced the first response.
+# regardless of which mode produced the first response. The optional second
+# arg names the defect in the first response (default: no parseable JSON) so
+# an incomplete-schema retry (vstack#678) tells the model exactly what was
+# missing instead of claiming the JSON did not parse.
 build_retry_prompt() {
   local raw="$1"
+  local problem="${2:-did not contain a parseable JSON object}"
   local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
   local schema=""
   if [[ -f "$schema_file" ]]; then
     schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
   fi
   cat <<RETRY
-Your previous response to the request below did not contain a parseable JSON object. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
+Your previous response to the request below ${problem}. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
 
 --- Original request ---
 ${PROMPT}
@@ -602,14 +610,33 @@ response_missing_qa_metadata() {
   ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1
 }
 
+# vstack#678: extraction can yield truncated-but-valid JSON — verdict and
+# summary survive while the finding arrays are silently dropped, so the
+# artifact looks reviewable but the actual blockers/suggestions are lost. The
+# schema requires verdict plus all three arrays (empty [] is fine), so anything
+# less is structurally incomplete: an incomplete FIRST response goes through
+# the one-shot retry (full original context, vstack#672); a still-incomplete
+# retried response is rejected. qa_metadata is deliberately NOT part of this
+# predicate — its absence rejects without a retry (vstack#672 contract).
+response_incomplete_schema() {
+  ! printf '%s' "$1" | jq -e '
+    ((.verdict? | type) == "string")
+    and ((.blockers? | type) == "array")
+    and ((.suggestions? | type) == "array")
+    and ((.questions? | type) == "array")
+  ' >/dev/null 2>&1
+}
+
 # Persist the rejected response as a sidecar (durable record), emit an error
 # JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH itself is never
 # written, so no pass artifact can exist for a review that did not verifiably
-# happen. The optional second arg overrides the error message; the default
-# describes the qa_metadata self-report.
+# happen. The optional second arg overrides the error message (default: the
+# qa_metadata self-report); the optional third arg overrides the sidecar
+# suffix (default "noreview" — "incomplete" for the vstack#678 schema gate).
 preserve_no_review_and_fail() {
   local json="$1"
   local errmsg="${2:-}"
+  local suffix="${3:-noreview}"
   local sidecar reason
 
   if [[ -z "$errmsg" ]]; then
@@ -619,7 +646,7 @@ preserve_no_review_and_fail() {
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
-    sidecar="${OUTPUT_PATH}.noreview.json"
+    sidecar="${OUTPUT_PATH}.${suffix}.json"
   else
     sidecar=$(mktemp)
   fi
@@ -627,21 +654,39 @@ preserve_no_review_and_fail() {
 
   jq -n --arg target "$TARGET_CLI" --arg errmsg "$errmsg" --arg sidecar "$sidecar" \
     '{error: "\($target) \($errmsg) — refusing to write a review artifact", response: $sidecar}' >&2
-  echo "→ no-review response preserved: $sidecar" >&2
+  echo "→ rejected response preserved: $sidecar" >&2
   exit "$EXIT_NO_REVIEW"
 }
 
 if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
+  # Two retryable defects in the first response share the one-shot retry: no
+  # parseable JSON at all (vstack#509 — prose claiming the JSON was "already
+  # delivered above", impossible with --no-session-persistence / --ephemeral),
+  # and parseable-but-truncated JSON that lost the required finding arrays
+  # (vstack#678). The retry resends the full original request (vstack#672), so
+  # a truncated extraction gets one chance to re-serialize completely instead
+  # of being written as a findings-less artifact.
+  RETRY_WHY=""
+  RETRY_PROBLEM=""
   if JSON=$(extract_json "$RESULT"); then
-    RESULT="$JSON"
+    if response_incomplete_schema "$JSON"; then
+      RETRY_WHY="first response JSON is structurally incomplete"
+      RETRY_PROBLEM="contained a JSON object that is missing required schema fields — verdict and the blockers, suggestions, and questions arrays are all mandatory (use [] for an empty array)"
+    else
+      RESULT="$JSON"
+    fi
   else
-    # The one-shot reviewer sometimes returns prose claiming the JSON was
-    # "already delivered above" — but with --no-session-persistence /
-    # --ephemeral there is no prior turn. Retry ONCE, feeding the raw response
-    # back with the schema so it serializes the findings it already produced.
-    echo "→ extract_json failed on first response; retrying once with captured response" >&2
+    RETRY_WHY="extract_json failed on first response"
+  fi
+
+  if [[ -n "$RETRY_WHY" ]]; then
+    echo "→ $RETRY_WHY; retrying once with captured response" >&2
     RETRY_PROMPT_TMP=$(mktemp)
-    build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
+    if [[ -n "$RETRY_PROBLEM" ]]; then
+      build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
+    else
+      build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
+    fi
 
     RETRY_RESULT=""
     RETRY_EXIT=0
@@ -657,6 +702,15 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       echo "→ retry returned an empty response" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif JSON=$(extract_json "$RETRY_RESULT"); then
+      # Same completeness discipline on the retried response: a retry that is
+      # still missing the required arrays must not become the artifact either
+      # (vstack#678) — preserve it and fail with the distinct no-review code.
+      if response_incomplete_schema "$JSON"; then
+        echo "→ retry response JSON is still structurally incomplete" >&2
+        preserve_no_review_and_fail "$JSON" \
+          "returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema)" \
+          incomplete
+      fi
       echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
       RESULT="$JSON"
     else

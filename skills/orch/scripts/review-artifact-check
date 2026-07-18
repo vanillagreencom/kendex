@@ -21,7 +21,7 @@ freshness gate against filesystem mtime.
 
 Both modes print JSON:
   {ok: bool, path: string|null,
-   reason: "valid"|"missing"|"stale"|"invalid"|"no_review"}
+   reason: "valid"|"missing"|"stale"|"invalid"|"no_review"|"incomplete"}
 
 reason meanings when ok=false:
   missing    no matching artifact found (glob) / file does not exist (--file)
@@ -32,6 +32,11 @@ reason meanings when ok=false:
              (qa_metadata.review_performed == false, or qa_metadata.reason is a
              no-scope/no-review admission) — rejected regardless of verdict.
              Artifacts without qa_metadata are unaffected.
+  incomplete artifact declares the qa/second-opinion shape (a qa_metadata
+             object is present) but blockers[]/suggestions[] are missing or
+             not arrays — the finding arrays were lost in the write, so the
+             verdict cannot be trusted. Artifacts without qa_metadata are
+             unaffected.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
@@ -58,6 +63,24 @@ self_reports_no_review() {
       and (($qa.review_performed == false)
            or ((($qa.reason // "") | tostring)
                | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+  ' "$1" >/dev/null 2>&1
+}
+
+# vstack#678: a truncated write can produce an artifact whose verdict/summary
+# survived while the finding arrays were silently lost — schema-valid on the
+# `.verdict` gate, but the actual blockers/suggestions are gone. Artifacts
+# that DECLARE the qa/second-opinion shape (a qa_metadata object — the
+# second-opinion producer always emits one, and QA reviewers are contractually
+# required to per reviewer qa-review.md) must therefore also carry blockers[]
+# and suggestions[]. Artifacts WITHOUT qa_metadata (internal reviewers,
+# pre-existing tolerance documented in reviewer review-finding.md) validate as
+# before. questions[] is not required here: it is PR-comment-triage-only and
+# the QA standard fields omit it.
+qa_shaped_incomplete() {
+  jq -e '
+    ((.qa_metadata? | type) == "object")
+      and (((.blockers? | type) != "array")
+           or ((.suggestions? | type) != "array"))
   ' "$1" >/dev/null 2>&1
 }
 
@@ -98,6 +121,10 @@ if [[ "${1:-}" == "--file" ]]; then
   fi
   if self_reports_no_review "$file"; then
     emit false "$file" "no_review"
+    exit 1
+  fi
+  if qa_shaped_incomplete "$file"; then
+    emit false "$file" "incomplete"
     exit 1
   fi
   emit true "$file" "valid"
@@ -150,6 +177,13 @@ while IFS= read -r file; do
     if [[ -z "$fail_path" ]]; then
       fail_path="$file"
       reason="no_review"
+    fi
+    continue
+  fi
+  if qa_shaped_incomplete "$file"; then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="incomplete"
     fi
     continue
   fi

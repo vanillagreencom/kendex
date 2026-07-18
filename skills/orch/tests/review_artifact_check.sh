@@ -230,15 +230,16 @@ out="$("$CHECK" --file "$no_qa")"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file artifact without qa_metadata still validates"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file artifact without qa_metadata reports reason=valid"
 
-# empty qa_metadata (the schema's performed-review shape) validates
+# empty qa_metadata (the schema's performed-review shape) with the finding
+# arrays validates — declaring qa_metadata requires the arrays (vstack#678)
 empty_qa="$worktree/tmp/review-external-20260718-040404.json"
-printf '{"verdict":"pass","qa_metadata":{}}' > "$empty_qa"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' > "$empty_qa"
 out="$("$CHECK" --file "$empty_qa")"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file empty qa_metadata reports reason=valid"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file empty qa_metadata with arrays reports reason=valid"
 
 # explicit review_performed=true validates
 performed="$worktree/tmp/review-external-20260718-050505.json"
-printf '{"verdict":"pass","qa_metadata":{"review_performed":true}}' > "$performed"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{"review_performed":true}}' > "$performed"
 out="$("$CHECK" --file "$performed")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file review_performed=true reports reason=valid"
 
@@ -256,12 +257,75 @@ assert_eq "$(jq -r '.path' <<<"$out")" "$glob_noreview" "glob no-review report p
 
 # ...and an older fresh valid sibling still wins over a newer no-review one
 glob_valid="$worktree/tmp/review-reviewer-ext-20260718-000000.json"
-printf '{"verdict":"pass","qa_metadata":{}}' > "$glob_valid"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_valid"
 touch -d "@$after" "$glob_valid"
 touch -d "@$later" "$glob_noreview"
 out="$("$CHECK" "$worktree" reviewer-ext "$delegated_at")"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past no-review to older valid artifact"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_valid" "glob fallback selects the valid sibling"
+
+# --- incomplete: qa-shaped artifacts must carry the finding arrays (vstack#678) ---
+# A truncated write can keep verdict/summary while losing blockers/suggestions —
+# schema-valid on the `.verdict` gate, but the findings are gone. An artifact
+# that declares qa_metadata without the arrays is rejected reason=incomplete;
+# artifacts without qa_metadata keep the pre-existing tolerance (see no_qa above).
+inc="$worktree/tmp/review-external-20260718-070707.json"
+printf '{"agent":"external-codex","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"looks fine","qa_metadata":{}}' > "$inc"
+set +e
+out="$("$CHECK" --file "$inc")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file qa-shaped artifact without arrays exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file qa-shaped without arrays reports ok=false"
+assert_eq "$(jq -r '.path' <<<"$out")" "$inc" "--file qa-shaped without arrays reports its path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file qa-shaped without arrays reports reason=incomplete"
+
+# a mistyped array is as lost as a missing one
+inc_type="$worktree/tmp/review-external-20260718-080808.json"
+printf '{"verdict":"pass","blockers":"none","suggestions":[],"qa_metadata":{}}' > "$inc_type"
+set +e
+out="$("$CHECK" --file "$inc_type")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file non-array blockers exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file non-array blockers reports reason=incomplete"
+
+# missing suggestions alone is incomplete too
+inc_sugg="$worktree/tmp/review-external-20260718-090909.json"
+printf '{"verdict":"pass","blockers":[],"qa_metadata":{}}' > "$inc_sugg"
+set +e
+out="$("$CHECK" --file "$inc_sugg")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file missing suggestions exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file missing suggestions reports reason=incomplete"
+
+# questions[] is NOT required (PR-comment-triage-only; the QA standard fields omit it)
+no_questions="$worktree/tmp/review-external-20260718-101010.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$no_questions"
+out="$("$CHECK" --file "$no_questions")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file qa-shaped without questions still validates"
+
+# glob mode applies the same gate: a fresh qa-shaped incomplete artifact is rejected...
+glob_inc="$worktree/tmp/review-reviewer-inc-20260718-111111.json"
+printf '{"verdict":"pass","summary":"truncated","qa_metadata":{}}' > "$glob_inc"
+touch -d "@$after" "$glob_inc"
+set +e
+out="$("$CHECK" "$worktree" reviewer-inc "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob qa-shaped artifact without arrays exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob qa-shaped without arrays reports reason=incomplete"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc" "glob incomplete report points at the artifact"
+
+# ...and an older fresh complete sibling still wins over a newer incomplete one
+glob_inc_valid="$worktree/tmp/review-reviewer-inc-20260718-000000.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_inc_valid"
+touch -d "@$after" "$glob_inc_valid"
+touch -d "@$later" "$glob_inc"
+out="$("$CHECK" "$worktree" reviewer-inc "$delegated_at")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past incomplete to older complete artifact"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc_valid" "glob fallback selects the complete sibling"
 
 # --- usage errors ---
 set +e
@@ -289,11 +353,13 @@ assert_file_contains "$review_pr" "using your harness file-write tool" "review-p
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
 assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' "review-pr passes review_delegated_at as the --file freshness boundary"
+assert_file_contains "$review_pr" 'reason `incomplete`' "review-pr documents the incomplete-artifact rejection (vstack#678)"
 
 # --- submit-pr.md wires the --file freshness boundary for the local review ---
 submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
 assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
+assert_file_contains "$submit_pr" 'reason `incomplete`' "submit-pr documents the incomplete-artifact rejection (vstack#678)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
