@@ -127,6 +127,16 @@ function parseArgs(argv) {
 function cleanPath(path) { return path?.startsWith("@") ? path.slice(1) : path; }
 function resolvePath(path) { return resolve(cleanPath(path)); }
 
+// A report may reference a path as Markdown inline code (`path`) or a link
+// ([text](path)); strip those delimiters before resolving so a valid path is
+// not reported missing (vstack#628).
+function stripMarkdownPathDelimiters(ref) {
+  let value = ref.trim();
+  const link = value.match(/^\[[^\]]*\]\(([^)\s]+)\)$/);
+  if (link) value = link[1];
+  return value.replace(/^`+/, "").replace(/`+$/, "").trim();
+}
+
 async function expandSimpleGlob(rawGlob, limit = MAX_CONTEXT_FILES) {
   const cleaned = cleanPath(rawGlob.trim());
   if (!cleaned.includes("*")) return [resolve(cleaned)];
@@ -475,7 +485,10 @@ async function validateCommand(options) {
   }
 
   const sidecarRef = report.match(/Raw metadata sidecar:\s*(\S+)/);
-  if (sidecarRef && resolve(sidecarRef[1]) !== rawPath) warnings.push(`Report references sidecar ${sidecarRef[1]} but ${rawPath} was validated.`);
+  if (sidecarRef) {
+    const referenced = stripMarkdownPathDelimiters(sidecarRef[1]);
+    if (resolve(referenced) !== rawPath) warnings.push(`Report references sidecar ${referenced} but ${rawPath} was validated.`);
+  }
 
   const ok = errors.length === 0;
   jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings });

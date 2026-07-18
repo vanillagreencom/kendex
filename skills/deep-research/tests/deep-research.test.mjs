@@ -208,6 +208,27 @@ test("validate passes on freshly generated report and sidecar", () => {
   assert.equal(json.queryCount, 2);
 });
 
+test("validate ignores Markdown backticks around a report-referenced sidecar path (vstack#628)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-validate-backtick-"));
+  const mock = join(dir, "mock.json");
+  const output = join(dir, "findings.md");
+  const raw = join(dir, "findings.raw.json");
+  writeFileSync(mock, JSON.stringify({ answer: "A well-supported synthesized answer.", results: [{ title: "Source", url: "https://example.com", text: "Detailed source text." }] }));
+  const generate = spawnSync(process.execPath, [script, "report", "question", "--additional-query", "variant", "--output", output], { encoding: "utf8", env: { ...process.env, EXA_MOCK_RESPONSE_FILE: mock } });
+  assert.equal(generate.status, 0, generate.stderr);
+
+  // A hand-authored report references the sidecar as Markdown inline code.
+  writeFileSync(output, readFileSync(output, "utf8").replace(/- Raw metadata sidecar: .*/, "- Raw metadata sidecar: `" + raw + "`"));
+  const okJson = JSON.parse(spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" }).stdout);
+  assert.equal(okJson.ok, true);
+  assert.ok(!okJson.warnings.some((w) => w.startsWith("Report references sidecar")), `unexpected sidecar warning: ${JSON.stringify(okJson.warnings)}`);
+
+  // A genuinely-different (still backticked) path must still warn — the fix must not over-suppress.
+  writeFileSync(output, readFileSync(output, "utf8").replace(/- Raw metadata sidecar: .*/, "- Raw metadata sidecar: `" + join(dir, "other.raw.json") + "`"));
+  const mismatchJson = JSON.parse(spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" }).stdout);
+  assert.ok(mismatchJson.warnings.some((w) => w.startsWith("Report references sidecar")), `expected a sidecar mismatch warning: ${JSON.stringify(mismatchJson.warnings)}`);
+});
+
 test("validate errors when standard mode lacks synthesis and flags evidence-brief lite", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-validate-synth-"));
   const mock = join(dir, "mock.json");
