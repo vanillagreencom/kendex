@@ -39,6 +39,15 @@
 # head's Actions run list: an active newer substantive run keeps the wait
 # pending, a successful one discards the stale failures, and a failed newest
 # run — or no newer run at all — stays terminal (cases 25-28).
+#
+# Plus rerun-attempt correlation (vstack#699): a rerun executes as a new
+# attempt under the ORIGINAL run id and creation time, so an in-flight
+# attempt 2 of an OLDER pull_request run is replacement current-head work even
+# though no run with a newer id exists (observed on hyprtrade#324, head
+# e99849b1: review run 29662812172 cancelled while attempt 2 of run
+# 29662588017 was live). Any in-flight same-head substantive run keeps the
+# wait pending; the attempt's completed success supersedes via its fresher
+# updated_at, and its failure stays terminal (cases 29-31).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -749,6 +758,57 @@ assert_eq "$rc" "1" "case28: cancelled run without newer sibling exits 1" "$stde
 assert_eq "$(json_field "$output" '.status')" "complete" "case28: lone cancelled run is terminal" "$stderr"
 assert_eq "$(json_field "$output" '.verdict')" "fail" "case28: lone cancelled run fails closed" "$stderr"
 assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Gate Publisher")][0].state')" "FAILURE" "case28: cancelled run's gate failure is reported" "$stderr"
+
+echo "=== ci-wait rerun-attempt correlation (vstack#699) ==="
+
+# Case 29: the incident shape from hyprtrade#324 — the rollup shows only the
+# concurrency-cancelled pull_request_review run 29662812172 (cancelled jobs,
+# CI Gate Publisher failure, stale CI Required status) while attempt 2 of the
+# OLDER pull_request run 29662588017 is in progress on the same head. The
+# rerun keeps its original (lower) run id and creation time, so no run with
+# `.id >` the failing run's exists; the in-flight attempt alone must keep the
+# wait pending instead of terminal-failing.
+stderr="$TMP_ROOT/case29.err"
+runs_query_file="$TMP_ROOT/case29-runs-query"
+set +e
+output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-active.json" STUB_ACTIONS_RUNS_QUERY_FILE="$runs_query_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case29: active rerun attempt exits 1 only at timeout" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "case29: cancelled run stays pending while attempt is active" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pending" "case29: lower-id in-flight attempt is not terminal" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case29: superseded failures removed from failed_checks" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case29: stale aggregate status reported as expected" "$stderr"
+assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Gate Publisher")][0].state')" "EXPECTED" "case29: cancelled run's gate failure reported as expected" "$stderr"
+assert_contains "$(cat "$runs_query_file")" "head_sha=e99849b1c72b1c082cf8325f316799e753f99561" "case29: correlation queries Actions runs for the incident head" "$stderr"
+
+# Case 30: attempt 2 completed successfully and republished CI Required
+# against its own run id. Despite the lower id, its fresher updated_at proves
+# it settled after the cancelled run froze; the frozen failures are discarded
+# and the surviving aggregate status passes the wait.
+stderr="$TMP_ROOT/case30.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-status-replaced.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-success.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case30: successful rerun attempt exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case30: successful attempt completes the wait" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "pass" "case30: successful attempt passes" "$stderr"
+assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case30: superseded cancelled checks are discarded" "$stderr"
+assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case30: replacement aggregate status is reported" "$stderr"
+
+# Case 31: attempt 2 completed with a genuine failure. Rerun-attempt
+# correlation must not blunt fail-fast: the settled failure is terminal
+# immediately.
+stderr="$TMP_ROOT/case31.err"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case31: failed rerun attempt exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "complete" "case31: failed attempt is terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case31: failed attempt fails closed" "$stderr"
+assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case31: aggregate failure is reported" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

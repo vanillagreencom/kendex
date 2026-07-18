@@ -8,7 +8,7 @@
 # left by prior workflow runs (e.g., SUCCESS/SKIPPED checks from a superseded
 # earlier run). A settled failure attributable only to superseded runs is
 # additionally correlated with the head's Actions run list before it can
-# terminate the wait (vstack#650); see superseding_run_state below.
+# terminate the wait (vstack#650, vstack#699); see superseding_run_state below.
 #
 # Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
 #
@@ -414,18 +414,36 @@ get_failed_run_id() {
 # stale `CI Required` status pointing at it stayed visible, while the newer
 # substantive run never appeared. Correlate the failing checks' runs against
 # the Actions run list for the current head instead:
-#   active     - the failing run is re-running, or a newer queued/in-progress
-#                substantive-event run of the same workflow exists on this
-#                head; the failure is provisional, keep waiting.
-#   superseded - the newest such run completed successfully; the stale
-#                failures will never update, drop them and let the surviving
-#                statuses decide.
-#   terminal   - no newer substantive run, the newest one itself failed or was
+#   active     - the failing run is re-running, or ANY substantive-event run
+#                on this head is queued or in progress; the failure is
+#                provisional, keep waiting.
+#   superseded - the newest completed same-workflow substantive run — one with
+#                a strictly newer run id, or a later rerun attempt of an older
+#                run whose latest activity postdates the failing run's —
+#                ended in success; the stale failures will never update, drop
+#                them and let the surviving statuses decide.
+#   terminal   - no such newer run, the newest one itself failed or was
 #                cancelled, or a failure cannot be attributed to a run.
 # Substantive events are the PR-driving dispatches: pull_request,
 # pull_request_review, pull_request_review_comment, merge_group. Anything
 # unattributable stays terminal so the waiter still fails closed, and a
 # cancelled run with no newer sibling remains a terminal failure as before.
+#
+# Run-id order is not event order: a rerun starts a new attempt under the
+# ORIGINAL run id and creation time, and that attempt's results overwrite the
+# run's check runs when they land — observed as attempt 2 of an older
+# pull_request run executing while a newer review-event run sat cancelled
+# (vstack#699). The active test is therefore deliberately NOT scoped to the
+# failing run's workflow or to run-id order: any in-flight substantive run on
+# the head is replacement current-head work, and holding the verdict pending
+# is bounded by the waiter timeout while a wrong terminal fail is not
+# recoverable (matches the vstack#656 contract — an aggregate failure stays
+# pending while a newer substantive run has no failures). It also makes the
+# in-flight-$newest case unreachable below. Discarding failures stays
+# stricter: superseded still requires a completed-success run of the SAME
+# workflow, and a rerun attempt of an older run only counts when its
+# updated_at postdates the failing run's settlement — proof its results
+# overwrote the frozen ones rather than preceding them.
 superseding_run_state() {
   local classes="$1" head_sha runs_json
   head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
@@ -438,26 +456,31 @@ superseding_run_state() {
     echo "terminal"
     return 0
   fi
-  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id}]' <<<"$runs_json")" '
+  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" '
     def runid:
       (.link // "")
       | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
       | (if . == null then null else tonumber end);
-    [ .failed[]
+    def substantive:
+      ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
+    ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
+    | [ .failed[]
       | runid as $rid
       | if $rid == null then "terminal"
         else
           ([$runs[] | select(.id == $rid)] | .[0]) as $own
           | if $own == null then "terminal"
             elif ($own.status // "") != "completed" then "active"
+            elif $head_in_flight then "active"
             else
               ([$runs[]
-                | select(.id > $rid
+                | select(substantive
                          and .workflow_id == $own.workflow_id
-                         and ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group")))]
-               | max_by(.id)) as $newest
+                         and (.id > $rid
+                              or ((.run_attempt // 1) > 1
+                                  and ((.updated_at // "") > ($own.updated_at // "")))))]
+               | max_by([(.updated_at // ""), .id])) as $newest
               | if $newest == null then "terminal"
-                elif ($newest.status // "") != "completed" then "active"
                 elif ($newest.conclusion // "") == "success" then "superseded"
                 else "terminal"
                 end
