@@ -14,7 +14,9 @@ metadata:
 
 # Worktree Management
 
-Portable git worktree manager. Layout defaults to `project/main` (repo) + `project/trees/{id}` (worktrees); projects can override the worktree parent directory.
+Portable git worktree manager. Worktrees live outside the repo root by default — `<parent-of-checkout>/.worktrees/<checkout-name>/{id}` — so recursive editor/file watchers on the repo never ingest worktree build outputs, and sibling repos cannot collide on a shared parent dir. Projects can override the worktree parent directory with `WORKTREE_BASE_DIR`.
+
+Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved (`list`/`remove`/`push`/`restack`/`create --reuse`); there is no auto-migration. Path comparisons are canonical (physical, symlink-resolved on both sides), so a worktree registered under a legacy symlinked spelling and addressed via its physical path — or vice versa — is recognized as the same tree, never as a foreign one.
 
 Resolves project root via `git rev-parse`, detects default branch automatically, and reads project-specific config from `.env`, `vstack.settings.toml`, then `.env.local` (`.env.local` wins).
 
@@ -214,7 +216,7 @@ Set non-sensitive defaults in committed `vstack.settings.toml` under `[env]`. Ex
 
 | Variable | Effect |
 |----------|--------|
-| `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths are used as-is. Default: `../trees` |
+| `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths and `~` are used as-is. Default: `../.worktrees/<checkout-name>` (external per-repo dir beside the checkout). Do not point it inside the repo root: worktree build outputs under the repo can exhaust recursive file-watcher (inotify) budgets |
 | `WORKTREE_SYMLINKS` | Space-separated paths symlinked from main checkout into each worktree; include `.env.local` only if worktrees should share local secrets/overrides |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `path=target` symlinks created inside each worktree, with relative targets resolving from the link location |
 | `WORKTREE_COPIES` | Space-separated files copied from main checkout into each worktree |
@@ -224,7 +226,7 @@ Example: share local env plus generated Claude assets, but keep `.claude/CLAUDE.
 
 ```toml
 [env]
-WORKTREE_BASE_DIR = "../trees"
+WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
 WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"

@@ -155,6 +155,9 @@ make_repo() {
   printf 'orig\n' > "$repo/file.txt"
   git -C "$repo" add file.txt
   git -C "$repo" commit -q -m base
+  # Pin the historical sibling trees/ base so this file's path assertions stay
+  # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
+  printf 'WORKTREE_BASE_DIR="../trees"\n' > "$repo/.env"
 }
 
 # Build a main+origin pair whose issue worktree diverges from origin/main on

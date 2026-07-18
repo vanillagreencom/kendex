@@ -86,6 +86,9 @@ make_repo() {
   printf 'base\n' >"$root/main/base.txt"
   git -C "$root/main" add base.txt
   git -C "$root/main" commit -q -m base
+  # Pin the historical sibling trees/ base so this file's path assertions stay
+  # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env"
   git init -q --bare "$root/origin.git"
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main

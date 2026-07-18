@@ -14,11 +14,13 @@
 #     skip            Skip the current commit in that paused restack
 #     abort           Abort that paused restack and clear pending authorization
 #
-# Layout: project/main (repo) + project/trees/{id} (worktrees by default)
+# Layout: main checkout (repo) + external worktree parent dir
+#   default: <parent-of-checkout>/.worktrees/<checkout-name>/{id}
 # Config: reads .env, vstack.settings.toml, then .env.local for optional settings (see below)
 #
 # vstack.settings.toml [env] and .env/.env.local config vars:
-#   WORKTREE_BASE_DIR        - parent directory for worktrees (relative to main checkout or absolute; default: ../trees)
+#   WORKTREE_BASE_DIR        - parent directory for worktrees (relative to main checkout or absolute;
+#                              default: ../.worktrees/<checkout-name>, an external per-repo sibling dir)
 #   WORKTREE_DEFAULT_BRANCH  - default branch name (auto-detected if unset, fallback: main)
 #   WORKTREE_SYMLINKS        - space-separated paths to symlink from main into worktrees
 #   WORKTREE_RELATIVE_SYMLINKS - space-separated path=target symlinks created inside worktrees
@@ -34,6 +36,22 @@ set -euo pipefail
 
 readonly ACTIVE_WORK_EXIT=75
 
+canonical_existing_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  (cd "$path" && pwd -P)
+}
+
+# Canonical (physical) path equality: both sides resolve through pwd -P, so a
+# path reached via a compatibility symlink and its physical form compare
+# equal. False when either side is not an existing directory.
+same_canonical_dir() {
+  local a="" b=""
+  a="$(canonical_existing_dir "$1" 2>/dev/null)" || return 1
+  b="$(canonical_existing_dir "$2" 2>/dev/null)" || return 1
+  [[ "$a" == "$b" ]]
+}
+
 # Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too)
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 if [[ -z "$PROJECT_ROOT" ]]; then
@@ -46,12 +64,9 @@ _git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
 if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
   PROJECT_ROOT="$(cd "$PROJECT_ROOT" && cd "$(dirname "$_git_common_dir")" && pwd)"
 fi
-
-canonical_existing_dir() {
-  local path="$1"
-  [[ -d "$path" ]] || return 1
-  (cd "$path" && pwd -P)
-}
+# Physical form so registry, base-dir, and guard comparisons all share one
+# canonical anchor even when the script is invoked through a symlinked path.
+PROJECT_ROOT="$(canonical_existing_dir "$PROJECT_ROOT")"
 
 git_common_dir_path() {
   local checkout="$1" common_dir=""
@@ -308,24 +323,31 @@ strip_trailing_slashes() {
 
 resolve_worktree_base_dir() {
   local raw="${WORKTREE_BASE_DIR:-}"
-  if [[ -z "$raw" ]]; then
-    printf '%s\n' "$(dirname "$PROJECT_ROOT")/trees"
-    return
-  fi
-
-  if [[ "$raw" == "~" ]]; then
-    raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}"
-  elif [[ "$raw" == "~/"* ]]; then
-    raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}/${raw#~/}"
-  fi
-
-  raw="$(strip_trailing_slashes "$raw")"
-
   local path
-  if [[ "$raw" == /* ]]; then
-    path="$raw"
+  if [[ -z "$raw" ]]; then
+    # Default: an external per-repo dir beside the checkout. Worktrees (and
+    # their build outputs) must not live under the repo root — an editor
+    # recursively watching the repo would ingest every worktree's build
+    # artifacts and can exhaust the per-user inotify budget. A shared sibling
+    # like ../trees would collide across repos (two repos' issue-1 would
+    # resolve to the same path), so the repo name disambiguates.
+    path="$(dirname "$PROJECT_ROOT")/.worktrees/$(basename "$PROJECT_ROOT")"
   else
-    path="$PROJECT_ROOT/$raw"
+    if [[ "$raw" == "~" ]]; then
+      raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}"
+    elif [[ "$raw" == "~/"* ]]; then
+      # ${raw:2}, not ${raw#~/}: an unquoted ~ in a strip pattern is itself
+      # tilde-expanded to $HOME, so the prefix would never match.
+      raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}/${raw:2}"
+    fi
+
+    raw="$(strip_trailing_slashes "$raw")"
+
+    if [[ "$raw" == /* ]]; then
+      path="$raw"
+    else
+      path="$PROJECT_ROOT/$raw"
+    fi
   fi
 
   [[ "$path" == "/" ]] && { printf '/\n'; return; }
@@ -655,7 +677,10 @@ worktree_for_branch() {
         # A stanza without a worktree path is not ownership proof; success
         # must always carry a usable path for command-substitution callers.
         if [[ -n "$current_path" ]]; then
-          printf '%s\n' "$current_path"
+          # Report the physical path when it resolves; git may have recorded
+          # an older lexical (symlinked) spelling. A stale registration whose
+          # directory is gone is reported as recorded.
+          canonical_existing_dir "$current_path" 2>/dev/null || printf '%s\n' "$current_path"
           return 0
         fi
         ;;
@@ -663,6 +688,26 @@ worktree_for_branch() {
     esac
   done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
   return 1
+}
+
+# Resolve an issue ID to its worktree path. Prefers the configured
+# WORKTREE_BASE_DIR target; when nothing exists there, falls back to the
+# worktree registered for the issue branch so trees created under an older
+# base-dir convention keep working unmoved (no auto-migration). The main
+# checkout is never a fallback target.
+worktree_path_for_issue() {
+  local issue="$1" configured="" registered=""
+  configured="$(worktree_path "$issue")"
+  if [[ -e "$configured" || -L "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  registered="$(worktree_for_branch "$(issue_branch_name "$issue")" 2>/dev/null || true)"
+  if [[ -n "$registered" ]] && ! same_canonical_dir "$registered" "$PROJECT_ROOT"; then
+    printf '%s\n' "$registered"
+    return 0
+  fi
+  printf '%s\n' "$configured"
 }
 
 rebase_in_progress() {
@@ -807,7 +852,7 @@ resolve_restack_worktree() {
   elif [[ "$arg" == */* ]]; then
     printf '%s\n' "$arg"
   else
-    worktree_path "$arg"
+    worktree_path_for_issue "$arg"
   fi
 }
 
@@ -1199,7 +1244,8 @@ case "${1:-}" in
     if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
       echo "Usage: $0 create <ID> [BRANCH] [options]"
       echo ""
-      echo "Create a worktree for an issue ID (resolved to trees/<id>), optionally with an"
+      echo "Create a worktree for an issue ID (resolved under the configured worktree base"
+      echo "dir; default: ../.worktrees/<repo> beside the main checkout), optionally with an"
       echo "explicit branch-name positional."
       echo ""
       echo "Options:"
@@ -1245,7 +1291,10 @@ case "${1:-}" in
         *) BRANCH="$1"; shift ;;
       esac
     done
-    WT_PATH="$(worktree_path "$ISSUE")"
+    # Prefer the configured target; fall back to the registered worktree for
+    # the issue branch so trees created under an older base-dir convention are
+    # still recognized as active work and reusable in place.
+    WT_PATH="$(worktree_path_for_issue "$ISSUE")"
 
     # 1. Existing work is an ownership signal. Bare create is only for claiming
     # new work; reuse must be explicit so discovery cannot rewrite another
@@ -1465,7 +1514,8 @@ case "${1:-}" in
       echo "Usage: $0 remove [ID|/path]"
       echo ""
       echo "Remove a worktree and delete its local branch when it is safely merged."
-      echo "Accepts an issue ID (resolved to trees/<id>) or a direct worktree path."
+      echo "Accepts an issue ID (resolved under the configured worktree base dir, falling"
+      echo "back to the worktree registered for the issue branch) or a direct path."
       exit 0
     fi
     ARG="${2:?Error: remove requires an issue ID or path}"
@@ -1482,17 +1532,30 @@ case "${1:-}" in
     if [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
-    # Auto-relocate if cwd is inside the worktree being removed
+    # Auto-relocate if cwd is inside the worktree being removed. Both sides
+    # are physical (pwd -P); the boundary-aware match avoids treating a
+    # sibling like .../issue-10 as inside .../issue-1.
     WT_REAL="$(cd "$WT_PATH" 2>/dev/null && pwd -P)" || WT_REAL=""
     CWD_REAL="$(pwd -P)"
-    if [[ -n "$WT_REAL" && "$CWD_REAL" == "$WT_REAL"* ]]; then
+    CWD_INSIDE_WT=false
+    if [[ -n "$WT_REAL" ]] && [[ "$CWD_REAL" == "$WT_REAL" || "$CWD_REAL" == "$WT_REAL"/* ]]; then
+      CWD_INSIDE_WT=true
       cd "$PROJECT_ROOT"
       echo "Relocated cwd to $PROJECT_ROOT" >&2
     fi
     BRANCH=""
     if [[ -d "$WT_PATH" ]]; then
+      # Only a worktree registered to this repository (compared canonically,
+      # so a legacy symlinked spelling still matches its physical form) may
+      # be mutated. A foreign repo's worktree reachable through a shared or
+      # symlinked base dir must not have its symlinks stripped or its
+      # registration touched.
+      if ! is_registered_project_worktree "$WT_PATH"; then
+        echo "Error: $WT_PATH is not a registered worktree of $PROJECT_ROOT; refusing to remove it." >&2
+        exit 1
+      fi
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       remove_symlinks "$WT_PATH"
       git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH"
@@ -1519,7 +1582,7 @@ case "${1:-}" in
       fi
     fi
     echo "Removed: $WT_PATH"
-    if [[ -n "$WT_REAL" && "$CWD_REAL" == "$WT_REAL"* ]]; then
+    if [[ "$CWD_INSIDE_WT" == true ]]; then
       echo "" >&2
       echo "Warning: Session cwd was inside deleted worktree. Start a new session from:" >&2
       echo "  $PROJECT_ROOT" >&2
@@ -1531,7 +1594,18 @@ case "${1:-}" in
 
   cleanup)
     git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
-    for wt in $(git -C "$PROJECT_ROOT" worktree list --porcelain | grep "^worktree " | grep -v "$PROJECT_ROOT$" | cut -d' ' -f2); do
+    # Collect candidates first: NUL-delimited porcelain parsing survives paths
+    # with spaces, and the main checkout is excluded by canonical comparison —
+    # git may report it under an older lexical (symlinked) spelling that a
+    # textual match against $PROJECT_ROOT would miss.
+    CLEANUP_TREES=()
+    while IFS= read -r -d '' CLEANUP_LINE; do
+      [[ "$CLEANUP_LINE" == worktree\ * ]] || continue
+      CLEANUP_WT="${CLEANUP_LINE#worktree }"
+      same_canonical_dir "$CLEANUP_WT" "$PROJECT_ROOT" && continue
+      CLEANUP_TREES+=("$CLEANUP_WT")
+    done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+    for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null)
       if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" branch -d "$BRANCH" 2>/dev/null; then
         remove_symlinks "$wt"
@@ -1542,11 +1616,11 @@ case "${1:-}" in
     ;;
 
   path)
-    worktree_path "${2:?Error: path requires an issue ID}"
+    worktree_path_for_issue "${2:?Error: path requires an issue ID}"
     ;;
 
   exists)
-    WT_PATH="$(worktree_path "${2:?Error: exists requires an issue ID}")"
+    WT_PATH="$(worktree_path_for_issue "${2:?Error: exists requires an issue ID}")"
     [[ -d "$WT_PATH" ]] && echo "true" || echo "false"
     ;;
 
@@ -1597,7 +1671,7 @@ case "${1:-}" in
     elif WT_PATH="$(current_checkout_path_for_issue "$ARG")"; then
       :
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
 
     if ! is_git_worktree_path "$WT_PATH"; then
@@ -1671,7 +1745,7 @@ case "${1:-}" in
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
     if ! is_git_worktree_path "$WT_PATH"; then
       echo "Error: Not a git worktree: $WT_PATH" >&2
@@ -1692,7 +1766,7 @@ case "${1:-}" in
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
     if ! is_git_worktree_path "$WT_PATH"; then
       echo "Error: Not a git worktree: $WT_PATH" >&2
@@ -1713,7 +1787,7 @@ case "${1:-}" in
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
     if ! is_git_worktree_path "$WT_PATH"; then
       echo "Error: Not a git worktree: $WT_PATH" >&2
@@ -1763,7 +1837,7 @@ case "${1:-}" in
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
-      WT_PATH="$(worktree_path "$ARG")"
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
     echo "Codex cleanup hook complete; app owns worktree deletion: $WT_PATH"
     ;;

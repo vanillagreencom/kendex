@@ -22,7 +22,9 @@ Run from the main checkout of a git repo with an `origin` remote. New-work claim
 ./scripts/worktree remove PROJ-123
 ```
 
-Defaults: detects branch from `origin/HEAD` (fallback: `main`), creates worktrees under sibling `trees/`, then applies configured symlinks and copies. Set `WORKTREE_BASE_DIR` to use another parent directory; relative paths resolve from the main checkout, absolute paths are used as-is.
+Defaults: detects branch from `origin/HEAD` (fallback: `main`), creates worktrees under `<parent-of-checkout>/.worktrees/<checkout-name>/` — an external per-repo dir beside the checkout, so recursive editor/file watchers on the repo never ingest worktree build outputs and sibling repos cannot collide — then applies configured symlinks and copies. Set `WORKTREE_BASE_DIR` to use another parent directory; relative paths resolve from the main checkout, absolute paths and `~` are used as-is. Avoid pointing it inside the repo root.
+
+Issue-ID commands (`remove`, `push`, `restack`, `path`, `exists`, `create --reuse`) resolve against the configured base dir first, then fall back to the worktree registered for the issue branch — worktrees created under an older base-dir convention keep working unmoved, with no auto-migration. Path comparisons are canonical (symlink-resolved on both sides), so a tree registered under a legacy symlinked spelling is recognized as the same tree when addressed by its physical path, and a foreign repo's worktree is still refused.
 
 Bare `create <ID>` claims new work only. Every new-branch mode, including `--from`, checks the normalized issue branch, an explicit requested branch, and `BOT_NAME/<issue>` for matching worktrees, local/remote refs, and open PRs. Existing ownership exits 75 without rebasing or modifying a branch. Origin remote-head and GitHub PR discovery are authoritative: an outage exits 1 before worktree config, branch, or target-path mutation instead of being treated as absence. Unreachable secondary remotes are skipped with a warning (they cannot hold other sessions' pushes); reachable ones still count as ownership. A repository-local per-issue lock holds the final repeated discovery through `git worktree add`, so concurrent claimers produce one worktree and one exit 75. Inspect or monitor owned work instead of launching another implementer. Run each issue create separately and check its result; do not batch creates in a shell loop whose last success can mask an earlier active-work exit.
 
@@ -84,7 +86,7 @@ Set non-sensitive project defaults in `vstack.settings.toml` under `[env]`. Exis
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTREE_BASE_DIR` | Parent directory for created worktrees (default: `../trees`) |
+| `WORKTREE_BASE_DIR` | Parent directory for created worktrees (default: `../.worktrees/<checkout-name>`, an external per-repo dir beside the checkout) |
 | `WORKTREE_DEFAULT_BRANCH` | Override default branch detection |
 | `WORKTREE_SYMLINKS` | Space-separated paths to symlink into worktrees |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `path=target` symlinks created inside each worktree |
@@ -102,7 +104,7 @@ pointed at each worktree's own `AGENTS.md`:
 
 ```toml
 [env]
-WORKTREE_BASE_DIR = "../trees"
+WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
 WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"
