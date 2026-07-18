@@ -53,6 +53,11 @@ Most commands accept no PR number to auto-detect from the current branch.
 Exception: `post-reply` with a numeric comment ID never auto-detects — it
 requires an explicit `--pr <N>` (thread `PRRT_...` IDs need no PR number).
 
+There is no CI wait command here: blocking until CI completes on a PR is the
+orch skill's `.agents/skills/orch/scripts/ci-wait <PR_NUMBER> [interval]
+[max_wait] [--json]`. `ci-logs` only fetches failure logs, and
+`await-mergeable` waits for merge-state resolution, not check completion.
+
 ### Label application contract
 
 `label-add` checks that the named label exists in the live repository inventory,

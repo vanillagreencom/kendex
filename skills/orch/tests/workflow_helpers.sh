@@ -126,8 +126,8 @@ assert_file_contains "$orch_skill" 'Avoid inline `$(...)`, shell `for`/`while` l
 dev_skill="$REPO_ROOT/skills/dev/SKILL.md"
 assert_file_contains "$orch_skill" 'approval required by policy, but AskForApproval is set to Never' "orch skill pins the exact Codex never-approval rejection string"
 assert_file_contains "$orch_skill" 'rewrite as one simple command per tool call' "orch skill tells runtime agents to rewrite rejected shapes as single commands"
-assert_file_contains "$orch_skill" 'Replace polling loops with `ci-wait`' "orch skill routes CI polling loops to ci-wait"
-assert_file_contains "$orch_skill" '`approval-wait` (review approval)' "orch skill routes approval polling to approval-wait"
+assert_file_contains "$orch_skill" 'Replace polling loops with the orch waiters `.agents/skills/orch/scripts/ci-wait`' "orch skill routes CI polling loops to the pathed orch ci-wait (vstack#662)"
+assert_file_contains "$orch_skill" '`.agents/skills/orch/scripts/approval-wait` (review approval)' "orch skill routes approval polling to the pathed orch approval-wait"
 assert_file_contains "$dev_skill" 'approval required by policy, but AskForApproval is set to Never' "dev skill carries the never-approval runtime pointer"
 
 # vstack#661 — the same Codex policy also rejects some porcelain verbs (top-level
