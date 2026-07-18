@@ -194,9 +194,14 @@ Complete Options:
 Validate-Completion:
   Pre-merge validation. Session-root issues (positional targets) are expected
   in "In Progress" or "In Review" — "Done" fails state_ok because managed
-  session roots stay pre-merge until PR merge. Bundle children expanded via
-  --include-children-of are expected in "Done". Each issue must also have a
-  comment containing "Completion Summary" or "Bundle Complete".
+  session roots stay pre-merge until PR merge. This pre-merge state rule applies
+  ONLY to the session root, not to expanded bundle children.
+  Bundle children expanded via --include-children-of are expected in "Done":
+  every completed child IS included and validates as Done/pass (a still-pending
+  child fails state_ok). Canceled children are excluded from the expansion —
+  abandoned work can never be "Done" and is not a pending gap. Each validated
+  issue must also have a comment containing "Completion Summary" or
+  "Bundle Complete".
 
 Examples:
   # Basic operations
@@ -2561,7 +2566,15 @@ validate_completion() {
         return 1
     fi
 
-    # If --include-children-of specified, fetch bundle and extract pending children
+    # If --include-children-of specified, fetch the bundle and expand its
+    # children as bundle-child validation targets. Per the documented bundle
+    # contract each child is expected to be "Done", so COMPLETED children must
+    # be INCLUDED (they are exactly what validates as Done) — not dropped.
+    # Only CANCELED children are excluded: abandoned work can never be "Done",
+    # is not a pending gap, and including it would permanently fail any bundle
+    # that legitimately canceled a sub-issue. This mirrors the `children
+    # --pending` filter, which likewise treats completed vs canceled distinctly
+    # from still-pending work.
     if [ -n "$include_children_of" ]; then
         local bundle
         if ! bundle=$(get_issue "$include_children_of" --with-bundle); then
@@ -2573,7 +2586,7 @@ validate_completion() {
             return 1
         fi
         local child_ids
-        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type | IN("completed", "canceled") | not) | .id] | .[]' 2>/dev/null)
+        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
             issue_ids+=("$child_id")
             roles+=("bundle-child")

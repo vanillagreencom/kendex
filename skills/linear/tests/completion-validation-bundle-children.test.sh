@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Regression test for vstack #634.
+#
+# validate_completion() used to expand --include-children-of with the filter
+#   select(.state_type | IN("completed", "canceled") | not)
+# which DROPPED completed (and canceled) children and kept only pending ones.
+# Because bundle children are validated with the "bundle-child" role — which
+# expects state "Done" — the exact children that should pass (completed ones)
+# were silently omitted. A fully-Done bundle expanded to an EMPTY child list and
+# validate-completion returned only the session-root result.
+#
+# The fix expands every non-canceled child: completed children ARE included and
+# validate as Done/pass, still-pending children are included and fail, and
+# canceled children are excluded (abandoned work can never be "Done").
+#
+# This drives the real linear.sh end-to-end with curl mocked (offline). It
+# exercises three scenarios:
+#   A. All children completed  -> children present + passing, all_ok true.
+#   B. One child still pending -> child present + failing, all_ok false.
+#   C. A canceled child        -> excluded from the expansion entirely.
+#
+# Pre-fix, scenario A fails (children CC-901/CC-902 omitted), scenario B fails
+# (CC-912 omitted rather than reported failing), and scenario C's canceled child
+# was already excluded (unchanged).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
+cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+
+cat >"$TMP_ROOT/bin/curl" <<'SH'
+#!/usr/bin/env bash
+# Minimal Linear GraphQL mock. Dispatches on query kind + the issue identifier
+# carried in variables. Emits "<json>___HTTP_CODE___200" like the real API.
+config="$(cat)"
+payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
+query="$(jq -r '.query' <<<"$payload")"
+vid="$(jq -r '.variables.id // .variables.issueId // ""' <<<"$payload")"
+
+emit() { printf '%s___HTTP_CODE___200' "$1"; }
+
+# A single-issue (non-bundle) GetIssue node.
+# Args: identifier state_name state_type parent_identifier
+single_issue() {
+  local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null"
+  if [[ -n "$parent" ]]; then
+    parent_json="{\"id\":\"uuid-$parent\",\"identifier\":\"$parent\",\"title\":\"parent\"}"
+  fi
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
+}
+
+# A child node embedded in a bundle's children.nodes.
+# Args: identifier state_name state_type parent_identifier
+bundle_child() {
+  local id="$1" sname="$2" stype="$3" parent="$4"
+  printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]},"children":{"nodes":[]}}' \
+    "$id" "$id" "$id" "$sname" "$stype" "$parent"
+}
+
+# A bundle (GetIssueWithBundle) for a parent in state In Review, given a
+# pre-rendered comma-joined children.nodes array body.
+bundle_parent() {
+  local id="$1" children="$2"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"In Review\",\"type\":\"started\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
+}
+
+comments_with_summary() {
+  emit '{"data":{"issue":{"comments":{"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
+}
+
+comments_empty() {
+  emit '{"data":{"issue":{"comments":{"nodes":[]}}}}'
+}
+
+if [[ "$query" == *"GetIssueWithBundle"* ]]; then
+  case "$vid" in
+  CC-900) bundle_parent CC-900 "$(bundle_child CC-901 Done completed CC-900),$(bundle_child CC-902 Done completed CC-900)" ;;
+  CC-910) bundle_parent CC-910 "$(bundle_child CC-911 Done completed CC-910),$(bundle_child CC-912 'In Progress' started CC-910)" ;;
+  CC-920) bundle_parent CC-920 "$(bundle_child CC-921 Done completed CC-920),$(bundle_child CC-922 Canceled canceled CC-920)" ;;
+  *) emit '{"errors":[{"message":"unknown bundle"}]}' ;;
+  esac
+elif [[ "$query" == *"ListComments"* ]]; then
+  # Every issue except the canceled one carries a summary comment.
+  case "$vid" in
+  CC-922) comments_empty ;;
+  *) comments_with_summary ;;
+  esac
+elif [[ "$query" == *"GetIssue"* ]]; then
+  case "$vid" in
+  CC-900) single_issue CC-900 'In Review' started "" ;;
+  CC-901) single_issue CC-901 Done completed CC-900 ;;
+  CC-902) single_issue CC-902 Done completed CC-900 ;;
+  CC-910) single_issue CC-910 'In Review' started "" ;;
+  CC-911) single_issue CC-911 Done completed CC-910 ;;
+  CC-912) single_issue CC-912 'In Progress' started CC-910 ;;
+  CC-920) single_issue CC-920 'In Review' started "" ;;
+  CC-921) single_issue CC-921 Done completed CC-920 ;;
+  CC-922) single_issue CC-922 Canceled canceled CC-920 ;;
+  *) emit '{"errors":[{"message":"unknown issue"}]}' ;;
+  esac
+else
+  emit '{"errors":[{"message":"unexpected query"}]}'
+fi
+SH
+chmod +x "$TMP_ROOT/bin/curl"
+
+run_validate() {
+  PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_API_KEY=test-token \
+    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
+    issues validate-completion "$@"
+}
+
+fail=0
+
+check() {
+  local label="$1" out="$2" filter="$3"
+  if ! jq -e "$filter" >/dev/null 2>&1 <<<"$out"; then
+    echo "FAIL: $label"
+    echo "  filter: $filter"
+    echo "  output: $out"
+    fail=1
+  fi
+}
+
+# --- Scenario A: all children completed (the #634 regression) --------------
+outA="$(run_validate CC-900 --include-children-of CC-900 2>/dev/null)"
+check "A: three results (root + 2 completed children)" "$outA" \
+  '(.results | length) == 3'
+check "A: completed child CC-901 is PRESENT and passes as Done" "$outA" \
+  '.results[] | select(.id == "CC-901") | .state == "Done" and .state_ok == true and .ok == true'
+check "A: completed child CC-902 is PRESENT and passes as Done" "$outA" \
+  '.results[] | select(.id == "CC-902") | .state == "Done" and .state_ok == true and .ok == true'
+check "A: session-root CC-900 passes in its pre-merge In Review state" "$outA" \
+  '.results[] | select(.id == "CC-900") | .state == "In Review" and .state_ok == true and .ok == true'
+check "A: all_ok true when every child is Done" "$outA" '.all_ok == true'
+
+# --- Scenario B: a still-pending child must still fail ----------------------
+outB="$(run_validate CC-910 --include-children-of CC-910 2>/dev/null)"
+check "B: three results (root + Done child + pending child)" "$outB" \
+  '(.results | length) == 3'
+check "B: Done child CC-911 passes" "$outB" \
+  '.results[] | select(.id == "CC-911") | .ok == true'
+check "B: pending child CC-912 is PRESENT and fails state_ok/ok" "$outB" \
+  '.results[] | select(.id == "CC-912") | .state == "In Progress" and .state_ok == false and .ok == false'
+check "B: all_ok false when a child is still pending" "$outB" '.all_ok == false'
+
+# --- Scenario C: canceled children are excluded from the expansion ---------
+outC="$(run_validate CC-920 --include-children-of CC-920 2>/dev/null)"
+check "C: two results (root + only the Done child; canceled excluded)" "$outC" \
+  '(.results | length) == 2'
+check "C: Done child CC-921 passes" "$outC" \
+  '.results[] | select(.id == "CC-921") | .ok == true'
+check "C: canceled child CC-922 is NOT in results" "$outC" \
+  '([.results[] | select(.id == "CC-922")] | length) == 0'
+check "C: all_ok true (canceled child does not block)" "$outC" '.all_ok == true'
+
+# --- Preserve single-issue behavior (no --include-children-of) -------------
+outS="$(run_validate CC-901 2>/dev/null)"
+check "S: single-issue validate has exactly one result" "$outS" \
+  '(.results | length) == 1 and .results[0].id == "CC-901"'
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "completion-validation-bundle-children: FAIL"
+  exit 1
+fi
+
+echo "all pass"

@@ -522,7 +522,13 @@ cache_validate_completion() {
         return 1
     fi
 
-    # If --include-children-of specified, fetch bundle from cache and extract pending children
+    # If --include-children-of specified, fetch the bundle from cache and expand
+    # its children as bundle-child validation targets. Per the documented bundle
+    # contract each child is expected to be "Done", so COMPLETED children must be
+    # INCLUDED (they are exactly what validates as Done) — not dropped. Only
+    # CANCELED children are excluded: abandoned work can never be "Done", is not
+    # a pending gap, and including it would permanently fail any bundle that
+    # legitimately canceled a sub-issue. Mirrors the live issues.sh path.
     if [[ -n "$include_children_of" ]]; then
         local bundle
         if ! bundle=$(cache_get_issue "$include_children_of" --with-bundle); then
@@ -534,7 +540,7 @@ cache_validate_completion() {
             return 1
         fi
         local child_ids
-        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type | IN("completed", "canceled") | not) | .id] | .[]' 2>/dev/null)
+        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
             issue_ids+=("$child_id")
             roles+=("bundle-child")
