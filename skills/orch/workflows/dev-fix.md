@@ -14,7 +14,7 @@ Delegate fix items to a specialist dev agent. Works standalone (user-initiated) 
 - `worktree`: worktree path
 - `lifecycle` (optional): `"managed"` (return to caller at § 3) | `"self"` (default, standalone).
 - `dev_agent` (optional): name of alive dev agent for fix delegation. If absent, determine from state/labels.
-- `issue_id` (optional): Issue ID. If absent, extracted from branch.
+- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
 - `items` (optional): formatted review items. If absent, build from conversation context.
 - `source` (optional): `pr-review` | `qa-review` | `review` | `local-review`. Default: `conversation`.
 - `qa_agent` (optional): QA agent name (for qa-review source).

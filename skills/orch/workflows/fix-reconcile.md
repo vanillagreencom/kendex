@@ -14,7 +14,7 @@ Batch workflow — checks if applied fixes address existing open issues. Process
 
 | Context | Source | Required |
 |---------|--------|----------|
-| `issue_id` | Caller issue ID for workflow-state lookup | Yes |
+| `issue_id` | Caller workflow-state key (normalized issue ID, e.g. `issue-N` — never the bare GitHub issue number) | Yes |
 | `pr_number` | Caller PR number for comments | Yes |
 
 ## 1. Gather Fixes

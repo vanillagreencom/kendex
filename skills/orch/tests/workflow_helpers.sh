@@ -314,6 +314,23 @@ if [[ -f "$settings_example" ]]; then
   assert_file_contains "$settings_example" 'REVIEWER_SLOT_BUDGET = "0"' "settings example documents the reviewer slot budget default"
 fi
 
+# vstack#660 — GitHub-issue orchestration stores workflow state under the
+# normalized `issue-N` key, so workflow docs must define `issue_id`/[ISSUE_ID]
+# as that workflow-state key (never the bare GitHub issue number), and
+# review-pr-comments § 6.1 step 8 must append replies under [ISSUE_ID] with
+# the key clarified in place.
+assert_file_contains "$comments_workflow" 'workflow-state append [ISSUE_ID] pr_comment_review.replied' "review-pr-comments § 6.1 step 8 appends replies under the [ISSUE_ID] state key"
+assert_file_contains "$comments_workflow" '# [ISSUE_ID] is the workflow-state key (e.g. issue-290), matching the' "review-pr-comments § 6.1 step 8 clarifies the state key in place"
+assert_file_contains "$comments_workflow" 'never the bare GitHub issue number' "review-pr-comments defines issue_id as the normalized state key"
+assert_file_contains "$submit_workflow" 'never the bare GitHub issue number' "submit-pr defines issue_id as the workflow-state key"
+for workflow_path in dev-fix dev-start initialize post-summary review-pr; do
+  assert_file_contains "$REPO_ROOT/skills/orch/workflows/$workflow_path.md" \
+    'workflow-state key — the normalized issue ID' \
+    "$workflow_path defines caller issue_id as the normalized workflow-state key"
+done
+assert_file_contains "$orch_skill" 'never the bare GitHub issue number' "orch skill states the workflow-state key convention"
+assert_file_contains "$state_schema" 'never the bare GitHub issue number' "workflow-state schema states the key convention"
+
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
 assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"

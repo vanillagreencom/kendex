@@ -15,7 +15,7 @@ Pre-submission code review: fix handling, QA checks, and issue audit.
 - `agents` (optional): list of review agent names. Default: every `reviewer-*` agent from the active harness registry. Do not hardcode a count — enumerate from the registry.
 - `lifecycle` (optional): `"managed"` (return to caller at § 11) | `"self"` (default, standalone).
 - `dev_agent` (optional): alive dev agent for fix delegation. If absent, fixes use sub-agent tasks.
-- `issue_id` (optional): issue tracker ID. If absent, extracted from branch.
+- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
 
 **If PR# provided:**
 ```bash

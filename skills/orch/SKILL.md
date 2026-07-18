@@ -179,6 +179,8 @@ Both `approval-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the
 
 To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand: it applies to every action and takes precedence over `ORCH_STATE_DIR`. Prefer the flag over an `ORCH_STATE_DIR=… workflow-state …` env prefix — the env-assignment prefix is rejected under Codex `approval=never` as a flagged command shape, while a plain flag is classifier-safe. `ORCH_STATE_DIR` remains supported as an environment fallback (default: `tmp`). Put non-secret workflow settings in committed `vstack.settings.toml` under `[env]`; `.env.local` remains supported for secrets and personal overrides.
 
+State keys are the normalized issue IDs — `issue-N` for GitHub issues (per `start` routing), `PROJ-123` for Linear — never the bare GitHub issue number. As a safety net, every action except `init` aliases a bare numeric key to the `issue-N` state file when only that file exists; the exact-key file wins when present, and the command errors (exit 2) instead of guessing when files exist under both keys.
+
 ```bash
 .agents/skills/orch/scripts/workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 ```
@@ -413,7 +415,7 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 Use workflow state files for data that must survive compaction: issue tracking, sub-issues, agent persistence, cycle counts, fix/escalation tracking, audit trails. Use the `workflow-state` CLI for all reads/writes, including `set-git-head` and `set-now` instead of inline command-substitution state-write snippets.
 
-Location: `<state-dir>/workflow-state-[ID].json` — `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`. From a worktree, prefer `--state-dir` over an `ORCH_STATE_DIR=…` env prefix (rejected under Codex `approval=never`).
+Location: `<state-dir>/workflow-state-[ID].json` — `[ID]` is the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), and `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`. From a worktree, prefer `--state-dir` over an `ORCH_STATE_DIR=…` env prefix (rejected under Codex `approval=never`).
 
 #### Compaction Recovery Protocol
 

@@ -18,6 +18,34 @@ get_state_file() {
     echo "${STATE_DIR}/${STATE_PREFIX}-${issue_id}.json"
 }
 
+# Resolve the state file for a key. GitHub-issue orchestration stores state
+# under the normalized `issue-N` key, so a bare numeric tracker number aliases
+# to the normalized file when only that file exists. The exact-key file wins
+# when it exists; if files exist under BOTH keys the target is ambiguous —
+# error out rather than guess. Non-numeric keys resolve to the exact file only.
+# Used by every subcommand except `init` (init always creates the exact key).
+resolve_state_file() {
+    local issue_id="$1"
+    local exact
+    exact=$(get_state_file "$issue_id")
+
+    if [[ "$issue_id" =~ ^[0-9]+$ ]]; then
+        local normalized
+        normalized=$(get_state_file "issue-${issue_id}")
+        if [[ -f "$exact" && -f "$normalized" ]]; then
+            echo "Error: ambiguous state key '$issue_id': both $exact and $normalized exist" >&2
+            echo "Remove or merge one file, then retry with the intended key" >&2
+            exit 2
+        fi
+        if [[ ! -f "$exact" && -f "$normalized" ]]; then
+            echo "$normalized"
+            return 0
+        fi
+    fi
+
+    echo "$exact"
+}
+
 ensure_state_exists() {
     local state_file="$1"
     if [[ ! -f "$state_file" ]]; then
@@ -122,7 +150,7 @@ cmd_get() {
     local jq_path="${2:-.}"
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     jq -r "$jq_path" "$state_file"
@@ -133,7 +161,7 @@ cmd_update() {
     local jq_expr="$2"
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     atomic_update "$state_file" "$jq_expr"
@@ -145,7 +173,7 @@ cmd_append() {
     local value="$3"
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     # Handle nested fields (e.g., pr_comment_review.fixes)
@@ -170,7 +198,7 @@ cmd_increment() {
     local field="$2"
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     atomic_update "$state_file" ".${field} += 1"
@@ -182,7 +210,7 @@ cmd_set() {
     local value="$3"
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     if [[ "$value" == "{"* ]] || [[ "$value" == "["* ]] || [[ "$value" == "null" ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]] || [[ "$value" =~ ^[0-9]+$ ]]; then
@@ -222,7 +250,7 @@ cmd_set_now() {
 
 cmd_path() {
     local issue_id="$1"
-    get_state_file "$issue_id"
+    resolve_state_file "$issue_id"
 }
 
 cmd_exists() {
@@ -240,7 +268,7 @@ cmd_exists() {
     fi
 
     local state_file
-    state_file=$(get_state_file "$issue_id")
+    state_file=$(resolve_state_file "$issue_id")
 
     if [[ "$json" == true ]]; then
         local exists=false
@@ -285,6 +313,14 @@ Commands:
   set-now <issue_id> <field>     Set field to current epoch seconds
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
+
+Keys:
+  GitHub-issue orchestration stores state under the normalized key issue-<N>.
+  Every command except init accepts the bare tracker number as an alias: when
+  only <state-dir>/workflow-state-issue-<N>.json exists, a numeric <issue_id>
+  resolves to that file. The exact-key file wins when it exists; if files
+  exist under BOTH keys the command errors (exit 2) instead of guessing.
+  init always creates the exact key given — pass the normalized key to init.
 
 Examples:
   workflow-state init PROJ-123 --agent rust --worktree /tmp/wt

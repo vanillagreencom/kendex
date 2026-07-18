@@ -17,7 +17,7 @@ Route PR review comments to domain agents, auto-fix valid items, loop until stab
 **Caller context parameters** (via `⤵`):
 - `worktree`: worktree path
 - `lifecycle` (optional): `"managed"` (return to caller at § 8) | `"self"` (default, standalone).
-- `issue_id` (optional): issue tracker ID. If absent, extracted from branch.
+- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
 - `pr_number` (optional): PR number. If absent, resolved from branch.
 
 **Standalone init** (`lifecycle: "self"` only):
@@ -112,7 +112,7 @@ Output: `threads` (inline) + `comments` (PR-level).
 
 ### 1.5 Resolve Issue Context
 
-1. **Identify parent issue**: Extract `[ISSUE_ID]` from branch name. If not found, ask user.
+1. **Identify parent issue**: use caller `issue_id` when provided; otherwise run `.agents/skills/orch/scripts/git-context issue-from-branch .` and use the output as `[ISSUE_ID]` — the normalized workflow-state key (e.g. `issue-290`), never the bare GitHub issue number. If no issue id matches, ask user.
 
 2. **Get worktree**:
    ```bash
@@ -356,6 +356,8 @@ Issue suggestions: [N] items → § 6.2 audit
    # Markdown-heavy alternative:
    #   .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" --body-file "$REPLY_FILE" --pr "[PR_NUMBER]"
    .agents/skills/github/scripts/github.sh resolve-thread "[THREAD_ID]"
+   # [ISSUE_ID] is the workflow-state key (e.g. issue-290), matching the
+   # state file created at init — never the bare tracker number (290).
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
    ```
 

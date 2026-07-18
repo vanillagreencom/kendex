@@ -13,7 +13,7 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 **Caller context parameters** (via `⤵`):
 - `worktree`: worktree path
 - `lifecycle` (optional): `"managed"` (return to caller at § 4) | `"self"` (default, standalone).
-- `issue_id` (optional): Issue ID. If absent, extracted from branch.
+- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash

@@ -10,7 +10,7 @@ Run a local pre-PR review, push changes, create/update the PR, triage review com
 | `submit-pr [PR#]` | Manage existing PR |
 | (from start-worktree) | Managed lifecycle with caller context |
 
-**Caller context parameters** (via `⤵`): `worktree`, `lifecycle` (`"managed"` → return at § 7 | `"self"` default), `issue_id` (extracted from branch if absent).
+**Caller context parameters** (via `⤵`): `worktree`, `lifecycle` (`"managed"` → return at § 7 | `"self"` default), `issue_id` (workflow-state key — the normalized issue ID, e.g. `issue-N` for GitHub, never the bare GitHub issue number; extracted from branch if absent).
 
 **If PR# provided:**
 ```bash
