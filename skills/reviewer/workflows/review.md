@@ -42,6 +42,8 @@ If a changed path was deleted, inspect it from the git diff or git history; do n
 
 Read decision files listed in delegation. Do NOT suggest changes that contradict them.
 
+If a listed decision file does not exist (`test -f [PATH]` fails), the delegation broke the orchestrator's decision-path provenance rule (vstack#696) — do not hunt for the intended file. Note the broken reference in your returned report and recover decision context directly with `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` (decider skill), reading the full files at the paths its JSON output returns.
+
 ### 1.3 Classify Findings
 
 Read the orch skill's recommendation-bias patterns. Apply its decision flow to ALL findings — a finding must pass actionability and relatedness checks before entering `blockers[]` or `suggestions[]`. Then use size to categorize suggestions as `fix` or `issue`.

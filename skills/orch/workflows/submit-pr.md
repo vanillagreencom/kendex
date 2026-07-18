@@ -140,7 +140,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    [1-3 bullets describing changes]
 
    ## Context
-   [For each matching decision from `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` (decider skill):]
+   [For each matching decision from `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` (decider skill) — paths come from that JSON output only, never from memory, and each is verified with `test -f [DECISION_FILE_PATH]` (one command per path); omit entries whose path fails (vstack#696):]
    - **[DECISION_ID]**: [ONE_LINE_SUMMARY] — `[DECISION_FILE_PATH]`
    [For each research file linked to the issue:]
    - **Research**: [TITLE] — `[RESEARCH_FILE_PATH]`

@@ -123,6 +123,14 @@ Output: `threads` (inline) + `comments` (PR-level).
 
 3. **Decision context**: `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]`. Collect matching IDs and summaries for § 3 delegation prompt.
 
+   The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+
+   ```bash
+   test -f [DECISION_FILE_PATH]
+   ```
+
+   **If the check fails**: omit that path and carry the one-line note `decision index lookup failed for [DECISION_ID]` in the decision-context lines instead — a broken path must never reach a domain agent.
+
 ## 2. Detect Domains
 
 Map each comment to a domain based on source and file path. Domain-to-agent routing is project-configurable — example defaults:
@@ -153,7 +161,8 @@ Parent Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
 
 Decision context (read before classifying — do NOT suggest changes that contradict these):
-[For each matching decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each verified decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each decision whose path failed verification: "decision index lookup failed for [DECISION_ID]"]
 [If none: "No linked decisions found."]
 
 Comments for your review:

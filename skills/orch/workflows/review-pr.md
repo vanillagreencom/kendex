@@ -60,6 +60,14 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 Collect decision IDs and summaries from the JSON output. If decisions found: include in the delegation prompt below. Agents MUST read cited decisions before suggesting changes that could contradict them.
 
+The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+
+```bash
+test -f [DECISION_FILE_PATH]
+```
+
+**If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a reviewer.
+
 ### 1.2 Check for Re-Review Context
 
 ```bash
@@ -173,7 +181,8 @@ Worktree: [WORKTREE_PATH]
 Branch: [BRANCH]
 
 Decisions:
-[For each matching decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
 [If none: "- No linked decisions found."]
 <if re-review cycle>
 Re-review cycle [N]. Already resolved — do NOT re-report:

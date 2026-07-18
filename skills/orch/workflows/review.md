@@ -55,6 +55,14 @@ git diff $DIFF_RANGE --stat
 
 Collect decision IDs and summaries from JSON output.
 
+The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+
+```bash
+test -f [DECISION_FILE_PATH]
+```
+
+**If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a reviewer.
+
 ## 2. Launch Review Agents
 
 **Detect team context:**
@@ -90,7 +98,8 @@ Branch: [BRANCH]
 Diff-range: [DIFF_RANGE]
 
 Decisions:
-[For each matching decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+[For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
 [If none: "- No linked decisions found."]
 </delegation_format>
 

@@ -106,6 +106,14 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```
    Collect decision IDs, summaries, and file paths from the JSON output for the `Decisions:` section below. Issue-linked lookup is exactly `decisions search --issue [ISSUE_ID]` — the decisions CLI has no bare `issue` action; never shorten the command in delegation guidance.
 
+   The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+
+   ```bash
+   test -f [DECISION_FILE_PATH]
+   ```
+
+   **If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a specialist.
+
 5. **Delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available).
 
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix, not procedure steps. The agent owns validate/commit/return per `dev/workflows/dev-fix.md`.
@@ -123,7 +131,8 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    [If qa_agent:] QA: [QA_AGENT]
 
    Decisions:
-   [For each matching decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+   [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
+   [For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
    [If none: "- No linked decisions found."]
 
    Review items:

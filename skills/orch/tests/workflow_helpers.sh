@@ -341,6 +341,33 @@ done
 assert_file_contains "$orch_skill" 'never the bare GitHub issue number' "orch skill states the workflow-state key convention"
 assert_file_contains "$state_schema" 'never the bare GitHub issue number' "workflow-state schema states the key convention"
 
+# vstack#696 — decision-path provenance: during an orch re-review wave the
+# delegation prompt cited two non-existent decision files composed from
+# memory, and a reviewer burned a cycle discovering the real ones. Every
+# workflow that injects decision references must (a) source paths ONLY from
+# the decider CLI's JSON output (the CLI resolves them from the decision
+# index) and (b) verify each path with a single `test -f` before injection,
+# omitting failures with a one-line lookup-failure note instead of passing
+# the broken path through. The delegation templates carry a slot for that
+# note, submit-pr applies the same rule to PR-body decision citations, and
+# the reviewer workflow carries the receiving-side fallback so a stray bad
+# path never costs another review cycle.
+reviewer_review_workflow="$REPO_ROOT/skills/reviewer/workflows/review.md"
+for workflow_path in dev-fix review review-pr review-pr-comments; do
+  workflow="$REPO_ROOT/skills/orch/workflows/$workflow_path.md"
+  assert_file_contains "$workflow" 'ONLY authorized source' "$workflow_path pins the decider CLI JSON output as the only decision-path source"
+  assert_file_contains "$workflow" 'never compose or recall a decision path from memory' "$workflow_path bans memory-composed decision paths"
+  assert_file_contains "$workflow" 'test -f [DECISION_FILE_PATH]' "$workflow_path verifies each decision path before injection"
+  assert_file_contains "$workflow" 'decision index lookup failed for [DECISION_ID]' "$workflow_path omits failed paths with the lookup-failure note"
+  assert_file_contains "$workflow" 'For each decision whose path failed verification' "$workflow_path delegation template carries the failed-verification slot"
+  assert_file_not_contains "$workflow" 'For each matching decision: "' "$workflow_path delegation template injects only verified decisions"
+done
+assert_file_contains "$submit_workflow" 'test -f [DECISION_FILE_PATH]' "submit-pr verifies decision paths cited in the PR body"
+assert_file_contains "$submit_workflow" 'omit entries whose path fails' "submit-pr omits unverified decision paths from the PR body"
+assert_file_contains "$reviewer_review_workflow" 'decision-path provenance rule' "reviewer review workflow names the provenance rule on broken paths"
+assert_file_contains "$reviewer_review_workflow" 'do not hunt for the intended file' "reviewer review workflow stops reviewers from burning a cycle on bad paths"
+assert_file_contains "$reviewer_review_workflow" 'decisions search "[RELEVANT_KEYWORDS]"' "reviewer review workflow routes recovery through the decider CLI"
+
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
 assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"
