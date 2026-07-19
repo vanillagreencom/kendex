@@ -522,5 +522,15 @@ assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans
 assert_file_contains "$qa_workflow" "benchmark recorder fails closed on all-zero counters" "qa-review documents all-zero recorder fallback"
 assert_file_contains "$qa_workflow" "targeted regression command reports numeric regressions" "qa-review reports targeted numeric regressions"
 
+# vstack#729 — tiered-CI guard-job skip propagation: a schedule-only
+# guard/classifier job's `skipped` result propagates through the `needs`
+# chain, silently skipping every downstream product job on ordinary PR
+# events while the workflow reads green. The canonical pattern must pin the
+# explicit consumer condition and the guard-as-code truth-table testing
+# pattern (validated in hyprtrade #339).
+assert_file_contains "$orch_development" "if: \${{ !cancelled() && needs.<classifier>.result == 'success' }}" "orch DEVELOPMENT pins the classifier-consumer condition shape"
+assert_file_contains "$orch_development" 'skips any job whose `needs` include a skipped job' "orch DEVELOPMENT names the needs-chain skip-propagation hazard"
+assert_file_contains "$orch_development" 'extract the guard decision into a script with a truth-table test' "orch DEVELOPMENT requires guard logic validated as code"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
