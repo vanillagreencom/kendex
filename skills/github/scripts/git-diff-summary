@@ -16,7 +16,9 @@ with stats and risk flags. Designed for review routing decisions.
 Usage: git-diff-summary [-C path] [base-branch]
 
 Arguments:
-  base-branch    Compare against this branch (default: main)
+  base-branch    Compare against this branch (default: the remote default
+                 branch, e.g. origin/main; falls back to local main when
+                 no remote-tracking ref exists)
   -C path        Run as if started in <path> (worktree support)
   --staged       Show only staged changes
   --head         Show uncommitted changes vs HEAD
@@ -25,8 +27,29 @@ Output: JSON with scope (production|support), domain groupings, stats, and risk 
 EOF
 }
 
+# Default base for review scope. A stale local main must not widen scope to
+# unrelated commits (vstack#718), so prefer the already-fetched remote-tracking
+# ref of the repo's default branch. No network: never fetches, so offline/CI
+# calls keep working. Falls back to local main when the repo has no remote.
+resolve_default_base() {
+    local head_ref
+    head_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)
+    if [ -n "$head_ref" ] && git rev-parse --verify --quiet "$head_ref" >/dev/null; then
+        echo "${head_ref#refs/remotes/}"
+        return
+    fi
+    local candidate
+    for candidate in origin/main origin/master; do
+        if git rev-parse --verify --quiet "refs/remotes/$candidate" >/dev/null; then
+            echo "$candidate"
+            return
+        fi
+    done
+    echo "main"
+}
+
 main() {
-    local base="main"
+    local base=""
     local diff_args=""
     local git_dir=""
 
@@ -40,19 +63,22 @@ main() {
         esac
     done
 
-    # Determine diff command
-    local diff_ref
-    if [ -n "$diff_args" ]; then
-        diff_ref="$diff_args"
-    else
-        diff_ref="${base}...HEAD"
-    fi
-
     # Use -C path if provided, otherwise repo root
     if [ -n "$git_dir" ]; then
         cd "$git_dir"
     else
         cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    # Determine diff command (base resolution must run inside the target repo)
+    local diff_ref
+    if [ -n "$diff_args" ]; then
+        diff_ref="$diff_args"
+    else
+        if [ -z "$base" ]; then
+            base=$(resolve_default_base)
+        fi
+        diff_ref="${base}...HEAD"
     fi
 
     # Get file list with status (A/M/D/R)
