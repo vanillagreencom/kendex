@@ -117,7 +117,7 @@ All operations use `.agents/skills/orch/scripts/workflow-state` (run with `help`
 
 To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which is rejected under Codex `approval=never` as a flagged command shape; a plain flag is classifier-safe. `ORCH_STATE_DIR` stays supported as an environment fallback.
 
-`set` and `append` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. Every other value is stored as a raw string, so pass plain strings bare: `set PROJ-123 pr_review.mode review`, never `'"review"'` (the quotes would be stored literally — vstack#705). `update` always takes a jq expression.
+`set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string, so pass plain strings bare: `set PROJ-123 pr_review.mode review`, never `'"review"'` (the quotes would be stored literally — vstack#705). `update` always takes a jq expression.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state init PROJ-123 --agent backend --worktree /tmp/wt
