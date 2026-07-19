@@ -324,6 +324,47 @@ if [[ -f "$settings_example" ]]; then
   assert_file_contains "$settings_example" 'REVIEWER_SLOT_BUDGET = "0"' "settings example documents the reviewer slot budget default"
 fi
 
+# vstack#715 — a configured-unlimited REVIEWER_SLOT_BUDGET does not override
+# the runtime's real thread cap. When a persistent launch hits the runtime
+# thread-limit error, review-pr must demote the cycle to bounded waves in
+# place: the reviewers that did spawn become the first wave, the observed
+# spawn count becomes the persisted wave size (reviewer_slots_observed),
+# re-review cycles stay in waves, and the user gets a one-line
+# recommendation to set the observed budget. The former manual workaround
+# (running the wave invariant by hand with persisted artifacts) is the
+# documented automatic behavior.
+assert_file_contains "$review_pr_workflow" 'Persistent-mode thread-limit recovery' "review-pr documents persistent-mode thread-limit recovery"
+assert_file_contains "$review_pr_workflow" 'observed successful spawn count' "review-pr sizes recovery waves from the observed spawn count"
+assert_file_contains "$review_pr_workflow" '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []' "review-pr persists the demotion and resets wave tracking in one write"
+assert_file_contains "$review_pr_workflow" ".reviewer_slots_observed // 0" "review-pr § 2 checks for a recorded demotion before choosing persistent mode"
+assert_file_contains "$review_pr_workflow" 'set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in vstack.settings.toml [env]' "review-pr recommends the observed runtime budget to the user"
+assert_file_contains "$review_pr_workflow" 'documented automatic behavior' "review-pr states the manual wave workaround is now automatic"
+assert_file_contains "$review_workflow" 'persistent-mode thread-limit recovery' "review routes unlimited-budget spawn failures to the recovery rule"
+assert_file_contains "$codebase_workflow" 'persistent-mode thread-limit recovery' "review-codebase routes unlimited-budget spawn failures to the recovery rule"
+assert_file_contains "$state_schema" 'reviewer_slots_observed' "workflow-state schema documents the observed wave size"
+assert_file_contains "$orch_skill" 'demote the cycle to bounded waves automatically' "orch skill Codex note documents automatic demotion at unlimited budget"
+assert_file_contains "$orch_skill" 'persisted as `reviewer_slots_observed`' "orch skill lifecycle section persists the observed wave size"
+assert_file_contains "$orch_development" 'advisory, the runtime cap authoritative (vstack#715)' "orch DEVELOPMENT records the runtime-authority rationale"
+assert_file_contains "$orch_readme" 'demote to bounded waves automatically' "orch README documents automatic demotion"
+
+# vstack#714 — a required command with an env-assignment prefix (e.g.
+# `LC_ALL=C tools/test-ci-changes`) is rejected under Codex approval=never
+# for the prefix shape alone, even when an issue spec or delegated
+# verification list requires it verbatim. The canonical normalization
+# happens where the command is ACCEPTED into the workflow (prepare /
+# delegation assembly), not where it runs: confirm the ambient environment
+# satisfies the precondition, then run the bare command unchanged; the
+# `env VAR=value cmd` wrapper is not the documented substitute.
+dev_implement="$REPO_ROOT/skills/dev/workflows/dev-implement.md"
+assert_file_contains "$orch_skill" 'Env-assignment prefixes are normalized at acceptance' "orch skill states the acceptance-time normalization rule"
+assert_file_contains "$orch_skill" 'run the bare `cmd args` unchanged' "orch skill keeps the bare required command exact"
+assert_file_contains "$orch_skill" 'not the documented substitute' "orch skill rules out the env wrapper as the canonical form"
+assert_file_contains "$orch_skill" 'never survives delegation' "orch skill normalizes delegated command lists before delegation"
+assert_file_contains "$dev_skill" 'env-assignment prefix' "dev skill carries the normalization rule"
+assert_file_contains "$dev_skill" 'not an acceptable substitute' "dev skill rules out the env wrapper"
+assert_file_contains "$dev_implement" 'Normalize env-prefixed required commands' "dev-implement normalizes env-prefixed commands at acceptance"
+assert_file_contains "$dev_implement" 'ambient precondition check first, then the bare command' "dev-implement § 5 runs the normalized form"
+
 # vstack#660 — GitHub-issue orchestration stores workflow state under the
 # normalized `issue-N` key, so workflow docs must define `issue_id`/[ISSUE_ID]
 # as that workflow-state key (never the bare GitHub issue number), and

@@ -95,6 +95,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, fallback}}`; records Codex `worker` fallback without changing logical keys |
 | `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave (`review-pr.md` § 2.2); the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
+| `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit (`review-pr.md` § 2.2 persistent-mode thread-limit recovery, vstack#715). While set, § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |

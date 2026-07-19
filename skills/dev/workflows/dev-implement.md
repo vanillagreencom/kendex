@@ -130,6 +130,7 @@ Before planning, check your domain's code (per your agent's Domain Setup):
 - Linear only: update estimate if scope differs: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`
   - Estimates: 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
 - **If bundled**: Plan sub-issue order based on dependencies/overlap.
+- **Normalize env-prefixed required commands** (vstack#714). If the issue spec or delegation carries a required command shaped `VAR=value cmd args` (e.g. `LC_ALL=C tools/test-ci-changes`), accept it as the bare `cmd args` plus an environment precondition — never the prefixed shape, which Codex `approval=never` rejects. Before running it (§ 5), confirm the ambient environment satisfies the precondition with one simple command (`printenv VAR`; `locale` for locale variables), then run the bare command unchanged. `env VAR=value cmd args` is not an acceptable substitute. If the ambient environment cannot satisfy the precondition, report it as a blocker in your return instead of running under the wrong environment. Canonical rule: orch SKILL.md § Harness-Safe Shell.
 
 ### 2.5 Domain-Specific Setup
 
@@ -260,6 +261,8 @@ Update relevant docs if implementation changes documented APIs or architecture.
 ```bash
 # Run the project's build/test/lint validation command
 ```
+
+Run required verification commands in their normalized form from § 2.4 — ambient precondition check first, then the bare command; never an env-assignment prefix, and never an `env`-wrapped substitute.
 
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`

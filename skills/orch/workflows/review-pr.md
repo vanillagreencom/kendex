@@ -100,7 +100,13 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
 
-The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: `4`). If `SLOT_BUDGET` is `0`, use **persistent mode** — today's semantics: every reviewer launches before the coordinated delegation batch and stays alive through fix/re-review cycles. Otherwise count the live persistent agent sessions:
+The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: `4`). If `SLOT_BUDGET` is `0`, first check whether an earlier cycle already recorded a runtime demotion (§ 2.2 persistent-mode thread-limit recovery):
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.reviewer_slots_observed // 0'
+```
+
+If the output is greater than `0`, use **wave mode** with `REVIEWER_SLOTS` set to that observed value — the runtime already proved the unlimited configuration wrong; do not relaunch the full set only to fail again. If the output is `0`, use **persistent mode** — today's semantics: every reviewer launches before the coordinated delegation batch and stays alive through fix/re-review cycles. The configured budget is advisory; the runtime cap is authoritative — § 2.2 recovers automatically if a persistent launch hits the thread limit. If `SLOT_BUDGET` is greater than `0`, count the live persistent agent sessions:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length'
@@ -155,6 +161,20 @@ On re-entry from § 3.2 (next wave of the same cycle), skip the reset. Then:
 - A retired reviewer has no session to reuse — recreate it fresh (`REVIEWERS_TO_LAUNCH = [WAVE]`), and write `review_agents`/`review_agent_ids`/`review_agent_runtime_types` with the live wave only.
 - If a spawn still fails with the runtime thread-limit error (Codex: `collab spawn failed: agent thread limit reached`), the budget is set too high for the live session count: continue with the reviewers that did spawn, fold the failed reviewer into a later wave, and use that smaller wave size for the rest of the cycle. If nothing spawned, report the misconfigured `REVIEWER_SLOT_BUDGET` to the user and stop.
 - A re-review delegation to a recreated reviewer MUST include the fresh-session block in the delegation prompt below — the recreated session has no memory of earlier cycles; state lives in artifacts, not session memory.
+
+**Persistent-mode thread-limit recovery** — a `SLOT_BUDGET` of `0` (unlimited) does not lift the runtime's real cap; the configuration is advisory, the runtime is authoritative. If a spawn in the persistent launch batch fails with the runtime thread-limit error (Codex: `collab spawn failed: agent thread limit reached`), do not retry the failed spawn and do not tear down the reviewers that did spawn — demote this review to wave mode and continue automatically:
+
+- `[WAVE]` = the reviewers that spawned successfully; `REVIEWER_SLOTS` = the observed successful spawn count. If nothing spawned, report the misconfigured `REVIEWER_SLOT_BUDGET` to the user and stop.
+- Record the demotion and reset the per-cycle wave tracking in one write, so every later § 2 entry — re-review cycles included — reuses wave mode at the observed size:
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []'
+```
+
+- From here the existing wave mechanics apply unchanged for the rest of the review: restrict this section's state-write and delegation steps to `[WAVE]`, re-stamp `review_delegated_at` immediately before each wave's delegation batch, retire each reviewer as its artifact validates (§ 3.1), and loop § 3.2 → § 2.2 until every reviewer in `[AGENTS]` is listed in `review_wave_done` — the reviewers whose spawns failed land in later waves.
+- Surface a one-line configuration recommendation to the user. `[OBSERVED_BUDGET]` = successful spawns + 1 (this primary session) + live persistent agent sessions (the § 2 `child_sessions` active count): `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in vstack.settings.toml [env] (observed: [N] reviewer spawns + this session + [M] live dev/QA sessions).`
+
+This recovery is the documented automatic behavior for what was previously a manual workaround (running the wave invariant by hand with persisted artifacts): review state lives in on-disk artifacts and workflow state — never in session memory — so demoting mid-launch loses nothing.
 
 After launch/reuse, store the active reviewer set:
 ```bash
