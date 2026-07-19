@@ -365,6 +365,42 @@ assert_file_contains "$dev_skill" 'not an acceptable substitute' "dev skill rule
 assert_file_contains "$dev_implement" 'Normalize env-prefixed required commands' "dev-implement normalizes env-prefixed commands at acceptance"
 assert_file_contains "$dev_implement" 'ambient precondition check first, then the bare command' "dev-implement § 5 runs the normalized form"
 
+# vstack#721 — a literal backtick anywhere in a generated command is
+# classified as command substitution under Codex approval=never and rejected
+# before it runs, even for a read-only search over Markdown inline code. The
+# canonical rule (regex hex escape `\x60` in single quotes, regex mode, one
+# simple command) lives in reviewer SKILL.md § Harness-Safe Shell; the dev
+# sites that generate validation/audit search commands must carry the concise
+# rule and point back at it rather than duplicating the essay.
+reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
+dev_fix="$REPO_ROOT/skills/dev/workflows/dev-fix.md"
+assert_file_contains "$reviewer_skill" 'regex hex escape `\x60` in single quotes' "reviewer skill holds the canonical hex-escape rule"
+assert_file_contains "$reviewer_skill" "rg -n '\\x60vstack refresh\\x60' skills/" "reviewer skill shows the worked safe-search example"
+assert_file_contains "$orch_skill" 'command substitution to the classifier' "orch Harness-Safe Shell bans literal backticks in generated commands"
+assert_file_contains "$orch_skill" 'reviewer SKILL.md § Harness-Safe Shell' "orch skill cross-references the canonical backtick rule"
+assert_file_contains "$dev_skill" 'Never put a literal backtick in a generated search command' "dev skill carries the backtick prohibition"
+assert_file_contains "$dev_skill" '`\x60`' "dev skill shows the hex-escape replacement"
+assert_file_contains "$dev_implement" 'regex hex escape `\x60` in single quotes' "dev-implement § 5 prescribes the hex-escape search shape"
+assert_file_contains "$dev_fix" 'never put a literal backtick in the command' "dev-fix § 1 carries the backtick prohibition"
+
+# vstack#722 — Codex approval=never rejects the top-level `git rebase`
+# porcelain verb itself; the classification is harness-side, so no user
+# authorization or delegation can lift it. The canonical replacement for a
+# clean linear issue branch (guarded worktree --reuse/--restack path, then
+# the cherry-pick replay with its dirty-tree and merge-commit bailouts)
+# lives in worktree SKILL.md § Policy-blocked rebase; orch and dev guidance
+# must route agents there instead of letting them retry or force-push.
+worktree_skill="$REPO_ROOT/skills/worktree/SKILL.md"
+assert_file_contains "$worktree_skill" 'Policy-blocked rebase (cherry-pick replay fallback)' "worktree skill holds the canonical rebase-replacement recipe"
+assert_file_contains "$worktree_skill" 'never replay over uncommitted changes' "worktree recipe refuses a dirty tree"
+assert_file_contains "$worktree_skill" 'If the range contains a merge commit' "worktree recipe bails out on merge commits in the range"
+assert_file_contains "$orch_skill" 'Never author a workflow step that assumes top-level `git rebase` will run' "orch Harness-Safe Shell forbids authoring rebase steps"
+assert_file_contains "$orch_skill" 'no user authorization or delegation can lift' "orch skill states the rejection is harness-side classification"
+assert_file_contains "$orch_skill" '§ Policy-blocked rebase (cherry-pick replay fallback)' "orch skill routes to the canonical worktree recipe"
+assert_file_contains "$orch_skill" 'report a blocker instead of improvising' "orch skill makes dirty-tree/merge-commit ranges a blocker"
+assert_file_contains "$dev_skill" 'a policy-blocked `git rebase` (vstack#722)' "dev skill carries the rebase-rejection rule"
+assert_file_contains "$dev_skill" '§ Policy-blocked rebase (cherry-pick replay fallback)' "dev skill routes to the canonical worktree recipe"
+
 # vstack#660 — GitHub-issue orchestration stores workflow state under the
 # normalized `issue-N` key, so workflow docs must define `issue_id`/[ISSUE_ID]
 # as that workflow-state key (never the bare GitHub issue number), and

@@ -264,6 +264,8 @@ Update relevant docs if implementation changes documented APIs or architecture.
 
 Run required verification commands in their normalized form from § 2.4 — ambient precondition check first, then the bare command; never an env-assignment prefix, and never an `env`-wrapped substitute.
 
+Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (vstack#721; canonical rule: reviewer SKILL.md § Harness-Safe Shell).
+
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`
 - **Simple + related to your work** → fix it, `--recheck`
