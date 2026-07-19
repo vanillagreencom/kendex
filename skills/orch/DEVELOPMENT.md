@@ -104,7 +104,9 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
   |---|---|---|
   | small | `pull_request` (behind the review gate) | lint, typecheck, unit tests for changed areas only (path-filter via a changes-detect job); target < 8 min |
   | medium | `merge_group` | small + the full unit/integration suite on the queue's merged preview — the last check before something becomes everyone's problem |
-  | full | `schedule` (nightly) + `push` to `main` | cross-platform matrix, benchmarks, sanitizers/hermetic lanes, mobile builds — expensive lanes where a one-day detection delay is acceptable pre-release |
+  | full | `schedule` (nightly) ONLY — never `push` to `main` | cross-platform matrix, benchmarks, sanitizers/hermetic lanes, mobile builds — expensive lanes where a one-day detection delay is acceptable pre-release |
+
+  Two waste guards: **no full tier on `push` to `main`** — on a merge-queue repo the queue already ran the medium suite on the exact merged tree, so a per-merge full run recreates the cost tiering exists to kill (non-queue repos may run medium on main-push); and **skip-if-unchanged nightlies** — the full-tier workflow's first job compares `main`'s HEAD against the last successful nightly's `head_sha` (`gh api repos/:owner/:repo/actions/workflows/<file>/runs?status=success&per_page=1`) and ends the run early when identical, so idle days cost one API call, not a matrix build.
 
   The review gate stays the first step of small-tier jobs (it costs seconds and is the comment-hygiene enforcement); `merge_group` passes through it post-review by construction. **Nightly failures self-file**: no session waits for a scheduled run, so the full-tier workflow's `on-failure` step files the report into the repo's issue queue, where the normal steward/overseer triage loop picks it up next cycle. Dedupe with a stable marker title — search first, comment on the existing issue instead of stacking duplicates:
 
