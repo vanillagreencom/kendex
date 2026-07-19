@@ -21978,7 +21978,6 @@ import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
 import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
 import { resolve as pathResolve } from "path";
-import { homedir as homedir6 } from "os";
 import { delimiter, dirname as dirname5, join as join6 } from "path";
 
 // node_modules/change-case/dist/index.js
@@ -22657,6 +22656,10 @@ function expandHome(input) {
 function piUserDir() {
   return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
 }
+function isolatedFromEnv() {
+  const v2 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
+  return v2 === "1" || v2 === "true" || v2 === "yes" || v2 === "on";
+}
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
@@ -22706,6 +22709,7 @@ function projectSettingsTrusted(settingsPath) {
 }
 function settingsPaths(cwd) {
   const user = join2(piUserDir(), "settings.json");
+  if (isolatedFromEnv()) return [user];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
 }
@@ -22828,8 +22832,9 @@ function managerToConfig(raw) {
 }
 function loadConfig(cwd) {
   const global2 = tryParseJson(join2(piUserDir(), "claude-bridge.json"));
-  const projectSettings = projectSettingsPath(cwd);
-  const trustedProject = projectSettingsTrusted(projectSettings);
+  const isolated = isolatedFromEnv();
+  const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
+  const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
   const project = trustedProject ? tryParseJson(join2(dirname2(projectSettings), "claude-bridge.json")) : {};
   const manager = managerToConfig(readManagerConfig(cwd));
   const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
@@ -22889,13 +22894,17 @@ function decideRegistration(state) {
 
 // src/agents-md.ts
 import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
-import { homedir as homedir4 } from "os";
 import { dirname as dirname3, join as join4, resolve as resolve2 } from "path";
-var GLOBAL_AGENTS_PATH = join4(homedir4(), ".pi", "agent", "AGENTS.md");
+function globalAgentsPath() {
+  return join4(piUserDir(), "AGENTS.md");
+}
 function resolveAgentsMdPath() {
-  const fromCwd = findAgentsMdInParents(process.cwd());
-  if (fromCwd) return fromCwd;
-  if (existsSync5(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
+  if (!isolatedFromEnv()) {
+    const fromCwd = findAgentsMdInParents(process.cwd());
+    if (fromCwd) return fromCwd;
+  }
+  const globalPath = globalAgentsPath();
+  if (existsSync5(globalPath)) return globalPath;
   return void 0;
 }
 function findAgentsMdInParents(startDir) {
@@ -22934,13 +22943,7 @@ function sanitizeAgentsContent(content) {
 
 // src/prompt-context.ts
 import { existsSync as existsSync6, readFileSync as readFileSync6 } from "fs";
-import { homedir as homedir5 } from "os";
 import { dirname as dirname4, join as join5, resolve as resolve3 } from "path";
-function piUserDir2() {
-  const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (configured) return resolve3(configured.replace(/^~(?=\/|$)/, homedir5()));
-  return join5(homedir5(), ".pi", "agent");
-}
 function readTrimmed(path) {
   try {
     if (!existsSync6(path)) return void 0;
@@ -22963,9 +22966,9 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join5(piUserDir2(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join5(piUserDir(), "APPEND_SYSTEM.md") }
   ];
-  const projectPath = findProjectAppendSystem(cwd);
+  const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
   const seen = /* @__PURE__ */ new Set();
   const output = [];
@@ -37639,10 +37642,9 @@ var _piAi = piAi;
 var getModels = await resolveGetModels(_piAi);
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(homedir6(), ".pi", "agent", "claude-bridge.log");
-var DEFAULT_DIAG_LOG_PATH = join6(homedir6(), ".pi", "agent", "claude-bridge-diag.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join6(piUserDir(), "claude-bridge-diag.log");
 }
 if (DEBUG) {
   try {
@@ -37682,6 +37684,7 @@ function executableFromPath(name) {
 function resolveClaudeExecutable(configured) {
   const trimmed = configured?.trim();
   if (trimmed) return trimmed;
+  if (isolatedFromEnv()) return void 0;
   return executableFromPath("claude") ?? executableFromPath("claude-code");
 }
 function errnoValue(err) {
@@ -39640,6 +39643,7 @@ export {
   processAssistantMessage,
   processStreamEvent,
   reportToolResultMismatch,
+  resolveClaudeExecutable,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,

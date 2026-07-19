@@ -8,7 +8,6 @@ import { spawn as spawnProcess } from "child_process";
 import { createHash } from "crypto";
 import { accessSync, appendFileSync, chmodSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { resolve as pathResolve } from "path";
-import { homedir } from "os";
 import { delimiter, dirname, join } from "path";
 import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
 import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, buildModels, fallbackModelForPrimaryModel } from "./models.js";
@@ -17,7 +16,7 @@ import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, stackDepth, pushContext, popContext } from "./query-state.js";
 import { findUnpairedToolUses, summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
-import { loadConfig, normalizeConnectorWriteMode, normalizeEffortLevel, recordProjectTrust, type Config, type ConnectorWriteMode } from "./config.js";
+import { isolatedFromEnv, loadConfig, normalizeConnectorWriteMode, normalizeEffortLevel, piUserDir, recordProjectTrust, type Config, type ConnectorWriteMode } from "./config.js";
 import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
@@ -33,14 +32,14 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 		: () => new _piAi.AssistantMessageEventStream();
 
 // --- Debug logging ---
-// CLAUDE_BRIDGE_DEBUG=1 enables debug logging to ~/.pi/agent/claude-bridge.log
+// CLAUDE_BRIDGE_DEBUG=1 enables debug logging to <piUserDir>/claude-bridge.log
+// (~/.pi/agent/claude-bridge.log unless PI_CODING_AGENT_DIR points elsewhere).
 
 const DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-const DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join(homedir(), ".pi", "agent", "claude-bridge.log");
-const DEFAULT_DIAG_LOG_PATH = join(homedir(), ".pi", "agent", "claude-bridge-diag.log");
+const DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join(piUserDir(), "claude-bridge.log");
 
 function diagLogPath(): string {
-	return process.env.CLAUDE_BRIDGE_DIAG_PATH || DEFAULT_DIAG_LOG_PATH;
+	return process.env.CLAUDE_BRIDGE_DIAG_PATH || join(piUserDir(), "claude-bridge-diag.log");
 }
 
 // Ensure log directories exist when debug is enabled
@@ -82,9 +81,13 @@ function executableFromPath(name: string): string | undefined {
 	return undefined;
 }
 
-function resolveClaudeExecutable(configured?: string): string | undefined {
+export function resolveClaudeExecutable(configured?: string): string | undefined {
 	const trimmed = configured?.trim();
 	if (trimmed) return trimmed;
+	// Isolated mode: never run whatever `claude` happens to be on $PATH — the
+	// host app either pins an executable in config or gets the SDK's bundled
+	// default, which ships inside the host bundle.
+	if (isolatedFromEnv()) return undefined;
 	return executableFromPath("claude") ?? executableFromPath("claude-code");
 }
 

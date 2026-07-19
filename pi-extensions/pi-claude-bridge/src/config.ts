@@ -75,8 +75,27 @@ function expandHome(input: string): string {
 	return input;
 }
 
-function piUserDir(): string {
+/**
+ * The Pi agent config dir: `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`.
+ * Every bridge default that used to hardcode `~/.pi/agent` routes through this
+ * so a host app that owns the agent dir owns those paths too.
+ */
+export function piUserDir(): string {
 	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+}
+
+/**
+ * Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`): a host app embedding the bridge
+ * declares that nothing outside its explicitly configured dirs may be read.
+ * Disables every cwd/home discovery fallback — the cwd AGENTS.md walk, project
+ * `.pi/` settings + claude-bridge.json, project APPEND_SYSTEM.md, and the
+ * `$PATH` claude executable search. Reads stay confined to `piUserDir()` (i.e.
+ * `PI_CODING_AGENT_DIR`) and the explicitly configured executable path.
+ * Default (unset) behavior for normal pi CLI users is unchanged.
+ */
+export function isolatedFromEnv(): boolean {
+	const v = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
+	return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 function asRecord(value: unknown): SettingsRecord | undefined {
@@ -140,6 +159,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 function settingsPaths(cwd: string): string[] {
 	const user = join(piUserDir(), "settings.json");
+	if (isolatedFromEnv()) return [user];
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
@@ -284,8 +304,9 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 
 export function loadConfig(cwd: string): Config {
 	const global = tryParseJson(join(piUserDir(), "claude-bridge.json"));
-	const projectSettings = projectSettingsPath(cwd);
-	const trustedProject = projectSettingsTrusted(projectSettings);
+	const isolated = isolatedFromEnv();
+	const projectSettings = isolated ? undefined : projectSettingsPath(cwd);
+	const trustedProject = projectSettings !== undefined && projectSettingsTrusted(projectSettings);
 	const project = trustedProject ? tryParseJson(join(dirname(projectSettings), "claude-bridge.json")) : {};
 	const manager = managerToConfig(readManagerConfig(cwd));
 	const provider = normalizeProviderConfig({ ...global.provider, ...project.provider, ...manager.provider });

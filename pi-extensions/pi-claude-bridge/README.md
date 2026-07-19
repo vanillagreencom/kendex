@@ -114,6 +114,17 @@ Set `allow` only for a one-shot write-executor session that has already obtained
 
 > **`allow` is per-process, not global.** Memsira's approved-write executor enables writes by setting `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Do not set `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar — that would make every connector session in that process write-capable, defeating the approval gate.
 
+### Isolated mode (embedding hosts)
+
+Host apps that embed the bridge and own every config dir explicitly can set `CLAUDE_BRIDGE_ISOLATED=1` in the bridge process env. Isolated mode disables every cwd/home discovery fallback so nothing outside the host-owned dirs is read:
+
+- no cwd-ancestor `AGENTS.md` walk — instructions come only from `<PI_CODING_AGENT_DIR>/AGENTS.md`;
+- no project `.pi/settings.json` / `.pi/claude-bridge.json` reads (even for trusted projects);
+- no project `.pi/APPEND_SYSTEM.md`;
+- no `$PATH` search for the `claude` executable — the host either pins `pathToClaudeCodeExecutable` or gets the Claude Agent SDK's bundled default.
+
+Config, logs, and `AGENTS.md` all resolve under `PI_CODING_AGENT_DIR`. Normal pi CLI usage (flag unset) is unchanged.
+
 ### Fable 5 caveat
 
 The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. For Fable 5, the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
@@ -130,9 +141,9 @@ If Claude Code accepts a turn but produces no visible output, the bridge returns
 
 ## Debugging
 
-Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `~/.pi/agent/claude-bridge.log` and per-query Claude Code CLI logs under `~/.pi/agent/cc-cli-logs/`.
+Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `<agent dir>/claude-bridge.log` and per-query Claude Code CLI logs under `<agent dir>/cc-cli-logs/`, where `<agent dir>` is `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`. Override the exact files with `CLAUDE_BRIDGE_DEBUG_PATH` / `CLAUDE_BRIDGE_DIAG_PATH`.
 
-Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification and writes a diagnostic file to `~/.pi/agent/claude-bridge-diag.log` so lost or mismatched tool output is visible.
+Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification and writes a diagnostic file to `<agent dir>/claude-bridge-diag.log` so lost or mismatched tool output is visible.
 
 Startup failures include the resolved Claude executable and working directory, which makes missing binaries and wrong launch directories easier to fix.
 

@@ -13,5 +13,6 @@ Implementation details for contributors. End-user setup, settings, and troublesh
 
 - Rate-limit errors are deduplicated before user notification. The bridge emits `vstack:rate-limit` so `pi-qol` can opt into reset-time auto-resume.
 - Stream-idle stalls close the stalled Claude Code subprocess and return a retryable assistant error. `CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT` accepts bare seconds or `ms`, `s`, and `m` suffixes.
-- Integrity diagnostics are written to `~/.pi/agent/claude-bridge-diag.log` with counts, affected tool names, and sampled tool-call IDs.
+- Integrity diagnostics are written to `<piUserDir>/claude-bridge-diag.log` (`PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`) with counts, affected tool names, and sampled tool-call IDs.
+- `CLAUDE_BRIDGE_ISOLATED=1` (embedding hosts) disables all cwd/home discovery fallbacks: the cwd `AGENTS.md` walk, project `.pi/` settings + `claude-bridge.json`, project `APPEND_SYSTEM.md`, and the `$PATH` claude executable search. See `isolatedFromEnv` in `src/config.ts`.
 - Startup preflight failures preserve the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type before handing the error back to the SDK.

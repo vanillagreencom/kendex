@@ -2,20 +2,30 @@
 //
 // Pi uses AGENTS.md for long-lived instructions; Claude Code reads the same
 // content under "# CLAUDE.md". We walk up from cwd looking for AGENTS.md,
-// fall back to ~/.pi/agent/AGENTS.md, and rewrite pi-specific references
+// fall back to <piUserDir>/AGENTS.md (~/.pi/agent/AGENTS.md unless
+// PI_CODING_AGENT_DIR points elsewhere), and rewrite pi-specific references
 // (~/.pi, .pi/, .pi, pi) to their Claude Code equivalents so any paths or
 // references in the file still resolve inside the CC subprocess.
+//
+// In isolated mode (CLAUDE_BRIDGE_ISOLATED=1) the cwd walk is disabled: only
+// the piUserDir file is consulted, so a host app that owns the agent dir owns
+// the full instruction surface.
 
 import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
+import { isolatedFromEnv, piUserDir } from "./config.js";
 
-const GLOBAL_AGENTS_PATH = join(homedir(), ".pi", "agent", "AGENTS.md");
+function globalAgentsPath(): string {
+	return join(piUserDir(), "AGENTS.md");
+}
 
 export function resolveAgentsMdPath(): string | undefined {
-	const fromCwd = findAgentsMdInParents(process.cwd());
-	if (fromCwd) return fromCwd;
-	if (existsSync(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
+	if (!isolatedFromEnv()) {
+		const fromCwd = findAgentsMdInParents(process.cwd());
+		if (fromCwd) return fromCwd;
+	}
+	const globalPath = globalAgentsPath();
+	if (existsSync(globalPath)) return globalPath;
 	return undefined;
 }
 
