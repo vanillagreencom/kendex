@@ -32,7 +32,7 @@ jobs:
               echo "not executable in git: $f"
               fail=1
             fi
-          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' | grep -v '/scripts/lib/')
+          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -v '/scripts/lib/')
           exit "$fail"
 
       - name: orch suite (run-all)
@@ -46,6 +46,19 @@ jobs:
             case "$t" in
               skills/orch/tests/*) continue ;;
             esac
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: hook suites
+        run: |
+          set -u
+          fail=0
+          for t in hooks/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"

@@ -3,7 +3,7 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: Validate formatting and lint before git commits on source files. Supports Rust (cargo fmt + clippy) and Biome projects (JS/TS/JSON).
+# description: Validate formatting and lint before git commits on source files. Rust runs cargo fmt plus a Clippy lane scoped to the staged files' packages; VSTACK_PRE_COMMIT_RUST_CLIPPY (env or vstack.settings.toml [env]) replaces the Clippy lane with a repo-owned command or "off" skips it. Biome projects (JS/TS/JSON) check staged paths.
 # safety: Prevents committing code that fails format or lint checks.
 # ---
 
@@ -23,15 +23,25 @@ if [ -z "$STAGED" ]; then
   exit 0
 fi
 
+# Print the last lines of a failed check's combined output so failures are
+# actionable (cargo/clippy emit diagnostics on stderr; earlier versions
+# discarded them and left only the generic guidance line).
+print_output_tail() {
+  if [ -n "$1" ]; then
+    echo "$1" | tail -40 >&2
+  fi
+}
+
 # Check for Rust files
 if echo "$STAGED" | grep -qE '\.rs$'; then
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+
   # Locate Cargo.toml so the hook works in repos that nest the manifest
   # (vstack's own `cli/Cargo.toml` is the canonical example) and when
   # the hook is invoked from a subdirectory. Earlier versions ran
   # `cargo fmt --check` from cwd unconditionally and misreported "could
   # not find Cargo.toml" as a fmt failure.
   MANIFEST_ARGS=()
-  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
   if [ -n "$REPO_ROOT" ] && [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
     MANIFEST=$(echo "$STAGED" | grep -E '\.rs$' | while IFS= read -r path; do
       dir=$(dirname "$path")
@@ -49,15 +59,86 @@ if echo "$STAGED" | grep -qE '\.rs$'; then
   fi
 
   # Format check
-  if ! cargo fmt "${MANIFEST_ARGS[@]}" --check 2>/dev/null; then
+  if ! FMT_OUTPUT=$(cargo fmt ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --check 2>&1); then
+    print_output_tail "$FMT_OUTPUT"
     echo "cargo fmt --check failed. Run 'cargo fmt' first." >&2
     exit 2
   fi
 
-  # Clippy check
-  if ! cargo clippy "${MANIFEST_ARGS[@]}" --workspace --all-targets -- -D warnings 2>/dev/null; then
-    echo "cargo clippy found warnings. Fix them before committing." >&2
-    exit 2
+  # Clippy lane, three tiers via VSTACK_PRE_COMMIT_RUST_CLIPPY (parent env
+  # wins; then the repo's vstack.settings.toml / .vstack/settings.toml [env]
+  # table — parsed inline because this hook must stay self-contained):
+  #   unset -> default clippy scoped to the staged files' packages
+  #   "off" -> skip entirely (repo-owned validation is authoritative)
+  #   other -> run verbatim via `bash -c`; its exit status decides
+  CLIPPY_CMD="${VSTACK_PRE_COMMIT_RUST_CLIPPY:-}"
+  if [ -z "$CLIPPY_CMD" ] && [ -n "$REPO_ROOT" ]; then
+    for SETTINGS_FILE in "$REPO_ROOT/vstack.settings.toml" "$REPO_ROOT/.vstack/settings.toml"; do
+      [ -f "$SETTINGS_FILE" ] || continue
+      CLIPPY_CMD=$(sed -n 's/^[[:space:]]*VSTACK_PRE_COMMIT_RUST_CLIPPY[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$SETTINGS_FILE" | head -1)
+      [ -n "$CLIPPY_CMD" ] && break
+    done
+  fi
+
+  if [ "$CLIPPY_CMD" = "off" ]; then
+    : # Clippy lane disabled by configuration.
+  elif [ -n "$CLIPPY_CMD" ]; then
+    if ! CLIPPY_OUTPUT=$( (cd "${REPO_ROOT:-.}" && bash -c "$CLIPPY_CMD") 2>&1); then
+      print_output_tail "$CLIPPY_OUTPUT"
+      echo "configured Clippy check failed (VSTACK_PRE_COMMIT_RUST_CLIPPY): $CLIPPY_CMD" >&2
+      echo "Fix the reported warnings before committing." >&2
+      exit 2
+    fi
+  else
+    # Default: scope clippy to the packages that own the staged .rs files so
+    # pre-existing warnings in unrelated workspace crates can't block the
+    # commit. Fall back to --workspace when no package name resolves (virtual
+    # manifest, parse failure).
+    PKG_NAMES=""
+    if [ -n "$REPO_ROOT" ]; then
+      PKG_NAMES=$(echo "$STAGED" | grep -E '\.rs$' | while IFS= read -r path; do
+        dir=$(dirname "$path")
+        while :; do
+          if [ -f "$REPO_ROOT/$dir/Cargo.toml" ]; then
+            # `name = "..."` from the [package] table only ([[bin]] and
+            # dependency tables also carry `name` keys).
+            awk '
+              /^[[:space:]]*\[/ { in_pkg = ($0 ~ /^[[:space:]]*\[package\][[:space:]]*(#.*)?$/); next }
+              in_pkg && /^[[:space:]]*name[[:space:]]*=/ {
+                if (match($0, /"[^"]*"/)) { print substr($0, RSTART + 1, RLENGTH - 2) }
+                exit
+              }
+            ' "$REPO_ROOT/$dir/Cargo.toml"
+            break
+          fi
+          if [ "$dir" = "." ] || [ "$dir" = "/" ] || [ -z "$dir" ]; then
+            break
+          fi
+          dir=$(dirname "$dir")
+        done
+      done | sort -u | grep -v '^$' || true)
+    fi
+
+    PKG_ARGS=()
+    if [ -n "$PKG_NAMES" ]; then
+      while IFS= read -r pkg; do
+        PKG_ARGS+=(-p "$pkg")
+      done <<EOF
+$PKG_NAMES
+EOF
+    fi
+
+    if [ -n "$PKG_NAMES" ]; then
+      SCOPE_ARGS=(${PKG_ARGS[@]+"${PKG_ARGS[@]}"})
+    else
+      SCOPE_ARGS=(--workspace)
+    fi
+
+    if ! CLIPPY_OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} ${SCOPE_ARGS[@]+"${SCOPE_ARGS[@]}"} --all-targets -- -D warnings 2>&1); then
+      print_output_tail "$CLIPPY_OUTPUT"
+      echo "cargo clippy found warnings. Fix them before committing." >&2
+      exit 2
+    fi
   fi
 fi
 

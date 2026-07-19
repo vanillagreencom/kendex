@@ -215,7 +215,7 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 | Hook | Event | Brief |
 |---|---|---|
 | `block-bare-cd` | `PreToolUse` | Blocks unsafe bare `cd` usage and nudges toward subshell-safe patterns. |
-| `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. |
+| `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. Rust Clippy lane is scoped to staged packages and configurable via `VSTACK_PRE_COMMIT_RUST_CLIPPY` (custom command or `off`). |
 | `post-edit-lint` | `PostToolUse` | Runs lint checks after source edits. |
 | `task-completed-check` | `TaskCompleted` | Runs final lint checks before marking work complete. Claude-Code-only — codex has no clean equivalent event. |
 

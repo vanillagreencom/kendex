@@ -150,6 +150,24 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 # Used by: second-opinion.
 
+# PRE-COMMIT HOOK
+
+# VSTACK_PRE_COMMIT_RUST_CLIPPY = "off"
+# Used by: hooks/pre-commit-check.sh (the Clippy lane for staged Rust files).
+# Three tiers:
+#   unset (default) — the hook runs `cargo clippy --all-targets -- -D warnings`
+#     scoped to the packages that own the staged .rs files (`-p <pkg>` per
+#     package), falling back to `--workspace` when no package resolves.
+#   "off" — skip the hook's Clippy lane entirely. Use when repo-owned
+#     validation (feature-matrix lanes, a project validator) is authoritative
+#     and the hook's default-feature lane could flag pre-existing warnings the
+#     staged change didn't introduce.
+#   any other value — run it verbatim via `bash -c` from the repo root as the
+#     Clippy check; its exit status decides. Use to pin the hook to the repo's
+#     canonical lint command, e.g. "cargo clippy --workspace --all-features
+#     --all-targets -- -D warnings" or "tools/validate --clippy".
+# The environment variable takes precedence over this file.
+
 # DEBUG / OVERRIDE HOOKS
 
 WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
