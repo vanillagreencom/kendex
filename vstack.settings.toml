@@ -14,7 +14,16 @@ LINEAR_FORMAT = "safe"
 LINEAR_TEAM = "Claude"
 LINEAR_TEAM_PREFIX = "CC"
 ORCH_STATE_DIR = "tmp"
+# Reviewer gate: no review bots on this repo - reviewer wait is skipped.
 PR_REVIEW_GATE = "off"
+# Nudge/nudge-window and trusted-check evidence (unused while gate is off,
+# materialized so refresh template-merge stays a no-op - vstack #683).
+PR_REVIEW_NUDGE_SECS = "600"
+PR_REVIEW_NUDGE = ""
+PR_REVIEW_CHECK = ""
+CI_WAIT_NO_CHECKS_GRACE = "180"
+CI_FIX_MAX_CYCLES = "6"
+REVIEWER_SLOT_BUDGET = "0"
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort xhigh --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "3000"
