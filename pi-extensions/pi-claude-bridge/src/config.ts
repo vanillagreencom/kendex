@@ -141,6 +141,10 @@ function projectTrustRegistry(): ProjectTrustRegistry {
 
 export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
 	if (!ctx.cwd) return;
+	// Isolated mode never reads project config, so recording trust would only
+	// run the cwd-ancestor `.pi/settings.json` walk (a filesystem probe outside
+	// the host-owned dirs) for a result nothing consumes. Skip it entirely.
+	if (isolatedFromEnv()) return;
 	let trusted = true;
 	try {
 		trusted = ctx.isProjectTrusted?.() === true;

@@ -143,6 +143,28 @@ describe("loadConfig isolation", () => {
 	}));
 });
 
+describe("recordProjectTrust isolation", () => {
+	it("isolated mode records nothing (no cwd walk, no trust entry)", () => withTempDir((dir) => {
+		const agentDir = join(dir, "agent");
+		const project = join(dir, "project");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(project, ".pi"), { recursive: true });
+		writeFileSync(join(project, ".pi", "settings.json"), "{}");
+		writeFileSync(join(project, ".pi", "claude-bridge.json"), JSON.stringify({ provider: { fastMode: true } }));
+		withEnv({ PI_CODING_AGENT_DIR: agentDir }, () => {
+			// Trust recorded while isolated must be a no-op: a later default-mode
+			// loadConfig still treats the project as untrusted.
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: "1" }, () => {
+				recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
+			});
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
+				const config = loadConfig(project);
+				assert.equal(config.provider?.fastMode, undefined);
+			});
+		});
+	}));
+});
+
 describe("readAppendSystemPromptFiles isolation", () => {
 	it("isolated mode skips project .pi/APPEND_SYSTEM.md but keeps the piUserDir file", () => withTempDir((dir) => {
 		const agentDir = join(dir, "agent");

@@ -22694,6 +22694,7 @@ function projectTrustRegistry() {
 }
 function recordProjectTrust(ctx2) {
   if (!ctx2.cwd) return;
+  if (isolatedFromEnv()) return;
   let trusted = true;
   try {
     trusted = ctx2.isProjectTrusted?.() === true;
