@@ -22,6 +22,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: executable bits on skill tests and scripts
+        run: |
+          set -u
+          fail=0
+          while IFS= read -r f; do
+            mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
+            if [ "$mode" = "100644" ]; then
+              echo "not executable in git: $f"
+              fail=1
+            fi
+          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' | grep -v '/scripts/lib/')
+          exit "$fail"
+
       - name: orch suite (run-all)
         run: bash skills/orch/tests/run-all.sh
 
