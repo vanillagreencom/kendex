@@ -300,15 +300,15 @@ The printed value is `GATE_MODE` — `approval`, `review`, or `off`. The resolut
 - **`review`** — wait for a formal review of the **current head commit** from any non-author reviewer, in any state: COMMENTED counts, and an approval is also a review. This is the correct mode for commenting-only review bots (Devin- or Codex-style reviewers) that never mark PRs APPROVED — under `approval` mode their COMMENTED reviews would idle every PR to timeout. The mode carries an obligation: once the review arrives, triage every reviewer comment, reply to each thread, and resolve all threads — the gate passes only at reviewed-at-head with zero unresolved threads, and only then does § 5 Verify CI run. While waiting, approval-wait itself nudges a reviewer that stays silent past `PR_REVIEW_NUDGE_SECS` (see Nudging below). Some review bots submit a review object only when they have findings, so a clean re-analysis would leave this predicate unsatisfiable (vstack#654): set `PR_REVIEW_CHECK` to the exact name the trusted review bot publishes on analyzed heads (e.g. `Devin Review`) and a `success` signal of that name on the current head also satisfies the review-received predicate — matched on either evidence surface, a check-run conclusion or a commit-status context (vstack#681: some bots publish statuses, not check-runs) — every other condition (no standing CHANGES_REQUESTED, zero unresolved threads) still applies, and the JSON result names the satisfying signal in `review_evidence` (`"review"` or `"check"`; with `"check"`, `review_evidence_surface` reports `"check_run"` or `"status"`). Both surfaces are matched by name/context, so the setting must name a signal produced by the trusted review bot — the same user-configured trust model as `PR_REVIEW_NUDGE`. Note that a status-only reviewer's `success` cannot re-fire the repo's CI by itself — repos gating CI on review evidence need the status re-fire bridge (orch `DEVELOPMENT.md` § CI Triggering Patterns); without it, one bounded manual rerun-in-place of the failed gate run after evidence success is the documented fallback.
 - **`off`** — no reviewer gate (repos with NO review bots and no reviewer policy). Skip the wait loop entirely and go straight to § 5 — the internal review (gate 1), CI (gate 2), and comment-hygiene (gate 3) gates still apply in full.
 
-Record the resolved mode; for `off`, also record the legacy gate field the § 6.1 gate 4 check reads:
+Record the resolved mode; for `off`, also record the legacy gate field the § 6.1 gate 4 check reads. Pass the value as a bare word — `workflow-state set` stores plain strings raw, so a pre-quoted value like `'"off"'` would store literal quote characters and break the gate 4 comparison (vstack#705):
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review.mode '"[GATE_MODE]"'
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review.mode [GATE_MODE]
 ```
 
 ```bash
 # off mode only:
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.gate '"off"'
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.gate off
 ```
 
 The mode is explicit configuration by design — no auto-detection. An empty requested-reviewer list proves nothing (review bots never appear as requested reviewers before their first review), so only the project settings can state "this repo has no reviewers" or "this repo's reviewers comment but never approve."
@@ -428,7 +428,11 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    | `0` | Gate met |
    | `> 0` | Run ONE triage pass: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 3` with managed context (bounded by `pr_comment_review.iterations`, max 5). If that pass pushed commits, re-run § 5 and re-confirm the § 4 gate with a short approval-wait (`approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]`; skip when `GATE_MODE` is `off`). Then re-run the gate 3 command once; if threads remain, present them and ask user: `Triage again` \| `Force merge` \| `Stop here` |
 
-4. **Gate 4** — verify the recorded § 4 result: met when the wait ended `approved` (approval mode) or `reviewed` (review mode), when `pr_approval.forced` was recorded by an explicit user override, or when the mode is `off` (`pr_review.mode` / legacy `pr_approval.gate` — reviewer-less repo, gate not applicable). Do not re-run the wait here — the gate 3 escape hatch above already re-confirms the gate after any late pushes.
+4. **Gate 4** — verify the recorded § 4 result: met when the wait ended `approved` (approval mode) or `reviewed` (review mode), when `pr_approval.forced` was recorded by an explicit user override, or when the mode is `off` (`pr_review.mode` / legacy `pr_approval.gate` — reviewer-less repo, gate not applicable). Read the recorded mode with:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '(.pr_review.mode // .pr_approval.gate // "") | gsub("\"";"")'
+   ```
+   The `gsub` strips literal quote characters — state files written by the pre-vstack#705 docs stored the mode as `"\"off\""`, and this read compares equal to `off` for both forms. Do not re-run the wait here — the gate 3 escape hatch above already re-confirms the gate after any late pushes.
 
 5. **Record results**: `MERGE_READY = true` only when all four gates are met (gate 4 by verdict or recorded force).
 

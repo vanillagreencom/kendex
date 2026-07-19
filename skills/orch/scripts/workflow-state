@@ -308,7 +308,10 @@ Commands:
   update <issue_id> <jq_expr>   Run arbitrary jq expression
   append <issue_id> <field> <value>   Append to array field
   increment <issue_id> <field>  Increment numeric field
-  set <issue_id> <field> <value>  Set field value
+  set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
+                                or all digits parse as JSON; anything else is
+                                stored as a raw string — pass strings bare,
+                                never pre-quoted '"..."')
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   path <issue_id>               Print state file path
@@ -330,6 +333,7 @@ Examples:
   workflow-state increment PROJ-123 pr_comment_review.iterations
   workflow-state append PROJ-123 json_paths "review.json"
   workflow-state append PROJ-123 fixed_items '{"description":"Fix","commit":"abc"}'
+  workflow-state set PROJ-123 pr_review.mode review
   workflow-state set PROJ-123 pr_review_baseline '{"last_ts":"2026-01-28","last_threads":2}'
   workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
   workflow-state set-now PROJ-123 review_delegated_at
