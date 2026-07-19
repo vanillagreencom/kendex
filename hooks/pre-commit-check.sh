@@ -3,7 +3,7 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: Validate formatting and lint before git commits on source files. Rust runs cargo fmt plus a Clippy lane scoped to the staged files' packages; VSTACK_PRE_COMMIT_RUST_CLIPPY (env or vstack.settings.toml [env]) replaces the Clippy lane with a repo-owned command or "off" skips it. Biome projects (JS/TS/JSON) check staged paths.
+# description: Validate formatting and lint before git commits on source files. Rust runs cargo fmt plus a Clippy lane scoped per staged file's owning crate manifest (workspace-excluded crates included); VSTACK_PRE_COMMIT_RUST_CLIPPY (env or vstack.settings.toml [env]) replaces the Clippy lane with a repo-owned command or "off" skips it. Biome projects (JS/TS/JSON) check staged paths.
 # safety: Prevents committing code that fails format or lint checks.
 # ---
 
@@ -68,7 +68,7 @@ if echo "$STAGED" | grep -qE '\.rs$'; then
   # Clippy lane, three tiers via VSTACK_PRE_COMMIT_RUST_CLIPPY (parent env
   # wins; then the repo's vstack.settings.toml / .vstack/settings.toml [env]
   # table — parsed inline because this hook must stay self-contained):
-  #   unset -> default clippy scoped to the staged files' packages
+  #   unset -> default clippy scoped per staged file's owning crate manifest
   #   "off" -> skip entirely (repo-owned validation is authoritative)
   #   other -> run verbatim via `bash -c`; its exit status decides
   CLIPPY_CMD="${VSTACK_PRE_COMMIT_RUST_CLIPPY:-}"
@@ -90,25 +90,31 @@ if echo "$STAGED" | grep -qE '\.rs$'; then
       exit 2
     fi
   else
-    # Default: scope clippy to the packages that own the staged .rs files so
-    # pre-existing warnings in unrelated workspace crates can't block the
-    # commit. Fall back to --workspace when no package name resolves (virtual
-    # manifest, parse failure).
-    PKG_NAMES=""
+    # Default: run clippy once per owning manifest — the nearest Cargo.toml
+    # with a [package] table above each staged .rs file. --manifest-path
+    # scopes cargo's default package selection to that package whether or
+    # not it is a member of the root workspace, so crates on the workspace
+    # `exclude` list lint against their own manifest instead of failing
+    # `-p` resolution from the repo root (vstack#742), and pre-existing
+    # warnings in unrelated workspace crates can't block the commit. Fall
+    # back to a single --workspace run when no owning manifest resolves
+    # (virtual manifest only, files outside any package).
+    OWNING_MANIFESTS=""
     if [ -n "$REPO_ROOT" ]; then
-      PKG_NAMES=$(echo "$STAGED" | grep -E '\.rs$' | while IFS= read -r path; do
+      OWNING_MANIFESTS=$(echo "$STAGED" | grep -E '\.rs$' | while IFS= read -r path; do
         dir=$(dirname "$path")
         while :; do
-          if [ -f "$REPO_ROOT/$dir/Cargo.toml" ]; then
-            # `name = "..."` from the [package] table only ([[bin]] and
-            # dependency tables also carry `name` keys).
-            awk '
-              /^[[:space:]]*\[/ { in_pkg = ($0 ~ /^[[:space:]]*\[package\][[:space:]]*(#.*)?$/); next }
-              in_pkg && /^[[:space:]]*name[[:space:]]*=/ {
-                if (match($0, /"[^"]*"/)) { print substr($0, RSTART + 1, RLENGTH - 2) }
-                exit
-              }
-            ' "$REPO_ROOT/$dir/Cargo.toml"
+          if [ "$dir" = "." ]; then
+            candidate="$REPO_ROOT/Cargo.toml"
+          else
+            candidate="$REPO_ROOT/$dir/Cargo.toml"
+          fi
+          if [ -f "$candidate" ]; then
+            # Only a manifest with a [package] table owns files; a virtual
+            # workspace manifest has no default package to scope to.
+            if grep -qE '^[[:space:]]*\[package\][[:space:]]*(#.*)?$' "$candidate"; then
+              echo "$candidate"
+            fi
             break
           fi
           if [ "$dir" = "." ] || [ "$dir" = "/" ] || [ -z "$dir" ]; then
@@ -119,25 +125,22 @@ if echo "$STAGED" | grep -qE '\.rs$'; then
       done | sort -u | grep -v '^$' || true)
     fi
 
-    PKG_ARGS=()
-    if [ -n "$PKG_NAMES" ]; then
-      while IFS= read -r pkg; do
-        PKG_ARGS+=(-p "$pkg")
+    if [ -n "$OWNING_MANIFESTS" ]; then
+      while IFS= read -r manifest; do
+        if ! CLIPPY_OUTPUT=$(cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings 2>&1); then
+          print_output_tail "$CLIPPY_OUTPUT"
+          echo "cargo clippy found warnings in $manifest. Fix them before committing." >&2
+          exit 2
+        fi
       done <<EOF
-$PKG_NAMES
+$OWNING_MANIFESTS
 EOF
-    fi
-
-    if [ -n "$PKG_NAMES" ]; then
-      SCOPE_ARGS=(${PKG_ARGS[@]+"${PKG_ARGS[@]}"})
     else
-      SCOPE_ARGS=(--workspace)
-    fi
-
-    if ! CLIPPY_OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} ${SCOPE_ARGS[@]+"${SCOPE_ARGS[@]}"} --all-targets -- -D warnings 2>&1); then
-      print_output_tail "$CLIPPY_OUTPUT"
-      echo "cargo clippy found warnings. Fix them before committing." >&2
-      exit 2
+      if ! CLIPPY_OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --workspace --all-targets -- -D warnings 2>&1); then
+        print_output_tail "$CLIPPY_OUTPUT"
+        echo "cargo clippy found warnings. Fix them before committing." >&2
+        exit 2
+      fi
     fi
   fi
 fi

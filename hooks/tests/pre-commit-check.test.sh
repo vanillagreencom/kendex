@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Regression tests for the pre-commit-check hook's Rust Clippy lane (vstack#737).
+# Regression tests for the pre-commit-check hook's Rust Clippy lane
+# (vstack#737, vstack#742).
 #
 # The hook previously hard-coded `cargo clippy --workspace --all-targets`
 # with stderr discarded, so commits failed on pre-existing warnings in
 # unrelated crates with no actionable output and no way to configure the
 # lane. These tests assert the three-tier VSTACK_PRE_COMMIT_RUST_CLIPPY
-# semantics (unset -> package-scoped default, "off" -> skip, custom -> run
-# verbatim via bash -c), the vstack.settings.toml fallback, the --workspace
-# fallback when no package resolves, the nested-manifest --manifest-path
-# behavior, and that fmt/clippy diagnostics now reach stderr on failure.
+# semantics (unset -> per-owning-manifest default, "off" -> skip, custom ->
+# run verbatim via bash -c), the vstack.settings.toml fallback, the
+# --workspace fallback when no owning manifest resolves, the
+# nested-manifest behavior, that workspace-excluded crates lint against
+# their own manifest instead of failing `-p` resolution (vstack#742), and
+# that fmt/clippy diagnostics reach stderr on failure.
 #
 # `cargo` is stubbed with a PATH shim that records invocations, so the suite
 # needs no Rust toolchain or real workspace.
@@ -133,18 +136,22 @@ echo 'pub fn a() {}' >"$REPO_A/crates/foo/src/lib.rs"
 echo 'pub fn b() {}' >"$REPO_A/crates/foo/src/extra.rs"
 echo 'pub fn c() {}' >"$REPO_A/crates/bar/src/lib.rs"
 git -C "$REPO_A" add -A
+REPO_A_PHYS="$(cd "$REPO_A" && pwd -P)"
 
-echo "=== pre-commit-check Rust clippy lane (vstack#737) ==="
+echo "=== pre-commit-check Rust clippy lane (vstack#737, vstack#742) ==="
 
-# --- Default: package-scoped clippy ------------------------------------------
+# --- Default: one clippy run per owning manifest ------------------------------
 run_hook "$REPO_A"
 assert_eq "$rc" "0" "default run with clean shims exits 0"
 assert_contains "$log" "cargo fmt --check" "fmt lane still runs"
-assert_contains "$log" "cargo clippy -p bar -p foo --all-targets -- -D warnings" \
-  "default clippy is scoped to staged packages, deduped and sorted"
-assert_not_contains "$log" "--workspace" "default clippy does not use --workspace when packages resolve"
+assert_contains "$log" "cargo clippy --manifest-path $REPO_A_PHYS/crates/bar/Cargo.toml --all-targets -- -D warnings" \
+  "default clippy runs against bar's manifest"
+assert_contains "$log" "cargo clippy --manifest-path $REPO_A_PHYS/crates/foo/Cargo.toml --all-targets -- -D warnings" \
+  "default clippy runs against foo's manifest (deduped across its staged files)"
+assert_not_contains "$log" " -p " "default clippy no longer passes -p package args"
+assert_not_contains "$log" "--workspace" "default clippy does not use --workspace when manifests resolve"
 
-# --- Workspace fallback when no package name resolves ------------------------
+# --- Workspace fallback when no owning manifest resolves ----------------------
 REPO_B="$TMP_ROOT/virtual-repo"
 make_repo "$REPO_B"
 cat >"$REPO_B/Cargo.toml" <<'EOF'
@@ -158,9 +165,9 @@ git -C "$REPO_B" add -A
 run_hook "$REPO_B"
 assert_eq "$rc" "0" "virtual-manifest run exits 0"
 assert_contains "$log" "cargo clippy --workspace --all-targets -- -D warnings" \
-  "clippy falls back to --workspace when no package resolves"
+  "clippy falls back to --workspace when no owning manifest resolves"
 
-# --- Nested manifest keeps --manifest-path and gains -p scoping --------------
+# --- Nested manifest: clippy targets the nested crate's own manifest ----------
 REPO_C="$TMP_ROOT/nested-repo"
 make_repo "$REPO_C"
 mkdir -p "$REPO_C/cli/src"
@@ -177,11 +184,44 @@ run_hook "$REPO_C"
 assert_eq "$rc" "0" "nested-manifest run exits 0"
 assert_contains "$log" "cargo fmt --manifest-path $REPO_C_PHYS/cli/Cargo.toml --check" \
   "fmt uses the nested manifest path"
-assert_contains "$log" "cargo clippy --manifest-path $REPO_C_PHYS/cli/Cargo.toml -p nested-cli --all-targets -- -D warnings" \
-  "clippy combines nested manifest path with package scoping"
+assert_contains "$log" "cargo clippy --manifest-path $REPO_C_PHYS/cli/Cargo.toml --all-targets -- -D warnings" \
+  "clippy targets the nested crate's own manifest"
+assert_not_contains "$log" " -p " "nested-manifest clippy passes no -p args"
+
+# --- Workspace-excluded crate lints against its own manifest (vstack#742) -----
+REPO_D="$TMP_ROOT/excluded-repo"
+make_repo "$REPO_D"
+cat >"$REPO_D/Cargo.toml" <<'EOF'
+[workspace]
+members = ["crates/member"]
+exclude = ["standalone"]
+EOF
+mkdir -p "$REPO_D/crates/member/src" "$REPO_D/standalone/src"
+cat >"$REPO_D/crates/member/Cargo.toml" <<'EOF'
+[package]
+name = "member"
+version = "0.1.0"
+EOF
+cat >"$REPO_D/standalone/Cargo.toml" <<'EOF'
+[package]
+name = "fixture-generator"
+version = "0.1.0"
+EOF
+echo 'pub fn m() {}' >"$REPO_D/crates/member/src/lib.rs"
+echo 'pub fn s() {}' >"$REPO_D/standalone/src/lib.rs"
+git -C "$REPO_D" add -A
+
+REPO_D_PHYS="$(cd "$REPO_D" && pwd -P)"
+run_hook "$REPO_D"
+assert_eq "$rc" "0" "excluded-crate commit is not blocked"
+assert_contains "$log" "cargo clippy --manifest-path $REPO_D_PHYS/standalone/Cargo.toml --all-targets -- -D warnings" \
+  "excluded crate lints against its own manifest"
+assert_contains "$log" "cargo clippy --manifest-path $REPO_D_PHYS/crates/member/Cargo.toml --all-targets -- -D warnings" \
+  "member crate staged alongside still gets its own run"
+assert_not_contains "$log" " -p " "excluded-crate run passes no -p args"
+assert_not_contains "$log" "--workspace" "excluded-crate run does not fall back to --workspace"
 
 # --- Env override: run verbatim via bash -c ----------------------------------
-REPO_A_PHYS="$(cd "$REPO_A" && pwd -P)"
 run_hook "$REPO_A" VSTACK_PRE_COMMIT_RUST_CLIPPY='echo "override-ran $PWD" >>"$CARGO_LOG"'
 assert_eq "$rc" "0" "passing env override exits 0"
 assert_contains "$log" "override-ran $REPO_A_PHYS" "override command runs verbatim from the repo root"
@@ -222,7 +262,8 @@ rm "$REPO_A/vstack.settings.toml"
 run_hook "$REPO_A" CARGO_CLIPPY_EXIT=1
 assert_eq "$rc" "2" "clippy failure exits 2"
 assert_contains "$err" "clippy::float_cmp" "clippy diagnostics are no longer swallowed"
-assert_contains "$err" "cargo clippy found warnings" "clippy guidance line still present"
+assert_contains "$err" "cargo clippy found warnings in $REPO_A_PHYS/crates/bar/Cargo.toml" \
+  "clippy guidance names the failing manifest"
 
 run_hook "$REPO_A" CARGO_FMT_EXIT=1
 assert_eq "$rc" "2" "fmt failure exits 2"

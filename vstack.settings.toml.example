@@ -160,8 +160,9 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reas
 # Used by: hooks/pre-commit-check.sh (the Clippy lane for staged Rust files).
 # Three tiers:
 #   unset (default) — the hook runs `cargo clippy --all-targets -- -D warnings`
-#     scoped to the packages that own the staged .rs files (`-p <pkg>` per
-#     package), falling back to `--workspace` when no package resolves.
+#     once per crate manifest owning a staged .rs file (`--manifest-path`, so
+#     workspace-excluded crates lint against their own manifest), falling back
+#     to `--workspace` when no owning manifest resolves.
 #   "off" — skip the hook's Clippy lane entirely. Use when repo-owned
 #     validation (feature-matrix lanes, a project validator) is authoritative
 #     and the hook's default-feature lane could flag pre-existing warnings the
