@@ -185,30 +185,43 @@ Report findings for user decision.
 
 ## 5. Verify
 
-After fix is pushed:
+A fix push moved the PR head, so the review gate is re-confirmed at the new head **before** CI is waited on — the same review-before-CI ordering as `submit-pr.md` § 4 → § 5, applied universally with no repo detection (vstack#726). On approval-gated repos CI for the new head starts only after exact-head review evidence exists, so waiting on CI first would deadlock or watch an intentionally red gate run; on always-on repos CI has been running since the push, so the short re-confirmation costs nothing.
 
-```bash
-.agents/skills/orch/scripts/ci-wait [PR_NUMBER]
-```
+1. **Re-confirm the review gate at the new head** — resolve the mode through the existing gate vocabulary, never by detection:
+   ```bash
+   .agents/skills/orch/scripts/approval-wait --resolve-mode
+   ```
+   The printed value is `GATE_MODE`. Skip to step 2 when it is `off`. Otherwise run the short exact-head re-confirmation:
+   ```bash
+   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
+   ```
+   - `approved` / `reviewed` → step 2.
+   - `comments` / `changes_requested` → new review feedback on the fix push. Managed: return it to the caller's review-gate handling (`submit-pr.md` § 4 step 1 triage pass). Standalone: run that triage pass, then re-run this step.
+   - `timeout` → no exact-head review evidence yet. On repos whose CI is gated on review evidence, CI cannot have started — a missing or red gate run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or stop and hand back.
 
-**Post to issue tracker** — **Linear only** (GitHub items: the PR conversation already records the fix):
-```bash
-.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
-```
-Use the output as `ISSUE`.
+2. **Wait for CI**:
+   ```bash
+   .agents/skills/orch/scripts/ci-wait [PR_NUMBER]
+   ```
 
-If `ISSUE` is non-empty, determine tracker:
+3. **Post to issue tracker** — **Linear only** (GitHub items: the PR conversation already records the fix):
+   ```bash
+   .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+   ```
+   Use the output as `ISSUE`.
 
-```bash
-.agents/skills/orch/scripts/tracker-for-issue "$ISSUE"
-```
-Use the output as `TRACKER`.
+   If `ISSUE` is non-empty, determine tracker:
 
-If `TRACKER` is `linear`, post the short status:
+   ```bash
+   .agents/skills/orch/scripts/tracker-for-issue "$ISSUE"
+   ```
+   Use the output as `TRACKER`.
 
-```bash
-.agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
-```
+   If `TRACKER` is `linear`, post the short status:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
+   ```
 
 ## 6. Present Results
 

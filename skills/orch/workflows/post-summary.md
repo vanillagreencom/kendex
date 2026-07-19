@@ -86,6 +86,7 @@ Use the first output as `ISSUE_ID` and the tracker output as `TRACKER`. Use curr
    - **Created Issues**: From `audit_issues_created` + `pr_comment_review.issues_created`. Include project name.
    - **QA Metrics**: Include if QA agents ran (project-configurable).
    - **Recommendations Processed**: Dedupe by description across cycles.
+   - **Commit SHAs**: when workflow state carries a `.rebase_map` (recorded by `submit-pr.md` § 2 step 1 after a `worktree push` auto-rebase rewrote the branch), resolve every published SHA through it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden (vstack#728); fix SHAs stored in state were already rewritten at push time, so the map matters for artifact-sourced references like a perf QA `benchmark_commit`.
 
 ---
 

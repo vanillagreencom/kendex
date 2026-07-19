@@ -293,7 +293,7 @@ merge. Detach them first.
    A rerun-in-place (`gh run rerun` / rerun-failed-jobs) re-executes the workflow definition and verifier state pinned at the original triggering event — a PR that changes gate or CI workflow behavior only exhibits its new behavior on a fresh head (new push → attempt-1 run), never via a rerun of an old attempt. Reruns are for flakes and re-gating on unchanged workflows; behavior changes need a new commit and push.
 
    1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5 step 2`. For a queue ejection the failing run is the **merge-group** run (workflow event `merge_group`), not necessarily the PR-head run — locate it via the failing run link in the PR's checks or `gh run list --event merge_group --limit 10`, and point ci-fix's log fetching at that run.
-   2. **Re-confirm the review gate** after ci-fix pushed a fix — pushes can dismiss reviewer approvals and move the head past the reviewed commit (skip when the § 3.2 `GATE_MODE` is `off`):
+   2. **Re-confirm the review gate** after ci-fix pushed a fix — pushes can dismiss reviewer approvals and move the head past the reviewed commit. ci-fix itself already re-confirmed the gate at the new head before re-verifying CI (its § 5, vstack#726); this short wait re-checks that the evidence still stands at the head about to be re-armed (skip when the § 3.2 `GATE_MODE` is `off`):
       ```bash
       .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
       ```

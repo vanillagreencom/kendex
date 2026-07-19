@@ -154,6 +154,7 @@ assert_not_contains "$(cat "$ANCESTOR_ROOT/push.err")" "Rebase onto origin/main 
 assert_contains "$(cat "$ANCESTOR_ROOT/push.err")" "skipping rebase" "push reports it skipped the unnecessary rebase"
 assert_eq "$ancestor_post_head" "$ancestor_pre_head" "HEAD is unchanged (no rebase happened)"
 assert_eq "$(git --git-dir="$ANCESTOR_ROOT/origin.git" rev-parse refs/heads/issue-ancestor)" "$ancestor_pre_head" "feature branch lands on remote at the merge commit"
+assert_not_contains "$(cat "$ANCESTOR_ROOT/push.out")" "rebase-map:" "skipped rebase emits no rebase-map lines"
 
 # --- Rebase still happens when genuinely behind -------------------------------
 # Feature does NOT contain origin/main as an ancestor (main advanced after the
@@ -170,10 +171,14 @@ printf 'advanced\n' > "$BEHIND_ROOT/main/main-advanced.txt"
 git -C "$BEHIND_ROOT/main" add main-advanced.txt
 git -C "$BEHIND_ROOT/main" commit -q -m 'advance main'
 git -C "$BEHIND_ROOT/main" push -q origin main
-# Feature adds its own (non-conflicting) file on the old base.
+# Feature adds its own (non-conflicting) files on the old base — two commits,
+# so the vstack#728 rebase map must pair each rewritten commit by position.
 printf 'fix\n' > "$BEHIND_ROOT/trees/issue-behind/fix.txt"
 git -C "$BEHIND_ROOT/trees/issue-behind" add fix.txt
 git -C "$BEHIND_ROOT/trees/issue-behind" commit -q -m 'review fix'
+printf 'fix2\n' > "$BEHIND_ROOT/trees/issue-behind/fix2.txt"
+git -C "$BEHIND_ROOT/trees/issue-behind" add fix2.txt
+git -C "$BEHIND_ROOT/trees/issue-behind" commit -q -m 'second review fix'
 git -C "$BEHIND_ROOT/trees/issue-behind" fetch -q origin
 # Precondition: branch does NOT yet contain the advanced origin/main.
 set +e
@@ -182,6 +187,8 @@ behind_precond=$?
 set -e
 assert_eq "$behind_precond" "1" "behind branch does not contain origin/main before push"
 behind_pre_head="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD)"
+behind_pre_c1="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD~1)"
+behind_pre_c2="$behind_pre_head"
 set +e
 (
   cd "$BEHIND_ROOT/main" && \
@@ -196,6 +203,17 @@ assert_ne "$behind_post_head" "$behind_pre_head" "rebase rewrote HEAD (rebase ac
 assert_path_exists "$BEHIND_ROOT/trees/issue-behind/main-advanced.txt" "rebase moved the base onto advanced origin/main"
 assert_is_ancestor "$BEHIND_ROOT/trees/issue-behind" origin/main HEAD "origin/main is contained after rebase"
 assert_eq "$(git --git-dir="$BEHIND_ROOT/origin.git" rev-parse refs/heads/issue-behind)" "$behind_post_head" "remote branch matches rebased local head"
+
+# --- vstack#728: the rebase prints an old→new commit map -----------------------
+# Both branch commits were rewritten; push stdout must carry one
+# `rebase-map: <old-sha> <new-sha>` line per commit, paired by position.
+behind_post_c1="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD~1)"
+behind_post_c2="$behind_post_head"
+behind_push_out="$(cat "$BEHIND_ROOT/push.out")"
+assert_contains "$behind_push_out" "rebase-map: $behind_pre_c1 $behind_post_c1" "rebase map pairs the first rewritten commit"
+assert_contains "$behind_push_out" "rebase-map: $behind_pre_c2 $behind_post_c2" "rebase map pairs the second rewritten commit"
+assert_eq "$(grep -c '^rebase-map: ' <<<"$behind_push_out")" "2" "rebase map emits exactly one line per rewritten commit"
+assert_contains "$(cat "$BEHIND_ROOT/push.err")" "rebase-map lines follow (vstack#728)" "rebase map announces itself on stderr"
 
 # --- --no-rebase skips the rebase (unchanged behavior) ------------------------
 # A behind branch pushed with --no-rebase must not be rebased: HEAD stays put
@@ -226,6 +244,49 @@ norebase_post_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEA
 assert_eq "$norebase_code" "0" "--no-rebase push succeeds"
 assert_eq "$norebase_post_head" "$norebase_pre_head" "--no-rebase leaves HEAD unchanged"
 assert_path_absent "$NOREBASE_ROOT/trees/issue-norebase/main-advanced.txt" "--no-rebase does not pull in advanced main"
+assert_not_contains "$(cat "$NOREBASE_ROOT/push.out")" "rebase-map:" "--no-rebase emits no rebase-map lines"
+
+# --- vstack#728: a commit dropped by the rebase maps to "dropped" --------------
+# The branch carries a commit whose patch main already merged (different SHA,
+# same patch-id) plus its own fix. The rebase drops the duplicated commit, so
+# pre/post counts differ and the map must pair by subject: the surviving commit
+# maps old→new, the vanished one maps old→dropped.
+DROP_ROOT="$TMP_ROOT/dropped"
+make_repo "$DROP_ROOT/main"
+git init -q --bare "$DROP_ROOT/origin.git"
+git -C "$DROP_ROOT/main" remote add origin "$DROP_ROOT/origin.git"
+git -C "$DROP_ROOT/main" push -q -u origin main
+git -C "$DROP_ROOT/main" worktree add -q -b issue-dropped "$DROP_ROOT/trees/issue-dropped" main
+# Branch commit 1: the patch main will independently merge.
+printf 'dup\n' > "$DROP_ROOT/trees/issue-dropped/dup.txt"
+git -C "$DROP_ROOT/trees/issue-dropped" add dup.txt
+git -C "$DROP_ROOT/trees/issue-dropped" commit -q -m 'duplicated change'
+# Branch commit 2: the branch's own fix.
+printf 'fix\n' > "$DROP_ROOT/trees/issue-dropped/fix.txt"
+git -C "$DROP_ROOT/trees/issue-dropped" add fix.txt
+git -C "$DROP_ROOT/trees/issue-dropped" commit -q -m 'review fix'
+# main lands the same patch under another subject and advances origin.
+printf 'dup\n' > "$DROP_ROOT/main/dup.txt"
+git -C "$DROP_ROOT/main" add dup.txt
+git -C "$DROP_ROOT/main" commit -q -m 'main landed the dup patch'
+git -C "$DROP_ROOT/main" push -q origin main
+drop_pre_c1="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD~1)"
+drop_pre_c2="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD)"
+set +e
+(
+  cd "$DROP_ROOT/main" && \
+    "$WORKTREE_SCRIPT" push "$DROP_ROOT/trees/issue-dropped" --set-upstream \
+      >"$DROP_ROOT/push.out" 2>"$DROP_ROOT/push.err"
+)
+drop_code=$?
+set -e
+drop_post_head="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD)"
+drop_push_out="$(cat "$DROP_ROOT/push.out")"
+assert_eq "$drop_code" "0" "push succeeds when the rebase drops a duplicated commit"
+assert_eq "$(git -C "$DROP_ROOT/trees/issue-dropped" rev-list --count origin/main..HEAD)" "1" "rebase dropped the duplicated commit"
+assert_contains "$drop_push_out" "rebase-map: $drop_pre_c1 dropped" "rebase map reports the vanished commit as dropped"
+assert_contains "$drop_push_out" "rebase-map: $drop_pre_c2 $drop_post_head" "rebase map pairs the surviving commit by subject"
+assert_eq "$(grep -c '^rebase-map: ' <<<"$drop_push_out")" "2" "dropped-commit rebase map covers both pre-rebase commits"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

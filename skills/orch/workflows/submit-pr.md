@@ -119,6 +119,21 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    .agents/skills/worktree/scripts/worktree push "[WORKTREE_PATH]" --set-upstream
    ```
 
+   **Rebase-map reconciliation (required).** `worktree push` auto-rebases the branch onto the updated base; that legitimately rewrites every branch commit, and the push then prints one `rebase-map: [OLD_SHA] [NEW_SHA]` line per rewritten commit (`[NEW_SHA]` is the literal word `dropped` when the replayed commit vanished because its patch was already upstream). Commit SHAs recorded before the push — `fixed_items`, `pr_comment_review.fixes`, a perf QA `benchmark_commit` — now name commits that no longer exist on the branch. When the push output contains any `rebase-map:` lines, reconcile before anything publishes them; publication (PR body, § 6.2 summary, `post-summary.md`) with unreconciled pre-rebase SHAs is forbidden (vstack#728):
+
+   1. Record the map so later sessions can still resolve artifact-sourced SHAs — one command per mapping line, `dropped` stored literally:
+      ```bash
+      .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.rebase_map = (.rebase_map // {}) + {"[OLD_SHA]": "[NEW_SHA]"}'
+      ```
+   2. Rewrite every stored fix commit that matches a mapped old SHA. A recorded short SHA matches when it is a prefix of `[OLD_SHA]`; replace it with `[NEW_SHA]` truncated to the recorded length (one command per matching item):
+      ```bash
+      .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '(.fixed_items[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"'
+      ```
+      ```bash
+      .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '(.pr_comment_review.fixes[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"'
+      ```
+   3. Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review/QA artifact rather than state (e.g. perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches, since a later rebase maps new → newer.
+
 2. **Check for existing PR**:
    ```bash
    .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state
@@ -163,6 +178,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    - **Completed Issues**: Use `Closes` keyword for issue tracker linkage. Indent sub-issues.
    - **Created Issues**: Include if issues created during local review or comment triage.
    - **QA Metrics**: Include if QA agents ran. Format is project-configurable based on which QA agent types are active.
+   - **Commit SHAs**: every SHA published in the body (fix commits, perf `benchmark_commit`) must be post-reconciliation — resolve through the step 1 rebase map when one was recorded (vstack#728).
 
 4. **Create or update PR**. CI configured on `pull_request` runs from the moment the PR exists — orch never defers, queues, or gates it behind bot review activity. Approval-gated repos start their heavy CI only after the § 4 review-gate verdict instead; that is repo-side configuration (see orch `DEVELOPMENT.md` § CI Triggering Patterns) and needs no detection here.
 
@@ -317,7 +333,7 @@ Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are
 
 **Nudging.** approval-wait nudges silent reviewers itself: when the mode's signal has not arrived within `PR_REVIEW_NUDGE_SECS` (default 600s, `0` disables) of the wait starting or of the head last changing, it posts the user-configured `PR_REVIEW_NUDGE` comment body on the PR — or, when that setting is empty, falls back to a GitHub-native re-review request to the PR's requested and past reviewers (silence when there is nobody to re-request). Each head SHA is nudged at most once; a push restarts the nudge clock and re-arms the nudge for the new head. Both keys live in `vstack.settings.toml` `[env]` next to the gate mode — the nudge text is project configuration, no bot names are built in.
 
-The full cycle after any fix-up push is: push fixes → the head changes → wait for a NEW review of the new head (approval-wait nudges after `PR_REVIEW_NUDGE_SECS` if the reviewer stays silent) → triage, reply to, and resolve every thread → § 5 Verify CI (→ § 5.2 ci-fix cycles, bounded by `CI_FIX_MAX_CYCLES`, when red) → § 6 merge gates.
+The full cycle after any fix-up push is: push fixes → the head changes → wait for a NEW review of the new head (approval-wait nudges after `PR_REVIEW_NUDGE_SECS` if the reviewer stays silent) → triage, reply to, and resolve every thread → § 5 Verify CI (→ § 5.2 ci-fix cycles, bounded by `CI_FIX_MAX_CYCLES`, when red — each ci-fix push re-confirms this gate at its new head before re-verifying CI, vstack#726) → § 6 merge gates.
 
 1. **Review wait loop.** Poll for the gate verdict and new review comments together (skip when `GATE_MODE` is `off`):
    ```bash
@@ -387,7 +403,7 @@ A rerun-in-place (`gh run rerun` / rerun-failed-jobs) re-executes the workflow d
 1. **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-7 → § 5.2 step 2`
 
 2. **After ci-fix returns**:
-   - If fix applied → ci-fix already pushed and re-verified CI (its § 5); treat its final CI result as the § 5.1 result and re-route via the § 5.1 step 2 table. A recovery push may also dismiss existing reviewer approvals or move the head past the reviewed commit — when ci-fix pushed commits, re-confirm the § 4 gate with a short wait (`approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]`) before § 6 (skip this re-confirm when `GATE_MODE` is `off`).
+   - If fix applied → ci-fix already pushed, re-confirmed the § 4 gate at the new head, and only then re-verified CI (its § 5). The ordering is deliberate (vstack#726): a recovery push dismisses or outdates exact-head review evidence, and on approval-gated repos CI for the new head starts only after the renewed evidence exists — re-confirming the review gate after ci-wait would deadlock those repos or read an intentionally red gate run as a fix failure. Record ci-fix's gate re-confirmation result as the § 4 result for the § 6.1 gate 4 check (skip the record when `GATE_MODE` is `off`), treat its final CI result as the § 5.1 result, and re-route via the § 5.1 step 2 table. If ci-fix instead returned a gate re-confirmation of `comments` or `changes_requested` (new review feedback on the fix push, no CI result yet), route that status through the § 4 step 1 table first, then re-enter § 5.1.
    - If fix not possible → Ask user: `Skip CI` | `Retry` | `Abort`
 
 3. **Max [MAX_CYCLES] ci-fix cycles** per PR submission — keep routing CI failures back into step 1 until CI passes or the budget is spent.
@@ -426,7 +442,7 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    | `unresolved_count` | Action |
    |--------------------|--------|
    | `0` | Gate met |
-   | `> 0` | Run ONE triage pass: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 3` with managed context (bounded by `pr_comment_review.iterations`, max 5). If that pass pushed commits, re-run § 5 and re-confirm the § 4 gate with a short approval-wait (`approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]`; skip when `GATE_MODE` is `off`). Then re-run the gate 3 command once; if threads remain, present them and ask user: `Triage again` \| `Force merge` \| `Stop here` |
+   | `> 0` | Run ONE triage pass: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 3` with managed context (bounded by `pr_comment_review.iterations`, max 5). If that pass pushed commits, re-confirm the § 4 gate with a short approval-wait (`approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]`; skip when `GATE_MODE` is `off`), then re-run § 5 — review before CI holds after every push (vstack#726). Then re-run the gate 3 command once; if threads remain, present them and ask user: `Triage again` \| `Force merge` \| `Stop here` |
 
 4. **Gate 4** — verify the recorded § 4 result: met when the wait ended `approved` (approval mode) or `reviewed` (review mode), when `pr_approval.forced` was recorded by an explicit user override, or when the mode is `off` (`pr_review.mode` / legacy `pr_approval.gate` — reviewer-less repo, gate not applicable). Read the recorded mode with:
    ```bash
@@ -448,7 +464,7 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    - `issue_id`: [ISSUE_ID]
    - `pr_number`: [PR_NUMBER]
 
-2. **Post summary** — skip if no fixes AND no issues created. Write to a file first (same backtick hazard as PR body):
+2. **Post summary** — skip if no fixes AND no issues created. Fix SHAs come from workflow state, which § 2 step 1 reconciled after any rebase; resolve artifact-sourced SHAs (perf `benchmark_commit`) through `.rebase_map` — publishing a stale pre-rebase SHA is forbidden (vstack#728). Write to a file first (same backtick hazard as PR body):
    ```bash
    mkdir -p [WORKTREE_PATH]/tmp
    .agents/skills/orch/scripts/git-context timestamp compact

@@ -466,6 +466,56 @@ assert_file_contains "$state_schema" '"status": "active"' "workflow-state schema
 assert_file_contains "$start_worktree_workflow" '.value.status = "closed"' "start-worktree shutdown retires child sessions to closed"
 assert_file_contains "$orch_skill" 'a record with no `status` field counts as active' "orch skill slot-accounting note carries the back-compat rule"
 
+# vstack#726 — review-before-CI holds after EVERY push, including ci-fix
+# recovery pushes: a fix push moves the PR head and outdates exact-head review
+# evidence, and approval-gated repos start CI for a head only after that
+# evidence exists. ci-fix § 5 must therefore re-confirm the review gate at the
+# new head (mode resolved via approval-wait --resolve-mode, skip when off)
+# BEFORE ci-wait; the old order (ci-wait, then re-confirm) deadlocked gated
+# repos or read an intentionally red gate run as a fix failure. submit-pr
+# § 5.2 and merge-pr's recovery cycle rely on that in-ci-fix ordering, and the
+# § 6.1 gate 3 escape hatch re-confirms the gate before re-running § 5.
+ci_fix_workflow="$REPO_ROOT/skills/orch/workflows/ci-fix.md"
+assert_file_contains "$ci_fix_workflow" 'approval-wait --resolve-mode' "ci-fix resolves the gate mode via approval-wait --resolve-mode"
+assert_file_contains "$ci_fix_workflow" '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]' "ci-fix runs the short exact-head review re-confirmation"
+assert_file_contains "$ci_fix_workflow" 'no repo detection (vstack#726)' "ci-fix applies the reorder universally without repo detection"
+assert_file_contains "$ci_fix_workflow" 'not a fix failure' "ci-fix does not read a review-gated missing CI run as a fix failure"
+ci_fix_gate_line="$(grep -n -m1 -F 'approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]' "$ci_fix_workflow" | cut -d: -f1)"
+ci_fix_wait_line="$(grep -n -m1 -F 'scripts/ci-wait [PR_NUMBER]' "$ci_fix_workflow" | cut -d: -f1)"
+ci_fix_ordering="missing-steps"
+if [[ -n "$ci_fix_gate_line" && -n "$ci_fix_wait_line" && "$ci_fix_gate_line" -lt "$ci_fix_wait_line" ]]; then
+  ci_fix_ordering="review-before-ci"
+fi
+assert_eq "$ci_fix_ordering" "review-before-ci" "ci-fix § 5 re-confirms the review gate before ci-wait"
+assert_file_contains "$submit_workflow" 're-confirmed the § 4 gate at the new head, and only then re-verified CI' "submit-pr § 5.2 states ci-fix re-confirms review before re-verifying CI"
+assert_file_not_contains "$submit_workflow" 'before § 6 (skip this re-confirm when' "submit-pr drops the after-CI gate re-confirmation ordering"
+assert_file_contains "$submit_workflow" 'then re-run § 5 — review before CI holds after every push (vstack#726)' "submit-pr gate 3 escape hatch re-confirms review before re-running CI"
+assert_file_contains "$submit_workflow" 're-confirms this gate at its new head before re-verifying CI, vstack#726' "submit-pr § 4 full cycle notes the per-push ci-fix re-confirmation"
+assert_file_contains "$merge_workflow" 'before re-verifying CI (its § 5, vstack#726)' "merge-pr recovery cycle relies on ci-fix's pre-CI gate re-confirmation"
+
+# vstack#728 — `worktree push` auto-rebases onto the updated base and
+# legitimately rewrites branch commits, so commit SHAs recorded pre-push
+# (fixed_items, pr_comment_review.fixes, perf QA benchmark_commit) go stale.
+# The push now prints one `rebase-map: <old> <new>` line per rewritten commit
+# (functional coverage: skills/worktree/tests/worktree_push_rebase.sh);
+# submit-pr § 2 step 1 must record the map in workflow state (rebase_map),
+# rewrite stored fix commits via workflow-state update, and forbid publishing
+# unreconciled pre-rebase SHAs; post-summary resolves artifact-sourced SHAs
+# through the recorded map.
+post_summary_workflow="$REPO_ROOT/skills/orch/workflows/post-summary.md"
+assert_file_contains "$submit_workflow" 'rebase-map: [OLD_SHA] [NEW_SHA]' "submit-pr documents the worktree push rebase-map output"
+assert_file_contains "$submit_workflow" '.rebase_map = (.rebase_map // {}) + {"[OLD_SHA]": "[NEW_SHA]"}' "submit-pr records the rebase map in workflow state"
+assert_file_contains "$submit_workflow" '(.fixed_items[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"' "submit-pr rewrites fixed_items commits from the map"
+assert_file_contains "$submit_workflow" '(.pr_comment_review.fixes[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"' "submit-pr rewrites pr-comment fix commits from the map"
+assert_file_contains "$submit_workflow" 'unreconciled pre-rebase SHAs is forbidden (vstack#728)' "submit-pr forbids publication with stale pre-rebase SHAs"
+assert_file_contains "$submit_workflow" 'follow the chain until no key matches' "submit-pr resolves artifact-sourced SHAs through the map chain"
+assert_file_contains "$submit_workflow" 'resolve through the step 1 rebase map when one was recorded (vstack#728)' "submit-pr PR body requires reconciled commit SHAs"
+assert_file_contains "$submit_workflow" 'publishing a stale pre-rebase SHA is forbidden (vstack#728)' "submit-pr § 6.2 summary forbids stale SHAs"
+assert_file_contains "$post_summary_workflow" 'resolve every published SHA through it' "post-summary resolves published SHAs through the rebase map"
+assert_file_contains "$post_summary_workflow" 'unreconciled pre-rebase SHA is forbidden (vstack#728)' "post-summary forbids stale-SHA publication"
+assert_file_contains "$state_schema" '`rebase_map` | object' "workflow-state schema documents the rebase map field"
+assert_file_contains "$state_schema" 'resolve through it repeatedly until no key matches' "workflow-state schema documents chained map resolution"
+
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
 assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"

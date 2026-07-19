@@ -313,6 +313,60 @@ remote_ref_lease_arg() {
   printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
 }
 
+# After a push auto-rebase rewrote the branch, print one machine-readable
+# "rebase-map: <old-sha> <new-sha>" line per rewritten commit on stdout so
+# callers (orch submit-pr) can remap commit SHAs recorded before the rebase
+# (vstack#728). A replayed commit that vanished (its patch was already
+# upstream) maps to "rebase-map: <old-sha> dropped". Inputs are the pre- and
+# post-rebase outputs of `git log --reverse --format='%H %s'
+# origin/<default>..HEAD`. Commits pair by position when the counts match
+# (rebase preserves order); on a count mismatch they pair by subject,
+# consuming each post-rebase line at most once. Bash 3.2: consumed indices
+# are tracked in a space-delimited string, no associative arrays.
+emit_rebase_map() {
+  local pre_list="$1" post_list="$2"
+  if [[ -z "$pre_list" || "$pre_list" == "$post_list" ]]; then
+    return 0
+  fi
+  local pre_count=0 post_count=0
+  pre_count="$(printf '%s\n' "$pre_list" | grep -c '^')"
+  if [[ -n "$post_list" ]]; then
+    post_count="$(printf '%s\n' "$post_list" | grep -c '^')"
+  fi
+  echo "→ auto-rebase rewrote $pre_count branch commit(s); rebase-map lines follow (vstack#728)" >&2
+  local i=1 j=1 old_line="" old_sha="" old_subject="" new_line="" new_sha="" used_idx=""
+  while [[ "$i" -le "$pre_count" ]]; do
+    old_line="$(printf '%s\n' "$pre_list" | sed -n "${i}p")"
+    old_sha="${old_line%% *}"
+    old_subject="${old_line#* }"
+    new_sha=""
+    if [[ "$pre_count" -eq "$post_count" ]]; then
+      new_line="$(printf '%s\n' "$post_list" | sed -n "${i}p")"
+      new_sha="${new_line%% *}"
+    else
+      j=1
+      while [[ "$j" -le "$post_count" ]]; do
+        case " $used_idx " in
+          *" $j "*) j=$((j + 1)); continue ;;
+        esac
+        new_line="$(printf '%s\n' "$post_list" | sed -n "${j}p")"
+        if [[ "${new_line#* }" == "$old_subject" ]]; then
+          new_sha="${new_line%% *}"
+          used_idx="$used_idx $j"
+          break
+        fi
+        j=$((j + 1))
+      done
+    fi
+    if [[ -z "$new_sha" ]]; then
+      echo "rebase-map: $old_sha dropped"
+    elif [[ "$new_sha" != "$old_sha" ]]; then
+      echo "rebase-map: $old_sha $new_sha"
+    fi
+    i=$((i + 1))
+  done
+}
+
 strip_trailing_slashes() {
   local path="$1"
   while [[ "$path" != "/" && "$path" == */ ]]; do
@@ -1645,6 +1699,7 @@ case "${1:-}" in
       echo ""
       echo "Push worktree branch to remote. Auto-rebases onto origin/$DEFAULT_BRANCH first."
       echo "Auto-rebased and supported create --reuse/--restack pushes use --force-with-lease pinned to the pre-rewrite target branch OID."
+      echo "When the auto-rebase rewrites branch commits, prints one 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout ('dropped' when the replayed commit vanished) so callers can remap recorded SHAs (vstack#728)."
       echo "Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to origin."
       echo ""
       echo "Options:"
@@ -1700,13 +1755,19 @@ case "${1:-}" in
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           echo "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2
-        elif ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
-          git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
-          echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
-          exit 1
         else
+          # Snapshot the branch-only commits before/after the rebase so a
+          # rewrite is reported as an old→new commit map (vstack#728).
+          PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
+          if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+            git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
+            echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
+            exit 1
+          fi
           # Rebase can replace symlinks with tracked content — restore them
           setup_worktree_links "$WT_PATH"
+          POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
+          emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"
         fi
       fi
     fi

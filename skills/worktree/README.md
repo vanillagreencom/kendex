@@ -78,6 +78,15 @@ later commits must descend from that head. The authorization is consumed after
 a successful push. Unexpected local rewrites and remote movement fail closed.
 Calls that skip auto-rebase still use plain pushes.
 
+When the auto-rebase rewrites branch commits, `worktree push` prints one
+`rebase-map: <old-sha> <new-sha>` line per rewritten commit on stdout
+(`dropped` in place of the new SHA when the replayed commit vanished because
+its patch was already upstream), so callers can remap commit SHAs recorded
+before the rebase — orch `submit-pr.md` § 2 step 1 consumes this to rewrite
+workflow-state fix references before publication (vstack#728). Commits pair by
+position when the pre/post counts match, otherwise by commit subject. A push
+that skips the rebase, or one run with `--no-rebase`, prints no map.
+
 `codex-setup` applies the same env/config symlinks, copies, mkdirs, bot remote, bot git identity, and lightweight dependency bootstrap that `create` applies after creating a worktree. `codex-branch` renames or switches the app-created worktree branch to the lower-case issue branch expected by `orch`. `codex-cleanup` is intentionally a no-op lifecycle hook for this script; Codex owns app-created worktree and branch deletion. Keep project-level teardown such as stopping containers or removing disposable caches in the Codex environment cleanup script after this command, but do not call `worktree remove` from the hook.
 
 ## Configuration

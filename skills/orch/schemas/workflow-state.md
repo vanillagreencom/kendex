@@ -58,6 +58,9 @@ Persistent state file for orch workflows. Survives context compaction.
     }
   ],
   "audit_issues_created": ["PROJ-200", "PROJ-201"],
+  "rebase_map": {
+    "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567": "76543210f9e8d7c6b5a49382716051423344abcd"
+  },
   "pr_review_baseline": {
     "last_ts": "2026-01-28T10:00:00Z",
     "last_threads": 2
@@ -106,6 +109,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `fixed_items` | object[] | Blockers successfully fixed |
 | `escalated_items` | object[] | Blockers that couldn't be fixed |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
+| `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines — vstack#728). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time (`submit-pr.md` § 2 step 1); the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
 | `pr_local_review` | object | Local pre-PR review tracking: `passes` (max 2 per submission) |
