@@ -100,7 +100,7 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
 
-The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: `4`). If `SLOT_BUDGET` is `0`, first check whether an earlier cycle already recorded a runtime demotion (§ 2.2 persistent-mode thread-limit recovery):
+The printed value is `SLOT_BUDGET` — the runtime's total concurrent agent-session budget, counting this primary session (`0` = unlimited; Codex collaboration runtime: MultiAgentV2's configurable default is `4` total including the primary — set the budget to the cap the machine config declares). If `SLOT_BUDGET` is `0`, first check whether an earlier cycle already recorded a runtime demotion (§ 2.2 persistent-mode thread-limit recovery):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.reviewer_slots_observed // 0'

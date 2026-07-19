@@ -312,7 +312,7 @@ assert_file_contains "$orch_skill" 'orch-env REVIEWER_SLOT_BUDGET 0' "orch skill
 assert_file_contains "$orch_skill" 'persistent when the budget allows, waves when it does not' "orch skill states the budget-conditional lifecycle policy"
 assert_file_contains "$orch_skill" 'never in reviewer session memory' "orch skill states the artifact-state invariant"
 assert_file_contains "$orch_skill" 'collab spawn failed: agent thread limit reached' "orch skill Codex note names the thread-limit error"
-assert_file_contains "$orch_skill" 'REVIEWER_SLOT_BUDGET = "4"' "orch skill Codex note sets the four-slot budget"
+assert_file_contains "$orch_skill" 'to the cap the machine config declares' "orch skill Codex note sets the budget to the config-declared cap"
 assert_file_contains "$orch_readme" 'REVIEWER_SLOT_BUDGET' "orch README documents the reviewer slot budget setting"
 assert_file_contains "$orch_development" '## Reviewer Slot Budget' "orch DEVELOPMENT carries the slot-budget design rationale"
 assert_file_contains "$state_schema" 'review_wave_done' "workflow-state schema documents wave completion tracking"
@@ -531,6 +531,47 @@ assert_file_contains "$qa_workflow" "targeted regression command reports numeric
 assert_file_contains "$orch_development" "if: \${{ !cancelled() && needs.<classifier>.result == 'success' }}" "orch DEVELOPMENT pins the classifier-consumer condition shape"
 assert_file_contains "$orch_development" 'skips any job whose `needs` include a skipped job' "orch DEVELOPMENT names the needs-chain skip-propagation hazard"
 assert_file_contains "$orch_development" 'extract the guard decision into a script with a truth-table test' "orch DEVELOPMENT requires guard logic validated as code"
+
+# vstack#739 — the Codex collaboration thread cap is MultiAgentV2's
+# CONFIGURABLE default (4 total including the primary), not a fixed runtime
+# property: `features.multi_agent_v2.max_concurrent_threads_per_session` in
+# ~/.codex/config.toml raises it. The legacy `agents.max_threads` is silently
+# ignored while MultiAgentV2 is active (openai/codex#33447, #33039), so docs
+# must name that silent-bypass hazard and the restart requirement, tell users
+# to set REVIEWER_SLOT_BUDGET to the config-declared cap, and cite completed
+# subagents holding slots (openai/codex#22779) as the mechanism behind
+# stale-slot accounting (vstack#701). No orch doc may still state the cap as
+# an inherent "four total" runtime property.
+assert_file_contains "$orch_skill" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch skill Codex note names the MultiAgentV2 cap config key"
+assert_file_contains "$orch_skill" 'MultiAgentV2 silently ignores it' "orch skill Codex note names the agents.max_threads silent-bypass hazard"
+assert_file_contains "$orch_skill" 'a running session keeps its old cap until restarted' "orch skill Codex note carries the restart requirement"
+assert_file_contains "$orch_development" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch DEVELOPMENT budget section names the cap config key"
+assert_file_contains "$orch_development" 'the legacy `agents.max_threads` is silently ignored while MultiAgentV2 is active' "orch DEVELOPMENT names the silently-ignored legacy key"
+assert_file_contains "$orch_development" 'whatever cap the machine config declares' "orch DEVELOPMENT sets the budget to the config-declared cap"
+assert_file_contains "$orch_development" 'openai/codex#22779' "orch DEVELOPMENT cites completed-subagent slot retention as the stale-slot mechanism"
+assert_file_contains "$orch_development" 'vstack#701' "orch DEVELOPMENT links the mechanism to the stale-slot accounting observations"
+assert_file_contains "$orch_readme" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch README budget row names the cap config key"
+for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$orch_skill" "$orch_readme" "$orch_development" "$state_schema"; do
+  assert_file_not_contains "$doc" 'four total' "$(basename "$doc") no longer asserts the Codex thread cap as fixed"
+done
+if [[ -f "$settings_example" ]]; then
+  assert_file_not_contains "$settings_example" 'four total' "settings example no longer asserts the Codex thread cap as fixed"
+  assert_file_contains "$settings_example" 'features.multi_agent_v2.max_concurrent_threads_per_session' "settings example names the cap config key"
+fi
+
+# vstack#740 — canonical branch-protection pattern: protected branches
+# require exactly ONE stable aggregate commit-status context published by a
+# truth-table publisher job (hyprtrade #339 origin shape: selected families
+# succeed, excluded families skipped, unexplained skips fail, fail-closed on
+# publication errors). Raw job names in branch protection are a standing
+# rename hazard (admin required-checks sync forced at merge time on every
+# ci.yml retune — observed on memsira 2026-07-19); the migration path is
+# publisher job -> single aggregate context -> drop raw names.
+assert_file_contains "$orch_development" 'exactly ONE stable aggregate commit-status context' "orch DEVELOPMENT pins the single-aggregate-context rule"
+assert_file_contains "$orch_development" 'truth-table publisher job' "orch DEVELOPMENT requires the truth-table publisher job"
+assert_file_contains "$orch_development" 'an unexplained skip is a failure, and publication/API errors fail closed' "orch DEVELOPMENT pins the publisher truth-table shape"
+assert_file_contains "$orch_development" 'standing rename hazard' "orch DEVELOPMENT names the raw-job-name rename hazard"
+assert_file_contains "$orch_development" 'add the publisher job → flip protection to the single aggregate context → drop the raw job names' "orch DEVELOPMENT carries the one-line migration path"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

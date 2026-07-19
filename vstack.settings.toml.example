@@ -54,8 +54,12 @@ REVIEWER_SLOT_BUDGET = "0"
 # persists through fix/re-review cycles. When the reviewer set exceeds the
 # available slots (budget minus the primary minus live dev/QA sessions),
 # review workflows run reviewers in bounded sequential waves, retiring each
-# completed session to release its slot. The Codex collaboration runtime
-# allows four total agent threads -> set "4".
+# completed session to release its slot. The Codex collaboration runtime's
+# cap is MultiAgentV2's configurable default of 4 total threads including the
+# primary (features.multi_agent_v2.max_concurrent_threads_per_session in
+# ~/.codex/config.toml; the legacy agents.max_threads is silently ignored
+# under V2, and a session must restart to pick up a change) -> set whatever
+# cap the machine config declares ("4" on a default config).
 
 # Reviewer merge gate mode: "approval" requires a GitHub-native review
 # approval before merge (orch submit-pr/merge-pr); "review" requires a formal
