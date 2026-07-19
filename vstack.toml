@@ -73,6 +73,7 @@ generalist = [
     "github",
     "dev",
     "linear",
+    "dep-radar",
 ]
 
 planner = [
