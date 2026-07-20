@@ -23,13 +23,23 @@ deserves a product-owner decision.
 
 ## The policy contract
 
-- **Auto-applied** (one PR per surface, merged only when checks pass):
+- **Auto-with-fixes** (one PR per surface, merged only when checks pass):
   security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from
-  official manifests only; SDK bumps with clean changelogs; internal
-  improvements with no user-facing behavior change.
-- **Reported, never auto-applied**: new user-facing capabilities; breaking or
-  major bumps; vendored-fork rebases; model swaps.
-- Uncertain findings are always reported, never auto-applied.
+  official manifests only; and — the bias-to-upgrade default — SDK,
+  agent-tooling, and runtime-binary bumps, npm/cargo majors, and
+  bundled-extension fork syncs. For those the skill does the bump and fixes its
+  fallout (API migrations, re-vendored bridges, tests, CI) in the same
+  per-surface workstream, deferring only on a strong concrete blocker.
+- **Reported, never auto-applied — exactly three things**: model-weight swaps;
+  changes to durable/recorded data scope; and anything an inventory owner-rule
+  explicitly demotes. Nothing else is report-by-default.
+- Uncertain findings are attempted, not deferred: the skill tries the upgrade
+  and reports only what actually failed, with error output.
+- Every pinned surface must have a wired upstream check command; a surface
+  without one is an inventory defect the run fixes.
+- True patched vendor forks of large upstreams stay report-tier; a
+  bundled-extension fork (script-synced, provenance-tracked) is auto-with-fixes
+  when your full test suite gates the sync.
 - Every run ends with a dated report, even an idle one.
 - Your inventory's owner rules can make the skill more conservative
   (demote auto → report) but never less (a rule cannot promote report → auto).

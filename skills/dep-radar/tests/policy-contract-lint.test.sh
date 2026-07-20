@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Doc-contract lint for the dep-radar operating policy.
 #
-# The skill's value rests on a maintainer-approved contract: what may be
-# auto-applied, what must only ever be reported, uncertain→report, one PR per
-# surface, and the demote-only owner-rule. A future edit that softens any of
-# those tiers (e.g. "may promote report→auto", batching surfaces into one PR)
-# would silently turn a safe refresh loop into an unsafe one. This lint pins
-# each contract clause in SKILL.md, and proves its own teeth by mutating a
-# copy of the doc to violate each rule and asserting the check catches it.
+# The skill's value rests on a maintainer-approved contract. Per owner
+# directive (vstack #765) the tiers now bias toward upgrading: SDKs, agent
+# tooling, runtime binaries, npm/cargo majors, and bundled-extension fork syncs
+# are auto-with-fixes; the report tier narrows to exactly three things
+# (model-weight swaps, durable/recorded data-scope changes, owner-rule
+# demotions); uncertain means attempt-the-upgrade-and-report-failures, not
+# defer. The orthogonal safety rails are unchanged: one PR per surface, never
+# batch, every surface has a wired upstream check, the demote-only owner-rule,
+# and a dated report every run. A future edit that re-broadens the report tier,
+# reverts uncertain to defer-by-default, promotes report→auto, or batches
+# surfaces would drift the contract off the owner's intent. This lint pins each
+# contract clause in SKILL.md, and proves its own teeth by mutating a copy of
+# the doc to violate each rule and asserting the check catches it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,12 +34,14 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # canonical SKILL.md carries on a single line, so plain grep -F is exact.
 check_contract() {
   local f="$1" missing=""
-  grep -qF 'AUTO-apply: security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK bumps with clean changelogs; internal improvements with no user-facing behavior change.' "$f" \
+  grep -qF 'AUTO-with-fixes (default): security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo'\''s full test suite gates the sync.' "$f" \
     || missing="$missing auto-tier-list"
-  grep -qF 'REPORT (never auto): new user-facing capabilities; breaking/major bumps; vendored-fork rebases; model swaps.' "$f" \
+  grep -qF 'REPORT (never auto): model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default.' "$f" \
     || missing="$missing report-tier-list"
-  grep -qF 'Uncertain → report.' "$f" \
-    || missing="$missing uncertain-to-report"
+  grep -qF 'Uncertain → attempt the upgrade; report only what actually failed, with error output.' "$f" \
+    || missing="$missing uncertain-attempt-upgrade"
+  grep -qF 'Every pinned surface must have a wired upstream check command' "$f" \
+    || missing="$missing upstream-check-required"
   grep -qF 'Every run ends with a dated report.' "$f" \
     || missing="$missing dated-report-every-run"
   grep -qF 'never promote report→auto' "$f" \
@@ -98,16 +106,20 @@ fi
 # --- Teeth: each violated rule must be caught -------------------------------
 
 expect_caught auto-tier-list \
-  "$(mutate no-auto '/AUTO-apply: security fixes/d')" \
-  "deleting the AUTO-apply tier list is caught"
+  "$(mutate no-auto '/AUTO-with-fixes (default): security fixes/d')" \
+  "deleting the AUTO-with-fixes tier list is caught"
 
 expect_caught report-tier-list \
   "$(mutate no-report '/REPORT (never auto)/d')" \
   "deleting the REPORT tier list is caught"
 
-expect_caught uncertain-to-report \
-  "$(mutate uncertain-flip 's/Uncertain → report\./Uncertain → auto-apply./')" \
-  "flipping uncertain→report to uncertain→auto is caught"
+expect_caught uncertain-attempt-upgrade \
+  "$(mutate uncertain-flip 's/Uncertain → attempt the upgrade.*/Uncertain → report./')" \
+  "reverting uncertain→attempt-the-upgrade back to uncertain→report (defer-by-default) is caught"
+
+expect_caught upstream-check-required \
+  "$(mutate no-upstream-check '/Every pinned surface must have a wired upstream check command/d')" \
+  "deleting the every-surface-needs-an-upstream-check rule is caught"
 
 expect_caught dated-report-every-run \
   "$(mutate no-dated '/Every run ends with a dated report/d')" \
