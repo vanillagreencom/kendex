@@ -2,6 +2,8 @@
 
 All review/QA agents output JSON to `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`.
 
+`{agent}` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
+
 Create the JSON artifact with the active harness file-write/edit tool. In Codex, use `apply_patch` to add or update the target file under `tmp/`. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes for review artifacts.
 
 ## Schema

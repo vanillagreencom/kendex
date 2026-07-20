@@ -32,7 +32,7 @@ Code-review, whole-codebase review, and QA-review workflows plus the structured-
 
 | Schema | Purpose |
 |--------|---------|
-| `schemas/review-finding.md` | Canonical JSON output shape for any review or QA verdict. Saved to `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`. |
+| `schemas/review-finding.md` | Canonical JSON output shape for any review or QA verdict. Saved to `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix — `reviewer-security` writes `review-reviewer-security-20260720-141530.json`, never `review-security-…`. |
 
 ## General Review Ethos
 

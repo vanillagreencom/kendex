@@ -117,6 +117,7 @@ targeted regression output.
 ### 2.6 Return JSON Report
 
 1. **Build JSON** per [`../schemas/review-finding.md`](../schemas/review-finding.md), filename `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
+   - `[AGENT]` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
    - Standard fields: `agent`, `timestamp`, `verdict`, `summary`, `blockers[]`, `suggestions[]`
    - If performance QA agent: include `benchmark_commit` from § 2.5
    - `qa_metadata.[agent_type]` populated per your agent (project-configurable):
@@ -131,7 +132,7 @@ targeted regression output.
    - `action_required`: 1+ items in `blockers[]`
    - `pass`: `blockers[]` empty
 
-2. **Create the artifact** at `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact path. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes.
+2. **Create the artifact** at `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` — `[AGENT]` in full, prefix included (`reviewer-security` → `review-reviewer-security-20260720-141530.json`), never shortened to `review-security-…` — with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact path. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes.
 
 3. **Return the JSON** in your response so the calling agent can validate the same content:
 
@@ -141,7 +142,7 @@ targeted regression output.
 
 Send this result to the orchestrator as an agent-to-agent message. **Writing the JSON to disk is not a return** — the orchestrator does not poll the filesystem, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
 
-**Return exactly**:
+**Return exactly** (`[AGENT]` and `[AGENT_NAME]` are both your full agent name including the `reviewer-` prefix — `reviewer-security` reports `agent: reviewer-security` and the file `review-reviewer-security-20260720-141530.json`):
 
 <output_format>
 QA_COMPLETE

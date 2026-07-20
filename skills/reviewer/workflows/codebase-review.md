@@ -49,6 +49,8 @@ Read the orch skill's recommendation-bias patterns if available. Apply its actio
 
 Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Target artifact path: `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json`.
 
+`[AGENT]` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-codebase-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-codebase-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
+
 Artifact write path:
 - Create `[WORKTREE_PATH]/tmp` with `mkdir -p [WORKTREE_PATH]/tmp` if it does not exist.
 - Write the JSON with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact artifact path.
@@ -56,7 +58,7 @@ Artifact write path:
 
 Send this result to the orchestrator as an agent-to-agent message. **Writing the JSON to disk is not a return**.
 
-**Return exactly**:
+**Return exactly** (`[AGENT]` is your full agent name including the `reviewer-` prefix, e.g. `review-reviewer-security-codebase-20260720-141530.json`):
 
 <output_format>
 Verdict: [pass|action_required]
@@ -71,7 +73,7 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json
 ## Constraints
 
 **Do NOT**:
-- Modify project files other than the required `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` review artifact
+- Modify project files other than the required `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` review artifact (`[AGENT]` in full, prefix included — `reviewer-security` → `review-reviewer-security-codebase-…`)
 - Modify issue tracker state
 - Create commits or push changes
 - Call other subagents

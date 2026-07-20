@@ -58,6 +58,8 @@ Items listed as fixed or escalated are already resolved — do NOT re-report the
 
 Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Target artifact path: `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
 
+`[AGENT]` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
+
 Artifact write path:
 - Create `[WORKTREE_PATH]/tmp` with `mkdir -p [WORKTREE_PATH]/tmp` if it does not exist.
 - Write the JSON with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact artifact path.
@@ -71,7 +73,7 @@ Artifact write path:
 
 Send this result to the orchestrator as an agent-to-agent message. **Writing the JSON to disk is not a return** — the orchestrator does not poll the filesystem, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
 
-**Return exactly** (return to orchestrator):
+**Return exactly** (return to orchestrator; `[AGENT]` is your full agent name including the `reviewer-` prefix, e.g. `review-reviewer-security-20260720-141530.json`):
 
 <output_format>
 Verdict: [pass|action_required]
