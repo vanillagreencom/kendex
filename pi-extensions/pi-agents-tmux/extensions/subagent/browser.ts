@@ -10,7 +10,7 @@ import { ensurePersistentPane, paneExists, stopPersistentPane, tmux } from "./pa
 import { readPaneRegistry, readTaskRegistry } from "./tasks.js";
 import { loadAgentPaneStatuses } from "./browser/shared.js";
 import { animateSpinnersEnabled } from "./settings.js";
-import { sortedMonitorRecords, taskNumberById } from "./task-records.js";
+import { liveDashboardSignature, mergeLiveDashboardItems, sortedMonitorRecords, taskNumberById } from "./task-records.js";
 import {
 	AGENTS_BROWSER_MAX_HEIGHT,
 	AGENTS_BROWSER_WIDTH,
@@ -42,6 +42,7 @@ import {
 	clampMonitorUiToRows,
 	monitorTreeRows,
 	renderMonitorTree,
+	restoreMonitorSelectionByKey,
 	selectableMonitorRows,
 	selectedMonitorRow,
 	type MonitorSectionKind,
@@ -80,6 +81,7 @@ export {
 	monitorTaskRowLabel,
 	monitorTreeRows,
 	renderMonitorTree,
+	restoreMonitorSelectionByKey,
 	type MonitorSectionKind,
 	type MonitorSessionGroup,
 	type MonitorTreeRow,
@@ -102,7 +104,7 @@ export {
 	dashboardDisplayLabels,
 } from "./browser/dashboard-integration.js";
 export { openTraceViewer } from "./browser/trace-viewer.js";
-export { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
+export { liveDashboardSignature, loadTaskRegistrySync, mergeLiveDashboardItems, taskNumberById } from "./task-records.js";
 
 function renderMonitorTabBody(
 	records: PaneTaskRecord[],
@@ -197,10 +199,19 @@ function createAgentsBrowserComponent(
 	let closed = false;
 	let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 	const spinnersAnimated = () => animateSpinnersEnabled(cwd);
-	const animationTimer = getActiveItems().some((item) => isDashboardAnimatingStatus(item.status)) ? setInterval(() => {
-		if (!closed && spinnersAnimated() && getActiveItems().some((item) => isDashboardAnimatingStatus(item.status))) requestRender();
-	}, 120) : undefined;
-	animationTimer?.unref?.();
+	// Single tick for both concerns: pick up live lifecycle changes (a new agent, a
+	// finished one) and animate spinners. It renders only when something moved, so
+	// an idle pop-up stays still. Always armed — agents can start after the pop-up
+	// opened, when nothing was animating yet.
+	const liveTimer = setInterval(() => {
+		if (closed) return;
+		if (refreshMonitorView()) {
+			requestRender();
+			return;
+		}
+		if (spinnersAnimated() && getActiveItems().some((item) => isDashboardAnimatingStatus(item.status))) requestRender();
+	}, 120);
+	liveTimer.unref?.();
 	const scheduleResizeRender = () => {
 		if (closed) return;
 		requestRender();
@@ -215,7 +226,7 @@ function createAgentsBrowserComponent(
 		closed = true;
 		if (resizeTimer) clearTimeout(resizeTimer);
 		resizeTimer = undefined;
-		if (animationTimer) clearInterval(animationTimer);
+		clearInterval(liveTimer);
 		process.off("SIGWINCH", scheduleResizeRender);
 	};
 	const finish = (action: AgentBrowserAction) => {
@@ -234,20 +245,45 @@ function createAgentsBrowserComponent(
 		if (ui.selected >= ui.scroll + layout.listRows) ui.scroll = ui.selected - layout.listRows + 1;
 		ui.scroll = Math.max(0, Math.min(ui.scroll, Math.max(0, list.length - layout.listRows)));
 	};
-	const monitorRecords = sortedMonitorRecords(taskRegistry);
-	const monitorGroups = buildMonitorSessionGroups(monitorRecords);
 	const monitorCollapsedSections = new Set<MonitorSectionKind>();
 	const monitorCollapsedSessions = new Set<string>();
-	const currentMonitorRows = () => monitorTreeRows(monitorGroups, monitorCollapsedSections, monitorCollapsedSessions);
 	const monitorCache = new Map<string, MonitorDetailEntry>();
-	const monitorTaskNumbers = taskNumberById(monitorRecords);
+	// `taskRegistry` is the disk snapshot taken when the pop-up opened. The live
+	// dashboard items are overlaid on it so an open pop-up tracks lifecycle changes
+	// instead of the frozen snapshot, and agrees with the statusline/mini-dashboard.
+	const buildMonitorView = (items: SubagentDashboardItem[]) => {
+		const records = sortedMonitorRecords(mergeLiveDashboardItems(taskRegistry, items));
+		return { groups: buildMonitorSessionGroups(records), records, taskNumbers: taskNumberById(records) };
+	};
+	let monitorSignature = liveDashboardSignature(getActiveItems());
+	let monitorView = buildMonitorView(getActiveItems());
+	const currentMonitorRows = () => monitorTreeRows(monitorView.groups, monitorCollapsedSections, monitorCollapsedSessions);
+	// Rebuilds only when live lifecycle state actually moved, so idle ticks neither
+	// re-sort nor repaint. Selection is restored by row key, not index, so rows
+	// appearing or moving above the cursor do not drag the highlight with them.
+	const refreshMonitorView = (): boolean => {
+		const items = getActiveItems();
+		const signature = liveDashboardSignature(items);
+		if (signature === monitorSignature) return false;
+		monitorSignature = signature;
+		const previousKey = selectedMonitorRow(currentMonitorRows(), ui)?.key;
+		const previousStatuses = new Map(monitorView.records.map((record) => [record.taskId, record.status]));
+		monitorView = buildMonitorView(items);
+		// Detail panes cache per task; drop the ones whose lifecycle moved so the
+		// inspector reloads instead of serving a stale trace.
+		for (const record of monitorView.records) {
+			if (previousStatuses.has(record.taskId) && previousStatuses.get(record.taskId) !== record.status) monitorCache.delete(record.taskId);
+		}
+		restoreMonitorSelectionByKey(ui, currentMonitorRows(), previousKey);
+		return true;
+	};
 	const loadMonitorRecord = (record: PaneTaskRecord | undefined, group?: MonitorSessionGroup) => {
 		if (!record) return;
 		const cacheKey = record.taskId;
 		const entry = monitorCache.get(cacheKey);
 		if (entry?.items || entry?.loading || entry?.error) return;
 		monitorCache.set(cacheKey, { loading: true });
-		void traceViewerItems(record, monitorTaskNumbers.get(record.taskId), discovery, group?.sessionNumber).then((items) => {
+		void traceViewerItems(record, monitorView.taskNumbers.get(record.taskId), discovery, group?.sessionNumber).then((items) => {
 			monitorCache.set(cacheKey, { items });
 			requestRender();
 		}).catch((error) => {
@@ -477,11 +513,12 @@ function createAgentsBrowserComponent(
 		const bodyWidth = agentFrameContentWidth(safeWidth);
 		const tabLine = renderAgentBrowserTabs(ui.tab, bodyWidth, theme);
 		if (ui.tab === "monitor") {
+			refreshMonitorView();
 			clampMonitor();
 			loadMonitorSelection();
 			const rows = currentMonitorRows();
 			const footer = monitorFooterHint(theme);
-			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout, spinnersAnimated()), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
+			const lines = [tabLine, "", ...renderMonitorTabBody(monitorView.records, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout, spinnersAnimated()), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
 		clamp();

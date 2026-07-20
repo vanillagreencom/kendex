@@ -191,6 +191,15 @@ function selectedMonitorRowIndex(rows: MonitorTreeRow[], ui: AgentBrowserUiState
 	return selected ? rows.findIndex((row) => row.key === selected.key) : -1;
 }
 
+// Rows are rebuilt whenever live lifecycle state moves. Re-anchoring the cursor to
+// the row key it was on keeps the highlight on the same task when rows appear,
+// disappear, or reorder above it; index-based selection would drift instead.
+export function restoreMonitorSelectionByKey(ui: AgentBrowserUiState, rows: MonitorTreeRow[], key: string | undefined): void {
+	if (key === undefined) return;
+	const index = selectableMonitorRows(rows).findIndex((row) => row.key === key);
+	if (index >= 0) ui.monitorSelected = index;
+}
+
 export function clampMonitorUiToRows(ui: AgentBrowserUiState, rows: MonitorTreeRow[], listRows: number): void {
 	const selectable = selectableMonitorRows(rows);
 	ui.monitorSelected = Math.max(0, Math.min(ui.monitorSelected, Math.max(0, selectable.length - 1)));

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { taskRegistryPath } from "./paths.js";
-import type { PaneTaskRecord, PaneTaskRegistry, PaneTaskStatus, UsageStats } from "./types.js";
+import type { PaneTaskRecord, PaneTaskRegistry, PaneTaskStatus, SubagentDashboardItem, SubagentDashboardStatus, UsageStats } from "./types.js";
 
 export type MonitorSessionType = "pane" | "bg-lane" | "bg-one-shot";
 
@@ -59,6 +59,55 @@ export function sortedMonitorRecords(registry: PaneTaskRegistry): PaneTaskRecord
 	return Object.values(registry)
 		.filter((record) => record.taskId && record.agent)
 		.sort((a, b) => recordTimestampLocal(b) - recordTimestampLocal(a));
+}
+
+export function monitorStatusFromDashboard(status: SubagentDashboardStatus): PaneTaskStatus {
+	// `waiting` only exists on the dashboard; the registry models that as `queued`.
+	return status === "waiting" ? "queued" : status;
+}
+
+// One live lifecycle fingerprint for the whole dashboard item set. Cheap enough to
+// compare on a UI tick, and changes exactly when a monitor row would need to move.
+export function liveDashboardSignature(items: SubagentDashboardItem[]): string {
+	return items
+		.map((item) => `${item.taskId}|${item.status}|${item.updatedAt ?? ""}|${item.completedAt ?? ""}`)
+		.sort()
+		.join("|");
+}
+
+// `tasks.json` is a disk snapshot; `dashboardState.items` is the authoritative
+// in-memory lifecycle view the statusline and mini-dashboard render from. Overlay
+// live items on the snapshot so all three surfaces agree: live wins on lifecycle
+// fields, the snapshot keeps completion detail (summary/files/validation/notes)
+// that never reaches a dashboard item, and history records the dashboard has
+// dropped stay visible.
+export function mergeLiveDashboardItems(registry: PaneTaskRegistry, items: SubagentDashboardItem[]): PaneTaskRegistry {
+	if (items.length === 0) return registry;
+	const merged: PaneTaskRegistry = { ...registry };
+	for (const item of items) {
+		if (!item.taskId || !item.agent) continue;
+		const record = merged[item.taskId];
+		merged[item.taskId] = {
+			...record,
+			taskId: item.taskId,
+			agent: item.agent,
+			task: item.task ?? record?.task ?? "",
+			status: monitorStatusFromDashboard(item.status),
+			kind: item.kind ?? record?.kind,
+			paneId: item.paneId ?? record?.paneId,
+			sessionKey: item.sessionKey ?? record?.sessionKey,
+			sessionMode: item.sessionMode ?? record?.sessionMode,
+			transcriptPath: item.transcriptPath ?? record?.transcriptPath,
+			deliverAs: item.deliverAs ?? record?.deliverAs,
+			usage: item.usage ?? record?.usage,
+			model: item.model ?? record?.model,
+			effort: item.effort ?? record?.effort,
+			createdAt: record?.createdAt ?? item.startedAt ?? item.updatedAt,
+			updatedAt: item.updatedAt ?? record?.updatedAt,
+			completedAt: item.completedAt ?? record?.completedAt,
+		};
+	}
+	return merged;
 }
 
 export function taskNumberById(records: PaneTaskRecord[]): Map<string, number> {
