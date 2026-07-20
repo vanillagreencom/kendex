@@ -16,6 +16,7 @@ import {
 	installSkillInvocationRenderer,
 	installUserMessageRenderer,
 } from "./tool-renderer/messages.js";
+import { installLiveSettingsRefresh } from "./tool-renderer/live-settings.js";
 import { recordProjectTrust, settingBoolean } from "./tool-renderer/settings.js";
 import { registerStackEvents } from "./tool-renderer/stack.js";
 import { registerBash, registerEdit, registerRead, registerReadOnly, registerWrite } from "./tool-renderer/tools.js";
@@ -31,6 +32,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 
 	registerStackEvents(pi);
 	installToolExecutionRendererPatch(pi);
+	installLiveSettingsRefresh(pi);
 	installToolChromePatch();
 	registerToolChromeEvents(pi);
 	installWorkingLoaderAlignmentPatch();

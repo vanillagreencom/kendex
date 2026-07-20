@@ -15,6 +15,7 @@ import {
 	suppressReadOnlyBashDiffOutput,
 	type StructuredDiff,
 } from "./diff.js";
+import { renderReadImages } from "./images.js";
 import {
 	bashLiveOutputDelayMs,
 	bashLiveTailLines,
@@ -154,7 +155,7 @@ export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 			const count = lineCount(content);
 			const summary = readResultSummary(result, context?.args ?? {}, theme);
 			const mode = readOutputMode(context?.cwd ?? cwd);
-			if (mode === "hidden") return makeEmpty();
+			if (mode === "hidden") return renderReadImages(makeEmpty(), result, expanded, theme, context, cwd);
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
 			if (mode === "preview" && expanded && content) {
 				const limit = Math.max(1, Math.floor(settingNumber("readPreviewLines", 80, context?.cwd)));
@@ -164,7 +165,7 @@ export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 					.join("\n")}`;
 				if (count > limit) text += `\n${treeConnector(theme, "│")}${theme.fg("muted", `… ${count - limit} more line(s)`)}`;
 			}
-			return makeTruncatedLines(text);
+			return renderReadImages(makeTruncatedLines(text), result, expanded, theme, context, cwd);
 		},
 	});
 }

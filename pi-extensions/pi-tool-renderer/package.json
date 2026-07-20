@@ -276,6 +276,20 @@
           "apply": "live"
         },
         {
+          "key": "showReadImages",
+          "label": "Read image display",
+          "description": "Image results when Pi terminal.showImages is false: off hides them, always shows them in read output, and on shows them only while tools are expanded. Changes apply immediately. Floating overlays temporarily hide images while preserving their layout space.",
+          "type": "enum",
+          "enumValues": [
+            "off",
+            "always",
+            "on"
+          ],
+          "default": "off",
+          "category": "Read",
+          "apply": "live"
+        },
+        {
           "key": "searchPreviewLines",
           "label": "Expanded search/list preview lines",
           "description": "Head lines shown for grep/find/ls when expanded.",

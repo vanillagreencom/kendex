@@ -121,12 +121,20 @@ export function stackShell(cwd?: string): { renderShell?: "self" } {
 }
 
 export type ReadOutputMode = "hidden" | "summary" | "preview";
+export type ReadImageMode = "off" | "always" | "on";
 export type SearchOutputMode = "hidden" | "count" | "preview";
 export type BashOutputMode = "hidden" | "summary" | "opencode" | "preview";
 export type McpOutputMode = "hidden" | "summary" | "preview";
 
 export function readOutputMode(cwd?: string): ReadOutputMode {
 	return settingEnum("readOutputMode", ["hidden", "summary", "preview"] as const, "preview", cwd);
+}
+
+export function readImageMode(cwd?: string): ReadImageMode {
+	const value = readVstackConfig(cwd).showReadImages;
+	if (value === true || value === "on") return "on";
+	if (value === "always") return "always";
+	return "off";
 }
 
 export function searchOutputMode(cwd?: string): SearchOutputMode {

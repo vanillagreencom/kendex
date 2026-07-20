@@ -22,6 +22,8 @@ import {
 	componentDefinesRenderer,
 } from "./generic.js";
 import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
+import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "./overlay.js";
+import { trackToolExecutionComponent } from "./live-settings.js";
 import { glyphs } from "./glyphs.js";
 import { subtleRule } from "./theme.js";
 
@@ -44,6 +46,10 @@ export function withCallTheme(component: any, renderer: (args: any, theme: any, 
 export function withResultTheme(component: any, renderer: (result: any, options: any, theme: any, context: any) => any): (result: any, options: any, theme: any, context: any) => any {
 	return function renderResultWithRememberedTheme(this: any, result: any, options: any, theme: any, context: any) {
 		rememberToolChromeTheme(component, theme);
+		trackToolExecutionComponent(component);
+		if (context && typeof context === "object" && typeof component?.ui?.hasOverlay === "function") {
+			context[TOOL_RENDER_OVERLAY_CHECK_SYMBOL] = () => component.ui.hasOverlay();
+		}
 		return renderer.call(this, result, options, theme, context);
 	};
 }
@@ -130,11 +136,17 @@ function shouldOmitBottomToolChromeRule(core: string[]): boolean {
 	return core.some((line) => /(?:└─+(?:┴─+)?┘|\+-+(?:\+-+)?\+)/.test(stripAnsi(line ?? "")));
 }
 
+function isTerminalImageLine(line: string): boolean {
+	return line.includes("\x1b_G") || line.includes("\x1b]1337;File=") || line.includes(RESERVED_IMAGE_ROW_MARKER);
+}
+
 function renderedToolCore(rendered: string[], width: number, cwd?: string): string[] | undefined {
 	let start = 0;
 	while (start < rendered.length && stripAnsi(rendered[start] ?? "").trim().length === 0) start++;
 	let end = rendered.length - 1;
-	while (end >= start && stripAnsi(rendered[end] ?? "").trim().length === 0) end--;
+	if (!rendered.some(isTerminalImageLine)) {
+		while (end >= start && stripAnsi(rendered[end] ?? "").trim().length === 0) end--;
+	}
 	if (start > end) return undefined;
 	const renderWidth = stableRenderWidth(width, cwd);
 	return rendered.slice(start, end + 1).flatMap((line) => {
