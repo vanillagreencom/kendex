@@ -573,5 +573,35 @@ assert_file_contains "$orch_development" 'an unexplained skip is a failure, and 
 assert_file_contains "$orch_development" 'standing rename hazard' "orch DEVELOPMENT names the raw-job-name rename hazard"
 assert_file_contains "$orch_development" 'add the publisher job → flip protection to the single aggregate context → drop the raw job names' "orch DEVELOPMENT carries the one-line migration path"
 
+# vstack#751 — the Codex collaboration `task_name` schema accepts only
+# lowercase letters, digits, and underscores, so canonical hyphenated agent
+# names (reviewer-arch) are rejected BEFORE launch, making a literal
+# first-attempt spawn impossible. The documented first attempt translates
+# hyphens to underscores in the runtime task_name only (`agent_type` stays
+# the canonical generated-agent name), attempted BEFORE any `worker`
+# fallback — the fallback ladder remains for genuinely missing/unexposed
+# agent types. Identity everywhere orch records it (workflow-state keys,
+# report artifacts, delegation records) stays the canonical hyphenated
+# name; the underscore form is runtime metadata
+# (`review_agent_runtime_types[...].task_name`).
+assert_file_contains "$orch_skill" 'accepts only lowercase letters, digits, and underscores (`[a-z0-9_]`) and rejects hyphenated names before launch (vstack#751)' "orch skill Codex note names the task_name schema constraint"
+assert_file_contains "$orch_skill" 'translating hyphens to underscores in the runtime `task_name` only (`reviewer-arch` → `task_name=reviewer_arch`' "orch skill pins the hyphens→underscores task_name-only translation"
+assert_file_contains "$orch_skill" 'Attempt this translation before any `worker` fallback' "orch skill orders translation before the worker fallback"
+assert_file_contains "$orch_skill" 'a `task_name` schema rejection is a naming mismatch, not a missing agent type' "orch skill separates schema rejection from missing agent types"
+assert_file_contains "$orch_skill" 'the underscore `task_name` is a runtime detail recorded, like the worker fallback, in runtime metadata (`review_agent_runtime_types[reviewer-name].task_name`)' "orch skill records the translated task_name as runtime metadata only"
+for doc in "$review_pr_workflow" "$review_workflow"; do
+  assert_file_contains "$doc" 'The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751)' "$(basename "$doc") names the task_name schema constraint"
+  assert_file_contains "$doc" '(`reviewer-arch` → `task_name=reviewer_arch`, `agent_type` unchanged)' "$(basename "$doc") pins the task_name-only translation example"
+  assert_file_contains "$doc" 'attempt that translation before any `worker` fallback' "$(basename "$doc") orders translation before the worker fallback"
+  assert_file_contains "$doc" 'record the runtime `task_name` under `review_agent_runtime_types[reviewer-name].task_name`' "$(basename "$doc") records the translated task_name as runtime metadata"
+done
+assert_file_contains "$review_pr_workflow" 'workflow-state keys and reports always use the canonical hyphenated name' "review-pr keeps the canonical hyphenated name in state and reports"
+assert_file_contains "$review_workflow" 'state keys and reports always use the canonical hyphenated name' "review keeps the canonical hyphenated name in state and reports"
+assert_file_contains "$dev_start_workflow" 'hyphens translated to underscores in the runtime `task_name` only (`agent_type` unchanged), attempted before any `worker` fallback' "dev-start applies the task_name translation before the worker fallback"
+assert_file_contains "$dev_start_workflow" 'rejects hyphenated names before launch (vstack#751)' "dev-start cites the schema-rejection origin"
+assert_file_contains "$dev_start_workflow" '`child_sessions` keys, reports, and delegation records keep the canonical hyphenated name' "dev-start keeps the canonical hyphenated name in state and records"
+assert_file_contains "$state_schema" '{name: {agent_type, task_name?, fallback}}' "workflow-state schema extends reviewer runtime metadata with task_name"
+assert_file_contains "$state_schema" '"task_name": "security_review"' "workflow-state schema example shows a translated runtime task_name"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

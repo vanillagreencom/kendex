@@ -28,7 +28,7 @@ Persistent state file for orch workflows. Survives context compaction.
     "doc-review": "agent_rev789"
   },
   "review_agent_runtime_types": {
-    "security-review": { "agent_type": "security-review", "fallback": null },
+    "security-review": { "agent_type": "security-review", "task_name": "security_review", "fallback": null },
     "doc-review": { "agent_type": "worker", "fallback": "spawn_rejected_or_unavailable" }
   },
   "review_wave_done": ["security-review"],
@@ -96,7 +96,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}`. `status` is `"active"` while the session is live (`dev-start.md` § 2 stamps it at spawn) and `"closed"` once the caller's shutdown step retires it (`start-worktree.md` § 5.5). Reviewer slot accounting treats a record with a missing `status` field as active — legacy records predate the field (vstack#698) |
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
-| `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, fallback}}`; records Codex `worker` fallback without changing logical keys |
+| `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records Codex `worker` fallback and, when the Codex `task_name` schema (`[a-z0-9_]` only) forced a hyphens→underscores runtime task name (vstack#751), the translated `task_name` — without changing logical keys |
 | `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave (`review-pr.md` § 2.2); the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
 | `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit (`review-pr.md` § 2.2 persistent-mode thread-limit recovery, vstack#715). While set, § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
