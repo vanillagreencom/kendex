@@ -57,6 +57,12 @@
 #  nudge1-5: PR_REVIEW_NUDGE/PR_REVIEW_NUDGE_SECS — once per head, clock reset
 #      on head change, empty-body fallback to reviewer re-request (or silence
 #      with nobody to re-request), approval-mode parity
+#  transient1-4: transient GitHub API failures (vstack#748) — an HTTP 503
+#      from the reviews listing (or approval-mode pr view) is absorbed with
+#      backoff inside the wait budget and reported as transient_api_errors
+#      on the eventual success; a persistent 503 becomes terminal only when
+#      the budget expires, preserving the original error message plus the
+#      count; an HTTP 404 stays immediately terminal with no count
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -182,6 +188,27 @@ case "${1:-}" in
     if [[ "${2:-}" == repos/*/pulls/*/reviews ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       mode="${STUB_REVIEWS_MODE:-none}"
+      if [[ "$mode" == "flaky_503" ]]; then
+        count=0
+        if [[ -f "${STUB_REVIEWS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_REVIEWS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_REVIEWS_COUNT_FILE"
+        if [[ "$count" -le 2 ]]; then
+          echo "HTTP 503: No server is currently available to service your request." >&2
+          exit 1
+        fi
+        mode="commented_at_head"
+      fi
+      if [[ "$mode" == "http_503" ]]; then
+        echo "HTTP 503: No server is currently available to service your request." >&2
+        exit 1
+      fi
+      if [[ "$mode" == "http_404" ]]; then
+        echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1/reviews)" >&2
+        exit 1
+      fi
       if [[ "$mode" == "reviewed_later" ]]; then
         count=0
         if [[ -f "${STUB_REVIEWS_COUNT_FILE:?}" ]]; then
@@ -305,6 +332,14 @@ case "${1:-}" in
       fi
       if [[ "$*" == *reviewDecision* ]]; then
         mode="${STUB_APPROVAL_MODE:-none}"
+        if [[ "$mode" == "approved_after_503" ]]; then
+          count="$(_bump_count)"
+          if [[ "$count" -le 2 ]]; then
+            echo "HTTP 503: No server is currently available to service your request." >&2
+            exit 1
+          fi
+          mode="approved_decision"
+        fi
         if [[ "$mode" == "approved_later" ]]; then
           count="$(_bump_count)"
           if [[ "$count" -lt 2 ]]; then
@@ -1038,6 +1073,61 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "nudge5: approval-mode silent wait still times out" "$stderr"
 assert_eq "$(nudge_log_lines "$nudge_log")" "1" "nudge5: approval mode nudges once per head" "$stderr"
+
+echo "=== approval-wait transient GitHub API errors (vstack#748) ==="
+
+# Transient 1: the reviews listing 503s twice, then recovers — the waiter
+# absorbs both failures with backoff inside the budget, still reaches the
+# reviewed verdict, and reports the absorbed count.
+stderr="$TMP_ROOT/transient1.err"
+count_file="$TMP_ROOT/transient1-count"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=flaky_503 STUB_REVIEWS_COUNT_FILE="$count_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "transient1: 503 twice then success exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "reviewed" "transient1: status reviewed despite transient 503s" "$stderr"
+assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient1: transient_api_errors counts the absorbed 503s" "$stderr"
+assert_eq "$(cat "$count_file")" "3" "transient1: reviews endpoint retried until it recovered" "$stderr"
+assert_contains "$(cat "$stderr")" "transient GitHub error" "transient1: each transient failure is logged to stderr"
+
+# Transient 2: a persistent 503 becomes terminal only when the wait budget
+# expires — the pre-#748 error message is preserved, plus the count.
+stderr="$TMP_ROOT/transient2.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=http_503 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "transient2: persistent 503 exits 1 at the deadline" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "error" "transient2: persistent 503 ends in status error" "$stderr"
+assert_contains "$(json_field "$output" '.error')" "review listing failed" "transient2: terminal error message preserved" "$stderr"
+assert_eq "$(json_field "$output" '.transient_api_errors >= 1')" "true" "transient2: transient_api_errors reported at the deadline" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds >= 3')" "true" "transient2: the full wait budget was spent retrying" "$stderr"
+
+# Transient 3: an HTTP 404 is NOT transient — immediately terminal, exactly
+# the pre-#748 behavior, with no transient_api_errors field.
+stderr="$TMP_ROOT/transient3.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=http_404 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "transient3: 404 exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "error" "transient3: 404 reports status error" "$stderr"
+assert_contains "$(json_field "$output" '.error')" "review listing failed" "transient3: 404 keeps the terminal error message" "$stderr"
+assert_eq "$(json_field "$output" '.transient_api_errors')" "null" "transient3: no transient count for a non-transient failure" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 3')" "true" "transient3: 404 terminates immediately, not at the deadline" "$stderr"
+
+# Transient 4: approval-mode gh pr view gets the same treatment — 503 twice,
+# then the APPROVED verdict lands.
+stderr="$TMP_ROOT/transient4.err"
+count_file="$TMP_ROOT/transient4-count"
+set +e
+output=$(run_wait_json STUB_APPROVAL_MODE=approved_after_503 STUB_APPROVAL_COUNT_FILE="$count_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "transient4: approval-mode 503s then approval exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "approved" "transient4: status approved despite transient 503s" "$stderr"
+assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient4: approval-mode pr view retries counted" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -43,6 +43,15 @@
 # threads exist without the mode's verdict, so callers can triage new
 # comments instead of idling out the full timeout.
 #
+# Transient GitHub API failures (vstack#748): inside the poll loop, an HTTP
+# 5xx, timeout, or transport error from any GitHub query is RETRYABLE — the
+# poller logs it to stderr, doubles the poll interval for the next attempt
+# (capped at 8x), and keeps waiting inside the existing max_wait budget. A
+# fully successful poll resets the backoff. Only when the budget expires on
+# a still-failing call does the last error become terminal, reported with a
+# transient_api_errors count. Non-transient failures (HTTP 404, 401/403,
+# malformed arguments) stay immediately terminal.
+#
 # Nudging (both modes): when the mode's signal has not arrived within
 # PR_REVIEW_NUDGE_SECS (default 600; 0 disables) of the wait starting or of
 # the head last changing — a push restarts the clock — the poller nudges the
@@ -87,6 +96,8 @@
 #     "review_evidence_surface": <string>,  # review mode only, alongside
 #                                   # review_evidence "check": "check_run" or
 #                                   # "status" — the API surface that matched
+#     "transient_api_errors": <int>,  # only when > 0: transient GitHub API
+#                                   # failures absorbed by retrying (vstack#748)
 #     "error": <string>             # only when status == "error"
 #   }
 #
@@ -209,6 +220,16 @@ last_check_surface=""
 last_check_app=""
 last_check_creator=""
 
+# Transient-failure bookkeeping (vstack#748): every gh call in the poll loop
+# writes stderr to GH_ERR_FILE so a failure can be classified before it is
+# allowed to terminate the wait. retry_interval doubles per consecutive
+# transient failure (capped) and resets after any fully successful poll.
+transient_api_errors=0
+GH_ERR_FILE="$(mktemp)"
+trap 'rm -f "$GH_ERR_FILE"' EXIT
+retry_interval="$POLL_INTERVAL"
+RETRY_INTERVAL_CAP=$((POLL_INTERVAL * 8))
+
 # Nudge bookkeeping: the clock restarts when the head changes, and each head
 # SHA is nudged at most once ("__none__" so an unknown head still gets one).
 last_reviewer_logins=""
@@ -250,6 +271,7 @@ emit_result() {
       --argjson unresolved "$last_unresolved" \
       --argjson elapsed "$elapsed" \
       --argjson mode_fields "$mode_fields" \
+      --argjson transient "$transient_api_errors" \
       --arg error "$error_msg" \
       '{
         status: $s,
@@ -258,7 +280,9 @@ emit_result() {
         changes_requested: $changes,
         unresolved_count: $unresolved,
         elapsed_seconds: $elapsed
-      } + $mode_fields + (if $error == "" then {} else {error: $error} end)'
+      } + $mode_fields
+        + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
+        + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
   case "$status" in
@@ -407,11 +431,11 @@ count_unresolved_threads() {
       threads_json=$(gh api graphql \
         -f query="$THREADS_QUERY" \
         -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" \
-        -F cursor="$cursor" 2>/dev/null)
+        -F cursor="$cursor" 2>"$GH_ERR_FILE")
     else
       threads_json=$(gh api graphql \
         -f query="$THREADS_QUERY" \
-        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>/dev/null)
+        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>"$GH_ERR_FILE")
     fi
     threads_status=$?
     set -e
@@ -433,6 +457,49 @@ count_unresolved_threads() {
   done
   printf '%s\n' "$total"
   return 0
+}
+
+# Classify the failed gh call whose stderr sits in GH_ERR_FILE (vstack#748).
+# Transient — retryable inside the wait budget — means the service or
+# transport hiccuped: HTTP 5xx, timeouts, connection/DNS/TLS failures, or a
+# timeout(1)-style exit 124. Anything else (HTTP 404, 401/403, malformed
+# arguments, unparseable success bodies) is terminal, exactly as before.
+gh_failure_is_transient() {
+  local gh_status="$1" err_text
+  [ "$gh_status" -eq 124 ] && return 0
+  err_text="$(cat "$GH_ERR_FILE" 2>/dev/null || true)"
+  case "$err_text" in
+    *"HTTP 5"*) return 0 ;;
+    *[Tt]imeout*|*"timed out"*|*"context deadline exceeded"*) return 0 ;;
+    *"connection refused"*|*"connection reset"*|*"network is unreachable"*) return 0 ;;
+    *"no such host"*|*"could not resolve"*|*[Tt]"emporary failure"*) return 0 ;;
+    *"unexpected EOF"*|*"TLS handshake"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Absorb one transient GitHub failure: count and log it, then sleep the
+# backed-off interval so the caller can `continue` the poll loop. When the
+# max_wait budget is already spent, the failure becomes terminal instead —
+# same error message and exit code as the pre-#748 immediate path, plus the
+# transient_api_errors count in the JSON.
+transient_retry() {
+  local what="$1" detail
+  detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  transient_api_errors=$((transient_api_errors + 1))
+  echo "approval-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}" >&2
+  update_elapsed
+  if [ "$elapsed" -ge "$MAX_WAIT" ]; then
+    emit_error "$what"
+    echo "$what" >&2
+    exit 1
+  fi
+  echo "approval-wait: retrying in ${retry_interval}s" >&2
+  sleep "$retry_interval"
+  retry_interval=$((retry_interval * 2))
+  if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
+    retry_interval="$RETRY_INTERVAL_CAP"
+  fi
 }
 
 # Post the nudge for the current head. With PR_REVIEW_NUDGE set, the nudge is
@@ -470,10 +537,14 @@ while true; do
     # head, and only reviews of the CURRENT head satisfy the gate) ---
     view_status=0
     set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,author 2>/dev/null)
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,author 2>"$GH_ERR_FILE")
     view_status=$?
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+      if gh_failure_is_transient "$view_status"; then
+        transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+        continue
+      fi
       emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
       echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
       exit 1
@@ -485,10 +556,14 @@ while true; do
     # does not, so head pinning needs the pulls/reviews listing) ---
     reviews_status=0
     set +e
-    reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>/dev/null | jq -s 'add // []')
+    reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE" | jq -s 'add // []')
     reviews_status=$?
     set -e
     if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
+      if gh_failure_is_transient "$reviews_status"; then
+        transient_retry "review listing failed for PR #$PR_NUM in $REPO"
+        continue
+      fi
       emit_error "review listing failed for PR #$PR_NUM in $REPO"
       echo "review listing failed for PR #$PR_NUM in $REPO" >&2
       exit 1
@@ -537,11 +612,15 @@ while true; do
       && [ -n "$last_head_sha" ]; then
       checks_status=0
       set +e
-      checks_json=$(gh api "repos/$REPO/commits/$last_head_sha/check-runs" --paginate 2>/dev/null \
+      checks_json=$(gh api "repos/$REPO/commits/$last_head_sha/check-runs" --paginate 2>"$GH_ERR_FILE" \
         | jq -s '[.[].check_runs[]?]')
       checks_status=$?
       set -e
       if [ "$checks_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
+        if gh_failure_is_transient "$checks_status"; then
+          transient_retry "check-run listing failed for commit $last_head_sha in $REPO"
+          continue
+        fi
         emit_error "check-run listing failed for commit $last_head_sha in $REPO"
         echo "check-run listing failed for commit $last_head_sha in $REPO" >&2
         exit 1
@@ -560,11 +639,15 @@ while true; do
         # waiting, same as a non-success check-run conclusion.
         statuses_status=0
         set +e
-        statuses_json=$(gh api "repos/$REPO/commits/$last_head_sha/status" --paginate 2>/dev/null \
+        statuses_json=$(gh api "repos/$REPO/commits/$last_head_sha/status" --paginate 2>"$GH_ERR_FILE" \
           | jq -s '[.[].statuses[]?]')
         statuses_status=$?
         set -e
         if [ "$statuses_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$statuses_json"; then
+          if gh_failure_is_transient "$statuses_status"; then
+            transient_retry "commit-status listing failed for commit $last_head_sha in $REPO"
+            continue
+          fi
           emit_error "commit-status listing failed for commit $last_head_sha in $REPO"
           echo "commit-status listing failed for commit $last_head_sha in $REPO" >&2
           exit 1
@@ -583,10 +666,14 @@ while true; do
     # once-per-head bookkeeping) ---
     view_status=0
     set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid 2>/dev/null)
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid 2>"$GH_ERR_FILE")
     view_status=$?
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+      if gh_failure_is_transient "$view_status"; then
+        transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+        continue
+      fi
       emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
       echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
       exit 1
@@ -609,6 +696,10 @@ while true; do
   threads_status=$?
   set -e
   if [ "$threads_status" -ne 0 ]; then
+    if gh_failure_is_transient "$threads_status"; then
+      transient_retry "review thread query failed for PR #$PR_NUM in $REPO"
+      continue
+    fi
     emit_error "review thread query failed for PR #$PR_NUM in $REPO"
     echo "review thread query failed for PR #$PR_NUM in $REPO" >&2
     exit 1
@@ -676,6 +767,9 @@ while true; do
   if [ "$elapsed" -ge "$MAX_WAIT" ]; then
     break
   fi
+  # Reaching here means every query in this poll succeeded — end any
+  # transient-failure backoff streak (vstack#748).
+  retry_interval="$POLL_INTERVAL"
   sleep "$POLL_INTERVAL"
   update_elapsed
 done
