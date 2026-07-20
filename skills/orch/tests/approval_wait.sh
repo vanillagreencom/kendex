@@ -201,6 +201,19 @@ case "${1:-}" in
         fi
         mode="commented_at_head"
       fi
+      if [[ "$mode" == "flaky_429" ]]; then
+        count=0
+        if [[ -f "${STUB_REVIEWS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_REVIEWS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_REVIEWS_COUNT_FILE"
+        if [[ "$count" -le 2 ]]; then
+          echo "HTTP 429: You have exceeded a secondary rate limit. Please wait a few minutes before you try again." >&2
+          exit 1
+        fi
+        mode="commented_at_head"
+      fi
       if [[ "$mode" == "http_503" ]]; then
         echo "HTTP 503: No server is currently available to service your request." >&2
         exit 1
@@ -1090,6 +1103,18 @@ assert_eq "$(json_field "$output" '.status')" "reviewed" "transient1: status rev
 assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient1: transient_api_errors counts the absorbed 503s" "$stderr"
 assert_eq "$(cat "$count_file")" "3" "transient1: reviews endpoint retried until it recovered" "$stderr"
 assert_contains "$(cat "$stderr")" "transient GitHub error" "transient1: each transient failure is logged to stderr"
+
+# Transient 1b (vstack#752): HTTP 429 rate limits are transient too — twice
+# then success recovers exactly like a 5xx.
+stderr="$TMP_ROOT/transient1b.err"
+count_file="$TMP_ROOT/transient1b-count"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=flaky_429 STUB_REVIEWS_COUNT_FILE="$count_file" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "transient1b: 429 twice then success exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "reviewed" "transient1b: status reviewed despite rate limits" "$stderr"
+assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient1b: transient_api_errors counts the absorbed 429s" "$stderr"
 
 # Transient 2: a persistent 503 becomes terminal only when the wait budget
 # expires — the pre-#748 error message is preserved, plus the count.

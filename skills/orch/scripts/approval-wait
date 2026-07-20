@@ -44,7 +44,8 @@
 # comments instead of idling out the full timeout.
 #
 # Transient GitHub API failures (vstack#748): inside the poll loop, an HTTP
-# 5xx, timeout, or transport error from any GitHub query is RETRYABLE — the
+# 5xx, HTTP 429 rate limit, timeout, or transport error from any GitHub
+# query is RETRYABLE — the
 # poller logs it to stderr, doubles the poll interval for the next attempt
 # (capped at 8x), and keeps waiting inside the existing max_wait budget. A
 # fully successful poll resets the backoff. Only when the budget expires on
@@ -461,7 +462,8 @@ count_unresolved_threads() {
 
 # Classify the failed gh call whose stderr sits in GH_ERR_FILE (vstack#748).
 # Transient — retryable inside the wait budget — means the service or
-# transport hiccuped: HTTP 5xx, timeouts, connection/DNS/TLS failures, or a
+# transport hiccuped: HTTP 5xx, HTTP 429 rate limits, timeouts,
+# connection/DNS/TLS failures, or a
 # timeout(1)-style exit 124. Anything else (HTTP 404, 401/403, malformed
 # arguments, unparseable success bodies) is terminal, exactly as before.
 gh_failure_is_transient() {
@@ -474,6 +476,7 @@ gh_failure_is_transient() {
     *"connection refused"*|*"connection reset"*|*"network is unreachable"*) return 0 ;;
     *"no such host"*|*"could not resolve"*|*[Tt]"emporary failure"*) return 0 ;;
     *"unexpected EOF"*|*"TLS handshake"*) return 0 ;;
+    *"HTTP 429"*|*"rate limit"*|*"abuse detection"*) return 0 ;;
   esac
   return 1
 }
