@@ -64,13 +64,16 @@ Elaborated:
   fallout in the same per-surface workstream: migrate changed APIs, re-vendor
   bundled-extension bridges, and repair the tests and CI the bump breaks. A
   bump being "major" is not itself a reason to defer.
-- **Defer only on a strong concrete blocker.** A blocker is a specific, named
-  obstacle you actually hit — an upstream that dropped a capability the repo
-  depends on with no migration path, a required transitive that does not yet
-  support the new version — not generic "it's a major, might break" caution.
-  When uncertain, attempt the upgrade; if it fails, report only what actually
-  failed, with the error output. A deferred-untried bump teaches nothing; a
-  tried-and-reported failure teaches exactly what blocks it.
+- **Fixability is the deciding test.** Before applying a breaking major,
+  investigate what it breaks (Phase 2 changelog/impact research) — then the
+  question is only *can the fallout be fixed in this PR?* If yes, do the bump
+  and fix it. Defer only when the breakage is genuinely unfixable: a specific,
+  named obstacle you actually hit — an upstream that dropped a capability the
+  repo depends on with no migration path, a required transitive that does not
+  yet support the new version — never generic "it's a major, might break"
+  caution. When uncertain, attempt the upgrade; if it fails, report only what
+  actually failed, with the error output. A deferred-untried bump teaches
+  nothing; a tried-and-reported failure teaches exactly what blocks it.
 - **Report, never auto-apply — exactly three things**: model-weight swaps;
   changes to durable/recorded data scope (what the repo persists or records);
   and anything an inventory owner-rule explicitly demotes. Nothing else is
