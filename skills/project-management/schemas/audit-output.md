@@ -42,6 +42,9 @@ Located at `findings.*`:
 | `wrong_project[]` | `issue`, `title`, `from`, `to`, `to_id`, `reason` |
 | `hierarchy[]` | `action`(`make_parent`\|`make_child`\|`bundle`\|`update_parent_desc`), `issue`\|`issues[]`, `parent`\|`children[]`\|`new_parent_title`, `reason` |
 | `combine[]` | `target`, `absorb[]`, `reason` |
+| `ready_to_schedule[]` | `id`, `title`, `cleared_blockers[]`, `reason` |
+
+**`ready_to_schedule[]`**: Scheduling signal only — an active issue whose blockers are all Done/Cancelled ("gates cleared, ready to schedule"). Completed-blocker relations are satisfied history, never stale metadata: they must not appear in `remove_relations[]` or under any stale-metadata framing.
 
 **`obsolete[].evidence`**: `{completed_by[], files_verified[], deliverables_checked[]}` — OR for decision-eliminated: `{decision_eliminated: true, decision_ref: "[REF]", eliminated_pattern: "..."}`
 
@@ -67,6 +70,7 @@ Located at `findings.*`:
     "wrong_project": 0,
     "combinations": 0,
     "relation_violations": 0,
+    "ready_to_schedule": 0,
     "architecture_gaps": {"critical": 0, "required": 0, "research": 0},
     "project_recommendations": {"new_projects": 0, "reopen_projects": 0}
   },
@@ -82,6 +86,7 @@ Located at `findings.*`:
     "wrong_project": [],
     "hierarchy": [],
     "combine": [],
+    "ready_to_schedule": [],
     "architecture_gaps": [],
     "project_recommendations": []
   },

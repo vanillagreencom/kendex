@@ -75,6 +75,15 @@ See issue tracker CLI skill for commands (`issues add-relation`, `issues list-re
 | `related` | Informational link, no blocking |
 | `duplicate` | Issues are duplicates (for merging) |
 
+### Completed Blockers Are Satisfied History
+
+A blocking relation pointing at a **Done or Canceled** issue is auto-satisfied — the tracker itself treats the dependent issue as unblocked the moment the blocker completes. The relation is satisfied history, not stale metadata:
+
+- **Keep the relation.** It stays for provenance and traceability of why work was sequenced. Never remove or "fix" a relation because its blocker is Done/Canceled.
+- **Audits must never classify completed-blocker relations as stale metadata.** The only legitimate audit output for them is a scheduling signal: "gates cleared, ready to schedule."
+
+**Why**: during a backlog staleness audit, an audit agent produced a "STALE blocked_by METADATA" section listing issues whose blockers were Done, framing the relations themselves as defects needing cleanup. That framing invites destructive removal of valid history; the correct read was that those issues were simply ready to schedule.
+
 ### Quick Reference
 
 ```bash
@@ -130,6 +139,6 @@ When pulling issues:
 
 ### Resolving a Blocker
 
-1. Complete the blocking issue (relation auto-clears)
+1. Complete the blocking issue (the block auto-clears; the relation itself stays as satisfied history — do not remove it)
 2. **If external**: Remove `blocked` label + add resolution comment
 3. Move blocked issue back to active state

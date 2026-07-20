@@ -313,6 +313,8 @@ For input issues with existing relations, add to candidate pairs for verificatio
 
 **Done issue relations are valid historical records.** Flag removal only for wrong dependencies (no creates-consumes), never because source is Done.
 
+**Completed-blocker relations are auto-satisfied, never stale.** A `blocked_by` relation whose blocker is Done/Cancelled is satisfied history — the tracker already treats the issue as unblocked, and the relation stays for provenance/traceability. Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading (a prior audit emitted a "STALE blocked_by METADATA" section listing issues whose blockers were Done — that framing is wrong and invites destructive cleanup). The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: add it to `ready_to_schedule[]` (PROJECT mode) or note "gates cleared, ready to schedule" in the issue's `reason` (ISSUE mode).
+
 ### 4.5 Scan for Relation Violations
 
 **Iterate** ALL `blocks`/`blocked_by` relations on input issues (and their children if bundled).
@@ -785,6 +787,7 @@ For each input issue, assign action based on analysis:
 
 - [ ] 1.7/2.1: Verification evidence collected and a distinct `VERIFICATION_CONTEXTS[ISSUE_KEY]` entry resolved for every input issue/contract; no linked PR, branch, or scope reused across issues; docs-only handled explicitly
 - [ ] 2: Contract extracted (target, creates, consumes, problem)
+- [ ] 4.4: Completed-blocker relations preserved (surfaced only as ready-to-schedule signals, never flagged as stale or removed)
 - [ ] 4.5: Relation violations scanned (cross-project, cross-bundle, child→standalone)
 - [ ] 5.1-5.2: Relations analyzed against the resolved code or documentation paths
 - [ ] 5.3: Priority alignment checked (skip if proposed without priority)

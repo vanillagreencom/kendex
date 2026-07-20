@@ -132,6 +132,8 @@ sortOrder → sort_order  # Manual sort position
 
 Blocking relations must connect peers of one bundle: same direct parent, or both top-level (and same project). An issue cannot block its own ancestor or descendant — the parent-child hierarchy already encodes that dependency; use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate. Before either acceptance or remediation, the guard proves each parent chain reaches an explicit null root through well-formed edges with unique IDs/identifiers. It also requires an explicit null or well-formed project value; incomplete, cyclic, or malformed hierarchy data is rejected before mutation.
 
+A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance and traceability; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule"). Cautionary precedent: an audit agent once emitted a "STALE blocked_by METADATA" section listing issues whose blockers were Done, framing valid history as defects and inviting destructive cleanup — the issues were simply ready to schedule.
+
 ## Common Pitfalls
 
 | Option | Accepts | On failure |
