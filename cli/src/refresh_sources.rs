@@ -58,7 +58,7 @@ pub(crate) fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
 }
 
 pub(crate) fn resolve_source_records(lock: &config::LockFile) -> Vec<ResolvedSource> {
-    resolve_source_records_with(lock, resolve_single_source)
+    resolve_source_records_with(lock, resolve_recorded_source)
 }
 
 fn resolve_source_records_with(
@@ -156,7 +156,13 @@ pub(crate) fn refresh_source_for_entry<'a>(
         return Some(source);
     }
 
-    if sources.len() == 1 {
+    // Legacy/moved-source fallback: an old lock may record a source string
+    // that no longer names anything on disk (a renamed repo, or a pre-1.0 lock
+    // with no meaningful source). Those may fall back to the sole loaded
+    // source. An entry whose own recorded source still exists must never be
+    // rebound to a different one — that silently reinstalled such entries from
+    // the wrong repo and masked the real source's edits.
+    if sources.len() == 1 && !recorded_source_exists(&entry.source) {
         sources.first()
     } else {
         None
@@ -217,6 +223,33 @@ pub(crate) fn source_pi_extension_for_lock_name<'a>(
 
 pub(crate) fn resolve_single_source(source: &str) -> Option<PathBuf> {
     resolve_single_source_with(source, true, true)
+}
+
+/// Resolve a source string that a lock entry recorded at install time.
+///
+/// Discovery (`resolve_single_source`) applies the [`crate::resolve::is_vstack_source`]
+/// layout heuristic so that walking up from CWD does not mistake an arbitrary
+/// directory for a package source. A recorded source needs no such guess: the
+/// user named it explicitly on `vstack add`, which accepts any directory
+/// holding the asset. Applying the heuristic here silently dropped alternate
+/// sources that the heuristic rejects — a dot-named dir, or one carrying only
+/// `skills/` — after which the entry fell back to whatever other source was
+/// loaded and edits to the real source stopped propagating.
+pub(crate) fn resolve_recorded_source(source: &str) -> Option<PathBuf> {
+    let path = Path::new(source);
+    if path.is_absolute() && path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+    resolve_single_source(source)
+}
+
+/// Whether an entry's recorded source still names a usable directory on disk.
+///
+/// Deliberately side-effect free (no remote fetch): callers use it in per-entry
+/// loops to decide whether an entry may fall back to a different source.
+pub(crate) fn recorded_source_exists(source: &str) -> bool {
+    let path = Path::new(source);
+    path.is_absolute() && path.is_dir()
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
@@ -316,6 +349,13 @@ mod tests {
         ))
     }
 
+    fn make_vstack_source(root: &Path, name: &str) -> PathBuf {
+        let source = root.join(name);
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("skills")).unwrap();
+        source
+    }
+
     fn lock_entry(name: &str, source: &str) -> LockEntry {
         LockEntry {
             name: name.into(),
@@ -340,6 +380,65 @@ mod tests {
             Some(source.clone())
         );
         assert!(resolve_single_source(&root.to_string_lossy()).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// `vstack add <SOURCE>` accepts any directory holding the asset, so a lock
+    /// entry may record one that the discovery heuristic rejects — a dot-named
+    /// dir, or one carrying only `skills/`. Dropping it here is what made
+    /// refresh fall back to the majority source and stop propagating edits.
+    #[test]
+    fn resolve_source_records_keeps_a_source_the_layout_heuristic_rejects() {
+        let root = tmpdir("recorded-alternate");
+        let alternate = root.join(".agents");
+        std::fs::create_dir_all(alternate.join("skills/demo")).unwrap();
+        assert!(
+            !crate::resolve::is_vstack_source(&alternate),
+            "fixture must exercise the heuristic-rejected case"
+        );
+        assert_eq!(resolve_single_source(&alternate.to_string_lossy()), None);
+
+        assert_eq!(
+            resolve_recorded_source(&alternate.to_string_lossy()),
+            Some(alternate.clone())
+        );
+
+        let mut lock = config::LockFile::default();
+        lock.add(lock_entry("demo", &alternate.to_string_lossy()));
+        let records = resolve_source_records(&lock);
+
+        assert_eq!(
+            records.iter().map(|r| r.root.clone()).collect::<Vec<_>>(),
+            vec![alternate]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// An entry whose own source still exists must never be silently rebound to
+    /// the sole other loaded source; that reinstalled it from the wrong repo.
+    /// The fallback stays available for a source that has genuinely gone away.
+    #[test]
+    fn refresh_source_for_entry_only_falls_back_when_the_recorded_source_is_gone() {
+        let root = tmpdir("no-rebind");
+        let alternate = root.join(".agents");
+        std::fs::create_dir_all(alternate.join("skills/demo")).unwrap();
+        let only_source = make_vstack_source(&root, "other");
+        let sources = vec![RefreshSource::from_root(&only_source)];
+
+        let live = lock_entry("demo", &alternate.to_string_lossy());
+        assert!(
+            refresh_source_for_entry(&sources, &live).is_none(),
+            "an entry whose recorded source exists must not bind to a different source"
+        );
+
+        let vanished = lock_entry("demo", &root.join("deleted-repo").to_string_lossy());
+        assert_eq!(
+            refresh_source_for_entry(&sources, &vanished).map(|s| s.root.clone()),
+            Some(only_source),
+            "legacy lock with a missing source keeps the single-source fallback"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

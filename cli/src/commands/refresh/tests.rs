@@ -725,6 +725,107 @@ fn refresh_items_reports_agent_write_failure_without_success() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// Anti-masking regression: an entry whose source no longer carries the asset
+/// used to be skipped silently, after which the report echoed the stored hash
+/// as `<hash> → <hash> (unchanged)` and refresh exited 0. Edits that never
+/// propagated were indistinguishable from a genuinely up-to-date install.
+#[test]
+fn refresh_reports_items_missing_from_their_source_instead_of_skipping() {
+    let root = tmpdir("missing-from-source");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&source, "1", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    // Locked, but absent from the source: nothing to refresh from.
+    lock.add(lock_entry(
+        "gone",
+        ItemKind::Skill,
+        &source,
+        vec!["claude-code"],
+    ));
+    lock.add(lock_entry(
+        "vanished",
+        ItemKind::Agent,
+        &source,
+        vec!["claude-code"],
+    ));
+    // Present in the source: must still refresh normally alongside them.
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &source,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+
+    assert!(stats.has_missing());
+    assert_eq!(
+        stats.missing.keys().cloned().collect::<Vec<_>>(),
+        vec!["gone".to_string(), "vanished".to_string()]
+    );
+    for name in ["gone", "vanished"] {
+        assert!(
+            stats.missing[name].contains(&source.display().to_string()),
+            "missing reason must name the resolved source: {}",
+            stats.missing[name]
+        );
+        assert!(
+            !stats.successful_items.contains(name),
+            "{name} must not count as refreshed"
+        );
+    }
+    assert_eq!(stats.skills_refreshed, 1);
+    assert!(stats.successful_items.contains("shared"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The single-source fallback must not silently reinstall an entry from a
+/// source it was never installed from — it reports missing instead.
+#[test]
+fn refresh_reports_missing_when_the_recorded_source_is_not_loaded() {
+    let root = tmpdir("unloaded-source");
+    let project = root.join("project");
+    let loaded = make_source(&root, "loaded");
+    let alternate = root.join(".agents");
+    std::fs::create_dir_all(alternate.join("skills/shared")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&loaded, "1", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &alternate,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&loaded)];
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+
+    assert_eq!(stats.skills_refreshed, 0);
+    assert_eq!(
+        stats.missing.get("shared").map(String::as_str),
+        Some("source not found")
+    );
+    assert!(
+        !project.join(".claude/skills/shared/SKILL.md").exists(),
+        "must not install from a source the entry was never installed from"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn refresh_rejects_agent_name_that_escapes_output_dir() {
     let root = tmpdir("agent-name-traversal");

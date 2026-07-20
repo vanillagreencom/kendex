@@ -11,7 +11,7 @@ use crate::refresh_sources::{
 };
 use crate::skill::Skill;
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Result counts from one invocation of [`refresh_items_in_scope`].
@@ -37,6 +37,12 @@ pub struct RefreshStats {
     /// Canonical project-owned skills managed through `[skill-instructions]`
     /// despite having no vstack lock entry or upstream package source.
     pub project_owned_skills: HashSet<String>,
+    /// Locked items that could not be refreshed because their source is gone
+    /// or no longer carries the asset, mapped to the reason. Tracked
+    /// separately from [`Self::failures`] (a failed install attempt) so the
+    /// report can never fall through to "unchanged" with the stored hash —
+    /// that silently masked an entry whose source had stopped providing it.
+    pub missing: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,8 +82,22 @@ impl RefreshStats {
         });
     }
 
+    /// Record that `item` has no asset to refresh from. `source` is the source
+    /// root it resolved to, or `None` when no source resolved at all.
+    fn mark_missing(&mut self, item: &str, source: Option<&Path>) {
+        let reason = match source {
+            Some(root) => format!("not found in source {}", root.display()),
+            None => "source not found".to_string(),
+        };
+        self.missing.insert(item.to_string(), reason);
+    }
+
     pub fn has_failures(&self) -> bool {
         !self.failures.is_empty()
+    }
+
+    pub fn has_missing(&self) -> bool {
+        !self.missing.is_empty()
     }
 }
 
@@ -186,15 +206,11 @@ pub fn refresh_items_in_scope(
             continue;
         }
         let Some(source) = refresh_source_for_entry(sources, entry) else {
-            if name_filter.is_none() {
-                eprintln!("  ! {} — source not found, skipped", name);
-            }
+            stats.mark_missing(name, None);
             continue;
         };
         let Some(agent) = source.agents.iter().find(|a| &a.name == name) else {
-            if name_filter.is_none() {
-                eprintln!("  ! {} — source not found, skipped", name);
-            }
+            stats.mark_missing(name, Some(&source.root));
             continue;
         };
 
@@ -315,9 +331,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
+            stats.mark_missing(name, None);
             continue;
         };
         let Some(skill) = source.skills.iter().find(|s| &s.name == name) else {
+            stats.mark_missing(name, Some(&source.root));
             continue;
         };
 
@@ -381,9 +399,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
+            stats.mark_missing(name, None);
             continue;
         };
         let Some(hook) = source.hooks.iter().find(|hook| hook.name == entry.name) else {
+            stats.mark_missing(name, Some(&source.root));
             continue;
         };
         let mut succeeded = 0usize;
@@ -416,9 +436,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
+            stats.mark_missing(name, None);
             continue;
         };
         let Some(ext) = source_pi_extension_for_lock_name(&source.pi_extensions, name) else {
+            stats.mark_missing(name, Some(&source.root));
             continue;
         };
         match crate::pi_extension::install_pi_extension(ext, global) {
@@ -963,7 +985,13 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         let source_resolved = source_records
             .iter()
             .any(|source| source.aliases.iter().any(|alias| alias == &entry.source));
+        // Repair only a source that has genuinely gone away. An entry whose
+        // recorded source still exists keeps it even when nothing else in the
+        // lock references it: rewriting it here is what silently re-pointed
+        // alternate-source entries at the majority source and undid every
+        // hand-correction of the lock.
         if !source_resolved
+            && !crate::refresh_sources::recorded_source_exists(&entry.source)
             && let Some(replacement) = &fallback_source
             && &entry.source != replacement
         {
@@ -1018,15 +1046,35 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             .max()
             .unwrap_or(0);
         for (_, kind, name, old, new) in &changes {
-            let changed = is_updated(name, old, new);
-            let mark = if changed { "!" } else { "✓" };
-            let label = if changed { "changed" } else { "unchanged" };
+            let missing = stats.missing.contains_key(name);
+            let changed = !missing && is_updated(name, old, new);
+            let mark = if missing {
+                "?"
+            } else if changed {
+                "!"
+            } else {
+                "✓"
+            };
+            let label = if missing {
+                "missing"
+            } else if changed {
+                "changed"
+            } else {
+                "unchanged"
+            };
             let old_short = if old.is_empty() {
                 "—".to_string()
             } else {
                 old.chars().take(8).collect()
             };
-            let new_short: String = new.chars().take(8).collect();
+            // A missing item's stored hash is deliberately not echoed as the
+            // new value: printing "<hash> → <hash> (unchanged)" is exactly the
+            // masking this state exists to prevent.
+            let new_short: String = if missing {
+                "—".to_string()
+            } else {
+                new.chars().take(8).collect()
+            };
             eprintln!(
                 "  {mark} {:kw$}  {:nw$}  {} → {}  ({})",
                 kind,
@@ -1088,6 +1136,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         stats.pi_refreshed,
         count_updated(ItemKind::PiExtension),
     );
+    for (item, reason) in &stats.missing {
+        eprintln!("  ? {item} — {reason}; not refreshed");
+    }
     if stats.has_failures() {
         for failure in &stats.failures {
             let harness = failure
@@ -1100,6 +1151,13 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         anyhow::bail!(
             "failed to refresh {} item/harness install(s)",
             stats.failures.len()
+        );
+    }
+    if stats.has_missing() {
+        anyhow::bail!(
+            "{} locked item(s) missing from their source; \
+             re-add them or run `vstack remove` to drop the stale entries",
+            stats.missing.len()
         );
     }
     Ok(())

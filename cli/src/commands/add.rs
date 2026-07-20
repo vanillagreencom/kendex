@@ -452,6 +452,40 @@ mod source_option_tests {
             vec![crate::REPO, "owner/custom"]
         );
     }
+
+    /// The lock must record the source the install actually read from, even
+    /// when that directory does not look like a canonical vstack repo (here a
+    /// dot-named dir carrying only `skills/`). Recording the registry's current
+    /// source instead points every later refresh at the wrong repo.
+    #[test]
+    fn resolve_source_for_app_prefers_the_passed_source_over_the_registry_current() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack-add-passed-source-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let alternate = root.join(".agents");
+        std::fs::create_dir_all(alternate.join("skills/demo")).unwrap();
+        let project_root = root.join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        let mut registry = config::SourceRegistry::default();
+        registry.remember_for_project(&project_root, "/repo/current-vstack");
+
+        let resolved =
+            resolve_source_for_app(Some(&alternate.to_string_lossy()), &registry, &project_root)
+                .expect("passed source should resolve");
+
+        let canonical = std::fs::canonicalize(&alternate).unwrap();
+        assert_eq!(resolved.source, canonical.display().to_string());
+        assert_eq!(resolved.dir, canonical);
+        assert!(
+            !crate::resolve::is_vstack_source(&alternate),
+            "fixture must exercise the non-canonical-layout case"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 /// vstack#71: walk each agent's [agent-skills] + [role-skills] + transitive
