@@ -37,6 +37,7 @@ export function createRpcHarness(opts) {
 	const cleanPath = process.env.PATH.split(":").filter((p) => !p.includes("node_modules")).join(":");
 
 	let pi, rpcLog;
+	let stopped = false;
 	let buffer = "";
 	let listeners = [];
 	let reqId = 0;
@@ -53,7 +54,7 @@ export function createRpcHarness(opts) {
 			env: { ...process.env, PATH: cleanPath, CLAUDE_BRIDGE_DEBUG: "1", CLAUDE_BRIDGE_DEBUG_PATH: DEBUG_LOG, ...env },
 		});
 
-		pi.stderr.on("data", (d) => rpcLog.write(d));
+		pi.stderr.on("data", (d) => { if (!stopped) rpcLog.write(d); });
 
 		const decoder = new StringDecoder("utf8");
 		pi.stdout.on("data", (chunk) => {
@@ -65,7 +66,7 @@ export function createRpcHarness(opts) {
 				buffer = buffer.slice(i + 1);
 				try {
 					const msg = JSON.parse(line);
-					rpcLog.write(`< ${line}\n`);
+					if (!stopped) rpcLog.write(`< ${line}\n`);
 					for (const fn of [...listeners]) fn(msg);
 				} catch {}
 			}
@@ -73,6 +74,7 @@ export function createRpcHarness(opts) {
 	}
 
 	function stop() {
+		stopped = true;
 		pi?.kill();
 		return new Promise((r) => rpcLog?.end(r));
 	}
@@ -88,7 +90,7 @@ export function createRpcHarness(opts) {
 	function send(cmd, timeout = defaultTimeout) {
 		const id = `req_${++reqId}`;
 		const full = { ...cmd, id };
-		rpcLog.write(`> ${JSON.stringify(full)}\n`);
+		if (!stopped) rpcLog.write(`> ${JSON.stringify(full)}\n`);
 		pi.stdin.write(JSON.stringify(full) + "\n");
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error(`Timeout: ${cmd.type}`)), timeout);

@@ -13,15 +13,28 @@
 
 console.log("=== int-session-compact.mjs ===");
 
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
 
 const TIMEOUT = 180_000;
 const BRIDGE_MODEL = "claude-bridge/claude-haiku-4-5";
 
+// pi >=0.80 refuses to compact a session smaller than compaction.keepRecentTokens
+// (default 20000) — far larger than this test's three tiny turns. Run against an
+// isolated agent dir with a tiny keep-recent threshold so /compact always has
+// something to cut. The machine's claude-bridge.json (e.g. a pinned Claude
+// executable path) is carried over so the bridge still spawns correctly.
+const agentDir = mkdtempSync(join(tmpdir(), "pi-compact-test-"));
+writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 100 } }));
+const realBridgeConfig = join(homedir(), ".pi", "agent", "claude-bridge.json");
+if (existsSync(realBridgeConfig)) copyFileSync(realBridgeConfig, join(agentDir, "claude-bridge.json"));
+
 const harness = createRpcHarness({
 	name: "session-compact",
 	args: ["--model", BRIDGE_MODEL],
+	env: { PI_CODING_AGENT_DIR: agentDir },
 	defaultTimeout: TIMEOUT,
 });
 

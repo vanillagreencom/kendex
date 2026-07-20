@@ -1477,6 +1477,55 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 
+/** Finalizes the current pi turn when the SDK invokes an MCP tool handler
+ *  before emitting `message_stop` or the completed assistant message.
+ *
+ *  Observed with Claude Code under pi 0.80's steer draining (tool result and
+ *  drained steer arrive in one provider call): the NEXT tool turn's tool_use
+ *  streams in, the SDK invokes the MCP handler — and neither terminal event
+ *  ever arrives. The invocation itself proves the assistant turn is committed,
+ *  so end the pi stream here exactly like the `message_stop` path; otherwise
+ *  the handler blocks on a result pi will never deliver (deadlock). No-op when
+ *  the turn already ended (stream null) or the tool call isn't part of the
+ *  currently streamed turn. */
+function finalizeToolUseTurnFromMcpInvocation(
+	queryCtx: QueryContext,
+	toolCallId: string,
+	toolName: string,
+	mappedArgs: Record<string, unknown>,
+): void {
+	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+	let idx = queryCtx.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === toolCallId);
+	if (idx >= 0) {
+		const block = queryCtx.turnBlocks[idx] as any;
+		if ("partialJson" in block) {
+			// Stream ended before content_block_stop — settle the args from the
+			// partial JSON the same way content_block_stop would have.
+			block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
+			queryCtx.updateToolCallArgs(block.id, block.arguments);
+			delete block.partialJson;
+			delete block.index;
+			queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+		}
+	} else {
+		// The invocation can arrive before the tool_use is streamed at all
+		// (observed after a tool-result+steer provider call reset the turn):
+		// synthesize the toolCall from the claim — the MCP call carries the
+		// authoritative id, name, and arguments.
+		queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
+		idx = queryCtx.turnBlocks.length - 1;
+		const block = queryCtx.turnBlocks[idx] as any;
+		queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
+		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+	}
+	queryCtx.turnSawToolCall = true;
+	queryCtx.turnOutput.stopReason = "toolUse";
+	debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) — SDK invoked the tool before message_stop/assistant message`);
+	queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
+	queryCtx.currentPiStream.end();
+	queryCtx.currentPiStream = null;
+}
+
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
 // blocks on a Promise until pi delivers the tool result via streamSimple.
 // Handlers claim their tool_call id by matching the actual MCP call
@@ -1515,6 +1564,7 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 				return result;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
+			finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
 			return new Promise<McpResult>((resolve) => {
 				queryCtx.pendingToolCalls.set(toolCallId, {
 					toolName: tool.name,
