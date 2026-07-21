@@ -96,10 +96,13 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 
 **Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the first harness spawn call. The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751): a hyphenated `[AGENT_TYPE]` spawns with hyphens translated to underscores in the runtime `task_name` only (`agent_type` unchanged), attempted before any `worker` fallback; `child_sessions` keys, reports, and delegation records keep the canonical hyphenated name. Do not launch `worker` and simulate the selected dev identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical selected agent name in bootstrap/delegation text, reports, and workflow-state keys. Use `worker` only when no matching custom agent exists, when the selected agent is intentionally generic, or after the generated-agent spawn is rejected/unavailable; record the runtime `agent_type` and fallback reason in status and workflow state.
 
-Before each implementation delegation, capture the current `HEAD`:
+Before each implementation delegation — the single delegation, and **every group's delegation in bundled mode** — capture the current `HEAD` and record the delegation timestamp. `dev_delegated_at` gates § 3 `dev-artifact-check` acceptance against a stale receipt from an earlier delegation — mirror `review-pr.md` § 2.2. Run each as its own tool call:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
+```
+```bash
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 
 **After each spawn**, persist the agent session:
@@ -141,6 +144,7 @@ a. For each sub-issue completed by any prior agent group (cumulative):
    Read bodies containing `Handoff Notes` from the JSON output.
 b. Extract "Handoff Notes" sections. Combine into a single block.
 c. Include in next delegation as `Handoff from prior agents:` (see below). Omit if none found.
+d. Re-run the § 2 pre-delegation stamps for this group — **both** `set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]` AND `set-now [ISSUE_ID] dev_delegated_at` — immediately before delegating it. All groups reuse one artifact path (`tmp/dev-return-[PARENT_ID].json`) and one `dev_delegated_at`, so a stamp left over from a prior group would let this group's idle check (SKILL § Wait for Agent Return) accept the prior group's stale receipt.
 
 Delegate to a `[AGENT_TYPE]` agent. Wait for completion. Parse: Branch, Commit, QA Labels, Summary.
 
@@ -179,6 +183,20 @@ Handoff from prior agents:
 ## 3. Validate Agent Return
 
 **Expected format**: `Branch: ... | Commit: [SHA] | QA Labels: ... | Summary: Posted ✓`
+
+**First — check the completion artifact.** Read `dev_delegated_at`, then validate the agent's on-disk receipt (run each as its own tool call):
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+```
+```bash
+.agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+```
+
+- **`ok == true`** → the completion is real (the agent finished its tail): proceed to the checks below **even if the return message was missing or partial** — a lost return is recovered without re-delegation (vstack#770).
+- **`ok == false`** with a missing or partial return message → treat as a stall per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting); do not proceed.
+
+When a return message DID arrive it stays authoritative for display; the artifact corroborates it. The artifact triggers/corroborates validation — it does NOT replace the git/worktree/tracker checks below.
 
 1. **Run ALL checks** — do not proceed if ANY fails:
    ```bash

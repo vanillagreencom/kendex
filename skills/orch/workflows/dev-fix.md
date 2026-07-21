@@ -114,7 +114,11 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
    **If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a specialist.
 
-5. **Delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available).
+5. **Record the delegation timestamp, then delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available). `dev_delegated_at` gates step 6 `dev-artifact-check` acceptance against a stale receipt from an earlier cycle — mirror `dev-start.md` § 2. Run immediately before the delegation:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+   ```
 
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix, not procedure steps. The agent owns validate/commit/return per `dev/workflows/dev-fix.md`.
    - ✅ `"Read X from parent state and forward to child — fix in parent so descendants inherit."`
@@ -139,7 +143,16 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    [FORMATTED_ITEMS]
    </delegation_format>
 
-6. **Wait for completion.** Parse return: item decisions (Applied/Skipped/Blocked), commits, validation status.
+6. **Wait for completion.** On the return message — or on an idle notification with no return — accept via the on-disk artifact before parsing (read `dev_delegated_at`, then run `dev-artifact-check`; run each as its own tool call):
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+   ```
+   ```bash
+   .agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+   ```
+
+   `ok == true` → the fix cycle completed (the tail finished): parse item decisions (Applied/Skipped/Blocked), commits, and validation status from the return message when present, or from the artifact's `items[]`/`validate` when the return was lost to a harness tool timeout (vstack#770) — no re-delegation. `ok == false` with a missing or partial return → treat as a stall per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting).
 
 7. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash

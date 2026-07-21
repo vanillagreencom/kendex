@@ -318,7 +318,13 @@ Issue suggestions: [N] items → § 6.2 audit
 
 2. **Group items** by `agent` field.
 
-3. **Delegate fixes** per agent group (reuse existing dev agent if available). ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix only; the agent owns process per `dev/workflows/dev-fix.md`.
+3. **Record the delegation timestamp, then delegate fixes** per agent group (reuse existing dev agent if available). `dev_delegated_at` gates step 5 `dev-artifact-check` acceptance against a stale receipt from an earlier cycle — mirror `dev-fix.md` § 2. Run immediately before the delegation:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+   ```
+
+   ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix only; the agent owns process per `dev/workflows/dev-fix.md`.
 
    <delegation_format>
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -338,7 +344,16 @@ Issue suggestions: [N] items → § 6.2 audit
    ---
    </delegation_format>
 
-5. **Wait for completion.**
+5. **Wait for completion.** On the return message — or on an idle notification with no return — accept via the on-disk artifact before handling results (read `dev_delegated_at`, then run `dev-artifact-check`; run each as its own tool call):
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+   ```
+   ```bash
+   .agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+   ```
+
+   `ok == true` → the fix cycle completed (the tail finished): proceed to step 6 using the return message when present, or the artifact's `items[]`/`validate` when the return was lost to a harness tool timeout (vstack#770) — no re-delegation. `ok == false` with a missing or partial return → treat as a stall per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting).
 
 6. **Handle results**:
    - Applied → mark for reply (§ 7.1)

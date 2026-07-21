@@ -155,6 +155,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`) |
 | `review-init` | Initialize standalone review context and print branch/worktree/issue/state JSON |
 | `review-artifact-check` | Validate a reviewer's on-disk JSON artifact (exists, `mtime >=` delegation epoch, `jq -e '.verdict'`, and no self-reported no-review) and print `{ok, path, reason}` — the sole review-pr completion condition. An artifact whose `qa_metadata` admits no review happened (`review_performed: false` or a no-scope reason) is rejected with reason `no_review` regardless of verdict; artifacts without `qa_metadata` are unaffected. `--file <path> [delegated_at_epoch]` validates one explicit artifact; the optional boundary applies the same freshness gate so a stale/misdated external review is rejected |
+| `dev-artifact-check` | Validate a dev agent's on-disk completion artifact (exists, `mtime >=` delegation epoch, and the required non-empty fields `.kind` ∈ implement\|fix, `.issue`, `.branch`, `.commit`, `.validate`) and print `{ok, path, reason}` (`valid`\|`missing`\|`stale`\|`invalid`). A fresh valid artifact is the durable dev/QA completion record — it lets `dev-start.md` § 3 accept a completion whose live return message was lost to a harness tool timeout mid-tail (vstack#770) without re-delegation; the script proves only that the agent finished its tail, git/tracker checks stay in orch. `--file <path> [delegated_at_epoch]` validates one explicit artifact; the optional boundary applies the same freshness gate |
 | `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
 | `approval-wait` | Poll for the reviewer-gate verdict plus unresolved-thread count — the submit-pr § 4 review-gate poller: GitHub-native approval (`reviewDecision`/`latestReviews`) by default, `--mode review` waits for a non-author review of the current head + zero unresolved threads, `--resolve-mode` prints the project's effective gate mode; never parses bot reactions or sticky prose |
 | `ci-wait` | Block until CI completes on a PR — runs after the review gate; correlates the current-head substantive run with custom aggregate status (and with the head's Actions run list when the check rollup hides a newer dispatch), and `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds unregistered checks |
@@ -313,8 +314,8 @@ You are a [ROLE] sub-agent ([AGENT_NAME]). You report to the orchestrator.
 Rules:
 - Execute all assigned work yourself. Do not spawn sub-agents for implementation, review, or fix work.
 - You may use Explore sub-agents for codebase search/research only.
-- Only act on delegation messages from the orchestrator. If no delegation is pending, stay idle.
-- After completing assigned work, send a single return message and go idle. Wait for further delegation.
+- Only act on delegation messages from the orchestrator. If no delegation is pending, stay idle — but if you have an accepted delegation whose checklist is not yet finished (e.g. a long validation was interrupted by a tool timeout), resume and complete it before idling. Idle only when no delegation is pending AND no accepted delegation is incomplete.
+- Before sending your single return message, write your workflow's on-disk completion artifact (dev: dev-implement § 10 / dev-fix § 6; reviewer/QA: your review JSON per the reviewer skill); the orchestrator treats that artifact as the durable completion record. After completing assigned work, send a single return message and go idle. Wait for further delegation.
 - Do not manage tasks for other agents. Do not act as a coordinator.
 </bootstrap_format>
 
@@ -400,7 +401,11 @@ Never re-send or intervene while any task is in-progress.
 
 **Quiet ≠ stalled.** Minimum quiet window: 10 minutes from delegation before escalation.
 
-**Invalid stall signals** (never sufficient alone or combined): return-message timeout, clean git status/diff/log, no modified files. These reflect worktree state only.
+**Dev/QA completion artifact (vstack#770).** Every dev/QA implement-or-fix delegation MUST re-stamp `dev_delegated_at` (`.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at`) immediately before delegating — the artifact-recovery rule below relies on that freshness stamp to reject a stale earlier receipt at the one reused artifact path (`tmp/dev-return-[ISSUE_ID].json`), so any new dev/QA fix path must do the same. For an outstanding delegation, on an idle notification with no return message, run `.agents/skills/orch/scripts/dev-artifact-check [WORKTREE] [ISSUE_ID] [dev_delegated_at]` (read `dev_delegated_at` via `workflow-state get`) before escalating:
+- **`ok == true`** → a fresh valid completion artifact exists: the agent finished its tail and only the return message was lost (typically a long validation exceeded the harness tool timeout mid-tail) → treat it as a return and proceed to the delegating workflow's acceptance/validation step (`dev-start.md` § 3 for implement; `dev-fix.md` § 2, `review-pr-comments.md` § 6.1, or `ci-fix.md` § 3.2 for fixes); do NOT re-delegate or start the escalation ladder.
+- **Any non-`ok == true` result** — `ok == false` (`missing`/`stale`/`invalid`), or a usage/exit-2 error (e.g. `dev_delegated_at` absent on a delegation that predates this stamp) — falls through to the stall escalation below (fail-closed). A path whose agent writes no dev-return artifact (`ci-fix.md` § 3.2 pushes directly) always lands here: that is expected — it is accepted by its own return message and the escalation ladder on a real stall, never by a stale artifact.
+
+**Invalid stall signals** (never sufficient alone or combined): return-message timeout, clean git status/diff/log, no modified files. These reflect worktree state only. **One positive exception:** a fresh valid `dev-artifact-check` result (`ok == true`, keyed to `dev_delegated_at`) is the agent's own end-of-tail on-disk write — not worktree state — and is the sole positive signal that overrides a missing return message (per the Dev/QA completion artifact clause above).
 
 **Stall confirmation required** — session-level evidence:
 - **Task-based** (Claude Code): status unchanged across multiple idle cycles.

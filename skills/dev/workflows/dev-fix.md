@@ -62,6 +62,8 @@ Related improvements OK — unrelated changes should become separate issues.
 # Run the project's build/test/lint validation command
 ```
 
+**Long-running validation (harness-timeout safety, vstack#770).** A `tools/validate`-class command or full hermetic suite that can exceed the harness tool timeout (~10 min; 15-30 min runs are at risk) must NOT be run as a plain foreground command the turn blocks on — a tool timeout ends the turn mid-checklist, so the completion tail (commit → artifact → return in § 4.2, § 6) is lost and the orchestrator sees only absence and burns its stall ladder. Run it so the turn survives: prefer the harness background/polling mechanism (start in background, poll status/exit code), or set an explicit generous tool timeout for that one command. If such a command IS interrupted by a tool timeout, do NOT end the turn — re-check its actual outcome (still running? exit code? log tail?) and resume the checklist in the SAME turn. Never treat a tool-timeout error on a long command as completion or as license to go idle.
+
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`
 - **Simple + related to your work** → fix it, `--recheck`
@@ -116,7 +118,24 @@ Criteria: Would this save 5+ minutes in a future session? If yes, update. One su
 
 ## 6. Return
 
-Send this result to the orchestrator as an agent-to-agent message. **Writing artifacts to disk or posting comments is not a return** — the orchestrator does not poll the filesystem, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
+**Before returning — write your completion artifact.** After the § 4.2 commit, write the durable completion record to `tmp/dev-return-[ISSUE_ID].json` using your harness file-write/edit tool — NOT shell redirection (§ 1 harness-safe rules). Populate `items` from the decision table below (one entry per review item). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation exceeded the harness tool timeout and ended the turn (§ 4, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating. Write it AFTER the commit so `commit`/`validate` are final.
+
+```json
+{
+  "kind": "fix",
+  "issue": "[ISSUE_ID]",
+  "branch": "[BRANCH]",
+  "commit": "[HEAD_SHA_AFTER_COMMIT]",
+  "validate": "pass",
+  "summary_posted": true,
+  "bundled": false,
+  "items": [{"n": 1, "decision": "Applied", "reasoning": "..."}]
+}
+```
+
+`items[]` mirrors the return table — one entry per item with its `n`, `decision` (`Applied`/`Skipped`/`Blocked`), and `reasoning`. `validate` is `"pass"` or `"FAILING: check1,check2"`; `commit` is HEAD after § 4.2 (the prior HEAD if no commit was needed).
+
+Then send the result to the orchestrator as an agent-to-agent message. **Writing artifacts to disk or posting comments is not a return** — the orchestrator does not poll the filesystem, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
 
 **Return exactly**:
 

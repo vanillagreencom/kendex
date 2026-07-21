@@ -37,6 +37,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "cycles": 0,
   "submit_cycles": 0,
   "review_delegated_at": 1769600000,
+  "dev_delegated_at": 1769600000,
   "review_skipped": "tiny-docs",
   "json_paths": [
     "tmp/review-security-20260128-100000.json"
@@ -104,6 +105,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
+| `dev_delegated_at` | number | Epoch seconds of last dev/QA implement-or-fix delegation — gates `dev-artifact-check` completion-artifact acceptance (`dev-start.md` § 3, `dev-fix.md` § 2) |
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |

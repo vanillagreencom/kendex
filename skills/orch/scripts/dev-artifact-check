@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Deterministically validate a dev agent's on-disk completion artifact for
+# dev-start / dev-fix acceptance. A dev completion is only real when
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID].json exists, is newer than the delegation
+# timestamp, and carries the required completion fields. The live return message
+# can be lost when a long tools/validate-class command exceeds the harness Bash
+# tool timeout mid-tail and ends the turn (vstack#770), so the artifact — written
+# after commit/labels/summary — is the durable completion record; return-message
+# prose alone never has to be re-earned when the artifact is fresh and valid.
+#
+# Artifact schema (written by the dev agent AFTER commit/labels/summary, via the
+# harness file-write tool — never shell redirection):
+#   {
+#     "kind": "implement" | "fix",          // required, must be one of these
+#     "issue": "[ISSUE_ID]",                 // required, normalized workflow-state key
+#     "branch": "[BRANCH]",                  // required
+#     "commit": "[HEAD_SHA_AFTER_COMMIT]",   // required
+#     "validate": "pass" | "FAILING: c1,c2", // required, non-empty
+#     "qa_labels": ["needs-review"],         // implement only; [] if none
+#     "summary_posted": true,                // implement §9.1 done (fix: items processed)
+#     "bundled": false,
+#     "items": []                            // fix: [{n, decision, reasoning}]; bundled: sub-issue results
+#   }
+#
+# Only the five required fields are validated here — the script proves the agent
+# finished its tail and wrote a fresh receipt. Git/tracker corroboration stays in
+# orch dev-start.md § 3 (and dev-fix.md); this script never runs git or tracker
+# checks.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 << 'EOF'
+Usage:
+  dev-artifact-check <worktree_path> <issue_id> <delegated_at_epoch>
+  dev-artifact-check --file <json_path> [delegated_at_epoch]
+
+Primary mode: checks [WORKTREE]/tmp/dev-return-[ISSUE_ID].json.
+File mode (--file): checks one explicit JSON file. Validates existence + the
+required completion fields; when the optional delegated_at_epoch is supplied it
+ALSO applies primary mode's freshness gate against filesystem mtime.
+
+Both modes print JSON:
+  {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
+
+reason meanings when ok=false:
+  missing  artifact file does not exist
+  stale    artifact mtime < delegated_at_epoch (primary mode, or --file when the
+           optional boundary is supplied)
+  invalid  artifact is not parseable JSON, or a required field is missing/empty:
+           .kind (must be "implement" or "fix"), .issue, .branch, .commit,
+           .validate
+
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+EOF
+}
+
+emit() {
+  local ok="$1" path="$2" reason="$3"
+  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
+}
+
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# A dev completion artifact is valid only when it is parseable JSON carrying all
+# five required non-empty fields: .kind must be exactly "implement" or "fix", and
+# .issue/.branch/.commit/.validate must each be a non-empty scalar. A truncated or
+# half-written receipt fails this gate and is rejected reason=invalid.
+has_required_fields() {
+  jq -e '
+    (((.kind? // "") == "implement") or ((.kind? // "") == "fix"))
+      and (((.issue? // "") | tostring) != "")
+      and (((.branch? // "") | tostring) != "")
+      and (((.commit? // "") | tostring) != "")
+      and (((.validate? // "") | tostring) != "")
+  ' "$1" >/dev/null 2>&1
+}
+
+# Shared gate for BOTH modes — the dev artifact is always a single deterministic
+# file (unlike the reviewer glob), so the check is identical: existence →
+# freshness (only when a boundary is supplied) → required fields → valid. Emits
+# the {ok, path, reason} JSON and returns 0 iff valid, 1 otherwise. delegated_at
+# may be empty ("" skips the freshness gate — the --file-without-boundary case).
+check_file() {
+  local file="$1" delegated_at="$2" mtime
+  if [[ ! -f "$file" ]]; then
+    emit false "" "missing"
+    return 1
+  fi
+  if [[ -n "$delegated_at" ]]; then
+    mtime="$(file_mtime "$file")"
+    if (( mtime < delegated_at )); then
+      emit false "$file" "stale"
+      return 1
+    fi
+  fi
+  if ! has_required_fields "$file"; then
+    emit false "$file" "invalid"
+    return 1
+  fi
+  emit true "$file" "valid"
+  return 0
+}
+
+# --- File mode: validate one explicit JSON path deterministically ---
+if [[ "${1:-}" == "--file" ]]; then
+  # Accept an OPTIONAL trailing delegated_at_epoch. When present, apply the same
+  # freshness gate as primary mode (artifact mtime < delegated_at → stale); when
+  # omitted, keep the existence + required-fields behavior.
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    usage
+    exit 2
+  fi
+  file="$2"
+  delegated_at="${3:-}"
+  if [[ -z "$file" ]]; then
+    echo "Error: --file requires a non-empty path" >&2
+    exit 2
+  fi
+  if [[ -n "$delegated_at" ]] && ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+    echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
+    exit 2
+  fi
+  if check_file "$file" "$delegated_at"; then exit 0; else exit 1; fi
+fi
+
+if [[ $# -ne 3 ]]; then
+  usage
+  exit 2
+fi
+
+worktree="$1"
+issue="$2"
+delegated_at="$3"
+
+if [[ ! -d "$worktree" ]]; then
+  echo "Error: worktree path '$worktree' is not a directory" >&2
+  exit 2
+fi
+if [[ -z "$issue" ]]; then
+  echo "Error: issue_id must be non-empty" >&2
+  exit 2
+fi
+if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+  echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
+  exit 2
+fi
+
+file="$worktree/tmp/dev-return-$issue.json"
+
+if check_file "$file" "$delegated_at"; then exit 0; else exit 1; fi

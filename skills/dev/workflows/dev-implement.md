@@ -266,6 +266,8 @@ Run required verification commands in their normalized form from § 2.4 — ambi
 
 Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (vstack#721; canonical rule: reviewer SKILL.md § Harness-Safe Shell).
 
+**Long-running validation (harness-timeout safety, vstack#770).** A `tools/validate`-class command or full hermetic suite that can exceed the harness tool timeout (~10 min; 15-30 min runs are at risk) must NOT be run as a plain foreground command the turn blocks on — a tool timeout ends the turn mid-checklist, so the completion tail (commit → QA labels → summary → artifact → return in § 7-10) is lost and the orchestrator sees only absence and burns its stall ladder. Run it so the turn survives: prefer the harness background/polling mechanism (start in background, poll status/exit code), or set an explicit generous tool timeout for that one command. If such a command IS interrupted by a tool timeout, do NOT end the turn — re-check its actual outcome (still running? exit code? log tail?) and resume the checklist in the SAME turn. Never treat a tool-timeout error on a long command as completion or as license to go idle.
+
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`
 - **Simple + related to your work** → fix it, `--recheck`
@@ -454,6 +456,24 @@ Do NOT post handoff to the completed issue — that conflates audiences. Handoff
 | Summary posted | Always | § 9.1 |
 | Downstream handoff | Blocks + context needed | § 9.2 |
 
+**Before returning — write your completion artifact.** With every row above checked (commit, QA labels, and summary now final), write the durable completion record to `tmp/dev-return-[ISSUE_ID].json` using your harness file-write/edit tool — NOT shell redirection (§ 1 harness-safe rules). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation exceeded the harness tool timeout and ended the turn (§ 5, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating the whole task. Write it AFTER commit/labels/summary so every field is final.
+
+```json
+{
+  "kind": "implement",
+  "issue": "[ISSUE_ID]",
+  "branch": "[BRANCH]",
+  "commit": "[HEAD_SHA_AFTER_COMMIT]",
+  "validate": "pass",
+  "qa_labels": ["needs-review"],
+  "summary_posted": true,
+  "bundled": false,
+  "items": []
+}
+```
+
+`validate` is `"pass"` or `"FAILING: check1,check2"` (matching your commit/return); `qa_labels` is the applied § 8 labels, `[]` if none; `bundled` is `false` for a single issue. **Bundled** (§ 11): key `issue` to the Parent ID, set `bundled: true`, and write the artifact once per bundle to `tmp/dev-return-[PARENT_ID].json` before the § 11 return — see § 11.
+
 **If single**: Return now with:
 ```
 Branch: [BRANCH_NAME]
@@ -503,7 +523,9 @@ Do NOT push or submit PR — orchestrator handles after review passes.
    .agents/skills/linear/scripts/linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md
    ```
 
-3. Send this result to the orchestrator as an agent-to-agent message. **Posting the parent summary comment is not a return** — the orchestrator does not poll the filesystem or issue tracker, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
+3. **Write the completion artifact** to `tmp/dev-return-[PARENT_ID].json` (schema in § 10, keyed to the Parent ID) using your harness file-write/edit tool — NOT shell redirection. Set `kind: "implement"`, `issue` to the Parent ID, `bundled: true`, and populate `items` with the per-sub-issue results (`[{"n":1,"decision":"...","reasoning":"..."}]`). Include **all five required fields** — `branch`, `commit` (the last sub-issue's HEAD), and `validate` too, not just `kind`/`issue`/`items` — or the orchestrator rejects the artifact `reason=invalid` (full schema in § 10). Write it before sending the return; the orchestrator treats it as the durable completion record for the bundle, so a lost return message is recoverable without redoing the work.
+
+4. Send this result to the orchestrator as an agent-to-agent message. **Posting the parent summary comment is not a return** — the orchestrator does not poll the filesystem or issue tracker, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
 
    **Return exactly**:
 

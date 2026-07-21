@@ -110,7 +110,11 @@ If `.exists` is `true`, read `.team_name`:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .team_name
 ```
 
-Delegate to `[AGENT]`. Wait for completion. Fill placeholders, omit empty lines/sections.
+**Record the delegation timestamp, then delegate** to `[AGENT]`. `dev_delegated_at` MUST be re-stamped immediately before delegating even though this agent writes **no** dev-return artifact (it pushes its fix directly, not via `dev-fix.md`): the re-stamp guarantees a stale receipt from an earlier dev-fix at the reused path `tmp/dev-return-[ISSUE_ID].json` can never be mis-accepted for this CI fix by the idle-recovery rule (SKILL § Wait for Agent Return). Fill placeholders, omit empty lines/sections.
+
+```bash
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+```
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
@@ -132,6 +136,15 @@ Worktree: [WORKTREE_PATH]
 
 Report: what was fixed, validate status, any unrelated failures.
 </delegation_format>
+
+**Wait for completion.** This agent writes **no** dev-return artifact, so `dev-artifact-check` here is *expected* to report `ok == false` — `missing`, or `stale` for a leftover receipt from an earlier dev-fix. That is the normal path: accept the completion from the agent's return message (what was fixed, validate status), and on a genuinely absent return follow the [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting) ladder — never a stale artifact. The check's only role on this path is the fail-closed guarantee (given the re-stamp above) that a stale earlier artifact can never be mis-accepted as this CI fix:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+```
+```bash
+.agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+```
 
 **→ Jump to § 4** (if merge queue) or **§ 5** (otherwise)
 
