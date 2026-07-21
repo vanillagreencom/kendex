@@ -262,6 +262,51 @@ enum Commands {
         #[arg(long)]
         kind: Option<String>,
     },
+
+    /// File a workflow-error issue for an installed asset, routing it to the
+    /// correct repo based on ownership: vstack-owned assets go upstream; assets
+    /// that are project-local (the safe default) go to THIS repo's issue
+    /// tracker. Ownership is resolved from installed provenance frontmatter
+    /// (skills/agents that declare it) and the project lock's recorded source —
+    /// not guessed; assets without provenance fall back to the lock source, and
+    /// anything unproven defaults to local. Non-interactive: use --dry-run to
+    /// preview.
+    Report {
+        /// Report about an installed skill by name.
+        #[arg(long)]
+        skill: Option<String>,
+        /// Report about an installed agent by name.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Report about an installed hook by name.
+        #[arg(long)]
+        hook: Option<String>,
+        /// Report about any installed asset by name (kind auto-detected).
+        #[arg(long)]
+        asset: Option<String>,
+        /// Issue title.
+        #[arg(long)]
+        title: String,
+        /// Issue body text (mutually exclusive with --body-file).
+        #[arg(long)]
+        body: Option<String>,
+        /// Read the issue body from a file (mutually exclusive with --body).
+        #[arg(long)]
+        body_file: Option<std::path::PathBuf>,
+        /// Shortcut for `--scope global`.
+        #[arg(short, long)]
+        global: bool,
+        /// Ownership-resolution scope: project | global (default: project).
+        #[arg(long)]
+        scope: Option<String>,
+        /// Upstream repo for vstack-owned issues (default: vanillagreencom/vstack).
+        #[arg(long)]
+        upstream: Option<String>,
+        /// Print the ownership decision, target repo, and exact gh command
+        /// without filing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -358,6 +403,31 @@ fn main() -> Result<()> {
         Some(Commands::Init { name, kind }) => {
             commands::init::run(name.as_deref(), kind.as_deref())
         }
+        Some(Commands::Report {
+            skill,
+            agent,
+            hook,
+            asset,
+            title,
+            body,
+            body_file,
+            global,
+            scope,
+            upstream,
+            dry_run,
+        }) => commands::report::run(commands::report::ReportArgs {
+            skill,
+            agent,
+            hook,
+            asset,
+            title,
+            body,
+            body_file,
+            global,
+            scope,
+            upstream,
+            dry_run,
+        }),
         // No subcommand → default to add
         None => commands::add::run(
             cli.source,

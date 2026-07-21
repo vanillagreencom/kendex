@@ -5,6 +5,7 @@ pub mod init;
 pub mod list;
 pub mod refresh;
 pub mod remove;
+pub mod report;
 pub mod update;
 pub mod update_pi;
 pub mod verify;
