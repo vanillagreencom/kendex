@@ -93,7 +93,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Setting | What it does |
 | --- | --- |
 | Read output mode | `preview`, `summary`, or `hidden`. |
-| Read image display | With Pi `terminal.showImages=false`: `off` hides images, `always` shows them in read output, and `on` shows them only while tools are expanded. Changes from Extension Settings apply immediately. Floating overlays temporarily hide images but keep their layout space. |
+| Read image display | `off`, `always`, or `on` (expanded-only); requires Pi `terminal.showImages=false`. |
 | Search output mode | `preview`, `count`, or `hidden`. |
 | Bash output mode | `opencode`, `preview`, `summary`, or `hidden`. |
 | Live bash output delay (ms) | Wait this long before showing a running bash output tail. |
