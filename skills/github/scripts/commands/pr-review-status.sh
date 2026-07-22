@@ -97,11 +97,9 @@ fi
 # Skipped reviewers (BOT_SKIPPED_REVIEWERS) are excluded.
 PENDING_BOTS_JSON='[]'
 if [[ -n "${BOT_REVIEWERS:-}" ]]; then
-    declare -A _SKIPPED_SET=()
+    _skipped_reviewers=()
     if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
-        for s in $(printf '%s' "$BOT_SKIPPED_REVIEWERS" | tr ',' ' '); do
-            [[ -n "$s" ]] && _SKIPPED_SET["$s"]=1
-        done
+        IFS=',' read -ra _skipped_reviewers <<< "$BOT_SKIPPED_REVIEWERS"
     fi
     _pending=()
     IFS=',' read -ra _BR <<< "$BOT_REVIEWERS"
@@ -109,7 +107,16 @@ if [[ -n "${BOT_REVIEWERS:-}" ]]; then
         _b="${_b#"${_b%%[![:space:]]*}"}"
         _b="${_b%"${_b##*[![:space:]]}"}"
         [[ -z "$_b" ]] && continue
-        [[ -n "${_SKIPPED_SET[$_b]:-}" ]] && continue
+        _is_skipped="false"
+        for _s in "${_skipped_reviewers[@]+"${_skipped_reviewers[@]}"}"; do
+            _s="${_s#"${_s%%[![:space:]]*}"}"
+            _s="${_s%"${_s##*[![:space:]]}"}"
+            if [[ -n "$_s" ]] && [[ "$_s" == "$_b" ]]; then
+                _is_skipped="true"
+                break
+            fi
+        done
+        [[ "$_is_skipped" == "true" ]] && continue
         _entry=$(bot_review_status "$PR_NUM" "$_b" 2>/dev/null || echo '{"status":"unknown"}')
         _st=$(echo "$_entry" | jq -r '.status // "unknown"')
         if [[ "$_st" == "pending" || "$_st" == "unknown" ]]; then
