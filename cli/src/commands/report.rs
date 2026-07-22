@@ -213,7 +213,8 @@ fn run_with_filer(args: ReportArgs, filer: &dyn IssueFiler) -> Result<()> {
 /// 1. Frontmatter self-declares vstack: `source: vstack`, OR a `repository` whose
 ///    parsed `owner/repo` slug equals the canonical `vanillagreencom/vstack`.
 /// 2. Else name is in the lock (kind matching any given kind selector) with a
-///    `source_repo` that identifies the upstream `owner/repo` → Vstack. A
+///    `source_repo` that identifies the canonical or configured upstream
+///    `owner/repo` → Vstack. A
 ///    foreign `source_repo` is authoritative project-local; live source Git
 ///    origin and remote shorthand fallbacks only apply to legacy entries that
 ///    have no recorded `source_repo`.
@@ -255,7 +256,7 @@ fn resolve_ownership(
 /// not upstream unless its recorded or live GitHub identity is upstream.
 fn lock_entry_is_vstack(entry: &config::LockEntry, upstream: &str) -> bool {
     if let Some(source_repo) = entry.source_repo.as_deref() {
-        return config::github_slug_eq(source_repo, upstream);
+        return repo_is_vstack_upstream(source_repo, upstream);
     }
 
     // Skills carry their own provenance frontmatter. A marker-only orphaned
@@ -271,7 +272,15 @@ fn lock_entry_is_vstack(entry: &config::LockEntry, upstream: &str) -> bool {
         config::resolve_source_path(&entry.source).as_deref(),
         &entry.source,
     )
-    .is_some_and(|source_repo| config::github_slug_eq(&source_repo, upstream))
+    .is_some_and(|source_repo| repo_is_vstack_upstream(&source_repo, upstream))
+}
+
+/// `--upstream` redirects filing and may name a fork that owns a vstack
+/// distribution, but it must never stop canonical vstack assets from being
+/// recognized as upstream-owned.
+fn repo_is_vstack_upstream(repository: &str, upstream: &str) -> bool {
+    config::github_slug_eq(repository, DEFAULT_UPSTREAM)
+        || config::github_slug_eq(repository, upstream)
 }
 
 /// True when frontmatter self-declares vstack ownership. The `repository` field
@@ -837,6 +846,38 @@ mod tests {
     }
 
     #[test]
+    fn ownership_vstack_via_canonical_lock_source_repo_with_upstream_override() {
+        let missing_source = tmpdir("missing-vstack-source-custom-target");
+        let lock = lock_with_repo(
+            "dev",
+            ItemKind::Agent,
+            missing_source.to_str().unwrap(),
+            Some(DEFAULT_UPSTREAM),
+        );
+        let sel = selector("dev", Some(ItemKind::Agent));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, "example/vstack-fork"),
+            Ownership::Vstack
+        );
+    }
+
+    #[test]
+    fn ownership_vstack_via_configured_fork_lock_source_repo() {
+        let missing_source = tmpdir("missing-vstack-fork-source");
+        let lock = lock_with_repo(
+            "dev",
+            ItemKind::Agent,
+            missing_source.to_str().unwrap(),
+            Some("example/vstack-fork"),
+        );
+        let sel = selector("dev", Some(ItemKind::Agent));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, "example/vstack-fork"),
+            Ownership::Vstack
+        );
+    }
+
+    #[test]
     fn ownership_vstack_via_legacy_live_source_git_origin() {
         let source = make_vstack_source("live-origin");
         init_git_origin(&source, "git@github.com:vanillagreencom/vstack.git");
@@ -847,6 +888,16 @@ mod tests {
             Ownership::Vstack
         );
         let _ = std::fs::remove_dir_all(&source);
+    }
+
+    #[test]
+    fn ownership_vstack_via_canonical_legacy_source_with_upstream_override() {
+        let lock = lock_with("guard", ItemKind::Hook, DEFAULT_UPSTREAM);
+        let sel = selector("guard", Some(ItemKind::Hook));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, "example/vstack-fork"),
+            Ownership::Vstack
+        );
     }
 
     #[test]
