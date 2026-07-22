@@ -73,6 +73,11 @@ assert_cache_and_attachment_roots() {
 assert_cache_and_attachment_roots "$LINK_ROOT/.agents/skills/linear/scripts/linear.sh" "logical installed invocation"
 assert_cache_and_attachment_roots "$SKILL_DIR/scripts/linear.sh" "canonical source-path invocation"
 
+if ! (cd "$LINK_ROOT" && bash -u -c 'source "$1"; : "$_CACHE_LIB_DIR"; declare -F cache_refresh_issues >/dev/null' _ "$SKILL_DIR/scripts/lib/cache.sh"); then
+  echo "FAIL cache library did not retain its own source directory for write-through refreshes"
+  exit 1
+fi
+
 EMPTY_REAL="$TMP_ROOT/empty-real/project"
 EMPTY_LINK="$TMP_ROOT/empty-link/project"
 mkdir -p "$EMPTY_REAL/.agents/skills" "$TMP_ROOT/empty-link"

@@ -136,6 +136,18 @@ assert_path_absent "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" "cleanup remo
 assert_branch_absent "$DEFAULT_ROOT/repo-a" "issue-default" "cleanup deletes the merged worktree branch after removal"
 assert_path_exists "$DEFAULT_ROOT/repo-a/base.txt" "cleanup never touches the main checkout"
 
+invalid_cleanup_path=$(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" create issue-invalid-cleanup)
+printf 'WORKTREE_SYMLINKS="../outside"\n' >"$DEFAULT_ROOT/repo-a/.env"
+set +e
+(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" cleanup >"$DEFAULT_ROOT/invalid-cleanup.out" 2>"$DEFAULT_ROOT/invalid-cleanup.err")
+invalid_cleanup_code=$?
+set -e
+assert_eq "$invalid_cleanup_code" "1" "cleanup reports failure when configured symlinks cannot be cleaned safely"
+assert_contains "$(cat "$DEFAULT_ROOT/invalid-cleanup.err")" "Could not safely clean" "cleanup reports the skipped merged worktree"
+assert_path_exists "$invalid_cleanup_path/.git" "failed cleanup keeps the merged worktree registered"
+rm -f "$DEFAULT_ROOT/repo-a/.env"
+(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" remove issue-invalid-cleanup >/dev/null)
+
 echo "=== explicit absolute and ~ overrides ==="
 
 abs_path=$(cd "$DEFAULT_ROOT/repo-a" && WORKTREE_BASE_DIR="$DEFAULT_ROOT/abs-base" "$WORKTREE_SCRIPT" path ISSUE-2)

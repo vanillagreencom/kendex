@@ -245,6 +245,7 @@ fn add_writes_project_skill_root(
     method: InstallMethod,
     auto_included_skill_names: &std::collections::HashSet<String>,
     lock: &LockFile,
+    linked_project_skill_root_has_managed_auto_skill: bool,
 ) -> bool {
     !global
         && !selected_skills.is_empty()
@@ -252,11 +253,33 @@ fn add_writes_project_skill_root(
             || auto_included_skill_names.iter().any(|name| {
                 lock.entries.get(name).is_some_and(|entry| {
                     entry.kind == config::ItemKind::Skill && entry.method == InstallMethod::Symlink
-                })
+                }) || linked_project_skill_root_has_managed_auto_skill
             })
             || harnesses
                 .iter()
                 .any(|harness| matches!(harness, Harness::Codex | Harness::Pi)))
+}
+
+fn linked_project_skill_root_has_managed_auto_skill(
+    project_root: &Path,
+    auto_included_skill_names: &std::collections::HashSet<String>,
+) -> bool {
+    let skill_root_has_symlink = [
+        project_root.join(".agents"),
+        project_root.join(".agents/skills"),
+    ]
+    .iter()
+    .any(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    });
+    skill_root_has_symlink
+        && auto_included_skill_names.iter().any(|name| {
+            project_root
+                .join(".agents/skills")
+                .join(name)
+                .join(".vstack-refreshed")
+                .is_file()
+        })
 }
 
 #[cfg(test)]
@@ -527,6 +550,7 @@ role: engineer
             InstallMethod::Copy,
             &auto,
             &symlink_lock,
+            false,
         ));
         assert!(
             !add_writes_project_skill_root(
@@ -536,6 +560,7 @@ role: engineer
                 InstallMethod::Copy,
                 &auto,
                 &copy_lock,
+                false,
             ),
             "copy-mode auto-included skills with copy lock entries do not write .agents/skills"
         );
@@ -547,6 +572,7 @@ role: engineer
                 InstallMethod::Copy,
                 &no_auto,
                 &LockFile::default(),
+                false,
             ),
             "manual copy-mode Claude skill installs do not write .agents/skills"
         );
@@ -812,6 +838,59 @@ role: engineer
         );
         assert!(!outside_agents.join("skills/demo/SKILL.md").exists());
         assert!(!project.join(".claude/skills/demo/SKILL.md").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_rejects_auto_skill_recovered_through_linked_agents_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("linked-agents-auto-recovered");
+        let source = root.join("source");
+        let project = root.join("project");
+        let outside_agents = root.join("main-checkout-agents");
+        let installed_skill = outside_agents.join("skills/demo");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&installed_skill).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        write_demo_agent_source(&source);
+        std::fs::write(installed_skill.join(".vstack-refreshed"), "managed\n").unwrap();
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        let err = crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["claude-code".into()]),
+                    Some(vec!["rust".into()]),
+                    None,
+                    None,
+                    None,
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        assert!(
+            err.to_string()
+                .contains("refusing project-owned skills path outside project root")
+        );
+        assert!(!project.join(".vstack-lock.json").exists());
+        assert!(!project.join("vstack.toml").exists());
+        assert!(!project.join(".claude/skills/demo").exists());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1407,6 +1486,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         method,
         &auto_included_skill_names,
         &LockFile::load(&config::lock_file_path(global)).unwrap_or_default(),
+        linked_project_skill_root_has_managed_auto_skill(&project_root, &auto_included_skill_names),
     ) {
         crate::commands::refresh::preflight_project_refresh(&project_root)?;
     }

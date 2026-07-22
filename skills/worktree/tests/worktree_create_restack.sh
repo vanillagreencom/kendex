@@ -451,7 +451,13 @@ assert_eq "$pending_move_code" "1" "remote movement during conflict resolution r
 assert_contains "$(cat "$PENDING_MOVE_ROOT/continue.err")" "changed while the supported restack was paused" "pending remote movement reports the invalidated continuation"
 assert_rebase_in_progress "$PENDING_MOVE_WT" "rejected stale continuation leaves the rebase paused"
 assert_eq "$(git --git-dir="$PENDING_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-pending-move)" "$pending_move_external" "pending remote movement remains untouched"
-(cd "$PENDING_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-pending-move >/dev/null)
+printf 'WORKTREE_MKDIRS="../outside"\n' >>"$PENDING_MOVE_ROOT/main/.env"
+set +e
+(cd "$PENDING_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-pending-move >"$PENDING_MOVE_ROOT/abort.out" 2>"$PENDING_MOVE_ROOT/abort.err")
+pending_abort_code=$?
+set -e
+assert_eq "$pending_abort_code" "0" "guarded abort remains successful when setup config becomes invalid"
+assert_contains "$(cat "$PENDING_MOVE_ROOT/abort.err")" "Restack was aborted successfully" "guarded abort reports post-abort setup failure separately"
 assert_no_rebase_in_progress "$PENDING_MOVE_WT" "guarded abort remains available after remote movement"
 
 # --- Remote movement after authorization still fails the exact lease ---------

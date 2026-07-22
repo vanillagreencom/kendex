@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+_CACHE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 linear_cache_canonical_existing_dir() {
     local path="$1"
     [[ -d "$path" ]] || return 1

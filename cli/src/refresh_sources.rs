@@ -240,7 +240,7 @@ pub(crate) fn resolve_recorded_source(source: &str) -> Option<PathBuf> {
     if path.is_absolute() && path.is_dir() {
         return Some(path.to_path_buf());
     }
-    if let Some(path) = resolve_relative_local_source(source, false) {
+    if let Some(path) = resolve_recorded_local_source(source) {
         return Some(path);
     }
     resolve_single_source(source)
@@ -255,7 +255,7 @@ pub(crate) fn recorded_source_exists(source: &str) -> bool {
     if path.is_absolute() {
         return path.is_dir();
     }
-    resolve_relative_local_source(source, false).is_some()
+    resolve_recorded_local_source(source).is_some()
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
@@ -322,6 +322,17 @@ fn is_bare_local_source(source: &str, looks_like_remote: bool) -> bool {
         && !source.starts_with('~')
         && !Path::new(source).is_absolute()
         && !looks_like_remote
+}
+
+fn resolve_recorded_local_source(source: &str) -> Option<PathBuf> {
+    let looks_like_remote =
+        source.contains('/') && !source.starts_with('.') && !source.starts_with('/');
+    if !is_explicit_relative_local_source(source)
+        && !is_bare_local_source(source, looks_like_remote)
+    {
+        return None;
+    }
+    resolve_relative_local_source(source, false)
 }
 
 fn resolve_relative_local_source(source: &str, require_vstack_source: bool) -> Option<PathBuf> {
@@ -522,6 +533,21 @@ mod tests {
             Some(std::fs::canonicalize(&main_checkout_neighbor).unwrap()),
             "../vstack must not silently keep pointing at the main checkout after a lock is copied"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recorded_remote_shorthand_does_not_bind_to_project_local_shadow_dir() {
+        let root = tmpdir("remote-shadow");
+        let project = root.join("project");
+        let shadow = project.join("owner").join("repo");
+        std::fs::create_dir_all(&shadow).unwrap();
+
+        crate::test_util::with_project_root(&project, || {
+            assert!(resolve_recorded_local_source("owner/repo").is_none());
+            assert!(!recorded_source_exists("owner/repo"));
+        });
 
         let _ = std::fs::remove_dir_all(root);
     }
