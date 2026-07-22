@@ -1415,12 +1415,14 @@ fn recover_hook_lock_entries_at_with_cursor_global_rules(
     ) {
         match lock.entries.get_mut(&item.name) {
             Some(entry) if entry.kind == ItemKind::Hook => {
-                if entry.source_repo.is_none() {
-                    let entry_source_repo = source_repo_for_source(
-                        resolve_source_path(&entry.source).as_deref(),
-                        &entry.source,
-                    );
-                    if entry_source_repo.is_some() {
+                // A resolvable recorded source is authoritative even when its
+                // current Git origin is absent: synchronize stale identity to
+                // the observed value, including None. If the source is
+                // unavailable, retain the last durable identity until a later
+                // refresh can observe it again.
+                if let Some(entry_source_root) = resolve_source_path(&entry.source) {
+                    let entry_source_repo = source_repo_from_git_origin(&entry_source_root);
+                    if entry.source_repo != entry_source_repo {
                         entry.source_repo = entry_source_repo;
                         modified = true;
                     }
@@ -2112,6 +2114,127 @@ mod source_registry_tests {
                 .get("my-hook")
                 .and_then(|entry| entry.source_repo.as_deref()),
             Some("example/project-assets")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_existing_hook_replaces_stale_source_identity_from_live_source() {
+        let dir = sandbox("hook_recover_replaces_stale_identity");
+        let selected_source = dir.join("selected-source");
+        let recorded_source = dir.join("recorded-source");
+        let project = dir.join("project");
+        fs::create_dir_all(selected_source.join("hooks")).unwrap();
+        fs::create_dir_all(&recorded_source).unwrap();
+        init_git_origin(
+            &recorded_source,
+            "https://github.com/example/project-assets.git",
+        );
+        let script = test_hook_script("my-hook", "echo source");
+        fs::write(selected_source.join("hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".claude/hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "my-hook".to_string(),
+            kind: ItemKind::Hook,
+            source: recorded_source.display().to_string(),
+            source_repo: Some("vanillagreencom/vstack".to_string()),
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-21T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        });
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &selected_source.display().to_string(),
+            "2026-07-22T00:00:00Z",
+        ));
+        assert_eq!(
+            lock.entries
+                .get("my-hook")
+                .and_then(|entry| entry.source_repo.as_deref()),
+            Some("example/project-assets")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_existing_hook_clears_stale_identity_for_live_source_without_origin() {
+        let dir = sandbox("hook_recover_clears_stale_identity");
+        let selected_source = dir.join("selected-source");
+        let recorded_source = dir.join("recorded-source");
+        let project = dir.join("project");
+        fs::create_dir_all(selected_source.join("hooks")).unwrap();
+        fs::create_dir_all(&recorded_source).unwrap();
+        let script = test_hook_script("my-hook", "echo source");
+        fs::write(selected_source.join("hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".claude/hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "my-hook".to_string(),
+            kind: ItemKind::Hook,
+            source: recorded_source.display().to_string(),
+            source_repo: Some("vanillagreencom/vstack".to_string()),
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-21T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        });
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &selected_source.display().to_string(),
+            "2026-07-22T00:00:00Z",
+        ));
+        assert_eq!(lock.entries.get("my-hook").unwrap().source_repo, None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_existing_hook_preserves_identity_when_recorded_source_is_unavailable() {
+        let dir = sandbox("hook_recover_preserves_unavailable_identity");
+        let selected_source = dir.join("selected-source");
+        let missing_recorded_source = dir.join("missing-recorded-source");
+        let project = dir.join("project");
+        fs::create_dir_all(selected_source.join("hooks")).unwrap();
+        let script = test_hook_script("my-hook", "echo source");
+        fs::write(selected_source.join("hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".claude/hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "my-hook".to_string(),
+            kind: ItemKind::Hook,
+            source: missing_recorded_source.display().to_string(),
+            source_repo: Some("vanillagreencom/vstack".to_string()),
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-21T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        });
+
+        assert!(!recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &selected_source.display().to_string(),
+            "2026-07-22T00:00:00Z",
+        ));
+        assert_eq!(
+            lock.entries
+                .get("my-hook")
+                .and_then(|entry| entry.source_repo.as_deref()),
+            Some("vanillagreencom/vstack")
         );
         let _ = fs::remove_dir_all(&dir);
     }
