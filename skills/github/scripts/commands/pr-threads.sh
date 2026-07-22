@@ -175,7 +175,11 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
 
         local page_nodes has_next next_cursor
         page_nodes=$(jq -c '.repository.pullRequest.reviewThreads.nodes' <<<"$page_result") || exit 1
-        all_nodes=$(jq -cn --argjson accumulated "$all_nodes" --argjson page "$page_nodes" '$accumulated + $page') || exit 1
+        # Keep review bodies out of exec arguments: a handful of maximum-size
+        # comments can exceed macOS ARG_MAX even though the API response is
+        # valid. Two compact JSON values on stdin let jq merge without an OS
+        # argument-size ceiling.
+        all_nodes=$(printf '%s\n%s\n' "$all_nodes" "$page_nodes" | jq -sc '.[0] + .[1]') || exit 1
         has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page_result") || exit 1
 
         if [ "$has_next" = "false" ]; then
@@ -191,11 +195,13 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
     done
 
     local result
-    result=$(jq -cn --argjson nodes "$all_nodes" '{
+    # The complete multi-page result can be larger still; wrap stdin rather
+    # than copying it into jq's argv.
+    result=$(printf '%s\n' "$all_nodes" | jq -c '{
         repository: {
             pullRequest: {
                 reviewThreads: {
-                    nodes: $nodes,
+                    nodes: .,
                     pageInfo: {hasNextPage: false, endCursor: null}
                 }
             }

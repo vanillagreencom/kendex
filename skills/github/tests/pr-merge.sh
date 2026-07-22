@@ -95,6 +95,20 @@ case "${1:-}" in
                 echo '{"errors":[{"message":"review threads unavailable"}]}'
                 exit 1
             fi
+            if [[ "${STUB_THREADS_LARGE_PAGE:-false}" == "true" ]]; then
+                jq -cn '{data:{repository:{pullRequest:{reviewThreads:{
+                    nodes: [range(0; 40) | {
+                        id: ("PRRT_large_" + tostring),
+                        isResolved: true,
+                        isOutdated: false,
+                        path: "src/large-page.rs",
+                        line: .,
+                        comments: {nodes: [{author: {login: "reviewer"}, body: ("x" * 65536)}]}
+                    }],
+                    pageInfo:{hasNextPage:false,endCursor:null}
+                }}}}}'
+                exit 0
+            fi
             if [[ "$*" == *"cursor=cursor-page-2"* ]]; then
                 if [[ "${STUB_THREADS_PAGE2_FETCH_FAIL:-false}" == "true" ]]; then
                     echo '{"errors":[{"message":"second review thread page unavailable"}]}'
@@ -271,6 +285,12 @@ assert_not_contains "$(cat "$call_log")" "pr merge" "immediate path never invoke
 outdated_threads='[{"id":"PRRT_outdated","isResolved":false,"isOutdated":true,"path":"src/old.rs","line":7,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Stale diff"}]}}]'
 out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$outdated_threads" run_check)
 assert_eq "$(jq -r .can_merge <<<"$out")" "true" "outdated unresolved thread is not actionable"
+
+# Forty valid maximum-size comment bodies produce a ~2.5 MiB page, exceeding
+# macOS ARG_MAX (and typical Linux ARG_MAX). The query boundary must stream
+# this payload through jq stdin rather than fail while constructing argv.
+out=$(STUB_CHECKS="$checks" STUB_THREADS_LARGE_PAGE=true run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "true" "large valid review page avoids ARG_MAX failure"
 
 first_page_threads=$(jq -cn '[range(0; 100) | {
     id: ("PRRT_resolved_" + tostring),
