@@ -612,7 +612,12 @@ fn inline_mode_is_primary(fields: &[(String, String)]) -> bool {
     fields
         .iter()
         .find(|(field, _)| field == "mode")
-        .map(|(_, value)| value.trim().trim_matches('"').eq_ignore_ascii_case("primary"))
+        .map(|(_, value)| {
+            value
+                .trim()
+                .trim_matches('"')
+                .eq_ignore_ascii_case("primary")
+        })
         .unwrap_or(false)
 }
 

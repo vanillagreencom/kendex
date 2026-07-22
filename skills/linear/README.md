@@ -32,7 +32,7 @@ skills/linear/
 ./scripts/linear.sh sync --reconcile
 ```
 
-Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachments fetch`) use existing `.cache/linear` data and do not require API auth.
+Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachments fetch`) use existing `.cache/linear` data and do not require API auth. Cache and attachment paths are anchored to the physical git worktree root from `git rev-parse --show-toplevel`, so symlinked checkout spellings and canonical skill invocation paths read and write the same cache. If no cache exists, the error JSON includes the checked `cache_dir` and `meta_path`.
 
 `cache labels list --format=safe` returns issue-label metadata (`id`, `name`, `team`, `parent`, `is_group`) so workflow callers can preflight labels and reject parent/group labels before issue mutation.
 

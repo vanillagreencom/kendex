@@ -232,6 +232,33 @@ fn build_source_options(
     options
 }
 
+fn same_path(a: &Path, b: &Path) -> bool {
+    let a = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a == b
+}
+
+fn add_writes_project_skill_root(
+    global: bool,
+    selected_skills: &[Skill],
+    harnesses: &[Harness],
+    method: InstallMethod,
+    auto_included_skill_names: &std::collections::HashSet<String>,
+    lock: &LockFile,
+) -> bool {
+    !global
+        && !selected_skills.is_empty()
+        && (method == InstallMethod::Symlink
+            || auto_included_skill_names.iter().any(|name| {
+                lock.entries.get(name).is_some_and(|entry| {
+                    entry.kind == config::ItemKind::Skill && entry.method == InstallMethod::Symlink
+                })
+            })
+            || harnesses
+                .iter()
+                .any(|harness| matches!(harness, Harness::Codex | Harness::Pi)))
+}
+
 #[cfg(test)]
 mod auto_include_agent_skills_tests {
     use super::*;
@@ -390,6 +417,141 @@ mod auto_include_agent_skills_tests {
 mod source_option_tests {
     use super::*;
 
+    fn tmpdir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("vstack-add-{label}-{}-{nanos}", std::process::id()))
+    }
+
+    fn write_demo_skill(source: &Path) {
+        let skill_dir = source.join("skills").join("demo");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: demo
+description: Demo skill
+license: MIT
+---
+
+# Demo
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("vstack.settings.toml.example"),
+            r#"[env]
+DEMO_TIMEOUT = "30"
+"#,
+        )
+        .unwrap();
+    }
+
+    fn write_demo_agent_source(source: &Path) {
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::write(
+            source.join("agents/rust.md"),
+            r#"---
+name: rust
+description: Rust agent
+model: sonnet
+role: engineer
+---
+
+# Rust
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[agent-skills]\nrust = [\"demo\"]\n",
+        )
+        .unwrap();
+    }
+
+    fn demo_skill_value() -> Skill {
+        Skill {
+            name: "demo".into(),
+            description: "Demo skill".into(),
+            license: None,
+            user_invocable: None,
+            dependencies: None,
+            body: String::new(),
+            source_dir: PathBuf::new(),
+            resolved_deps: Vec::new(),
+        }
+    }
+
+    fn skill_lock(name: &str, method: InstallMethod) -> LockFile {
+        let mut lock = LockFile::default();
+        lock.add(config::LockEntry {
+            name: name.into(),
+            kind: config::ItemKind::Skill,
+            source: "source".into(),
+            harnesses: vec!["claude-code".into()],
+            method,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock
+    }
+
+    fn write_project_skill_lock(project: &Path, source: &Path, method: InstallMethod) {
+        let mut lock = LockFile::default();
+        lock.add(config::LockEntry {
+            name: "demo".into(),
+            kind: config::ItemKind::Skill,
+            source: source.to_string_lossy().into_owned(),
+            harnesses: vec!["claude-code".into()],
+            method,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+    }
+
+    #[test]
+    fn add_preflight_accounts_for_auto_included_skill_effective_symlink_methods() {
+        let skills = vec![demo_skill_value()];
+        let auto = ["demo".to_string()].into_iter().collect();
+        let copy_lock = skill_lock("demo", InstallMethod::Copy);
+        let symlink_lock = skill_lock("demo", InstallMethod::Symlink);
+        let no_auto = std::collections::HashSet::new();
+
+        assert!(add_writes_project_skill_root(
+            false,
+            &skills,
+            &[Harness::ClaudeCode],
+            InstallMethod::Copy,
+            &auto,
+            &symlink_lock,
+        ));
+        assert!(
+            !add_writes_project_skill_root(
+                false,
+                &skills,
+                &[Harness::ClaudeCode],
+                InstallMethod::Copy,
+                &auto,
+                &copy_lock,
+            ),
+            "copy-mode auto-included skills with copy lock entries do not write .agents/skills"
+        );
+        assert!(
+            !add_writes_project_skill_root(
+                false,
+                &skills,
+                &[Harness::ClaudeCode],
+                InstallMethod::Copy,
+                &no_auto,
+                &LockFile::default(),
+            ),
+            "manual copy-mode Claude skill installs do not write .agents/skills"
+        );
+    }
+
     #[test]
     fn source_options_include_default_repo_for_fresh_installs() {
         let registry = config::SourceRegistry::default();
@@ -482,6 +644,269 @@ mod source_option_tests {
         assert!(
             !crate::resolve::is_vstack_source(&alternate),
             "fixture must exercise the non-canonical-layout case"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_path_matches_symlinked_project_root_to_canonical_source() {
+        let root = tmpdir("same-path-symlink");
+        let source = root.join("source");
+        let alias = root.join("source-link");
+        std::fs::create_dir_all(&source).unwrap();
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+
+        assert!(same_path(&alias, &source));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_rejects_symlinked_agents_ancestor_before_skill_install() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("linked-agents-preflight");
+        let source = root.join("source");
+        let project = root.join("project");
+        let outside_agents = root.join("main-checkout-agents");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside_agents).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        let err = crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    None,
+                    Some(vec!["demo".into()]),
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        assert!(
+            err.to_string()
+                .contains("refusing project-owned skills path outside project root")
+        );
+        assert!(
+            !outside_agents.join("skills/demo/SKILL.md").exists(),
+            "add must not copy project skills through a linked .agents directory"
+        );
+        assert!(!project.join("vstack.settings.toml").exists());
+        assert!(!project.join("vstack.toml").exists());
+        assert!(!project.join(".vstack-lock.json").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_allows_copy_skill_install_that_does_not_touch_linked_agents_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("linked-agents-copy-scope");
+        let source = root.join("source");
+        let project = root.join("project");
+        let outside_agents = root.join("main-checkout-agents");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside_agents).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["claude-code".into()]),
+                    None,
+                    Some(vec!["demo".into()]),
+                    None,
+                    None,
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+        });
+
+        assert!(project.join(".claude/skills/demo/SKILL.md").exists());
+        assert!(
+            !outside_agents.join("skills/demo/SKILL.md").exists(),
+            "copy-mode Claude install should not write through .agents"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_rejects_auto_included_skill_with_preserved_symlink_method() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("linked-agents-auto-symlink");
+        let source = root.join("source");
+        let project = root.join("project");
+        let outside_agents = root.join("main-checkout-agents");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside_agents).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        write_demo_agent_source(&source);
+        write_project_skill_lock(&project, &source, InstallMethod::Symlink);
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        let err = crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["claude-code".into()]),
+                    Some(vec!["rust".into()]),
+                    None,
+                    None,
+                    None,
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        assert!(
+            err.to_string()
+                .contains("refusing project-owned skills path outside project root")
+        );
+        assert!(!outside_agents.join("skills/demo/SKILL.md").exists());
+        assert!(!project.join(".claude/skills/demo/SKILL.md").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_allows_auto_included_skill_with_preserved_copy_method() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("linked-agents-auto-copy");
+        let source = root.join("source");
+        let project = root.join("project");
+        let outside_agents = root.join("main-checkout-agents");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside_agents).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        write_demo_agent_source(&source);
+        write_project_skill_lock(&project, &source, InstallMethod::Copy);
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["claude-code".into()]),
+                    Some(vec!["rust".into()]),
+                    None,
+                    None,
+                    None,
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+        });
+
+        assert!(project.join(".claude/skills/demo/SKILL.md").exists());
+        assert!(!outside_agents.join("skills/demo/SKILL.md").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_add_skips_project_settings_when_source_is_same_checkout_via_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmpdir("source-alias");
+        let source = root.join("source");
+        let alias = root.join("source-link");
+        let home = root.join("home");
+        let config = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        write_demo_skill(&source);
+        std::fs::write(source.join("vstack.toml"), "[role-skills]\n").unwrap();
+        symlink(&source, &alias).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config, || {
+            crate::test_util::with_project_root(&alias, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    None,
+                    Some(vec!["demo".into()]),
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+        });
+
+        assert_eq!(
+            std::fs::read_to_string(source.join("vstack.toml")).unwrap(),
+            "[role-skills]\n"
+        );
+        assert!(
+            !source.join("vstack.settings.toml").exists(),
+            "installing a source into itself through a symlink alias must not seed project settings"
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -950,6 +1375,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     };
 
     let source_dir = resolved_source.dir.clone();
+    let project_root = config::project_root();
     let mapping = crate::mapping::MappingConfig::load(&source_dir);
     let mut auto_included_skill_names = std::collections::HashSet::new();
 
@@ -974,6 +1400,16 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
         auto_included_skill_names.extend(added);
     }
+    if add_writes_project_skill_root(
+        global,
+        &selected_skills,
+        &harnesses,
+        method,
+        &auto_included_skill_names,
+        &LockFile::load(&config::lock_file_path(global)).unwrap_or_default(),
+    ) {
+        crate::commands::refresh::preflight_project_refresh(&project_root)?;
+    }
 
     // Whether we should write/update the project-level vstack.toml.
     // Suppress when:
@@ -981,7 +1417,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     //   - the "project root" we'd write to IS the vstack source repo
     //     itself (writing project-customization sections there would
     //     clobber the upstream source mapping config)
-    let writes_project_config = !global && config::project_root() != source_dir;
+    let writes_project_config = !global && !same_path(&project_root, &source_dir);
 
     // Ensure project-level vstack.toml exists for customization.
     // Merge already-installed items with newly selected ones so the
@@ -1013,25 +1449,21 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
         agent_names.sort();
         skill_names.sort();
-        crate::project_config::ensure_project_config(
-            &config::project_root(),
-            &agent_names,
-            &skill_names,
-        );
+        crate::project_config::ensure_project_config(&project_root, &agent_names, &skill_names);
 
         let harnesses_by_agent: std::collections::HashMap<String, Vec<Harness>> = selected_agents
             .iter()
             .map(|agent| (agent.name.clone(), harnesses.clone()))
             .collect();
         crate::project_config::write_agent_frontmatter_defaults(
-            &config::project_root(),
+            &project_root,
             &selected_agents,
             &harnesses_by_agent,
             &mapping,
         );
     }
 
-    let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
+    let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
     project_config.overlay_source_frontmatter(&mapping);
 
     if global {
@@ -1159,7 +1591,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 .join(harness.agent_filename(&a.name));
             let file_extras = crate::resolve::read_existing_extras(&existing_path, *harness);
             if writes_project_config {
-                project_config.save_extracted(&config::project_root(), &a.name, &file_extras);
+                project_config.save_extracted(&project_root, &a.name, &file_extras);
             }
 
             let extras = crate::resolve::build_agent_extras(
@@ -1240,11 +1672,10 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // vstack.toml mtime doesn't post-date installed_at (which would
     // make every item appear outdated on next launch).
     if writes_project_config {
-        crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
-        if let Some(result) = crate::project_settings::ensure_skill_settings(
-            &config::project_root(),
-            &selected_skills,
-        )? {
+        crate::project_config::write_agent_skills(&project_root, &agent_skill_map);
+        if let Some(result) =
+            crate::project_settings::ensure_skill_settings(&project_root, &selected_skills)?
+        {
             settings_note = Some(format!("Project settings: {}", result.summary()));
         }
     }

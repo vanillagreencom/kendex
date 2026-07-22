@@ -375,6 +375,138 @@ strip_trailing_slashes() {
   printf '%s\n' "$path"
 }
 
+validate_issue_id() {
+  local issue="$1"
+  if [[ ! "$issue" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$issue" == *..* ]]; then
+    echo "Error: invalid issue ID '$issue'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." >&2
+    return 1
+  fi
+}
+
+normalize_worktree_config_path() {
+  local var="$1" path="$2"
+  path="$(strip_trailing_slashes "$path")"
+  if [[ -z "$path" || "$path" == "." || "$path" == /* || "$path" == *\\* || "$path" == *'*'* || "$path" == *\?* || "$path" == *'['* || "$path" == *']'* || "$path" == */../* || "$path" == ../* || "$path" == */.. || "$path" == ".." || "$path" == */./* || "$path" == ./* || "$path" == */. ]]; then
+    echo "Error: invalid $var entry '$2'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." >&2
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+split_worktree_config_words() {
+  local value="$1"
+  local IFS=$' \t\n'
+  WORKTREE_CONFIG_WORDS=()
+  [[ -n "$value" ]] || return 0
+  read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
+}
+
+path_is_under_path() {
+  local parent="$1" child="$2"
+  [[ "$child" == "$parent/"* ]]
+}
+
+validate_relative_symlink_target() {
+  local spec="$1" target="$2"
+  if [[ -z "$target" || "$target" == /* ]]; then
+    echo "Error: invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec'. Target must be a non-empty relative path." >&2
+    return 1
+  fi
+}
+
+validate_worktree_setup_config() {
+  local path="" spec="" normalized="" target="" i j
+  local all_paths=()
+  local all_sources=()
+  local symlink_paths=()
+  local symlink_sources=()
+
+  split_worktree_config_words "${WORKTREE_MKDIRS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_MKDIRS "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_MKDIRS")
+  done
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_SYMLINKS")
+    symlink_paths+=("$normalized")
+    symlink_sources+=("WORKTREE_SYMLINKS")
+  done
+  split_worktree_config_words "${WORKTREE_COPIES:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_COPIES")
+  done
+  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
+  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    if [[ "$spec" != *=* ]]; then
+      echo "Error: invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
+      return 1
+    fi
+    path="${spec%%=*}"
+    target="${spec#*=}"
+    normalized="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
+    validate_relative_symlink_target "$spec" "$target" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_RELATIVE_SYMLINKS")
+    symlink_paths+=("$normalized")
+    symlink_sources+=("WORKTREE_RELATIVE_SYMLINKS")
+  done
+
+  for ((i = 0; i < ${#symlink_paths[@]}; i++)); do
+    for ((j = 0; j < ${#all_paths[@]}; j++)); do
+      if [[ "${symlink_paths[$i]}" == "${all_paths[$j]}" ]]; then
+        if [[ "${symlink_sources[$i]}" != "${all_sources[$j]}" ]]; then
+          echo "Error: configured worktree path '${all_paths[$j]}' is both a symlink target (${symlink_sources[$i]}) and a ${all_sources[$j]} entry; refusing setup to avoid following the symlink target." >&2
+          return 1
+        fi
+        continue
+      fi
+      if path_is_under_path "${symlink_paths[$i]}" "${all_paths[$j]}"; then
+        echo "Error: configured worktree path '${all_paths[$j]}' is inside symlink path '${symlink_paths[$i]}'; refusing setup to avoid following the symlink target." >&2
+        return 1
+      fi
+    done
+  done
+}
+
+worktree_symlink_prefix() {
+  local wt="$1" path="$2" include_leaf="${3:-false}"
+  local parts=() prefix="$wt" limit i
+  IFS='/' read -r -a parts <<<"$path"
+  limit="${#parts[@]}"
+  if [[ "$include_leaf" != true ]]; then
+    limit=$((limit - 1))
+  fi
+  for ((i = 0; i < limit; i++)); do
+    prefix="$prefix/${parts[$i]}"
+    if [[ -L "$prefix" ]]; then
+      printf '%s\n' "$prefix"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_worktree_path_safe() {
+  local wt="$1" path="$2" include_leaf="${3:-false}" link_path=""
+  link_path="$(worktree_symlink_prefix "$wt" "$path" "$include_leaf" 2>/dev/null || true)"
+  if [[ -n "$link_path" ]]; then
+    echo "Error: refusing to write '$path' in $wt because '$link_path' is a symlink." >&2
+    return 1
+  fi
+}
+
+mkdir_inside_worktree() {
+  local wt="$1" path="$2"
+  ensure_worktree_path_safe "$wt" "$path" true || return 1
+  mkdir -p "$wt/$path"
+}
+
 resolve_worktree_base_dir() {
   local raw="${WORKTREE_BASE_DIR:-}"
   local path
@@ -502,6 +634,7 @@ fetch_origin() {
 }
 
 worktree_path() {
+  validate_issue_id "$1" || return 1
   echo "$TREES_DIR/$(echo "$1" | tr '[:upper:]' '[:lower:]')"
 }
 
@@ -542,29 +675,37 @@ exclude_from_worktree_index() {
 }
 
 symlink_into_worktree() {
-  local src="$PROJECT_ROOT/$1"
-  local dst="$2/$1"
+  local path="$1" wt="$2"
+  local src="$PROJECT_ROOT/$path"
+  local dst="$wt/$path"
 
   # Every worktree-local symlink we create should be invisible to git status
   # in this worktree, regardless of whether the source dir has tracked files.
-  exclude_from_worktree_index "$2" "$1"
+  ensure_worktree_path_safe "$wt" "$path" false || return 1
+  exclude_from_worktree_index "$wt" "$path"
 
   if [[ -f "$src" ]]; then
     # File symlink — if the path is tracked in the worktree (common before a
     # project stops committing harness config files), mark it assume-unchanged
     # so replacing it with a symlink does not leave a noisy typechange.
-    if git -C "$2" ls-files --error-unmatch "$1" >/dev/null 2>&1; then
-      git -C "$2" update-index --assume-unchanged "$1" 2>/dev/null || true
+    if git -C "$wt" ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+      git -C "$wt" update-index --assume-unchanged "$path" 2>/dev/null || true
     fi
     mkdir -p "$(dirname "$dst")"
-    ln -sf "$src" "$dst"
+    if [[ -L "$dst" || -f "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -e "$dst" ]]; then
+      echo "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
+      return 1
+    fi
+    ln -s "$src" "$dst"
   elif [[ -d "$src" ]]; then
     # Directory symlink — if tracked by git, also mark files assume-unchanged
     # to prevent staging issues. (The exclude entry above already hides the
     # symlink itself; assume-unchanged covers the path's tracked contents.)
-    if git -C "$2" ls-files "$1/" 2>/dev/null | grep -q .; then
-      git -C "$2" ls-files "$1/" 2>/dev/null | \
-        xargs -r git -C "$2" update-index --assume-unchanged 2>/dev/null
+    if git -C "$wt" ls-files "$path/" 2>/dev/null | grep -q .; then
+      git -C "$wt" ls-files "$path/" 2>/dev/null | \
+        xargs -r git -C "$wt" update-index --assume-unchanged 2>/dev/null
     fi
 
     # Always remove existing dir/file before symlinking — rebase can replace
@@ -579,7 +720,13 @@ symlink_into_worktree() {
 remove_symlinks() {
   local wt="$1"
   # Clean configured symlinks
-  for path in ${WORKTREE_SYMLINKS:-}; do
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
+    if ! ensure_worktree_path_safe "$wt" "$path" false; then
+      echo "Warning: Skipping configured symlink cleanup for '$path' because a parent is a symlink." >&2
+      continue
+    fi
     rm -f "$wt/$path" 2>/dev/null
     # Try to clean empty parent dirs
     local parent="$(dirname "$wt/$path")"
@@ -589,10 +736,16 @@ remove_symlinks() {
     done
   done
   # Clean configured relative/internal symlinks
-  for spec in ${WORKTREE_RELATIVE_SYMLINKS:-}; do
+  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
+  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     [[ "$spec" == *=* ]] || continue
     local path="${spec%%=*}"
     [[ -n "$path" ]] || continue
+    path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
+    if ! ensure_worktree_path_safe "$wt" "$path" false; then
+      echo "Warning: Skipping configured relative symlink cleanup for '$path' because a parent is a symlink." >&2
+      continue
+    fi
     rm -f "$wt/$path" 2>/dev/null
     # Try to clean empty parent dirs
     local parent="$(dirname "$wt/$path")"
@@ -606,24 +759,32 @@ remove_symlinks() {
 # Apply all symlinks and copies to a worktree
 setup_worktree_links() {
   local wt="$1"
+  validate_worktree_setup_config || return 1
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
   # land inside them if needed). Idempotent; ignores empty entries.
-  for path in ${WORKTREE_MKDIRS:-}; do
-    if [[ -n "$path" ]]; then
-      mkdir -p "$wt/$path"
-      exclude_from_worktree_index "$wt" "$path"
-    fi
+  split_worktree_config_words "${WORKTREE_MKDIRS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_MKDIRS "$path")" || return 1
+    mkdir_inside_worktree "$wt" "$path" || return 1
+    exclude_from_worktree_index "$wt" "$path"
   done
 
   # Project-configured symlinks
-  for path in ${WORKTREE_SYMLINKS:-}; do
-    [[ -e "$PROJECT_ROOT/$path" ]] && symlink_into_worktree "$path" "$wt"
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
+    if [[ -e "$PROJECT_ROOT/$path" ]]; then
+      symlink_into_worktree "$path" "$wt" || return 1
+    fi
   done
 
   # Project-configured copies
-  for path in ${WORKTREE_COPIES:-}; do
+  split_worktree_config_words "${WORKTREE_COPIES:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
+      ensure_worktree_path_safe "$wt" "$path" true || return 1
       exclude_from_worktree_index "$wt" "$path"
       mkdir -p "$(dirname "$wt/$path")"
       cp "$PROJECT_ROOT/$path" "$wt/$path"
@@ -633,17 +794,17 @@ setup_worktree_links() {
   # Project-configured symlinks whose targets should resolve from inside the
   # worktree, not from the main checkout. Useful for harness pointers like
   # .claude/CLAUDE.md -> ../AGENTS.md.
-  for spec in ${WORKTREE_RELATIVE_SYMLINKS:-}; do
+  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
+  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     if [[ "$spec" != *=* ]]; then
       echo "Warning: Ignoring invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
       continue
     fi
     local path="${spec%%=*}"
     local target="${spec#*=}"
-    if [[ -z "$path" || -z "$target" ]]; then
-      echo "Warning: Ignoring invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
-      continue
-    fi
+    path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
+    validate_relative_symlink_target "$spec" "$target" || return 1
+    ensure_worktree_path_safe "$wt" "$path" false || return 1
     mkdir -p "$(dirname "$wt/$path")"
     rm -rf "$wt/$path" 2>/dev/null
     ln -sfn "$target" "$wt/$path"
@@ -722,6 +883,27 @@ is_registered_project_worktree() {
   [[ "$common_dir" == "$PROJECT_COMMON_GIT_DIR" ]]
 }
 
+require_registered_project_worktree() {
+  local target="$1" action="$2"
+  if ! is_git_worktree_path "$target"; then
+    echo "Error: Not a git worktree: $target" >&2
+    return 1
+  fi
+  if ! is_registered_project_worktree "$target"; then
+    echo "Error: $target is not a registered worktree of $PROJECT_ROOT; refusing to $action." >&2
+    return 1
+  fi
+}
+
+require_non_main_project_worktree() {
+  local target="$1" action="$2"
+  require_registered_project_worktree "$target" "$action" || return 1
+  if same_canonical_dir "$target" "$PROJECT_ROOT"; then
+    echo "Error: $target is the main checkout for $PROJECT_ROOT; refusing to $action." >&2
+    return 1
+  fi
+}
+
 worktree_for_branch() {
   local branch="$1" line="" current_path=""
   while IFS= read -r -d '' line; do
@@ -751,6 +933,7 @@ worktree_for_branch() {
 # checkout is never a fallback target.
 worktree_path_for_issue() {
   local issue="$1" configured="" registered=""
+  validate_issue_id "$issue" || return 1
   configured="$(worktree_path "$issue")"
   if [[ -e "$configured" || -L "$configured" ]]; then
     printf '%s\n' "$configured"
@@ -1218,6 +1401,7 @@ case "${1:-}" in
     esac
 
     WT_PATH="$(resolve_restack_worktree "$ARG")"
+    validate_worktree_setup_config || exit 1
     validate_pending_restack_state "$WT_PATH" || exit 1
     RESTACK_BRANCH="$(restack_state_get "$WT_PATH" branch)"
     acquire_issue_claim_lock "$RESTACK_BRANCH" || exit 1
@@ -1349,6 +1533,7 @@ case "${1:-}" in
     # the issue branch so trees created under an older base-dir convention are
     # still recognized as active work and reusable in place.
     WT_PATH="$(worktree_path_for_issue "$ISSUE")"
+    validate_worktree_setup_config || exit 1
 
     # 1. Existing work is an ownership signal. Bare create is only for claiming
     # new work; reuse must be explicit so discovery cannot rewrite another
@@ -1606,8 +1791,7 @@ case "${1:-}" in
       # be mutated. A foreign repo's worktree reachable through a shared or
       # symlinked base dir must not have its symlinks stripped or its
       # registration touched.
-      if ! is_registered_project_worktree "$WT_PATH"; then
-        echo "Error: $WT_PATH is not a registered worktree of $PROJECT_ROOT; refusing to remove it." >&2
+      if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
@@ -1648,6 +1832,11 @@ case "${1:-}" in
 
   cleanup)
     git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
+    CLEANUP_FAILED=false
+    CLEANUP_MERGE_TARGET="origin/$DEFAULT_BRANCH"
+    if ! git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_MERGE_TARGET" >/dev/null 2>&1; then
+      CLEANUP_MERGE_TARGET="$DEFAULT_BRANCH"
+    fi
     # Collect candidates first: NUL-delimited porcelain parsing survives paths
     # with spaces, and the main checkout is excluded by canonical comparison —
     # git may report it under an older lexical (symlinked) spelling that a
@@ -1661,12 +1850,26 @@ case "${1:-}" in
     done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null)
-      if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" branch -d "$BRANCH" 2>/dev/null; then
-        remove_symlinks "$wt"
-        git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>/dev/null && echo "Cleaned: $wt"
+      if [[ -n "$BRANCH" ]] && \
+         git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && \
+         git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
+        remove_symlinks "$wt" || continue
+        if git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>/dev/null; then
+          if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
+            CLEANUP_FAILED=true
+            echo "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
+            echo "  Remaining branch: $BRANCH" >&2
+            echo "  Worktree path removed/pruned: $wt" >&2
+            continue
+          fi
+          echo "Cleaned: $wt"
+        fi
         [[ -d "$wt" ]] && rm -rf "$wt"
       fi
     done
+    if [[ "$CLEANUP_FAILED" == true ]]; then
+      exit 1
+    fi
     ;;
 
   path)
@@ -1729,9 +1932,11 @@ case "${1:-}" in
       WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
 
-    if ! is_git_worktree_path "$WT_PATH"; then
-      echo "Error: Not a git worktree: $WT_PATH" >&2
+    if ! require_registered_project_worktree "$WT_PATH" "push it"; then
       exit 1
+    fi
+    if [[ "$AUTO_REBASE" == true ]]; then
+      validate_worktree_setup_config || exit 1
     fi
 
     REMOTE="${BOT_REMOTE_NAME:-origin}"
@@ -1808,8 +2013,7 @@ case "${1:-}" in
     else
       WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
-    if ! is_git_worktree_path "$WT_PATH"; then
-      echo "Error: Not a git worktree: $WT_PATH" >&2
+    if ! require_non_main_project_worktree "$WT_PATH" "restore links in it"; then
       exit 1
     fi
     setup_worktree_links "$WT_PATH"
@@ -1829,8 +2033,7 @@ case "${1:-}" in
     else
       WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
-    if ! is_git_worktree_path "$WT_PATH"; then
-      echo "Error: Not a git worktree: $WT_PATH" >&2
+    if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
       exit 1
     fi
     setup_codex_worktree "$WT_PATH"
@@ -1850,10 +2053,10 @@ case "${1:-}" in
     else
       WT_PATH="$(worktree_path_for_issue "$ARG")"
     fi
-    if ! is_git_worktree_path "$WT_PATH"; then
-      echo "Error: Not a git worktree: $WT_PATH" >&2
+    if ! require_non_main_project_worktree "$WT_PATH" "normalize its branch"; then
       exit 1
     fi
+    validate_worktree_setup_config || exit 1
 
     TARGET_BRANCH="$(issue_branch_name "$ISSUE")"
     CURRENT_BRANCH="$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)"

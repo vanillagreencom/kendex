@@ -471,6 +471,15 @@ pub fn preflight_project_refresh(project_root: &Path) -> Result<()> {
     resolve_project_owned_skills_root(project_root).map(|_| ())
 }
 
+fn escaped_project_owned_skills_message(skills_dir: &Path) -> String {
+    format!(
+        "refusing project-owned skills path outside project root: {}. \
+This project has a .agents skills path that resolves outside the selected project; \
+run from the checkout that owns that path, or replace it with a project-local .agents directory before project-scope skill installs or refresh.",
+        skills_dir.display()
+    )
+}
+
 fn resolve_project_owned_skills_root(
     project_root: &Path,
 ) -> Result<Option<ProjectOwnedSkillsRoot>> {
@@ -486,10 +495,7 @@ fn resolve_project_owned_skills_root(
                 .canonicalize()
                 .map_err(|err| anyhow::anyhow!("failed to resolve project-owned skills: {err}"))?;
             if !skills_dir_canon.starts_with(&project_root_canon) {
-                anyhow::bail!(
-                    "refusing project-owned skills path outside project root: {}",
-                    skills_dir.display()
-                );
+                anyhow::bail!("{}", escaped_project_owned_skills_message(&skills_dir));
             }
             if !skills_dir_canon.is_dir() {
                 anyhow::bail!(
@@ -519,10 +525,7 @@ fn resolve_project_owned_skills_root(
                 .canonicalize()
                 .map_err(|err| anyhow::anyhow!("failed to resolve .agents directory: {err}"))?;
             if !agents_dir_canon.starts_with(&project_root_canon) {
-                anyhow::bail!(
-                    "refusing project-owned skills path outside project root: {}",
-                    skills_dir.display()
-                );
+                anyhow::bail!("{}", escaped_project_owned_skills_message(&skills_dir));
             }
             if !agents_dir_canon.is_dir() {
                 anyhow::bail!(

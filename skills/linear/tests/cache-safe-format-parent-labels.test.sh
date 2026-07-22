@@ -30,6 +30,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/.agents/skills" "$tmp/.cache/linear"
+git -C "$tmp" init -q -b main
 cp -R "$SKILL_DIR" "$tmp/.agents/skills/linear"
 LINEAR="$tmp/.agents/skills/linear/scripts/linear.sh"
 
@@ -74,7 +75,7 @@ cat > "$tmp/.cache/linear/issues.json" <<'JSON'
 ]
 JSON
 
-run() { PATH="$tmp/bin:$PATH" bash "$LINEAR" "$@"; }
+run() { cd "$tmp" && PATH="$tmp/bin:$PATH" bash "$LINEAR" "$@"; }
 
 # --- safe: labels:null child still surfaces its real parent_id -------------------
 safe_out="$(run cache issues get CC-803 --format=safe 2>/dev/null)"

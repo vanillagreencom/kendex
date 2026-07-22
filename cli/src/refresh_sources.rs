@@ -240,6 +240,9 @@ pub(crate) fn resolve_recorded_source(source: &str) -> Option<PathBuf> {
     if path.is_absolute() && path.is_dir() {
         return Some(path.to_path_buf());
     }
+    if let Some(path) = resolve_relative_local_source(source, false) {
+        return Some(path);
+    }
     resolve_single_source(source)
 }
 
@@ -249,7 +252,10 @@ pub(crate) fn resolve_recorded_source(source: &str) -> Option<PathBuf> {
 /// loops to decide whether an entry may fall back to a different source.
 pub(crate) fn recorded_source_exists(source: &str) -> bool {
     let path = Path::new(source);
-    path.is_absolute() && path.is_dir()
+    if path.is_absolute() {
+        return path.is_dir();
+    }
+    resolve_relative_local_source(source, false).is_some()
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
@@ -273,23 +279,23 @@ fn resolve_single_source_with(
     let looks_like_remote =
         source.contains('/') && !source.starts_with('.') && !source.starts_with('/');
 
-    // Relative local source tokens resolve by walking up from CWD. The pure
-    // config hash/reconcile path also preserves legacy bare-relative fallback.
-    if source == "."
-        || source.starts_with("./")
-        || source.starts_with("../")
-        || (!require_vstack_source && !looks_like_remote)
-    {
-        let mut dir = std::env::current_dir().ok()?;
-        loop {
-            if crate::resolve::is_vstack_source(&dir) {
-                return Some(dir);
-            }
-            if !dir.pop() {
-                break;
-            }
+    // Explicit relative local source tokens in locks/registries are
+    // project-scoped. Treating them as "walk upward to any vstack source" can
+    // rebind a live ./source entry to the checkout running the command from a
+    // linked worktree, then repair the lock to the wrong source.
+    if is_explicit_relative_local_source(source) {
+        return resolve_relative_local_source(source, require_vstack_source);
+    }
+
+    // Legacy pure hash/reconcile paths accepted bare placeholders such as
+    // "source" by falling back to the nearest vstack checkout from CWD. Keep
+    // that compatibility only after trying the project-relative path, and only
+    // for non-discovery calls where the historical fallback existed.
+    if !require_vstack_source && is_bare_local_source(source, looks_like_remote) {
+        if let Some(path) = resolve_relative_local_source(source, false) {
+            return Some(path);
         }
-        return None;
+        return find_vstack_source_from_cwd();
     }
 
     // Remote shorthand (owner/repo) — update once during top-level source resolution,
@@ -305,6 +311,43 @@ fn resolve_single_source_with(
     }
 
     None
+}
+
+fn is_explicit_relative_local_source(source: &str) -> bool {
+    source == "." || source.starts_with("./") || source.starts_with("../")
+}
+
+fn is_bare_local_source(source: &str, looks_like_remote: bool) -> bool {
+    !source.is_empty()
+        && !source.starts_with('~')
+        && !Path::new(source).is_absolute()
+        && !looks_like_remote
+}
+
+fn resolve_relative_local_source(source: &str, require_vstack_source: bool) -> Option<PathBuf> {
+    if source.starts_with('~') {
+        return None;
+    }
+    let candidate = config::project_root().join(source);
+    if !candidate.is_dir() {
+        return None;
+    }
+    if require_vstack_source && !crate::resolve::is_vstack_source(&candidate) {
+        return None;
+    }
+    Some(canonicalish(&candidate))
+}
+
+fn find_vstack_source_from_cwd() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if crate::resolve::is_vstack_source(&dir) {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// Pull latest changes for a cached remote repo.
@@ -416,6 +459,73 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn resolve_source_records_resolves_relative_sources_from_project_root() {
+        let root = tmpdir("recorded-relative");
+        let project = root.join("project");
+        let relative_source = project.join("vendor").join("vstack");
+        std::fs::create_dir_all(relative_source.join("skills/demo")).unwrap();
+
+        let mut lock = config::LockFile::default();
+        lock.add(lock_entry("demo", "./vendor/vstack"));
+
+        let records = crate::test_util::with_project_root(&project, || {
+            assert_eq!(
+                resolve_recorded_source("./vendor/vstack"),
+                Some(std::fs::canonicalize(&relative_source).unwrap())
+            );
+            assert!(recorded_source_exists("./vendor/vstack"));
+            resolve_source_records(&lock)
+        });
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].root,
+            std::fs::canonicalize(&relative_source).unwrap()
+        );
+        assert_eq!(records[0].aliases, vec!["./vendor/vstack".to_string()]);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relative_parent_source_uses_current_worktree_lexical_neighbor() {
+        let root = tmpdir("recorded-relative-parent");
+        let main_project = root.join("dev").join("consumer");
+        let main_checkout_neighbor = root.join("dev").join("vstack");
+        let linked_worktree = root
+            .join("dev")
+            .join(".worktrees")
+            .join("consumer")
+            .join("issue-1");
+        let worktree_neighbor = root
+            .join("dev")
+            .join(".worktrees")
+            .join("consumer")
+            .join("vstack");
+        std::fs::create_dir_all(&main_project).unwrap();
+        std::fs::create_dir_all(main_checkout_neighbor.join("skills/demo")).unwrap();
+        std::fs::create_dir_all(&linked_worktree).unwrap();
+        std::fs::create_dir_all(worktree_neighbor.join("skills/demo")).unwrap();
+
+        let resolved = crate::test_util::with_project_root(&linked_worktree, || {
+            resolve_recorded_source("../vstack")
+        });
+
+        assert_eq!(
+            resolved,
+            Some(std::fs::canonicalize(&worktree_neighbor).unwrap()),
+            "copied relative lock sources are resolved from the current worktree root"
+        );
+        assert_ne!(
+            resolved,
+            Some(std::fs::canonicalize(&main_checkout_neighbor).unwrap()),
+            "../vstack must not silently keep pointing at the main checkout after a lock is copied"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// An entry whose own source still exists must never be silently rebound to
     /// the sole other loaded source; that reinstalled it from the wrong repo.
     /// The fallback stays available for a source that has genuinely gone away.
@@ -439,6 +549,26 @@ mod tests {
             Some(only_source),
             "legacy lock with a missing source keeps the single-source fallback"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refresh_source_for_entry_does_not_fallback_for_live_relative_source() {
+        let root = tmpdir("relative-no-rebind");
+        let project = root.join("project");
+        let relative_source = project.join("vendor").join("vstack");
+        std::fs::create_dir_all(relative_source.join("skills/demo")).unwrap();
+        let only_source = make_vstack_source(&root, "other");
+        let sources = vec![RefreshSource::from_root(&only_source)];
+        let live_relative = lock_entry("demo", "./vendor/vstack");
+
+        crate::test_util::with_project_root(&project, || {
+            assert!(
+                refresh_source_for_entry(&sources, &live_relative).is_none(),
+                "a live relative source must not rebind to the sole loaded source"
+            );
+        });
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -5,8 +5,24 @@
 
 set -euo pipefail
 
-_CACHE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CACHE_PROJECT_ROOT="$(cd "$_CACHE_LIB_DIR/../../../../.." && pwd)"
+linear_cache_canonical_existing_dir() {
+    local path="$1"
+    [[ -d "$path" ]] || return 1
+    (cd "$path" && pwd -P)
+}
+
+linear_cache_project_root() {
+    if [[ -n "${PROJECT_ROOT:-}" ]]; then
+        linear_cache_canonical_existing_dir "$PROJECT_ROOT"
+        return
+    fi
+
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    linear_cache_canonical_existing_dir "$root"
+}
+
+CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
 CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 
 # =============================================================================
@@ -19,6 +35,13 @@ cache_ensure_dir() {
 
 cache_exists() {
     [[ -f "$CACHE_DIR/meta.json" ]]
+}
+
+cache_missing_error() {
+    jq -cn \
+        --arg cache_dir "$CACHE_DIR" \
+        --arg meta_path "$CACHE_DIR/meta.json" \
+        '{error: "No cache found. Run: linear.sh sync", cache_dir: $cache_dir, meta_path: $meta_path}' >&2
 }
 
 cache_is_fresh() {

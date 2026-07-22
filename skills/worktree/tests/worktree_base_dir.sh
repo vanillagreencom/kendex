@@ -124,16 +124,16 @@ assert_eq "$default_create_out" "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" 
 assert_path_exists "$DEFAULT_ROOT/.worktrees/repo-a/issue-default/.git" "default-created worktree is registered"
 assert_path_absent "$DEFAULT_ROOT/repo-a/trees" "create adds nothing under the repo root"
 
-# cleanup parses the registry under the new layout and excludes the main
-# checkout by canonical comparison. Its collection semantics are unchanged:
-# a branch checked out in a worktree still refuses `git branch -d`, so the
-# worktree is skipped, and the main checkout is never a candidate.
+# cleanup parses the registry under the new layout, excludes the main checkout
+# by canonical comparison, and removes merged worktrees before deleting their
+# checked-out branches.
 set +e
 (cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" cleanup >"$DEFAULT_ROOT/cleanup.out" 2>"$DEFAULT_ROOT/cleanup.err")
 cleanup_code=$?
 set -e
 assert_eq "$cleanup_code" "0" "cleanup runs cleanly under the default external layout"
-assert_path_exists "$DEFAULT_ROOT/.worktrees/repo-a/issue-default/.git" "cleanup skips a worktree whose branch is checked out"
+assert_path_absent "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" "cleanup removes a merged worktree whose branch was checked out"
+assert_branch_absent "$DEFAULT_ROOT/repo-a" "issue-default" "cleanup deletes the merged worktree branch after removal"
 assert_path_exists "$DEFAULT_ROOT/repo-a/base.txt" "cleanup never touches the main checkout"
 
 echo "=== explicit absolute and ~ overrides ==="

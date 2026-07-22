@@ -25,6 +25,7 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear/comments"
+git -C "$TMP_ROOT" init -q -b main
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
@@ -69,7 +70,7 @@ for id in CC-900 CC-901 CC-902 CC-910 CC-911 CC-912 CC-920 CC-921; do
 done
 
 run_validate() {
-  bash "$LINEAR" cache issues validate-completion "$@"
+  cd "$TMP_ROOT" && bash "$LINEAR" cache issues validate-completion "$@"
 }
 
 fail=0

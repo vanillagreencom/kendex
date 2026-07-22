@@ -1058,7 +1058,7 @@ main() {
     esac
 
     if [[ ! -f "$CACHE_DIR/meta.json" ]]; then
-        echo '{"error": "No cache found. Run: linear.sh sync"}' >&2
+        cache_missing_error
         return 1
     fi
 

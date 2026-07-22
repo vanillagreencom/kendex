@@ -24,6 +24,7 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"
+git -C "$TMP_ROOT" init -q -b main
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
@@ -50,7 +51,7 @@ issue_record() {
 } | jq -s '.' >"$TMP_ROOT/.cache/linear/issues.json"
 
 run_list() {
-  bash "$LINEAR" cache issues list "$@"
+  cd "$TMP_ROOT" && bash "$LINEAR" cache issues list "$@"
 }
 
 fail=0

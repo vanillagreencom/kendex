@@ -12,8 +12,28 @@
 
 set -euo pipefail
 
-_ATTACH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ATTACH_CACHE_PROJECT_ROOT="$(cd "$_ATTACH_LIB_DIR/../../../../.." && pwd)"
+linear_attach_canonical_existing_dir() {
+    local path="$1"
+    [[ -d "$path" ]] || return 1
+    (cd "$path" && pwd -P)
+}
+
+linear_attach_project_root() {
+    if [[ -n "${CACHE_PROJECT_ROOT:-}" ]]; then
+        linear_attach_canonical_existing_dir "$CACHE_PROJECT_ROOT"
+        return
+    fi
+    if [[ -n "${PROJECT_ROOT:-}" ]]; then
+        linear_attach_canonical_existing_dir "$PROJECT_ROOT"
+        return
+    fi
+
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    linear_attach_canonical_existing_dir "$root"
+}
+
+ATTACH_CACHE_PROJECT_ROOT="$(linear_attach_project_root)"
 ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
 ATTACH_FILES_DIR="$ATTACH_DIR/files"
 ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"

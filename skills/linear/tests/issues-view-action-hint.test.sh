@@ -19,6 +19,7 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
+git -C "$TMP_ROOT" init -q -b main
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR_SH="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
@@ -41,7 +42,7 @@ ERR_FILE="$TMP_ROOT/stderr"
 # Captures stdout in $out, stderr in $err, exit code in $rc.
 run_linear() {
   set +e
-  out=$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  out=$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
     bash "$LINEAR_SH" ${ARGS[@]+"${ARGS[@]}"} 2>"$ERR_FILE")
   rc=$?
   set -e

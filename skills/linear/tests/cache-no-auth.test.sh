@@ -11,6 +11,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/.agents/skills" "$tmp/.cache/linear" "$tmp/bin"
+git -C "$tmp" init -q -b main
 cp -R "$SKILL_DIR" "$tmp/.agents/skills/linear"
 
 export OP_SENTINEL="$tmp/op-invocations.txt"
@@ -97,7 +98,7 @@ run_cache_read() {
   : > "$err"
 
   set +e
-  RUN_OUT=$(PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
+  RUN_OUT=$(cd "$tmp" && PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
     bash "$tmp/.agents/skills/linear/scripts/linear.sh" "$@" 2>"$err")
   local rc=$?
   set -e
@@ -157,8 +158,8 @@ fi
 rm -f "$OP_SENTINEL"
 : > "$err"
 set +e
-PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
-  bash "$tmp/.agents/skills/linear/scripts/linear.sh" auth-check >/dev/null 2>"$err"
+(cd "$tmp" && PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
+  bash "$tmp/.agents/skills/linear/scripts/linear.sh" auth-check >/dev/null 2>"$err")
 auth_rc=$?
 set -e
 

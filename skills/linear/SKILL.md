@@ -91,6 +91,8 @@ linear.sh sync --full           # Full re-sync
 
 `cache issues list --all-projects` enumerates every project in ONE command — each row carries its `project` name, and other filters (`--state`, `--max`, `--format`) compose. Use it for cross-project comparison sets instead of looping `--project` per project; restricted harness approval policies reject loop-shaped commands. Mutually exclusive with `--project`.
 
+Cache and attachment files live under `.cache/linear` in the physical git worktree root reported by `git rev-parse --show-toplevel`, not under the path used to reach the skill script. This keeps `sync`, `cache`, and attachment reads consistent across symlinked checkout spellings, worktrees, and canonical source-path invocation. A missing-cache error includes the checked `cache_dir` and `meta_path`; inspect those fields before assuming a sync wrote somewhere else.
+
 ## Output Formats
 
 | Format | Description |

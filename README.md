@@ -108,11 +108,13 @@ canonical project-owned skills at `.agents/skills/<name>/SKILL.md`, even when
 the local skill has no lock entry. For project-owned skills, vstack maintains
 only its marked `Project Instructions` block; updates and removals are
 idempotent and leave the rest of the skill and unrelated project files intact.
-Project refresh preflights configuration and the `.agents/skills` ownership
-boundary before lock reconciliation or installation, so failures leave the
-lock and installed files unchanged. Project hook removal uses the same strict
-preflight before changing hook files, settings, locks, or generated agents;
-global removal remains independent of project configuration.
+Project skill installs and refreshes preflight the `.agents/skills` ownership
+boundary before changing project-owned skills. If `.agents` resolves outside
+the selected checkout, run the command from the checkout that owns it or use a
+project-local `.agents` directory. Failures leave the lock and installed files
+unchanged. Project hook removal uses the same strict preflight before changing
+hook files, settings, locks, or generated agents; global removal remains
+independent of project configuration.
 
 Key rules:
 

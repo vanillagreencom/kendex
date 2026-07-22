@@ -14,13 +14,21 @@ LINEAR_LIMIT_ISSUE_DESC=100000 # Issues have no practical limit
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+linear_canonical_existing_dir() {
+    local path="$1"
+    [[ -d "$path" ]] || return 1
+    (cd "$path" && pwd -P)
+}
+
 # Command scripts may be invoked directly instead of through linear.sh. Keep
 # their runtime failure deterministic and ahead of Bash-4-only shared config.
 # shellcheck source=bash-version.sh
 source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
 
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
+PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"
+unset PROJECT_ROOT_RAW
 
 # Inline secret overrides must beat project files. Cache-only commands rely on
 # this so fake/op:// test values are not replaced by a developer's .env.local.
