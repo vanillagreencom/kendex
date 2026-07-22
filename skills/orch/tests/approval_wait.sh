@@ -63,6 +63,12 @@
 #      on the eventual success; a persistent 503 becomes terminal only when
 #      the budget expires, preserving the original error message plus the
 #      count; an HTTP 404 stays immediately terminal with no count
+#   proceed1-8: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
+#      reached with zero unresolved threads degrades to "proceeded" (exit 0)
+#      under "proceed" (review and approval modes; also via the --on-timeout
+#      flag), while open threads still return "comments", a standing
+#      CHANGES_REQUESTED still blocks, the default is "block" (timeout), and an
+#      unrecognized value falls back to block with a warning
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -755,6 +761,90 @@ rc=$?
 set -e
 assert_eq "$rc" "3" "case21e: text-mode review auth failure exits 3" "$stderr"
 assert_contains "$output" "Review error: no working GitHub auth path" "case21e: review-mode error names the review gate"
+
+echo "=== approval-wait PR_REVIEW_ON_TIMEOUT reviewer-down flexibility ==="
+
+# proceed1: review mode, no evidence, zero threads, setting=proceed — the
+# deadline degrades to "proceeded" (exit 0), so a credit-exhausted reviewer
+# that posted nothing does not block the fleet.
+stderr="$TMP_ROOT/proceed1.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "proceed1: reviewer-down proceed exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "proceed1: status proceeded" "$stderr"
+assert_eq "$(json_field "$output" '.unresolved_count')" "0" "proceed1: proceeded only with zero unresolved threads" "$stderr"
+
+# proceed2: the --on-timeout proceed flag drives the same behavior without the
+# setting (and overrides it for explicit callers/tests).
+stderr="$TMP_ROOT/proceed2.err"
+set +e
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env STUB_REVIEWS_MODE=none .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review --on-timeout proceed) 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "proceed2: --on-timeout proceed flag exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "proceed2: flag yields status proceeded" "$stderr"
+
+# proceed3: an unresolved thread ALWAYS blocks, even under proceed — it returns
+# "comments" before the deadline, so a real open comment is never bypassed.
+stderr="$TMP_ROOT/proceed3.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_THREADS_UNRESOLVED=2 PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed3: open threads still block under proceed" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "comments" "proceed3: status comments, not proceeded" "$stderr"
+
+# proceed4: a standing CHANGES_REQUESTED still blocks under proceed — proceed
+# only ever converts a no-verdict timeout, never a negative verdict.
+stderr="$TMP_ROOT/proceed4.err"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=changes_standing PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed4: changes_requested still blocks under proceed" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "changes_requested" "proceed4: status changes_requested, not proceeded" "$stderr"
+
+# proceed5: the default (setting unset) preserves block — no evidence times out.
+stderr="$TMP_ROOT/proceed5.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed5: default is block (timeout)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed5: default status timeout" "$stderr"
+
+# proceed6: approval mode degrades symmetrically — no approval verdict, zero
+# threads, proceed -> proceeded, exit 0.
+stderr="$TMP_ROOT/proceed6.err"
+set +e
+output=$(run_wait_json_short STUB_APPROVAL_MODE=none PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "proceed6: approval-mode proceed exits 0" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "proceed6: approval-mode status proceeded" "$stderr"
+
+# proceed7: text output names the proceed reason instead of a timeout line.
+stderr="$TMP_ROOT/proceed7.err"
+set +e
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed .agents/skills/orch/scripts/approval-wait 1 1 3 --mode review) 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "proceed7: review-mode proceed text exits 0" "$stderr"
+assert_contains "$output" "proceeding per PR_REVIEW_ON_TIMEOUT=proceed" "proceed7: text names the proceed reason"
+
+# proceed8: an unrecognized value falls back to block (timeout) and warns.
+stderr="$TMP_ROOT/proceed8.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=bogus 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed8: invalid value falls back to block" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed8: invalid value times out" "$stderr"
+assert_contains "$(cat "$stderr")" "unrecognized PR_REVIEW_ON_TIMEOUT value" "proceed8: invalid value warns"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 

@@ -32,6 +32,18 @@ PR_REVIEW_NUDGE = ""
 # check on repos where all publishers are trusted.
 PR_REVIEW_CHECK = ""
 
+# Used by: orch (`approval-wait`, `submit-pr` / `merge-pr` / `ci-fix`).
+# Deadline behavior when the review gate signal never arrives — the reviewer
+# posted nothing (e.g. its credits are exhausted). "block" (default) reports a
+# "timeout" and the caller prompts or keeps waiting. "proceed" instead reports
+# a distinct "proceeded" verdict and records a reviewer-down override, moving
+# to CI/merge — but ONLY when zero threads are unresolved, so an open thread
+# always blocks (it returns "comments" first) and a real comment is never
+# bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
+# repos this only fires when EVERY reviewer is silent; a single live reviewer
+# already satisfies the gate on its own.
+PR_REVIEW_ON_TIMEOUT = "block"
+
 # Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
 # checks have registered yet. Raise for repos whose CI dispatches only after a
 # review approval (approval-gated jobs / merge queue) with slow dispatch.

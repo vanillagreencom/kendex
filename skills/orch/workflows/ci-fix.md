@@ -211,9 +211,9 @@ A fix push moved the PR head, so the review gate is re-confirmed at the new head
    ```bash
    .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
    ```
-   - `approved` / `reviewed` → step 2.
+   - `approved` / `reviewed` / `proceeded` → step 2. (`proceeded` is the `PR_REVIEW_ON_TIMEOUT=proceed` reviewer-down degrade: the re-confirm deadline passed with zero unresolved threads and no reviewer evidence; record `pr_approval.forced true` and continue.)
    - `comments` / `changes_requested` → new review feedback on the fix push. Managed: return it to the caller's review-gate handling (`submit-pr.md` § 4 step 1 triage pass). Standalone: run that triage pass, then re-run this step.
-   - `timeout` → no exact-head review evidence yet. On repos whose CI is gated on review evidence, CI cannot have started — a missing or red gate run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or stop and hand back.
+   - `timeout` → no exact-head review evidence yet (only when `PR_REVIEW_ON_TIMEOUT` is `block`/unset — `proceed` returns `proceeded` above). On repos whose CI is gated on review evidence, CI cannot have started — a missing or red gate run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or stop and hand back.
 
 2. **Wait for CI**:
    ```bash

@@ -333,13 +333,15 @@ Bot-SPECIFIC signals (emoji reactions, sticky-comment prose, checklist text) are
 
 **Nudging.** approval-wait nudges silent reviewers itself: when the mode's signal has not arrived within `PR_REVIEW_NUDGE_SECS` (default 600s, `0` disables) of the wait starting or of the head last changing, it posts the user-configured `PR_REVIEW_NUDGE` comment body on the PR — or, when that setting is empty, falls back to a GitHub-native re-review request to the PR's requested and past reviewers (silence when there is nobody to re-request). Each head SHA is nudged at most once; a push restarts the nudge clock and re-arms the nudge for the new head. Both keys live in `vstack.settings.toml` `[env]` next to the gate mode — the nudge text is project configuration, no bot names are built in.
 
+**Reviewer-down flexibility.** `PR_REVIEW_ON_TIMEOUT` (default `block`) controls the deadline when a reviewer never posts — the "credits ran out" case. `block` reports `timeout` and step 1 prompts as above. `proceed` instead reports `proceeded` (routed above) so a dead reviewer does not stall the fleet. This is safe because the deadline is only reachable with **zero unresolved threads**: an open thread returns `comments` long before the wait expires, so `proceed` can never bypass an actual comment, only the *absence* of a review. It also carries no risk of skipping a live reviewer — evidence from **any** non-author reviewer satisfies the gate, so on a multi-reviewer repo `proceeded` only fires when *every* bot is silent. A `changes_requested` verdict is a real signal, not silence, and always blocks regardless of this setting.
+
 The full cycle after any fix-up push is: push fixes → the head changes → wait for a NEW review of the new head (approval-wait nudges after `PR_REVIEW_NUDGE_SECS` if the reviewer stays silent) → triage, reply to, and resolve every thread → § 5 Verify CI (→ § 5.2 ci-fix cycles, bounded by `CI_FIX_MAX_CYCLES`, when red — each ci-fix push re-confirms this gate at its new head before re-verifying CI, vstack#726) → § 6 merge gates.
 
 1. **Review wait loop.** Poll for the gate verdict and new review comments together (skip when `GATE_MODE` is `off`):
    ```bash
    .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 900 --json --mode [GATE_MODE]
    ```
-   The result is a JSON object: `status` (`approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`error`) plus `review_decision`, `approvals`, `changes_requested`, and `unresolved_count`. approval-wait always emits it — no silent completion. In `approval` mode detection uses `gh pr view --json reviewDecision,latestReviews` (either signal: the branch-protection aggregate `reviewDecision == "APPROVED"`, or the latest-review-per-reviewer fallback when no protection is configured); any reviewer counts, human or bot. In `review` mode detection pins reviews to the current head SHA (re-read every poll, so a force-push resets the wait), excludes DISMISSED reviews and the PR author's own, blocks on a standing CHANGES_REQUESTED, and requires zero unresolved threads; with `PR_REVIEW_CHECK` set, a `success` signal of that trusted name on the current head — a check-run conclusion or a commit-status context (vstack#681) — counts as review evidence too, and `review_evidence` in the JSON reports which signal passed (`review_evidence_surface` names the surface for check evidence).
+   The result is a JSON object: `status` (`approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error`) plus `review_decision`, `approvals`, `changes_requested`, and `unresolved_count`. approval-wait always emits it — no silent completion. In `approval` mode detection uses `gh pr view --json reviewDecision,latestReviews` (either signal: the branch-protection aggregate `reviewDecision == "APPROVED"`, or the latest-review-per-reviewer fallback when no protection is configured); any reviewer counts, human or bot. In `review` mode detection pins reviews to the current head SHA (re-read every poll, so a force-push resets the wait), excludes DISMISSED reviews and the PR author's own, blocks on a standing CHANGES_REQUESTED, and requires zero unresolved threads; with `PR_REVIEW_CHECK` set, a `success` signal of that trusted name on the current head — a check-run conclusion or a commit-status context (vstack#681) — counts as review evidence too, and `review_evidence` in the JSON reports which signal passed (`review_evidence_surface` names the surface for check evidence).
 
    Route on `status`:
 
@@ -348,8 +350,9 @@ The full cycle after any fix-up push is: push fixes → the head changes → wai
    | `approved`, `unresolved_count == 0` | Approval verdict recorded → step 2 |
    | `approved`, `unresolved_count > 0` | Approval recorded; run the triage pass below to clear the comments. If the pass pushed no commits, the approval stands → step 2 (thread hygiene is re-confirmed at the § 6.1 gate 3 final check); if it pushed commits, restart step 1 |
    | `reviewed` | Review of the current head recorded with zero unresolved threads → step 2 |
+   | `proceeded` | Reviewer-down degrade (`PR_REVIEW_ON_TIMEOUT=proceed`): the deadline passed with **zero unresolved threads** and no reviewer evidence — every configured reviewer stayed silent (e.g. credits exhausted). Record a reviewer-down override so the § 6.1 gate 4 check reads it as a deliberate proceed, not an organic verdict, then → step 2. CI (§ 5) and the comment-hygiene gate (§ 6.1 gate 3) still apply in full: `.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true` |
    | `changes_requested` or `comments` | New review feedback: run the triage pass below, then restart step 1. In `review` mode this is the normal path — each reviewer comment lands as a thread (`comments`), the triage pass replies to and resolves every one, and the restarted wait returns `reviewed` once the head has a review and zero threads remain |
-   | `timeout` | No gate verdict after 15 min → Ask user: "No [GATE_MODE]-gate verdict on PR #[PR_NUMBER] after [ELAPSED] min" — `Force merge` \| `Keep waiting` \| `Stop here` |
+   | `timeout` | No gate verdict after 15 min (only when `PR_REVIEW_ON_TIMEOUT` is `block`/unset — with `proceed` a no-evidence deadline arrives as `proceeded` above) → Ask user: "No [GATE_MODE]-gate verdict on PR #[PR_NUMBER] after [ELAPSED] min" — `Force merge` \| `Keep waiting` \| `Stop here` |
    | `error` | Re-run step 1 once; if it repeats, report the error and ask user: `Keep waiting` \| `Stop here` |
 
    **Triage pass** (bounded by `pr_comment_review.iterations`, max 5 — read it before each pass; at the cap, present the remaining feedback and ask user: `Triage again` \| `Force merge` \| `Stop here`):
@@ -364,7 +367,7 @@ The full cycle after any fix-up push is: push fixes → the head changes → wai
      ```
    - `Stop here` → § 6 with the review gate unmet (`MERGE_READY = false`); the PR stays open awaiting review. Skip § 5 — on approval-gated repos CI cannot start until the review verdict lands.
 
-2. **Record the result** for the § 6.1 gate 4 check — gate status (`approved` or `reviewed` per mode, or forced via `pr_approval.forced`) and the `unresolved_count` at verdict time — then → § 5.
+2. **Record the result** for the § 6.1 gate 4 check — gate status (`approved` or `reviewed` per mode, or forced via `pr_approval.forced`, which also covers a `proceeded` reviewer-down degrade) and the `unresolved_count` at verdict time — then → § 5.
 
 ---
 
@@ -444,7 +447,7 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    | `0` | Gate met |
    | `> 0` | Run ONE triage pass: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 step 3` with managed context (bounded by `pr_comment_review.iterations`, max 5). If that pass pushed commits, re-confirm the § 4 gate with a short approval-wait (`approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]`; skip when `GATE_MODE` is `off`), then re-run § 5 — review before CI holds after every push (vstack#726). Then re-run the gate 3 command once; if threads remain, present them and ask user: `Triage again` \| `Force merge` \| `Stop here` |
 
-4. **Gate 4** — verify the recorded § 4 result: met when the wait ended `approved` (approval mode) or `reviewed` (review mode), when `pr_approval.forced` was recorded by an explicit user override, or when the mode is `off` (`pr_review.mode` / legacy `pr_approval.gate` — reviewer-less repo, gate not applicable). Read the recorded mode with:
+4. **Gate 4** — verify the recorded § 4 result: met when the wait ended `approved` (approval mode) or `reviewed` (review mode), when `pr_approval.forced` was recorded (an explicit user Force merge, or a `proceeded` reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`), or when the mode is `off` (`pr_review.mode` / legacy `pr_approval.gate` — reviewer-less repo, gate not applicable). Read the recorded mode with:
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '(.pr_review.mode // .pr_approval.gate // "") | gsub("\"";"")'
    ```

@@ -14,15 +14,26 @@ LINEAR_FORMAT = "safe"
 LINEAR_TEAM = "Claude"
 LINEAR_TEAM_PREFIX = "CC"
 ORCH_STATE_DIR = "tmp"
-# Reviewer gate: no review bots on this repo - reviewer wait is skipped.
-PR_REVIEW_GATE = "off"
-# Nudge/nudge-window and trusted-check evidence (unused while gate is off,
-# materialized so refresh template-merge stays a no-op - vstack #683).
+# Reviewer gate: Copilot (copilot-pull-request-reviewer) auto-reviews every PR
+# here but never APPROVES — it only COMMENTS — so the gate runs in "review"
+# mode: a formal review of the current head plus zero unresolved threads, never
+# an approval verdict. Devin does not review this repo, so no "@devin review"
+# nudge is configured; an empty PR_REVIEW_NUDGE falls back to a GitHub-native
+# re-review request, which re-triggers Copilot.
+PR_REVIEW_GATE = "review"
 PR_REVIEW_NUDGE_SECS = "600"
 PR_REVIEW_NUDGE = ""
-PR_REVIEW_CHECK = ""
+# Copilot publishes its analysis as the "copilot-pull-request-reviewer"
+# check-run; a success of that exact name on the current head satisfies the
+# review-received predicate when a clean re-analysis submits no review object
+# (vstack #654). All publishers on this repo are trusted (match-by-name).
+PR_REVIEW_CHECK = "copilot-pull-request-reviewer"
+# Reviewer-down flexibility: when no review evidence arrives before the wait
+# deadline AND zero threads are unresolved (open threads always block), proceed
+# to CI/merge instead of stalling the fleet on a credit-exhausted reviewer.
+# "block" (the default) keeps the prior prompt-on-timeout behavior.
+PR_REVIEW_ON_TIMEOUT = "proceed"
 CI_WAIT_NO_CHECKS_GRACE = "180"
-CI_FIX_MAX_CYCLES = "6"
 REVIEWER_SLOT_BUDGET = "0"
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort xhigh --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"

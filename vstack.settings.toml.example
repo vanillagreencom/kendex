@@ -93,6 +93,16 @@ PR_REVIEW_CHECK = ""
 # only a check produced by the trusted review bot. Empty = review objects
 # only.
 
+PR_REVIEW_ON_TIMEOUT = "block"
+# Used by: orch (`approval-wait`, submit-pr / merge-pr / ci-fix). Deadline
+# behavior when the review gate signal never arrives — the reviewer posted
+# nothing (e.g. its credits are exhausted). "block" (default) reports a timeout
+# and the caller prompts or keeps waiting. "proceed" instead records a
+# reviewer-down override and moves to CI/merge, but ONLY when zero threads are
+# unresolved (an open thread always blocks — it returns "comments" first — so a
+# real comment is never bypassed); CI and comment-hygiene gates still apply. On
+# multi-reviewer repos this only fires when EVERY reviewer is silent.
+
 # BOT / COMMIT IDENTITY
 
 BOT_NAME = "automation-bot"

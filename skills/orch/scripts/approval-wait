@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wait for the reviewer-gate verdict on a PR. Always emits a final result on
 # stdout — an "Approval ..."/"Review ..." line, or a JSON object with --json —
-# so callers can route approved vs changes-requested vs timeout
+# so callers can route approved vs changes-requested vs timeout vs proceeded
 # deterministically (vstack#538, vstack#642).
 #
 # Two wait modes (--mode, default approval):
@@ -63,7 +63,19 @@
 # or silence when there is nobody to re-request. Both keys read with the
 # orch-env precedence (process env > vstack.settings.toml > default).
 #
-# Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review]
+# Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "block"): when the
+# gate signal never arrives before the deadline — the reviewer posted nothing,
+# e.g. its credits are exhausted — "block" reports "timeout" (exit 1) as
+# before, and the caller prompts or keeps waiting. "proceed" instead reports a
+# distinct "proceeded" (exit 0), but ONLY when zero threads are unresolved, so
+# a dead reviewer never stalls the fleet while an actual open comment always
+# still blocks (an unresolved thread returns "comments" before the deadline is
+# ever reached). The caller records "proceeded" as a reviewer-down override;
+# CI and the comment-hygiene gate still apply. The --on-timeout flag overrides
+# the setting; both read with orch-env precedence (process env >
+# vstack.settings.toml > default).
+#
+# Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review] [--on-timeout block|proceed]
 #        approval-wait --resolve-mode
 #   poll_interval default 15s, max_wait default 900s (15 min).
 #
@@ -75,14 +87,16 @@
 # read the mode through it instead of re-deriving the chain.
 #
 # Exit codes:
-#   0 - approved (approval mode) / reviewed (review mode)
+#   0 - approved (approval mode) / reviewed (review mode) / proceeded
+#       (deadline reached with zero unresolved threads under
+#       PR_REVIEW_ON_TIMEOUT=proceed)
 #   1 - changes requested, unresolved comments pending, timeout, or a
 #       non-auth error
 #   3 - GitHub auth/CLI error (matches ci-wait)
 #
 # JSON output (always when --json):
 #   {
-#     "status": "approved" | "reviewed" | "changes_requested" | "comments" | "timeout" | "error",
+#     "status": "approved" | "reviewed" | "changes_requested" | "comments" | "timeout" | "proceeded" | "error",
 #     "review_decision": <string>,  # raw reviewDecision ("" when unset)
 #     "approvals": <int>,           # reviewers whose latest review is APPROVED
 #     "changes_requested": <int>,   # reviewers whose latest review is CHANGES_REQUESTED
@@ -124,6 +138,7 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 JSON_OUTPUT=false
 MODE="approval"
 RESOLVE_MODE=false
+ON_TIMEOUT_FLAG=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -131,6 +146,10 @@ while [[ $# -gt 0 ]]; do
     --resolve-mode) RESOLVE_MODE=true; shift ;;
     --mode)
       MODE="${2:?approval-wait: --mode requires a value: approval or review}"
+      shift 2
+      ;;
+    --on-timeout)
+      ON_TIMEOUT_FLAG="${2:?approval-wait: --on-timeout requires a value: block or proceed}"
       shift 2
       ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -202,6 +221,24 @@ NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 # evidence entirely.
 REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 
+# Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "block"): controls
+# the deadline verdict when the gate signal never arrives. "block" reports
+# "timeout" (exit 1) as before — the caller prompts or keeps waiting.
+# "proceed" reports a distinct "proceeded" (exit 0) INSTEAD, but only when zero
+# threads are unresolved, so a credit-exhausted reviewer that posted nothing
+# never blocks the fleet. An open thread can never reach this path: an
+# unresolved thread exits the poll loop as "comments" first, so a real comment
+# is never bypassed. The --on-timeout flag overrides the setting for explicit
+# callers and tests; same env > vstack.settings.toml > default precedence.
+ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT block)}"
+case "$ON_TIMEOUT" in
+  block|proceed) ;;
+  *)
+    echo "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block" >&2
+    ON_TIMEOUT="block"
+    ;;
+esac
+
 update_elapsed() {
   local now
   now="$(date +%s)"
@@ -240,7 +277,8 @@ last_nudged_sha="__none__"
 
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
-#   status: approved | reviewed | changes_requested | comments | timeout | error
+#   status: approved | reviewed | changes_requested | comments | timeout
+#         | proceeded | error
 emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
@@ -297,6 +335,13 @@ emit_result() {
         echo "Review: reviewed via check-run '$REVIEW_CHECK_NAME'${last_check_app:+ (app: $last_check_app)} (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
       else
         echo "Review: reviewed (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head, unresolved threads: $last_unresolved)"
+      fi
+      ;;
+    proceeded)
+      if [[ "$MODE" == "review" ]]; then
+        echo "Review: no reviewer evidence after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
+      else
+        echo "Approval: no approval verdict after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (decision: ${last_review_decision:-none}, unresolved threads: $last_unresolved)"
       fi
       ;;
     changes_requested)
@@ -777,6 +822,15 @@ while true; do
   update_elapsed
 done
 
-# Deadline reached with no verdict — report timeout, never silent success.
+# Deadline reached with no verdict. Default ("block"): report timeout (exit 1),
+# never a silent success. With PR_REVIEW_ON_TIMEOUT=proceed AND zero unresolved
+# threads (an open thread would already have exited the loop as "comments"),
+# degrade to "proceeded" (exit 0) so a credit-exhausted reviewer that posted
+# nothing does not block the fleet — the caller records it as a reviewer-down
+# override, and CI plus the comment-hygiene gate still apply.
+if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ]; then
+  emit_result "proceeded"
+  exit 0
+fi
 emit_result "timeout"
 exit 1
