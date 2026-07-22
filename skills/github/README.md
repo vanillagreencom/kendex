@@ -66,7 +66,8 @@ failed or cancelled checks remain `ci_failed: ...` and are not transient.
 Actionable review threads (unresolved and not outdated), plus failures to read
 thread state, are permanent blockers. They stop both immediate merge and
 `--auto` before any merge or queue mutation. Only the explicit, dangerous
-`--force` flag bypasses that safety gate.
+`--force` flag bypasses that safety gate. Thread retrieval follows every
+GraphQL page and fails rather than treating an incomplete list as clean.
 Merge execution is exact-head guarded. A successful mutation returns exit `0`
 when already merged, exit `75` with a distinct message when either a required
 merge-queue entry or classic auto-merge is active, and exit `1` when no merged,

@@ -91,12 +91,15 @@ get_pr_threads() {
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
 
-    # GraphQL query
-    local query='
+    # GitHub caps one reviewThreads connection page at 100 nodes. Fetch every
+    # page before emitting anything so merge callers cannot mistake a partial
+    # result for a clean review state.
+    local initial_query='
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
@@ -115,8 +118,89 @@ query($owner: String!, $repo: String!, $number: Int!) {
   }
 }'
 
+    local page_query='
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 1) {
+            nodes {
+              author { login }
+              body
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+
+    local all_nodes='[]'
+    local cursor="" page_count=0
+    while :; do
+        page_count=$((page_count + 1))
+        if [ "$page_count" -gt 1000 ]; then
+            echo '{"error": "Review thread pagination exceeded safety limit"}' >&2
+            exit 1
+        fi
+
+        local page_result
+        if [ -z "$cursor" ]; then
+            page_result=$(gh_graphql "$initial_query" -F owner="$owner" -F repo="$repo" -F number="$pr_num") || exit 1
+        else
+            page_result=$(gh_graphql "$page_query" -F owner="$owner" -F repo="$repo" -F number="$pr_num" -F cursor="$cursor") || exit 1
+        fi
+
+        # Fail closed on a missing PR, malformed nodes, or a next-page flag
+        # without a usable cursor. No partial list is printed on failure.
+        if ! jq -e '
+            .repository.pullRequest.reviewThreads as $threads |
+            ($threads | type == "object") and
+            ($threads.nodes | type == "array") and
+            ($threads.pageInfo.hasNextPage | type == "boolean") and
+            (($threads.pageInfo.hasNextPage == false) or
+             (($threads.pageInfo.endCursor | type) == "string" and
+              ($threads.pageInfo.endCursor | length) > 0))
+        ' >/dev/null 2>&1 <<<"$page_result"; then
+            echo '{"error": "GitHub returned malformed review thread pagination data"}' >&2
+            exit 1
+        fi
+
+        local page_nodes has_next next_cursor
+        page_nodes=$(jq -c '.repository.pullRequest.reviewThreads.nodes' <<<"$page_result") || exit 1
+        all_nodes=$(jq -cn --argjson accumulated "$all_nodes" --argjson page "$page_nodes" '$accumulated + $page') || exit 1
+        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page_result") || exit 1
+
+        if [ "$has_next" = "false" ]; then
+            break
+        fi
+
+        next_cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page_result") || exit 1
+        if [ "$next_cursor" = "$cursor" ]; then
+            echo '{"error": "GitHub review thread pagination cursor did not advance"}' >&2
+            exit 1
+        fi
+        cursor="$next_cursor"
+    done
+
     local result
-    result=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F number="$pr_num") || exit 1
+    result=$(jq -cn --argjson nodes "$all_nodes" '{
+        repository: {
+            pullRequest: {
+                reviewThreads: {
+                    nodes: $nodes,
+                    pageInfo: {hasNextPage: false, endCursor: null}
+                }
+            }
+        }
+    }') || exit 1
 
     # Apply format and filters
     case "$FORMAT" in

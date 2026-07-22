@@ -95,8 +95,27 @@ case "${1:-}" in
                 echo '{"errors":[{"message":"review threads unavailable"}]}'
                 exit 1
             fi
-            jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
-                '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes}}}}}'
+            if [[ "$*" == *"cursor=cursor-page-2"* ]]; then
+                if [[ "${STUB_THREADS_PAGE2_FETCH_FAIL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"second review thread page unavailable"}]}'
+                    exit 1
+                fi
+                if [[ "${STUB_THREADS_PAGE2_MALFORMED:-false}" == "true" ]]; then
+                    jq -cn --argjson nodes "${STUB_THREADS_PAGE2_JSON:-[]}" \
+                        '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:null}}}}}}'
+                    exit 0
+                fi
+                jq -cn --argjson nodes "${STUB_THREADS_PAGE2_JSON:-[]}" \
+                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
+                exit 0
+            fi
+            if [[ -n "${STUB_THREADS_PAGE2_JSON:-}" ]]; then
+                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
+                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:"cursor-page-2"}}}}}}'
+            else
+                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
+                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
+            fi
             exit 0
         fi
         ;;
@@ -252,6 +271,49 @@ assert_not_contains "$(cat "$call_log")" "pr merge" "immediate path never invoke
 outdated_threads='[{"id":"PRRT_outdated","isResolved":false,"isOutdated":true,"path":"src/old.rs","line":7,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Stale diff"}]}}]'
 out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$outdated_threads" run_check)
 assert_eq "$(jq -r .can_merge <<<"$out")" "true" "outdated unresolved thread is not actionable"
+
+first_page_threads=$(jq -cn '[range(0; 100) | {
+    id: ("PRRT_resolved_" + tostring),
+    isResolved: true,
+    isOutdated: false,
+    path: "src/first-page.rs",
+    line: .,
+    comments: {nodes: [{author: {login: "reviewer"}, body: "Resolved"}]}
+}]')
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$first_page_threads" \
+    STUB_THREADS_PAGE2_JSON="$actionable_threads" \
+    run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "false" "actionable thread after first 100 blocks readiness"
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "unresolved_threads: 1 actionable thread(s)" "second-page blocker reaches merge gate"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$first_page_threads" \
+    STUB_THREADS_PAGE2_JSON='[]' \
+    STUB_THREADS_PAGE2_FETCH_FAIL=true \
+    STUB_CALL_LOG="$call_log" \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "second-page fetch failure blocks --auto"
+assert_contains "$out" "review_threads_fetch_failed:" "second-page failure reaches fail-closed merge gate"
+assert_not_contains "$(cat "$call_log")" "pr merge" "second-page failure never invokes gh pr merge"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$first_page_threads" \
+    STUB_THREADS_PAGE2_JSON='[]' \
+    STUB_THREADS_PAGE2_MALFORMED=true \
+    STUB_CALL_LOG="$call_log" \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "malformed second-page cursor state blocks --auto"
+assert_contains "$out" "review_threads_fetch_failed:" "malformed pagination reaches fail-closed merge gate"
+assert_not_contains "$(cat "$call_log")" "pr merge" "malformed pagination never invokes gh pr merge"
 
 : >"$call_log"
 set +e
