@@ -82,6 +82,17 @@ assert_branch_absent() {
   fi
 }
 
+assert_branch_exists() {
+  local repo="$1" branch="$2" name="$3"
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        missing branch: %s\n' "$name" "$branch"
+  fi
+}
+
 # No open PRs anywhere in this file; ownership signals are local/remote refs.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
@@ -147,6 +158,30 @@ assert_contains "$(cat "$DEFAULT_ROOT/invalid-cleanup.err")" "Could not safely c
 assert_path_exists "$invalid_cleanup_path/.git" "failed cleanup keeps the merged worktree registered"
 rm -f "$DEFAULT_ROOT/repo-a/.env"
 (cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" remove issue-invalid-cleanup >/dev/null)
+
+REMOVE_FAIL_ROOT="$TMP_ROOT/remove-failure"
+make_repo "$REMOVE_FAIL_ROOT"
+remove_fail_path=$(cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remove-failure)
+mkdir -p "$REMOVE_FAIL_ROOT/bin"
+cat >"$REMOVE_FAIL_ROOT/bin/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ " $* " == *" worktree remove --force "* && "$*" == *"issue-remove-failure"* ]]; then
+  echo "simulated worktree removal failure" >&2
+  exit 1
+fi
+exec "$REAL_GIT_BIN" "$@"
+STUB
+chmod +x "$REMOVE_FAIL_ROOT/bin/git"
+REAL_GIT_BIN="$(command -v git)"
+set +e
+(cd "$REMOVE_FAIL_ROOT/main" && PATH="$REMOVE_FAIL_ROOT/bin:$PATH" REAL_GIT_BIN="$REAL_GIT_BIN" "$WORKTREE_SCRIPT" cleanup >"$REMOVE_FAIL_ROOT/cleanup.out" 2>"$REMOVE_FAIL_ROOT/cleanup.err")
+remove_fail_code=$?
+set -e
+assert_eq "$remove_fail_code" "1" "cleanup reports git worktree removal failure"
+assert_contains "$(cat "$REMOVE_FAIL_ROOT/cleanup.err")" "preserving it for manual recovery" "cleanup explains that failed removal was preserved"
+assert_path_exists "$remove_fail_path/.git" "cleanup preserves a worktree that Git refused to remove"
+assert_branch_exists "$REMOVE_FAIL_ROOT/main" "issue-remove-failure" "cleanup preserves the branch when worktree removal fails"
+(cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" remove issue-remove-failure >/dev/null)
 
 echo "=== explicit absolute and ~ overrides ==="
 

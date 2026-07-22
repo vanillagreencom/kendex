@@ -56,6 +56,17 @@ assert_path_absent() {
   fi
 }
 
+assert_file_lacks_line() {
+  local path="$1" line="$2" name="$3"
+  if [[ ! -f "$path" ]] || ! grep -qxF -- "$line" "$path"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unexpected line in %s: %s\n' "$name" "$path" "$line"
+  fi
+}
+
 assert_branch_absent() {
   local repo="$1" branch="$2" name="$3"
   if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
@@ -245,6 +256,8 @@ rm -f "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
 mkdir -p "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
 printf 'keep\n' >"$FILE_DIR_ROOT/trees/issue-file-dir/tool/preserved.txt"
 printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_DIR_ROOT/main/.env"
+file_dir_index_before="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" ls-files -v tool)"
+file_dir_common="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" rev-parse --git-common-dir)"
 set +e
 (cd "$FILE_DIR_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FILE_DIR_ROOT/trees/issue-file-dir") >"$FILE_DIR_ROOT/file-dir.out" 2>"$FILE_DIR_ROOT/file-dir.err"
 file_dir_rc=$?
@@ -252,6 +265,22 @@ set -e
 assert_eq "$file_dir_rc" "1" "file symlink setup refuses to delete an existing directory leaf"
 assert_contains "$(cat "$FILE_DIR_ROOT/file-dir.err")" "refusing to replace non-file" "directory-leaf diagnostic names the refusal"
 assert_eq "$(cat "$FILE_DIR_ROOT/trees/issue-file-dir/tool/preserved.txt")" "keep" "file symlink setup preserves an existing directory leaf"
+assert_eq "$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" ls-files -v tool)" "$file_dir_index_before" "rejected file symlink leaves index flags unchanged"
+assert_file_lacks_line "$file_dir_common/info/exclude" "tool" "rejected file symlink leaves shared excludes unchanged"
+
+REL_DIR_ROOT="$TMP_ROOT/relative-dir"
+make_repo "$REL_DIR_ROOT"
+git -C "$REL_DIR_ROOT/main" worktree add -q -b issue-relative-dir "$REL_DIR_ROOT/trees/issue-relative-dir" main
+mkdir -p "$REL_DIR_ROOT/trees/issue-relative-dir/local-link"
+printf 'keep-relative\n' >"$REL_DIR_ROOT/trees/issue-relative-dir/local-link/preserved.txt"
+printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >"$REL_DIR_ROOT/main/.env"
+set +e
+(cd "$REL_DIR_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$REL_DIR_ROOT/trees/issue-relative-dir") >"$REL_DIR_ROOT/relative-dir.out" 2>"$REL_DIR_ROOT/relative-dir.err"
+relative_dir_rc=$?
+set -e
+assert_eq "$relative_dir_rc" "1" "relative symlink setup refuses to delete an existing directory leaf"
+assert_contains "$(cat "$REL_DIR_ROOT/relative-dir.err")" "refusing to replace non-file" "relative directory-leaf diagnostic names the refusal"
+assert_eq "$(cat "$REL_DIR_ROOT/trees/issue-relative-dir/local-link/preserved.txt")" "keep-relative" "relative symlink setup preserves an existing directory leaf"
 
 echo "=== direct path commands refuse foreign worktrees and main checkout ==="
 

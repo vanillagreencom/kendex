@@ -682,6 +682,10 @@ symlink_into_worktree() {
   # Every worktree-local symlink we create should be invisible to git status
   # in this worktree, regardless of whether the source dir has tracked files.
   ensure_worktree_path_safe "$wt" "$path" false || return 1
+  if [[ -f "$src" && -e "$dst" && ! -L "$dst" && ! -f "$dst" ]]; then
+    echo "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
+    return 1
+  fi
   exclude_from_worktree_index "$wt" "$path"
 
   if [[ -f "$src" ]]; then
@@ -805,9 +809,15 @@ setup_worktree_links() {
     path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
     validate_relative_symlink_target "$spec" "$target" || return 1
     ensure_worktree_path_safe "$wt" "$path" false || return 1
+    if [[ -e "$wt/$path" && ! -L "$wt/$path" && ! -f "$wt/$path" ]]; then
+      echo "Error: refusing to replace non-file worktree path '$path' with a relative symlink." >&2
+      return 1
+    fi
     mkdir -p "$(dirname "$wt/$path")"
-    rm -rf "$wt/$path" 2>/dev/null
-    ln -sfn "$target" "$wt/$path"
+    if [[ -L "$wt/$path" || -f "$wt/$path" ]]; then
+      rm -f "$wt/$path"
+    fi
+    ln -s "$target" "$wt/$path"
     exclude_from_worktree_index "$wt" "$path"
   done
 }
@@ -1860,17 +1870,26 @@ case "${1:-}" in
           echo "Error: Could not safely clean configured symlinks from merged worktree: $wt" >&2
           continue
         fi
-        if git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>/dev/null; then
-          if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
-            CLEANUP_FAILED=true
-            echo "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
-            echo "  Remaining branch: $BRANCH" >&2
-            echo "  Worktree path removed/pruned: $wt" >&2
-            continue
-          fi
-          echo "Cleaned: $wt"
+        CLEANUP_REMOVE_OUTPUT=""
+        if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
+          CLEANUP_FAILED=true
+          echo "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
+          [[ -n "$CLEANUP_REMOVE_OUTPUT" ]] && printf '%s\n' "$CLEANUP_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+          continue
         fi
-        [[ -d "$wt" ]] && rm -rf "$wt"
+        if [[ -e "$wt" || -L "$wt" ]]; then
+          CLEANUP_FAILED=true
+          echo "Error: Git reported successful worktree removal but the path remains; preserving it for manual recovery: $wt" >&2
+          continue
+        fi
+        if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
+          CLEANUP_FAILED=true
+          echo "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
+          echo "  Remaining branch: $BRANCH" >&2
+          echo "  Worktree path removed/pruned: $wt" >&2
+          continue
+        fi
+        echo "Cleaned: $wt"
       fi
     done
     if [[ "$CLEANUP_FAILED" == true ]]; then
