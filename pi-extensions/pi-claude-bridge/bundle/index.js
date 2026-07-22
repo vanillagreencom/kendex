@@ -28011,7 +28011,7 @@ function projectSettingsTrusted(settingsPath) {
 }
 function settingsPaths(cwd) {
   const user = join3(piUserDir(), "settings.json");
-  if (isolatedFromEnv()) return [user];
+  if (isolatedFromEnv()) return [];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
 }
@@ -28138,7 +28138,7 @@ function loadConfig(cwd) {
   const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
   const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
   const project = trustedProject ? tryParseJson(join3(dirname2(projectSettings), "claude-bridge.json")) : {};
-  const manager = managerToConfig(readManagerConfig(cwd));
+  const manager = isolated ? {} : managerToConfig(readManagerConfig(cwd));
   const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
   return {
     enabled: manager.enabled ?? project.enabled ?? global2.enabled ?? true,
@@ -28201,10 +28201,9 @@ function globalAgentsPath() {
   return join5(piUserDir(), "AGENTS.md");
 }
 function resolveAgentsMdPath() {
-  if (!isolatedFromEnv()) {
-    const fromCwd = findAgentsMdInParents(process.cwd());
-    if (fromCwd) return fromCwd;
-  }
+  if (isolatedFromEnv()) return void 0;
+  const fromCwd = findAgentsMdInParents(process.cwd());
+  if (fromCwd) return fromCwd;
   const globalPath = globalAgentsPath();
   if (existsSync5(globalPath)) return globalPath;
   return void 0;

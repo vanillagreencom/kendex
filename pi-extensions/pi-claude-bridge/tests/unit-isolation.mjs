@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isolatedFromEnv, loadConfig, piUserDir, recordProjectTrust } from "../src/config.ts";
-import { resolveAgentsMdPath } from "../src/agents-md.ts";
+import { extractAgentsAppend, resolveAgentsMdPath } from "../src/agents-md.ts";
 import { readAppendSystemPromptFiles } from "../src/prompt-context.ts";
 import { resolveClaudeExecutable } from "../src/index.ts";
 
@@ -93,21 +93,37 @@ describe("resolveAgentsMdPath isolation", () => {
 		}
 	}));
 
-	it("isolated mode ignores cwd AGENTS.md and reads only piUserDir", () => withTempDir((dir) => {
+	it("default mode falls back to the piUserDir AGENTS.md", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		const agentDir = join(dir, "agent");
+		mkdirSync(cwdDir, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "AGENTS.md"), "# global instructions\n");
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined, PI_CODING_AGENT_DIR: agentDir }, () => {
+				assert.equal(resolveAgentsMdPath(), resolve(join(agentDir, "AGENTS.md")));
+				assert.match(extractAgentsAppend() ?? "", /global instructions/);
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("isolated mode suppresses cwd and shared piUserDir AGENTS.md", () => withTempDir((dir) => {
 		const cwdDir = join(dir, "cwd");
 		const agentDir = join(dir, "agent");
 		mkdirSync(cwdDir, { recursive: true });
 		mkdirSync(agentDir, { recursive: true });
 		writeFileSync(join(cwdDir, "AGENTS.md"), "# personal instructions\n");
+		writeFileSync(join(agentDir, "AGENTS.md"), "# shared global instructions\n");
 		const oldCwd = process.cwd();
 		try {
 			process.chdir(cwdDir);
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: "1", PI_CODING_AGENT_DIR: agentDir }, () => {
-				// No app-owned AGENTS.md → nothing at all (cwd file must NOT leak).
 				assert.equal(resolveAgentsMdPath(), undefined);
-				// App-owned AGENTS.md wins once present.
-				writeFileSync(join(agentDir, "AGENTS.md"), "# app instructions\n");
-				assert.equal(resolveAgentsMdPath(), resolve(join(agentDir, "AGENTS.md")));
+				assert.equal(extractAgentsAppend(), undefined);
 			});
 		} finally {
 			process.chdir(oldCwd);
@@ -116,28 +132,59 @@ describe("resolveAgentsMdPath isolation", () => {
 });
 
 describe("loadConfig isolation", () => {
-	it("isolated mode ignores trusted project config and reads only piUserDir", () => withTempDir((dir) => {
+	it("isolated mode ignores shared manager and trusted project config in favor of authoritative config", () => withTempDir((dir) => {
 		const agentDir = join(dir, "agent");
 		const project = join(dir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(join(project, ".pi"), { recursive: true });
-		writeFileSync(join(agentDir, "claude-bridge.json"), JSON.stringify({ provider: { fastMode: false } }));
-		writeFileSync(join(project, ".pi", "claude-bridge.json"), JSON.stringify({ provider: { fastMode: true, pathToClaudeCodeExecutable: "/opt/evil/claude" } }));
+		writeFileSync(join(agentDir, "claude-bridge.json"), JSON.stringify({
+			enabled: true,
+			provider: {
+				fastMode: false,
+				pathToClaudeCodeExecutable: "/opt/host/sha-pinned-claude",
+				enableConnectors: false,
+				connectorWriteMode: "deny",
+			},
+		}));
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
+				enabled: false,
+				fastMode: true,
+				pathToClaudeCodeExecutable: "/opt/shared/hostile-claude",
+				enableConnectors: true,
+				connectorWriteMode: "allow",
+			} } } },
+		}));
+		writeFileSync(join(project, ".pi", "claude-bridge.json"), JSON.stringify({
+			provider: {
+				fastMode: true,
+				pathToClaudeCodeExecutable: "/opt/project/claude",
+				enableConnectors: true,
+				connectorWriteMode: "allow",
+			},
+		}));
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { pathToClaudeCodeExecutable: "/opt/evil/claude2" } } } },
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { pathToClaudeCodeExecutable: "/opt/project/manager-claude" } } } },
 		}));
 		withEnv({ PI_CODING_AGENT_DIR: agentDir }, () => {
 			recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
-			// Sanity: default mode DOES read the trusted project config.
+			// Normal Pi behavior is unchanged: trusted project manager settings win.
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
 				const config = loadConfig(project);
 				assert.equal(config.provider?.fastMode, true);
+				assert.equal(config.provider?.pathToClaudeCodeExecutable, "/opt/project/manager-claude");
+				assert.equal(config.provider?.enableConnectors, true);
+				assert.equal(config.provider?.connectorWriteMode, "allow");
+				assert.equal(config.enabled, false);
 			});
-			// Isolated mode ignores both project files even though trust is recorded.
+			// Isolated mode ignores both settings overlays and both project files.
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: "1" }, () => {
 				const config = loadConfig(project);
 				assert.equal(config.provider?.fastMode, false);
-				assert.equal(config.provider?.pathToClaudeCodeExecutable, undefined);
+				assert.equal(config.provider?.pathToClaudeCodeExecutable, "/opt/host/sha-pinned-claude");
+				assert.equal(config.provider?.enableConnectors, false);
+				assert.equal(config.provider?.connectorWriteMode, "deny");
+				assert.equal(config.enabled, true);
 			});
 		});
 	}));

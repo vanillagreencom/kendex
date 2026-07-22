@@ -7,9 +7,8 @@
 // (~/.pi, .pi/, .pi, pi) to their Claude Code equivalents so any paths or
 // references in the file still resolve inside the CC subprocess.
 //
-// In isolated mode (CLAUDE_BRIDGE_ISOLATED=1) the cwd walk is disabled: only
-// the piUserDir file is consulted, so a host app that owns the agent dir owns
-// the full instruction surface.
+// In isolated mode (CLAUDE_BRIDGE_ISOLATED=1), all AGENTS.md discovery is
+// disabled. Embedding hosts provide their instruction surface explicitly.
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
@@ -20,10 +19,9 @@ function globalAgentsPath(): string {
 }
 
 export function resolveAgentsMdPath(): string | undefined {
-	if (!isolatedFromEnv()) {
-		const fromCwd = findAgentsMdInParents(process.cwd());
-		if (fromCwd) return fromCwd;
-	}
+	if (isolatedFromEnv()) return undefined;
+	const fromCwd = findAgentsMdInParents(process.cwd());
+	if (fromCwd) return fromCwd;
 	const globalPath = globalAgentsPath();
 	if (existsSync(globalPath)) return globalPath;
 	return undefined;

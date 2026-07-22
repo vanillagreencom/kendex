@@ -1,6 +1,8 @@
 // User-facing extension config. Legacy config is loaded from
 // ~/.pi/agent/claude-bridge.json and .pi/claude-bridge.json. vstack extension
-// manager config is loaded from settings.json and overrides legacy files.
+// manager config is loaded from settings.json and overrides legacy files in
+// normal Pi sessions. Isolated embedding hosts consume only the authoritative
+// user claude-bridge.json and never read extension-manager settings.
 
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
@@ -87,10 +89,11 @@ export function piUserDir(): string {
 /**
  * Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`): a host app embedding the bridge
  * declares that nothing outside its explicitly configured dirs may be read.
- * Disables every cwd/home discovery fallback — the cwd AGENTS.md walk, project
- * `.pi/` settings + claude-bridge.json, project APPEND_SYSTEM.md, and the
- * `$PATH` claude executable search. Reads stay confined to `piUserDir()` (i.e.
- * `PI_CODING_AGENT_DIR`) and the explicitly configured executable path.
+ * Disables every cwd/home discovery fallback — all AGENTS.md discovery,
+ * extension-manager settings, project `.pi/` settings + claude-bridge.json,
+ * project APPEND_SYSTEM.md, and the `$PATH` claude executable search. Bridge
+ * configuration comes only from `piUserDir()/claude-bridge.json` and any
+ * explicitly configured executable path.
  * Default (unset) behavior for normal pi CLI users is unchanged.
  */
 export function isolatedFromEnv(): boolean {
@@ -163,7 +166,10 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 function settingsPaths(cwd: string): string[] {
 	const user = join(piUserDir(), "settings.json");
-	if (isolatedFromEnv()) return [user];
+	// An embedding host may have to share PI_CODING_AGENT_DIR with an in-process
+	// Pi SDK. In isolated mode, settings.json is therefore not authoritative and
+	// must not be consulted even at user scope.
+	if (isolatedFromEnv()) return [];
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
@@ -312,7 +318,7 @@ export function loadConfig(cwd: string): Config {
 	const projectSettings = isolated ? undefined : projectSettingsPath(cwd);
 	const trustedProject = projectSettings !== undefined && projectSettingsTrusted(projectSettings);
 	const project = trustedProject ? tryParseJson(join(dirname(projectSettings), "claude-bridge.json")) : {};
-	const manager = managerToConfig(readManagerConfig(cwd));
+	const manager: Partial<Config> = isolated ? {} : managerToConfig(readManagerConfig(cwd));
 	const provider = normalizeProviderConfig({ ...global.provider, ...project.provider, ...manager.provider });
 	return {
 		enabled: manager.enabled ?? project.enabled ?? global.enabled ?? true,

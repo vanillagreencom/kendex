@@ -118,12 +118,13 @@ Set `allow` only for a one-shot write-executor session that has already obtained
 
 Host apps that embed the bridge and own every config dir explicitly can set `CLAUDE_BRIDGE_ISOLATED=1` in the bridge process env. Isolated mode disables every cwd/home discovery fallback so nothing outside the host-owned dirs is read:
 
-- no cwd-ancestor `AGENTS.md` walk — instructions come only from `<PI_CODING_AGENT_DIR>/AGENTS.md`;
+- no `AGENTS.md` discovery, including cwd ancestors and the shared `<PI_CODING_AGENT_DIR>/AGENTS.md`;
+- no extension-manager overlay from `<PI_CODING_AGENT_DIR>/settings.json`;
 - no project `.pi/settings.json` / `.pi/claude-bridge.json` reads (even for trusted projects);
 - no project `.pi/APPEND_SYSTEM.md`;
 - no `$PATH` search for the `claude` executable — the host either pins `pathToClaudeCodeExecutable` or gets the Claude Agent SDK's bundled default.
 
-Config, logs, and `AGENTS.md` all resolve under `PI_CODING_AGENT_DIR`. Normal pi CLI usage (flag unset) is unchanged.
+Bridge settings come only from the authoritative `<PI_CODING_AGENT_DIR>/claude-bridge.json`; logs still resolve under `PI_CODING_AGENT_DIR`. Normal Pi CLI usage (flag unset) is unchanged.
 
 ### Fable 5 caveat
 
