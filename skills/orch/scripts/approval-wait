@@ -67,13 +67,16 @@
 # gate signal never arrives before the deadline — the reviewer posted nothing,
 # e.g. its credits are exhausted — "block" reports "timeout" (exit 1) as
 # before, and the caller prompts or keeps waiting. "proceed" instead reports a
-# distinct "proceeded" (exit 0), but ONLY when zero threads are unresolved, so
-# a dead reviewer never stalls the fleet while an actual open comment always
-# still blocks (an unresolved thread returns "comments" before the deadline is
-# ever reached). The caller records "proceeded" as a reviewer-down override;
-# CI and the comment-hygiene gate still apply. The --on-timeout flag overrides
-# the setting; both read with orch-env precedence (process env >
-# vstack.settings.toml > default).
+# distinct "proceeded" (exit 0), but ONLY on genuine reviewer silence: zero
+# unresolved threads (an open thread returns "comments" before the deadline) AND
+# no reviewer evidence. In review mode reaching the deadline already means no
+# review is pinned to the current head; in approval mode an active COMMENTED
+# review (a reviewer that engaged but did not approve) also blocks the degrade,
+# so proceed can never bypass a live gate — only route around a dead reviewer.
+# The caller records "proceeded" as a reviewer-down override; CI and the
+# comment-hygiene gate still apply. The --on-timeout flag overrides the setting;
+# both read with orch-env precedence (process env > vstack.settings.toml >
+# default).
 #
 # Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review] [--on-timeout block|proceed]
 #        approval-wait --resolve-mode
@@ -253,6 +256,12 @@ last_changes=0
 last_unresolved=0
 last_head_sha=""
 last_reviews_at_head=0
+# Approval mode only: non-author, non-dismissed latest reviews of ANY state
+# (COMMENTED included). Distinguishes "a reviewer engaged but did not approve"
+# from "no reviewer showed at all", so the PR_REVIEW_ON_TIMEOUT=proceed degrade
+# fires only on genuine reviewer silence — never past an active COMMENTED
+# review. Review mode leaves this 0 and relies on its at-head evidence instead.
+last_reviews_present=0
 last_review_evidence=""
 last_check_surface=""
 last_check_app=""
@@ -714,7 +723,7 @@ while true; do
     # once-per-head bookkeeping) ---
     view_status=0
     set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid 2>"$GH_ERR_FILE")
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid,author 2>"$GH_ERR_FILE")
     view_status=$?
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
@@ -729,10 +738,19 @@ while true; do
 
     last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
     last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
+    pr_author=$(jq -r '.author.login // ""' <<<"$view_json")
     # latestReviews already holds the latest review per reviewer; count formal
     # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
     last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
     last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
+    # Any non-author reviewer whose latest review is a formal state (APPROVED,
+    # CHANGES_REQUESTED, or COMMENTED — DISMISSED/PENDING excluded) is a reviewer
+    # that ENGAGED. The proceed-on-timeout degrade must not fire past one: a
+    # COMMENTED review means the reviewer is present, not silent, so proceeding
+    # would bypass a live gate rather than route around a dead reviewer.
+    last_reviews_present=$(jq --arg author "$pr_author" \
+      '[.latestReviews[]? | select((.author.login // "") != $author
+        and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED"))] | length' <<<"$view_json")
     last_reviewer_logins=$(jq -r '[.latestReviews[]? | .author.login // empty]
       | unique | .[]' <<<"$view_json")
   fi
@@ -823,12 +841,17 @@ while true; do
 done
 
 # Deadline reached with no verdict. Default ("block"): report timeout (exit 1),
-# never a silent success. With PR_REVIEW_ON_TIMEOUT=proceed AND zero unresolved
-# threads (an open thread would already have exited the loop as "comments"),
-# degrade to "proceeded" (exit 0) so a credit-exhausted reviewer that posted
-# nothing does not block the fleet — the caller records it as a reviewer-down
-# override, and CI plus the comment-hygiene gate still apply.
-if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ]; then
+# never a silent success. With PR_REVIEW_ON_TIMEOUT=proceed, degrade to
+# "proceeded" (exit 0) so a credit-exhausted reviewer that posted nothing does
+# not block the fleet — but ONLY on genuine reviewer silence:
+#   - zero unresolved threads (an open thread already exited as "comments"), and
+#   - no reviewer evidence. In review mode reaching here already means no review
+#     is pinned to the current head; in approval mode last_reviews_present guards
+#     against an active COMMENTED review (a reviewer that engaged but did not
+#     approve is not "down", so it must timeout, not proceed).
+# The caller records "proceeded" as a reviewer-down override; CI and the
+# comment-hygiene gate still apply.
+if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] && [ "$last_reviews_present" -eq 0 ]; then
   emit_result "proceeded"
   exit 0
 fi

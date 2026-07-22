@@ -63,12 +63,13 @@
 #      on the eventual success; a persistent 503 becomes terminal only when
 #      the budget expires, preserving the original error message plus the
 #      count; an HTTP 404 stays immediately terminal with no count
-#   proceed1-8: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
-#      reached with zero unresolved threads degrades to "proceeded" (exit 0)
-#      under "proceed" (review and approval modes; also via the --on-timeout
-#      flag), while open threads still return "comments", a standing
-#      CHANGES_REQUESTED still blocks, the default is "block" (timeout), and an
-#      unrecognized value falls back to block with a warning
+#   proceed1-9: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
+#      reached with zero unresolved threads AND no reviewer evidence degrades to
+#      "proceeded" (exit 0) under "proceed" (review and approval modes; also via
+#      the --on-timeout flag), while open threads still return "comments", a
+#      standing CHANGES_REQUESTED still blocks, an active COMMENTED review in
+#      approval mode still times out (not silence), the default is "block"
+#      (timeout), and an unrecognized value falls back to block with a warning
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -845,6 +846,19 @@ set -e
 assert_eq "$rc" "1" "proceed8: invalid value falls back to block" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "timeout" "proceed8: invalid value times out" "$stderr"
 assert_contains "$(cat "$stderr")" "unrecognized PR_REVIEW_ON_TIMEOUT value" "proceed8: invalid value warns"
+
+# proceed9: approval mode with an active COMMENTED review is NOT reviewer
+# silence — a reviewer engaged but did not approve. proceed must NOT convert it
+# (that would bypass a live approval gate), so it still times out (Copilot #795
+# review of PR #795). Guards the "zero reviewer evidence" boundary in approval
+# mode, where reaching the deadline does not by itself imply no review.
+stderr="$TMP_ROOT/proceed9.err"
+set +e
+output=$(run_wait_json_short STUB_APPROVAL_MODE=commented_only PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed9: active COMMENTED review blocks proceed (approval mode)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed9: status timeout, not proceeded" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 
