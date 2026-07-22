@@ -3,7 +3,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_SCRIPT="$(cd "$TEST_DIR/.." && pwd)/scripts/worktree"
+WORKTREE_PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
+WORKTREE_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -29,6 +30,17 @@ assert_contains() {
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unexpected substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  else
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
   fi
 }
 
@@ -473,59 +485,70 @@ git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" commit -q -m 'bot review fix'
 )
 assert_eq "$(git --git-dir="$BOT_PUSH_ROOT/bot.git" rev-parse refs/heads/issue-bot-push)" "$(git -C "$BOT_PUSH_ROOT/trees/issue-bot-push" rev-parse HEAD)" "auto-rebased push uses configured bot remote lease"
 
-GITHUB_PUSH_ROOT="$TMP_ROOT/github-push"
-make_repo "$GITHUB_PUSH_ROOT/main"
-git -C "$GITHUB_PUSH_ROOT/main" remote add origin git@github.com:owner/repo.git
-git -C "$GITHUB_PUSH_ROOT/main" worktree add -q -b issue-github-push "$GITHUB_PUSH_ROOT/trees/issue-github-push" main
-printf 'github-change\n' >> "$GITHUB_PUSH_ROOT/trees/issue-github-push/file.txt"
-git -C "$GITHUB_PUSH_ROOT/trees/issue-github-push" add file.txt
-git -C "$GITHUB_PUSH_ROOT/trees/issue-github-push" commit -q -m 'github push change'
-mkdir -p "$GITHUB_PUSH_ROOT/bin"
+# Exercise the package in both supported layouts. A worktree-only install must
+# fall back to plain git when the optional sibling GitHub helper is absent. A
+# sibling helper, when present, must be sourced and own the git invocation.
+# GitHub credential and URL-rewrite semantics belong to the GitHub package's
+# git-https-auth tests, so the optional fixture uses only a delegation marker.
+AUTH_FIXTURE_ROOT="$TMP_ROOT/auth-fixtures"
+mkdir -p "$AUTH_FIXTURE_ROOT/standalone" "$AUTH_FIXTURE_ROOT/with-helper"
+cp -R "$WORKTREE_PACKAGE_DIR" "$AUTH_FIXTURE_ROOT/standalone/worktree"
+cp -R "$WORKTREE_PACKAGE_DIR" "$AUTH_FIXTURE_ROOT/with-helper/worktree"
+mkdir -p "$AUTH_FIXTURE_ROOT/with-helper/github/scripts/lib"
+cat > "$AUTH_FIXTURE_ROOT/with-helper/github/scripts/lib/gh-auth.sh" <<'EOF'
+vstack_github_git() {
+  git -c vstack.test-github-helper=loaded "$@"
+}
+EOF
+STANDALONE_WORKTREE_SCRIPT="$AUTH_FIXTURE_ROOT/standalone/worktree/scripts/worktree"
+HELPER_WORKTREE_SCRIPT="$AUTH_FIXTURE_ROOT/with-helper/worktree/scripts/worktree"
+
+AUTH_PUSH_ROOT="$TMP_ROOT/auth-push"
+make_repo "$AUTH_PUSH_ROOT/main"
+git -C "$AUTH_PUSH_ROOT/main" remote add origin git@github.com:owner/repo.git
+git -C "$AUTH_PUSH_ROOT/main" worktree add -q -b issue-github-push "$AUTH_PUSH_ROOT/trees/issue-github-push" main
+printf 'github-change\n' >> "$AUTH_PUSH_ROOT/trees/issue-github-push/file.txt"
+git -C "$AUTH_PUSH_ROOT/trees/issue-github-push" add file.txt
+git -C "$AUTH_PUSH_ROOT/trees/issue-github-push" commit -q -m 'github push change'
+mkdir -p "$AUTH_PUSH_ROOT/bin"
 REAL_GIT="$(command -v git)"
-cat > "$GITHUB_PUSH_ROOT/bin/git" <<EOF
+cat > "$AUTH_PUSH_ROOT/bin/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 for arg in "\$@"; do
   if [[ "\$arg" == "push" ]]; then
-    printf '%s\n' "\$*" >"$GITHUB_PUSH_ROOT/push.args"
+    printf '%s\n' "\$*" >"\${WORKTREE_TEST_PUSH_ARGS:?}"
     exit 0
   fi
 done
 exec "$REAL_GIT" "\$@"
 EOF
-chmod +x "$GITHUB_PUSH_ROOT/bin/git"
-cat > "$GITHUB_PUSH_ROOT/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  auth)
-    if [[ "${2:-}" == "status" || "${2:-}" == "git-credential" ]]; then
-      echo "Logged in"
-      exit 0
-    fi
-    ;;
-  api)
-    if [[ "${2:-}" == "user" ]]; then
-      echo "test-user"
-      exit 0
-    fi
-    ;;
-esac
-printf 'unexpected gh call: %s\n' "$*" >&2
-exit 1
-EOF
-chmod +x "$GITHUB_PUSH_ROOT/bin/gh"
+chmod +x "$AUTH_PUSH_ROOT/bin/git"
 set +e
 (
-  cd "$GITHUB_PUSH_ROOT/trees/issue-github-push" && \
-    PATH="$GITHUB_PUSH_ROOT/bin:$PATH" "$WORKTREE_SCRIPT" push ISSUE-GITHUB-PUSH --no-rebase --set-upstream >"$GITHUB_PUSH_ROOT/github-push.out" 2>"$GITHUB_PUSH_ROOT/github-push.err"
+  cd "$AUTH_PUSH_ROOT/trees/issue-github-push" && \
+    WORKTREE_TEST_PUSH_ARGS="$AUTH_PUSH_ROOT/standalone-push.args" \
+    PATH="$AUTH_PUSH_ROOT/bin:$PATH" \
+    "$STANDALONE_WORKTREE_SCRIPT" push ISSUE-GITHUB-PUSH --no-rebase --set-upstream >"$AUTH_PUSH_ROOT/standalone-push.out" 2>"$AUTH_PUSH_ROOT/standalone-push.err"
 )
-github_push_code=$?
+standalone_push_code=$?
 set -e
-assert_eq "$github_push_code" "0" "push uses gh HTTPS fallback for GitHub SSH remote"
-assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "credential.helper=!gh auth git-credential" "push command installs gh credential helper"
-assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "url.https://github.com/.insteadOf=git@github.com:" "push command rewrites GitHub scp SSH URL"
-assert_contains "$(cat "$GITHUB_PUSH_ROOT/push.args")" "push -u origin HEAD:refs/heads/issue-github-push" "push command still targets configured remote branch"
+assert_eq "$standalone_push_code" "0" "standalone worktree push falls back to plain git"
+assert_not_contains "$(cat "$AUTH_PUSH_ROOT/standalone-push.args")" "vstack.test-github-helper=loaded" "standalone worktree push does not require a GitHub helper"
+assert_contains "$(cat "$AUTH_PUSH_ROOT/standalone-push.args")" "push -u origin HEAD:refs/heads/issue-github-push" "standalone push still targets configured remote branch"
+
+set +e
+(
+  cd "$AUTH_PUSH_ROOT/trees/issue-github-push" && \
+    WORKTREE_TEST_PUSH_ARGS="$AUTH_PUSH_ROOT/helper-push.args" \
+    PATH="$AUTH_PUSH_ROOT/bin:$PATH" \
+    "$HELPER_WORKTREE_SCRIPT" push ISSUE-GITHUB-PUSH --no-rebase --set-upstream >"$AUTH_PUSH_ROOT/helper-push.out" 2>"$AUTH_PUSH_ROOT/helper-push.err"
+)
+helper_push_code=$?
+set -e
+assert_eq "$helper_push_code" "0" "worktree push accepts an optional sibling GitHub helper"
+assert_contains "$(cat "$AUTH_PUSH_ROOT/helper-push.args")" "vstack.test-github-helper=loaded" "worktree push delegates git invocation to sibling GitHub helper"
+assert_contains "$(cat "$AUTH_PUSH_ROOT/helper-push.args")" "push -u origin HEAD:refs/heads/issue-github-push" "helper-backed push still targets configured remote branch"
 
 # .env.local is not special-cased. It is only linked when listed in
 # WORKTREE_SYMLINKS.
