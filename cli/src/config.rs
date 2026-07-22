@@ -1415,9 +1415,15 @@ fn recover_hook_lock_entries_at_with_cursor_global_rules(
     ) {
         match lock.entries.get_mut(&item.name) {
             Some(entry) if entry.kind == ItemKind::Hook => {
-                if entry.source_repo.is_none() && source_repo.is_some() {
-                    entry.source_repo = source_repo.clone();
-                    modified = true;
+                if entry.source_repo.is_none() {
+                    let entry_source_repo = source_repo_for_source(
+                        resolve_source_path(&entry.source).as_deref(),
+                        &entry.source,
+                    );
+                    if entry_source_repo.is_some() {
+                        entry.source_repo = entry_source_repo;
+                        modified = true;
+                    }
                 }
                 for harness in item.harnesses {
                     if !entry.harnesses.contains(&harness) {
@@ -1474,7 +1480,6 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
     // Re-add skills found on disk but missing from lock
     let disk_skills = scan_installed_skills_on_disk(global);
     let now = now_iso();
-    let source_repo = source_repo_for_source(resolve_source_path(source).as_deref(), source);
     for item in &disk_skills {
         if !lock.entries.contains_key(&item.name) {
             // Determine which harnesses have this skill by checking dirs
@@ -1493,7 +1498,10 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
                 name: item.name.clone(),
                 kind: item.kind,
                 source: source.to_string(),
-                source_repo: source_repo.clone(),
+                // A refresh marker proves vstack manages this installed skill,
+                // but not which registry supplied it. In a multi-source project
+                // the single reconciliation hint is insufficient attribution.
+                source_repo: None,
                 harnesses,
                 method: InstallMethod::Symlink,
                 installed_at: now.clone(),
@@ -2055,6 +2063,55 @@ mod source_registry_tests {
         assert!(
             entry.source_hash.is_empty(),
             "refresh should count recovered hooks as updated after reinstall"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_existing_hook_uses_lock_entry_source_identity_not_reconciliation_hint() {
+        let dir = sandbox("hook_recover_existing_source_identity");
+        let selected_source = dir.join("selected-source");
+        let recorded_source = dir.join("recorded-source");
+        let project = dir.join("project");
+        fs::create_dir_all(selected_source.join("hooks")).unwrap();
+        fs::create_dir_all(&recorded_source).unwrap();
+        init_git_origin(
+            &selected_source,
+            "git@github.com:vanillagreencom/vstack.git",
+        );
+        init_git_origin(
+            &recorded_source,
+            "https://github.com/example/project-assets.git",
+        );
+        let script = test_hook_script("my-hook", "echo source");
+        fs::write(selected_source.join("hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".claude/hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "my-hook".to_string(),
+            kind: ItemKind::Hook,
+            source: recorded_source.display().to_string(),
+            source_repo: None,
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-21T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        });
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &selected_source.display().to_string(),
+            "2026-07-22T00:00:00Z",
+        ));
+        assert_eq!(
+            lock.entries
+                .get("my-hook")
+                .and_then(|entry| entry.source_repo.as_deref()),
+            Some("example/project-assets")
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -2712,6 +2769,44 @@ echo foreign
             InstallMethod::Copy
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reconcile_does_not_attribute_orphaned_skill_to_source_hint() {
+        let dir = sandbox("reconcile_orphaned_skill_identity");
+        let project = dir.join("project");
+        let source = dir.join("source");
+        fs::create_dir_all(project.join(".agents/skills/third-party")).unwrap();
+        fs::write(
+            project.join(".agents/skills/third-party/.vstack-refreshed"),
+            "managed\n",
+        )
+        .unwrap();
+        fs::create_dir_all(source.join("skills/third-party")).unwrap();
+        fs::write(
+            source.join("skills/third-party/SKILL.md"),
+            "# Third party\n",
+        )
+        .unwrap();
+        init_git_origin(&source, "git@github.com:vanillagreencom/vstack.git");
+
+        let recovered = crate::test_util::with_project_root(&project, || {
+            let mut lock = LockFile::default();
+            assert!(reconcile_lock_with_disk(
+                &mut lock,
+                false,
+                &source.display().to_string(),
+            ));
+            lock.entries.get("third-party").cloned()
+        })
+        .expect("orphaned managed skill should regain a lock entry");
+
+        assert_eq!(recovered.source, source.display().to_string());
+        assert_eq!(
+            recovered.source_repo, None,
+            "the reconciliation source hint is not proof of orphan ownership"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

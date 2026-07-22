@@ -1032,9 +1032,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             entry.source = replacement.clone();
             repaired_sources += 1;
         }
-        sync_lock_entry_source_repo(&source_records, entry);
         let old_hash = entry.source_hash.clone();
         if stats.successful_items.contains(&entry.name) {
+            sync_lock_entry_source_repo(&source_records, entry);
             entry.installed_at = now.clone();
             entry.source_hash = config::compute_source_hash(entry);
         }
