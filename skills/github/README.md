@@ -73,9 +73,10 @@ when already merged, exit `75` with a distinct message when either a required
 merge-queue entry or classic auto-merge is active, and exit `1` when no merged,
 queued, or armed postcondition can be proven. Required-queue membership is read
 through GraphQL because `gh pr view --json` does not expose it.
-`--force` remains immediate-only: a nonzero forced mutation returns exit `1`
-unless the exact-head post-state is already `MERGED`. Auto-merge or queue
-enrollment active before the call cannot mask the immediate failure.
+`--force` remains immediate-only and cannot be combined with `--auto`; the
+conflicting flags fail before any GitHub lookup or mutation. A nonzero forced
+mutation returns exit `1` unless the exact-head post-state is already `MERGED`.
+Auto-merge or queue enrollment active before the call cannot mask the failure.
 
 ## Git HTTPS Fallback
 

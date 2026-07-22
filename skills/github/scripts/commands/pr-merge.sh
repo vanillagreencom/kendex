@@ -91,7 +91,8 @@ Options:
   --delete-branch  Delete branch after merge (default: true)
   --keep-branch    Keep branch after merge
   --check          Run checks only, output JSON, don't merge
-  --force          Skip checks and merge (requires explicit user decision)
+  --force          Skip checks and merge (requires explicit user decision;
+                   cannot be combined with --auto)
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
@@ -422,6 +423,11 @@ main() {
             ;;
         esac
     done
+
+    if [ "$force" = true ] && [ "$auto" = true ]; then
+        echo "Error: --force and --auto cannot be combined; --force is immediate-only" >&2
+        exit 1
+    fi
 
     if [ -z "$pr_num" ]; then
         echo '{"error": "PR number required"}' >&2

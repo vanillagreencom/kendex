@@ -216,6 +216,10 @@ run_merge_force() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --keep-branch)
 }
 
+run_merge_force_auto() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --auto --keep-branch)
+}
+
 echo "=== pr-merge --check CI classification ==="
 
 checks='[{"name":"Linux Integration","state":"IN_PROGRESS","bucket":"pending"},{"name":"Cross-Platform","state":"PENDING","bucket":"pending"}]'
@@ -557,6 +561,18 @@ assert_contains "$out" "base branch policy prohibits the merge" "genuine failure
 
 echo
 echo "=== pr-merge --force immediate failure contract (vstack#782) ==="
+
+# Force and auto request contradictory outcomes. Reject the combination before
+# PR resolution, authentication, checks, or any merge/queue mutation.
+call_log="$TMPDIR/force-auto-calls.log"
+: >"$call_log"
+set +e
+out=$(STUB_CALL_LOG="$call_log" run_merge_force_auto 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "--force and --auto are rejected as conflicting modes"
+assert_contains "$out" "--force and --auto cannot be combined" "conflicting modes report a clear usage error"
+assert_eq "$(cat "$call_log")" "" "conflicting modes make no GitHub API or mutation calls"
 
 # The authoritative exact-head postcondition wins over a CLI transport/status
 # failure: the requested immediate outcome actually happened.
