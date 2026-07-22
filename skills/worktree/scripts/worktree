@@ -6,6 +6,8 @@
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
 #     --pr NUMBER     Look up the branch from a PR number (implies --base)
 #     --reuse         Explicitly reuse and update an existing issue worktree
+#     --recover-local Recreate a missing worktree for the exact local-only
+#                     issue branch without rebasing or rewriting its commits
 #     --restack       When reusing an existing worktree and the rebase onto
 #                     origin/<default> conflicts, stop in the conflict state
 #                     for resolution instead of aborting the rebase
@@ -1269,6 +1271,97 @@ scan_candidate_ownership() {
   return 0
 }
 
+refuse_local_branch_recovery() {
+  local issue="$1" branch="$2" reason="$3" details="${4:-}"
+  echo "Cannot recover local branch '$branch' for '$issue'." >&2
+  echo "  Reason: $reason${details:+ ($details)}" >&2
+  echo "No worktree was created and the local branch was not modified." >&2
+  return "$ACTIVE_WORK_EXIT"
+}
+
+# Validate the deliberately narrow recovery case from vstack#780: the exact
+# normalized issue branch survived locally, but its worktree was removed
+# before the branch was ever published. This is separate from new-work claim
+# discovery because that local ref is the one ownership signal recovery is
+# expected to consume. Every other ownership signal remains a refusal.
+validate_local_branch_recovery() {
+  local issue="$1" target="$2" branch="" existing_wt="" remote_ref=""
+  local pr_details="" upstream="" candidate="" candidate_wt=""
+  branch="$(issue_branch_name "$issue")"
+
+  if [[ "$branch" == "$DEFAULT_BRANCH" ]]; then
+    refuse_local_branch_recovery "$issue" "$branch" "the issue branch resolves to the default branch"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+    echo "Error: --recover-local requires the exact local branch '$branch'." >&2
+    echo "No worktree was created." >&2
+    return 1
+  fi
+  if ! git -C "$PROJECT_ROOT" cat-file -e "refs/heads/$branch^{commit}" 2>/dev/null; then
+    refuse_local_branch_recovery "$issue" "$branch" "the local ref does not name a commit"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+
+  existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
+  if [[ -n "$existing_wt" ]]; then
+    if [[ -d "$existing_wt" ]] && is_registered_project_worktree "$existing_wt"; then
+      refuse_existing_worktree "$issue" "$existing_wt"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    refuse_local_branch_recovery "$issue" "$branch" "an incomplete or stale worktree registration still owns the branch" "$existing_wt"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+
+  guard_new_target_path "$issue" "$target" || return "$ACTIVE_WORK_EXIT"
+
+  remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
+  if [[ -n "$remote_ref" ]]; then
+    refuse_local_branch_recovery "$issue" "$branch" "a remote branch already exists" "$remote_ref"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  pr_details="$(candidate_open_pr_details "$branch" || true)"
+  if [[ -n "$pr_details" ]]; then
+    refuse_local_branch_recovery "$issue" "$branch" "an open pull request already exists" "${pr_details%%$'\t'*}"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  upstream="$(git -C "$PROJECT_ROOT" for-each-ref --format='%(upstream)' "refs/heads/$branch")"
+  if [[ -n "$upstream" ]]; then
+    refuse_local_branch_recovery "$issue" "$branch" "the branch has configured upstream history" "$upstream"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+
+  # BOT_NAME/<issue> is another session-owner spelling used by create. Its
+  # presence alongside the exact issue branch makes ownership ambiguous.
+  for candidate in "${CANDIDATE_BRANCHES[@]}"; do
+    [[ "$candidate" == "$branch" ]] && continue
+    candidate_wt="$(worktree_for_branch "$candidate" 2>/dev/null || true)"
+    if [[ -n "$candidate_wt" ]]; then
+      refuse_local_branch_recovery "$issue" "$branch" "another candidate branch has a worktree" "$candidate at $candidate_wt"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$candidate"; then
+      refuse_local_branch_recovery "$issue" "$branch" "another local candidate branch exists" "$candidate"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    remote_ref="$(remote_ref_for_branch "$candidate" 2>/dev/null || true)"
+    if [[ -n "$remote_ref" ]]; then
+      refuse_local_branch_recovery "$issue" "$branch" "another remote candidate branch exists" "$remote_ref"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    pr_details="$(candidate_open_pr_details "$candidate" || true)"
+    if [[ -n "$pr_details" ]]; then
+      refuse_local_branch_recovery "$issue" "$branch" "another candidate branch has an open pull request" "$candidate"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+  done
+
+  if ! git -C "$PROJECT_ROOT" merge-base "origin/$DEFAULT_BRANCH" "$branch" >/dev/null 2>&1; then
+    refuse_local_branch_recovery "$issue" "$branch" "the branch does not share history with origin/$DEFAULT_BRANCH"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+}
+
 acquire_issue_claim_lock() {
   local issue="$1" normalized_issue="" claim_key="" lock_path=""
   if ! command -v flock >/dev/null 2>&1; then
@@ -1369,6 +1462,10 @@ refuse_existing_branch() {
   echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
   if [[ "$signal" == "open pull request" ]]; then
     echo "To inspect that PR in a worktree intentionally, pass --pr <number>." >&2
+  elif [[ "$signal" == "existing local branch" && "$branch" == "$(issue_branch_name "$issue")" ]]; then
+    echo "If this is an unpublished issue branch whose worktree was lost, recover it explicitly:" >&2
+    echo "  $0 create $issue --recover-local" >&2
+    echo "Recovery revalidates that the branch is local-only and unambiguously owned before recreating it." >&2
   else
     echo "To check out that branch intentionally, pass --base $branch." >&2
   fi
@@ -1503,6 +1600,8 @@ case "${1:-}" in
       echo "  --from REF      Create a new branch starting from REF (branch, tag, or commit)"
       echo "  --pr NUMBER     Look up the branch from a PR number (implies --base)"
       echo "  --reuse         Explicitly reuse and update an existing issue worktree"
+      echo "  --recover-local Recreate a missing worktree for the exact local-only issue"
+      echo "                  branch; preserves commits and does not rebase"
       echo "  --restack       When reusing, stop in the conflict state for resolution"
       echo "                  instead of aborting the rebase"
       exit 0
@@ -1523,12 +1622,14 @@ case "${1:-}" in
     PR=""
     REUSE=false
     RESTACK=false
+    RECOVER_LOCAL=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
         --reuse) REUSE=true; shift ;;
+        --recover-local) RECOVER_LOCAL=true; shift ;;
         --restack) RESTACK=true; shift ;;
         # An unknown --flag must fail rather than be silently captured as a
         # branch name. A legitimate positional branch name (not leading with
@@ -1541,6 +1642,52 @@ case "${1:-}" in
         *) BRANCH="$1"; shift ;;
       esac
     done
+    if [[ "$RECOVER_LOCAL" == true ]] && \
+       [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" || "$REUSE" == true || "$RESTACK" == true ]]; then
+      echo "Error: --recover-local cannot be combined with a branch name, --base, --from, --pr, --reuse, or --restack." >&2
+      exit 1
+    fi
+
+    if [[ "$RECOVER_LOCAL" == true ]]; then
+      # Recovery always recreates at the currently configured path. It never
+      # silently revives or migrates a legacy/stale registration elsewhere.
+      WT_PATH="$(worktree_path "$ISSUE")"
+      validate_worktree_setup_config || exit 1
+      build_candidate_branches "$ISSUE" ""
+
+      # Read-only ownership discovery before taking the claim lock gives fast,
+      # useful refusals. Repeat all checks under the same lock used by create,
+      # immediately before the only branch/worktree mutation.
+      discover_candidate_ownership || exit 1
+      validate_local_branch_recovery "$ISSUE" "$WT_PATH" || exit $?
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      fetch_origin || exit 1
+      discover_candidate_ownership || exit 1
+      validate_local_branch_recovery "$ISSUE" "$WT_PATH" || exit $?
+
+      RECOVERY_BRANCH="$(issue_branch_name "$ISSUE")"
+      RECOVERY_HEAD="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$RECOVERY_BRANCH")"
+      mkdir -p "$TREES_DIR"
+      if ! git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$RECOVERY_BRANCH" >/dev/null 2>&1; then
+        echo "Error: Git could not recreate the worktree for local branch '$RECOVERY_BRANCH'." >&2
+        echo "The branch remains unchanged at $RECOVERY_HEAD." >&2
+        exit 1
+      fi
+      if [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RECOVERY_BRANCH" ]] || \
+         [[ "$(git -C "$WT_PATH" rev-parse HEAD 2>/dev/null || true)" != "$RECOVERY_HEAD" ]]; then
+        echo "Error: Recreated worktree did not preserve the exact branch identity and tip $RECOVERY_HEAD." >&2
+        echo "The worktree was left in place for inspection: $WT_PATH" >&2
+        exit 1
+      fi
+      release_issue_claim_lock
+      if ! setup_codex_worktree "$WT_PATH"; then
+        echo "Error: Local branch '$RECOVERY_BRANCH' was recovered with its commits intact, but configured worktree setup failed." >&2
+        echo "Fix the WORKTREE_* configuration, then run: $0 fix-links '$WT_PATH'" >&2
+        exit 1
+      fi
+      echo "$WT_PATH"
+      exit 0
+    fi
     # Prefer the configured target; fall back to the registered worktree for
     # the issue branch so trees created under an older base-dir convention are
     # still recognized as active work and reusable in place.

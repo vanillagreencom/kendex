@@ -3,7 +3,7 @@ name: worktree
 description: "Git worktree management: create, list, remove isolated working copies with env/config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack|--recover-local] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: vstack
@@ -93,6 +93,19 @@ For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before o
 | `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
 | `--reuse` | Explicitly reuse an existing issue worktree and rebase it onto `origin/<default>` |
 | `--restack` | When reusing an existing worktree and its rebase onto `origin/<default>` conflicts, stop in the conflict state for resolution instead of aborting |
+| `--recover-local` | Recreate a missing worktree for the exact local-only issue branch without rebasing or rewriting its commits |
+
+### Recovering a local-only branch after worktree loss
+
+If an issue worktree was removed outside this tool after commits were made but before the branch was pushed, the exact normalized issue branch can survive locally without any checkout. Recover it explicitly:
+
+```bash
+.agents/skills/worktree/scripts/worktree create ISSUE_ID --recover-local
+```
+
+Recovery is not a shortcut around the new-work claim gate. Bare `create <ID>` continues to exit 75 for the surviving local branch and points the owning session to this explicit mode. Recovery accepts only the exact normalized issue branch (for example, `CC-123` → `cc-123`), records its commit tip, recreates it at the currently configured `WORKTREE_BASE_DIR` path, verifies the same branch and tip were checked out, and reapplies all configured setup. It never rebases, resets, deletes, or rewrites the surviving branch.
+
+The command fails closed if the target path exists; any active, stale, or incomplete worktree registration owns the branch; the branch is missing, non-commit, the default branch, unrelated to `origin/<default>`, or has an upstream; or any matching remote branch, open PR, or alternate bot-prefixed candidate exists. Remote/PR discovery is repeated under the normal per-issue claim lock before creation. Inspect and reconcile those cases instead of forcing recovery.
 
 ### Reuse rebase conflicts
 
