@@ -1865,11 +1865,6 @@ case "${1:-}" in
       if [[ -n "$BRANCH" ]] && \
          git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && \
          git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
-        if ! remove_symlinks "$wt"; then
-          CLEANUP_FAILED=true
-          echo "Error: Could not safely clean configured symlinks from merged worktree: $wt" >&2
-          continue
-        fi
         CLEANUP_REMOVE_OUTPUT=""
         if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
           CLEANUP_FAILED=true

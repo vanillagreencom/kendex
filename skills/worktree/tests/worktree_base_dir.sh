@@ -153,15 +153,17 @@ set +e
 (cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" cleanup >"$DEFAULT_ROOT/invalid-cleanup.out" 2>"$DEFAULT_ROOT/invalid-cleanup.err")
 invalid_cleanup_code=$?
 set -e
-assert_eq "$invalid_cleanup_code" "1" "cleanup reports failure when configured symlinks cannot be cleaned safely"
-assert_contains "$(cat "$DEFAULT_ROOT/invalid-cleanup.err")" "Could not safely clean" "cleanup reports the skipped merged worktree"
-assert_path_exists "$invalid_cleanup_path/.git" "failed cleanup keeps the merged worktree registered"
+assert_eq "$invalid_cleanup_code" "0" "cleanup does not depend on current setup-path configuration"
+assert_path_absent "$invalid_cleanup_path" "cleanup removes the intact merged worktree despite invalid setup config"
+assert_branch_absent "$DEFAULT_ROOT/repo-a" "issue-invalid-cleanup" "cleanup deletes the merged branch despite invalid setup config"
 rm -f "$DEFAULT_ROOT/repo-a/.env"
-(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" remove issue-invalid-cleanup >/dev/null)
 
 REMOVE_FAIL_ROOT="$TMP_ROOT/remove-failure"
 make_repo "$REMOVE_FAIL_ROOT"
+printf 'TEST_SHARED="shared"\n' >"$REMOVE_FAIL_ROOT/main/.env.local"
+printf 'WORKTREE_SYMLINKS=".env.local"\n' >"$REMOVE_FAIL_ROOT/main/.env"
 remove_fail_path=$(cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remove-failure)
+assert_eq "$(readlink "$remove_fail_path/.env.local")" "$REMOVE_FAIL_ROOT/main/.env.local" "removal-failure fixture starts with configured symlink intact"
 mkdir -p "$REMOVE_FAIL_ROOT/bin"
 cat >"$REMOVE_FAIL_ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash
@@ -180,6 +182,7 @@ set -e
 assert_eq "$remove_fail_code" "1" "cleanup reports git worktree removal failure"
 assert_contains "$(cat "$REMOVE_FAIL_ROOT/cleanup.err")" "preserving it for manual recovery" "cleanup explains that failed removal was preserved"
 assert_path_exists "$remove_fail_path/.git" "cleanup preserves a worktree that Git refused to remove"
+assert_eq "$(readlink "$remove_fail_path/.env.local")" "$REMOVE_FAIL_ROOT/main/.env.local" "cleanup failure preserves configured worktree symlinks"
 assert_branch_exists "$REMOVE_FAIL_ROOT/main" "issue-remove-failure" "cleanup preserves the branch when worktree removal fails"
 (cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" remove issue-remove-failure >/dev/null)
 
