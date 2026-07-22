@@ -7,6 +7,10 @@
 #   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
 #   1   BLOCKED                — checks failed; no merge attempted, none queued
 #
+# Actionable unresolved review threads are a local hard gate: neither an
+# immediate merge nor `--auto` may mutate merge state while they remain. Only
+# the deliberately dangerous `--force` override skips this gate.
+#
 # `--auto` is idempotent for merge-queue repositories: a re-invocation on a PR
 # that is already enrolled reports QUEUED (75) from the authoritative post-call
 # snapshot, not BLOCKED, even though `gh pr merge --auto` exits nonzero when the
@@ -86,12 +90,13 @@ Options:
   --force          Skip checks and merge (requires explicit user decision)
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
+                   Never bypasses actionable unresolved review threads.
   --dry-run        Show what would happen without merging
 
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
   --check          Run checks, output JSON for workflow to parse
-  --force          Skip all checks, merge immediately
+  --force          Deliberately skip all checks, including review threads
   --auto           Enable auto-merge when immediate merge is blocked
 
 Exit codes:
@@ -183,11 +188,29 @@ run_checks() {
         fi
     fi
 
-    # 3. Check unresolved threads
-    local unresolved
-    unresolved=$("$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>/dev/null | jq -r '.unresolved_count // 0')
-    if [ "$unresolved" != "0" ]; then
-        warnings+=("unresolved_threads: $unresolved thread(s) need attention")
+    # 3. Check actionable review threads. GitHub does not protect merges on
+    # unresolved conversations by default, so this is a local hard gate rather
+    # than a warning. Outdated threads no longer refer to the current diff and
+    # are not actionable. A failed or malformed lookup also blocks: treating an
+    # unknown review state as clean would recreate the unsafe merge path.
+    local threads_json unresolved
+    if ! threads_json=$("$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>/dev/null); then
+        can_merge=false
+        issues+=("review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub")
+    elif ! jq -e '
+        (.threads | type == "array") and
+        all(.threads[];
+            (.is_resolved | type == "boolean") and
+            (.is_outdated | type == "boolean"))
+    ' >/dev/null 2>&1 <<<"$threads_json"; then
+        can_merge=false
+        issues+=("review_threads_fetch_failed: GitHub returned malformed review thread data")
+    else
+        unresolved=$(jq '[.threads[] | select(.is_resolved == false and .is_outdated == false)] | length' <<<"$threads_json")
+        if [ "$unresolved" -gt 0 ]; then
+            can_merge=false
+            issues+=("unresolved_threads: $unresolved actionable thread(s) need attention")
+        fi
     fi
 
     # 4. Check review status
@@ -264,7 +287,11 @@ print_blocked() {
     if [ "$transient" = "true" ]; then
         echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
     fi
-    echo "Use --auto to queue for auto-merge, or --force to merge anyway." >&2
+    if echo "$check_result" | jq -e '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0' >/dev/null 2>&1; then
+        echo "Resolve the review-thread gate and retry. Use --force only after an explicit decision to override it." >&2
+    else
+        echo "Use --auto to queue for auto-merge, or --force after an explicit decision to override safety checks." >&2
+    fi
 }
 
 # Run gh with the same effective identity used for the merge mutation. Keep the
@@ -417,9 +444,15 @@ main() {
         can_merge=$(echo "$check_result" | jq -r '.can_merge')
 
         if [ "$can_merge" != "true" ]; then
+            # `--auto` may defer GitHub-enforced blockers, but it must never
+            # bypass local review-thread safety. GitHub can otherwise accept
+            # and immediately merge a PR whose conversations remain open.
+            local has_review_thread_gate
+            has_review_thread_gate=$(echo "$check_result" | jq '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0')
+
             # If --auto, fall through to enable auto-merge below.
             # Otherwise, exit BLOCKED with breakdown.
-            if [ "$auto" != true ]; then
+            if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
                 local blocked_severity
                 blocked_severity=$(merge_blocked_severity "$check_result")
                 local block_args=(

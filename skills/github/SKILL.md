@@ -32,7 +32,7 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed. Prefer `--body-file` for Markdown with backticks/code fences; `--body` is safe only for plain strings. `--force` skips checks. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now. Three exit codes — see below. |
+| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now, but never bypass actionable review threads. `--force`: deliberate override of all safety checks. Three exit codes — see below. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
 | `label-add <PR-or-issue> <label> [--reason TEXT] [--issue] [--required\|--optional]` | Check the live label inventory, then add a label through an authoritative REST capability boundary; direct script execution also loads current-project env. |
@@ -127,6 +127,12 @@ membership with GraphQL because `gh pr view --json` does not expose
 `mergeQueueEntry`. An `OPEN` PR with no `autoMergeRequest` is therefore still a
 successful exit `75` when its required merge-queue entry is active; an `OPEN`
 PR with neither queue nor auto-merge proof fails closed.
+
+Actionable review threads (unresolved and not outdated) are a hard local gate.
+They make `can_merge` false and block both immediate merge and `--auto` before
+any merge or queue mutation. A failed or malformed thread lookup also blocks,
+because an unknown review state cannot be treated as clean. The documented
+`--force` flag is the only deliberate override and skips every safety check.
 
 A BLOCKED outcome is further classified on stderr as **transient** (mergeable
 UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should

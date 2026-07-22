@@ -33,12 +33,27 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local haystack="$1" needle="$2" name="$3"
+    if ! grep -qF -- "$needle" <<<"$haystack"; then
+        PASS=$((PASS + 1))
+        printf '  ok    %s\n' "$name"
+    else
+        FAIL=$((FAIL + 1))
+        printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+    fi
+}
+
 mkdir -p "$TMPDIR/bin" "$TMPDIR/repo"
 git -C "$TMPDIR/repo" init -q
 
 cat >"$TMPDIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ -n "${STUB_CALL_LOG:-}" ]]; then
+    printf '%s\n' "$*" >>"$STUB_CALL_LOG"
+fi
 
 case "${1:-}" in
     auth)
@@ -76,7 +91,12 @@ case "${1:-}" in
                     '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
                 exit 0
             fi
-            echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+            if [[ "${STUB_THREADS_FETCH_FAIL:-false}" == "true" ]]; then
+                echo '{"errors":[{"message":"review threads unavailable"}]}'
+                exit 1
+            fi
+            jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
+                '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes}}}}}'
             exit 0
         fi
         ;;
@@ -155,6 +175,14 @@ run_merge() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --auto --keep-branch)
 }
 
+run_merge_immediate() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --keep-branch)
+}
+
+run_merge_force() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --keep-branch)
+}
+
 echo "=== pr-merge --check CI classification ==="
 
 checks='[{"name":"Linux Integration","state":"IN_PROGRESS","bucket":"pending"},{"name":"Cross-Platform","state":"PENDING","bucket":"pending"}]'
@@ -183,6 +211,72 @@ out=$(STUB_CHECKS="$checks" run_check)
 assert_eq "$(jq -r .can_merge <<<"$out")" "true" "successful and skipped checks can merge"
 assert_eq "$(jq -r '.issues | length' <<<"$out")" "0" "successful and skipped checks emit no issues"
 assert_eq "$(jq -r .transient <<<"$out")" "false" "mergeable PR is not transient"
+
+echo
+echo "=== pr-merge actionable review-thread safety gate (vstack#785) ==="
+
+checks='[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]'
+actionable_threads='[{"id":"PRRT_actionable","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":12,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Fix this safety bug"}]}}]'
+out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$actionable_threads" run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "false" "actionable unresolved thread blocks readiness"
+assert_eq "$(jq -r .transient <<<"$out")" "false" "actionable unresolved thread is a permanent block"
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "unresolved_threads: 1 actionable thread(s)" "actionable thread is a blocking issue"
+assert_eq "$(jq -r '.warnings | map(select(startswith("unresolved_threads:"))) | length' <<<"$out")" "0" "actionable thread is never downgraded to warning"
+
+call_log="$TMPDIR/review-thread-calls.log"
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$actionable_threads" \
+    STUB_CALL_LOG="$call_log" \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "--auto cannot bypass actionable review thread gate"
+assert_contains "$out" "BLOCKED PR #123 — no merge attempted, none queued" "--auto reports fail-closed outcome"
+assert_contains "$out" "Resolve the review-thread gate and retry" "blocked output does not recommend ineffective --auto bypass"
+assert_not_contains "$(cat "$call_log")" "pr merge" "--auto never invokes gh pr merge"
+assert_not_contains "$(cat "$call_log")" "mergeQueueEntry" "--auto never reaches post-mutation merge queue API"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$actionable_threads" \
+    STUB_CALL_LOG="$call_log" \
+    run_merge_immediate 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "immediate merge fails closed on actionable review thread"
+assert_not_contains "$(cat "$call_log")" "pr merge" "immediate path never invokes gh pr merge"
+
+outdated_threads='[{"id":"PRRT_outdated","isResolved":false,"isOutdated":true,"path":"src/old.rs","line":7,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Stale diff"}]}}]'
+out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$outdated_threads" run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "true" "outdated unresolved thread is not actionable"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_FETCH_FAIL=true \
+    STUB_CALL_LOG="$call_log" \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "review-thread lookup failure blocks --auto"
+assert_contains "$out" "review_threads_fetch_failed:" "lookup failure has explicit blocking issue"
+assert_not_contains "$(cat "$call_log")" "pr merge" "lookup failure never invokes gh pr merge"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$actionable_threads" \
+    STUB_CALL_LOG="$call_log" \
+    STUB_POST_STATE=MERGED \
+    STUB_MERGE_COMMIT=forced-merge-oid \
+    run_merge_force 2>&1)
+status=$?
+set -e
+assert_eq "$status" "0" "documented --force remains a deliberate override"
+assert_contains "$(cat "$call_log")" "pr merge" "--force deliberately invokes gh pr merge"
 
 echo
 echo "=== pr-merge --check superseded-run scoping (vstack#492/#494) ==="

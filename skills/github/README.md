@@ -63,6 +63,10 @@ keeps the raw `gh`/`op` detail for logs.
 `pr-merge --check` reports still-running checks as `ci_pending: ...` and sets
 `transient: true` when those pending checks are the only blockers. Terminal
 failed or cancelled checks remain `ci_failed: ...` and are not transient.
+Actionable review threads (unresolved and not outdated), plus failures to read
+thread state, are permanent blockers. They stop both immediate merge and
+`--auto` before any merge or queue mutation. Only the explicit, dangerous
+`--force` flag bypasses that safety gate.
 Merge execution is exact-head guarded. A successful mutation returns exit `0`
 when already merged, exit `75` with a distinct message when either a required
 merge-queue entry or classic auto-merge is active, and exit `1` when no merged,
