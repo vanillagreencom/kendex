@@ -595,6 +595,7 @@ ownership_heads_for_remote() {
 }
 
 discover_ownership_remote_heads() {
+  local strict_secondary="${1:-false}"
   local remotes=()
   local remote="" output="" have_origin=false i
   while IFS= read -r remote; do
@@ -619,6 +620,11 @@ discover_ownership_remote_heads() {
         [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
         return 1
       fi
+      if [[ "$strict_secondary" == true ]]; then
+        echo "Error: Could not query remote '$remote'; local-only branch recovery requires every configured remote to be authoritative." >&2
+        [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+        return 1
+      fi
       # An unreachable secondary remote cannot receive another session's
       # pushes, so skipping it cannot hide active ownership; only origin is
       # authoritative for new-work claims.
@@ -633,6 +639,21 @@ discover_ownership_remote_heads() {
 # Explicit owner reuse still requires a fresh origin before rebasing.
 fetch_origin() {
   fetch_ownership_remote origin
+}
+
+# Recovery must refresh only the default branch's remote-tracking ref. An
+# ordinary `git fetch --prune origin` honors configured fetch refspecs, which
+# may target refs/heads/* in mirror-style repositories and delete or rewrite
+# the local-only branch we are trying to preserve. The explicit refspec
+# bypasses remote.origin.fetch; no-prune/no-tags constrain all other refs.
+fetch_recovery_default_branch() {
+  local output=""
+  if output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch --no-tags --no-prune --no-recurse-submodules origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" 2>&1)"; then
+    return 0
+  fi
+  echo "Error: Could not safely refresh origin/$DEFAULT_BRANCH for local-only branch recovery." >&2
+  [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+  return 1
 }
 
 worktree_path() {
@@ -1196,7 +1217,8 @@ build_candidate_branches() {
 }
 
 discover_candidate_ownership() {
-  discover_ownership_remote_heads || return 1
+  local strict_secondary="${1:-false}"
+  discover_ownership_remote_heads "$strict_secondary" || return 1
   CANDIDATE_OPEN_PR_BRANCHES=()
   CANDIDATE_OPEN_PR_DETAILS=()
 
@@ -1285,8 +1307,9 @@ refuse_local_branch_recovery() {
 # discovery because that local ref is the one ownership signal recovery is
 # expected to consume. Every other ownership signal remains a refusal.
 validate_local_branch_recovery() {
-  local issue="$1" target="$2" branch="" existing_wt="" remote_ref=""
-  local pr_details="" upstream="" candidate="" candidate_wt=""
+  local issue="$1" target="$2" expected_head="${3:-}" require_fresh_base="${4:-true}"
+  local branch="" existing_wt="" remote_ref=""
+  local pr_details="" upstream="" candidate="" candidate_wt="" current_head="" object_type=""
   branch="$(issue_branch_name "$issue")"
 
   if [[ "$branch" == "$DEFAULT_BRANCH" ]]; then
@@ -1298,8 +1321,14 @@ validate_local_branch_recovery() {
     echo "No worktree was created." >&2
     return 1
   fi
-  if ! git -C "$PROJECT_ROOT" cat-file -e "refs/heads/$branch^{commit}" 2>/dev/null; then
+  object_type="$(git -C "$PROJECT_ROOT" cat-file -t "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ "$object_type" != commit ]]; then
     refuse_local_branch_recovery "$issue" "$branch" "the local ref does not name a commit"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  current_head="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$branch")"
+  if [[ -n "$expected_head" && "$current_head" != "$expected_head" ]]; then
+    refuse_local_branch_recovery "$issue" "$branch" "the local branch tip changed during recovery" "expected $expected_head, found $current_head"
     return "$ACTIVE_WORK_EXIT"
   fi
 
@@ -1356,7 +1385,8 @@ validate_local_branch_recovery() {
     fi
   done
 
-  if ! git -C "$PROJECT_ROOT" merge-base "origin/$DEFAULT_BRANCH" "$branch" >/dev/null 2>&1; then
+  if [[ "$require_fresh_base" == true ]] && \
+     ! git -C "$PROJECT_ROOT" merge-base "origin/$DEFAULT_BRANCH" "$branch" >/dev/null 2>&1; then
     refuse_local_branch_recovery "$issue" "$branch" "the branch does not share history with origin/$DEFAULT_BRANCH"
     return "$ACTIVE_WORK_EXIT"
   fi
@@ -1654,19 +1684,29 @@ case "${1:-}" in
       WT_PATH="$(worktree_path "$ISSUE")"
       validate_worktree_setup_config || exit 1
       build_candidate_branches "$ISSUE" ""
+      RECOVERY_BRANCH="$(issue_branch_name "$ISSUE")"
+      if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$RECOVERY_BRANCH"; then
+        echo "Error: --recover-local requires the exact local branch '$RECOVERY_BRANCH'." >&2
+        echo "No worktree was created." >&2
+        exit 1
+      fi
+      if [[ "$(git -C "$PROJECT_ROOT" cat-file -t "refs/heads/$RECOVERY_BRANCH" 2>/dev/null || true)" != commit ]]; then
+        refuse_local_branch_recovery "$ISSUE" "$RECOVERY_BRANCH" "the local ref does not name a commit" || exit $?
+      fi
+      # This snapshot precedes every fetch-capable operation. All later
+      # validation and the created checkout must retain this exact tip.
+      RECOVERY_HEAD="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$RECOVERY_BRANCH")"
 
       # Read-only ownership discovery before taking the claim lock gives fast,
       # useful refusals. Repeat all checks under the same lock used by create,
       # immediately before the only branch/worktree mutation.
-      discover_candidate_ownership || exit 1
-      validate_local_branch_recovery "$ISSUE" "$WT_PATH" || exit $?
+      discover_candidate_ownership true || exit 1
+      validate_local_branch_recovery "$ISSUE" "$WT_PATH" "$RECOVERY_HEAD" false || exit $?
       acquire_issue_claim_lock "$ISSUE" || exit 1
-      fetch_origin || exit 1
-      discover_candidate_ownership || exit 1
-      validate_local_branch_recovery "$ISSUE" "$WT_PATH" || exit $?
+      fetch_recovery_default_branch || exit 1
+      discover_candidate_ownership true || exit 1
+      validate_local_branch_recovery "$ISSUE" "$WT_PATH" "$RECOVERY_HEAD" true || exit $?
 
-      RECOVERY_BRANCH="$(issue_branch_name "$ISSUE")"
-      RECOVERY_HEAD="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$RECOVERY_BRANCH")"
       mkdir -p "$TREES_DIR"
       if ! git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$RECOVERY_BRANCH" >/dev/null 2>&1; then
         echo "Error: Git could not recreate the worktree for local branch '$RECOVERY_BRANCH'." >&2

@@ -210,6 +210,60 @@ assert_contains "$RECOVER_ERR" "a remote branch already exists" "published refus
 assert_eq "$(git -C "$ROOT/main" rev-parse issue-remote)" "$remote_head" "remote refusal preserves the local tip"
 assert_path_absent "$ROOT/recovery-trees/issue-remote" "remote refusal creates no path"
 
+git init -q --bare "$ROOT/secondary.git"
+git -C "$ROOT/main" remote add secondary "$ROOT/secondary.git"
+git -C "$ROOT/main" branch issue-secondary main
+secondary_head="$(git -C "$ROOT/main" rev-parse issue-secondary)"
+git -C "$ROOT/main" push -q secondary issue-secondary
+run_recover issue-secondary secondary env
+assert_eq "$RECOVER_CODE" "75" "branch published only on a secondary remote exits 75"
+assert_contains "$RECOVER_ERR" "secondary/issue-secondary" "secondary ownership refusal names the remote branch"
+assert_eq "$(git -C "$ROOT/main" rev-parse issue-secondary)" "$secondary_head" "secondary refusal preserves the local tip"
+assert_path_absent "$ROOT/recovery-trees/issue-secondary" "secondary ownership creates no path"
+git -C "$ROOT/main" remote remove secondary
+
+git -C "$ROOT/main" branch issue-secondary-unreachable main
+unreachable_head="$(git -C "$ROOT/main" rev-parse issue-secondary-unreachable)"
+git -C "$ROOT/main" remote add unreachable-secondary "$ROOT/missing-secondary.git"
+run_recover issue-secondary-unreachable secondary-unreachable env
+assert_eq "$RECOVER_CODE" "1" "unreachable secondary remote blocks local-only recovery"
+assert_contains "$RECOVER_ERR" "local-only branch recovery requires every configured remote" "strict recovery discovery explains the secondary-remote requirement"
+assert_eq "$(git -C "$ROOT/main" rev-parse issue-secondary-unreachable)" "$unreachable_head" "unreachable-secondary refusal preserves the local tip"
+assert_path_absent "$ROOT/recovery-trees/issue-secondary-unreachable" "unreachable secondary creates no path"
+git -C "$ROOT/main" remote remove unreachable-secondary
+
+refspec_tree="$(git -C "$ROOT/main" rev-parse 'main^{tree}')"
+refspec_head="$(printf 'refspec survivor\n' | git -C "$ROOT/main" commit-tree "$refspec_tree" -p main)"
+git -C "$ROOT/main" update-ref refs/heads/issue-refspec "$refspec_head"
+git -C "$ROOT/main" config --unset-all remote.origin.fetch
+git -C "$ROOT/main" config --add remote.origin.fetch '+refs/heads/issue-refspec:refs/heads/issue-refspec'
+refspec_path="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-refspec --recover-local)"
+assert_eq "$(git -C "$ROOT/main" rev-parse refs/heads/issue-refspec)" "$refspec_head" "explicit recovery fetch ignores a local-head destructive fetch refspec"
+assert_eq "$(git -C "$refspec_path" rev-parse HEAD)" "$refspec_head" "refspec-safe recovery checks out the pre-fetch snapshot"
+
+git -C "$ROOT/main" config --unset-all remote.origin.fetch
+git -C "$ROOT/main" config --add remote.origin.fetch '+refs/heads/issue-refspec-fail:refs/heads/issue-refspec-fail'
+git -C "$ROOT/main" branch issue-refspec-fail main
+refspec_fail_head="$(git -C "$ROOT/main" rev-parse issue-refspec-fail)"
+git --git-dir="$ROOT/origin.git" update-ref -d refs/heads/main
+run_recover issue-refspec-fail refspec-fail env
+assert_eq "$RECOVER_CODE" "1" "missing remote default branch makes the constrained recovery fetch fail closed"
+assert_contains "$RECOVER_ERR" "Could not safely refresh origin/main" "constrained fetch failure is explicit"
+assert_eq "$(git -C "$ROOT/main" rev-parse issue-refspec-fail)" "$refspec_fail_head" "failed fetch cannot prune or rewrite the snapshotted local branch"
+assert_path_absent "$ROOT/recovery-trees/issue-refspec-fail" "failed constrained fetch creates no path"
+git -C "$ROOT/main" push -q origin refs/heads/main:refs/heads/main
+git -C "$ROOT/main" config --unset-all remote.origin.fetch
+git -C "$ROOT/main" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+
+rewind_tree="$(git -C "$ROOT/main" rev-parse 'main^{tree}')"
+stale_tracking_head="$(printf 'stale tracking advance\n' | git -C "$ROOT/main" commit-tree "$rewind_tree" -p main)"
+git -C "$ROOT/main" update-ref refs/remotes/origin/main "$stale_tracking_head"
+git -C "$ROOT/main" branch issue-default-rewind main
+rewind_recovery_head="$(git -C "$ROOT/main" rev-parse issue-default-rewind)"
+rewind_path="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-default-rewind --recover-local)"
+assert_eq "$(git -C "$ROOT/main" rev-parse refs/remotes/origin/main)" "$(git -C "$ROOT/main" rev-parse refs/heads/main)" "constrained forced refspec accepts an authoritative default-branch rewind"
+assert_eq "$(git -C "$rewind_path" rev-parse HEAD)" "$rewind_recovery_head" "default-branch rewind still preserves the snapshotted recovery tip"
+
 git -C "$ROOT/main" branch issue-upstream main
 git -C "$ROOT/main" branch --set-upstream-to=origin/main issue-upstream >/dev/null
 run_recover issue-upstream upstream env
