@@ -258,6 +258,14 @@ fn lock_entry_is_vstack(entry: &config::LockEntry, upstream: &str) -> bool {
         return config::github_slug_eq(source_repo, upstream);
     }
 
+    // Only agents and hooks need the legacy live-source fallback: skills carry
+    // their own provenance frontmatter. A marker-only orphaned skill recovered
+    // after lock loss has no attributable source, even though reconciliation
+    // needs a source hint so a later successful refresh can reinstall it.
+    if !matches!(entry.kind, ItemKind::Agent | ItemKind::Hook) {
+        return false;
+    }
+
     config::source_repo_for_source(
         config::resolve_source_path(&entry.source).as_deref(),
         &entry.source,
@@ -923,14 +931,24 @@ mod tests {
     }
 
     #[test]
-    fn ownership_vstack_via_lock_remote_slug_source() {
-        // Rule 2 remote-install branch: the lock source is the `owner/repo`
-        // shorthand (no local path to stat) and equals the upstream → Vstack.
-        let lock = lock_with("dev", ItemKind::Skill, "vanillagreencom/vstack");
-        let sel = selector("dev", Some(ItemKind::Skill));
+    fn ownership_vstack_hook_via_legacy_lock_remote_slug_source() {
+        // Legacy agent/hook lock entries may use the `owner/repo` shorthand
+        // when no durable source_repo field was recorded.
+        let lock = lock_with("guard", ItemKind::Hook, "vanillagreencom/vstack");
+        let sel = selector("guard", Some(ItemKind::Hook));
         assert_eq!(
             resolve_ownership(&lock, Some(&sel), None, DEFAULT_UPSTREAM),
             Ownership::Vstack
+        );
+    }
+
+    #[test]
+    fn ownership_project_local_for_unattributed_recovered_skill_source_hint() {
+        let lock = lock_with("third-party", ItemKind::Skill, "vanillagreencom/vstack");
+        let sel = selector("third-party", Some(ItemKind::Skill));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, DEFAULT_UPSTREAM),
+            Ownership::ProjectLocal
         );
     }
 
