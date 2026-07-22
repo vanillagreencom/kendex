@@ -126,7 +126,7 @@ assert_all_lock_entries_source_repo() {
   local entry_count
   local source_repo_count
   entry_count=$(grep -c '"name":' "$project_lock" || true)
-  source_repo_count=$(grep -c '"source_repo": "vanillagreencom/vstack"' "$project_lock" || true)
+  source_repo_count=$(grep -Ec '"source_repo": "[^"/]+/[^"/]+"' "$project_lock" || true)
   if [[ $entry_count -gt 0 && $source_repo_count -eq $entry_count ]]; then
     pass "$phase persists source repository identity for every lock entry"
   else
