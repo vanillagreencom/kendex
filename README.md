@@ -55,6 +55,9 @@ That opens an interactive installer where you pick which agents, skills, hooks, 
 ## How It Works
 
 A source repo is a package registry. vstack discovers what's there, asks which pieces you want, then writes the right files for each tool.
+Installed lock entries record both the selected source path/string and, when
+available, its GitHub `owner/repo` identity so later refreshes and issue reports
+keep working after a checkout moves.
 
 ```text
 source repo

@@ -193,6 +193,7 @@ mod tests {
             name: name.into(),
             kind,
             source: source.to_string_lossy().into_owned(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-15T00:00:00Z".into(),

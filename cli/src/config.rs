@@ -9,6 +9,11 @@ pub struct LockEntry {
     pub name: String,
     pub kind: ItemKind,
     pub source: String,
+    /// GitHub `owner/repo` identity for the source checkout/remote recorded at
+    /// install time. This is durable across moved or absent local paths and is
+    /// used for ownership routing where installed assets have no frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo: Option<String>,
     pub harnesses: Vec<String>,
     pub method: InstallMethod,
     pub installed_at: String,
@@ -780,6 +785,79 @@ pub fn resolve_source_path(source: &str) -> Option<PathBuf> {
     crate::refresh_sources::resolve_source_path(source)
 }
 
+/// Parse an `owner/repo` slug out of a GitHub SSH/HTTPS remote URL, a bare
+/// `owner/repo` shorthand, or `owner/repo.git`. Returns None for local paths,
+/// non-GitHub URLs, and anything that is not exactly one owner/repo pair.
+pub fn parse_github_slug(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+
+    // Bare `owner/repo` (no scheme, no host, no whitespace): exactly two
+    // non-empty, slash-free segments. Local absolute paths and nested relative
+    // paths have a leading empty segment or more than two parts.
+    if !url.contains("://") && !url.contains('@') && !url.contains(char::is_whitespace) {
+        let bare = url.strip_suffix(".git").unwrap_or(url);
+        let mut parts = bare.split('/');
+        if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next())
+            && !owner.is_empty()
+            && !repo.is_empty()
+        {
+            return Some(format!(
+                "{}/{}",
+                owner.to_ascii_lowercase(),
+                repo.to_ascii_lowercase()
+            ));
+        }
+        return None;
+    }
+
+    let after = url
+        .strip_prefix("git@github.com:")
+        .or_else(|| url.strip_prefix("https://github.com/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let after = after
+        .trim_end_matches('/')
+        .strip_suffix(".git")
+        .unwrap_or(after);
+    let mut parts = after.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!(
+        "{}/{}",
+        owner.to_ascii_lowercase(),
+        repo.to_ascii_lowercase()
+    ))
+}
+
+pub fn github_slug_eq(left: &str, right: &str) -> bool {
+    parse_github_slug(left)
+        .zip(parse_github_slug(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn source_repo_from_git_origin(source_root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", source_root.to_str()?, "remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout);
+    parse_github_slug(url.trim())
+}
+
+/// Resolve the durable repository identity for a source. Prefer the actual Git
+/// origin of a local/cached source root; fall back to the recorded source string
+/// only when it is itself a GitHub remote URL or owner/repo shorthand.
+pub fn source_repo_for_source(source_root: Option<&Path>, recorded_source: &str) -> Option<String> {
+    source_root
+        .and_then(source_repo_from_git_origin)
+        .or_else(|| parse_github_slug(recorded_source))
+}
+
 /// Compute source hash for a lock entry based on its kind.
 pub fn compute_source_hash(entry: &LockEntry) -> String {
     let source_root = match resolve_source_path(&entry.source) {
@@ -1327,6 +1405,7 @@ fn recover_hook_lock_entries_at_with_cursor_global_rules(
     installed_at: &str,
     cursor_global_rules_dir: &Path,
 ) -> bool {
+    let source_repo = source_repo_for_source(resolve_source_path(source).as_deref(), source);
     let mut modified = false;
     for item in scan_installed_hooks_on_disk_at_with_cursor_global_rules(
         project_root,
@@ -1336,6 +1415,10 @@ fn recover_hook_lock_entries_at_with_cursor_global_rules(
     ) {
         match lock.entries.get_mut(&item.name) {
             Some(entry) if entry.kind == ItemKind::Hook => {
+                if entry.source_repo.is_none() && source_repo.is_some() {
+                    entry.source_repo = source_repo.clone();
+                    modified = true;
+                }
                 for harness in item.harnesses {
                     if !entry.harnesses.contains(&harness) {
                         entry.harnesses.push(harness);
@@ -1349,6 +1432,7 @@ fn recover_hook_lock_entries_at_with_cursor_global_rules(
                     name: item.name.clone(),
                     kind: ItemKind::Hook,
                     source: source.to_string(),
+                    source_repo: source_repo.clone(),
                     harnesses: item.harnesses,
                     method: InstallMethod::Copy,
                     installed_at: installed_at.to_string(),
@@ -1390,6 +1474,7 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
     // Re-add skills found on disk but missing from lock
     let disk_skills = scan_installed_skills_on_disk(global);
     let now = now_iso();
+    let source_repo = source_repo_for_source(resolve_source_path(source).as_deref(), source);
     for item in &disk_skills {
         if !lock.entries.contains_key(&item.name) {
             // Determine which harnesses have this skill by checking dirs
@@ -1408,6 +1493,7 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
                 name: item.name.clone(),
                 kind: item.kind,
                 source: source.to_string(),
+                source_repo: source_repo.clone(),
                 harnesses,
                 method: InstallMethod::Symlink,
                 installed_at: now.clone(),
@@ -1483,10 +1569,15 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
                 .source_repo
                 .clone()
                 .unwrap_or_else(|| source.to_string());
+            let entry_source_repo = source_repo_for_source(
+                resolve_source_path(&entry_source).as_deref(),
+                &entry_source,
+            );
             let mut entry = LockEntry {
                 name: pkg_name.clone(),
                 kind: ItemKind::PiExtension,
                 source: entry_source,
+                source_repo: entry_source_repo,
                 harnesses: vec!["pi".to_string()],
                 method: InstallMethod::Copy,
                 installed_at: now.clone(),
@@ -1530,6 +1621,79 @@ mod source_registry_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn init_git_origin(dir: &Path, origin: &str) {
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = std::process::Command::new("git")
+            .args(["remote", "add", "origin", origin])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn lock_entry_deserializes_legacy_without_source_repo() {
+        let raw = r#"{
+          "name": "guard",
+          "kind": "hook",
+          "source": "/missing/source",
+          "harnesses": ["codex"],
+          "method": "copy",
+          "installed_at": "2026-07-21T00:00:00Z"
+        }"#;
+        let entry: LockEntry = serde_json::from_str(raw).unwrap();
+        assert_eq!(entry.name, "guard");
+        assert_eq!(entry.kind, ItemKind::Hook);
+        assert!(entry.source_repo.is_none());
+        assert!(entry.source_hash.is_empty());
+    }
+
+    #[test]
+    fn source_repo_for_source_prefers_git_origin_over_layout() {
+        let dir = sandbox("source_repo_git");
+        fs::create_dir_all(dir.join("agents")).unwrap();
+        fs::create_dir_all(dir.join("hooks")).unwrap();
+        init_git_origin(&dir, "https://github.com/vanillagreencom/vstack.git");
+
+        assert_eq!(
+            source_repo_for_source(Some(&dir), &dir.to_string_lossy()).as_deref(),
+            Some("vanillagreencom/vstack")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_repo_for_source_does_not_infer_from_local_layout_only() {
+        let dir = sandbox("source_repo_layout");
+        fs::create_dir_all(dir.join("agents")).unwrap();
+        fs::create_dir_all(dir.join("hooks")).unwrap();
+
+        assert_eq!(
+            source_repo_for_source(Some(&dir), &dir.to_string_lossy()),
+            None
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_github_slug_normalizes_supported_remote_shapes() {
+        assert_eq!(
+            parse_github_slug("git@github.com:VanillaGreenCom/VStack.git").as_deref(),
+            Some("vanillagreencom/vstack")
+        );
+        assert_eq!(
+            parse_github_slug("https://github.com/owner/repo/").as_deref(),
+            Some("owner/repo")
+        );
+        assert_eq!(parse_github_slug("a/b/c"), None);
+        assert_eq!(parse_github_slug("/home/me/dev/vstack"), None);
     }
 
     #[test]
@@ -1671,6 +1835,7 @@ mod source_registry_tests {
             name: "@vanillagreen/pi-questions".to_string(),
             kind: ItemKind::PiExtension,
             source: dir.display().to_string(),
+            source_repo: None,
             harnesses: vec!["pi".to_string()],
             method: InstallMethod::Symlink,
             installed_at: "2026-05-06T00:00:00Z".to_string(),
@@ -1762,6 +1927,7 @@ mod source_registry_tests {
             name: "my-hook".to_string(),
             kind: ItemKind::Hook,
             source: dir.display().to_string(),
+            source_repo: None,
             harnesses: vec!["claude-code".to_string()],
             method: InstallMethod::Symlink,
             installed_at: "2026-05-09T00:00:00Z".to_string(),
@@ -2481,6 +2647,7 @@ echo foreign
             name: "reviewer".into(),
             kind: ItemKind::Skill,
             source: "source".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -2526,6 +2693,7 @@ echo foreign
             name: "reviewer".into(),
             kind: ItemKind::Skill,
             source: "source".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),

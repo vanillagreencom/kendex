@@ -317,6 +317,7 @@ pub fn record_install(
     lock: &mut LockFile,
     results: &[InstallResult],
     source: &str,
+    source_repo: Option<&str>,
     method: InstallMethod,
 ) {
     let now = crate::config::now_iso();
@@ -327,6 +328,7 @@ pub fn record_install(
                 existing.harnesses.push(harness_id);
             }
             existing.source = source.into();
+            existing.source_repo = source_repo.map(str::to_string);
             existing.method = method;
             existing.installed_at = now.clone();
             existing.source_hash = crate::config::compute_source_hash(existing);
@@ -335,6 +337,7 @@ pub fn record_install(
                 name: result.name.clone(),
                 kind: result.kind,
                 source: source.into(),
+                source_repo: source_repo.map(str::to_string),
                 harnesses: vec![harness_id],
                 method,
                 installed_at: now.clone(),
@@ -479,6 +482,7 @@ mod tests {
             name: "rust".into(),
             kind: ItemKind::Agent,
             source: "old-source".into(),
+            source_repo: None,
             harnesses: vec![Harness::Pi.id().to_string()],
             method: InstallMethod::Symlink,
             installed_at: "2026-05-01T00:00:00Z".into(),
@@ -492,11 +496,18 @@ mod tests {
             detail: String::new(),
         }];
 
-        record_install(&mut lock, &results, "new-source", InstallMethod::Copy);
+        record_install(
+            &mut lock,
+            &results,
+            "new-source",
+            Some("vanillagreencom/vstack"),
+            InstallMethod::Copy,
+        );
 
         let entry = lock.entries.get("rust").expect("entry should exist");
         assert_eq!(entry.method, InstallMethod::Copy);
         assert_eq!(entry.source, "new-source");
+        assert_eq!(entry.source_repo.as_deref(), Some("vanillagreencom/vstack"));
         assert!(entry.harnesses.contains(&Harness::Pi.id().to_string()));
         assert!(
             entry

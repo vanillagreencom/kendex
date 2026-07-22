@@ -5,9 +5,9 @@ use crate::hook::Hook;
 use crate::installer;
 use crate::project_config::ProjectConfig;
 use crate::refresh_sources::{
-    RefreshSource, all_source_hooks, all_source_pi_extensions, load_refresh_sources,
-    refresh_source_for_entry, resolve_skill_pairs_from_sources, resolve_source_records,
-    source_pi_extension_for_lock_name,
+    RefreshSource, ResolvedSource, all_source_hooks, all_source_pi_extensions,
+    load_refresh_sources, refresh_source_for_entry, resolve_skill_pairs_from_sources,
+    resolve_source_records, source_pi_extension_for_lock_name,
 };
 use crate::skill::Skill;
 use anyhow::Result;
@@ -109,6 +109,37 @@ impl RefreshStats {
 fn hash_installed_skill_dir(path: &Path) -> u64 {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     config::hash_dir_bytes_excluding(&resolved, &[".vstack-refreshed"])
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    a.canonicalize().unwrap_or_else(|_| a.to_path_buf())
+        == b.canonicalize().unwrap_or_else(|_| b.to_path_buf())
+}
+
+fn observed_source_repo_for_lock_entry(
+    source_records: &[ResolvedSource],
+    entry: &config::LockEntry,
+) -> Option<Option<String>> {
+    if let Some(record) = source_records.iter().find(|source| {
+        source.aliases.iter().any(|alias| alias == &entry.source)
+            || (Path::new(&entry.source).is_absolute()
+                && same_path(&source.root, Path::new(&entry.source)))
+    }) {
+        return Some(record.source_repo.clone());
+    }
+    if let Some(source_root) = config::resolve_source_path(&entry.source) {
+        return Some(config::source_repo_for_source(
+            Some(&source_root),
+            &entry.source,
+        ));
+    }
+    config::parse_github_slug(&entry.source).map(|source_repo| Some(source_repo))
+}
+
+fn sync_lock_entry_source_repo(source_records: &[ResolvedSource], entry: &mut config::LockEntry) {
+    if let Some(source_repo) = observed_source_repo_for_lock_entry(source_records, entry) {
+        entry.source_repo = source_repo;
+    }
 }
 
 /// Generic upstream-merge: starts with `project_list` if present, else
@@ -1001,6 +1032,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             entry.source = replacement.clone();
             repaired_sources += 1;
         }
+        sync_lock_entry_source_repo(&source_records, entry);
         let old_hash = entry.source_hash.clone();
         if stats.successful_items.contains(&entry.name) {
             entry.installed_at = now.clone();

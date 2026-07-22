@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 pub(crate) struct ResolvedSource {
     pub root: PathBuf,
     pub aliases: Vec<String>,
+    pub source_repo: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct RefreshSource {
     pub root: PathBuf,
     pub aliases: Vec<String>,
+    pub source_repo: Option<String>,
     pub mapping: MappingConfig,
     pub agents: Vec<Agent>,
     pub skills: Vec<Skill>,
@@ -28,6 +30,7 @@ impl RefreshSource {
         Self {
             root: record.root.clone(),
             aliases: record.aliases.clone(),
+            source_repo: record.source_repo.clone(),
             mapping: MappingConfig::load(&record.root),
             agents: crate::agent::discover_agents(&record.root.join("agents")).unwrap_or_default(),
             skills: crate::skill::discover_skills(&record.root.join("skills")).unwrap_or_default(),
@@ -44,6 +47,7 @@ impl RefreshSource {
         Self::load(&ResolvedSource {
             root: root.to_path_buf(),
             aliases: vec![root.to_string_lossy().into_owned()],
+            source_repo: config::source_repo_for_source(Some(root), &root.to_string_lossy()),
         })
     }
 }
@@ -109,6 +113,7 @@ fn resolve_source_records_with(
 }
 
 fn push_resolved_source(sources: &mut Vec<ResolvedSource>, root: PathBuf, alias: String) {
+    let source_repo = config::source_repo_for_source(Some(&root), &alias);
     if let Some(existing) = sources
         .iter_mut()
         .find(|source| same_path(&source.root, &root))
@@ -116,10 +121,14 @@ fn push_resolved_source(sources: &mut Vec<ResolvedSource>, root: PathBuf, alias:
         if !existing.aliases.iter().any(|known| known == &alias) {
             existing.aliases.push(alias);
         }
+        if existing.source_repo.is_none() {
+            existing.source_repo = source_repo;
+        }
     } else {
         sources.push(ResolvedSource {
             root,
             aliases: vec![alias],
+            source_repo,
         });
     }
 }
@@ -415,6 +424,7 @@ mod tests {
             name: name.into(),
             kind: ItemKind::Agent,
             source: source.into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -496,6 +506,43 @@ mod tests {
         );
         assert_eq!(records[0].aliases, vec!["./vendor/vstack".to_string()]);
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_source_records_records_remote_shorthand_repo_identity() {
+        let root = tmpdir("remote-identity");
+        let source = make_vstack_source(&root, "source");
+        let mut lock = config::LockFile::default();
+        lock.add(lock_entry("demo", "vanillagreencom/vstack"));
+
+        let records = resolve_source_records_with(&lock, |source_name| {
+            if source_name == "vanillagreencom/vstack" {
+                Some(source.clone())
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].source_repo.as_deref(),
+            Some("vanillagreencom/vstack")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_source_records_does_not_infer_identity_from_local_layout() {
+        let root = tmpdir("local-layout-identity");
+        let source = make_vstack_source(&root, "source");
+        let mut lock = config::LockFile::default();
+        lock.add(lock_entry("demo", &source.to_string_lossy()));
+
+        let records = resolve_source_records(&lock);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source_repo, None);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -610,6 +657,7 @@ mod tests {
             name: "dev".into(),
             kind: ItemKind::Skill,
             source: "owner/repo".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),

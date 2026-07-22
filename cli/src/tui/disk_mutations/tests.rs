@@ -64,6 +64,21 @@ fn tmpdir(label: &str) -> PathBuf {
     ))
 }
 
+fn init_git_origin(dir: &std::path::Path, origin: &str) {
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = std::process::Command::new("git")
+        .args(["remote", "add", "origin", origin])
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
 #[test]
 fn filter_harnesses_drops_cursor_when_moving_to_global() {
     // Regression: Cursor is project-only. A move-to-global plan must
@@ -119,6 +134,7 @@ fn move_destination_hook_matching_uses_destination_harness_lock() {
         name: "guard".into(),
         kind: ItemKind::Hook,
         source: "source".into(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -171,6 +187,7 @@ fn codex_hooks_are_reinstalled_for_newly_moved_agents() {
         name: "finish-check".into(),
         kind: ItemKind::Hook,
         source: "source".into(),
+        source_repo: None,
         harnesses: vec!["codex".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -202,6 +219,7 @@ fn generate_moved_agents_reports_when_no_harness_succeeds() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: "source".into(),
+        source_repo: None,
         harnesses: vec!["cursor".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -249,6 +267,7 @@ fn generate_moved_agents_rejects_name_that_escapes_output_dir() {
         name: "../../pwned".into(),
         kind: ItemKind::Agent,
         source: "source".into(),
+        source_repo: None,
         harnesses: vec!["claude-code".into(), "codex".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -302,6 +321,7 @@ fn generate_moved_agents_reports_partial_failure_and_rolls_back_success() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: "source".into(),
+        source_repo: None,
         harnesses: vec!["claude-code".into(), "codex".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -367,6 +387,7 @@ fn perform_move_plans_aborts_when_destination_lock_is_unreadable() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -421,6 +442,7 @@ fn perform_move_plans_moves_agent_and_cleans_source() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -491,6 +513,7 @@ fn perform_move_plans_moves_skill_and_cleans_source() {
         name: "dev".into(),
         kind: ItemKind::Skill,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -557,6 +580,7 @@ fn perform_move_plans_moves_hook_and_cleans_source() {
         name: "guard".into(),
         kind: ItemKind::Hook,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -621,6 +645,7 @@ fn perform_move_plans_moves_pi_package_and_cleans_source() {
         name: "pi-mini".into(),
         kind: ItemKind::PiExtension,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["pi".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -693,6 +718,7 @@ fn inline_update_refreshes_hook_config_and_agents() {
     std::fs::create_dir_all(source.join("agents")).unwrap();
     std::fs::create_dir_all(source.join("hooks")).unwrap();
     std::fs::create_dir_all(&project).unwrap();
+    init_git_origin(&source, "git@github.com:vanillagreencom/vstack.git");
     std::fs::write(
         source.join("vstack.toml"),
         "[hook-events]\n\"PostCompact:\" = \"all\"\n",
@@ -713,6 +739,7 @@ fn inline_update_refreshes_hook_config_and_agents() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -722,6 +749,7 @@ fn inline_update_refreshes_hook_config_and_agents() {
         name: "guard".into(),
         kind: ItemKind::Hook,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -771,6 +799,66 @@ fn inline_update_refreshes_hook_config_and_agents() {
     assert!(frontmatter.pointer("/hooks/PreToolUse").is_none());
     assert!(frontmatter.pointer("/hooks/PostCompact").is_some());
 
+    let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        lock.entries
+            .get("guard")
+            .and_then(|entry| entry.source_repo.as_deref()),
+        Some("vanillagreencom/vstack")
+    );
+    assert_eq!(
+        lock.entries
+            .get("rust")
+            .and_then(|entry| entry.source_repo.as_deref()),
+        Some("vanillagreencom/vstack")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn inline_update_clears_stale_source_repo_for_local_source_without_origin() {
+    let root = tmpdir("inline-update-source-repo-clear");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+
+    let mut hook = hook_fixture("guard", None);
+    hook.source_path = source.join("hooks/guard.sh");
+    hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "guard".into(),
+        kind: ItemKind::Hook,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: Some("vanillagreencom/vstack".to_string()),
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let items = DiscoveredItems {
+        agents: Vec::new(),
+        skills: Vec::new(),
+        hooks: vec![hook.clone()],
+        pi_extensions: Vec::new(),
+        extras: Vec::new(),
+    };
+
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+        let report = perform_inline_update(&["guard".to_string()], &items);
+        assert_eq!(report.completed, 1, "report: {report:?}");
+        assert!(report.failed.is_empty(), "report: {report:?}");
+    });
+
+    let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(lock.entries.get("guard").unwrap().source_repo, None);
+
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -809,6 +897,7 @@ fn tui_remove_hook_refreshes_claude_agent_frontmatter() {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -818,6 +907,7 @@ fn tui_remove_hook_refreshes_claude_agent_frontmatter() {
         name: "guard".into(),
         kind: ItemKind::Hook,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -896,6 +986,7 @@ fn assert_tui_hook_removal_rejects_broken_config(kind: BrokenRemovalConfig) {
         name: "rust".into(),
         kind: ItemKind::Agent,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-15T00:00:00Z".into(),
@@ -905,6 +996,7 @@ fn assert_tui_hook_removal_rejects_broken_config(kind: BrokenRemovalConfig) {
         name: "guard".into(),
         kind: ItemKind::Hook,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: vec!["claude-code".into()],
         method: InstallMethod::Copy,
         installed_at: "2026-07-15T00:00:00Z".into(),

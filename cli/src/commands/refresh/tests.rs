@@ -12,6 +12,7 @@ fn lock_hook_from_source(name: &str, source: &str, harnesses: Vec<&str>) -> Lock
         name: name.into(),
         kind: ItemKind::Hook,
         source: source.into(),
+        source_repo: None,
         harnesses: harnesses.into_iter().map(String::from).collect(),
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
@@ -100,11 +101,86 @@ fn lock_entry(name: &str, kind: ItemKind, source: &Path, harnesses: Vec<&str>) -
         name: name.into(),
         kind,
         source: source.to_string_lossy().into_owned(),
+        source_repo: None,
         harnesses: harnesses.into_iter().map(String::from).collect(),
         method: InstallMethod::Copy,
         installed_at: "2026-07-03T00:00:00Z".into(),
         source_hash: String::new(),
     }
+}
+
+#[test]
+fn source_repo_for_lock_entry_uses_resolved_source_record_identity() {
+    let root = tmpdir("refresh-source-repo");
+    let source = root.join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let entry = lock_entry(
+        "rust",
+        ItemKind::Agent,
+        Path::new("/moved/source"),
+        vec!["codex"],
+    );
+    let records = vec![crate::refresh_sources::ResolvedSource {
+        root: source,
+        aliases: vec!["/moved/source".to_string()],
+        source_repo: Some("vanillagreencom/vstack".to_string()),
+    }];
+
+    assert_eq!(
+        observed_source_repo_for_lock_entry(&records, &entry)
+            .flatten()
+            .as_deref(),
+        Some("vanillagreencom/vstack")
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn sync_lock_entry_source_repo_clears_stale_identity_for_resolved_local_source_without_origin() {
+    let root = tmpdir("refresh-source-repo-clear-stale");
+    let source = make_source(&root, "local-source");
+    let mut entry = lock_entry("rust", ItemKind::Agent, &source, vec!["codex"]);
+    entry.source_repo = Some("vanillagreencom/vstack".to_string());
+
+    sync_lock_entry_source_repo(&[], &mut entry);
+
+    assert_eq!(entry.source_repo, None);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn sync_lock_entry_source_repo_clears_stale_identity_for_resolved_record_without_identity() {
+    let root = tmpdir("refresh-source-repo-clear-record");
+    let source = make_source(&root, "local-source");
+    let mut entry = lock_entry(
+        "rust",
+        ItemKind::Agent,
+        Path::new("/moved/source"),
+        vec!["codex"],
+    );
+    entry.source_repo = Some("vanillagreencom/vstack".to_string());
+    let records = vec![crate::refresh_sources::ResolvedSource {
+        root: source,
+        aliases: vec!["/moved/source".to_string()],
+        source_repo: None,
+    }];
+
+    sync_lock_entry_source_repo(&records, &mut entry);
+
+    assert_eq!(entry.source_repo, None);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn sync_lock_entry_source_repo_preserves_identity_when_source_unavailable() {
+    let root = tmpdir("refresh-source-repo-preserve-moved");
+    let source = root.join("moved-source");
+    let mut entry = lock_entry("rust", ItemKind::Agent, &source, vec!["codex"]);
+    entry.source_repo = Some("vanillagreencom/vstack".to_string());
+
+    sync_lock_entry_source_repo(&[], &mut entry);
+
+    assert_eq!(entry.source_repo.as_deref(), Some("vanillagreencom/vstack"));
 }
 
 #[test]

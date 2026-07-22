@@ -527,6 +527,7 @@ pub(super) fn perform_inline_update(
         .map(|root| crate::refresh_sources::RefreshSource {
             root: root.to_path_buf(),
             aliases: vec![root.to_string_lossy().into_owned()],
+            source_repo: config::source_repo_for_source(Some(root), &root.to_string_lossy()),
             mapping: mapping.clone(),
             agents: items.agents.clone(),
             skills: items.skills.clone(),
@@ -535,6 +536,9 @@ pub(super) fn perform_inline_update(
         })
         .into_iter()
         .collect();
+    let selected_source_repo = refresh_sources
+        .first()
+        .map(|source| source.source_repo.clone());
 
     for scope_global in [false, true] {
         let lock_path = config::lock_file_path(scope_global);
@@ -626,11 +630,12 @@ pub(super) fn perform_inline_update(
         }
 
         let now = config::now_iso();
-        for name in names {
-            if stats.successful_items.contains(name)
-                && let Some(entry) = lock.entries.get_mut(name)
-            {
+        for (name, entry) in lock.entries.iter_mut() {
+            if stats.successful_items.contains(name) {
                 entry.installed_at = now.clone();
+                if let Some(source_repo) = &selected_source_repo {
+                    entry.source_repo = source_repo.clone();
+                }
                 entry.source_hash = config::compute_source_hash(entry);
             }
         }

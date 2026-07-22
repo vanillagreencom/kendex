@@ -177,6 +177,7 @@ fn print_install_summary(
 
 struct ResolvedSource {
     source: String,
+    source_repo: Option<String>,
     label: String,
     dir: PathBuf,
     persist: bool,
@@ -408,6 +409,7 @@ mod auto_include_agent_skills_tests {
             name: "reviewer".into(),
             kind: config::ItemKind::Skill,
             source: "source".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Symlink,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -417,6 +419,7 @@ mod auto_include_agent_skills_tests {
             name: "rust".into(),
             kind: config::ItemKind::Agent,
             source: "source".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method: InstallMethod::Copy,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -446,6 +449,21 @@ mod source_option_tests {
             .expect("system clock before epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("vstack-add-{label}-{}-{nanos}", std::process::id()))
+    }
+
+    fn init_git_origin(dir: &Path, origin: &str) {
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = std::process::Command::new("git")
+            .args(["remote", "add", "origin", origin])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
 
     fn write_demo_skill(source: &Path) {
@@ -513,6 +531,7 @@ role: engineer
             name: name.into(),
             kind: config::ItemKind::Skill,
             source: "source".into(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -527,6 +546,7 @@ role: engineer
             name: "demo".into(),
             kind: config::ItemKind::Skill,
             source: source.to_string_lossy().into_owned(),
+            source_repo: None,
             harnesses: vec!["claude-code".into()],
             method,
             installed_at: "2026-07-03T00:00:00Z".into(),
@@ -584,6 +604,7 @@ role: engineer
         let project_root = std::env::temp_dir().join("vstack_source_options_default_removed");
         let resolved = ResolvedSource {
             source: "/repo/local-vstack".into(),
+            source_repo: None,
             label: "local: /repo/local-vstack".into(),
             dir: PathBuf::from("/repo/local-vstack"),
             persist: false,
@@ -607,6 +628,7 @@ role: engineer
         let project_root = std::env::temp_dir().join("vstack_source_options_default_removed");
         let resolved = ResolvedSource {
             source: "/repo/local-vstack".into(),
+            source_repo: None,
             label: "local: /repo/local-vstack".into(),
             dir: PathBuf::from("/repo/local-vstack"),
             persist: false,
@@ -625,6 +647,7 @@ role: engineer
         let project_root = std::env::temp_dir().join("vstack_source_options_registered_only");
         let resolved = ResolvedSource {
             source: "owner/custom".into(),
+            source_repo: Some("owner/custom".into()),
             label: "owner/custom".into(),
             dir: PathBuf::from("/cache/owner_custom"),
             persist: true,
@@ -672,6 +695,28 @@ role: engineer
             "fixture must exercise the non-canonical-layout case"
         );
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_source_for_app_records_local_source_git_identity() {
+        let root = tmpdir("source-repo-local");
+        let project_root = root.join("project");
+        let source = root.join("source");
+        std::fs::create_dir_all(&project_root).unwrap();
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("skills")).unwrap();
+        init_git_origin(&source, "https://github.com/vanillagreencom/vstack.git");
+
+        let registry = config::SourceRegistry::default();
+        let resolved =
+            resolve_source_for_app(Some(&source.to_string_lossy()), &registry, &project_root)
+                .expect("local source should resolve");
+
+        assert_eq!(
+            resolved.source_repo.as_deref(),
+            Some("vanillagreencom/vstack")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1065,17 +1110,22 @@ fn resolve_source_for_app(
             let dir = std::fs::canonicalize(path)?;
             Ok(ResolvedSource {
                 source: dir.display().to_string(),
+                source_repo: config::source_repo_for_source(Some(&dir), &dir.to_string_lossy()),
                 label: source_label(path),
                 dir,
                 persist: true,
             })
         }
-        Some(source) => Ok(ResolvedSource {
-            source: source.to_string(),
-            label: source_label(source),
-            dir: resolve_source(Some(source))?,
-            persist: true,
-        }),
+        Some(source) => {
+            let dir = resolve_source(Some(source))?;
+            Ok(ResolvedSource {
+                source: source.to_string(),
+                source_repo: config::source_repo_for_source(Some(&dir), source),
+                label: source_label(source),
+                dir,
+                persist: true,
+            })
+        }
         None => {
             // Prefer the source selected for THIS project. Source selection is
             // intentionally project-scoped: choosing a repo while working in
@@ -1085,6 +1135,7 @@ fn resolve_source_for_app(
             {
                 return Ok(ResolvedSource {
                     source: current.to_string(),
+                    source_repo: config::source_repo_for_source(Some(&dir), current),
                     label: source_label(current),
                     dir,
                     persist: true,
@@ -1099,6 +1150,7 @@ fn resolve_source_for_app(
             {
                 return Ok(ResolvedSource {
                     label: source_label(&current),
+                    source_repo: config::source_repo_for_source(Some(&dir), &current),
                     source: current,
                     dir,
                     persist: true,
@@ -1111,6 +1163,10 @@ fn resolve_source_for_app(
                 if crate::resolve::is_vstack_source(&dir) {
                     return Ok(ResolvedSource {
                         source: dir.display().to_string(),
+                        source_repo: config::source_repo_for_source(
+                            Some(&dir),
+                            &dir.to_string_lossy(),
+                        ),
                         label: source_label(dir.to_str().unwrap_or("local")),
                         dir,
                         persist: false,
@@ -1122,9 +1178,11 @@ fn resolve_source_for_app(
             }
 
             let source = crate::REPO.to_string();
+            let dir = resolve_source(Some(&source))?;
             Ok(ResolvedSource {
                 label: source_label(&source),
-                dir: resolve_source(Some(&source))?,
+                source_repo: config::source_repo_for_source(Some(&dir), &source),
+                dir,
                 source,
                 persist: true,
             })
@@ -1767,7 +1825,13 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     for legacy in &migrated_pi_extensions {
         lock.remove(legacy);
     }
-    installer::record_install(&mut lock, &results, &resolved_source.source, method);
+    installer::record_install(
+        &mut lock,
+        &results,
+        &resolved_source.source,
+        resolved_source.source_repo.as_deref(),
+        method,
+    );
     for (name, preserved_method) in &preserved_auto_skill_methods {
         let Some(entry) = lock.entries.get_mut(name) else {
             continue;
@@ -1794,6 +1858,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                     existing.harnesses.push(harness_id);
                 }
                 existing.source = resolved_source.source.clone();
+                existing.source_repo = resolved_source.source_repo.clone();
                 existing.installed_at = now.clone();
                 existing.source_hash = config::compute_source_hash(existing);
             } else {
@@ -1801,6 +1866,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                     name: h.name.clone(),
                     kind: config::ItemKind::Hook,
                     source: resolved_source.source.clone(),
+                    source_repo: resolved_source.source_repo.clone(),
                     harnesses: vec![harness_id],
                     method,
                     installed_at: now.clone(),

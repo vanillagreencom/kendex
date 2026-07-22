@@ -34,6 +34,7 @@ installed_run_all=$tmp_phys/.agents/skills/orch/tests/run-all.sh
 obsolete_installed_test=$tmp_phys/.agents/skills/orch/tests/generated-start-markdownlint.sh
 snapshot=$tmp_phys/start-after-add.md
 external_caller_cwd=$tmp_phys/external-caller
+project_lock=$tmp_phys/.vstack-lock.json
 mkdir "$external_caller_cwd"
 
 PASS=0
@@ -120,6 +121,19 @@ check_dev_generated() {
   fi
 }
 
+assert_all_lock_entries_source_repo() {
+  local phase=$1
+  local entry_count
+  local source_repo_count
+  entry_count=$(grep -c '"name":' "$project_lock" || true)
+  source_repo_count=$(grep -c '"source_repo": "vanillagreencom/vstack"' "$project_lock" || true)
+  if [[ $entry_count -gt 0 && $source_repo_count -eq $entry_count ]]; then
+    pass "$phase persists source repository identity for every lock entry"
+  else
+    fail "$phase persists source repository identity for every lock entry"
+  fi
+}
+
 echo "=== downstream install and workflow verification ==="
 
 log=$tmp_phys/vstack-add.log
@@ -150,9 +164,16 @@ esac
 
 check_generated "install"
 check_dev_generated "install"
+assert_all_lock_entries_source_repo "install"
 if [[ -f "$generated" ]]; then
   cp "$generated" "$snapshot"
 fi
+
+# Model a legacy lock written before source_repo existed. Refresh must backfill
+# the durable identity and save it, not merely keep it in memory for this run.
+legacy_lock=$tmp_phys/.vstack-lock.legacy.json
+sed '/"source_repo":/d' "$project_lock" >"$legacy_lock"
+mv "$legacy_lock" "$project_lock"
 
 # Model a downstream checkout installed before #592. A canonical refresh must
 # remove the obsolete source-only regression before the installed suite runs.
@@ -174,6 +195,7 @@ fi
 
 check_generated "first refresh"
 check_dev_generated "first refresh"
+assert_all_lock_entries_source_repo "first refresh"
 if [[ ! -e "$obsolete_installed_test" ]]; then
   pass "first refresh removes the obsolete installed source-only test"
 else
