@@ -212,9 +212,9 @@ fn run_with_filer(args: ReportArgs, filer: &dyn IssueFiler) -> Result<()> {
 /// Precedence:
 /// 1. Frontmatter self-declares vstack: `source: vstack`, OR a `repository` whose
 ///    parsed `owner/repo` slug equals the canonical `vanillagreencom/vstack`.
-/// 2. Else name is in the lock (kind matching any given kind selector) with a
-///    `source_repo` that identifies the canonical or configured upstream
-///    `owner/repo` → Vstack. A
+/// 2. Else a non-skill name is in the lock (kind matching any given kind
+///    selector) with a `source_repo` that identifies the canonical or
+///    configured upstream `owner/repo` → Vstack. A
 ///    foreign `source_repo` is authoritative project-local; live source Git
 ///    origin and remote shorthand fallbacks only apply to legacy entries that
 ///    have no recorded `source_repo`.
@@ -255,19 +255,19 @@ fn resolve_ownership(
 /// deliberately ignores source layout: a local project-shaped package source is
 /// not upstream unless its recorded or live GitHub identity is upstream.
 fn lock_entry_is_vstack(entry: &config::LockEntry, upstream: &str) -> bool {
-    if let Some(source_repo) = entry.source_repo.as_deref() {
-        return repo_is_vstack_upstream(source_repo, upstream);
-    }
-
-    // Skills carry their own provenance frontmatter. A marker-only orphaned
-    // skill recovered after lock loss has no attributable source, even though
-    // reconciliation needs a source hint so a later successful refresh can
-    // reinstall it. Other legacy kinds (including Pi packages) have no such
-    // self-provenance and retain the live-source fallback.
+    // Skills are self-attributing: the repository distributing a skill is not
+    // necessarily the repository that owns it. Only installed skill
+    // frontmatter may opt a skill into upstream routing.
     if entry.kind == ItemKind::Skill {
         return false;
     }
 
+    if let Some(source_repo) = entry.source_repo.as_deref() {
+        return repo_is_vstack_upstream(source_repo, upstream);
+    }
+
+    // Other legacy kinds (including Pi packages) have no self-provenance and
+    // retain the live-source fallback.
     config::source_repo_for_source(
         config::resolve_source_path(&entry.source).as_deref(),
         &entry.source,
@@ -755,6 +755,22 @@ mod tests {
         }
     }
 
+    fn agent_args(agent: &str, title: &str, body: &str, dry_run: bool) -> ReportArgs {
+        ReportArgs {
+            skill: None,
+            agent: Some(agent.to_string()),
+            hook: None,
+            asset: None,
+            title: title.to_string(),
+            body: Some(body.to_string()),
+            body_file: None,
+            global: false,
+            scope: Some("project".to_string()),
+            upstream: None,
+            dry_run,
+        }
+    }
+
     /// Write a SKILL.md with vstack provenance frontmatter under the project
     /// skills dir (`.agents/skills/<name>/SKILL.md`, the Codex/Pi project root).
     fn write_vstack_skill(project_root: &Path, name: &str) {
@@ -1019,6 +1035,30 @@ mod tests {
     }
 
     #[test]
+    fn ownership_project_local_for_skill_with_distributor_source_repo() {
+        let lock = lock_with_repo(
+            "third-party",
+            ItemKind::Skill,
+            "vanillagreencom/vstack",
+            Some(DEFAULT_UPSTREAM),
+        );
+        let sel = selector("third-party", Some(ItemKind::Skill));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, DEFAULT_UPSTREAM),
+            Ownership::ProjectLocal
+        );
+
+        let foreign = AssetFrontmatter {
+            source: None,
+            repository: Some("https://github.com/example/third-party".to_string()),
+        };
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), Some(&foreign), DEFAULT_UPSTREAM),
+            Ownership::ProjectLocal
+        );
+    }
+
+    #[test]
     fn ownership_project_local_when_lock_slug_is_not_upstream() {
         // A remote slug that is NOT the upstream must not be claimed as vstack.
         let lock = lock_with("dev", ItemKind::Skill, "someorg/other-repo");
@@ -1173,14 +1213,14 @@ mod tests {
         // `--asset` (kind None) resolves its marker kind from the lock entry.
         let lock = lock_with_repo(
             "dev",
-            ItemKind::Skill,
+            ItemKind::Agent,
             "/missing/source",
             Some("vanillagreencom/vstack"),
         );
         let sel = selector("dev", None);
         let plan = plan_for_inputs(&lock, Some(&sel), None, "T", "B", DEFAULT_UPSTREAM);
         assert_eq!(plan.ownership, Ownership::Vstack);
-        assert!(plan.body_with_marker.contains("kind=skill"));
+        assert!(plan.body_with_marker.contains("kind=agent"));
     }
 
     // --- selector validation --------------------------------------------------
@@ -1360,13 +1400,13 @@ mod tests {
     }
 
     #[test]
-    fn run_lock_source_repo_vstack_files_upstream_with_marker_without_frontmatter() {
+    fn run_agent_lock_source_repo_vstack_files_upstream_with_marker_without_frontmatter() {
         let root = tmpdir("cap-lock-source-repo-vstack");
         std::fs::create_dir_all(&root).unwrap();
         let missing_source = root.join("missing-source");
         let lock = lock_with_repo(
-            "locked-skill",
-            ItemKind::Skill,
+            "locked-agent",
+            ItemKind::Agent,
             missing_source.to_str().unwrap(),
             Some("vanillagreencom/vstack"),
         );
@@ -1374,7 +1414,7 @@ mod tests {
 
         crate::test_util::with_project_root(&root, || {
             let filer = CapturingFiler::default();
-            let args = skill_args("locked-skill", "broke", "body", false);
+            let args = agent_args("locked-agent", "broke", "body", false);
             let result = run_with_filer(args, &filer);
             assert!(result.is_ok());
             let calls = filer.calls.borrow();
@@ -1387,7 +1427,7 @@ mod tests {
             assert_eq!(a[repo_idx + 1], DEFAULT_UPSTREAM);
             assert!(
                 a.iter().any(|x| x.contains(
-                    "<!-- vstack-report:v1 asset=locked-skill kind=skill ownership=vstack -->"
+                    "<!-- vstack-report:v1 asset=locked-agent kind=agent ownership=vstack -->"
                 )),
                 "vstack issue body must carry the marker"
             );

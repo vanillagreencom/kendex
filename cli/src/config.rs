@@ -795,6 +795,18 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
     // non-empty, slash-free segments. Local absolute paths and nested relative
     // paths have a leading empty segment or more than two parts.
     if !url.contains("://") && !url.contains('@') && !url.contains(char::is_whitespace) {
+        let path = Path::new(url);
+        let has_windows_drive = url.as_bytes().get(1) == Some(&b':');
+        if path.is_absolute()
+            || url.starts_with("./")
+            || url.starts_with("../")
+            || url.starts_with(".\\")
+            || url.starts_with("..\\")
+            || url.contains('\\')
+            || has_windows_drive
+        {
+            return None;
+        }
         let bare = url.strip_suffix(".git").unwrap_or(url);
         let mut parts = bare.split('/');
         if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next())
@@ -810,10 +822,20 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
         return None;
     }
 
-    let after = url
-        .strip_prefix("git@github.com:")
-        .or_else(|| url.strip_prefix("https://github.com/"))
-        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let after = if let Some(after) = url.strip_prefix("git@github.com:") {
+        after
+    } else if let Some(after_scheme) = url.strip_prefix("https://") {
+        let (authority, path) = after_scheme.split_once('/')?;
+        let host = authority.rsplit('@').next()?;
+        if !host.eq_ignore_ascii_case("github.com") {
+            return None;
+        }
+        path
+    } else if let Some(after) = url.strip_prefix("ssh://git@github.com/") {
+        after
+    } else {
+        return None;
+    };
     let after = after
         .trim_end_matches('/')
         .strip_suffix(".git")
@@ -1702,7 +1724,19 @@ mod source_registry_tests {
             parse_github_slug("https://github.com/owner/repo/").as_deref(),
             Some("owner/repo")
         );
+        assert_eq!(
+            parse_github_slug("https://credential@github.com/Owner/Repo.git").as_deref(),
+            Some("owner/repo")
+        );
+        assert_eq!(
+            parse_github_slug("https://user:token@github.com/owner/repo").as_deref(),
+            Some("owner/repo")
+        );
         assert_eq!(parse_github_slug("a/b/c"), None);
+        assert_eq!(parse_github_slug("./source"), None);
+        assert_eq!(parse_github_slug("../source"), None);
+        assert_eq!(parse_github_slug("C:/source"), None);
+        assert_eq!(parse_github_slug(".\\source"), None);
         assert_eq!(parse_github_slug("/home/me/dev/vstack"), None);
     }
 
