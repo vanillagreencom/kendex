@@ -258,11 +258,12 @@ fn lock_entry_is_vstack(entry: &config::LockEntry, upstream: &str) -> bool {
         return config::github_slug_eq(source_repo, upstream);
     }
 
-    // Only agents and hooks need the legacy live-source fallback: skills carry
-    // their own provenance frontmatter. A marker-only orphaned skill recovered
-    // after lock loss has no attributable source, even though reconciliation
-    // needs a source hint so a later successful refresh can reinstall it.
-    if !matches!(entry.kind, ItemKind::Agent | ItemKind::Hook) {
+    // Skills carry their own provenance frontmatter. A marker-only orphaned
+    // skill recovered after lock loss has no attributable source, even though
+    // reconciliation needs a source hint so a later successful refresh can
+    // reinstall it. Other legacy kinds (including Pi packages) have no such
+    // self-provenance and retain the live-source fallback.
+    if entry.kind == ItemKind::Skill {
         return false;
     }
 
@@ -936,6 +937,20 @@ mod tests {
         // when no durable source_repo field was recorded.
         let lock = lock_with("guard", ItemKind::Hook, "vanillagreencom/vstack");
         let sel = selector("guard", Some(ItemKind::Hook));
+        assert_eq!(
+            resolve_ownership(&lock, Some(&sel), None, DEFAULT_UPSTREAM),
+            Ownership::Vstack
+        );
+    }
+
+    #[test]
+    fn ownership_vstack_pi_extension_via_legacy_lock_remote_slug_source() {
+        let lock = lock_with(
+            "@vanillagreen/pi-hooks",
+            ItemKind::PiExtension,
+            "vanillagreencom/vstack",
+        );
+        let sel = selector("@vanillagreen/pi-hooks", None);
         assert_eq!(
             resolve_ownership(&lock, Some(&sel), None, DEFAULT_UPSTREAM),
             Ownership::Vstack
