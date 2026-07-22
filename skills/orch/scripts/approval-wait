@@ -69,12 +69,13 @@
 # before, and the caller prompts or keeps waiting. "proceed" instead reports a
 # distinct "proceeded" (exit 0), but ONLY on genuine reviewer silence: zero
 # unresolved threads (an open thread returns "comments" before the deadline),
-# no reviewer evidence, AND a head that did not change during this wait. In
-# review mode reaching the deadline already means no review is pinned to the
-# current head; in approval mode an active COMMENTED review (a reviewer that
-# engaged but did not approve) also blocks the degrade; and a force-push that
-# moved the head mid-wait falls back to "timeout" (the caller re-waits on the
-# now-stable head) so proceed can never fire seconds after a new commit before
+# no reviewer engagement of any kind, AND a head that did not change during
+# this wait. "No engagement" means: no review pinned to the current head, and
+# (review mode) no named trusted check/status present at head in any state — a
+# pending or failed reviewer check counts as engagement, not silence — and
+# (approval mode) no active COMMENTED review either. A force-push that moved the
+# head mid-wait also falls back to "timeout" (the caller re-waits on the
+# now-stable head), so proceed can never fire seconds after a new commit before
 # the reviewer could re-review it. Proceed thus never bypasses a live gate —
 # only routes around a genuinely dead reviewer.
 # The caller records "proceeded" as a reviewer-down override; CI and the
@@ -677,6 +678,13 @@ while true; do
     last_check_surface=""
     last_check_app=""
     last_check_creator=""
+    # Reviewer engagement for the proceed-on-timeout guard (review mode): a
+    # named check/status present in ANY state means the reviewer engaged this
+    # head, so proceed must not treat it as silence. Reset per poll; set below
+    # when a check-run or status of the configured name is found. (A review
+    # object at head exits as "reviewed" before the deadline, so only the
+    # check/status surface can reach the proceed branch here.)
+    last_reviews_present=0
     if [ -n "$REVIEW_CHECK_NAME" ] && [ "$last_reviews_at_head" -eq 0 ] \
       && [ -n "$last_head_sha" ]; then
       checks_status=0
@@ -697,6 +705,12 @@ while true; do
       named_check=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
         '[.[] | select(.name == $name)] | sort_by(.started_at // "") | last // {}' <<<"$checks_json")
       last_check_app=$(jq -r '.app.slug // ""' <<<"$named_check")
+      # Presence in ANY conclusion (queued/in-progress/failure/success) is
+      # reviewer engagement — tracked apart from the success-only gate evidence
+      # so proceed-on-timeout cannot fire past an active or failed check.
+      if [ -n "$(jq -r '.name // ""' <<<"$named_check")" ]; then
+        last_reviews_present=1
+      fi
       if [ "$(jq -r '.conclusion // ""' <<<"$named_check")" = "success" ]; then
         check_at_head=1
         last_check_surface="check_run"
@@ -723,6 +737,11 @@ while true; do
         fi
         named_status=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
           '[.[] | select(.context == $name)] | sort_by(.updated_at // "") | last // {}' <<<"$statuses_json")
+        # A named status in ANY state (pending/failure/error/success) is
+        # likewise reviewer engagement — track presence apart from success.
+        if [ -n "$(jq -r '.context // ""' <<<"$named_status")" ]; then
+          last_reviews_present=1
+        fi
         if [ "$(jq -r '.state // ""' <<<"$named_status")" = "success" ]; then
           check_at_head=1
           last_check_surface="status"
@@ -860,10 +879,13 @@ done
 # "proceeded" (exit 0) so a credit-exhausted reviewer that posted nothing does
 # not block the fleet — but ONLY on genuine reviewer silence:
 #   - zero unresolved threads (an open thread already exited as "comments"),
-#   - no reviewer evidence. In review mode reaching here already means no review
-#     is pinned to the current head; in approval mode last_reviews_present guards
-#     against an active COMMENTED review (a reviewer that engaged but did not
-#     approve is not "down", so it must timeout, not proceed), and
+#   - no reviewer evidence (last_reviews_present == 0). In review mode that
+#     means no named trusted check/status is present at head in ANY state — a
+#     pending or failed reviewer check is engagement, not silence (a review
+#     object at head, or a success check, exits as "reviewed" before the
+#     deadline). In approval mode it means no non-author review (COMMENTED
+#     included) exists — a reviewer that engaged but did not approve is not
+#     "down", so it must timeout, not proceed. And
 #   - the head did not change during this wait. elapsed is measured from
 #     START_TIME, so a force-push near MAX_WAIT would otherwise proceed seconds
 #     after the new commit appeared, before the reviewer could re-review it;

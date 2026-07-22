@@ -63,15 +63,17 @@
 #      on the eventual success; a persistent 503 becomes terminal only when
 #      the budget expires, preserving the original error message plus the
 #      count; an HTTP 404 stays immediately terminal with no count
-#   proceed1-10: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
+#   proceed1-12: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
 #      reached with zero unresolved threads AND no reviewer evidence AND an
 #      unchanged head degrades to "proceeded" (exit 0) under "proceed" (review
 #      and approval modes; also via the --on-timeout flag), while open threads
 #      still return "comments", a standing CHANGES_REQUESTED still blocks, an
 #      active COMMENTED review in approval mode still times out (not silence), a
 #      head change during the wait falls back to timeout (no fair window on the
-#      new commit), the default is "block" (timeout), and an unrecognized value
-#      falls back to block with a warning
+#      new commit), a present-but-not-success trusted check/status (failed or
+#      pending) in review mode still times out (engagement, not silence), the
+#      default is "block" (timeout), and an unrecognized value falls back to
+#      block with a warning
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -879,6 +881,30 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "proceed10: head change during wait blocks proceed" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "timeout" "proceed10: status timeout, not proceeded (head moved)" "$stderr"
+
+# proceed11: review mode with a FAILED trusted check-run at head is a real
+# reviewer signal, not silence — the reviewer ran and did not pass. proceed
+# must not fire (Copilot #795 review, approval-wait:874); it times out.
+stderr="$TMP_ROOT/proceed11.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=failure_at_head \
+  PR_REVIEW_CHECK="Review Bot" PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed11: failed trusted check blocks proceed (present, not silent)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed11: status timeout, not proceeded" "$stderr"
+
+# proceed12: review mode with a PENDING trusted commit status at head means the
+# reviewer is actively analyzing — presence, not silence. proceed must not fire
+# on the status surface either; it times out.
+stderr="$TMP_ROOT/proceed12.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_STATUS_MODE=pending_at_head \
+  PR_REVIEW_CHECK="Review Bot" PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed12: pending trusted status blocks proceed (present, not silent)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed12: status timeout, not proceeded" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 
