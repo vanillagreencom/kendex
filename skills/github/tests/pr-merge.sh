@@ -286,6 +286,26 @@ outdated_threads='[{"id":"PRRT_outdated","isResolved":false,"isOutdated":true,"p
 out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$outdated_threads" run_check)
 assert_eq "$(jq -r .can_merge <<<"$out")" "true" "outdated unresolved thread is not actionable"
 
+malformed_threads='[
+  {"id":"PRRT_null","isResolved":null,"isOutdated":false,"path":"src/null.rs","line":1,"comments":{"nodes":[]}},
+  {"id":"PRRT_missing","isOutdated":false,"path":"src/missing.rs","line":2,"comments":{"nodes":[]}},
+  {"id":"PRRT_string","isResolved":"false","isOutdated":false,"path":"src/string.rs","line":3,"comments":{"nodes":[]}}
+]'
+out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$malformed_threads" run_check)
+assert_eq "$(jq -r .can_merge <<<"$out")" "false" "malformed thread state blocks readiness"
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "review_threads_fetch_failed: GitHub returned malformed review thread data" "malformed node reaches trust-boundary validation"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$malformed_threads" \
+    STUB_CALL_LOG="$call_log" \
+    run_merge 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "malformed thread state blocks --auto"
+assert_not_contains "$(cat "$call_log")" "pr merge" "malformed thread state never invokes gh pr merge"
+
 # Forty valid maximum-size comment bodies produce a ~2.5 MiB page, exceeding
 # macOS ARG_MAX (and typical Linux ARG_MAX). The query boundary must stream
 # this payload through jq stdin rather than fail while constructing argv.

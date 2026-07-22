@@ -194,7 +194,10 @@ run_checks() {
     # are not actionable. A failed or malformed lookup also blocks: treating an
     # unknown review state as clean would recreate the unsafe merge path.
     local threads_json unresolved
-    if ! threads_json=$("$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>/dev/null); then
+    # Fetch the complete unfiltered list. Filtering unresolved threads inside
+    # pr-threads would discard nodes whose isResolved value is missing, null,
+    # or malformed before this trust-boundary validation can reject them.
+    if ! threads_json=$("$SCRIPT_DIR/pr-threads.sh" "$pr_num" 2>/dev/null); then
         can_merge=false
         issues+=("review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub")
     elif ! jq -e '
