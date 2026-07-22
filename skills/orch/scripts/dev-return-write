@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# dev-return-write — deterministically write a dev agent's on-disk completion
+# artifact that orch reads to accept a dev/QA completion without depending on the
+# live return message (vstack#770, vstack#776).
+#
+# The dev agent runs THIS one command instead of hand-authoring the JSON, so the
+# receipt is always well-formed and complete — it eliminates the truncated /
+# missing-field / malformed-JSON class entirely. It is a sanctioned single-command
+# invocation (harness-safe: the agent runs one command with explicit arguments, no
+# shell redirection in the agent's own command; the write to disk is internal to
+# this script and atomic — temp file + mv).
+#
+# The artifact is bound to its delegation by a per-round token: the file is named
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json AND carries "round_id":
+# ROUND_ID inside. dev-artifact-check resolves that exact path and rejects any
+# receipt whose internal round_id differs — deterministic identity that replaces
+# the earlier mtime>=delegation freshness heuristic (which proved only WHEN bytes
+# were written, not WHICH delegation wrote them).
+#
+# Usage:
+#   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
+#     --branch BRANCH --commit SHA --validate STR \
+#     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
+#     [--item N DECISION REASONING]...
+#
+# Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
+#
+# Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
+#   {
+#     "schema_version": 1,                    // required, number
+#     "round_id": "[ROUND_ID]",               // required, matches the filename token
+#     "kind": "implement" | "fix",            // required
+#     "issue": "[ISSUE_ID]",                  // required, normalized state key
+#     "branch": "[BRANCH]",                   // required
+#     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
+#     "validate": "pass" | "FAILING: c1,c2",  // required, "pass" or "FAILING:…"
+#     "qa_labels": ["needs-review"],          // [] when no --qa-label given
+#     "summary_posted": true,                 // false with --no-summary
+#     "summary": "…" | null,                  // --summary-file content (GitHub/ad-hoc recovery)
+#     "bundled": false,                       // true with --bundled
+#     "items": [{"n": 1, "decision": "Applied", "reasoning": "…"}]
+#   }
+#
+# Kind rules:
+#   --kind fix OR --bundled  → REQUIRES >=1 --item (a fix/bundled artifact with no
+#                              items is incomplete).
+#   --kind implement (single, no --bundled) → zero items allowed → writes "items": [].
+#   DECISION ∈ {Applied, Skipped, Blocked}; N is a non-negative integer; REASONING
+#   must be non-empty.
+#
+# Validated on the orch side by dev-artifact-check (reasons:
+# missing | invalid | incomplete). All usage/validation errors exit 2.
+
+set -euo pipefail
+
+PROG="dev-return-write"
+
+# Path-safe token grammar for --issue / --round-id: no '/', no '..', no
+# whitespace, so a value can never escape the tmp/ directory.
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
+    --branch BRANCH --commit SHA --validate STR \
+    [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
+    [--item N DECISION REASONING]...
+
+Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
+--kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
+REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
+--issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
+skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
+EOF
+}
+
+need() {
+  # $1 = flag name, $2 = current argc ($#). A value option needs at least 2 args.
+  (( $2 >= 2 )) || die "$1 requires a value"
+}
+
+# Validate a path-forming token (--issue / --round-id): non-empty, matches the
+# path-safe grammar, and contains no '..'. Shared verbatim with dev-artifact-check.
+check_id_token() {
+  # $1 = flag name, $2 = value.
+  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
+    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+}
+
+worktree=""
+kind=""
+issue=""
+round_id=""
+branch=""
+commit=""
+validate=""
+summary_file=""
+bundled=false
+summary_posted=true
+qa_labels=()
+item_n=()
+item_decision=()
+item_reasoning=()
+
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree)     need "$1" $#; worktree="$2"; shift 2 ;;
+    --kind)         need "$1" $#; kind="$2"; shift 2 ;;
+    --issue)        need "$1" $#; issue="$2"; shift 2 ;;
+    --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
+    --branch)       need "$1" $#; branch="$2"; shift 2 ;;
+    --commit)       need "$1" $#; commit="$2"; shift 2 ;;
+    --validate)     need "$1" $#; validate="$2"; shift 2 ;;
+    --summary-file) need "$1" $#; summary_file="$2"; shift 2 ;;
+    --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
+    --bundled)      bundled=true; shift ;;
+    --no-summary)   summary_posted=false; shift ;;
+    --item)
+      # Consumes exactly 3 args: N DECISION REASONING.
+      if (( $# < 4 )); then
+        die "--item requires exactly 3 arguments: N DECISION REASONING"
+      fi
+      n="$2"; decision="$3"; reasoning="$4"
+      if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        die "--item N must be a non-negative integer, got '$n'"
+      fi
+      case "$decision" in
+        Applied|Skipped|Blocked) ;;
+        *) die "--item DECISION must be Applied|Skipped|Blocked, got '$decision'" ;;
+      esac
+      if [[ -z "$reasoning" ]]; then
+        die "--item REASONING must be non-empty (item $n)"
+      fi
+      item_n+=("$n")
+      item_decision+=("$decision")
+      item_reasoning+=("$reasoning")
+      shift 4
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+# --- Validate required fields ---
+[[ -n "$worktree" ]] || die "--worktree is required"
+[[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+case "$kind" in
+  implement|fix) ;;
+  "") die "--kind is required (implement|fix)" ;;
+  *)  die "--kind must be implement or fix, got '$kind'" ;;
+esac
+check_id_token --issue "$issue"
+check_id_token --round-id "$round_id"
+[[ -n "$branch" ]]   || die "--branch is required (non-empty)"
+[[ -n "$commit" ]]   || die "--commit is required (non-empty)"
+[[ -n "$validate" ]] || die "--validate is required (non-empty)"
+[[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
+  || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
+if [[ -n "$summary_file" ]]; then
+  [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
+fi
+
+# A fix or bundled artifact without items is incomplete — reject before writing.
+if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
+  if (( ${#item_n[@]} == 0 )); then
+    die "at least one --item is required for --kind fix or --bundled"
+  fi
+fi
+
+# --- Build the two variable-length arrays deterministically with jq ---
+if (( ${#qa_labels[@]} > 0 )); then
+  qa_json="$(jq -n '$ARGS.positional' --args "${qa_labels[@]}")"
+else
+  qa_json='[]'
+fi
+
+if (( ${#item_n[@]} > 0 )); then
+  items_json="$(
+    for i in "${!item_n[@]}"; do
+      jq -n \
+        --argjson n "${item_n[$i]}" \
+        --arg decision "${item_decision[$i]}" \
+        --arg reasoning "${item_reasoning[$i]}" \
+        '{n: $n, decision: $decision, reasoning: $reasoning}'
+    done | jq -s '.'
+  )"
+else
+  items_json='[]'
+fi
+
+# --- Compute the absolute, round-scoped out path ---
+mkdir -p "$worktree/tmp"
+out_dir="$(cd "$worktree/tmp" && pwd)"
+out="$out_dir/dev-return-$issue-$round_id.json"
+
+# --- Write atomically: build to a same-dir temp file, then mv over the target ---
+# A concurrent checker never observes a partial/empty artifact, and a failed
+# generation leaves any prior receipt intact.
+tmp="$(mktemp "$out_dir/.dev-return-$issue.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+# --summary-file content (or null) rides along for GitHub/ad-hoc recovery, where
+# the completion summary is returned to the orchestrator rather than posted to a
+# tracker; summary_posted stays honest (true only for the Linear-posted case).
+if [[ -n "$summary_file" ]]; then
+  summary_arg=(--rawfile summary "$summary_file")
+else
+  summary_arg=(--argjson summary null)
+fi
+
+jq -n \
+  --argjson schema_version 1 \
+  --arg round_id "$round_id" \
+  --arg kind "$kind" \
+  --arg issue "$issue" \
+  --arg branch "$branch" \
+  --arg commit "$commit" \
+  --arg validate "$validate" \
+  --argjson qa_labels "$qa_json" \
+  --argjson summary_posted "$summary_posted" \
+  "${summary_arg[@]}" \
+  --argjson bundled "$bundled" \
+  --argjson items "$items_json" \
+  '{
+     schema_version: $schema_version,
+     round_id: $round_id,
+     kind: $kind,
+     issue: $issue,
+     branch: $branch,
+     commit: $commit,
+     validate: $validate,
+     qa_labels: $qa_labels,
+     summary_posted: $summary_posted,
+     summary: $summary,
+     bundled: $bundled,
+     items: $items
+   }' > "$tmp"
+
+mv "$tmp" "$out"
+trap - EXIT
+
+printf '%s\n' "$out"

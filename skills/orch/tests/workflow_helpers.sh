@@ -56,6 +56,26 @@ assert_eq "$(jq -r '.issue_id' <<<"$exists_json")" "issue-353" "workflow-state e
 missing_json="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" exists --json issue-404)"
 assert_eq "$(jq -r '.exists' <<<"$missing_json")" "false" "workflow-state exists --json reports missing state"
 
+# vstack#776 — new-round-id mints a unique per-delegation token (`date +%s%N`-`$RANDOM`
+# — a nanosecond timestamp plus random suffix), stores it at the field, and prints
+# it. Rapid consecutive mints must all differ so a same-second re-stamp can never
+# collide with a prior round's receipt path (a concatenated `$RANDOM$RANDOM` is not
+# injective — this test would catch a regression to that form).
+rid1="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+rid2="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+stored_rid="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" get issue-353 '.dev_round_id')"
+assert_eq "$([[ -n "$rid1" ]] && echo yes)" "yes" "new-round-id prints a non-empty token"
+assert_eq "$([[ "$rid1" != "$rid2" ]] && echo uniq)" "uniq" "new-round-id mints a distinct token each call"
+assert_eq "$stored_rid" "$rid2" "new-round-id stores the latest token at the field"
+assert_eq "$([[ "$rid2" =~ ^[A-Za-z0-9._-]+$ ]] && echo ok)" "ok" "new-round-id token is path-safe"
+# Several rapid consecutive mints must ALL be distinct (no same-second collision).
+r_a="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+r_b="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+r_c="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+r_d="$(ORCH_STATE_DIR="$state_dir" "$REPO_ROOT/skills/orch/scripts/workflow-state" new-round-id issue-353 dev_round_id)"
+distinct_count="$(printf '%s\n' "$r_a" "$r_b" "$r_c" "$r_d" | sort -u | wc -l | tr -d ' ')"
+assert_eq "$distinct_count" "4" "four rapid consecutive mints are all distinct"
+
 default_branch="$(WORKTREE_DEFAULT_BRANCH=trunk "$REPO_ROOT/skills/orch/scripts/resolve-base-branch" "$REPO_ROOT")"
 assert_eq "$default_branch" "trunk" "resolve-base-branch honors WORKTREE_DEFAULT_BRANCH"
 

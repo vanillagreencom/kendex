@@ -110,10 +110,13 @@ If `.exists` is `true`, read `.team_name`:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .team_name
 ```
 
-**Record the delegation timestamp, then delegate** to `[AGENT]`. `dev_delegated_at` MUST be re-stamped immediately before delegating even though this agent writes **no** dev-return artifact (it pushes its fix directly, not via `dev-fix.md`): the re-stamp guarantees a stale receipt from an earlier dev-fix at the reused path `tmp/dev-return-[ISSUE_ID].json` can never be mis-accepted for this CI fix by the idle-recovery rule (SKILL § Wait for Agent Return). Fill placeholders, omit empty lines/sections.
+**Stamp the round, then delegate** to `[AGENT]`. Like every dev/QA delegation, this one MUST mint a fresh `dev_round_id` immediately before delegating (SKILL § Wait for Agent Return invariant) — even though this agent writes **no** dev-return artifact (it pushes its fix directly, not via `dev-fix.md`). Minting a fresh token is exactly what guarantees a leftover artifact from an earlier dev-implement/dev-fix round (still on disk at its own round-scoped path, and still referenced by the *previous* `dev_round_id`) can never be mis-accepted for this CI fix by the idle-recovery rule: the round-mode check now looks for THIS round's token, which no prior artifact carries. `dev_delegated_at` stays as the watchdog deadline. Run each as its own tool call; fill placeholders, omit empty lines/sections.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+```
+```bash
+.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
 <delegation_format>
@@ -137,13 +140,13 @@ Worktree: [WORKTREE_PATH]
 Report: what was fixed, validate status, any unrelated failures.
 </delegation_format>
 
-**Wait for completion.** This agent writes **no** dev-return artifact, so `dev-artifact-check` here is *expected* to report `ok == false` — `missing`, or `stale` for a leftover receipt from an earlier dev-fix. That is the normal path: accept the completion from the agent's return message (what was fixed, validate status), and on a genuinely absent return follow the [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting) ladder — never a stale artifact. The check's only role on this path is the fail-closed guarantee (given the re-stamp above) that a stale earlier artifact can never be mis-accepted as this CI fix:
+**Wait for completion.** This agent writes **no** dev-return artifact, so the round-mode `dev-artifact-check` for THIS fresh `dev_round_id` is *expected* to report `ok == false` (`missing` — no artifact exists at this round's path). That is the normal path: accept the completion from the agent's return message (what was fixed, validate status) plus the pushed fix commit, and on a genuinely absent return follow the [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting) ladder. The fresh round token (not the check itself) is the fail-closed guarantee — a prior round's leftover artifact carries the *previous* token, so it can never satisfy this round's check:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
 ```
 ```bash
-.agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
 
 **→ Jump to § 4** (if merge queue) or **§ 5** (otherwise)

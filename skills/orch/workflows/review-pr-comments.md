@@ -318,11 +318,15 @@ Issue suggestions: [N] items → § 6.2 audit
 
 2. **Group items** by `agent` field.
 
-3. **Record the delegation timestamp, then delegate fixes** per agent group (reuse existing dev agent if available). `dev_delegated_at` gates step 5 `dev-artifact-check` acceptance against a stale receipt from an earlier cycle — mirror `dev-fix.md` § 2. Run immediately before the delegation:
+3. **Stamp the round, then delegate fixes** per agent group (reuse existing dev agent if available). `dev_round_id` binds step 5 `dev-artifact-check` acceptance to THIS cycle's receipt (deterministic identity — vstack#776); `dev_delegated_at` is the watchdog deadline. Run each as its own tool call, immediately before the delegation:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
+   ```bash
+   .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+   ```
+   Use the printed token as `[DEV_ROUND_ID]`; note this group's delegated item numbers (`#[N]`) as `[ITEM_NUMBERS]` (comma-separated) for step 5's exact item-set check.
 
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix only; the agent owns process per `dev/workflows/dev-fix.md`.
 
@@ -333,6 +337,8 @@ Issue suggestions: [N] items → § 6.2 audit
    Issue: [ISSUE_ID]
    PR: #[PR_NUMBER]
    Worktree: [WORKTREE_PATH]
+   Round ID: [DEV_ROUND_ID]
+   Artifact Key: [ISSUE_ID]
 
    Review items:
    [For each item marked "Fixing":]
@@ -344,16 +350,33 @@ Issue suggestions: [N] items → § 6.2 audit
    ---
    </delegation_format>
 
-5. **Wait for completion.** On the return message — or on an idle notification with no return — accept via the on-disk artifact before handling results (read `dev_delegated_at`, then run `dev-artifact-check`; run each as its own tool call):
+5. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return can be lost to a harness tool timeout mid-tail, vstack#770).
+
+   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode with this group's item numbers (run each as its own tool call):
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_delegated_at // empty'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
    ```
    ```bash
-   .agents/skills/orch/scripts/dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items [ITEM_NUMBERS]
    ```
+   `--expect-items [ITEM_NUMBERS]` requires the artifact's `items[]` to cover EXACTLY the delegated set (each once, no unknown/duplicate, valid decision, non-empty reasoning). The round id guarantees only THIS cycle's receipt is read (vstack#776).
 
-   `ok == true` → the fix cycle completed (the tail finished): proceed to step 6 using the return message when present, or the artifact's `items[]`/`validate` when the return was lost to a harness tool timeout (vstack#770) — no re-delegation. `ok == false` with a missing or partial return → treat as a stall per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting).
+   **Check B** — the fix commit landed and nothing was left behind:
+
+   ```bash
+   git -C "[WORKTREE_PATH]" status --porcelain
+   # Must be empty (clean worktree).
+   git -C "[WORKTREE_PATH]" log -1 --oneline
+   # Shows the fix commit reported by the artifact/return.
+   ```
+   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or the round applied nothing and correctly made no new commit (an all-items-skipped fix leaves HEAD unchanged; B passes on a clean worktree).
+
+   **Decision table.** Apply the fix-round A×B acceptance table in [`dev-fix.md` § 6](dev-fix.md) (the canonical fix-round table — including exact-commit binding on `ok==true`, the bounded git re-read on `ok==true`+`B fail`, and the report-only tail-reconciliation nudge on `ok==false`+`B pass`, never re-running the fix), with these step-pointer deltas for this workflow:
+
+   - **Accept** (`ok==true`, B pass) → handle results (step 6), then push (step 7).
+   - **`ok==false`, B pass** → the tail-reconciliation nudge's recovered per-item decisions drive the replies (step 8) and § 8 state (dev-fix's "step 7" maps here to steps 6-8/§ 8).
+   - Dev-vs-reviewer asymmetry is the same — see [SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting).
 
 6. **Handle results**:
    - Applied → mark for reply (§ 7.1)

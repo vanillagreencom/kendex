@@ -1,58 +1,96 @@
 #!/usr/bin/env bash
 # Deterministically validate a dev agent's on-disk completion artifact for
-# dev-start / dev-fix acceptance. A dev completion is only real when
-# [WORKTREE]/tmp/dev-return-[ISSUE_ID].json exists, is newer than the delegation
-# timestamp, and carries the required completion fields. The live return message
-# can be lost when a long tools/validate-class command exceeds the harness Bash
-# tool timeout mid-tail and ends the turn (vstack#770), so the artifact — written
-# after commit/labels/summary — is the durable completion record; return-message
-# prose alone never has to be re-earned when the artifact is fresh and valid.
+# dev-start / dev-fix / review-pr-comments acceptance. The live return message can
+# be lost when a long tools/validate-class command exceeds the harness Bash tool
+# timeout mid-tail and ends the turn (vstack#770), so the artifact — written after
+# commit/labels/summary via `dev-return-write` — is the durable completion record.
 #
-# Artifact schema (written by the dev agent AFTER commit/labels/summary, via the
-# harness file-write tool — never shell redirection):
-#   {
-#     "kind": "implement" | "fix",          // required, must be one of these
-#     "issue": "[ISSUE_ID]",                 // required, normalized workflow-state key
-#     "branch": "[BRANCH]",                  // required
-#     "commit": "[HEAD_SHA_AFTER_COMMIT]",   // required
-#     "validate": "pass" | "FAILING: c1,c2", // required, non-empty
-#     "qa_labels": ["needs-review"],         // implement only; [] if none
-#     "summary_posted": true,                // implement §9.1 done (fix: items processed)
-#     "bundled": false,
-#     "items": []                            // fix: [{n, decision, reasoning}]; bundled: sub-issue results
-#   }
+# IDENTITY IS BY ROUND ID, NOT MTIME (vstack#776). Each delegation stamps a unique
+# round token (`workflow-state new-round-id [ISSUE] dev_round_id`) that is embedded
+# in the delegation. `dev-return-write` names its file
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json and writes "round_id":
+# ROUND_ID inside. This check resolves that exact path and requires the internal
+# `.round_id` to equal the expected token — clock-independent, and immune to the
+# same-second re-stamp / late-rewriting-old-round / cross-group / cross-workflow
+# receipt confusion that an `mtime >= delegated_at` heuristic at a single reused
+# path allowed. The mtime freshness gate is gone entirely.
 #
-# Only the five required fields are validated here — the script proves the agent
-# finished its tail and wrote a fresh receipt. Git/tracker corroboration stays in
-# orch dev-start.md § 3 (and dev-fix.md); this script never runs git or tracker
-# checks.
+# Artifact schema (written by `dev-return-write`; canonical:
+# skills/orch/schemas/dev-return.md):
+#   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
+#     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
+#     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
+#     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
+#
+# The scalars prove the agent finished its tail; the items gates prove a fix or
+# bundled artifact carries its per-item results. Git/tracker corroboration (and
+# exact-commit binding) stay in the orch workflow; this script never runs git or
+# tracker checks.
 
 set -euo pipefail
 
+PROG="dev-artifact-check"
+# Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+# --expect-items is a comma-separated list of item numbers.
+EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
+
 usage() {
-  cat >&2 << 'EOF'
+  cat << 'EOF'
 Usage:
-  dev-artifact-check <worktree_path> <issue_id> <delegated_at_epoch>
-  dev-artifact-check --file <json_path> [delegated_at_epoch]
+  dev-artifact-check --worktree WT --issue ISSUE --round-id RID [--expect-items N,N,...]
+  dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...]
 
-Primary mode: checks [WORKTREE]/tmp/dev-return-[ISSUE_ID].json.
-File mode (--file): checks one explicit JSON file. Validates existence + the
-required completion fields; when the optional delegated_at_epoch is supplied it
-ALSO applies primary mode's freshness gate against filesystem mtime.
+Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
+requires it exists, its internal .round_id == RID, then the scalar/kind/items gates.
+File mode: validates one explicit JSON file (round_id checked only when --round-id
+is supplied). It is a test/parity affordance — round-trip checks and known-path
+artifacts — with no production caller; the orch workflows always use round mode.
+There is one identity model (round id); the mtime freshness gate and the old
+legacy positional mode are gone (vstack#776).
 
-Both modes print JSON:
-  {ok: bool, path: string|null, reason: "valid"|"missing"|"stale"|"invalid"}
+--expect-items (fix rounds): the delegated review-item numbers. items[] must cover
+EXACTLY that set — each expected n present once, no unknown/duplicate n, every
+decision ∈ {Applied,Skipped,Blocked}, every reasoning non-empty. Without it, a
+fix/bundled artifact only needs a non-empty, well-formed items[].
+
+Prints JSON: {ok: bool, path: string|null,
+              reason: "valid"|"missing"|"invalid"|"incomplete"}
+
+Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
+items → incomplete → valid.
 
 reason meanings when ok=false:
-  missing  artifact file does not exist
-  stale    artifact mtime < delegated_at_epoch (primary mode, or --file when the
-           optional boundary is supplied)
-  invalid  artifact is not parseable JSON, or a required field is missing/empty:
-           .kind (must be "implement" or "fix"), .issue, .branch, .commit,
-           .validate
+  missing     artifact file does not exist at the resolved path
+  invalid     round_id != expected, OR not parseable JSON, OR a required field is
+              wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch/.commit/
+              .validate non-empty strings; .round_id non-empty string;
+              .schema_version a number
+  incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
+              or non-empty-well-formed (kind fix OR bundled==true). kind implement
+              without bundled keeps allowing items: [].
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
+}
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+need() {
+  # $1 = flag name, $2 = current argc ($#). A value option needs at least 2 args.
+  (( $2 >= 2 )) || die "$1 requires a value"
+}
+
+# Validate a path-forming token (--issue / --round-id): non-empty, matches the
+# path-safe grammar, and contains no '..'. Shared verbatim with dev-return-write.
+check_id_token() {
+  # $1 = flag name, $2 = value.
+  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
+    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
 }
 
 emit() {
@@ -61,94 +99,152 @@ emit() {
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
 }
 
-file_mtime() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
-}
-
-# A dev completion artifact is valid only when it is parseable JSON carrying all
-# five required non-empty fields: .kind must be exactly "implement" or "fix", and
-# .issue/.branch/.commit/.validate must each be a non-empty scalar. A truncated or
-# half-written receipt fails this gate and is rejected reason=invalid.
-has_required_fields() {
-  jq -e '
-    (((.kind? // "") == "implement") or ((.kind? // "") == "fix"))
-      and (((.issue? // "") | tostring) != "")
-      and (((.branch? // "") | tostring) != "")
-      and (((.commit? // "") | tostring) != "")
-      and (((.validate? // "") | tostring) != "")
+# The artifact's internal round_id must equal the expected token. Guards against
+# a copied/renamed file dropped at the round-scoped path.
+round_id_matches() {
+  jq -e --arg want "$2" '
+    ((.round_id? | type) == "string") and (.round_id == $want)
   ' "$1" >/dev/null 2>&1
 }
 
-# Shared gate for BOTH modes — the dev artifact is always a single deterministic
-# file (unlike the reviewer glob), so the check is identical: existence →
-# freshness (only when a boundary is supplied) → required fields → valid. Emits
-# the {ok, path, reason} JSON and returns 0 iff valid, 1 otherwise. delegated_at
-# may be empty ("" skips the freshness gate — the --file-without-boundary case).
-check_file() {
-  local file="$1" delegated_at="$2" mtime
+# Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch/.commit/
+# .validate non-empty STRINGS (arrays/objects/bools/numbers fail, not just "");
+# .round_id a non-empty string; .schema_version a number. A truncated or
+# half-written receipt fails this gate → reason=invalid.
+has_required_fields() {
+  jq -e '
+    (((.kind? // "") == "implement") or ((.kind? // "") == "fix"))
+      and ((.issue? | type) == "string") and (.issue != "")
+      and ((.branch? | type) == "string") and (.branch != "")
+      and ((.commit? | type) == "string") and (.commit != "")
+      and ((.validate? | type) == "string") and (.validate != "")
+      and ((.round_id? | type) == "string") and (.round_id != "")
+      and ((.schema_version? | type) == "number")
+  ' "$1" >/dev/null 2>&1
+}
+
+# vstack#678 parity fallback (no --expect-items): an artifact of kind "fix" OR with
+# bundled == true must carry a non-empty .items array whose every element is an
+# object with a numeric .n, a decision ∈ {Applied,Skipped,Blocked}, and a non-empty
+# .reasoning. kind "implement" without bundled is unaffected (items: [] allowed).
+# Returns 0 (true) when fix/bundled-shaped but items are missing/empty/malformed.
+fix_or_bundled_incomplete() {
+  jq -e '
+    ((((.kind? // "") == "fix") or (.bundled? == true))) as $needs_items
+    | $needs_items
+      and (((.items? | type) != "array")
+           or ((.items | length) == 0)
+           or (any(.items[];
+                 (type != "object")
+                 or ((.n? | type) != "number")
+                 or ((.decision? | type) != "string")
+                 or ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) == null)
+                 or ((.reasoning? | type) != "string")
+                 or (.reasoning == ""))))
+  ' "$1" >/dev/null 2>&1
+}
+
+# Exact item-set completeness for a fix round (--expect-items N,N,...). items[] must
+# cover EXACTLY the expected set: every element well-formed, and the multiset of
+# .n equals the expected set (each present once, no unknown/duplicate). A 1-item
+# artifact must not satisfy a 10-item delegation. Returns 0 (true) when items[]
+# covers the set exactly.
+items_exact_ok() {
+  jq -e --arg expect "$2" '
+    ($expect | split(",") | map(tonumber)) as $want
+    | ((.items? | type) == "array")
+      and (all(.items[];
+            (type == "object")
+            and ((.n | type) == "number")
+            and ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) != null)
+            and ((.reasoning | type) == "string") and (.reasoning != "")))
+      and (([ .items[].n ] | sort) == ($want | sort))
+  ' "$1" >/dev/null 2>&1
+}
+
+# Shared gate: existence → (round_id match, when expected) → required scalars
+# (invalid) → items (incomplete) → valid. Emits {ok, path, reason}, returns 0 iff
+# valid. want_round "" skips the round_id match (--file mode without --round-id).
+# expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
+validate_artifact() {
+  local file="$1" want_round="$2" expect_items="$3"
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     return 1
   fi
-  if [[ -n "$delegated_at" ]]; then
-    mtime="$(file_mtime "$file")"
-    if (( mtime < delegated_at )); then
-      emit false "$file" "stale"
-      return 1
-    fi
+  if [[ -n "$want_round" ]] && ! round_id_matches "$file" "$want_round"; then
+    emit false "$file" "invalid"
+    return 1
   fi
   if ! has_required_fields "$file"; then
     emit false "$file" "invalid"
+    return 1
+  fi
+  if [[ -n "$expect_items" ]]; then
+    if ! items_exact_ok "$file" "$expect_items"; then
+      emit false "$file" "incomplete"
+      return 1
+    fi
+  elif fix_or_bundled_incomplete "$file"; then
+    emit false "$file" "incomplete"
     return 1
   fi
   emit true "$file" "valid"
   return 0
 }
 
-# --- File mode: validate one explicit JSON path deterministically ---
-if [[ "${1:-}" == "--file" ]]; then
-  # Accept an OPTIONAL trailing delegated_at_epoch. When present, apply the same
-  # freshness gate as primary mode (artifact mtime < delegated_at → stale); when
-  # omitted, keep the existence + required-fields behavior.
-  if [[ $# -lt 2 || $# -gt 3 ]]; then
-    usage
-    exit 2
-  fi
-  file="$2"
-  delegated_at="${3:-}"
-  if [[ -z "$file" ]]; then
-    echo "Error: --file requires a non-empty path" >&2
-    exit 2
-  fi
-  if [[ -n "$delegated_at" ]] && ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
-    echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
-    exit 2
-  fi
-  if check_file "$file" "$delegated_at"; then exit 0; else exit 1; fi
-fi
-
-if [[ $# -ne 3 ]]; then
+# --- Mode dispatch: --file (explicit path) or round mode (--worktree/--issue/
+# --round-id). Each sets `file`, `want_round`, and `expect_items`; the shared tail
+# validates --expect-items once and runs the check. -h/--help prints usage. ---
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
+  exit 0
+fi
+
+file=""
+want_round=""
+expect_items=""
+
+if [[ "${1:-}" == "--file" ]]; then
+  shift
+  file="${1:-}"
+  [[ -n "$file" && "$file" != --* ]] || die "--file requires a non-empty path"
+  shift
+  while (( $# > 0 )); do
+    case "$1" in
+      --round-id)     need "$1" $#; want_round="$2"; shift 2 ;;
+      --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      *) die "unknown --file argument: $1" ;;
+    esac
+  done
+elif [[ "${1:-}" == --* ]]; then
+  worktree=""
+  issue=""
+  round_id=""
+  while (( $# > 0 )); do
+    case "$1" in
+      --worktree)     need "$1" $#; worktree="$2"; shift 2 ;;
+      --issue)        need "$1" $#; issue="$2"; shift 2 ;;
+      --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
+      --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "$worktree" ]] || die "--worktree is required"
+  [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+  check_id_token --issue "$issue"
+  check_id_token --round-id "$round_id"
+  want_round="$round_id"
+  file="$worktree/tmp/dev-return-$issue-$round_id.json"
+else
+  # Neither --file nor round mode → usage error. One identity model (round id);
+  # the legacy positional mode was removed with its only caller.
+  usage >&2
   exit 2
 fi
 
-worktree="$1"
-issue="$2"
-delegated_at="$3"
-
-if [[ ! -d "$worktree" ]]; then
-  echo "Error: worktree path '$worktree' is not a directory" >&2
-  exit 2
+# Shared tail: --expect-items grammar (both modes), then validate once.
+if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
+  die "--expect-items must be comma-separated item numbers, got '$expect_items'"
 fi
-if [[ -z "$issue" ]]; then
-  echo "Error: issue_id must be non-empty" >&2
-  exit 2
-fi
-if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
-  echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
-  exit 2
-fi
-
-file="$worktree/tmp/dev-return-$issue.json"
-
-if check_file "$file" "$delegated_at"; then exit 0; else exit 1; fi
+if validate_artifact "$file" "$want_round" "$expect_items"; then exit 0; else exit 1; fi

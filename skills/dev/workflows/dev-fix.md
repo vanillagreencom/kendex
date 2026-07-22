@@ -118,22 +118,13 @@ Criteria: Would this save 5+ minutes in a future session? If yes, update. One su
 
 ## 6. Return
 
-**Before returning — write your completion artifact.** After the § 4.2 commit, write the durable completion record to `tmp/dev-return-[ISSUE_ID].json` using your harness file-write/edit tool — NOT shell redirection (§ 1 harness-safe rules). Populate `items` from the decision table below (one entry per review item). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation exceeded the harness tool timeout and ended the turn (§ 4, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating. Write it AFTER the commit so `commit`/`validate` are final.
+**Before returning — write your completion artifact.** After the § 4.2 commit, run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`) — do NOT hand-author the JSON (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). Pass one `--item` per review item you were delegated, from the decision table below — the orchestrator checks the artifact covers EXACTLY the delegated item set, so include every item (Applied, Skipped, and Blocked alike). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation exceeded the harness tool timeout and ended the turn (§ 4, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating. Run it AFTER the commit so `commit`/`validate` are final:
 
-```json
-{
-  "kind": "fix",
-  "issue": "[ISSUE_ID]",
-  "branch": "[BRANCH]",
-  "commit": "[HEAD_SHA_AFTER_COMMIT]",
-  "validate": "pass",
-  "summary_posted": true,
-  "bundled": false,
-  "items": [{"n": 1, "decision": "Applied", "reasoning": "..."}]
-}
+```bash
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] --item [N] [DECISION] [REASONING] [--item ...]
 ```
 
-`items[]` mirrors the return table — one entry per item with its `n`, `decision` (`Applied`/`Skipped`/`Blocked`), and `reasoning`. `validate` is `"pass"` or `"FAILING: check1,check2"`; `commit` is HEAD after § 4.2 (the prior HEAD if no commit was needed).
+`--issue [ARTIFACT_KEY]` is the delegation's `Artifact Key:` line — the **normalized workflow-state key** (`issue-N` for GitHub, `PROJ-123` for Linear), NOT the tracker-native `OWNER/REPO#N`; orch resolves the artifact by that exact key. `--round-id` is the `[DEV_ROUND_ID]` from the `Round ID:` line. One `--item N DECISION REASONING` per delegated review item — `N` is the item's `#[N]` number, `DECISION` ∈ Applied|Skipped|Blocked (mirroring the return table), `REASONING` non-empty plain text (no backticks). `--kind fix` requires at least one `--item` (the writer rejects a fix artifact with none). `--validate` is `pass` or `FAILING: check1,check2`; `--commit` is HEAD after § 4.2 (the prior HEAD if no commit was needed). It is a single sanctioned command (harness-safe — no shell redirection in your command) and prints the artifact path.
 
 Then send the result to the orchestrator as an agent-to-agent message. **Writing artifacts to disk or posting comments is not a return** — the orchestrator does not poll the filesystem, and turn text is not visible across team boundaries. Send exactly one message with the body below, then go idle.
 

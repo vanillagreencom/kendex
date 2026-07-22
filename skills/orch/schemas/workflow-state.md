@@ -38,6 +38,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "submit_cycles": 0,
   "review_delegated_at": 1769600000,
   "dev_delegated_at": 1769600000,
+  "dev_round_id": "1769600000123456789-1837",
   "review_skipped": "tiny-docs",
   "json_paths": [
     "tmp/review-security-20260128-100000.json"
@@ -105,7 +106,8 @@ Persistent state file for orch workflows. Survives context compaction.
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
-| `dev_delegated_at` | number | Epoch seconds of last dev/QA implement-or-fix delegation — gates `dev-artifact-check` completion-artifact acceptance (`dev-start.md` § 3, `dev-fix.md` § 2) |
+| `dev_delegated_at` | number | Epoch seconds of last dev/QA implement-or-fix delegation — the watchdog deadline for stall escalation (SKILL § Wait for Agent Return). No longer gates artifact acceptance (round id does — vstack#776) |
+| `dev_round_id` | string | Unique per-delegation round token (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random suffix, distinct even across rapid same-second re-stamps), minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA implement-or-fix delegation and embedded in it. `dev-artifact-check` resolves `tmp/dev-return-[ISSUE_ID]-[dev_round_id].json` and requires its internal `round_id` to match — deterministic completion-artifact identity (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1) |
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |

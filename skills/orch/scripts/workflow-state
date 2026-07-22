@@ -248,6 +248,28 @@ cmd_set_now() {
     cmd_set "$issue_id" "$field" "$value"
 }
 
+# Generate a unique per-delegation round token, store it at <field>, and print
+# it. The token binds a dev completion artifact to exactly the delegation that
+# produced it (vstack#776): the writer names its file dev-return-<issue>-<RID>.json
+# and embeds "round_id": RID, and dev-artifact-check resolves that exact path and
+# rejects any receipt whose internal round_id differs. This deterministic identity
+# replaces the earlier mtime>=dev_delegated_at freshness heuristic, which proved
+# only WHEN bytes were written, not WHICH delegation wrote them.
+#
+# The token is a nanosecond-resolution timestamp (`date +%s%N`) plus a random
+# suffix, so even rapid same-second (indeed same-millisecond) re-stamps get
+# distinct tokens — unlike a concatenated `$RANDOM$RANDOM`, which is not injective
+# (e.g. "1"+"20" == "12"+"0"). Both components stay within the path-safe grammar.
+cmd_new_round_id() {
+    local issue_id="$1"
+    local field="$2"
+    local value
+
+    value="$(date +%s%N)-$RANDOM"
+    cmd_set "$issue_id" "$field" "$value"
+    echo "$value"
+}
+
 cmd_path() {
     local issue_id="$1"
     resolve_state_file "$issue_id"
@@ -314,6 +336,9 @@ Commands:
                                 never pre-quoted '"..."')
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
+  new-round-id <issue_id> <field>  Generate a unique per-delegation round token,
+                                store it at <field>, and print it (binds a dev
+                                completion artifact to its delegation — vstack#776)
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
 
@@ -337,6 +362,7 @@ Examples:
   workflow-state set PROJ-123 pr_review_baseline '{"last_ts":"2026-01-28","last_threads":2}'
   workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
   workflow-state set-now PROJ-123 review_delegated_at
+  workflow-state new-round-id PROJ-123 dev_round_id
   workflow-state update PROJ-123 '.fixed_items | map(select(.source == "qa-review"))'
   workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 
@@ -386,6 +412,7 @@ case "${1:-help}" in
     set)       shift; cmd_set "$@" ;;
     set-git-head) shift; cmd_set_git_head "$@" ;;
     set-now)   shift; cmd_set_now "$@" ;;
+    new-round-id) shift; cmd_new_round_id "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
     help|--help|-h) cmd_help ;;

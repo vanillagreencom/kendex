@@ -122,6 +122,61 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
 
 Always-on CI (everything on `pull_request`) needs no change — § 5 just verifies checks that already ran. `ci-wait` tolerates post-approval dispatch latency via `CI_WAIT_NO_CHECKS_GRACE` (default 180s) before reporting "no checks registered". It scopes the current-head check rollup to the latest substantive run per workflow, so a later all-skipped `COMMENTED` review dispatch cannot hide an active approved run. A custom aggregate status still pointing at the pre-approval run stays pending while a newer non-failing substantive run exists; the newer run must publish its own status before the waiter can pass, and a failed run or missing replacement remains fail-closed. GitHub's check rollup can also omit a newer same-head dispatch entirely (observed for a `pull_request_review_comment` run whose same-second `pull_request_review` sibling was cancelled by concurrency, vstack#650), so a settled failure attributable only to superseded runs is correlated against the head's Actions run list before it can terminate: any queued or in-progress substantive-event run on the head keeps the wait pending — a rerun executes as a new attempt under its original run id, so this cannot rely on run-id order (vstack#699) — a newest same-workflow run that completed successfully discards the stale failures, and a failed newest run — or a cancelled run with no newer or fresher sibling — stays terminal. This section is guidance for consuming repos; vstack's own CI is unaffected.
 
+## Dev Completion Artifact (round-id identity)
+
+Dev/QA implement-or-fix completions are accepted from an on-disk artifact so a lost
+return message — a long validation exceeding the harness tool timeout mid-tail
+(vstack#770) — never forces re-delegation. `dev-return-write` writes it;
+`dev-artifact-check` validates it. The canonical schema is
+[`schemas/dev-return.md`](./schemas/dev-return.md); the developer-facing mechanics
+are below.
+
+### Round-id identity (vstack#776)
+
+Each delegation mints a unique token via `workflow-state new-round-id [ISSUE]
+dev_round_id` (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random
+suffix, distinct even across rapid re-stamps) and embeds it in the delegation.
+`dev-return-write --round-id RID` names the file `tmp/dev-return-[ISSUE]-[RID].json`
+and writes `"round_id": RID` inside; `dev-artifact-check --round-id RID` resolves that
+exact path and requires the internal `round_id` to match. This replaced the earlier
+`mtime >= dev_delegated_at` freshness gate (dropped entirely), which proved only
+*when* bytes were written — so a same-second re-stamp, a timed-out old-round agent
+rewriting late, a bundle group-A receipt consumed by group-B, or a cross-round
+ci-fix receipt could all be mis-accepted at the single reused path. `dev_delegated_at`
+remains, now solely as the stall watchdog deadline.
+
+### `dev-return-write` — deterministic, atomic
+
+- Required: `--worktree --kind implement|fix --issue --round-id --branch --commit --validate`.
+- `--issue`/`--round-id` must match `^[A-Za-z0-9._-]+$` with no `..` (they form the filename — path-safe grammar); `--validate` is `pass` or begins with `FAILING:`.
+- `--kind fix` OR `--bundled` requires ≥1 `--item N DECISION REASONING` — `DECISION ∈ {Applied,Skipped,Blocked}`, `N` a non-negative integer, `REASONING` non-empty. `implement` without `--bundled` may have zero items (`items: []`).
+- Optional: `--qa-label` (repeatable), `--bundled`, `--no-summary` (sets `summary_posted:false`), `--summary-file PATH` (embeds file content as `summary` — for GitHub/ad-hoc rounds whose summary isn't posted to a tracker, so a lost return is recoverable).
+- Writes `round_id` and `schema_version: 1`; builds the JSON with `jq` (never string concat) to a same-dir temp file and `mv`s it over the target (atomic — a concurrent checker never sees a partial artifact, and a failed generation leaves any prior receipt intact).
+- Any usage/validation error → stderr + exit 2 (bad `--kind`, missing required arg, malformed `--validate`, path-unsafe `--issue`/`--round-id`, bad `--item` DECISION, empty REASONING, non-integer `N`, a missing `--summary-file`, or a `fix`/`--bundled` invocation with no `--item`); on success prints the artifact's absolute path.
+
+### `dev-artifact-check` — gates, ordered
+
+`{ok, path, reason}`, first failing gate wins: **missing → invalid → incomplete → valid**.
+
+- `missing` — no file at the resolved path.
+- `invalid` — internal `round_id` != expected; OR not parseable JSON; OR a required field wrong-typed/empty: `.kind ∈ {implement,fix}`; `.issue`/`.branch`/`.commit`/`.validate` non-empty **strings** (arrays/objects/bools/numbers fail, not just `""`); `.round_id` a non-empty string; `.schema_version` a number.
+- `incomplete` — items rule fails:
+  - with `--expect-items N,N,...` (fix rounds — the orchestrator passes the delegated item numbers): `items[]` must cover **exactly** that set (each expected `n` once, no unknown/duplicate, `decision ∈ {Applied,Skipped,Blocked}`, `reasoning` non-empty). A 1-item artifact cannot satisfy a 10-item delegation.
+  - without `--expect-items` (kind `fix` OR `bundled: true`): a non-empty, well-formed `items[]`. Bundled sub-issue *completeness* is covered by the orchestrator's Linear `validate-completion --include-children-of` (the git/tracker "B" check), not the artifact.
+  - kind `implement` without `bundled` allows `items: []`.
+
+Modes: round mode `--worktree WT --issue ISSUE --round-id RID [--expect-items ...]`
+(the production path) and `--file <path> [--round-id RID] [--expect-items ...]` (a
+test/parity affordance for explicit-path / round-trip checks — no production
+caller). There is one identity model — round id — with no mtime gate and no legacy
+positional mode. All four dev/QA delegation paths (dev-start, dev-fix,
+review-pr-comments, ci-fix) mint a fresh `dev_round_id` before delegating and accept
+via round mode; ci-fix's agent writes no artifact, so its check is expectedly
+`missing` (the fresh token makes any prior round's leftover artifact un-matchable).
+The script never runs git/tracker checks; git/tracker corroboration and exact-commit
+binding (`.commit == git rev-parse HEAD`) live in the orch acceptance decision table
+(`dev-start.md` § 3 / `dev-fix.md`).
+
 ## Tests
 
 ```bash
