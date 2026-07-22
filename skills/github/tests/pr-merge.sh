@@ -556,5 +556,57 @@ assert_contains "$out" "BLOCKED PR #123 — gh pr merge failed" "genuine failure
 assert_contains "$out" "base branch policy prohibits the merge" "genuine failure surfaces raw gh output"
 
 echo
+echo "=== pr-merge --force immediate failure contract (vstack#782) ==="
+
+# The authoritative exact-head postcondition wins over a CLI transport/status
+# failure: the requested immediate outcome actually happened.
+set +e
+out=$(STUB_MERGE_EXIT=1 \
+    STUB_MERGE_STDERR="failed to read the completed mutation response" \
+    STUB_POST_STATE=MERGED \
+    STUB_MERGE_COMMIT=forced-merge-oid \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge_force 2>&1)
+status=$?
+set -e
+assert_eq "$status" "0" "failed CLI remains success when exact-head post-state is MERGED"
+assert_contains "$out" "MERGED PR #123" "force reports the authoritative immediate postcondition"
+
+# `--force` is an immediate-only operation. A pre-existing classic auto-merge
+# request must not make a rejected immediate mutation appear successful.
+set +e
+out=$(STUB_MERGE_EXIT=1 \
+    STUB_MERGE_STDERR="failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON='{"enabledAt":"2026-07-21T00:00:00Z"}' \
+    STUB_POST_IN_QUEUE=false \
+    STUB_POST_QUEUE_ENTRY_JSON=null \
+    run_merge_force 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "failed --force stays blocked when classic auto-merge was already armed"
+assert_contains "$out" "BLOCKED PR #123 — gh pr merge failed" "failed --force reports its immediate mutation failure"
+assert_contains "$out" "base branch policy prohibits the merge" "failed --force preserves the immediate failure detail"
+
+# Required-queue membership is likewise not proof that an immediate --force
+# attempt succeeded. Queue idempotency remains reserved for non-force modes.
+set +e
+out=$(STUB_MERGE_EXIT=1 \
+    STUB_MERGE_STDERR="failed to run merge: merge queue is required" \
+    STUB_POST_STATE=OPEN \
+    STUB_POST_AUTO_JSON=null \
+    STUB_POST_IN_QUEUE=true \
+    STUB_POST_QUEUE_ENTRY_JSON='{"state":"QUEUED"}' \
+    STUB_POST_QUEUE_STATE=QUEUED \
+    run_merge_force 2>&1)
+status=$?
+set -e
+assert_eq "$status" "1" "failed --force stays blocked when a queue entry was already active"
+assert_contains "$out" "BLOCKED PR #123 — gh pr merge failed" "queued --force failure is not reported as pending success"
+assert_contains "$out" "merge queue is required" "queued --force failure preserves the immediate failure detail"
+
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

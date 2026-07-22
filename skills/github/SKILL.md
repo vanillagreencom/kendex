@@ -134,6 +134,13 @@ any merge or queue mutation. A failed or malformed thread lookup also blocks,
 because an unknown review state cannot be treated as clean. The documented
 `--force` flag is the only deliberate override and skips every safety check.
 
+`--force` has immediate-only semantics. If its guarded `gh pr merge` mutation
+fails and the exact-head post-state is not `MERGED`, `pr-merge` returns BLOCKED
+even when classic auto-merge or a merge-queue entry was already active.
+Pre-existing deferred state is not proof that the forced immediate attempt
+succeeded. An authoritative exact-head `MERGED` post-state remains success;
+non-force and `--auto` idempotent pending outcomes retain exit `75`.
+
 A BLOCKED outcome is further classified on stderr as **transient** (mergeable
 UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should
 `await-mergeable` and retry) or **permanent** (conflicts, `ci_failed`,
