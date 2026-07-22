@@ -63,13 +63,15 @@
 #      on the eventual success; a persistent 503 becomes terminal only when
 #      the budget expires, preserving the original error message plus the
 #      count; an HTTP 404 stays immediately terminal with no count
-#   proceed1-9: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
-#      reached with zero unresolved threads AND no reviewer evidence degrades to
-#      "proceeded" (exit 0) under "proceed" (review and approval modes; also via
-#      the --on-timeout flag), while open threads still return "comments", a
-#      standing CHANGES_REQUESTED still blocks, an active COMMENTED review in
-#      approval mode still times out (not silence), the default is "block"
-#      (timeout), and an unrecognized value falls back to block with a warning
+#   proceed1-10: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
+#      reached with zero unresolved threads AND no reviewer evidence AND an
+#      unchanged head degrades to "proceeded" (exit 0) under "proceed" (review
+#      and approval modes; also via the --on-timeout flag), while open threads
+#      still return "comments", a standing CHANGES_REQUESTED still blocks, an
+#      active COMMENTED review in approval mode still times out (not silence), a
+#      head change during the wait falls back to timeout (no fair window on the
+#      new commit), the default is "block" (timeout), and an unrecognized value
+#      falls back to block with a warning
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -859,6 +861,24 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "proceed9: active COMMENTED review blocks proceed (approval mode)" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "timeout" "proceed9: status timeout, not proceeded" "$stderr"
+
+# proceed10: a head change DURING the wait (force-push near the deadline)
+# disqualifies proceed — elapsed is measured from START_TIME, so proceed must
+# not fire seconds after a new commit before the reviewer could re-review it.
+# Falls back to timeout so the caller re-waits on the now-stable head (Copilot
+# #795 review of PR #795, approval-wait:846).
+stderr="$TMP_ROOT/proceed10.err"
+head_count="$TMP_ROOT/proceed10-head-count"
+set +e
+output=$(cd "$TMP_ROOT/repo" \
+  && PATH="$TMP_ROOT/bin:$PATH" \
+     env STUB_REVIEWS_MODE=none STUB_HEAD_MODE=changes STUB_HEAD_COUNT_FILE="$head_count" \
+         PR_REVIEW_ON_TIMEOUT=proceed \
+         .agents/skills/orch/scripts/approval-wait 1 1 5 --json --mode review 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed10: head change during wait blocks proceed" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed10: status timeout, not proceeded (head moved)" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 

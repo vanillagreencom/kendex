@@ -68,11 +68,15 @@
 # e.g. its credits are exhausted — "block" reports "timeout" (exit 1) as
 # before, and the caller prompts or keeps waiting. "proceed" instead reports a
 # distinct "proceeded" (exit 0), but ONLY on genuine reviewer silence: zero
-# unresolved threads (an open thread returns "comments" before the deadline) AND
-# no reviewer evidence. In review mode reaching the deadline already means no
-# review is pinned to the current head; in approval mode an active COMMENTED
-# review (a reviewer that engaged but did not approve) also blocks the degrade,
-# so proceed can never bypass a live gate — only route around a dead reviewer.
+# unresolved threads (an open thread returns "comments" before the deadline),
+# no reviewer evidence, AND a head that did not change during this wait. In
+# review mode reaching the deadline already means no review is pinned to the
+# current head; in approval mode an active COMMENTED review (a reviewer that
+# engaged but did not approve) also blocks the degrade; and a force-push that
+# moved the head mid-wait falls back to "timeout" (the caller re-waits on the
+# now-stable head) so proceed can never fire seconds after a new commit before
+# the reviewer could re-review it. Proceed thus never bypasses a live gate —
+# only routes around a genuinely dead reviewer.
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply. The --on-timeout flag overrides the setting;
 # both read with orch-env precedence (process env > vstack.settings.toml >
@@ -283,6 +287,14 @@ last_reviewer_logins=""
 nudge_clock="$START_TIME"
 prev_head_sha=""
 last_nudged_sha="__none__"
+# Set true if the head moves after the first poll. A force-push near MAX_WAIT
+# would otherwise let the very next poll see no evidence on the new commit and
+# emit "proceeded" seconds later — skipping a reviewer who has not yet seen the
+# push. When the head changed during this wait, the deadline falls back to
+# "timeout" (the caller re-waits on the now-stable head, whose own wait can
+# proceed if the reviewer stays genuinely silent). Elapsed is measured from the
+# original START_TIME, so this per-head guard is what makes proceed head-fair.
+head_changed_during_wait=false
 
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
@@ -815,9 +827,12 @@ while true; do
   # --- nudge when the gate signal is silent past the nudge window ---
   if [ "$last_head_sha" != "$prev_head_sha" ]; then
     # A new head restarts the nudge clock; the first observed head keeps the
-    # wait-start clock.
+    # wait-start clock. A change after the first observation also disqualifies
+    # the proceed-on-timeout degrade for the rest of this wait (see the deadline
+    # branch): the reviewer has not had a fair window on the new commit.
     if [ -n "$prev_head_sha" ]; then
       nudge_clock="$(date +%s)"
+      head_changed_during_wait=true
     fi
     prev_head_sha="$last_head_sha"
   fi
@@ -844,14 +859,19 @@ done
 # never a silent success. With PR_REVIEW_ON_TIMEOUT=proceed, degrade to
 # "proceeded" (exit 0) so a credit-exhausted reviewer that posted nothing does
 # not block the fleet — but ONLY on genuine reviewer silence:
-#   - zero unresolved threads (an open thread already exited as "comments"), and
+#   - zero unresolved threads (an open thread already exited as "comments"),
 #   - no reviewer evidence. In review mode reaching here already means no review
 #     is pinned to the current head; in approval mode last_reviews_present guards
 #     against an active COMMENTED review (a reviewer that engaged but did not
-#     approve is not "down", so it must timeout, not proceed).
+#     approve is not "down", so it must timeout, not proceed), and
+#   - the head did not change during this wait. elapsed is measured from
+#     START_TIME, so a force-push near MAX_WAIT would otherwise proceed seconds
+#     after the new commit appeared, before the reviewer could re-review it;
+#     fall back to timeout so the caller re-waits on the now-stable head.
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply.
-if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] && [ "$last_reviews_present" -eq 0 ]; then
+if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] \
+  && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ]; then
   emit_result "proceeded"
   exit 0
 fi
