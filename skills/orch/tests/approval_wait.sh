@@ -63,7 +63,7 @@
 #      on the eventual success; a persistent 503 becomes terminal only when
 #      the budget expires, preserving the original error message plus the
 #      count; an HTTP 404 stays immediately terminal with no count
-#   proceed1-12: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
+#   proceed1-13: PR_REVIEW_ON_TIMEOUT reviewer-down flexibility — a deadline
 #      reached with zero unresolved threads AND no reviewer evidence AND an
 #      unchanged head degrades to "proceeded" (exit 0) under "proceed" (review
 #      and approval modes; also via the --on-timeout flag), while open threads
@@ -71,7 +71,9 @@
 #      active COMMENTED review in approval mode still times out (not silence), a
 #      head change during the wait falls back to timeout (no fair window on the
 #      new commit), a present-but-not-success trusted check/status (failed or
-#      pending) in review mode still times out (engagement, not silence), the
+#      pending) in review mode still times out (engagement, not silence), a head
+#      that moved in the final last-poll->emit confirm window falls back to
+#      timeout (no proceed/marker on a superseded head), the
 #      default is "block" (timeout), and an unrecognized value falls back to
 #      block with a warning
 #   marker1-6: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a
@@ -371,6 +373,14 @@ case "${1:-}" in
         else
           echo '{"reviewRequests":[]}'
         fi
+        exit 0
+      fi
+      # Head-only confirm query (`--json headRefOid -q .headRefOid`), distinct
+      # from the poll snapshots: return the raw sha. STUB_CONFIRM_HEAD overrides
+      # it to simulate a push in the last-poll -> emit window; default matches
+      # the poll head so a stable wait confirms and proceeds.
+      if [[ "$*" == *"-q .headRefOid"* ]]; then
+        printf '%s\n' "${STUB_CONFIRM_HEAD:-headsha1}"
         exit 0
       fi
       if [[ "$*" == *reviewDecision* ]]; then
@@ -924,6 +934,23 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "proceed12: pending trusted status blocks proceed (present, not silent)" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "timeout" "proceed12: status timeout, not proceeded" "$stderr"
+
+# proceed13: a push in the final last-poll -> emit window (head confirmed
+# different at the decision) falls back to timeout, preserving the head-unchanged
+# guarantee — no proceed and no marker on a superseded commit (Copilot #796
+# review, approval-wait:669). The head is stable across polls (so
+# head_changed_during_wait stays false), only the emit-time confirm differs.
+stderr="$TMP_ROOT/proceed13.err"
+marker_log="$TMP_ROOT/proceed13.log"; : > "$marker_log"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_CONFIRM_HEAD=headsha2 \
+  STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "proceed13: head moved in the confirm window blocks proceed" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "proceed13: status timeout, not proceeded" "$stderr"
+assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "proceed13: no marker posted on a superseded head" "$stderr"
 
 echo "=== approval-wait reviewer-outage marker (PR_REVIEW_OUTAGE_CONTEXT) ==="
 

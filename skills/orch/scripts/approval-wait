@@ -74,10 +74,12 @@
 # (review mode) no named trusted check/status present at head in any state — a
 # pending or failed reviewer check counts as engagement, not silence — and
 # (approval mode) no active COMMENTED review either. A force-push that moved the
-# head mid-wait also falls back to "timeout" (the caller re-waits on the
-# now-stable head), so proceed can never fire seconds after a new commit before
-# the reviewer could re-review it. Proceed thus never bypasses a live gate —
-# only routes around a genuinely dead reviewer.
+# head mid-wait falls back to "timeout" (the caller re-waits on the now-stable
+# head), and the head is re-confirmed once more at the deadline itself — closing
+# the last-poll -> emit window — so neither the proceed nor its outage marker can
+# land on a commit that was superseded after the final poll. Proceed thus never
+# bypasses a live gate and never attests a stale head — only routes around a
+# genuinely dead reviewer.
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply. The --on-timeout flag overrides the setting;
 # both read with orch-env precedence (process env > vstack.settings.toml >
@@ -683,6 +685,20 @@ post_outage_marker() {
   fi
 }
 
+# Re-read the PR head and confirm it still equals the head the proceed decision
+# was made on. head_changed_during_wait only catches changes OBSERVED across
+# polls; a push in the final last-poll -> emit window would otherwise let a
+# proceed (and its outage marker) land on a now-superseded commit while the
+# current-head gate got nothing. On a mismatch — or a failed/empty re-read — the
+# caller must treat it as timeout and re-wait on the current head, preserving the
+# head-unchanged guarantee. Uses a `-q` head-only query, distinct from the poll
+# snapshots, so it is unambiguous.
+confirm_head_unchanged() {
+  local cur
+  cur=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid -q '.headRefOid' 2>/dev/null) || return 1
+  [ -n "$cur" ] && [ "$cur" = "$last_head_sha" ]
+}
+
 update_elapsed
 while true; do
   if [ "$MODE" = "review" ]; then
@@ -976,13 +992,17 @@ done
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply.
 if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] \
-  && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ]; then
-  # Attest the outage on the head BEFORE emitting, so a repo-side CI gate that
-  # reads PR_REVIEW_OUTAGE_CONTEXT already has the signal by the time the caller
-  # moves on to verify CI. No-op when the context is unset (orch-side-only).
+  && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ] \
+  && confirm_head_unchanged; then
+  # The head is confirmed unchanged through to this decision. Attest the outage
+  # on it BEFORE emitting, so a repo-side CI gate that reads
+  # PR_REVIEW_OUTAGE_CONTEXT already has the signal by the time the caller moves
+  # on to verify CI. No-op when the context is unset (orch-side-only).
   post_outage_marker
   emit_result "proceeded"
   exit 0
 fi
+# Either not a proceed, or the head moved in the final window (confirm failed):
+# report timeout so the caller re-waits on the current head. No marker is posted.
 emit_result "timeout"
 exit 1
