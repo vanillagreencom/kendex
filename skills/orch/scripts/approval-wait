@@ -83,6 +83,19 @@
 # both read with orch-env precedence (process env > vstack.settings.toml >
 # default).
 #
+# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty): on a
+# repo whose CI/branch-protection gate independently blocks merges on review
+# evidence, the orch-side "proceeded" alone does not unblock the merge — that
+# gate runs on events, not on orch's wait deadline. When this names a
+# commit-status context, a proceed posts that context as `success` on the
+# proceeded head, giving such a gate a signal to accept (as an extra
+# review-evidence surface) and its status re-fire bridge an event to re-run on.
+# It is a branch-protection relaxation bounded by the same genuine-silence
+# predicate as the proceed itself and by bot-only status trust; match-by-context,
+# so name it only where every status publisher is trusted. Empty = orch-side
+# only (no marker; the repo-side gate is untouched). See orch DEVELOPMENT.md
+# "Reviewer-outage recognition" for the repo-side gate/bridge pattern.
+#
 # Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review] [--on-timeout block|proceed]
 #        approval-wait --resolve-mode
 #   poll_interval default 15s, max_wait default 900s (15 min).
@@ -246,6 +259,22 @@ case "$ON_TIMEOUT" in
     ON_TIMEOUT="block"
     ;;
 esac
+
+# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty). When a
+# proceed degrade fires (reviewer genuinely down), a repo whose CI gate blocks
+# merges on review evidence needs a signal it can accept — CI runs on events,
+# not on a wait deadline, so it has no notion of "orch hit the deadline". If
+# this names a commit-status context, orch posts that context as `success` on
+# the proceeded head (below): the repo's CI gate can add it as an accepted
+# review-evidence surface, and its status re-fire bridge re-runs the gate on the
+# status event, turning the required check green. SECURITY: this is a
+# branch-protection relaxation — the status lets a merge proceed with no review.
+# It is bounded by the same hardened predicate that gates the proceed itself
+# (genuine silence only) and by the bot-only trust of the status API, and it is
+# match-by-context, so name it only on repos where every status publisher is
+# trusted (the same trust model as PR_REVIEW_CHECK). Empty = post nothing (orch
+# proceeds but the repo-side CI gate is unaffected — orch-side-only opt-in).
+OUTAGE_CONTEXT="$("$SCRIPT_DIR/orch-env" PR_REVIEW_OUTAGE_CONTEXT "")"
 
 update_elapsed() {
   local now
@@ -600,6 +629,26 @@ post_nudge() {
   fi
 }
 
+# Attest a reviewer-outage on the proceeded head (PR_REVIEW_OUTAGE_CONTEXT).
+# Called only from the proceed path, so it inherits that path's guarantee of
+# genuine reviewer silence. Posts the configured context as `success` on the
+# exact head so a repo whose CI gate reads it can turn its required check green
+# and its status re-fire bridge can re-run the gate; head-pinned, so a later
+# force-push (a new head with no marker) never rides a stale attestation. A
+# failure warns but never blocks the proceed verdict — the orch-side degrade
+# stands regardless; the marker is best-effort plumbing for repo-side CI.
+post_outage_marker() {
+  [ -n "$OUTAGE_CONTEXT" ] || return 0
+  [ -n "$last_head_sha" ] || return 0
+  if ! gh api -X POST "repos/$REPO/statuses/$last_head_sha" \
+      -f state=success \
+      -f context="$OUTAGE_CONTEXT" \
+      -f "description=orch reviewer-outage: proceeded after ${elapsed}s with no reviewer evidence" \
+      >/dev/null 2>&1; then
+    echo "approval-wait: outage-marker status '$OUTAGE_CONTEXT' failed for PR #$PR_NUM in $REPO" >&2
+  fi
+}
+
 update_elapsed
 while true; do
   if [ "$MODE" = "review" ]; then
@@ -894,6 +943,10 @@ done
 # comment-hygiene gate still apply.
 if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] \
   && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ]; then
+  # Attest the outage on the head BEFORE emitting, so a repo-side CI gate that
+  # reads PR_REVIEW_OUTAGE_CONTEXT already has the signal by the time the caller
+  # moves on to verify CI. No-op when the context is unset (orch-side-only).
+  post_outage_marker
   emit_result "proceeded"
   exit 0
 fi

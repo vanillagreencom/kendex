@@ -103,6 +103,19 @@ PR_REVIEW_ON_TIMEOUT = "block"
 # real comment is never bypassed); CI and comment-hygiene gates still apply. On
 # multi-reviewer repos this only fires when EVERY reviewer is silent.
 
+PR_REVIEW_OUTAGE_CONTEXT = ""
+# Used by: orch (`approval-wait`). Makes PR_REVIEW_ON_TIMEOUT=proceed
+# end-to-end on repos whose CI/branch-protection gate independently blocks
+# merges on review evidence. When this names a commit-status context, a proceed
+# posts that context as `success` on the proceeded head; the repo's CI gate can
+# accept it as an extra review-evidence surface and its status re-fire bridge
+# re-runs the gate. Empty (default) = orch-side-only (no marker; the repo-side
+# gate is untouched). SECURITY: a branch-protection relaxation — the status
+# lets a merge proceed with no review; bounded by the genuine-silence proceed
+# predicate + bot-only status trust, matched by context, so name it ONLY where
+# every status publisher is trusted. See orch DEVELOPMENT.md "Reviewer-outage
+# recognition".
+
 # BOT / COMMIT IDENTITY
 
 BOT_NAME = "automation-bot"

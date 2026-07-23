@@ -74,6 +74,11 @@
 #      pending) in review mode still times out (engagement, not silence), the
 #      default is "block" (timeout), and an unrecognized value falls back to
 #      block with a warning
+#   marker1-5: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a proceed
+#      posts the configured context as a success status on the current head
+#      (review and approval modes), posts nothing when the context is empty or
+#      the deadline did not proceed (timeout) or a thread is open, so the marker
+#      tracks the proceed decision exactly and only attests genuine outage
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -188,6 +193,15 @@ case "${1:-}" in
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       payload="$(cat)"
       echo "rerequest:$payload" >> "${STUB_NUDGE_LOG:?}"
+      echo '{}'
+      exit 0
+    fi
+    # Outage-marker POST: repos/<repo>/statuses/<sha> (plural — distinct from
+    # the singular commits/<sha>/status read). Log the full arg line when a
+    # test opts in via STUB_MARKER_LOG so it can assert the context and head.
+    if [[ "$*" == *"/statuses/"* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      [[ -n "${STUB_MARKER_LOG:-}" ]] && printf 'marker:%s\n' "$*" >> "$STUB_MARKER_LOG"
       echo '{}'
       exit 0
     fi
@@ -905,6 +919,70 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "proceed12: pending trusted status blocks proceed (present, not silent)" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "timeout" "proceed12: status timeout, not proceeded" "$stderr"
+
+echo "=== approval-wait reviewer-outage marker (PR_REVIEW_OUTAGE_CONTEXT) ==="
+
+# marker1: a proceed with PR_REVIEW_OUTAGE_CONTEXT set posts that context as a
+# success status on the proceeded head, so a repo-side CI gate can accept it and
+# its status re-fire bridge can re-run the gate.
+stderr="$TMP_ROOT/marker1.err"
+marker_log="$TMP_ROOT/marker1.log"; : > "$marker_log"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "marker1: proceed still exits 0 with the marker configured" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "marker1: status proceeded" "$stderr"
+assert_contains "$(cat "$marker_log")" "context=vstack-reviewer-outage" "marker1: posts the configured context" "$stderr"
+assert_contains "$(cat "$marker_log")" "statuses/headsha1" "marker1: posts on the current head" "$stderr"
+
+# marker2: with PR_REVIEW_OUTAGE_CONTEXT empty (default), proceed posts NO
+# marker — orch-side-only opt-in, the repo-side gate is untouched.
+stderr="$TMP_ROOT/marker2.err"
+marker_log="$TMP_ROOT/marker2.log"; : > "$marker_log"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
+  STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$(json_field "$output" '.status')" "proceeded" "marker2: status proceeded" "$stderr"
+assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker2: no marker posted when context empty" "$stderr"
+
+# marker3: a non-proceed deadline (default block -> timeout) never posts the
+# marker, even with the context set — only a genuine proceed attests an outage.
+stderr="$TMP_ROOT/marker3.err"
+marker_log="$TMP_ROOT/marker3.log"; : > "$marker_log"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$(json_field "$output" '.status')" "timeout" "marker3: default block times out" "$stderr"
+assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker3: no marker on timeout (only proceed attests)" "$stderr"
+
+# marker4: an open thread returns "comments" before the deadline, so no outage
+# is attested despite the context being set — a real comment is never bypassed.
+stderr="$TMP_ROOT/marker4.err"
+marker_log="$TMP_ROOT/marker4.log"; : > "$marker_log"
+set +e
+output=$(run_review_json STUB_REVIEWS_MODE=none STUB_THREADS_UNRESOLVED=2 PR_REVIEW_ON_TIMEOUT=proceed \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$(json_field "$output" '.status')" "comments" "marker4: open thread returns comments, not proceeded" "$stderr"
+assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker4: no outage attested when a thread is open" "$stderr"
+
+# marker5: approval mode attests symmetrically — a proceed posts the marker.
+stderr="$TMP_ROOT/marker5.err"
+marker_log="$TMP_ROOT/marker5.log"; : > "$marker_log"
+set +e
+output=$(run_wait_json_short STUB_APPROVAL_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_LOG="$marker_log" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$(json_field "$output" '.status')" "proceeded" "marker5: approval-mode proceed" "$stderr"
+assert_contains "$(cat "$marker_log")" "context=vstack-reviewer-outage" "marker5: approval-mode posts the marker" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 
