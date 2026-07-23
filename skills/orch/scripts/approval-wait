@@ -83,13 +83,15 @@
 # both read with orch-env precedence (process env > vstack.settings.toml >
 # default).
 #
-# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty): on a
-# repo whose CI/branch-protection gate independently blocks merges on review
-# evidence, the orch-side "proceeded" alone does not unblock the merge — that
-# gate runs on events, not on orch's wait deadline. When this names a
-# commit-status context, a proceed posts that context as `success` on the
-# proceeded head, giving such a gate a signal to accept (as an extra
-# review-evidence surface) and its status re-fire bridge an event to re-run on.
+# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty; review
+# mode only): on a repo whose CI/branch-protection gate independently blocks
+# merges on review evidence, the orch-side "proceeded" alone does not unblock
+# the merge — that gate runs on events, not on orch's wait deadline. When this
+# names a commit-status context, a review-mode proceed posts that context as
+# `success` on the proceeded head, giving such a gate a signal to accept (as an
+# extra review-evidence surface) and its status re-fire bridge an event to re-run
+# on. Approval mode never posts it (its silence signal excludes reviewer checks,
+# and a status cannot satisfy native required-approvals).
 # It is a branch-protection relaxation bounded by the same genuine-silence
 # predicate as the proceed itself and by bot-only status trust; match-by-context,
 # so name it only where every status publisher is trusted. Empty = orch-side
@@ -260,9 +262,10 @@ case "$ON_TIMEOUT" in
     ;;
 esac
 
-# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty). When a
-# proceed degrade fires (reviewer genuinely down), a repo whose CI gate blocks
-# merges on review evidence needs a signal it can accept — CI runs on events,
+# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty; review
+# mode only — see post_outage_marker). When a proceed degrade fires (reviewer
+# genuinely down), a repo whose CI gate blocks merges on review evidence needs
+# a signal it can accept — CI runs on events,
 # not on a wait deadline, so it has no notion of "orch hit the deadline". If
 # this names a commit-status context, orch posts that context as `success` on
 # the proceeded head (below): the repo's CI gate can add it as an accepted
@@ -637,7 +640,17 @@ post_nudge() {
 # force-push (a new head with no marker) never rides a stale attestation. A
 # failure warns but never blocks the proceed verdict — the orch-side degrade
 # stands regardless; the marker is best-effort plumbing for repo-side CI.
+#
+# REVIEW MODE ONLY: the genuine-silence bound requires "no engagement of any
+# kind", but only review mode queries PR_REVIEW_CHECK check-runs/statuses into
+# last_reviews_present — approval mode counts formal reviews alone, so a
+# queued/pending/failed reviewer check could be active there when the marker
+# posts, falsely attesting silence. Restricting to review mode is also the
+# right scope: the marker exists to unblock a repo-side CI gate that reads
+# review-evidence statuses (the review-gated-CI pattern), and a commit status
+# cannot satisfy approval mode's native required-approvals branch protection.
 post_outage_marker() {
+  [ "$MODE" = "review" ] || return 0
   [ -n "$OUTAGE_CONTEXT" ] || return 0
   [ -n "$last_head_sha" ] || return 0
   if ! gh api -X POST "repos/$REPO/statuses/$last_head_sha" \

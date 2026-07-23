@@ -74,11 +74,12 @@
 #      pending) in review mode still times out (engagement, not silence), the
 #      default is "block" (timeout), and an unrecognized value falls back to
 #      block with a warning
-#   marker1-5: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a proceed
-#      posts the configured context as a success status on the current head
-#      (review and approval modes), posts nothing when the context is empty or
-#      the deadline did not proceed (timeout) or a thread is open, so the marker
-#      tracks the proceed decision exactly and only attests genuine outage
+#   marker1-5: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a
+#      review-mode proceed posts the configured context as a success status on
+#      the current head; posts nothing when the context is empty, the deadline
+#      did not proceed (timeout), a thread is open, or the mode is approval
+#      (review-mode only — approval's silence signal excludes reviewer checks),
+#      so the marker attests only genuine review-mode outage
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -973,7 +974,10 @@ set -e
 assert_eq "$(json_field "$output" '.status')" "comments" "marker4: open thread returns comments, not proceeded" "$stderr"
 assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker4: no outage attested when a thread is open" "$stderr"
 
-# marker5: approval mode attests symmetrically — a proceed posts the marker.
+# marker5: approval mode posts NO marker even on a proceed — its engagement
+# signal (last_reviews_present) excludes reviewer check-runs/statuses, and a
+# commit status cannot satisfy native required-approvals anyway, so the outage
+# marker is review-mode only (Copilot #796 review, approval-wait:949).
 stderr="$TMP_ROOT/marker5.err"
 marker_log="$TMP_ROOT/marker5.log"; : > "$marker_log"
 set +e
@@ -981,8 +985,8 @@ output=$(run_wait_json_short STUB_APPROVAL_MODE=none PR_REVIEW_ON_TIMEOUT=procee
   PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_LOG="$marker_log" 2>"$stderr")
 rc=$?
 set -e
-assert_eq "$(json_field "$output" '.status')" "proceeded" "marker5: approval-mode proceed" "$stderr"
-assert_contains "$(cat "$marker_log")" "context=vstack-reviewer-outage" "marker5: approval-mode posts the marker" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "marker5: approval-mode still proceeds" "$stderr"
+assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker5: approval-mode posts no marker (review-mode only)" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 

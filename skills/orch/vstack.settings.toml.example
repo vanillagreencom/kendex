@@ -44,11 +44,11 @@ PR_REVIEW_CHECK = ""
 # already satisfies the gate on its own.
 PR_REVIEW_ON_TIMEOUT = "block"
 
-# Used by: orch (`approval-wait`). Makes PR_REVIEW_ON_TIMEOUT=proceed
+# Used by: orch (`approval-wait`, review mode). Makes PR_REVIEW_ON_TIMEOUT=proceed
 # end-to-end on repos whose CI/branch-protection gate independently blocks
 # merges on review evidence (that gate runs on events, not on orch's wait
 # deadline, so the orch-side "proceeded" alone cannot unblock it). When this
-# names a commit-status context, a proceed posts that context as `success` on
+# names a commit-status context, a review-mode proceed posts that context as `success` on
 # the proceeded head; the repo's CI gate can accept it as an extra
 # review-evidence surface, and its status re-fire bridge re-runs the gate on
 # the event. Empty (default) = post nothing (orch-side-only opt-in — the
