@@ -74,12 +74,14 @@
 #      pending) in review mode still times out (engagement, not silence), the
 #      default is "block" (timeout), and an unrecognized value falls back to
 #      block with a warning
-#   marker1-5: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a
+#   marker1-6: PR_REVIEW_OUTAGE_CONTEXT reviewer-outage attestation — a
 #      review-mode proceed posts the configured context as a success status on
-#      the current head; posts nothing when the context is empty, the deadline
-#      did not proceed (timeout), a thread is open, or the mode is approval
-#      (review-mode only — approval's silence signal excludes reviewer checks),
-#      so the marker attests only genuine review-mode outage
+#      the current head (JSON outage_marker "posted"); posts nothing when the
+#      context is empty, the deadline did not proceed (timeout), a thread is
+#      open, or the mode is approval (review-mode only — approval's silence
+#      signal excludes reviewer checks); and a rejected POST still proceeds but
+#      reports outage_marker "failed" + a loud warning so the caller can retry/
+#      stop rather than idle ci-wait against a gate that got no signal
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 
@@ -203,6 +205,8 @@ case "${1:-}" in
     if [[ "$*" == *"/statuses/"* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       [[ -n "${STUB_MARKER_LOG:-}" ]] && printf 'marker:%s\n' "$*" >> "$STUB_MARKER_LOG"
+      # STUB_MARKER_FAIL simulates a rejected status POST (e.g. no statuses:write).
+      if [[ -n "${STUB_MARKER_FAIL:-}" ]]; then echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; fi
       echo '{}'
       exit 0
     fi
@@ -937,6 +941,7 @@ assert_eq "$rc" "0" "marker1: proceed still exits 0 with the marker configured" 
 assert_eq "$(json_field "$output" '.status')" "proceeded" "marker1: status proceeded" "$stderr"
 assert_contains "$(cat "$marker_log")" "context=vstack-reviewer-outage" "marker1: posts the configured context" "$stderr"
 assert_contains "$(cat "$marker_log")" "statuses/headsha1" "marker1: posts on the current head" "$stderr"
+assert_eq "$(json_field "$output" '.outage_marker')" "posted" "marker1: JSON reports outage_marker posted" "$stderr"
 
 # marker2: with PR_REVIEW_OUTAGE_CONTEXT empty (default), proceed posts NO
 # marker — orch-side-only opt-in, the repo-side gate is untouched.
@@ -987,6 +992,22 @@ rc=$?
 set -e
 assert_eq "$(json_field "$output" '.status')" "proceeded" "marker5: approval-mode still proceeds" "$stderr"
 assert_eq "$(wc -l < "$marker_log" | tr -d ' ')" "0" "marker5: approval-mode posts no marker (review-mode only)" "$stderr"
+
+# marker6: a FAILED marker POST (e.g. missing statuses:write) still exits 0 with
+# status "proceeded" — the reviewer really is down — but reports
+# outage_marker="failed" in the JSON and warns loudly, so a caller can tell the
+# repo-side gate never got its signal (it cannot recover on its own) and
+# retry/stop instead of idling ci-wait (Copilot #796 review, approval-wait:662).
+stderr="$TMP_ROOT/marker6.err"
+set +e
+output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
+  PR_REVIEW_OUTAGE_CONTEXT="vstack-reviewer-outage" STUB_MARKER_FAIL=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "marker6: failed marker still exits 0 (proceed stands)" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "marker6: status still proceeded" "$stderr"
+assert_eq "$(json_field "$output" '.outage_marker')" "failed" "marker6: JSON reports outage_marker failed" "$stderr"
+assert_contains "$(cat "$stderr")" "outage-marker status" "marker6: warns about the failed marker" "$stderr"
 
 echo "=== approval-wait --mode review check-run evidence (vstack#654) ==="
 

@@ -136,6 +136,12 @@
 #                                   # "status" — the API surface that matched
 #     "transient_api_errors": <int>,  # only when > 0: transient GitHub API
 #                                   # failures absorbed by retrying (vstack#748)
+#     "outage_marker": <string>,    # review-mode proceed with
+#                                   # PR_REVIEW_OUTAGE_CONTEXT set: "posted" or
+#                                   # "failed" (the status POST was rejected —
+#                                   # the repo-side CI gate got no signal and
+#                                   # cannot recover; retry or stop, do not idle
+#                                   # ci-wait). Absent when not attempted.
 #     "error": <string>             # only when status == "error"
 #   }
 #
@@ -303,6 +309,11 @@ last_review_evidence=""
 last_check_surface=""
 last_check_app=""
 last_check_creator=""
+# Outage-marker outcome, reported in the JSON so a caller can distinguish a
+# proceed whose marker landed (repo-side gate will re-fire green) from one whose
+# marker POST failed (gate stays red, cannot recover on its own). "" = not
+# attempted (no context / approval mode); "posted"; "failed".
+last_outage_marker=""
 
 # Transient-failure bookkeeping (vstack#748): every gh call in the poll loop
 # writes stderr to GH_ERR_FILE so a failure can be classified before it is
@@ -365,6 +376,7 @@ emit_result() {
       --argjson elapsed "$elapsed" \
       --argjson mode_fields "$mode_fields" \
       --argjson transient "$transient_api_errors" \
+      --arg marker "$last_outage_marker" \
       --arg error "$error_msg" \
       '{
         status: $s,
@@ -375,6 +387,7 @@ emit_result() {
         elapsed_seconds: $elapsed
       } + $mode_fields
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
+        + (if $marker == "" then {} else {outage_marker: $marker} end)
         + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
@@ -653,12 +666,20 @@ post_outage_marker() {
   [ "$MODE" = "review" ] || return 0
   [ -n "$OUTAGE_CONTEXT" ] || return 0
   [ -n "$last_head_sha" ] || return 0
-  if ! gh api -X POST "repos/$REPO/statuses/$last_head_sha" \
+  if gh api -X POST "repos/$REPO/statuses/$last_head_sha" \
       -f state=success \
       -f context="$OUTAGE_CONTEXT" \
       -f "description=orch reviewer-outage: proceeded after ${elapsed}s with no reviewer evidence" \
       >/dev/null 2>&1; then
-    echo "approval-wait: outage-marker status '$OUTAGE_CONTEXT' failed for PR #$PR_NUM in $REPO" >&2
+    last_outage_marker="posted"
+  else
+    # The proceed verdict stands (the reviewer is genuinely down), but the
+    # signal the repo-side CI gate needs was not created — that gate cannot
+    # recover on its own. Surface it loudly AND in the JSON (outage_marker:
+    # "failed") so the caller can retry the marker or stop, rather than idling
+    # ci-wait against a gate that will never turn green.
+    last_outage_marker="failed"
+    echo "approval-wait: outage-marker status '$OUTAGE_CONTEXT' POST failed for PR #$PR_NUM in $REPO — the repo-side CI gate will NOT recover on its own (check statuses:write); JSON outage_marker=failed." >&2
   fi
 }
 
