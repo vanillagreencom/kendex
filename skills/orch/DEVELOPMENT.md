@@ -70,7 +70,9 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
 
   What to do instead is **contingent on the repo's merge path, and the contingency is the point** — the version of this advice that read as universal is exactly how the guidance went wrong:
 
-  1. **Repos whose documented merge procedure routes through `github.sh pr-merge`**: drop the CI-side thread condition. `pr-merge` already applies a local hard gate on actionable (unresolved, non-outdated) review threads — bypassable only by an explicit `--force`, and not even by `--auto` — which needs no re-fire and no credential, so thread hygiene relocates to merge time and the gate keeps only its review-evidence terms.
+  1. **Repos whose documented merge procedure routes through `github.sh pr-merge`**: drop the CI-side thread condition. `pr-merge` already applies a local hard gate on actionable (unresolved, non-outdated) review threads — bypassable only by an explicit `--force`, and not even by `--auto` — so thread hygiene relocates to merge time and the gate keeps only its review-evidence terms. This needs no re-fire and no NEW credential: `pr-merge` authenticates with the `GH_TOKEN`/`GH_BOT_TOKEN` the merging session already uses, unlike a CI-side re-fire, which would need a token provisioned as a repo secret.
+
+     **A merge queue is not a reason to opt out of this.** `pr-merge` supports queues first-class: `--auto` enrolls the PR and reports QUEUED (exit 75), is idempotent when the PR is already enrolled (vstack#616), and the queue still retests the exact merged candidate. So "we merge raw so the queue retests the candidate" does not justify bypassing the skill — bypassing it only discards the thread gate.
   2. **Repos whose documented merge procedure does NOT route through the skill** — typically merge-queue repos that merge with raw `gh pr merge <number> --squash` so the queue retests the exact candidate: do NOT drop it. Raw merging puts `pr-merge`'s unresolved-threads gate nowhere in their path, so removing the CI-side term leaves thread hygiene enforced NOWHERE — a silent weakening of the review gate, not a simplification. Relocating the check for such a repo is a review-policy change to its own merge procedure, needing the maintainer's sign-off; it is not a CI refactor a session may make unilaterally. Determine which case a repo is in by reading its merge procedure, never by assuming the skill is the merge path.
   3. **Repos that keep the CI-side thread condition** need BOTH halves, and the second is the one usually missed:
      - a rerun-in-place path that can actually re-run its lanes — see § Status re-fire bridge below and its skipped-jobs mode selection (vstack#806); the earlier `rerun-failed-jobs`-first shape could not clear a gate-only attempt 1;
@@ -95,11 +97,17 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
             GH_TOKEN: ${{ github.token }}
             SHA: ${{ github.event.sha }}
           run: |
-            for pr in $(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[].number'); do
+            # Enumerate into variables FIRST. `for x in $(cmd)` does not abort the
+            # step under `bash -e` when cmd fails — the substitution yields an
+            # empty word list, the loop body never runs, and the bridge exits 0
+            # having done nothing. Assignment propagates the failure instead.
+            prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[].number')
+            for pr in $prs; do
               head=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
               [ "$head" = "$SHA" ] || continue
-              for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA" \
-                  --jq '.workflow_runs[] | select(.conclusion == "failure") | .id'); do
+              runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA" \
+                --jq '.workflow_runs[] | select(.conclusion == "failure") | .id')
+              for run in $runs; do
                 # Choose the rerun mode from what the run CONTAINS. A gate-blocked
                 # attempt 1 SKIPPED its heavy lanes rather than failing them, and
                 # rerun-failed-jobs cannot resurrect a skipped job, so only a full
@@ -118,7 +126,7 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
             done
   ```
 
-  Conventions carried over from the memsira approval-rerun bridge (the prior art for this pattern): **quiesce** before dispatching — the failed-conclusion filter already skips runs that are queued or in progress, so a head whose gate is mid-rerun is never double-dispatched, and the current-head equality check drops superseded SHAs instead of rerunning stale runs; and **fail loud** — every `gh` call is unguarded, so any API error fails the step (and the bridge run) visibly under the runner's default `bash -e` rather than being papered over by a second call, and a bridge that stops working is discoverable on the Actions tab. Narrow the rerun loop to the gate workflow(s) by name if unrelated workflows also fail on the head.
+  Conventions carried over from the memsira approval-rerun bridge (the prior art for this pattern): **quiesce** before dispatching — the failed-conclusion filter already skips runs that are queued or in progress, so a head whose gate is mid-rerun is never double-dispatched, and the current-head equality check drops superseded SHAs instead of rerunning stale runs; and **fail loud** — every `gh` call is unguarded, so an API error fails the step (and the bridge run) visibly under the runner's default `bash -e` rather than being papered over by a second call, and a bridge that stops working is discoverable on the Actions tab. That guarantee depends on HOW each call is written: `bash -e` does not abort on a failed command substitution used as a `for` word list — it just yields no items, so the loop silently does nothing and the run still exits 0. Enumerate into a variable first and loop over that; the assignment is what propagates the failure. Every query in the snippet above is written that way for this reason. Narrow the rerun loop to the gate workflow(s) by name if unrelated workflows also fail on the head.
 
   **Mode selection is by run content, never by fallback (vstack#806, drovr #249).** The earlier shape ran `rerun-failed-jobs` first and fell back with `|| ... /rerun`, which was wrong twice over. On a gate-blocked attempt 1 the heavy lanes were SKIPPED, not failed, so `rerun-failed-jobs` re-ran the gate job alone, the skipped prerequisites stayed skipped, and the aggregate could never turn green. And the `||` never rescued it: `||` catches a failed API *call*, and `rerun-failed-jobs` SUCCEEDED — it did rerun the failed job — so the full `rerun` was unreachable and the bridge reported success while the PR stayed red. `rerun-failed-jobs` is correct only when every job that must turn green actually failed; **it cannot resurrect a SKIPPED job** — the same caveat that makes the per-job gate shape load-bearing under § Tiered CI below. Change the two together. The job query is the authority: `/actions/runs/{id}/jobs` defaults to the latest attempt and reports `conclusion` per job, `skipped` among its values. A rerun re-executes the workflow definition pinned at the original event (see § 5.2 of `submit-pr.md`) — correct here, because the gate logic is unchanged and only the evidence it queries has since turned green.
 
