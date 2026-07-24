@@ -632,7 +632,10 @@ export function isConnectorWriteTool(name: string): boolean {
 	// server name containing `__` leaves the extra segment in `tool`, which then
 	// fails the read-prefix test — ambiguity resolves to write.
 	const sep = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
-	if (sep < 0) return true;
+	// No separator (sep < 0) OR an EMPTY server segment (sep at the prefix, e.g.
+	// `mcp__claude_ai___search_messages`) means the name doesn't parse as
+	// <server>__<tool> — it never earns the read-prefix exemption.
+	if (sep <= CONNECTOR_NS_PREFIX.length) return true;
 	const tool = name.slice(sep + "__".length);
 	return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
 }

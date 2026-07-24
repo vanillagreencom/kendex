@@ -43399,7 +43399,7 @@ var CONNECTOR_WRITE_TOOLS = [
 function isConnectorWriteTool(name) {
   if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
   const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
-  if (sep2 < 0) return true;
+  if (sep2 <= CONNECTOR_NS_PREFIX.length) return true;
   const tool = name.slice(sep2 + "__".length);
   return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
 }

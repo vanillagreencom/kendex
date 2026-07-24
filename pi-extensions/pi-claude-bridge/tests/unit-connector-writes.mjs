@@ -143,6 +143,8 @@ test("isConnectorWriteTool FAILS CLOSED on malformed names inside the connector 
 		"mcp__claude_ai_", // prefix only, no server, no tool
 		"mcp__claude_ai_Slack", // server, no tool segment
 		"mcp__claude_ai_Slack__", // empty tool segment
+		"mcp__claude_ai___search_messages", // EMPTY server segment: read verb must not exempt it
+		"mcp__claude_ai_____get_thing", // empty server + leading-underscore tool segment
 		"mcp__claude_ai_Weird__Server__list_things", // extra segment → not a bare read verb
 		"mcp__claude_ai_Slack__Send_Message", // read prefixes are case-sensitive
 	];
