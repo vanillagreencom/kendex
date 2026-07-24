@@ -287,6 +287,19 @@ for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_not_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$LEGACY_CHECK" "$wf.md carries no legacy positional dev-artifact-check call"
 done
 
+# --- vstack#803: mechanical per-wake A/B check + single-shot wall-clock watchdog ---
+# The stall was an orchestrator that read a `finished` wake's wording and idled
+# without running A/B, plus a wait loop with no wall-clock re-entry when wakes
+# stopped. SKILL must mandate both, and every delegation point that stamps
+# dev_delegated_at must arm the watchdog.
+orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
+assert_file_contains "$orch_skill" "Classify every wake mechanically" "SKILL mandates mechanical per-wake A/B classification (vstack#803)"
+assert_file_contains "$orch_skill" "Arm a wall-clock watchdog at delegation" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (vstack#803)"
+WATCHDOG_ARM="arm the single-shot wall-clock watchdog"
+for wf in dev-start dev-fix review-pr-comments ci-fix; do
+  assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$WATCHDOG_ARM" "$wf.md arms the single-shot watchdog at delegation (vstack#803)"
+done
+
 # --- doc wiring: dev workflows write the completion artifact via dev-return-write with --round-id ---
 # The dev workflows key the artifact to [ARTIFACT_KEY] (the normalized workflow-state
 # key from the delegation's Artifact Key: line), NOT the tracker-native [ISSUE_ID],

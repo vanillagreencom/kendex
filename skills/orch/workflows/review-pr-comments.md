@@ -318,7 +318,7 @@ Issue suggestions: [N] items → § 6.2 audit
 
 2. **Group items** by `agent` field.
 
-3. **Stamp the round, then delegate fixes** per agent group (reuse existing dev agent if available). `dev_round_id` binds step 5 `dev-artifact-check` acceptance to THIS cycle's receipt (deterministic identity — vstack#776); `dev_delegated_at` is the watchdog deadline. Run each as its own tool call, immediately before the delegation:
+3. **Stamp the round, then delegate fixes** per agent group (reuse existing dev agent if available). `dev_round_id` binds step 5 `dev-artifact-check` acceptance to THIS cycle's receipt (deterministic identity — vstack#776); `dev_delegated_at` is the watchdog deadline — immediately after stamping it, **arm the single-shot wall-clock watchdog** for `dev_delegated_at + 10min` (SKILL § Wait for Agent Return), so the A/B check + escalation ladder runs even if the agent goes silent with no further wake (vstack#803). Run each as its own tool call, immediately before the delegation:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
