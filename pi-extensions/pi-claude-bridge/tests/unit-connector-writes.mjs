@@ -199,11 +199,39 @@ test("isConnectorWriteTool denies LIVE Slack + Atlassian writes", () => {
 
 test("isConnectorWriteTool: a read verb mixed with a mutation still denies", () => {
 	// A name may open with a read verb and still mutate; deny wins over the
-	// read exemption so the mixed case can never sneak through.
+	// read exemption so the mixed case can never sneak through. The second
+	// block uses mutating verbs BEYOND the obvious create/send/delete — the
+	// mutation vocabulary must cover the verbs real APIs actually use, or a
+	// compound name launders a mutation past the gate. `fetchAndLock` is a real
+	// precedent (Camunda's external-task endpoint, which locks tasks).
 	const writes = [
 		"mcp__claude_ai_Slack__getOrCreateChannel",
 		"mcp__claude_ai_Atlassian__findAndDeleteIssue",
 		"mcp__claude_ai_Gmail__get_and_send_draft",
+		"mcp__claude_ai_Camunda__fetchAndLock",
+		"mcp__claude_ai_Github__getMergePullRequest",
+		"mcp__claude_ai_Jira__getResolveIssue",
+		"mcp__claude_ai_PagerDuty__get_incident_and_acknowledge",
+		"mcp__claude_ai_AWS__describe_instance_and_terminate",
+		"mcp__claude_ai_AWS__describe_instance_and_stop",
+		"mcp__claude_ai_Calendly__get_next_slot_and_book",
+		"mcp__claude_ai_Slack__slack_search_and_join_channel",
+		"mcp__claude_ai_Slack__slack_get_channel_and_leave",
+		"mcp__claude_ai_Slack__slack_search_and_star_message",
+		"mcp__claude_ai_Slack__slack_get_message_and_forward",
+	];
+	for (const name of writes) assert.equal(isConnectorWriteTool(name), true, name);
+});
+
+test("isConnectorWriteTool: a verb-shaped SERVER name cannot launder its tool's verb", () => {
+	// The server-prefix skip exists for Slack's `slack_`-prefixed tools. It must
+	// never strip a leading word that is itself a mutation — otherwise a server
+	// named after a verb turns its own writes into reads.
+	const writes = [
+		"mcp__claude_ai_Sync__sync_get_status",
+		"mcp__claude_ai_Archive__archive_list_items",
+		"mcp__claude_ai_Delete__delete_get_thing",
+		"mcp__claude_ai_Merge__merge_read_branch",
 	];
 	for (const name of writes) assert.equal(isConnectorWriteTool(name), true, name);
 });

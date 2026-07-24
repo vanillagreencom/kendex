@@ -110,13 +110,36 @@ const CONNECTOR_READ_VERBS = new Set([
 	"download", "describe", "query", "count", "view", "lookup", "whoami",
 ]);
 
-// Unambiguously mutating words, consulted ONLY when a tool name already begins
-// with a read verb (e.g. a hypothetical `getOrCreateChannel`): deny wins over
-// the read exemption there, so a mixed name can never earn read treatment.
+// Mutating words. Two jobs, both on the deny side:
+//
+//  1. A name that begins with a read verb but also names a mutation
+//     (`fetchAndLock`, `get_incident_and_acknowledge`) is a WRITE — deny wins
+//     over the read exemption, so a compound name cannot earn read treatment.
+//  2. A leading word that repeats the server name is NOT skipped when it is a
+//     mutation word, so a connector whose SERVER is verb-shaped
+//     (`Delete__delete_get_thing`) keeps its real verb.
+//
+// This list is deliberately broad and errs toward over-denial: a read wrongly
+// called a write only blocks a read, whereas the reverse runs an ungated
+// mutation. It is a backstop, not the primary protection — that is the leading
+// verb, which real connector tools put first (`createJiraIssue`,
+// `slack_send_message`, `delete_file`). Nouns that collide with real read names
+// are deliberately excluded (`comment`/`tag`/`flag`/`run`, since
+// `getComment`, `searchByTag`, `getFeatureFlag`, `getWorkflowRun` are reads).
 const CONNECTOR_MUTATION_WORDS = new Set([
 	"create", "update", "delete", "remove", "add", "edit", "send", "post",
 	"write", "upload", "publish", "schedule", "transition", "archive", "move",
 	"copy", "revoke", "assign", "invite", "share", "rename", "replace", "set",
+	"merge", "resolve", "lock", "unlock", "acknowledge", "ack", "book",
+	"start", "stop", "terminate", "restart", "join", "leave", "star", "unstar",
+	"forward", "sync", "approve", "reject", "close", "reopen", "cancel",
+	"enable", "disable", "grant", "trigger", "execute", "apply", "submit",
+	"pin", "unpin", "mute", "unmute", "subscribe", "unsubscribe", "follow",
+	"unfollow", "clear", "purge", "reset", "rotate", "deploy", "install",
+	"uninstall", "save", "store", "put", "patch", "insert", "append",
+	"prepend", "duplicate", "restore", "revert", "import", "export", "upsert",
+	"sign", "complete", "claim", "release", "promote", "demote", "escalate",
+	"resend", "retry", "react", "vote",
 ]);
 
 // Splits a tool (or server) segment into lowercase words, handling snake_case,
@@ -212,10 +235,17 @@ export function isConnectorWriteTool(name: string): boolean {
 	// Skip a leading run of words that just repeats the server name, so a
 	// server-prefixed tool (`Slack__slack_read_channel`) is judged on its real
 	// verb. Only an exact leading match is skipped — an unrelated first word
-	// (`Weird__Server__list_things`) stays and fails the read test.
+	// (`Weird__Server__list_things`) stays and fails the read test. A mutation
+	// word is never skipped, so a verb-shaped server name
+	// (`Delete__delete_get_thing`, `Sync__sync_get_status`) cannot launder its
+	// own tool's verb away.
 	const serverWords = connectorNameWords(server);
 	let skipped = 0;
-	while (skipped < serverWords.length && words[skipped] === serverWords[skipped]) skipped++;
+	while (
+		skipped < serverWords.length
+		&& words[skipped] === serverWords[skipped]
+		&& !CONNECTOR_MUTATION_WORDS.has(words[skipped])
+	) skipped++;
 	const rest = words.slice(skipped);
 	// Nothing parseable left (empty/punctuation-only tool segment, or a tool
 	// named exactly after its server) → write.
