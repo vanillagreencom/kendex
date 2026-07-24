@@ -293,6 +293,49 @@ assert_eq "$unlocked_out" "Removed: $LOCKED_ROOT/trees/issue-locked" "unlocked w
 assert_path_absent "$LOCKED_ROOT/trees/issue-locked" "unlocked worktree removed"
 assert_branch_absent "$LOCKED_ROOT/main" "issue-locked" "unlocked merged branch deleted"
 
+# The load-bearing case: the lock precheck PASSES (nothing is locked) and git
+# itself refuses the removal. Only "leave the tree intact until git succeeds"
+# can preserve the symlinks here — reintroducing a pre-strip after the precheck
+# would fail these assertions while the locked case above still passed. Mirrors
+# the fake-`git` pattern worktree_base_dir.sh uses for `cleanup`.
+RMFAIL_ROOT="$TMP_ROOT/remove-failure"
+make_repo "$RMFAIL_ROOT/main"
+printf 'agents\n' > "$RMFAIL_ROOT/main/AGENTS.md"
+mkdir -p "$RMFAIL_ROOT/main/.agents" "$RMFAIL_ROOT/main/.claude/agents"
+git -C "$RMFAIL_ROOT/main" add AGENTS.md
+git -C "$RMFAIL_ROOT/main" commit -q -m agents
+cat > "$RMFAIL_ROOT/main/.env.local" <<'ENV'
+WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
+WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
+ENV
+git -C "$RMFAIL_ROOT/main" worktree add -q -b issue-rmfail "$RMFAIL_ROOT/trees/issue-rmfail" main
+(cd "$RMFAIL_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$RMFAIL_ROOT/trees/issue-rmfail") >/dev/null
+mkdir -p "$RMFAIL_ROOT/bin"
+cat > "$RMFAIL_ROOT/bin/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ " $* " == *" worktree remove --force "* && "$*" == *"issue-rmfail"* ]]; then
+  echo "simulated worktree removal failure" >&2
+  exit 1
+fi
+exec "$REAL_GIT_BIN" "$@"
+STUB
+chmod +x "$RMFAIL_ROOT/bin/git"
+REAL_GIT_BIN="$(command -v git)"
+set +e
+(cd "$RMFAIL_ROOT/main" && PATH="$RMFAIL_ROOT/bin:$PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
+  "$WORKTREE_SCRIPT" remove ISSUE-RMFAIL >"$RMFAIL_ROOT/out" 2>"$RMFAIL_ROOT/err")
+rmfail_code=$?
+set -e
+assert_eq "$rmfail_code" "1" "git-refused removal exits nonzero"
+assert_contains "$(cat "$RMFAIL_ROOT/err")" "preserving it for manual recovery" "git-refused removal explains the worktree was preserved"
+assert_contains "$(cat "$RMFAIL_ROOT/err")" "simulated worktree removal failure" "git-refused removal surfaces git's own message"
+assert_path_exists "$RMFAIL_ROOT/trees/issue-rmfail/.git" "git-refused removal preserves the worktree"
+assert_branch_exists "$RMFAIL_ROOT/main" "issue-rmfail" "git-refused removal preserves the branch"
+assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.env.local" "$RMFAIL_ROOT/main/.env.local" "git-refused removal leaves .env.local symlink intact"
+assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.agents" "$RMFAIL_ROOT/main/.agents" "git-refused removal leaves .agents symlink intact"
+assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/agents" "$RMFAIL_ROOT/main/.claude/agents" "git-refused removal leaves configured dir symlink intact"
+assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/CLAUDE.md" "../AGENTS.md" "git-refused removal leaves relative symlink intact"
+
 # Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
 # an already-created app worktree; codex-cleanup is a non-destructive hook and
 # leaves worktree/branch deletion to the app.
