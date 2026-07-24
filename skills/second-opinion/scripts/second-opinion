@@ -67,8 +67,19 @@ RANGE=""
 # failures (1). A response missing the required qa_metadata object (vstack#672)
 # or still structurally incomplete after the one-shot retry (vstack#678) is
 # rejected the same way. None of these paths writes the --output artifact.
+#
+# EXIT_CLI_FAILED (vstack#809): the external CLI failed to produce ANY review at
+# all — it exited non-zero (quota/auth/network), timed out, or returned nothing
+# usable on a zero exit. That yields no external verdict, so like exits 3/4 it
+# must never be a silent exit-0 success; it joins the no-verdict class. It is
+# kept DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
+# (the model answered, but the answer is unusable), whereas 5 is a lane-level
+# failure (the model never answered) — an operator retries a down lane but reads
+# a code-4 as a real signal about the review. Only review/audit modes (the ones
+# with the no-verdict contract) use it; challenge/quick keep the generic 1.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
+EXIT_CLI_FAILED=5
 
 # --- Help ---------------------------------------------------------------------
 
@@ -113,7 +124,8 @@ Default commands:
 
 Exit codes:
   0  success
-  1  CLI/config failure, timeout, or unrecoverable non-JSON response
+  1  config failure (bad target, missing jq), or an unrecoverable non-JSON
+     response that survived the one-shot retry (review/audit)
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata
@@ -121,6 +133,10 @@ Exit codes:
      was still structurally incomplete after the one-shot retry — missing
      verdict or the blockers/suggestions/questions arrays (response kept as
      <output>.incomplete.json)
+  5  review/audit: the external CLI failed to produce any review — it exited
+     non-zero (quota/auth/network), timed out, or returned an empty response on
+     a zero exit. No external verdict; whatever partial output existed is kept
+     as <output>.failed.json and the CLI's own error text is echoed on stderr
 HELP
 }
 
@@ -432,12 +448,59 @@ run_target_cli() {
   return "$rc"
 }
 
+# vstack#809: a failed external-CLI invocation on the primary call — non-zero
+# exit (quota/auth/network), timeout, or a zero exit that returned nothing
+# usable — produces no external verdict, exactly like the no-scope/no-review
+# gates. Left as a bare exit-0 it fails invisibly precisely when the lane is
+# down, so it must join the no-verdict class: preserve whatever partial output
+# exists as <output>.failed.json (mirroring the .noreview/.incomplete sidecars),
+# emit an error JSON on stderr that carries the sidecar path AND the CLI's own
+# error text (so an operator sees "usage limit", not a bare code), then exit
+# EXIT_CLI_FAILED. Only review/audit modes carry the no-verdict contract, so
+# only they call this; challenge/quick keep the generic exit 1. Independent of
+# TARGET_CLI — both lanes route through run_target_cli and STDERR_TMP.
+preserve_cli_failure_and_fail() {
+  local reason="$1"          # human-readable cause (e.g. "exited with code 2")
+  local partial="${2:-}"     # captured stdout, may be empty
+  local sidecar cause=""
+
+  # The CLI's own stderr is the authoritative cause (e.g. the quota message).
+  [[ -s "$STDERR_TMP" ]] && cause=$(head -20 "$STDERR_TMP")
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    sidecar="${OUTPUT_PATH}.failed.json"
+  else
+    sidecar=$(mktemp)
+  fi
+  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
+        --arg cause "$cause" --arg stdout "$partial" \
+    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, partial_stdout: $stdout}' \
+    > "$sidecar"
+
+  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
+    '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
+  echo "→ external CLI failed: $TARGET_CLI $reason" >&2
+  if [[ -n "$cause" ]]; then
+    echo "--- cause (${TARGET_CLI} stderr) ---" >&2
+    printf '%s\n' "$cause" >&2
+  fi
+  echo "→ failed invocation preserved: $sidecar" >&2
+  exit "$EXIT_CLI_FAILED"
+}
+
+# review/audit carry the no-verdict contract (exits 3/4/5); challenge/quick do not.
+REVIEW_LIKE=false
+[[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
+
 RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
 
 if [[ $EXIT_CODE -eq 124 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
 elif [[ $EXIT_CODE -ne 0 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
   echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
@@ -449,6 +512,7 @@ fi
 echo "→ Response received (${#RESULT} bytes)" >&2
 
 if [[ ${#RESULT} -eq 0 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
   echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2

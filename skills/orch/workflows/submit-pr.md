@@ -94,7 +94,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_local_review.passes
    ```
-   If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened), reason `incomplete` (the artifact declares `qa_metadata` but its findings are unusable — arrays lost, or a present `blockers[]`/`suggestions[]` item omits a required `review-finding` field such as `category`; a `detail` field pinpoints it), and script exits 3 (no diff scope) / 4 (model reported no review, or the response stayed schema-incomplete after the one-shot retry): none of these is a pass.
+   If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened), reason `incomplete` (the artifact declares `qa_metadata` but its findings are unusable — arrays lost, or a present `blockers[]`/`suggestions[]` item omits a required `review-finding` field such as `category`; a `detail` field pinpoints it), and script exits 3 (no diff scope) / 4 (model reported no review, or the response stayed schema-incomplete after the one-shot retry) / 5 (the external CLI never produced a review — non-zero exit, timeout, or empty response — partial output preserved as `<output>.failed.json`): none of these is a pass.
 
 4. **Route findings** from the JSON (`../../reviewer/schemas/review-finding.md` schema):
    - No `blockers[]` and no `suggestions[]` with `category: "fix"` → § 2 (diff drained).

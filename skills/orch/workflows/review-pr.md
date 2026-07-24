@@ -240,7 +240,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 ```
 **If `ok == false`** — the external JSON is missing, has no `verdict` field, self-reports that no review was performed (reason `no_review`), or declares `qa_metadata` but its findings are unusable — arrays lost or an item missing a required `review-finding` field such as `category` (reason `incomplete`, with a `detail` field pinpointing it). Report the `reason` (and `detail` when present) to the user and skip the append (external review is advisory).
 
-**On failure**: report to user but **continue** — external review is advisory, not blocking. Exit 3 means the wrapper found no diff scope to review; exit 4 means the external model reported it performed no review or omitted required schema fields even after the one-shot retry (response preserved as `<output>.noreview.json` / `<output>.incomplete.json`) — in all cases there is no external verdict; never substitute a pass.
+**On failure**: report to user but **continue** — external review is advisory, not blocking. Exit 3 means the wrapper found no diff scope to review; exit 4 means the external model reported it performed no review or omitted required schema fields even after the one-shot retry (response preserved as `<output>.noreview.json` / `<output>.incomplete.json`); exit 5 means the external CLI itself never produced a review — a non-zero exit (quota, auth, network), a timeout, or an empty response on a zero exit — with whatever partial output preserved as `<output>.failed.json` and the CLI's own error text on stderr. In all cases there is no external verdict; never substitute a pass.
 
 ## 3. Collect Results (Watchdog)
 
