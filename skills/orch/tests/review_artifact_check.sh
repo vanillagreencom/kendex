@@ -35,6 +35,17 @@ assert_file_contains() {
   fi
 }
 
+assert_substr() {
+  local haystack="$1" needle="$2" name="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected substring: %s\n        in:                 %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
 assert_file_not_contains() {
   local file="$1" pattern="$2" name="$3"
   if grep -Fq -- "$pattern" "$file"; then
@@ -326,6 +337,123 @@ touch -d "@$later" "$glob_inc"
 out="$("$CHECK" "$worktree" reviewer-inc "$delegated_at")"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past incomplete to older complete artifact"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc_valid" "glob fallback selects the complete sibling"
+
+# --- incomplete: qa-shaped artifacts must carry USABLE finding items (vstack#810) ---
+# qa_shaped_incomplete only catches arrays lost wholesale. An artifact can carry
+# present, non-empty blockers[]/suggestions[] whose ITEMS omit the required
+# review-finding fields — present in prose but unroutable, because the
+# orchestrator routes suggestions on `category`. Required item set (from
+# reviewer/schemas/review-finding.md § Item Fields): id, title, location,
+# description, recommendation, priority, estimate — plus category (∈ fix|issue)
+# for suggestions. Reason reuses `incomplete`; a `detail` field names the first
+# offending item and field.
+
+# the exact malformed shape from the issue: {title, location, detail, severity}
+issue_bad="$worktree/tmp/review-external-20260810-010101.json"
+printf '{"agent":"reviewer-arch","verdict":"pass","blockers":[],"suggestions":[{"title":"Two resolvers coexist","location":"/abs/instrument_link.rs (instrument_name)","detail":"...","severity":"low"}],"qa_metadata":{"arch_review":{"overall_score":8.4,"pass":true}}}' > "$issue_bad"
+set +e
+out="$("$CHECK" --file "$issue_bad")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file issue malformed suggestion exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file issue malformed suggestion reports ok=false"
+assert_eq "$(jq -r '.path' <<<"$out")" "$issue_bad" "--file issue malformed suggestion reports its path"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file issue malformed suggestion reports reason=incomplete"
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[0]" "--file issue malformed detail names the offending item"
+assert_substr "$(jq -r '.detail' <<<"$out")" "category" "--file issue malformed detail names the missing category field"
+
+# a fully schema-compliant artifact with populated items still validates
+compliant="$worktree/tmp/review-external-20260810-020202.json"
+printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"d","recommendation":"r","priority":1,"estimate":2}],"suggestions":[{"id":1,"title":"t","location":"src/y.rs (`g`)","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"fix"}],"qa_metadata":{}}' > "$compliant"
+out="$("$CHECK" --file "$compliant")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file fully compliant items reports ok=true"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file fully compliant items reports reason=valid"
+assert_eq "$(jq -r '.detail' <<<"$out")" "null" "--file valid artifact carries no detail field"
+
+# empty blockers[]/suggestions[] carry no items and stay valid (do not regress)
+empty_items="$worktree/tmp/review-external-20260810-030303.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$empty_items"
+out="$("$CHECK" --file "$empty_items")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file empty arrays stay valid under item check"
+
+# an item missing ONLY category (routing-critical) is rejected
+nocat="$worktree/tmp/review-external-20260810-040404.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2}],"qa_metadata":{}}' > "$nocat"
+set +e
+out="$("$CHECK" --file "$nocat")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file suggestion missing only category exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file suggestion missing only category reports reason=incomplete"
+assert_substr "$(jq -r '.detail' <<<"$out")" "category" "--file missing-category detail names category"
+
+# category present but not in {fix,issue} is rejected (routing keys on the value)
+badcatval="$worktree/tmp/review-external-20260810-050505.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"low"}],"qa_metadata":{}}' > "$badcatval"
+set +e
+out="$("$CHECK" --file "$badcatval")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file suggestion category not in {fix,issue} exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file bad category value reports reason=incomplete"
+
+# blockers require the base fields but NOT category — a blocker missing a base
+# field is rejected, a blocker without category is fine
+badblk="$worktree/tmp/review-external-20260810-060606.json"
+printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","recommendation":"r","priority":1,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$badblk"
+set +e
+out="$("$CHECK" --file "$badblk")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file blocker missing description exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file blocker missing base field reports reason=incomplete"
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[0]" "--file blocker detail names the blockers array"
+assert_substr "$(jq -r '.detail' <<<"$out")" "description" "--file blocker detail names the missing field"
+
+okblk="$worktree/tmp/review-external-20260810-070707.json"
+printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":1,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$okblk"
+out="$("$CHECK" --file "$okblk")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file blocker without category is valid (category is suggestions-only)"
+
+# artifacts WITHOUT qa_metadata keep the pre-existing tolerance — malformed items
+# do NOT trip the check (parity with qa_shaped_incomplete's gating)
+noqa_bad="$worktree/tmp/review-external-20260810-080808.json"
+printf '{"verdict":"pass","suggestions":[{"title":"t","location":"l"}]}' > "$noqa_bad"
+out="$("$CHECK" --file "$noqa_bad")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file malformed items without qa_metadata stay tolerant (valid)"
+
+# array-lost incomplete still precedes the item check: a qa-shaped artifact whose
+# arrays are entirely missing is reason=incomplete with no item detail
+arrays_lost="$worktree/tmp/review-external-20260810-090909.json"
+printf '{"verdict":"pass","summary":"truncated","qa_metadata":{}}' > "$arrays_lost"
+set +e
+out="$("$CHECK" --file "$arrays_lost")"
+rc=$?
+set -e
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file arrays-lost still reason=incomplete"
+assert_eq "$(jq -r '.detail' <<<"$out")" "null" "--file arrays-lost incomplete carries no item detail"
+
+# glob mode applies the same item gate: a fresh malformed-item artifact is rejected...
+glob_item_bad="$worktree/tmp/review-reviewer-item-20260810-111111.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"title":"t","location":"l","detail":"x","severity":"low"}],"qa_metadata":{}}' > "$glob_item_bad"
+touch -d "@$after" "$glob_item_bad"
+set +e
+out="$("$CHECK" "$worktree" reviewer-item "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob malformed-item artifact exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob malformed-item reports reason=incomplete"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_bad" "glob malformed-item report points at the artifact"
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[0]" "glob malformed-item detail names the item"
+
+# ...and an older fresh well-formed sibling still wins over a newer malformed one
+glob_item_ok="$worktree/tmp/review-reviewer-item-20260810-000000.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue"}],"qa_metadata":{}}' > "$glob_item_ok"
+touch -d "@$after" "$glob_item_ok"
+touch -d "@$later" "$glob_item_bad"
+out="$("$CHECK" "$worktree" reviewer-item "$delegated_at")"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past malformed-item to older well-formed artifact"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_ok" "glob fallback selects the well-formed sibling"
 
 # --- usage errors ---
 set +e

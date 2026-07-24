@@ -229,7 +229,7 @@ mkdir -p [WORKTREE_PATH]/tmp
   --output "$EXTERNAL_OUTPUT"
 ```
 
-**On success** — validate deterministically, then append. Pass `review_delegated_at` (recorded in § 2.2) as the freshness boundary so a stale or misdated external artifact is rejected the same way glob mode rejects stale reviewer JSONs. `review-artifact-check --file` then checks existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, that the artifact does not self-report a no-review (`qa_metadata.review_performed: false` → reason `no_review`), and that an artifact declaring `qa_metadata` still carries its `blockers[]`/`suggestions[]` arrays (reason `incomplete` when they were lost in the write), printing `{ok, path, reason}` — no inline conditional or redirection:
+**On success** — validate deterministically, then append. Pass `review_delegated_at` (recorded in § 2.2) as the freshness boundary so a stale or misdated external artifact is rejected the same way glob mode rejects stale reviewer JSONs. `review-artifact-check --file` then checks existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, that the artifact does not self-report a no-review (`qa_metadata.review_performed: false` → reason `no_review`), and that an artifact declaring `qa_metadata` carries usable findings — its `blockers[]`/`suggestions[]` arrays present (reason `incomplete` when they were lost in the write) AND every present item carrying the required `review-finding` fields, including the routing-critical `category ∈ {fix,issue}` on suggestions (reason `incomplete` with a `detail` field naming the item and field, vstack#810) — printing `{ok, path, reason}` — no inline conditional or redirection:
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
@@ -238,7 +238,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "$EXTERNAL_OUTPUT"
 ```
-**If `ok == false`** — the external JSON is missing, has no `verdict` field, self-reports that no review was performed (reason `no_review`), or declares `qa_metadata` but lost its finding arrays (reason `incomplete`). Report the `reason` to the user and skip the append (external review is advisory).
+**If `ok == false`** — the external JSON is missing, has no `verdict` field, self-reports that no review was performed (reason `no_review`), or declares `qa_metadata` but its findings are unusable — arrays lost or an item missing a required `review-finding` field such as `category` (reason `incomplete`, with a `detail` field pinpointing it). Report the `reason` (and `detail` when present) to the user and skip the append (external review is advisory).
 
 **On failure**: report to user but **continue** — external review is advisory, not blocking. Exit 3 means the wrapper found no diff scope to review; exit 4 means the external model reported it performed no review or omitted required schema fields even after the one-shot retry (response preserved as `<output>.noreview.json` / `<output>.incomplete.json`) — in all cases there is no external verdict; never substitute a pass.
 
@@ -255,7 +255,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-Run `review-artifact-check` on every return message and every watchdog sweep. It prints `{ok, path, reason}` after validating existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, the absence of a self-reported no-review (`qa_metadata.review_performed: false` → reason `no_review`), and that an artifact declaring `qa_metadata` still carries its `blockers[]`/`suggestions[]` arrays (reason `incomplete`).
+Run `review-artifact-check` on every return message and every watchdog sweep. It prints `{ok, path, reason}` after validating existence, `mtime >= review_delegated_at`, `jq -e '.verdict'`, the absence of a self-reported no-review (`qa_metadata.review_performed: false` → reason `no_review`), and that an artifact declaring `qa_metadata` carries usable findings — the `blockers[]`/`suggestions[]` arrays present and every present item carrying its required `review-finding` fields, including `category ∈ {fix,issue}` on suggestions (reason `incomplete`; a `detail` field names the offending item and field).
 
 **If `ok == true`** — the agent is complete. Append `path` and drop from `OUTSTANDING`:
 ```bash
@@ -269,7 +269,7 @@ Run `review-artifact-check` on every return message and every watchdog sweep. It
 
 **If `ok == false` after a return message** — the return is **incomplete** (even if its `File:` path looks valid or the message body contains JSON). Send that agent **exactly one** re-delegation:
 
-> Your review return is incomplete: `review-artifact-check` reports `[reason]` for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), then return `Verdict:` and `File:` again.
+> Your review return is incomplete: `review-artifact-check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md` (each `blockers[]`/`suggestions[]` item needs `id`, `title`, `location`, `description`, `recommendation`, `priority`, `estimate`; suggestions also `category ∈ {fix,issue}`), then return `Verdict:` and `File:` again.
 
 If `review-artifact-check` still reports `ok == false` after the re-delegation return (or the agent hits its § 3.2 deadline), mark the agent `unresponsive` — do not re-delegate a second time.
 

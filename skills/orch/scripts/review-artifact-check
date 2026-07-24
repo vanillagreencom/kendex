@@ -33,19 +33,30 @@ reason meanings when ok=false:
              no-scope/no-review admission) — rejected regardless of verdict.
              Artifacts without qa_metadata are unaffected.
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
-             object is present) but blockers[]/suggestions[] are missing or
-             not arrays — the finding arrays were lost in the write, so the
-             verdict cannot be trusted. Artifacts without qa_metadata are
+             object is present) but its findings are unusable — either
+             blockers[]/suggestions[] are missing or not arrays (the arrays
+             were lost in the write), OR a present blockers[]/suggestions[]
+             item is missing a required review-finding field so the
+             orchestrator cannot route it. The `detail` field names the first
+             offending item and field. Artifacts without qa_metadata are
              unaffected.
+
+When ok=false with reason=incomplete because of a malformed item, an extra
+`detail` string field is included identifying the array, index, and missing
+or invalid fields (e.g. "suggestions[0]: missing/invalid category, description").
+The {ok, path, reason} fields are always present and unchanged; `detail` is
+additive.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
 }
 
 emit() {
-  local ok="$1" path="$2" reason="$3"
+  local ok="$1" path="$2" reason="$3" detail="${4:-}"
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
-    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
+    --arg detail "$detail" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
+     + (if $detail == "" then {} else {detail: $detail} end)'
 }
 
 file_mtime() {
@@ -82,6 +93,54 @@ qa_shaped_incomplete() {
       and (((.blockers? | type) != "array")
            or ((.suggestions? | type) != "array"))
   ' "$1" >/dev/null 2>&1
+}
+
+# vstack#810: qa_shaped_incomplete only catches arrays that were lost wholesale.
+# An artifact can instead carry present, non-empty blockers[]/suggestions[]
+# whose ITEMS omit the required review-finding fields — e.g. {title, location,
+# detail, severity} instead of the schema's {id, title, location, description,
+# recommendation, priority, estimate[, category]}. Such an item is present in
+# prose but unroutable: the orchestrator routes suggestions on `category`
+# (fix -> dev, issue -> audit), so a category-less item matches neither filter
+# and every finding is silently dropped. The required set is derived from
+# reviewer/schemas/review-finding.md § "Item Fields (blockers/suggestions)"
+# (all seven marked Required=Yes for both arrays; `category` additionally
+# Required for suggestions, and constrained to {fix,issue} because routing keys
+# on it). Gated on the qa_metadata declaration for parity with
+# qa_shaped_incomplete: artifacts without qa_metadata keep the pre-existing
+# tolerance documented in reviewer review-finding.md. Empty arrays carry no
+# items and stay valid. Prints the first offending item's diagnostic on stdout
+# (array[index] + the missing/invalid fields), empty string when every item is
+# well-formed or the artifact is not qa-shaped.
+finding_item_detail() {
+  jq -r '
+    if ((.qa_metadata? | type) == "object") then
+      ( ["id","title","location","description","recommendation","priority","estimate"]
+        as $base
+      | ( [ (.blockers?    | if type == "array" then . else [] end
+              | to_entries[] | {arr: "blockers",    i: .key, item: .value}),
+            (.suggestions? | if type == "array" then . else [] end
+              | to_entries[] | {arr: "suggestions", i: .key, item: .value}) ]
+          | map(
+              .arr as $arr | .i as $i | .item as $item
+              | ($base + (if $arr == "suggestions" then ["category"] else [] end))
+                as $req
+              | [ $req[] | select((($item | type) != "object") or ($item[.] == null)) ]
+                as $missing
+              | ( if ($arr == "suggestions")
+                     and (($item | type) == "object")
+                     and ($item.category != null)
+                     and ((["fix","issue"] | index($item.category | tostring)) == null)
+                  then ["category(not fix|issue)"] else [] end )
+                as $badcat
+              | ($missing + $badcat) as $problems
+              | if ($problems | length) > 0
+                then "\($arr)[\($i)]: missing/invalid \($problems | join(", "))"
+                else empty end
+            )
+          | (first(.[]) // "") ) )
+    else "" end
+  ' "$1" 2>/dev/null
 }
 
 # --- File mode: validate one explicit JSON path deterministically ---
@@ -127,6 +186,11 @@ if [[ "${1:-}" == "--file" ]]; then
     emit false "$file" "incomplete"
     exit 1
   fi
+  detail="$(finding_item_detail "$file")"
+  if [[ -n "$detail" ]]; then
+    emit false "$file" "incomplete" "$detail"
+    exit 1
+  fi
   emit true "$file" "valid"
   exit 0
 fi
@@ -155,6 +219,7 @@ fi
 
 reason="missing"
 fail_path=""
+fail_detail=""
 
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
@@ -187,9 +252,18 @@ while IFS= read -r file; do
     fi
     continue
   fi
+  detail="$(finding_item_detail "$file")"
+  if [[ -n "$detail" ]]; then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="incomplete"
+      fail_detail="$detail"
+    fi
+    continue
+  fi
   emit true "$file" "valid"
   exit 0
 done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
 
-emit false "$fail_path" "$reason"
+emit false "$fail_path" "$reason" "$fail_detail"
 exit 1
