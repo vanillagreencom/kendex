@@ -101,11 +101,16 @@ The `defer-ci` label pattern is retired — orch never defers, queues, or labels
             # step under `bash -e` when cmd fails — the substitution yields an
             # empty word list, the loop body never runs, and the bridge exits 0
             # having done nothing. Assignment propagates the failure instead.
-            prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[].number')
+            prs=$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls?per_page=100" --jq '.[].number')
             for pr in $prs; do
               head=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
               [ "$head" = "$SHA" ] || continue
-              runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA" \
+              # Paginate: the default page is 30 runs, and a busy head can push
+              # the failed gate run off it — the bridge would then rerun nothing
+              # and still exit 0.
+              runs=$(gh api --paginate \
+                "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA&per_page=100" \
                 --jq '.workflow_runs[] | select(.conclusion == "failure") | .id')
               for run in $runs; do
                 # Choose the rerun mode from what the run CONTAINS. A gate-blocked
