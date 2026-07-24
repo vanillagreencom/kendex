@@ -42846,26 +42846,60 @@ function connectorsEnabledFor(config2) {
 var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Gmail__*",
   "mcp__claude_ai_Google_Calendar__*",
-  "mcp__claude_ai_Google_Drive__*"
+  "mcp__claude_ai_Google_Drive__*",
+  "mcp__claude_ai_Slack__*",
+  "mcp__claude_ai_Atlassian__*"
 ];
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
 var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
 var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX}Gmail__`;
 var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX}Google_Calendar__`;
 var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX}Google_Drive__`;
-var CONNECTOR_READ_PREFIXES = [
-  "list_",
-  "search_",
-  "get_",
-  "read_",
-  "fetch_",
-  "find_",
-  "download_",
-  "describe_",
-  "query_",
-  "count_",
-  "view_"
-];
+var CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX}Slack__`;
+var CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX}Atlassian__`;
+var CONNECTOR_READ_VERBS = /* @__PURE__ */ new Set([
+  "list",
+  "search",
+  "get",
+  "read",
+  "fetch",
+  "find",
+  "download",
+  "describe",
+  "query",
+  "count",
+  "view",
+  "lookup",
+  "whoami"
+]);
+var CONNECTOR_MUTATION_WORDS = /* @__PURE__ */ new Set([
+  "create",
+  "update",
+  "delete",
+  "remove",
+  "add",
+  "edit",
+  "send",
+  "post",
+  "write",
+  "upload",
+  "publish",
+  "schedule",
+  "transition",
+  "archive",
+  "move",
+  "copy",
+  "revoke",
+  "assign",
+  "invite",
+  "share",
+  "rename",
+  "replace",
+  "set"
+]);
+function connectorNameWords(segment) {
+  return segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((word) => word.toLowerCase());
+}
 var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_GMAIL}create_draft`,
   `${CONNECTOR_NS_GMAIL}create_label`,
@@ -42880,14 +42914,44 @@ var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_CALENDAR}delete_event`,
   `${CONNECTOR_NS_CALENDAR}respond_to_event`,
   `${CONNECTOR_NS_DRIVE}create_file`,
-  `${CONNECTOR_NS_DRIVE}copy_file`
+  `${CONNECTOR_NS_DRIVE}copy_file`,
+  // Slack + Atlassian writes, taken from a live enumeration of an account with
+  // both connectors attached. The PreToolUse hook already denies these by verb;
+  // listing them by id also removes them from the model's context in a
+  // read-only session (the CLI matcher needs exact ids). Additive only — an id
+  // missing here is still denied at call time.
+  `${CONNECTOR_NS_SLACK}slack_send_message`,
+  `${CONNECTOR_NS_SLACK}slack_send_message_draft`,
+  `${CONNECTOR_NS_SLACK}slack_schedule_message`,
+  `${CONNECTOR_NS_SLACK}slack_create_canvas`,
+  `${CONNECTOR_NS_SLACK}slack_update_canvas`,
+  `${CONNECTOR_NS_ATLASSIAN}createJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}editJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}transitionJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}addCommentToJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}addWorklogToJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}createIssueLink`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluencePage`,
+  `${CONNECTOR_NS_ATLASSIAN}updateConfluencePage`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluenceFooterComment`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluenceInlineComment`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassComponent`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
 ];
 function isConnectorWriteTool(name) {
   if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
   const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
   if (sep2 <= CONNECTOR_NS_PREFIX.length) return true;
-  const tool = name.slice(sep2 + "__".length);
-  return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
+  const server = name.slice(CONNECTOR_NS_PREFIX.length, sep2);
+  const words = connectorNameWords(name.slice(sep2 + "__".length));
+  const serverWords = connectorNameWords(server);
+  let skipped = 0;
+  while (skipped < serverWords.length && words[skipped] === serverWords[skipped]) skipped++;
+  const rest = words.slice(skipped);
+  if (rest.length === 0) return true;
+  if (!CONNECTOR_READ_VERBS.has(rest[0])) return true;
+  return rest.some((word) => CONNECTOR_MUTATION_WORDS.has(word));
 }
 function connectorWriteModeFromEnv() {
   const v4 = (process.env.CLAUDE_BRIDGE_CONNECTOR_WRITE ?? "").trim().toLowerCase();

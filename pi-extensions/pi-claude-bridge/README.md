@@ -18,6 +18,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 - Thinking-level forwarding with summarized Opus thinking display.
 - Optional Claude effort overrides (`xhigh` → `max` for Opus 4.8).
 - MCP isolation and Claude cloud-MCP suppression to keep tokens lean.
+- Optional access to your Claude account's connectors — Gmail, Calendar, Drive, Slack, Jira, Confluence — read-only by default.
 - Opt-in forwarding of `APPEND_SYSTEM.md` and recognized Pi prompt hooks.
 
 ## Install
@@ -96,11 +97,22 @@ Keys may be bare model IDs (`claude-opus-4-8`), `claude-bridge/<id>`, or `*` for
 
 ### Connectors
 
-The bridge can expose the authenticated Claude account's claude.ai cloud MCP connectors (Gmail, Google Calendar, Google Drive) to the model. These are low-level `provider` options (set in `settings.json` under the extension-manager config, or via env). Off by default so Pi owns tool execution.
+Turn this on and the model can use whatever your Claude account already has connected — the same connectors you use in the Claude app, now inside Pi:
+
+- **Gmail** — search mail, read threads and messages.
+- **Google Calendar** — check calendars and events.
+- **Google Drive** — find and read files.
+- **Slack** — search and read channels, threads, canvases, and people.
+- **Jira and Confluence** — search and read issues, pages, and spaces.
+- Anything else on the account (Figma, org-specific connectors) works the same way — nothing to configure per connector.
+
+Sessions are **read-only** by default: the model can look things up, but cannot send, post, or change anything unless you explicitly turn writes on below.
+
+These are low-level `provider` options (set in `settings.json` under the extension-manager config, or via env). Off by default so Pi owns tool execution.
 
 | Option (`provider.*`) | Env var | Values | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `enableConnectors` | `CLAUDE_BRIDGE_ENABLE_CONNECTORS` | `true`/`false` | off | Expose the account's Gmail/Calendar/Drive connectors to the model (env OR config enables). |
+| `enableConnectors` | `CLAUDE_BRIDGE_ENABLE_CONNECTORS` | `true`/`false` | off | Expose the account's connectors to the model (env OR config enables). |
 | `connectorWriteMode` | `CLAUDE_BRIDGE_CONNECTOR_WRITE` | `deny`/`allow` | `deny` | When connectors are enabled, whether their WRITE tools are exposed. |
 
 For both, the env var wins over config. `connectorWriteMode` only matters when connectors are enabled. Any value other than exactly `allow` is treated as `deny` (fail-closed).
@@ -108,7 +120,7 @@ For both, the env var wins over config. `connectorWriteMode` only matters when c
 With `connectorWriteMode: "deny"` (the default), connector sessions are **read-only**: search/read/fetch/list tools stay available, but mutating tools (Gmail `create_draft`/labels, Calendar `create_event`/`update_event`/`delete_event`/`respond_to_event`, Drive `create_file`/`copy_file`) are denied. Enforcement is two-layered:
 
 - **Model context:** the known write tools are passed as `disallowedTools` (exact tool ids), so the model does not see them. (Note: the CLI's MCP permission matcher only supports exact tool names or a whole-server `mcp__server__*` glob — partial tool-segment globs are inert — so exact ids are what actually removes today's writes.)
-- **Runtime:** a `PreToolUse` hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is **fail-closed** and covers the whole `mcp__claude_ai_<Server>__` space — a tool there is a write unless its tool segment starts with a known read prefix (`list_`, `search_`, `get_`, `read_`, `fetch_`, …), and a name under that prefix that does not parse as `<server>__<tool>` (no separator, or an empty server segment) is a write too. This covers both not-yet-known write tools (e.g. a future Gmail `send_message` or Drive `delete_file`) and connectors beyond the Google trio: claude.ai connectors attach account-wide, so a Slack/Atlassian/org-custom connector is visible in a connector session even though it isn't in `allowedTools`, and its writes are denied by the same rule.
+- **Runtime:** a `PreToolUse` hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is **fail-closed** and covers the whole `mcp__claude_ai_<Server>__` space — a tool there is a write unless its name *begins* with a known read verb (`list`, `search`, `get`, `read`, `fetch`, …). The verb is matched as a word across naming styles, since connector servers differ: `search_threads` (Gmail), `slack_read_channel` (Slack, server-prefixed), `getJiraIssue` (Atlassian, camelCase) are all reads; a leading word that merely repeats the server name is skipped first. A name that opens with a read verb but also names a mutation (`getOrCreateChannel`) is a write, and so is a name that does not parse as `<server>__<tool>`. This covers both not-yet-known write tools (e.g. a future Gmail `send_message` or Drive `delete_file`) and connectors beyond the Google trio: claude.ai connectors attach account-wide, so a Slack/Atlassian/org-custom connector is visible in a connector session, and its writes are denied by the same rule.
 
 Set `allow` only for a one-shot write-executor session that has already obtained explicit user approval — never for an interactive connector chat.
 

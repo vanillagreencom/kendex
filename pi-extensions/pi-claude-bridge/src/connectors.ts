@@ -51,10 +51,15 @@ export function connectorsEnabledFor(config?: Config): boolean {
 
 // Cloud MCP connector tool namespaces auto-allowed when connectors are enabled.
 // Names match Claude Code's claude.ai connector servers.
+// Whole-server globs (the only glob shape the CLI matcher honors). Deny rules
+// take precedence, so listing a server here never exposes its writes — the
+// write ids above and the PreToolUse hook still remove them.
 export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
 	"mcp__claude_ai_Gmail__*",
 	"mcp__claude_ai_Google_Calendar__*",
 	"mcp__claude_ai_Google_Drive__*",
+	"mcp__claude_ai_Slack__*",
+	"mcp__claude_ai_Atlassian__*",
 ];
 
 // Claude Code registers a Claude account's cloud connectors as DEFERRED tools
@@ -81,19 +86,51 @@ const CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
 const CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX}Gmail__`;
 const CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX}Google_Calendar__`;
 const CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX}Google_Drive__`;
+const CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX}Slack__`;
+const CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX}Atlassian__`;
 
-// Read-verb prefixes: a connector tool whose name (the segment after its
-// namespace) starts with one of these is a non-mutating READ and always stays
-// available. Everything else on a connector namespace is treated as a WRITE.
-// Observed reads (POC): list_labels, search_threads, get_message, list_calendars,
-// list_events, get_event — i.e. list_/search_/get_; the rest are common Google
-// read verbs. Keep this list tight: mis-classifying a read as a write only
-// blocks a read (safe, easily fixed), whereas mis-classifying a write as a read
-// would open an ungated mutation.
-const CONNECTOR_READ_PREFIXES = [
-	"list_", "search_", "get_", "read_", "fetch_", "find_",
-	"download_", "describe_", "query_", "count_", "view_",
-];
+// Read verbs: a connector tool whose tool segment BEGINS with one of these
+// words is a non-mutating READ and stays available. Everything else on a
+// connector namespace is treated as a WRITE. Matching is on WORDS, not on a
+// literal `verb_` prefix, because connector servers do not share a naming
+// convention — verified live against a Claude account with Slack + Atlassian
+// attached:
+//
+//   Gmail      search_threads, get_message          (snake_case)
+//   Slack      slack_read_channel, slack_search_public
+//                                                   (snake_case, server-prefixed)
+//   Atlassian  getJiraIssue, searchJiraIssuesUsingJql, getConfluencePage
+//                                                   (camelCase)
+//
+// A literal-prefix test only matched the Gmail shape, so EVERY Slack and
+// Atlassian tool — reads included — classified as a write and was denied at
+// runtime, making those connectors unusable in a read-only session.
+const CONNECTOR_READ_VERBS = new Set([
+	"list", "search", "get", "read", "fetch", "find",
+	"download", "describe", "query", "count", "view", "lookup", "whoami",
+]);
+
+// Unambiguously mutating words, consulted ONLY when a tool name already begins
+// with a read verb (e.g. a hypothetical `getOrCreateChannel`): deny wins over
+// the read exemption there, so a mixed name can never earn read treatment.
+const CONNECTOR_MUTATION_WORDS = new Set([
+	"create", "update", "delete", "remove", "add", "edit", "send", "post",
+	"write", "upload", "publish", "schedule", "transition", "archive", "move",
+	"copy", "revoke", "assign", "invite", "share", "rename", "replace", "set",
+]);
+
+// Splits a tool (or server) segment into lowercase words, handling snake_case,
+// camelCase, PascalCase, and acronym runs (`getHTTPResponse` → get, http,
+// response). Punctuation-only input yields an empty list, which callers treat
+// as unparseable → write.
+function connectorNameWords(segment: string): string[] {
+	return segment
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+		.split(/[^A-Za-z0-9]+/)
+		.filter(Boolean)
+		.map((word) => word.toLowerCase());
+}
 
 // Explicit known write tool names (current claude.ai connectors). Passed to the
 // SDK disallowedTools so today's writes are removed from the model's context by
@@ -113,6 +150,29 @@ export const CONNECTOR_WRITE_TOOLS = [
 	`${CONNECTOR_NS_CALENDAR}respond_to_event`,
 	`${CONNECTOR_NS_DRIVE}create_file`,
 	`${CONNECTOR_NS_DRIVE}copy_file`,
+	// Slack + Atlassian writes, taken from a live enumeration of an account with
+	// both connectors attached. The PreToolUse hook already denies these by verb;
+	// listing them by id also removes them from the model's context in a
+	// read-only session (the CLI matcher needs exact ids). Additive only — an id
+	// missing here is still denied at call time.
+	`${CONNECTOR_NS_SLACK}slack_send_message`,
+	`${CONNECTOR_NS_SLACK}slack_send_message_draft`,
+	`${CONNECTOR_NS_SLACK}slack_schedule_message`,
+	`${CONNECTOR_NS_SLACK}slack_create_canvas`,
+	`${CONNECTOR_NS_SLACK}slack_update_canvas`,
+	`${CONNECTOR_NS_ATLASSIAN}createJiraIssue`,
+	`${CONNECTOR_NS_ATLASSIAN}editJiraIssue`,
+	`${CONNECTOR_NS_ATLASSIAN}transitionJiraIssue`,
+	`${CONNECTOR_NS_ATLASSIAN}addCommentToJiraIssue`,
+	`${CONNECTOR_NS_ATLASSIAN}addWorklogToJiraIssue`,
+	`${CONNECTOR_NS_ATLASSIAN}createIssueLink`,
+	`${CONNECTOR_NS_ATLASSIAN}createConfluencePage`,
+	`${CONNECTOR_NS_ATLASSIAN}updateConfluencePage`,
+	`${CONNECTOR_NS_ATLASSIAN}createConfluenceFooterComment`,
+	`${CONNECTOR_NS_ATLASSIAN}createConfluenceInlineComment`,
+	`${CONNECTOR_NS_ATLASSIAN}createCompassComponent`,
+	`${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
+	`${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`,
 ];
 
 // Classify a connector tool name as a WRITE (mutating) tool. FAIL CLOSED, twice:
@@ -124,11 +184,15 @@ export const CONNECTOR_WRITE_TOOLS = [
 //     `tools: []` (see toolIsolationForQuery), so those tools are discoverable
 //     and callable. Keying on the trio meant e.g. a Slack send_message ran
 //     ungated inside claude, invisible to Pi's ConsentGate.
-//  2. Verb: a tool on that space is a write UNLESS its tool segment starts with a
-//     known read prefix, so not-yet-known write tools (e.g. Gmail send_message,
+//  2. Verb: a tool on that space is a write UNLESS its tool segment BEGINS with a
+//     known read verb, so not-yet-known write tools (e.g. Gmail send_message,
 //     Drive delete_file, Calendar add_attendee) are blocked in a read-only
 //     session. A name under the connector prefix with no parseable `__<tool>`
 //     segment is also a write: it is a connector by construction, so deny wins.
+//     The verb is matched as a WORD across snake_case and camelCase, and a
+//     leading word that merely repeats the server name is skipped first
+//     (`Slack__slack_read_channel` reads as `read channel`), because connector
+//     servers name their tools differently from one another.
 //
 // Non-connector tools (Pi custom-tools, ToolSearch, MCP-resource tools, other MCP
 // servers) are never connector writes → false. Used by connectorWriteDenyHook and
@@ -143,8 +207,22 @@ export function isConnectorWriteTool(name: string): boolean {
 	// `mcp__claude_ai___search_messages`) means the name doesn't parse as
 	// <server>__<tool> — it never earns the read-prefix exemption.
 	if (sep <= CONNECTOR_NS_PREFIX.length) return true;
-	const tool = name.slice(sep + "__".length);
-	return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
+	const server = name.slice(CONNECTOR_NS_PREFIX.length, sep);
+	const words = connectorNameWords(name.slice(sep + "__".length));
+	// Skip a leading run of words that just repeats the server name, so a
+	// server-prefixed tool (`Slack__slack_read_channel`) is judged on its real
+	// verb. Only an exact leading match is skipped — an unrelated first word
+	// (`Weird__Server__list_things`) stays and fails the read test.
+	const serverWords = connectorNameWords(server);
+	let skipped = 0;
+	while (skipped < serverWords.length && words[skipped] === serverWords[skipped]) skipped++;
+	const rest = words.slice(skipped);
+	// Nothing parseable left (empty/punctuation-only tool segment, or a tool
+	// named exactly after its server) → write.
+	if (rest.length === 0) return true;
+	if (!CONNECTOR_READ_VERBS.has(rest[0])) return true;
+	// Begins as a read but also names a mutation → deny wins.
+	return rest.some((word) => CONNECTOR_MUTATION_WORDS.has(word));
 }
 
 // Connector write mode from the env override. `allow` exposes connector write
