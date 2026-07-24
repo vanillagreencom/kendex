@@ -51,7 +51,7 @@ pub fn write_source_index(global: bool, index: &SourceIndex) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let pretty = serde_json::to_string_pretty(index)?;
+    let pretty = crate::config::to_json_pretty(index)?;
     std::fs::write(&path, pretty)?;
     Ok(())
 }
@@ -837,7 +837,7 @@ fn write_settings(path: &Path, value: &serde_json::Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let pretty = serde_json::to_string_pretty(value)?;
+    let pretty = crate::config::to_json_pretty(value)?;
     std::fs::write(path, pretty)?;
     Ok(())
 }

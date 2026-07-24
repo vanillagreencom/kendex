@@ -240,7 +240,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
 
     event_arr.push(hook_entry);
 
-    let output = serde_json::to_string_pretty(&settings)?;
+    let output = crate::config::to_json_pretty(&settings)?;
     std::fs::write(&settings_path, output)?;
 
     Ok(())
@@ -432,7 +432,7 @@ fn merge_codex_hooks_json_owned(
     }
     event_arr.push(entry);
 
-    let output = serde_json::to_string_pretty(&doc)?;
+    let output = crate::config::to_json_pretty(&doc)?;
     std::fs::write(hooks_json, output)?;
     Ok(())
 }
@@ -765,7 +765,7 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     }
 
     if changed {
-        let output = serde_json::to_string_pretty(&settings)?;
+        let output = crate::config::to_json_pretty(&settings)?;
         std::fs::write(&settings_path, output)?;
     }
     Ok(())
@@ -811,7 +811,7 @@ fn remove_hook_from_codex_json(global: bool, name: &str, script_path: &Path) -> 
                 }
             }
         } else {
-            let output = serde_json::to_string_pretty(&doc)?;
+            let output = crate::config::to_json_pretty(&doc)?;
             std::fs::write(&hooks_json, output)
                 .with_context(|| format!("writing Codex hooks config {}", hooks_json.display()))?;
         }

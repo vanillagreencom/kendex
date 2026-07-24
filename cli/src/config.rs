@@ -121,6 +121,18 @@ pub struct SourceRegistry {
     pub project_current: BTreeMap<String, String>,
 }
 
+/// Serialize `value` as pretty JSON terminated by exactly one newline.
+/// vstack's JSON artifacts are POSIX text files and some are tracked by
+/// consuming repos (`.vstack-lock.json`), so the terminator keeps every
+/// rewrite from adding a `\ No newline at end of file` line to their diffs.
+pub fn to_json_pretty(value: &impl Serialize) -> Result<String> {
+    let mut out = serde_json::to_string_pretty(value)?;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 impl LockFile {
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
@@ -138,7 +150,7 @@ impl LockFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = serde_json::to_string_pretty(self)?;
+        let content = to_json_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -192,7 +204,7 @@ impl SourceRegistry {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = serde_json::to_string_pretty(self)?;
+        let content = to_json_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -1668,6 +1680,67 @@ mod source_registry_tests {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    fn lock_file_save_terminates_with_exactly_one_newline() {
+        let dir = sandbox("lock_newline");
+        let path = dir.join(".vstack-lock.json");
+
+        let mut lock = LockFile {
+            version: 1,
+            ..Default::default()
+        };
+        lock.add(LockEntry {
+            name: "guard".to_string(),
+            kind: ItemKind::Hook,
+            source: "vanillagreencom/vstack".to_string(),
+            source_repo: Some("vanillagreencom/vstack".to_string()),
+            harnesses: vec!["codex".to_string()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-24T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        });
+
+        lock.save(&path).unwrap();
+        let first = fs::read_to_string(&path).unwrap();
+        assert!(
+            first.ends_with("}\n"),
+            "lock file must end with one newline"
+        );
+        assert!(
+            !first.ends_with("\n\n"),
+            "lock file must not end with a blank line"
+        );
+
+        // Load/save round-trips must not accumulate terminators, otherwise
+        // every refresh would grow the file by a blank line.
+        LockFile::load(&path).unwrap().save(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn source_registry_save_terminates_with_exactly_one_newline() {
+        let dir = sandbox("registry_newline");
+        let path = dir.join("sources.json");
+
+        let mut registry = SourceRegistry::default();
+        registry.remember("vanillagreencom/vstack");
+
+        registry.save(&path).unwrap();
+        let first = fs::read_to_string(&path).unwrap();
+        assert!(first.ends_with("}\n"), "registry must end with one newline");
+        assert!(
+            !first.ends_with("\n\n"),
+            "registry must not end with a blank line"
+        );
+
+        SourceRegistry::load(&path).unwrap().save(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
