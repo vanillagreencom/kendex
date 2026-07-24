@@ -268,7 +268,7 @@ merge. Detach them first.
    Exit `75` = QUEUED FOR AUTO-MERGE — treat as success-pending and run the watch loop below. Ejection is per-PR: a failed merge-group run removes only this PR from the queue while other queued PRs re-test and merge independently, so each session's own merge-pr watch owns recovery for its own PR and parallel sessions never need to coordinate.
 
    **Watch loop** (Claude Code shell shape) — each poll runs the two commands below, then routes; `sleep 30` between polls, at most 20 polls (~10 min).
-   > If you are running in **Codex**: that `sleep`-poll shape is rejected by the `approval=never` classifier and has **no queue-watch waiter to substitute** — `ci-wait` covers CI status and `await-mergeable` covers merge-state, neither watches merge-queue membership (known gap, vstack#818). Run each poll's two commands as separate single tool calls with no `sleep` and no loop, re-entering between polls; if that is not possible, stop after the first poll and report the PR as still-queued per the last row of the routing table — the merge stays armed and fires on its own.
+   > If you are running in **Codex**: that `sleep`-poll shape is rejected by the `approval=never` classifier and has **no queue-watch waiter to substitute** — `ci-wait` covers CI status and `await-mergeable` covers merge-state, neither watches merge-queue membership (known gap, tracked in vstack#819). Run each poll's two commands as separate single tool calls with no `sleep` and no loop, re-entering between polls; if that is not possible, stop after the first poll and report the PR as still-queued per the last row of the routing table — the merge stays armed and fires on its own.
 
    ```bash
    gh pr view [PR_NUMBER] --json state,mergedAt
