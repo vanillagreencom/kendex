@@ -2,9 +2,9 @@
 
 The durable on-disk record a dev/QA agent writes at the end of an implement or fix
 delegation. It is the deterministic completion signal orch reads to accept a
-dev/QA completion **independently of the live return message**, which can be lost
-when a long `tools/validate`-class command exceeds the harness tool timeout
-mid-tail and ends the turn (vstack#770).
+dev/QA completion **independently of the live return message**, which is routinely
+absent when a long `tools/validate`-class command outlasts the agent's turn
+(vstack#770, vstack#818).
 
 ## Deterministic identity: the round id (vstack#776)
 

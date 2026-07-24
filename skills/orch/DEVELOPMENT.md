@@ -169,9 +169,9 @@ Always-on CI (everything on `pull_request`) needs no change — § 5 just verifi
 
 ## Dev Completion Artifact (round-id identity)
 
-Dev/QA implement-or-fix completions are accepted from an on-disk artifact so a lost
-return message — a long validation exceeding the harness tool timeout mid-tail
-(vstack#770) — never forces re-delegation. `dev-return-write` writes it;
+Dev/QA implement-or-fix completions are accepted from an on-disk artifact so a missing
+return message — routine when a long validation outlasts the agent's turn
+(vstack#770, vstack#818) — never forces re-delegation. `dev-return-write` writes it;
 `dev-artifact-check` validates it. The canonical schema is
 [`schemas/dev-return.md`](./schemas/dev-return.md); the developer-facing mechanics
 are below.

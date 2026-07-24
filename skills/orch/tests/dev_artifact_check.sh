@@ -291,10 +291,13 @@ done
 # The stall was an orchestrator that read a `finished` wake's wording and idled
 # without running A/B, plus a wait loop with no wall-clock re-entry when wakes
 # stopped. SKILL must mandate both, and every delegation point that stamps
-# dev_delegated_at must arm the watchdog.
+# dev_delegated_at must arm the watchdog. vstack#818 re-homed both mandates into
+# the numbered "orchestrator owns round closure" list (same requirements, new
+# wording) and made that list the primary path rather than a recovery fallback.
 orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
-assert_file_contains "$orch_skill" "Classify every wake mechanically" "SKILL mandates mechanical per-wake A/B classification (vstack#803)"
-assert_file_contains "$orch_skill" "Arm a wall-clock watchdog at delegation" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (vstack#803)"
+assert_file_contains "$orch_skill" "Run A/B on every wake and at the deadline, and classify mechanically" "SKILL mandates mechanical per-wake A/B classification (vstack#803)"
+assert_file_contains "$orch_skill" "Arm a single-shot wall-clock watchdog" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (vstack#803)"
+assert_file_contains "$orch_skill" "primary path, not a recovery fallback" "SKILL states orchestrator-side closure as the primary path (vstack#818)"
 WATCHDOG_ARM="arm the single-shot wall-clock watchdog"
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$WATCHDOG_ARM" "$wf.md arms the single-shot watchdog at delegation (vstack#803)"

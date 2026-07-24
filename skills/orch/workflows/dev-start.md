@@ -96,7 +96,7 @@ gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
 
 **Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the first harness spawn call. The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751): a hyphenated `[AGENT_TYPE]` spawns with hyphens translated to underscores in the runtime `task_name` only (`agent_type` unchanged), attempted before any `worker` fallback; `child_sessions` keys, reports, and delegation records keep the canonical hyphenated name. Do not launch `worker` and simulate the selected dev identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical selected agent name in bootstrap/delegation text, reports, and workflow-state keys. Use `worker` only when no matching custom agent exists, when the selected agent is intentionally generic, or after the generated-agent spawn is rejected/unavailable; record the runtime `agent_type` and fallback reason in status and workflow state.
 
-Before each implementation delegation — the single delegation, and **every group's delegation in bundled mode** — capture the current `HEAD`, record the delegation timestamp, and mint a fresh per-delegation round id. `dev_round_id` binds § 3 `dev-artifact-check` acceptance to exactly THIS delegation's receipt — deterministic identity, immune to a stale or cross-round receipt at a shared path (vstack#776); `dev_delegated_at` is the watchdog deadline (SKILL § Wait for Agent Return) — immediately after stamping it, **arm the single-shot wall-clock watchdog** for `dev_delegated_at + 10min` per that section, so the A/B check + escalation ladder runs even if the agent goes silent with no further wake (vstack#803). Run each as its own tool call:
+Before each implementation delegation — the single delegation, and **every group's delegation in bundled mode** — capture the current `HEAD`, record the delegation timestamp, and mint a fresh per-delegation round id. `dev_round_id` binds § 3 `dev-artifact-check` acceptance to exactly THIS delegation's receipt — deterministic identity, immune to a stale or cross-round receipt at a shared path (vstack#776); `dev_delegated_at` is the watchdog deadline (SKILL § Wait for Agent Return) — immediately after stamping it, **arm the single-shot wall-clock watchdog** for `dev_delegated_at + 10min` per that section. This is mandatory on every implementation delegation, not a recovery step: an agent that backgrounds a long validation and ends its turn is behaving correctly and may emit no further wake, so the watchdog is the only thing that runs the § 3 A/B check and escalation ladder (vstack#803, vstack#818). Run each as its own tool call:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
@@ -190,9 +190,7 @@ Handoff from prior agents:
 
 ## 3. Validate Agent Return
 
-**Expected format**: `Branch: ... | Commit: [SHA] | QA Labels: ... | Summary: Posted ✓`
-
-Acceptance is a deterministic function of two checks — **A** (the on-disk completion artifact) and **B** (git/tracker completion) — never of the return message, which is informational for display only. A return can be lost when a long validation exceeds the harness tool timeout mid-tail and ends the turn (vstack#770); acceptance must not depend on it.
+Acceptance is a deterministic function of two checks — **A** (the on-disk completion artifact) and **B** (git/tracker completion) — never of the return message, which is informational for display only. Expect no return message in the normal case for a long-validation round: the agent may have backgrounded the run and ended its turn (vstack#770, vstack#818), so run A/B on the § 2 watchdog deadline rather than waiting for one.
 
 **Check A — completion artifact.** Read `dev_round_id`, then validate the round-scoped receipt (run each as its own tool call):
 
@@ -245,11 +243,7 @@ Per-field B failures and the targeted re-delegation each one implies (used by th
 | `ok==false` | pass | Code appears landed but the round did **not** finish — B proves code landed, not that the tail ran (validate, labels, a summary belonging to THIS round, and this agent's authorship are unproven; an unrelated commit advances HEAD and Linear `validate-completion` matches any prior "Completion Summary"). Do NOT declare complete and do NOT re-run the implementation. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status / QA labels / summary; do NOT re-run the implementation."* Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
 | `ok==false` | fail | **Not done** — no completion evidence. Do NOT proceed; wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
 
-**Why `A=false, B=pass` recovers the tail rather than accepting** (external-review hardening): B (HEAD advanced + clean worktree + tracker state) proves code *appears* landed, not that the delegated round completed — an unrelated commit advances HEAD, and Linear `validate-completion` matches any prior completion comment with no per-round freshness bound. Only a valid artifact for the current `dev_round_id` proves THIS agent finished THIS round's tail, so acceptance always converges on the `ok==true` path.
-
-**Dev-vs-reviewer asymmetry (do not "align").** Dev accepts on the round-scoped artifact plus git/tracker; reviewers have no such independent signal (their JSON is the deliverable) and re-delegate on `ok==false`. Do not import the reviewer's re-delegate-on-`ok==false` rule here — full rationale in [SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting).
-
-When a return message DID arrive it stays authoritative for display; A and B decide acceptance. Never proceed on a fail with "may have a different format" or similar excuses.
+Never proceed on a fail with "may have a different format" or similar excuses, and do not import the reviewer's re-delegate-on-`ok==false` rule here — the asymmetry is intentional ([SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting)).
 
 **Store QA state** (on Accept):
 ```bash

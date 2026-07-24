@@ -350,7 +350,7 @@ Issue suggestions: [N] items → § 6.2 audit
    ---
    </delegation_format>
 
-5. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return can be lost to a harness tool timeout mid-tail, vstack#770).
+5. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return is routinely absent when a long validation outlasts the agent's turn, vstack#770/#818).
 
    **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode with this group's item numbers (run each as its own tool call):
 

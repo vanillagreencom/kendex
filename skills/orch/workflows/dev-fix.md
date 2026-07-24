@@ -149,7 +149,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    [FORMATTED_ITEMS]
    </delegation_format>
 
-6. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return can be lost to a harness tool timeout mid-tail, vstack#770).
+6. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return is routinely absent when a long validation outlasts the agent's turn, vstack#770/#818).
 
    **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode with the delegated item numbers (run each as its own tool call):
 
@@ -180,7 +180,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    | `ok==false` | pass | Fix code appears landed but the round did **not** finish (its per-item decisions are unproven — B shows a clean tree, not that THIS round's tail ran). Do NOT re-run the fix and do NOT accept on git alone. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item) and re-report your item decisions; do NOT re-run the fix."* Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
    | `ok==false` | fail | **Not done** — no completion evidence. Wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
 
-   **Dev-vs-reviewer asymmetry (do not "align").** Dev accepts on the round-scoped artifact plus git; reviewers have no such independent signal (their JSON is the deliverable) and re-delegate on `ok==false`. Do not import the reviewer rule here — full rationale in [SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting).
+   Do not import the reviewer's re-delegate-on-`ok==false` rule here — the asymmetry is intentional ([SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting)).
 
 7. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash
