@@ -103,6 +103,52 @@ test("isConnectorWriteTool leaves connector reads + non-connector tools availabl
 	for (const name of reads) assert.equal(isConnectorWriteTool(name), false, name);
 });
 
+test("isConnectorWriteTool denies writes on UNKNOWN connector namespaces", () => {
+	// Connectors attach account-wide: any claude.ai connector beyond the Google
+	// trio must be write-denied too, or its mutations run ungated inside claude.
+	const writes = [
+		"mcp__claude_ai_Slack__send_message",
+		"mcp__claude_ai_Atlassian__create_issue",
+		"mcp__claude_ai_Figma__update_file",
+		"mcp__claude_ai_Notion__delete_page",
+	];
+	for (const name of writes) assert.equal(isConnectorWriteTool(name), true, name);
+});
+
+test("isConnectorWriteTool keeps reads on UNKNOWN connector namespaces available", () => {
+	const reads = [
+		"mcp__claude_ai_Slack__search_messages",
+		"mcp__claude_ai_Atlassian__get_issue",
+		"mcp__claude_ai_Linear__list_issues",
+	];
+	for (const name of reads) assert.equal(isConnectorWriteTool(name), false, name);
+});
+
+test("isConnectorWriteTool ignores non-connector tools entirely", () => {
+	const untouched = [
+		"ToolSearch",
+		"ListMcpResources",
+		"ReadMcpResource",
+		"mcp__some_other_server__do_thing",
+		"mcp__some_other_server__create_thing",
+		"memory_write", // bare Pi custom tool
+	];
+	for (const name of untouched) assert.equal(isConnectorWriteTool(name), false, name);
+});
+
+test("isConnectorWriteTool FAILS CLOSED on malformed names inside the connector space", () => {
+	// Anything under mcp__claude_ai_ is a connector by construction, so a name we
+	// cannot split into <server>__<tool> must classify as a write, never a read.
+	const malformed = [
+		"mcp__claude_ai_", // prefix only, no server, no tool
+		"mcp__claude_ai_Slack", // server, no tool segment
+		"mcp__claude_ai_Slack__", // empty tool segment
+		"mcp__claude_ai_Weird__Server__list_things", // extra segment → not a bare read verb
+		"mcp__claude_ai_Slack__Send_Message", // read prefixes are case-sensitive
+	];
+	for (const name of malformed) assert.equal(isConnectorWriteTool(name), true, name);
+});
+
 test("PreToolUse hook denies connector writes (known + future) and allows reads", async () => {
 	const hook = connectorWriteDenyHook();
 	// future write: not a known read verb → deny
@@ -115,6 +161,18 @@ test("PreToolUse hook denies connector writes (known + future) and allows reads"
 	// non-connector tools pass through
 	assert.equal((await runHook(hook, "ToolSearch")).continue, true, "ToolSearch continues");
 	assert.equal((await runHook(hook, "mcp__custom-tools__foo")).continue, true, "custom tool continues");
+});
+
+test("PreToolUse hook denies writes on an UNKNOWN connector namespace", async () => {
+	const hook = connectorWriteDenyHook();
+	const out = await runHook(hook, "mcp__claude_ai_Slack__send_message");
+	assert.ok(isDeny(out), "Slack send_message denied");
+	assert.match(out.hookSpecificOutput.permissionDecisionReason, /mcp__claude_ai_Slack__send_message/);
+	assert.ok(isDeny(await runHook(hook, "mcp__claude_ai_Atlassian__create_issue")), "Atlassian create_issue denied");
+	// reads on the same unknown namespace still pass
+	assert.equal((await runHook(hook, "mcp__claude_ai_Slack__search_messages")).continue, true, "Slack search continues");
+	// other MCP servers are untouched
+	assert.equal((await runHook(hook, "mcp__some_other_server__create_thing")).continue, true, "non-connector MCP continues");
 });
 
 test("connectorQueryOptions(true) [deny] wires BOTH disallowedTools ids AND the PreToolUse hook", () => {

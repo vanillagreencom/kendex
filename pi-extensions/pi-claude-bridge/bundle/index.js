@@ -43363,10 +43363,10 @@ var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Google_Drive__*"
 ];
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
-var CONNECTOR_NS_GMAIL = "mcp__claude_ai_Gmail__";
-var CONNECTOR_NS_CALENDAR = "mcp__claude_ai_Google_Calendar__";
-var CONNECTOR_NS_DRIVE = "mcp__claude_ai_Google_Drive__";
-var CONNECTOR_NAMESPACES = [CONNECTOR_NS_GMAIL, CONNECTOR_NS_CALENDAR, CONNECTOR_NS_DRIVE];
+var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
+var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX}Gmail__`;
+var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX}Google_Calendar__`;
+var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX}Google_Drive__`;
 var CONNECTOR_READ_PREFIXES = [
   "list_",
   "search_",
@@ -43397,9 +43397,10 @@ var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_DRIVE}copy_file`
 ];
 function isConnectorWriteTool(name) {
-  const ns2 = CONNECTOR_NAMESPACES.find((n) => name.startsWith(n));
-  if (!ns2) return false;
-  const tool = name.slice(ns2.length);
+  if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
+  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
+  if (sep2 < 0) return true;
+  const tool = name.slice(sep2 + "__".length);
   return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
 }
 function connectorWriteModeFromEnv() {

@@ -567,11 +567,13 @@ export const CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "Rea
 // ONE-SHOT write-enabled bridge query. This block is the bridge lever for that:
 // deny connector write tools by default, allow them only for that executor.
 //
-// Cloud connector server namespaces (the `mcp__<server>__` prefix).
-const CONNECTOR_NS_GMAIL = "mcp__claude_ai_Gmail__";
-const CONNECTOR_NS_CALENDAR = "mcp__claude_ai_Google_Calendar__";
-const CONNECTOR_NS_DRIVE = "mcp__claude_ai_Google_Drive__";
-const CONNECTOR_NAMESPACES = [CONNECTOR_NS_GMAIL, CONNECTOR_NS_CALENDAR, CONNECTOR_NS_DRIVE];
+// Cloud connector server namespaces (the `mcp__<server>__` prefix). Every
+// claude.ai connector server lives under CONNECTOR_NS_PREFIX, so that prefix —
+// not the named trio — is what marks a tool as connector-owned.
+const CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
+const CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX}Gmail__`;
+const CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX}Google_Calendar__`;
+const CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX}Google_Drive__`;
 
 // Read-verb prefixes: a connector tool whose name (the segment after its
 // namespace) starts with one of these is a non-mutating READ and always stays
@@ -606,17 +608,32 @@ export const CONNECTOR_WRITE_TOOLS = [
 	`${CONNECTOR_NS_DRIVE}copy_file`,
 ];
 
-// Classify a connector tool name as a WRITE (mutating) tool. FAIL CLOSED: a tool
-// on a connector namespace is a write UNLESS its verb is a known read prefix, so
-// not-yet-known future write tools (e.g. Gmail send_message, Drive delete_file,
-// Calendar add_attendee) are classified as writes and blocked in a read-only
-// session. Non-connector tools (Pi custom-tools, ToolSearch, MCP-resource tools)
-// are never connector writes → false. Used by connectorWriteDenyHook and by
-// callers (e.g. the one-shot write executor) that enumerate live connector tools.
+// Classify a connector tool name as a WRITE (mutating) tool. FAIL CLOSED, twice:
+//
+//  1. Namespace: the whole `mcp__claude_ai_<Server>__` space counts, not just the
+//     known Gmail/Calendar/Drive trio. Connectors attach account-wide, so ANY
+//     other connector on the account (Slack, Atlassian, Figma, org-custom) shows
+//     up in a bridge session — and the connector path deliberately omits
+//     `tools: []` (see toolIsolationForQuery), so those tools are discoverable
+//     and callable. Keying on the trio meant e.g. a Slack send_message ran
+//     ungated inside claude, invisible to Pi's ConsentGate.
+//  2. Verb: a tool on that space is a write UNLESS its tool segment starts with a
+//     known read prefix, so not-yet-known write tools (e.g. Gmail send_message,
+//     Drive delete_file, Calendar add_attendee) are blocked in a read-only
+//     session. A name under the connector prefix with no parseable `__<tool>`
+//     segment is also a write: it is a connector by construction, so deny wins.
+//
+// Non-connector tools (Pi custom-tools, ToolSearch, MCP-resource tools, other MCP
+// servers) are never connector writes → false. Used by connectorWriteDenyHook and
+// by callers (e.g. the one-shot write executor) that enumerate live connector tools.
 export function isConnectorWriteTool(name: string): boolean {
-	const ns = CONNECTOR_NAMESPACES.find((n) => name.startsWith(n));
-	if (!ns) return false;
-	const tool = name.slice(ns.length);
+	if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
+	// First `__` after the prefix ends the server segment. First (not last) so a
+	// server name containing `__` leaves the extra segment in `tool`, which then
+	// fails the read-prefix test — ambiguity resolves to write.
+	const sep = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
+	if (sep < 0) return true;
+	const tool = name.slice(sep + "__".length);
 	return !CONNECTOR_READ_PREFIXES.some((prefix) => tool.startsWith(prefix));
 }
 
@@ -647,9 +664,10 @@ export function connectorWriteModeFor(config?: Config): ConnectorWriteMode {
 // regardless of permissionMode (we use bypassPermissions), so this — not the
 // static deny lists — is the real prefix-based runtime enforcement of
 // isConnectorWriteTool. disallowedTools removes today's KNOWN writes from model
-// context, but the CLI matcher can't glob the tool segment, so a future write
-// tool (e.g. mcp__claude_ai_Gmail__send_message, ..._Drive__delete_file) would
-// otherwise be callable in a read-only session; this hook denies it by prefix.
+// context, but it lists exact ids on the known trio only, so a future write tool
+// (e.g. mcp__claude_ai_Gmail__send_message, ..._Drive__delete_file) or any tool
+// on another connector the account has attached (mcp__claude_ai_Slack__send_message)
+// would otherwise be callable in a read-only session; this hook denies it by prefix.
 export function connectorWriteDenyHook(): HookCallback {
 	return async (input) => {
 		// The CLI treats a hook error/timeout as an EMPTY hook output and lets
@@ -712,8 +730,9 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
 	// closed: any mode but exact "allow" is treated as read-only). This removes
 	// today's KNOWN writes from the model's context by exact id; deny rules take
 	// precedence over the CLAUDE_AI_CONNECTOR_TOOL_PATTERNS allow rules below, so
-	// reads stay available. Runtime enforcement covering unknown/future write
-	// tools is done by connectorWriteDenyHook — see connectorQueryOptions.
+	// reads stay available. Runtime enforcement covering future write tools and
+	// connector namespaces we don't enumerate here (Slack, Atlassian, org-custom)
+	// is done by connectorWriteDenyHook — see connectorQueryOptions.
 	if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
 	return {
 		disallowedTools,
