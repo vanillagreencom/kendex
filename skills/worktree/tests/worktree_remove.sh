@@ -251,8 +251,10 @@ assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/CLAUDE.md" "../AGENT
 # removal fails here. TWO mechanisms are asserted below, and they are not the
 # same thing (#800):
 #   1. Symlink preservation comes from never pre-stripping — the tree stays
-#      intact until git itself succeeds, so ANY refusal (including a lock raced
-#      in after the precheck) leaves it whole. This is the actual safety net.
+#      intact until git itself starts deleting, so a refusal issued before that
+#      point (including a lock raced in after the precheck) leaves it whole.
+#      This is the actual safety net. Git's deletion is not atomic, so it does
+#      not extend to a failure partway THROUGH removal.
 #   2. The lock precheck is a DIAGNOSTIC: it names the owning session and the
 #      unlock command, which git's own refusal does not. It is racy by nature
 #      and is not what protects the symlinks.

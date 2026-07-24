@@ -1989,14 +1989,19 @@ case "${1:-}" in
       # left a live session's worktree without .agents/.claude/.env.local
       # whenever git then refused the removal (#800), and no precheck can close
       # that window: a lock acquired between the check and the strip lands right
-      # back in the original failure mode. Because the tree is untouched until
-      # git succeeds, ANY refusal — raced lock included — preserves it. This is
-      # the same ordering `cleanup` adopted in #784, for the same reason.
+      # back in the original failure mode. Because nothing is mutated before git
+      # runs, a refusal issued BEFORE deletion begins — raced lock included —
+      # leaves the tree whole. Git's deletion is not transactional, so a failure
+      # partway through can still leave it partially removed; that is git's own
+      # window, not one this script widens. Same ordering `cleanup` adopted in
+      # #784, for the same reason.
       REMOVE_OUTPUT=""
       if ! REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH" 2>&1)"; then
         echo "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
         [[ -n "$REMOVE_OUTPUT" ]] && printf '%s\n' "$REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
-        echo "Its configured symlinks and branch were left untouched." >&2
+        echo "  Branch: ${BRANCH:-unknown} (not deleted)" >&2
+        echo "Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was." >&2
+        echo "Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: $0 fix-links \"$WT_PATH\"" >&2
         exit 1
       fi
       # Safety net: remove directory if git left it behind
