@@ -5,7 +5,6 @@ var __export = (target, all) => {
 };
 
 // src/index.ts
-import { calculateCost } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 
 // node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
@@ -26831,456 +26830,6 @@ function Y6(e, t) {
   return null;
 }
 
-// node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
-import { randomUUID } from "crypto";
-import { mkdirSync as mkdirSync2, writeFileSync, appendFileSync as appendFileSync2, existsSync as existsSync2, rmSync as rmSync2 } from "fs";
-import { dirname } from "path";
-import { readFileSync as readFileSync2 } from "fs";
-import { realpathSync as realpathSync2 } from "fs";
-import { homedir } from "os";
-import { join as join2 } from "path";
-function parseJsonl(content) {
-  return content.split("\n").filter((line) => line.trim()).map(parseRecord);
-}
-function parseJsonlFile(path) {
-  return parseJsonl(readFileSync2(path, "utf-8"));
-}
-function parseRecord(line) {
-  const raw = JSON.parse(line);
-  if (raw.type === "user") return raw;
-  if (raw.type === "assistant") return raw;
-  return raw;
-}
-function serializeRecord(record2) {
-  return JSON.stringify(record2);
-}
-var MAX_SANITIZED_LENGTH = 200;
-function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join2(homedir(), ".claude");
-}
-function normalizeProjectPath(projectPath) {
-  try {
-    return realpathSync2(projectPath).normalize("NFC");
-  } catch {
-    return projectPath.normalize("NFC");
-  }
-}
-function projectPathToHash(projectPath) {
-  const sanitized = projectPath.replace(/[^a-zA-Z0-9]/g, "-");
-  if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized;
-  let h = 0;
-  for (let i = 0; i < projectPath.length; i++)
-    h = (h << 5) - h + projectPath.charCodeAt(i) | 0;
-  return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
-}
-function getProjectDir(projectPath, claudeDir) {
-  return join2(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
-}
-function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join2(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
-}
-function repairToolPairing(messages) {
-  const result = [];
-  let pending = null;
-  const synthetic = (id) => ({
-    type: "tool_result",
-    tool_use_id: id,
-    content: "[no tool result recorded]",
-    is_error: true
-  });
-  const flushPending = () => {
-    if (pending && pending.size > 0) {
-      result.push({ role: "user", content: [...pending].map(synthetic) });
-    }
-    pending = null;
-  };
-  for (const msg of messages) {
-    if (msg.role === "assistant") {
-      flushPending();
-      const ids = /* @__PURE__ */ new Set();
-      if (Array.isArray(msg.content)) {
-        for (const b of msg.content) {
-          if (b.type === "tool_use" && typeof b.id === "string") ids.add(b.id);
-        }
-      }
-      result.push(msg);
-      pending = ids.size > 0 ? ids : null;
-      continue;
-    }
-    const blocks = Array.isArray(msg.content) ? msg.content : null;
-    const hasToolResults = blocks?.some((b) => b.type === "tool_result") ?? false;
-    if (!pending && !hasToolResults) {
-      result.push(msg);
-      continue;
-    }
-    const input = blocks ?? (typeof msg.content === "string" && msg.content ? [{ type: "text", text: msg.content }] : []);
-    const provided = /* @__PURE__ */ new Set();
-    const kept = input.filter((b) => {
-      if (b.type !== "tool_result") return true;
-      if (pending?.has(b.tool_use_id)) {
-        provided.add(b.tool_use_id);
-        return true;
-      }
-      return false;
-    });
-    if (pending) {
-      const missing = [...pending].filter((id) => !provided.has(id)).map(synthetic);
-      kept.unshift(...missing);
-      pending = null;
-    }
-    if (kept.length === 0) {
-      if (result.length === 0) {
-        result.push({ role: "user", content: [{ type: "text", text: "[orphaned tool result removed]" }] });
-      }
-      continue;
-    }
-    result.push({ ...msg, content: kept });
-  }
-  flushPending();
-  return result;
-}
-var ADJECTIVES = [
-  "ancient",
-  "bold",
-  "bright",
-  "calm",
-  "clever",
-  "cool",
-  "crimson",
-  "daring",
-  "eager",
-  "fast",
-  "fierce",
-  "gentle",
-  "golden",
-  "happy",
-  "hidden",
-  "iron",
-  "keen",
-  "lively",
-  "mighty",
-  "nimble",
-  "pale",
-  "proud",
-  "quick",
-  "rapid",
-  "sharp",
-  "silent",
-  "smooth",
-  "steady",
-  "swift",
-  "vivid",
-  "warm",
-  "wild"
-];
-var NOUNS = [
-  "arrow",
-  "badge",
-  "beacon",
-  "blade",
-  "brook",
-  "castle",
-  "cedar",
-  "cloud",
-  "comet",
-  "crest",
-  "dawn",
-  "drift",
-  "eagle",
-  "ember",
-  "falcon",
-  "flame",
-  "forge",
-  "gale",
-  "grove",
-  "harbor",
-  "hawk",
-  "jade",
-  "kettle",
-  "lance",
-  "maple",
-  "marsh",
-  "needle",
-  "oak",
-  "pearl",
-  "pine",
-  "ridge",
-  "river",
-  "rune",
-  "sage",
-  "shade",
-  "spark",
-  "stone",
-  "thorn",
-  "tower",
-  "wave"
-];
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-function generateSlug() {
-  return `${pick(ADJECTIVES)}-${pick(ADJECTIVES)}-${pick(NOUNS)}`;
-}
-function syntheticMessageId() {
-  return `msg_syn_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-}
-function syntheticRequestId() {
-  return `req_syn_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-}
-var Session = class {
-  sessionId;
-  projectPath;
-  jsonlPath;
-  _records = [];
-  _pendingRecords = [];
-  _lastUuid = null;
-  _slug;
-  _cwd;
-  _version;
-  _gitBranch;
-  _model;
-  _fileExists;
-  _nextTimestamp;
-  constructor(opts) {
-    this.sessionId = opts.sessionId;
-    this.projectPath = opts.projectPath;
-    this.jsonlPath = opts.jsonlPath;
-    this._slug = opts.slug ?? generateSlug();
-    this._cwd = opts.cwd ?? opts.projectPath;
-    this._version = opts.version ?? "2.1.83";
-    this._gitBranch = opts.gitBranch ?? "HEAD";
-    this._model = opts.model ?? "claude-sonnet-4-6";
-    this._records = opts.records ?? [];
-    this._fileExists = opts.fileExists ?? false;
-    this._nextTimestamp = Date.now();
-    for (let i = this._records.length - 1; i >= 0; i--) {
-      const r = this._records[i];
-      if (r.type === "user" || r.type === "assistant") {
-        this._lastUuid = r.uuid;
-        break;
-      }
-    }
-  }
-  /** All records (existing + pending). */
-  get records() {
-    return [...this._records, ...this._pendingRecords];
-  }
-  /** Only user and assistant message records. */
-  get messages() {
-    return this.records.filter(
-      (r) => r.type === "user" || r.type === "assistant"
-    );
-  }
-  baseFields() {
-    const uuid3 = randomUUID();
-    const record2 = {
-      uuid: uuid3,
-      parentUuid: this._lastUuid,
-      sessionId: this.sessionId,
-      timestamp: new Date(this._nextTimestamp++).toISOString(),
-      isSidechain: false,
-      cwd: this._cwd,
-      userType: "external",
-      version: this._version,
-      gitBranch: this._gitBranch,
-      slug: this._slug,
-      entrypoint: "cli"
-    };
-    this._lastUuid = uuid3;
-    return record2;
-  }
-  /** Add a user text message. Returns its uuid. */
-  addUserMessage(text) {
-    const base = this.baseFields();
-    const record2 = {
-      type: "user",
-      ...base,
-      message: { role: "user", content: text }
-    };
-    this._pendingRecords.push(record2);
-    return base.uuid;
-  }
-  /** Add an assistant message with the given content blocks. Returns its uuid. */
-  addAssistantMessage(content, opts) {
-    const base = this.baseFields();
-    const hasToolUse2 = content.some((b) => b.type === "tool_use");
-    const payload = {
-      id: syntheticMessageId(),
-      type: "message",
-      role: "assistant",
-      model: opts?.model ?? this._model,
-      content,
-      stop_reason: opts?.stopReason ?? (hasToolUse2 ? "tool_use" : "end_turn"),
-      stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0 }
-    };
-    const record2 = {
-      type: "assistant",
-      ...base,
-      requestId: syntheticRequestId(),
-      message: payload
-    };
-    this._pendingRecords.push(record2);
-    return base.uuid;
-  }
-  /** Add a user message containing tool results. Returns its uuid. */
-  addToolResults(results) {
-    const base = this.baseFields();
-    const record2 = {
-      type: "user",
-      ...base,
-      message: {
-        role: "user",
-        content: results.map((r) => ({
-          type: "tool_result",
-          tool_use_id: r.toolUseId,
-          content: r.content,
-          ...r.isError ? { is_error: true } : {}
-        }))
-      }
-    };
-    this._pendingRecords.push(record2);
-    return base.uuid;
-  }
-  /**
-   * Convenience: add a complete tool call round-trip.
-   * Creates assistant tool_use message, user tool_result message,
-   * and optionally a final assistant text response.
-   */
-  addToolCalls(calls, opts) {
-    const toolUseBlocks = calls.map((c) => ({
-      type: "tool_use",
-      id: `toolu_syn_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
-      name: c.name,
-      input: c.input
-    }));
-    this.addAssistantMessage(toolUseBlocks, { model: opts?.model, stopReason: "tool_use" });
-    this.addToolResults(
-      calls.map((c, i) => ({
-        toolUseId: toolUseBlocks[i].id,
-        content: c.result,
-        isError: c.isError
-      }))
-    );
-    if (opts?.response) {
-      this.addAssistantMessage(opts.response, { model: opts?.model });
-    }
-  }
-  /**
-   * Import an array of Anthropic API-shaped messages, dispatching each to the
-   * appropriate internal method based on role and content type.
-   */
-  importMessages(messages) {
-    messages = repairToolPairing(messages);
-    for (const msg of messages) {
-      if (msg.role === "assistant") {
-        const content = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : msg.content;
-        this.addAssistantMessage(content);
-      } else {
-        if (typeof msg.content === "string") {
-          this.addUserMessage(msg.content);
-        } else {
-          const toolResults = msg.content.filter(
-            (b) => b.type === "tool_result"
-          );
-          if (toolResults.length > 0) {
-            this.addToolResults(toolResults.map((r) => ({
-              toolUseId: r.tool_use_id,
-              content: r.content,
-              isError: r.is_error
-            })));
-          } else {
-            const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-            this.addUserMessage(text || JSON.stringify(msg.content));
-          }
-        }
-      }
-    }
-  }
-  /**
-   * Reset this session to empty state and delete any on-disk artifacts.
-   * The sessionId and jsonlPath are preserved so subsequent writes reuse them.
-   */
-  clear() {
-    this._records = [];
-    this._pendingRecords = [];
-    this._lastUuid = null;
-    this._nextTimestamp = Date.now();
-    this._fileExists = false;
-    removeSessionFiles(this.jsonlPath);
-  }
-  /** Write pending records to disk. Creates the file/directory if needed. */
-  save() {
-    if (this._pendingRecords.length === 0) return;
-    const dir = dirname(this.jsonlPath);
-    if (!existsSync2(dir)) {
-      mkdirSync2(dir, { recursive: true });
-    }
-    const data = this._pendingRecords.map((r) => serializeRecord(r) + "\n").join("");
-    if (this._fileExists) {
-      appendFileSync2(this.jsonlPath, data, "utf-8");
-    } else {
-      writeFileSync(this.jsonlPath, data, "utf-8");
-      this._fileExists = true;
-    }
-    this._records.push(...this._pendingRecords);
-    this._pendingRecords = [];
-  }
-};
-function removeSessionFiles(jsonlPath) {
-  rmSync2(jsonlPath, { force: true });
-  const companionDir = jsonlPath.endsWith(".jsonl") ? jsonlPath.slice(0, -".jsonl".length) : jsonlPath;
-  rmSync2(companionDir, { recursive: true, force: true });
-}
-function deleteSession(sessionId, projectPath, claudeDir) {
-  const normalized = normalizeProjectPath(projectPath);
-  const jsonlPath = getSessionPath(sessionId, normalized, claudeDir);
-  removeSessionFiles(jsonlPath);
-}
-function createSession(opts) {
-  const sessionId = opts.sessionId ?? randomUUID();
-  const projectPath = normalizeProjectPath(opts.projectPath);
-  const jsonlPath = getSessionPath(sessionId, projectPath, opts.claudeDir);
-  return new Session({
-    sessionId,
-    projectPath,
-    jsonlPath,
-    cwd: opts.cwd ? normalizeProjectPath(opts.cwd) : projectPath,
-    version: opts.version,
-    gitBranch: opts.gitBranch,
-    model: opts.model
-  });
-}
-function openSession(opts) {
-  const projectPath = normalizeProjectPath(opts.projectPath);
-  const jsonlPath = getSessionPath(opts.sessionId, projectPath, opts.claudeDir);
-  return readSession(jsonlPath, projectPath);
-}
-function readSession(jsonlPath, projectPath) {
-  const records = parseJsonlFile(jsonlPath);
-  const firstMsg = records.find((r) => r.type === "user" || r.type === "assistant");
-  const sessionId = firstMsg?.sessionId ?? "";
-  const resolvedProjectPath = projectPath ?? firstMsg?.cwd ?? "";
-  return new Session({
-    sessionId,
-    projectPath: resolvedProjectPath,
-    jsonlPath,
-    slug: firstMsg?.slug,
-    cwd: firstMsg?.cwd,
-    version: firstMsg?.version,
-    gitBranch: firstMsg?.gitBranch,
-    records,
-    fileExists: true
-  });
-}
-
-// src/index.ts
-import { spawn as spawnProcess } from "child_process";
-import { createHash } from "crypto";
-import { accessSync, appendFileSync as appendFileSync3, chmodSync, constants as fsConstants, mkdirSync as mkdirSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
-import { resolve as pathResolve } from "path";
-import { delimiter, dirname as dirname5, join as join7 } from "path";
-
 // node_modules/change-case/dist/index.js
 var SPLIT_LOWER_UPPER_RE = new RegExp("([\\p{Ll}\\d])(\\p{Lu})", "gu");
 var SPLIT_UPPER_UPPER_RE = new RegExp("(\\p{Lu})([\\p{Lu}][\\p{Ll}])", "gu");
@@ -27613,79 +27162,6 @@ function rewriteSkillsBlock(skillsBlock) {
   );
 }
 
-// src/session-verify.ts
-import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync2 } from "fs";
-import { StringDecoder } from "node:string_decoder";
-function forEachJsonlLine(path, onLine) {
-  const fd = openSync2(path, "r");
-  const buffer = Buffer.allocUnsafe(64 * 1024);
-  const decoder = new StringDecoder("utf8");
-  let pending = "";
-  try {
-    for (; ; ) {
-      const bytesRead = readSync2(fd, buffer, 0, buffer.length, null);
-      if (bytesRead === 0) break;
-      pending += decoder.write(buffer.subarray(0, bytesRead));
-      let start = 0;
-      for (; ; ) {
-        const newline = pending.indexOf("\n", start);
-        if (newline < 0) {
-          pending = pending.slice(start);
-          break;
-        }
-        const line = pending.slice(start, newline);
-        onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
-        start = newline + 1;
-      }
-    }
-    pending += decoder.end();
-    if (pending.length > 0) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
-  } finally {
-    closeSync2(fd);
-  }
-}
-function summarizeJsonl(path) {
-  const summary = { count: 0 };
-  forEachJsonlLine(path, (line) => {
-    if (!line.trim()) return;
-    summary.count += 1;
-    if (summary.firstLine === void 0) summary.firstLine = line;
-    summary.lastLine = line;
-  });
-  return summary;
-}
-function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount) {
-  const warnings = [];
-  let st2;
-  try {
-    st2 = statSync2(jsonlPath);
-  } catch (e) {
-    warnings.push(`file missing after save \u2014 path=${jsonlPath} err=${e.message}`);
-    return warnings;
-  }
-  let summary;
-  try {
-    summary = summarizeJsonl(jsonlPath);
-  } catch (e) {
-    warnings.push(`file unreadable \u2014 path=${jsonlPath} size=${st2.size} err=${e.message}`);
-    return warnings;
-  }
-  if (summary.count !== expectedRecordCount) {
-    warnings.push(`record count mismatch \u2014 expected=${expectedRecordCount} actual=${summary.count} path=${jsonlPath} bytes=${st2.size}`);
-    return warnings;
-  }
-  try {
-    const firstRec = JSON.parse(summary.firstLine ?? "");
-    const lastRec = JSON.parse(summary.lastLine ?? "");
-    if (firstRec.sessionId !== expectedSessionId || lastRec.sessionId !== expectedSessionId) {
-      warnings.push(`sessionId drift \u2014 expected=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}`);
-    }
-  } catch (e) {
-    warnings.push(`malformed JSONL \u2014 path=${jsonlPath} err=${e.message}`);
-  }
-  return warnings;
-}
-
 // src/extract-tool-results.ts
 function toolResultToMcpContent(content) {
   if (typeof content === "string") return [{ type: "text", text: content || "" }];
@@ -27905,53 +27381,15 @@ function popContext() {
   _ctx = contextStack.pop();
 }
 
-// src/tool-pairing-audit.ts
-function contentBlocks(content) {
-  return Array.isArray(content) ? content.filter((block) => Boolean(block && typeof block === "object")) : [];
-}
-function toolUses(content) {
-  return contentBlocks(content).filter((block) => block.type === "tool_use" && typeof block.id === "string").map((block) => ({ id: block.id, name: typeof block.name === "string" && block.name ? block.name : "unknown" }));
-}
-function toolResultIds(content) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const block of contentBlocks(content)) {
-    if (block.type === "tool_result" && typeof block.tool_use_id === "string") ids.add(block.tool_use_id);
-  }
-  return ids;
-}
-function findUnpairedToolUses(messages) {
-  const missing = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (msg?.role !== "assistant") continue;
-    const uses = toolUses(msg.content);
-    if (uses.length === 0) continue;
-    const next = messages[i + 1];
-    const nextUserIndex = next?.role === "user" ? i + 1 : null;
-    const resultIds = nextUserIndex == null ? /* @__PURE__ */ new Set() : toolResultIds(next.content);
-    for (const use2 of uses) {
-      if (!resultIds.has(use2.id)) {
-        missing.push({ id: use2.id, toolName: use2.name, assistantIndex: i, userIndex: nextUserIndex });
-      }
-    }
-  }
-  return missing;
-}
-function summarizeMissingToolNames(missing) {
-  const counts = /* @__PURE__ */ new Map();
-  for (const item of missing) counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count }));
-}
-
 // src/config.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
-import { homedir as homedir2 } from "os";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "path";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
+import { homedir } from "os";
+import { dirname, join as join2, resolve as resolve2 } from "path";
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
 function expandHome(input) {
-  if (input === "~") return homedir2();
-  if (input.startsWith("~/")) return join3(homedir2(), input.slice(2));
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join2(homedir(), input.slice(2));
   return input;
 }
 function piUserDir() {
@@ -27976,11 +27414,11 @@ function mergeDeep(target, source) {
 function projectSettingsPath(cwd) {
   let current = resolve2(cwd);
   while (true) {
-    const candidate = join3(current, ".pi", "settings.json");
-    if (existsSync3(candidate)) return candidate;
-    if (existsSync3(join3(current, ".pi")) || existsSync3(join3(current, ".git")) || existsSync3(join3(current, ".vstack-lock.json"))) return candidate;
-    const parent = dirname2(current);
-    if (parent === current) return join3(resolve2(cwd), ".pi", "settings.json");
+    const candidate = join2(current, ".pi", "settings.json");
+    if (existsSync2(candidate)) return candidate;
+    if (existsSync2(join2(current, ".pi")) || existsSync2(join2(current, ".git")) || existsSync2(join2(current, ".vstack-lock.json"))) return candidate;
+    const parent = dirname(current);
+    if (parent === current) return join2(resolve2(cwd), ".pi", "settings.json");
     current = parent;
   }
 }
@@ -28010,15 +27448,15 @@ function projectSettingsTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 function settingsPaths(cwd) {
-  const user = join3(piUserDir(), "settings.json");
+  const user = join2(piUserDir(), "settings.json");
   if (isolatedFromEnv()) return [];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
 }
 function tryParseJson(path) {
-  if (!existsSync3(path)) return {};
+  if (!existsSync2(path)) return {};
   try {
-    return JSON.parse(readFileSync3(path, "utf-8"));
+    return JSON.parse(readFileSync2(path, "utf-8"));
   } catch {
     return {};
   }
@@ -28026,9 +27464,9 @@ function tryParseJson(path) {
 function readManagerConfig(cwd) {
   const merged = {};
   for (const path of settingsPaths(cwd)) {
-    if (!existsSync3(path)) continue;
+    if (!existsSync2(path)) continue;
     try {
-      const parsed = JSON.parse(readFileSync3(path, "utf8"));
+      const parsed = JSON.parse(readFileSync2(path, "utf8"));
       const configRoot = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config);
       const config2 = asRecord(configRoot?.[PACKAGE_ID]);
       if (config2) mergeDeep(merged, config2);
@@ -28133,11 +27571,11 @@ function managerToConfig(raw) {
   };
 }
 function loadConfig(cwd) {
-  const global2 = tryParseJson(join3(piUserDir(), "claude-bridge.json"));
+  const global2 = tryParseJson(join2(piUserDir(), "claude-bridge.json"));
   const isolated = isolatedFromEnv();
   const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
   const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
-  const project = trustedProject ? tryParseJson(join3(dirname2(projectSettings), "claude-bridge.json")) : {};
+  const project = trustedProject ? tryParseJson(join2(dirname(projectSettings), "claude-bridge.json")) : {};
   const manager = isolated ? {} : managerToConfig(readManagerConfig(cwd));
   const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
   return {
@@ -28148,13 +27586,13 @@ function loadConfig(cwd) {
 }
 
 // src/auth-presence.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
-import { homedir as homedir3, platform as osPlatform } from "os";
-import { join as join4 } from "path";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
+import { homedir as homedir2, platform as osPlatform } from "os";
+import { join as join3 } from "path";
 function resolveClaudeConfigDir(env = process.env) {
   const configured = env.CLAUDE_CONFIG_DIR;
   if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
-  return join4(homedir3(), ".claude");
+  return join3(homedir2(), ".claude");
 }
 function nonEmptyEnv(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -28165,9 +27603,9 @@ function envTruthy(value) {
 }
 function hasApiKeyHelper(configDir) {
   try {
-    const settingsPath = join4(configDir, "settings.json");
-    if (!existsSync4(settingsPath)) return false;
-    const parsed = JSON.parse(readFileSync4(settingsPath, "utf8"));
+    const settingsPath = join3(configDir, "settings.json");
+    if (!existsSync3(settingsPath)) return false;
+    const parsed = JSON.parse(readFileSync3(settingsPath, "utf8"));
     return typeof parsed?.apiKeyHelper === "string" && parsed.apiKeyHelper.trim().length > 0;
   } catch {
     return false;
@@ -28183,7 +27621,7 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
   if (envTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return true;
   if (envTruthy(env.CLAUDE_CODE_USE_MANTLE)) return true;
   const configDir = resolveClaudeConfigDir(env);
-  if (existsSync4(join4(configDir, ".credentials.json"))) return true;
+  if (existsSync3(join3(configDir, ".credentials.json"))) return true;
   if (hasApiKeyHelper(configDir)) return true;
   if (platform === "darwin") return true;
   return false;
@@ -28195,25 +27633,25 @@ function decideRegistration(state) {
 }
 
 // src/agents-md.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
-import { dirname as dirname3, join as join5, resolve as resolve3 } from "path";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
+import { dirname as dirname2, join as join4, resolve as resolve3 } from "path";
 function globalAgentsPath() {
-  return join5(piUserDir(), "AGENTS.md");
+  return join4(piUserDir(), "AGENTS.md");
 }
 function resolveAgentsMdPath() {
   if (isolatedFromEnv()) return void 0;
   const fromCwd = findAgentsMdInParents(process.cwd());
   if (fromCwd) return fromCwd;
   const globalPath = globalAgentsPath();
-  if (existsSync5(globalPath)) return globalPath;
+  if (existsSync4(globalPath)) return globalPath;
   return void 0;
 }
 function findAgentsMdInParents(startDir) {
   let current = resolve3(startDir);
   while (true) {
-    const candidate = join5(current, "AGENTS.md");
-    if (existsSync5(candidate)) return candidate;
-    const parent = dirname3(current);
+    const candidate = join4(current, "AGENTS.md");
+    if (existsSync4(candidate)) return candidate;
+    const parent = dirname2(current);
     if (parent === current) break;
     current = parent;
   }
@@ -28223,7 +27661,7 @@ function extractAgentsAppend() {
   const agentsPath = resolveAgentsMdPath();
   if (!agentsPath) return void 0;
   try {
-    const content = readFileSync5(agentsPath, "utf-8").trim();
+    const content = readFileSync4(agentsPath, "utf-8").trim();
     if (!content) return void 0;
     const sanitized = sanitizeAgentsContent(content);
     return sanitized.length > 0 ? `# CLAUDE.md
@@ -28243,12 +27681,12 @@ function sanitizeAgentsContent(content) {
 }
 
 // src/prompt-context.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "fs";
-import { dirname as dirname4, join as join6, resolve as resolve4 } from "path";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
+import { dirname as dirname3, join as join5, resolve as resolve4 } from "path";
 function readTrimmed(path) {
   try {
-    if (!existsSync6(path)) return void 0;
-    const content = readFileSync6(path, "utf8").trim();
+    if (!existsSync5(path)) return void 0;
+    const content = readFileSync5(path, "utf8").trim();
     return content.length > 0 ? content : void 0;
   } catch {
     return void 0;
@@ -28257,9 +27695,9 @@ function readTrimmed(path) {
 function findProjectAppendSystem(startDir) {
   let current = resolve4(startDir);
   while (true) {
-    const candidate = join6(current, ".pi", "APPEND_SYSTEM.md");
-    if (existsSync6(candidate)) return candidate;
-    const parent = dirname4(current);
+    const candidate = join5(current, ".pi", "APPEND_SYSTEM.md");
+    if (existsSync5(candidate)) return candidate;
+    const parent = dirname3(current);
     if (parent === current) break;
     current = parent;
   }
@@ -28267,7 +27705,7 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join6(piUserDir(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join5(piUserDir(), "APPEND_SYSTEM.md") }
   ];
   const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
@@ -29015,7 +28453,7 @@ __export(util_exports, {
   optionalKeys: () => optionalKeys,
   parsedType: () => parsedType,
   partial: () => partial,
-  pick: () => pick2,
+  pick: () => pick,
   prefixIssues: () => prefixIssues,
   primitiveTypes: () => primitiveTypes,
   promiseAllObject: () => promiseAllObject,
@@ -29351,7 +28789,7 @@ var BIGINT_FORMAT_RANGES = {
   int64: [/* @__PURE__ */ BigInt("-9223372036854775808"), /* @__PURE__ */ BigInt("9223372036854775807")],
   uint64: [/* @__PURE__ */ BigInt(0), /* @__PURE__ */ BigInt("18446744073709551615")]
 };
-function pick2(schema, mask) {
+function pick(schema, mask) {
   const currDef = schema._zod.def;
   const checks = currDef.checks;
   const hasChecks = checks && checks.length > 0;
@@ -42938,19 +42376,18 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
   return compat.getModels;
 }
 
-// src/index.ts
-var _piAi = piAi;
-var getModels = await resolveGetModels(_piAi);
-var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
+// src/debug.ts
+import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
+import { dirname as dirname4, join as join6 } from "path";
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join7(piUserDir(), "claude-bridge.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join7(piUserDir(), "claude-bridge-diag.log");
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join6(piUserDir(), "claude-bridge-diag.log");
 }
 if (DEBUG) {
   try {
-    mkdirSync3(dirname5(DEBUG_LOG_PATH), { recursive: true });
-    mkdirSync3(dirname5(diagLogPath()), { recursive: true, mode: 448 });
+    mkdirSync2(dirname4(DEBUG_LOG_PATH), { recursive: true });
+    mkdirSync2(dirname4(diagLogPath()), { recursive: true, mode: 448 });
   } catch {
   }
 }
@@ -42965,11 +42402,57 @@ function debug(...args) {
   };
   const msg = args.map(fmt).join(" ");
   try {
-    appendFileSync3(DEBUG_LOG_PATH, `[${ts2}] [${moduleInstanceId}] ${msg}
+    appendFileSync2(DEBUG_LOG_PATH, `[${ts2}] [${moduleInstanceId}] ${msg}
 `);
   } catch {
   }
 }
+var nextCliDebugSeq = 1;
+function makeCliDebugOptions(tag) {
+  if (!DEBUG) return {};
+  const seq = nextCliDebugSeq++;
+  const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  const logDir = join6(dirname4(DEBUG_LOG_PATH), "cc-cli-logs");
+  try {
+    mkdirSync2(logDir, { recursive: true });
+  } catch {
+  }
+  const debugFile = join6(logDir, `${ts2}-${tag}-${seq}.log`);
+  debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
+  return {
+    debug: true,
+    debugFile,
+    stderr: (data) => {
+      for (const line of data.split(/\r?\n/)) {
+        if (line) debug(`[cli-stderr ${tag}#${seq}] ${line}`);
+      }
+    }
+  };
+}
+function diagDump(label, data) {
+  try {
+    const ts2 = (/* @__PURE__ */ new Date()).toISOString();
+    const entry = { ts: ts2, moduleInstanceId, label, ...data };
+    const path = diagLogPath();
+    try {
+      mkdirSync2(dirname4(path), { recursive: true, mode: 448 });
+    } catch {
+    }
+    appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
+    try {
+      chmodSync(path, 384);
+    } catch {
+    }
+    debug(`DIAG: ${label} (see ${path})`);
+  } catch (error51) {
+    debug(`DIAG FAILED: ${label}`, error51);
+  }
+}
+
+// src/claude-executable.ts
+import { spawn as spawnProcess } from "child_process";
+import { accessSync, constants as fsConstants, readFileSync as readFileSync6, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { delimiter, join as join7 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
@@ -43041,7 +42524,7 @@ function classifyClaudeExecutableBytes(bytes) {
 function preflightClaudeExecutable(path, cwd) {
   let realCwd = cwd;
   try {
-    const cwdStat = statSync3(cwd);
+    const cwdStat = statSync2(cwd);
     if (!cwdStat.isDirectory()) {
       throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not a directory.", {
         code: "ENOTDIR",
@@ -43051,7 +42534,7 @@ function preflightClaudeExecutable(path, cwd) {
       });
     }
     accessSync(cwd, fsConstants.X_OK);
-    realCwd = realpathSync3(cwd);
+    realCwd = realpathSync2(cwd);
   } catch (err) {
     if (err.name === "ClaudeExecutablePreflightError") throw err;
     throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not reachable before spawning Claude Code.", {
@@ -43065,7 +42548,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let realPath = path;
   try {
-    const stat = statSync3(path);
+    const stat = statSync2(path);
     if (!stat.isFile()) {
       throw makeClaudePreflightError("Claude Code executable preflight failed: resolved path is not a file.", {
         code: "EACCES",
@@ -43075,7 +42558,7 @@ function preflightClaudeExecutable(path, cwd) {
       });
     }
     accessSync(path, fsConstants.X_OK);
-    realPath = realpathSync3(path);
+    realPath = realpathSync2(path);
   } catch (err) {
     if (err.name === "ClaudeExecutablePreflightError") throw err;
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot access resolved executable before spawning Claude Code.", {
@@ -43089,7 +42572,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let fileType;
   try {
-    fileType = classifyClaudeExecutableBytes(readFileSync7(realPath).subarray(0, 16));
+    fileType = classifyClaudeExecutableBytes(readFileSync6(realPath).subarray(0, 16));
   } catch (err) {
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
       code: codeValue(err, "EACCES"),
@@ -43181,46 +42664,57 @@ function spawnClaudeCodeWithDiagnostics(options) {
     off: child.off.bind(child)
   };
 }
-var nextCliDebugSeq = 1;
-function makeCliDebugOptions(tag) {
-  if (!DEBUG) return {};
-  const seq = nextCliDebugSeq++;
-  const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join7(dirname5(DEBUG_LOG_PATH), "cc-cli-logs");
-  try {
-    mkdirSync3(logDir, { recursive: true });
-  } catch {
+
+// src/tool-pairing-audit.ts
+function contentBlocks(content) {
+  return Array.isArray(content) ? content.filter((block) => Boolean(block && typeof block === "object")) : [];
+}
+function toolUses(content) {
+  return contentBlocks(content).filter((block) => block.type === "tool_use" && typeof block.id === "string").map((block) => ({ id: block.id, name: typeof block.name === "string" && block.name ? block.name : "unknown" }));
+}
+function toolResultIds(content) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const block of contentBlocks(content)) {
+    if (block.type === "tool_result" && typeof block.tool_use_id === "string") ids.add(block.tool_use_id);
   }
-  const debugFile = join7(logDir, `${ts2}-${tag}-${seq}.log`);
-  debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
-  return {
-    debug: true,
-    debugFile,
-    stderr: (data) => {
-      for (const line of data.split(/\r?\n/)) {
-        if (line) debug(`[cli-stderr ${tag}#${seq}] ${line}`);
+  return ids;
+}
+function findUnpairedToolUses(messages) {
+  const missing = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant") continue;
+    const uses = toolUses(msg.content);
+    if (uses.length === 0) continue;
+    const next = messages[i + 1];
+    const nextUserIndex = next?.role === "user" ? i + 1 : null;
+    const resultIds = nextUserIndex == null ? /* @__PURE__ */ new Set() : toolResultIds(next.content);
+    for (const use2 of uses) {
+      if (!resultIds.has(use2.id)) {
+        missing.push({ id: use2.id, toolName: use2.name, assistantIndex: i, userIndex: nextUserIndex });
       }
     }
-  };
-}
-function diagDump(label, data) {
-  try {
-    const ts2 = (/* @__PURE__ */ new Date()).toISOString();
-    const entry = { ts: ts2, moduleInstanceId, label, ...data };
-    const path = diagLogPath();
-    try {
-      mkdirSync3(dirname5(path), { recursive: true, mode: 448 });
-    } catch {
-    }
-    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
-    try {
-      chmodSync(path, 384);
-    } catch {
-    }
-    debug(`DIAG: ${label} (see ${path})`);
-  } catch (error51) {
-    debug(`DIAG FAILED: ${label}`, error51);
   }
+  return missing;
+}
+function summarizeMissingToolNames(missing) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const item of missing) counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count }));
+}
+
+// src/bridge-state.ts
+var sharedSession = null;
+var extensionApi;
+var piUI;
+function setSharedSession(next) {
+  sharedSession = next;
+}
+function setExtensionApi(next) {
+  extensionApi = next;
+}
+function setPiUI(next) {
+  piUI = next;
 }
 function safeNotify(message, level = "warning") {
   try {
@@ -43301,16 +42795,8 @@ function __testSetBridgeIntegrityState(state) {
 function __testGetBridgeIntegrityState() {
   return { sharedSession };
 }
-var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
-var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
-var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
-var SDK_TO_PI_TOOL_NAME = {
-  read: "read",
-  write: "write",
-  edit: "edit",
-  bash: "bash"
-};
-var MODELS = buildModels(getModels("anthropic"));
+
+// src/connectors.ts
 var DISALLOWED_BUILTIN_TOOLS = [
   "Read",
   "Write",
@@ -43448,12 +42934,751 @@ function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
     allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS]
   };
 }
-var sharedSession = null;
-var extensionApi;
-var piUI;
-var extraUsageHelperInFlight = null;
-var RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
-var RATE_LIMIT_TOKEN = "\x1B[31m[rate-limit]\x1B[39m";
+
+// node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
+import { randomUUID } from "crypto";
+import { mkdirSync as mkdirSync3, writeFileSync, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
+import { dirname as dirname5 } from "path";
+import { readFileSync as readFileSync7 } from "fs";
+import { realpathSync as realpathSync3 } from "fs";
+import { homedir as homedir3 } from "os";
+import { join as join8 } from "path";
+function parseJsonl(content) {
+  return content.split("\n").filter((line) => line.trim()).map(parseRecord);
+}
+function parseJsonlFile(path) {
+  return parseJsonl(readFileSync7(path, "utf-8"));
+}
+function parseRecord(line) {
+  const raw = JSON.parse(line);
+  if (raw.type === "user") return raw;
+  if (raw.type === "assistant") return raw;
+  return raw;
+}
+function serializeRecord(record2) {
+  return JSON.stringify(record2);
+}
+var MAX_SANITIZED_LENGTH = 200;
+function getClaudeDir(claudeDir) {
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join8(homedir3(), ".claude");
+}
+function normalizeProjectPath(projectPath) {
+  try {
+    return realpathSync3(projectPath).normalize("NFC");
+  } catch {
+    return projectPath.normalize("NFC");
+  }
+}
+function projectPathToHash(projectPath) {
+  const sanitized = projectPath.replace(/[^a-zA-Z0-9]/g, "-");
+  if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized;
+  let h = 0;
+  for (let i = 0; i < projectPath.length; i++)
+    h = (h << 5) - h + projectPath.charCodeAt(i) | 0;
+  return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
+}
+function getProjectDir(projectPath, claudeDir) {
+  return join8(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+}
+function getSessionPath(sessionId, projectPath, claudeDir) {
+  return join8(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+}
+function repairToolPairing(messages) {
+  const result = [];
+  let pending = null;
+  const synthetic = (id) => ({
+    type: "tool_result",
+    tool_use_id: id,
+    content: "[no tool result recorded]",
+    is_error: true
+  });
+  const flushPending = () => {
+    if (pending && pending.size > 0) {
+      result.push({ role: "user", content: [...pending].map(synthetic) });
+    }
+    pending = null;
+  };
+  for (const msg of messages) {
+    if (msg.role === "assistant") {
+      flushPending();
+      const ids = /* @__PURE__ */ new Set();
+      if (Array.isArray(msg.content)) {
+        for (const b of msg.content) {
+          if (b.type === "tool_use" && typeof b.id === "string") ids.add(b.id);
+        }
+      }
+      result.push(msg);
+      pending = ids.size > 0 ? ids : null;
+      continue;
+    }
+    const blocks = Array.isArray(msg.content) ? msg.content : null;
+    const hasToolResults = blocks?.some((b) => b.type === "tool_result") ?? false;
+    if (!pending && !hasToolResults) {
+      result.push(msg);
+      continue;
+    }
+    const input = blocks ?? (typeof msg.content === "string" && msg.content ? [{ type: "text", text: msg.content }] : []);
+    const provided = /* @__PURE__ */ new Set();
+    const kept = input.filter((b) => {
+      if (b.type !== "tool_result") return true;
+      if (pending?.has(b.tool_use_id)) {
+        provided.add(b.tool_use_id);
+        return true;
+      }
+      return false;
+    });
+    if (pending) {
+      const missing = [...pending].filter((id) => !provided.has(id)).map(synthetic);
+      kept.unshift(...missing);
+      pending = null;
+    }
+    if (kept.length === 0) {
+      if (result.length === 0) {
+        result.push({ role: "user", content: [{ type: "text", text: "[orphaned tool result removed]" }] });
+      }
+      continue;
+    }
+    result.push({ ...msg, content: kept });
+  }
+  flushPending();
+  return result;
+}
+var ADJECTIVES = [
+  "ancient",
+  "bold",
+  "bright",
+  "calm",
+  "clever",
+  "cool",
+  "crimson",
+  "daring",
+  "eager",
+  "fast",
+  "fierce",
+  "gentle",
+  "golden",
+  "happy",
+  "hidden",
+  "iron",
+  "keen",
+  "lively",
+  "mighty",
+  "nimble",
+  "pale",
+  "proud",
+  "quick",
+  "rapid",
+  "sharp",
+  "silent",
+  "smooth",
+  "steady",
+  "swift",
+  "vivid",
+  "warm",
+  "wild"
+];
+var NOUNS = [
+  "arrow",
+  "badge",
+  "beacon",
+  "blade",
+  "brook",
+  "castle",
+  "cedar",
+  "cloud",
+  "comet",
+  "crest",
+  "dawn",
+  "drift",
+  "eagle",
+  "ember",
+  "falcon",
+  "flame",
+  "forge",
+  "gale",
+  "grove",
+  "harbor",
+  "hawk",
+  "jade",
+  "kettle",
+  "lance",
+  "maple",
+  "marsh",
+  "needle",
+  "oak",
+  "pearl",
+  "pine",
+  "ridge",
+  "river",
+  "rune",
+  "sage",
+  "shade",
+  "spark",
+  "stone",
+  "thorn",
+  "tower",
+  "wave"
+];
+function pick2(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function generateSlug() {
+  return `${pick2(ADJECTIVES)}-${pick2(ADJECTIVES)}-${pick2(NOUNS)}`;
+}
+function syntheticMessageId() {
+  return `msg_syn_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+}
+function syntheticRequestId() {
+  return `req_syn_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+}
+var Session = class {
+  sessionId;
+  projectPath;
+  jsonlPath;
+  _records = [];
+  _pendingRecords = [];
+  _lastUuid = null;
+  _slug;
+  _cwd;
+  _version;
+  _gitBranch;
+  _model;
+  _fileExists;
+  _nextTimestamp;
+  constructor(opts) {
+    this.sessionId = opts.sessionId;
+    this.projectPath = opts.projectPath;
+    this.jsonlPath = opts.jsonlPath;
+    this._slug = opts.slug ?? generateSlug();
+    this._cwd = opts.cwd ?? opts.projectPath;
+    this._version = opts.version ?? "2.1.83";
+    this._gitBranch = opts.gitBranch ?? "HEAD";
+    this._model = opts.model ?? "claude-sonnet-4-6";
+    this._records = opts.records ?? [];
+    this._fileExists = opts.fileExists ?? false;
+    this._nextTimestamp = Date.now();
+    for (let i = this._records.length - 1; i >= 0; i--) {
+      const r = this._records[i];
+      if (r.type === "user" || r.type === "assistant") {
+        this._lastUuid = r.uuid;
+        break;
+      }
+    }
+  }
+  /** All records (existing + pending). */
+  get records() {
+    return [...this._records, ...this._pendingRecords];
+  }
+  /** Only user and assistant message records. */
+  get messages() {
+    return this.records.filter(
+      (r) => r.type === "user" || r.type === "assistant"
+    );
+  }
+  baseFields() {
+    const uuid3 = randomUUID();
+    const record2 = {
+      uuid: uuid3,
+      parentUuid: this._lastUuid,
+      sessionId: this.sessionId,
+      timestamp: new Date(this._nextTimestamp++).toISOString(),
+      isSidechain: false,
+      cwd: this._cwd,
+      userType: "external",
+      version: this._version,
+      gitBranch: this._gitBranch,
+      slug: this._slug,
+      entrypoint: "cli"
+    };
+    this._lastUuid = uuid3;
+    return record2;
+  }
+  /** Add a user text message. Returns its uuid. */
+  addUserMessage(text) {
+    const base = this.baseFields();
+    const record2 = {
+      type: "user",
+      ...base,
+      message: { role: "user", content: text }
+    };
+    this._pendingRecords.push(record2);
+    return base.uuid;
+  }
+  /** Add an assistant message with the given content blocks. Returns its uuid. */
+  addAssistantMessage(content, opts) {
+    const base = this.baseFields();
+    const hasToolUse2 = content.some((b) => b.type === "tool_use");
+    const payload = {
+      id: syntheticMessageId(),
+      type: "message",
+      role: "assistant",
+      model: opts?.model ?? this._model,
+      content,
+      stop_reason: opts?.stopReason ?? (hasToolUse2 ? "tool_use" : "end_turn"),
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 }
+    };
+    const record2 = {
+      type: "assistant",
+      ...base,
+      requestId: syntheticRequestId(),
+      message: payload
+    };
+    this._pendingRecords.push(record2);
+    return base.uuid;
+  }
+  /** Add a user message containing tool results. Returns its uuid. */
+  addToolResults(results) {
+    const base = this.baseFields();
+    const record2 = {
+      type: "user",
+      ...base,
+      message: {
+        role: "user",
+        content: results.map((r) => ({
+          type: "tool_result",
+          tool_use_id: r.toolUseId,
+          content: r.content,
+          ...r.isError ? { is_error: true } : {}
+        }))
+      }
+    };
+    this._pendingRecords.push(record2);
+    return base.uuid;
+  }
+  /**
+   * Convenience: add a complete tool call round-trip.
+   * Creates assistant tool_use message, user tool_result message,
+   * and optionally a final assistant text response.
+   */
+  addToolCalls(calls, opts) {
+    const toolUseBlocks = calls.map((c) => ({
+      type: "tool_use",
+      id: `toolu_syn_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
+      name: c.name,
+      input: c.input
+    }));
+    this.addAssistantMessage(toolUseBlocks, { model: opts?.model, stopReason: "tool_use" });
+    this.addToolResults(
+      calls.map((c, i) => ({
+        toolUseId: toolUseBlocks[i].id,
+        content: c.result,
+        isError: c.isError
+      }))
+    );
+    if (opts?.response) {
+      this.addAssistantMessage(opts.response, { model: opts?.model });
+    }
+  }
+  /**
+   * Import an array of Anthropic API-shaped messages, dispatching each to the
+   * appropriate internal method based on role and content type.
+   */
+  importMessages(messages) {
+    messages = repairToolPairing(messages);
+    for (const msg of messages) {
+      if (msg.role === "assistant") {
+        const content = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : msg.content;
+        this.addAssistantMessage(content);
+      } else {
+        if (typeof msg.content === "string") {
+          this.addUserMessage(msg.content);
+        } else {
+          const toolResults = msg.content.filter(
+            (b) => b.type === "tool_result"
+          );
+          if (toolResults.length > 0) {
+            this.addToolResults(toolResults.map((r) => ({
+              toolUseId: r.tool_use_id,
+              content: r.content,
+              isError: r.is_error
+            })));
+          } else {
+            const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+            this.addUserMessage(text || JSON.stringify(msg.content));
+          }
+        }
+      }
+    }
+  }
+  /**
+   * Reset this session to empty state and delete any on-disk artifacts.
+   * The sessionId and jsonlPath are preserved so subsequent writes reuse them.
+   */
+  clear() {
+    this._records = [];
+    this._pendingRecords = [];
+    this._lastUuid = null;
+    this._nextTimestamp = Date.now();
+    this._fileExists = false;
+    removeSessionFiles(this.jsonlPath);
+  }
+  /** Write pending records to disk. Creates the file/directory if needed. */
+  save() {
+    if (this._pendingRecords.length === 0) return;
+    const dir = dirname5(this.jsonlPath);
+    if (!existsSync6(dir)) {
+      mkdirSync3(dir, { recursive: true });
+    }
+    const data = this._pendingRecords.map((r) => serializeRecord(r) + "\n").join("");
+    if (this._fileExists) {
+      appendFileSync3(this.jsonlPath, data, "utf-8");
+    } else {
+      writeFileSync(this.jsonlPath, data, "utf-8");
+      this._fileExists = true;
+    }
+    this._records.push(...this._pendingRecords);
+    this._pendingRecords = [];
+  }
+};
+function removeSessionFiles(jsonlPath) {
+  rmSync2(jsonlPath, { force: true });
+  const companionDir = jsonlPath.endsWith(".jsonl") ? jsonlPath.slice(0, -".jsonl".length) : jsonlPath;
+  rmSync2(companionDir, { recursive: true, force: true });
+}
+function deleteSession(sessionId, projectPath, claudeDir) {
+  const normalized = normalizeProjectPath(projectPath);
+  const jsonlPath = getSessionPath(sessionId, normalized, claudeDir);
+  removeSessionFiles(jsonlPath);
+}
+function createSession(opts) {
+  const sessionId = opts.sessionId ?? randomUUID();
+  const projectPath = normalizeProjectPath(opts.projectPath);
+  const jsonlPath = getSessionPath(sessionId, projectPath, opts.claudeDir);
+  return new Session({
+    sessionId,
+    projectPath,
+    jsonlPath,
+    cwd: opts.cwd ? normalizeProjectPath(opts.cwd) : projectPath,
+    version: opts.version,
+    gitBranch: opts.gitBranch,
+    model: opts.model
+  });
+}
+function openSession(opts) {
+  const projectPath = normalizeProjectPath(opts.projectPath);
+  const jsonlPath = getSessionPath(opts.sessionId, projectPath, opts.claudeDir);
+  return readSession(jsonlPath, projectPath);
+}
+function readSession(jsonlPath, projectPath) {
+  const records = parseJsonlFile(jsonlPath);
+  const firstMsg = records.find((r) => r.type === "user" || r.type === "assistant");
+  const sessionId = firstMsg?.sessionId ?? "";
+  const resolvedProjectPath = projectPath ?? firstMsg?.cwd ?? "";
+  return new Session({
+    sessionId,
+    projectPath: resolvedProjectPath,
+    jsonlPath,
+    slug: firstMsg?.slug,
+    cwd: firstMsg?.cwd,
+    version: firstMsg?.version,
+    gitBranch: firstMsg?.gitBranch,
+    records,
+    fileExists: true
+  });
+}
+
+// src/session-persistence.ts
+import { createHash } from "crypto";
+import { realpathSync as realpathSync4, statSync as statSync4 } from "fs";
+import { resolve as pathResolve } from "path";
+
+// src/session-verify.ts
+import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync3 } from "fs";
+import { StringDecoder } from "node:string_decoder";
+function forEachJsonlLine(path, onLine) {
+  const fd = openSync2(path, "r");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  try {
+    for (; ; ) {
+      const bytesRead = readSync2(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      pending += decoder.write(buffer.subarray(0, bytesRead));
+      let start = 0;
+      for (; ; ) {
+        const newline = pending.indexOf("\n", start);
+        if (newline < 0) {
+          pending = pending.slice(start);
+          break;
+        }
+        const line = pending.slice(start, newline);
+        onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+        start = newline + 1;
+      }
+    }
+    pending += decoder.end();
+    if (pending.length > 0) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
+  } finally {
+    closeSync2(fd);
+  }
+}
+function summarizeJsonl(path) {
+  const summary = { count: 0 };
+  forEachJsonlLine(path, (line) => {
+    if (!line.trim()) return;
+    summary.count += 1;
+    if (summary.firstLine === void 0) summary.firstLine = line;
+    summary.lastLine = line;
+  });
+  return summary;
+}
+function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount) {
+  const warnings = [];
+  let st2;
+  try {
+    st2 = statSync3(jsonlPath);
+  } catch (e) {
+    warnings.push(`file missing after save \u2014 path=${jsonlPath} err=${e.message}`);
+    return warnings;
+  }
+  let summary;
+  try {
+    summary = summarizeJsonl(jsonlPath);
+  } catch (e) {
+    warnings.push(`file unreadable \u2014 path=${jsonlPath} size=${st2.size} err=${e.message}`);
+    return warnings;
+  }
+  if (summary.count !== expectedRecordCount) {
+    warnings.push(`record count mismatch \u2014 expected=${expectedRecordCount} actual=${summary.count} path=${jsonlPath} bytes=${st2.size}`);
+    return warnings;
+  }
+  try {
+    const firstRec = JSON.parse(summary.firstLine ?? "");
+    const lastRec = JSON.parse(summary.lastLine ?? "");
+    if (firstRec.sessionId !== expectedSessionId || lastRec.sessionId !== expectedSessionId) {
+      warnings.push(`sessionId drift \u2014 expected=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}`);
+    }
+  } catch (e) {
+    warnings.push(`malformed JSONL \u2014 path=${jsonlPath} err=${e.message}`);
+  }
+  return warnings;
+}
+
+// src/session-persistence.ts
+var BRIDGE_SESSION_CUSTOM_TYPE = "claude-bridge-session";
+function fingerprintMessages(messages) {
+  const normalized = messages.map((message) => {
+    if (message.role === "assistant") {
+      return {
+        role: message.role,
+        provider: message.provider,
+        model: message.model,
+        content: message.content
+      };
+    }
+    return message;
+  });
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+}
+function readBuiltSessionContext(sessionManager) {
+  const built = typeof sessionManager?.buildSessionContext === "function" ? sessionManager.buildSessionContext() : void 0;
+  return Array.isArray(built?.messages) ? built : void 0;
+}
+function latestPersistedBridgeSession(sessionManager) {
+  const entries = typeof sessionManager?.getEntries === "function" ? sessionManager.getEntries() : [];
+  if (!Array.isArray(entries)) return void 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== BRIDGE_SESSION_CUSTOM_TYPE) continue;
+    const data = entry.data;
+    if (!data || typeof data.sessionId !== "string" || typeof data.cursor !== "number" || typeof data.cwd !== "string" || typeof data.fingerprint !== "string") continue;
+    return data;
+  }
+  return void 0;
+}
+function claudeSessionExists(sessionId, cwd) {
+  try {
+    const session = openSession({ sessionId, projectPath: cwd, claudeDir: process.env.CLAUDE_CONFIG_DIR });
+    statSync4(session.jsonlPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function canonicalize(p4) {
+  if (!p4) return void 0;
+  try {
+    return realpathSync4.native(p4);
+  } catch {
+    return pathResolve(p4);
+  }
+}
+function shouldRestorePersistedBridgeEntry(persisted, currentPiSessionId, currentCwd) {
+  if (!persisted.piSessionId) return "missing piSessionId";
+  if (currentPiSessionId && persisted.piSessionId !== currentPiSessionId) {
+    return `piSessionId mismatch (persisted=${persisted.piSessionId} current=${currentPiSessionId})`;
+  }
+  if (currentCwd && canonicalize(persisted.cwd) !== canonicalize(currentCwd)) {
+    return `cwd mismatch (persisted=${persisted.cwd} current=${currentCwd})`;
+  }
+  return void 0;
+}
+function restoreSharedSessionFromPi(ctx2) {
+  const persisted = latestPersistedBridgeSession(ctx2.sessionManager);
+  if (!persisted) return;
+  const currentPiSessionId = typeof ctx2.sessionManager?.getSessionId === "function" ? ctx2.sessionManager.getSessionId() : void 0;
+  const currentCwd = typeof ctx2.sessionManager?.getCwd === "function" ? ctx2.sessionManager.getCwd() : ctx2.cwd;
+  const rejection = shouldRestorePersistedBridgeEntry(persisted, currentPiSessionId, currentCwd);
+  if (rejection) {
+    debug(`restoreSharedSession: ${rejection} \u2014 forcing rebuild`);
+    return;
+  }
+  const built = readBuiltSessionContext(ctx2.sessionManager);
+  if (!built) return;
+  const cursor = Math.max(0, Math.min(persisted.cursor, built.messages.length));
+  const fingerprint = fingerprintMessages(built.messages.slice(0, cursor));
+  if (fingerprint !== persisted.fingerprint) {
+    debug(`restoreSharedSession: fingerprint mismatch for ${persisted.sessionId.slice(0, 8)}`);
+    return;
+  }
+  if (!claudeSessionExists(persisted.sessionId, persisted.cwd)) {
+    debug(`restoreSharedSession: Claude session missing for ${persisted.sessionId.slice(0, 8)}`);
+    return;
+  }
+  setSharedSession({ sessionId: persisted.sessionId, cursor, cwd: persisted.cwd });
+  debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
+}
+function schedulePersistSharedSession(ctxLike) {
+  if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
+  const snapshot = { ...sharedSession };
+  const timer = setTimeout(() => {
+    try {
+      const built = readBuiltSessionContext(ctxLike.sessionManager);
+      if (!built) return;
+      const cursor = Math.max(0, Math.min(snapshot.cursor, built.messages.length));
+      const data = {
+        ...snapshot,
+        cursor,
+        fingerprint: fingerprintMessages(built.messages.slice(0, cursor)),
+        piSessionId: typeof ctxLike.sessionManager?.getSessionId === "function" ? ctxLike.sessionManager.getSessionId() : void 0,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
+      debug(`persistSharedSession: saved ${data.sessionId.slice(0, 8)}, cursor=${data.cursor}`);
+    } catch (error51) {
+      debug("persistSharedSession failed:", error51);
+    }
+  }, 0);
+  timer.unref?.();
+}
+function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
+  const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
+  debug(`convertAndImportMessages: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
+  debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m, i) => {
+    const c = m.content;
+    if (typeof c === "string") return `[${i}]${m.role}:text`;
+    if (Array.isArray(c)) return `[${i}]${m.role}:${c.map((b) => b.type).join("+")}`;
+    return `[${i}]${m.role}:?`;
+  }).join(" "));
+  if (sanitizedIds.size > 0) {
+    debug(
+      `convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
+      [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
+    );
+  }
+  const missingToolResults = findUnpairedToolUses(anthropicMessages);
+  const repaired = repairToolPairing(anthropicMessages);
+  if (missingToolResults.length > 0) {
+    reportSyntheticToolResultRepair(missingToolResults, {
+      cwd,
+      messageCount: messages.length,
+      anthropicMessageCount: anthropicMessages.length,
+      sessionId: session.sessionId,
+      jsonlPath: session.jsonlPath
+    });
+  }
+  if (repaired.length !== anthropicMessages.length) {
+    debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} \u2192 ${repaired.length} msgs`);
+  }
+  if (repaired.length) session.importMessages(repaired);
+}
+function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount, cwd) {
+  const warnings = verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
+  for (const msg of warnings) {
+    debug(`WARNING session verify: ${msg}`);
+    piUI?.notify(
+      `Session file issue: ${msg}
+cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}
+Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
+      "warning"
+    );
+    diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+  }
+}
+function safeRealpath(p4) {
+  try {
+    return realpathSync4(p4);
+  } catch (e) {
+    return `<failed: ${e.message}>`;
+  }
+}
+function debugSessionPaths(label, cwd, jsonlPath) {
+  const realCwd = safeRealpath(cwd);
+  let fileSize = null;
+  let fileExists = false;
+  try {
+    const st2 = statSync4(jsonlPath);
+    fileExists = true;
+    fileSize = st2.size;
+  } catch {
+  }
+  debug(`${label}: cwd=${cwd}`);
+  if (realCwd !== cwd) debug(`${label}: realpath(cwd)=${realCwd} (DIFFERS \u2014 symlink-resolved path is what CC SDK uses)`);
+  debug(`${label}: jsonlPath=${jsonlPath}`);
+  debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
+  debug(`${label}: env.CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
+}
+function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
+  const priorMessages = messages.slice(0, -1);
+  if (sharedSession && !sharedSession.needsRebuild) {
+    const missed = priorMessages.slice(sharedSession.cursor);
+    const trailingAssistantOnly = missed.length === 1 && missed[0].role === "assistant";
+    if (missed.length === 0 || trailingAssistantOnly) {
+      if (trailingAssistantOnly) {
+        setSharedSession({ ...sharedSession, cursor: priorMessages.length, cwd });
+      }
+      debug(`Case 3: ${trailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
+      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor}`);
+      return { sessionId: sharedSession.sessionId };
+    }
+  }
+  if (priorMessages.length === 0) {
+    debug(`Case 1: clean start, ${messages.length} total messages`);
+    debug(`syncResult: path=clean-start`);
+    return { sessionId: null };
+  }
+  const previousSessionId = sharedSession?.sessionId;
+  const previousCursor = sharedSession?.cursor ?? 0;
+  const preserveId = previousSessionId !== void 0 && !sharedSession?.forceRotate;
+  if (preserveId) {
+    deleteSession(previousSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
+  }
+  const session = createSession({
+    projectPath: cwd,
+    claudeDir: process.env.CLAUDE_CONFIG_DIR,
+    ...preserveId ? { sessionId: previousSessionId } : {},
+    ...modelId ? { model: modelId } : {}
+  });
+  convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
+  session.save();
+  verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd);
+  setSharedSession({ sessionId: session.sessionId, cursor: priorMessages.length, cwd });
+  if (previousSessionId === void 0) {
+    debug(`Case 2: first turn with ${priorMessages.length} prior messages \u2192 session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
+  } else if (preserveId) {
+    const missedCount = priorMessages.length - previousCursor;
+    debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total \u2192 rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
+  } else {
+    debug(`Case 4 post-abort: ${priorMessages.length} total \u2192 new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
+  }
+  debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
+  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === void 0 ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
+  return { sessionId: session.sessionId };
+}
+
+// src/stream-idle-watchdog.ts
 var DEFAULT_STREAM_IDLE_TIMEOUT_MS = 9e4;
 var STREAM_IDLE_BACKOFF_HINT_MS = 6e4;
 var STREAM_IDLE_TIMEOUT_ENV = "CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT";
@@ -43538,6 +43763,10 @@ function createStreamIdleWatchdog({
     timedOut: () => didTimeout
   };
 }
+
+// src/rate-limit.ts
+var RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
+var RATE_LIMIT_TOKEN = "\x1B[31m[rate-limit]\x1B[39m";
 function isExtraUsageRequiredMessage(value) {
   let text;
   if (typeof value === "string") text = value;
@@ -43593,341 +43822,14 @@ function formatAllowedRateLimitWarning(info) {
   if (utilization === void 0 || utilization < ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD) return void 0;
   return `Claude rate limit warning: nearing ${rateLimitTypeLabel(info.rateLimitType)} limit; check Claude Code /usage for exact utilization.`;
 }
-function emitRateLimitEvent(payload) {
-  try {
-    extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
-  } catch {
-  }
-}
-function extraUsageAllowed(config2) {
-  return config2.provider?.allowExtraUsage === true;
-}
-function sdkTextFromMessage(message) {
-  if (message.type === "result") return message.result;
-  if (message.type === "assistant") {
-    const content = message.message?.content;
-    if (!Array.isArray(content)) return void 0;
-    return content.map((block) => block?.type === "text" && typeof block.text === "string" ? block.text : "").filter(Boolean).join("\n");
-  }
-  return void 0;
-}
-async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd)) {
-  const providerSettings = config2.provider ?? {};
-  const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
-  if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
-  const helperQuery = tAt({
-    prompt: "/extra-usage",
-    options: {
-      cwd,
-      env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
-      maxTurns: 1,
-      ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
-      spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
-      ...makeCliDebugOptions("extra-usage")
-    }
-  });
-  const outputs = [];
-  try {
-    for await (const message of helperQuery) {
-      const text = sdkTextFromMessage(message)?.trim();
-      if (text && outputs[outputs.length - 1] !== text) outputs.push(text);
-    }
-  } finally {
-    helperQuery.close();
-  }
-  return outputs.join("\n").trim() || "Claude Code /extra-usage completed.";
-}
-function launchExtraUsageHelperIfAllowed(cwd, config2, reason) {
-  if (!extraUsageAllowed(config2)) return false;
-  if (extraUsageHelperInFlight) return true;
-  extraUsageHelperInFlight = runExtraUsageHelper(cwd, config2).then((message) => {
-    piUI?.notify(`Claude extra usage helper: ${message}`, "info");
-    return message;
-  }).catch((error51) => {
-    const message = error51 instanceof Error ? error51.message : String(error51);
-    piUI?.notify(`Claude extra usage helper failed after ${reason}: ${message}`, "error");
-    throw error51;
-  }).finally(() => {
-    extraUsageHelperInFlight = null;
-  });
-  void extraUsageHelperInFlight.catch(() => {
-  });
-  return true;
-}
-var BRIDGE_SESSION_CUSTOM_TYPE = "claude-bridge-session";
-function fingerprintMessages(messages) {
-  const normalized = messages.map((message) => {
-    if (message.role === "assistant") {
-      return {
-        role: message.role,
-        provider: message.provider,
-        model: message.model,
-        content: message.content
-      };
-    }
-    return message;
-  });
-  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
-}
-function readBuiltSessionContext(sessionManager) {
-  const built = typeof sessionManager?.buildSessionContext === "function" ? sessionManager.buildSessionContext() : void 0;
-  return Array.isArray(built?.messages) ? built : void 0;
-}
-function latestPersistedBridgeSession(sessionManager) {
-  const entries = typeof sessionManager?.getEntries === "function" ? sessionManager.getEntries() : [];
-  if (!Array.isArray(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== BRIDGE_SESSION_CUSTOM_TYPE) continue;
-    const data = entry.data;
-    if (!data || typeof data.sessionId !== "string" || typeof data.cursor !== "number" || typeof data.cwd !== "string" || typeof data.fingerprint !== "string") continue;
-    return data;
-  }
-  return void 0;
-}
-function claudeSessionExists(sessionId, cwd) {
-  try {
-    const session = openSession({ sessionId, projectPath: cwd, claudeDir: process.env.CLAUDE_CONFIG_DIR });
-    statSync3(session.jsonlPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function canonicalize(p4) {
-  if (!p4) return void 0;
-  try {
-    return realpathSync3.native(p4);
-  } catch {
-    return pathResolve(p4);
-  }
-}
-function shouldRestorePersistedBridgeEntry(persisted, currentPiSessionId, currentCwd) {
-  if (!persisted.piSessionId) return "missing piSessionId";
-  if (currentPiSessionId && persisted.piSessionId !== currentPiSessionId) {
-    return `piSessionId mismatch (persisted=${persisted.piSessionId} current=${currentPiSessionId})`;
-  }
-  if (currentCwd && canonicalize(persisted.cwd) !== canonicalize(currentCwd)) {
-    return `cwd mismatch (persisted=${persisted.cwd} current=${currentCwd})`;
-  }
-  return void 0;
-}
-function restoreSharedSessionFromPi(ctx2) {
-  const persisted = latestPersistedBridgeSession(ctx2.sessionManager);
-  if (!persisted) return;
-  const currentPiSessionId = typeof ctx2.sessionManager?.getSessionId === "function" ? ctx2.sessionManager.getSessionId() : void 0;
-  const currentCwd = typeof ctx2.sessionManager?.getCwd === "function" ? ctx2.sessionManager.getCwd() : ctx2.cwd;
-  const rejection = shouldRestorePersistedBridgeEntry(persisted, currentPiSessionId, currentCwd);
-  if (rejection) {
-    debug(`restoreSharedSession: ${rejection} \u2014 forcing rebuild`);
-    return;
-  }
-  const built = readBuiltSessionContext(ctx2.sessionManager);
-  if (!built) return;
-  const cursor = Math.max(0, Math.min(persisted.cursor, built.messages.length));
-  const fingerprint = fingerprintMessages(built.messages.slice(0, cursor));
-  if (fingerprint !== persisted.fingerprint) {
-    debug(`restoreSharedSession: fingerprint mismatch for ${persisted.sessionId.slice(0, 8)}`);
-    return;
-  }
-  if (!claudeSessionExists(persisted.sessionId, persisted.cwd)) {
-    debug(`restoreSharedSession: Claude session missing for ${persisted.sessionId.slice(0, 8)}`);
-    return;
-  }
-  sharedSession = { sessionId: persisted.sessionId, cursor, cwd: persisted.cwd };
-  debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
-}
-function schedulePersistSharedSession(ctxLike) {
-  if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
-  const snapshot = { ...sharedSession };
-  const timer = setTimeout(() => {
-    try {
-      const built = readBuiltSessionContext(ctxLike.sessionManager);
-      if (!built) return;
-      const cursor = Math.max(0, Math.min(snapshot.cursor, built.messages.length));
-      const data = {
-        ...snapshot,
-        cursor,
-        fingerprint: fingerprintMessages(built.messages.slice(0, cursor)),
-        piSessionId: typeof ctxLike.sessionManager?.getSessionId === "function" ? ctxLike.sessionManager.getSessionId() : void 0,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
-      debug(`persistSharedSession: saved ${data.sessionId.slice(0, 8)}, cursor=${data.cursor}`);
-    } catch (error51) {
-      debug("persistSharedSession failed:", error51);
-    }
-  }, 0);
-  timer.unref?.();
-}
-function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
-  const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
-  debug(`convertAndImportMessages: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
-  debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m, i) => {
-    const c = m.content;
-    if (typeof c === "string") return `[${i}]${m.role}:text`;
-    if (Array.isArray(c)) return `[${i}]${m.role}:${c.map((b) => b.type).join("+")}`;
-    return `[${i}]${m.role}:?`;
-  }).join(" "));
-  if (sanitizedIds.size > 0) {
-    debug(
-      `convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
-      [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
-    );
-  }
-  const missingToolResults = findUnpairedToolUses(anthropicMessages);
-  const repaired = repairToolPairing(anthropicMessages);
-  if (missingToolResults.length > 0) {
-    reportSyntheticToolResultRepair(missingToolResults, {
-      cwd,
-      messageCount: messages.length,
-      anthropicMessageCount: anthropicMessages.length,
-      sessionId: session.sessionId,
-      jsonlPath: session.jsonlPath
-    });
-  }
-  if (repaired.length !== anthropicMessages.length) {
-    debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} \u2192 ${repaired.length} msgs`);
-  }
-  if (repaired.length) session.importMessages(repaired);
-}
-function extractAllToolResults2(context) {
-  const { results, stopIdx } = extractAllToolResults(context.messages);
-  debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
-  debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
-  for (let r = 0; r < results.length; r++) {
-    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
-  }
-  return results;
-}
-function extractUserPrompt(messages) {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") return null;
-  if (typeof last.content === "string") return last.content;
-  return messageContentToText(last.content) || "";
-}
-function extractUserPromptBlocks(messages) {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") return null;
-  if (typeof last.content === "string") {
-    debug(`extractUserPromptBlocks: content is string (length=${last.content.length})`);
-    return null;
-  }
-  if (!Array.isArray(last.content)) {
-    debug(`extractUserPromptBlocks: content is ${typeof last.content}`);
-    return null;
-  }
-  debug(`extractUserPromptBlocks: ${last.content.length} blocks, types=${last.content.map((b) => b.type).join(",")}`);
-  let hasImage = false;
-  const blocks = [];
-  for (const block of last.content) {
-    if (block.type === "text" && block.text) {
-      blocks.push({ type: "text", text: block.text });
-    } else if (block.type === "image") {
-      debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
-      if (!block.data || !block.mimeType) {
-        debug(`image block missing data or mimeType, skipping`);
-        continue;
-      }
-      hasImage = true;
-      blocks.push({
-        type: "image",
-        source: { type: "base64", media_type: block.mimeType, data: block.data }
-      });
-    }
-  }
-  return hasImage ? blocks : null;
-}
-async function* wrapPromptStream(blocks) {
-  yield {
-    type: "user",
-    message: { role: "user", content: blocks },
-    parent_tool_use_id: null
-  };
-}
-function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount, cwd) {
-  const warnings = verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
-  for (const msg of warnings) {
-    debug(`WARNING session verify: ${msg}`);
-    piUI?.notify(
-      `Session file issue: ${msg}
-cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}
-Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
-      "warning"
-    );
-    diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
-  }
-}
-function safeRealpath(p4) {
-  try {
-    return realpathSync3(p4);
-  } catch (e) {
-    return `<failed: ${e.message}>`;
-  }
-}
-function debugSessionPaths(label, cwd, jsonlPath) {
-  const realCwd = safeRealpath(cwd);
-  let fileSize = null;
-  let fileExists = false;
-  try {
-    const st2 = statSync3(jsonlPath);
-    fileExists = true;
-    fileSize = st2.size;
-  } catch {
-  }
-  debug(`${label}: cwd=${cwd}`);
-  if (realCwd !== cwd) debug(`${label}: realpath(cwd)=${realCwd} (DIFFERS \u2014 symlink-resolved path is what CC SDK uses)`);
-  debug(`${label}: jsonlPath=${jsonlPath}`);
-  debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
-  debug(`${label}: env.CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
-}
-function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
-  const priorMessages = messages.slice(0, -1);
-  if (sharedSession && !sharedSession.needsRebuild) {
-    const missed = priorMessages.slice(sharedSession.cursor);
-    const trailingAssistantOnly = missed.length === 1 && missed[0].role === "assistant";
-    if (missed.length === 0 || trailingAssistantOnly) {
-      if (trailingAssistantOnly) {
-        sharedSession = { ...sharedSession, cursor: priorMessages.length, cwd };
-      }
-      debug(`Case 3: ${trailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
-      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor}`);
-      return { sessionId: sharedSession.sessionId };
-    }
-  }
-  if (priorMessages.length === 0) {
-    debug(`Case 1: clean start, ${messages.length} total messages`);
-    debug(`syncResult: path=clean-start`);
-    return { sessionId: null };
-  }
-  const previousSessionId = sharedSession?.sessionId;
-  const previousCursor = sharedSession?.cursor ?? 0;
-  const preserveId = previousSessionId !== void 0 && !sharedSession?.forceRotate;
-  if (preserveId) {
-    deleteSession(previousSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
-  }
-  const session = createSession({
-    projectPath: cwd,
-    claudeDir: process.env.CLAUDE_CONFIG_DIR,
-    ...preserveId ? { sessionId: previousSessionId } : {},
-    ...modelId ? { model: modelId } : {}
-  });
-  convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
-  session.save();
-  verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd);
-  sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
-  if (previousSessionId === void 0) {
-    debug(`Case 2: first turn with ${priorMessages.length} prior messages \u2192 session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
-  } else if (preserveId) {
-    const missedCount = priorMessages.length - previousCursor;
-    debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total \u2192 rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
-  } else {
-    debug(`Case 4 post-abort: ${priorMessages.length} total \u2192 new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
-  }
-  debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
-  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === void 0 ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
-  return { sessionId: session.sessionId };
-}
+
+// src/tool-mapping.ts
+var SDK_TO_PI_TOOL_NAME = {
+  read: "read",
+  write: "write",
+  edit: "edit",
+  bash: "bash"
+};
 function mapToolName(name, customToolNameToPi) {
   const normalized = name.toLowerCase();
   const builtin = SDK_TO_PI_TOOL_NAME[normalized];
@@ -43964,95 +43866,9 @@ function mapToolArgs(toolName, args) {
   }
   return result;
 }
-function resolveMcpTools(context, excludeToolName) {
-  const mcpTools = [];
-  const customToolNameToSdk = /* @__PURE__ */ new Map();
-  const customToolNameToPi = /* @__PURE__ */ new Map();
-  if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
-  for (const tool of context.tools) {
-    if (tool.name === excludeToolName) continue;
-    const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
-    mcpTools.push(tool);
-    customToolNameToSdk.set(tool.name, sdkName);
-    customToolNameToSdk.set(tool.name.toLowerCase(), sdkName);
-    customToolNameToPi.set(sdkName, tool.name);
-    customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
-  }
-  return { mcpTools, customToolNameToSdk, customToolNameToPi };
-}
-function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
-  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-  let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
-  if (idx >= 0) {
-    const block = queryCtx.turnBlocks[idx];
-    if ("partialJson" in block) {
-      block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
-      queryCtx.updateToolCallArgs(block.id, block.arguments);
-      delete block.partialJson;
-      delete block.index;
-      queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-    }
-  } else {
-    queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
-    idx = queryCtx.turnBlocks.length - 1;
-    const block = queryCtx.turnBlocks[idx];
-    queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
-    queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-  }
-  queryCtx.turnSawToolCall = true;
-  queryCtx.turnOutput.stopReason = "toolUse";
-  debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 SDK invoked the tool before message_stop/assistant message`);
-  queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-  queryCtx.currentPiStream.end();
-  queryCtx.currentPiStream = null;
-}
-function buildMcpServers(tools, queryCtx) {
-  if (!tools.length) return void 0;
-  const mcpTools = tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: jsonSchemaToZodShape(tool.parameters),
-    handler: async (args) => {
-      const mappedArgs = mapToolArgs(tool.name, args);
-      const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
-      const toolCallId = claim.toolCallId;
-      if (!toolCallId) {
-        debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
-        diagDump("tool_handler_unmatched", {
-          toolName: tool.name,
-          argKeys: argKeys(mappedArgs),
-          available: claim.available,
-          turnToolCallIds: queryCtx.turnToolCallIds,
-          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
-        });
-        return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
-      }
-      if (claim.match !== "tool-args" || claim.ambiguous) {
-        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
-      }
-      if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
-        const result = queryCtx.pendingResults.get(toolCallId);
-        queryCtx.pendingResults.delete(toolCallId);
-        queryCtx.markToolResultResolved(toolCallId);
-        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
-        return result;
-      }
-      debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
-      finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
-      return new Promise((resolve5) => {
-        queryCtx.pendingToolCalls.set(toolCallId, {
-          toolName: tool.name,
-          resolve: (result) => {
-            queryCtx.markToolResultResolved(toolCallId);
-            resolve5(result);
-          }
-        });
-      });
-    }
-  }));
-  const server = HDe({ name: MCP_SERVER_NAME, version: "1.0.0", tools: mcpTools });
-  return { [MCP_SERVER_NAME]: server };
-}
+
+// src/assistant-stream.ts
+import { calculateCost } from "@earendil-works/pi-ai";
 function updateUsage(output, usage, model) {
   if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
   if (usage.output_tokens != null) output.usage.output = usage.output_tokens;
@@ -44063,27 +43879,6 @@ function updateUsage(output, usage, model) {
   const promptTokens = output.usage.input + output.usage.cacheRead + output.usage.cacheWrite;
   const cachePct = promptTokens > 0 ? Math.round(output.usage.cacheRead / promptTokens * 100) : 0;
   debug(`usage: in=${output.usage.input} out=${output.usage.output} cacheRead=${output.usage.cacheRead} cacheWrite=${output.usage.cacheWrite} total=${output.usage.totalTokens} cachePct=${cachePct}% model=${model.id}`);
-}
-var REASONING_TO_EFFORT = {
-  minimal: "low",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "max"
-};
-function normalizeEffortOverrideModelKey(value) {
-  const key = value.trim().toLowerCase();
-  return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
-}
-function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
-  const target = normalizeEffortOverrideModelKey(modelId);
-  for (const [key, rawEffort] of Object.entries(providerConfig?.modelEffortOverrides ?? {})) {
-    const normalizedKey = normalizeEffortOverrideModelKey(key);
-    if (normalizedKey !== "*" && normalizedKey !== target) continue;
-    const effort = normalizeEffortLevel(rawEffort);
-    if (effort) return effort;
-  }
-  return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
 function mapStopReason(reason) {
   switch (reason) {
@@ -44336,6 +44131,241 @@ function processAssistantMessage(message, model, customToolNameToPi) {
     c.currentPiStream.end();
     c.currentPiStream = null;
   }
+}
+
+// src/index.ts
+var _piAi = piAi;
+var getModels = await resolveGetModels(_piAi);
+var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
+var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
+var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
+var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
+var MODELS = buildModels(getModels("anthropic"));
+var extraUsageHelperInFlight = null;
+function emitRateLimitEvent(payload) {
+  try {
+    extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
+  } catch {
+  }
+}
+function extraUsageAllowed(config2) {
+  return config2.provider?.allowExtraUsage === true;
+}
+function sdkTextFromMessage(message) {
+  if (message.type === "result") return message.result;
+  if (message.type === "assistant") {
+    const content = message.message?.content;
+    if (!Array.isArray(content)) return void 0;
+    return content.map((block) => block?.type === "text" && typeof block.text === "string" ? block.text : "").filter(Boolean).join("\n");
+  }
+  return void 0;
+}
+async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd)) {
+  const providerSettings = config2.provider ?? {};
+  const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
+  if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
+  const helperQuery = tAt({
+    prompt: "/extra-usage",
+    options: {
+      cwd,
+      env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
+      maxTurns: 1,
+      ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+      spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
+      ...makeCliDebugOptions("extra-usage")
+    }
+  });
+  const outputs = [];
+  try {
+    for await (const message of helperQuery) {
+      const text = sdkTextFromMessage(message)?.trim();
+      if (text && outputs[outputs.length - 1] !== text) outputs.push(text);
+    }
+  } finally {
+    helperQuery.close();
+  }
+  return outputs.join("\n").trim() || "Claude Code /extra-usage completed.";
+}
+function launchExtraUsageHelperIfAllowed(cwd, config2, reason) {
+  if (!extraUsageAllowed(config2)) return false;
+  if (extraUsageHelperInFlight) return true;
+  extraUsageHelperInFlight = runExtraUsageHelper(cwd, config2).then((message) => {
+    piUI?.notify(`Claude extra usage helper: ${message}`, "info");
+    return message;
+  }).catch((error51) => {
+    const message = error51 instanceof Error ? error51.message : String(error51);
+    piUI?.notify(`Claude extra usage helper failed after ${reason}: ${message}`, "error");
+    throw error51;
+  }).finally(() => {
+    extraUsageHelperInFlight = null;
+  });
+  void extraUsageHelperInFlight.catch(() => {
+  });
+  return true;
+}
+function extractAllToolResults2(context) {
+  const { results, stopIdx } = extractAllToolResults(context.messages);
+  debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
+  debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
+  for (let r = 0; r < results.length; r++) {
+    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
+  }
+  return results;
+}
+function extractUserPrompt(messages) {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") return null;
+  if (typeof last.content === "string") return last.content;
+  return messageContentToText(last.content) || "";
+}
+function extractUserPromptBlocks(messages) {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") return null;
+  if (typeof last.content === "string") {
+    debug(`extractUserPromptBlocks: content is string (length=${last.content.length})`);
+    return null;
+  }
+  if (!Array.isArray(last.content)) {
+    debug(`extractUserPromptBlocks: content is ${typeof last.content}`);
+    return null;
+  }
+  debug(`extractUserPromptBlocks: ${last.content.length} blocks, types=${last.content.map((b) => b.type).join(",")}`);
+  let hasImage = false;
+  const blocks = [];
+  for (const block of last.content) {
+    if (block.type === "text" && block.text) {
+      blocks.push({ type: "text", text: block.text });
+    } else if (block.type === "image") {
+      debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+      if (!block.data || !block.mimeType) {
+        debug(`image block missing data or mimeType, skipping`);
+        continue;
+      }
+      hasImage = true;
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: block.mimeType, data: block.data }
+      });
+    }
+  }
+  return hasImage ? blocks : null;
+}
+async function* wrapPromptStream(blocks) {
+  yield {
+    type: "user",
+    message: { role: "user", content: blocks },
+    parent_tool_use_id: null
+  };
+}
+function resolveMcpTools(context, excludeToolName) {
+  const mcpTools = [];
+  const customToolNameToSdk = /* @__PURE__ */ new Map();
+  const customToolNameToPi = /* @__PURE__ */ new Map();
+  if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
+  for (const tool of context.tools) {
+    if (tool.name === excludeToolName) continue;
+    const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
+    mcpTools.push(tool);
+    customToolNameToSdk.set(tool.name, sdkName);
+    customToolNameToSdk.set(tool.name.toLowerCase(), sdkName);
+    customToolNameToPi.set(sdkName, tool.name);
+    customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
+  }
+  return { mcpTools, customToolNameToSdk, customToolNameToPi };
+}
+function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
+  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+  let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
+  if (idx >= 0) {
+    const block = queryCtx.turnBlocks[idx];
+    if ("partialJson" in block) {
+      block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
+      queryCtx.updateToolCallArgs(block.id, block.arguments);
+      delete block.partialJson;
+      delete block.index;
+      queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+    }
+  } else {
+    queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
+    idx = queryCtx.turnBlocks.length - 1;
+    const block = queryCtx.turnBlocks[idx];
+    queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
+    queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+  }
+  queryCtx.turnSawToolCall = true;
+  queryCtx.turnOutput.stopReason = "toolUse";
+  debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 SDK invoked the tool before message_stop/assistant message`);
+  queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
+  queryCtx.currentPiStream.end();
+  queryCtx.currentPiStream = null;
+}
+function buildMcpServers(tools, queryCtx) {
+  if (!tools.length) return void 0;
+  const mcpTools = tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: jsonSchemaToZodShape(tool.parameters),
+    handler: async (args) => {
+      const mappedArgs = mapToolArgs(tool.name, args);
+      const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
+      const toolCallId = claim.toolCallId;
+      if (!toolCallId) {
+        debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
+        diagDump("tool_handler_unmatched", {
+          toolName: tool.name,
+          argKeys: argKeys(mappedArgs),
+          available: claim.available,
+          turnToolCallIds: queryCtx.turnToolCallIds,
+          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
+        });
+        return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
+      }
+      if (claim.match !== "tool-args" || claim.ambiguous) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
+      }
+      if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
+        const result = queryCtx.pendingResults.get(toolCallId);
+        queryCtx.pendingResults.delete(toolCallId);
+        queryCtx.markToolResultResolved(toolCallId);
+        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
+        return result;
+      }
+      debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
+      finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+      return new Promise((resolve5) => {
+        queryCtx.pendingToolCalls.set(toolCallId, {
+          toolName: tool.name,
+          resolve: (result) => {
+            queryCtx.markToolResultResolved(toolCallId);
+            resolve5(result);
+          }
+        });
+      });
+    }
+  }));
+  const server = HDe({ name: MCP_SERVER_NAME, version: "1.0.0", tools: mcpTools });
+  return { [MCP_SERVER_NAME]: server };
+}
+var REASONING_TO_EFFORT = {
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "max"
+};
+function normalizeEffortOverrideModelKey(value) {
+  const key = value.trim().toLowerCase();
+  return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
+}
+function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
+  const target = normalizeEffortOverrideModelKey(modelId);
+  for (const [key, rawEffort] of Object.entries(providerConfig?.modelEffortOverrides ?? {})) {
+    const normalizedKey = normalizeEffortOverrideModelKey(key);
+    if (normalizedKey !== "*" && normalizedKey !== target) continue;
+    const effort = normalizeEffortLevel(rawEffort);
+    if (effort) return effort;
+  }
+  return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
 async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, wasAborted) {
   let capturedSessionId;
@@ -44687,7 +44717,7 @@ function streamClaudeAgentSdk(model, context, options) {
       streamIdleTimedOut = true;
       abortCtx.deferredUserMessages = [];
       abortCtx.handledTerminalError = true;
-      if (sharedSession) sharedSession = { ...sharedSession, needsRebuild: true, forceRotate: true };
+      if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
       debug("provider: stream idle timeout", `model=${model.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
       emitRateLimitEvent({
@@ -44745,7 +44775,7 @@ function streamClaudeAgentSdk(model, context, options) {
       return;
     }
     if (wasAborted || options?.signal?.aborted) {
-      if (sharedSession) sharedSession = { ...sharedSession, needsRebuild: true, forceRotate: true };
+      if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       ctx().deferredUserMessages = [];
       debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
       if (ctx().turnOutput) {
@@ -44761,7 +44791,7 @@ function streamClaudeAgentSdk(model, context, options) {
     if (sessionId) {
       const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
       debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}`);
-      sharedSession = { sessionId, cursor, cwd };
+      setSharedSession({ sessionId, cursor, cwd });
     }
     try {
       while (ctx().deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
@@ -44782,7 +44812,7 @@ function streamClaudeAgentSdk(model, context, options) {
           const { capturedSessionId: contSid } = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted);
           const sid = contSid ?? sharedSession?.sessionId;
           if (sid) {
-            sharedSession = { sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd };
+            setSharedSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd });
           }
         } catch (contError) {
           debug(`provider: continuation query error:`, contError);
@@ -44800,9 +44830,9 @@ function streamClaudeAgentSdk(model, context, options) {
     const suppressDuplicateError = ctx().handledTerminalError || streamIdleTimedOut;
     const openedExtraUsage = !suppressDuplicateError && isExtraUsageRequiredMessage(error51) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
     if ((wasAborted || options?.signal?.aborted) && sharedSession) {
-      sharedSession = { ...sharedSession, needsRebuild: true, forceRotate: true };
+      setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
     } else {
-      sharedSession = null;
+      setSharedSession(null);
     }
     ctx().deferredUserMessages = [];
     if (suppressDuplicateError) {
@@ -44897,7 +44927,7 @@ function registerBridgeCommands(pi) {
   });
 }
 function index_default(pi) {
-  extensionApi = pi;
+  setExtensionApi(pi);
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   const config2 = loadConfig(process.cwd());
   debug("loadConfig:", JSON.stringify(config2));
@@ -44908,11 +44938,11 @@ function index_default(pi) {
   }
   const clearSession = (event) => {
     debug(`${event}: clearing session ${sharedSession?.sessionId?.slice(0, 8) ?? "none"}`);
-    sharedSession = null;
+    setSharedSession(null);
   };
   pi.on("session_start", (event, ctx2) => {
     recordProjectTrust(ctx2);
-    piUI = ctx2.ui;
+    setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
       clearSession(`session_start:${event.reason}`);
     }
@@ -44933,7 +44963,7 @@ function index_default(pi) {
     }
     if (sharedSession) {
       debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
-      sharedSession = { ...sharedSession, needsRebuild: true };
+      setSharedSession({ ...sharedSession, needsRebuild: true });
     }
   };
   pi.on("session_compact", () => markRebuild("session_compact"));
