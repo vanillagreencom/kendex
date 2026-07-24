@@ -145,3 +145,42 @@ test("statusline.enabled=false keeps QOL editor helpers but skips statusline/foo
 	expect(fake.api.exec.mock.calls.length).toBe(0);
 	fake.handlers.session_shutdown?.({ reason: "quit" }, ctx);
 });
+
+test("session_info_changed syncs the session title without waiting for the poll", async () => {
+	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
+	let sessionName: string | undefined;
+	const fake = makeFakeApi();
+	fake.api.getSessionName = () => sessionName;
+	qolDefault(fake.api);
+	const ctx = makeCtx();
+
+	fake.handlers.session_start?.({ reason: "startup" }, ctx);
+	const requestRender = mock(() => {});
+	const editorFactory = ctx.ui.setEditorComponent.mock.calls.at(-1)?.[0];
+	editorFactory?.({ requestRender }, makeTheme(), {});
+	requestRender.mockClear();
+	const statusCallsBefore = ctx.ui.setStatus.mock.calls.length;
+
+	sessionName = "Renamed session";
+	fake.handlers.session_info_changed?.({ name: sessionName }, ctx);
+
+	// syncSessionTitle re-renders on a changed name and always reasserts the
+	// session-manager status slot, so both prove the handler ran the sync.
+	expect(requestRender.mock.calls.length).toBeGreaterThan(0);
+	expect(ctx.ui.setStatus.mock.calls.length).toBeGreaterThan(statusCallsBefore);
+	expect(ctx.ui.setStatus.mock.calls.at(-1)?.[0]).toBe("session-manager");
+	fake.handlers.session_shutdown?.({ reason: "quit" }, ctx);
+});
+
+test("session_info_changed is a no-op without a UI", async () => {
+	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
+	const fake = makeFakeApi();
+	fake.api.getSessionName = () => "Headless rename";
+	qolDefault(fake.api);
+	const ctx = makeCtx();
+	ctx.hasUI = false;
+
+	fake.handlers.session_info_changed?.({ name: "Headless rename" }, ctx);
+
+	expect(ctx.ui.setStatus.mock.calls.length).toBe(0);
+});

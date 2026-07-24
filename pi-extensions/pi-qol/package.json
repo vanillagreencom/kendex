@@ -79,7 +79,7 @@
         {
           "key": "showSessionNameTitle",
           "label": "Show session name title",
-          "description": "Show the named session above the prompt. In tmux, update the current pane title to \"π <session>\" and enable a pane border title padded with non-breaking spaces so tmux does not trim it.",
+          "description": "Show the named session above the prompt. In tmux, update the current pane title to \"π <session>\" and enable a pane border title padded with non-breaking spaces so tmux does not trim it. The title refreshes as soon as Pi reports a session metadata change.",
           "type": "boolean",
           "default": true,
           "category": "Statusline",

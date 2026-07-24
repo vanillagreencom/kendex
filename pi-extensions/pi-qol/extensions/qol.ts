@@ -668,6 +668,13 @@ export default function qol(pi: ExtensionAPI): void {
 	pi.on("thinking_level_select", (_event, ctx) => {
 		if (ctx.hasUI) requestRender();
 	});
+	// Renames land immediately instead of waiting for the SESSION_TITLE_SYNC_INTERVAL_MS
+	// poll installed by installSessionTitleSync; the poll stays as the backstop for
+	// name changes Pi does not announce.
+	pi.on("session_info_changed", (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		syncSessionTitle(ctx);
+	});
 	pi.on("agent_start", (_event, ctx) => {
 		clearIdleCompactionTimer();
 		clearTmuxWindowMark();

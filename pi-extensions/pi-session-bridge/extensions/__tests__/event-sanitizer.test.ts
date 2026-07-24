@@ -137,6 +137,60 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.raw).toEqual(payload);
 	});
 
+	test("session_info_changed compacts the renamed session to a preview", () => {
+		const payload = { type: "session_info_changed", name: "Rename the bridge registry" };
+		const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
+		const data = result.data as Record<string, unknown>;
+
+		expect(data.nameBytes).toBe(Buffer.byteLength(payload.name, "utf8"));
+		expect(data.nameLength).toBe(payload.name.length);
+		expect(data.namePreview).toBe(payload.name);
+		expect("nameTruncated" in data).toBe(false);
+		expect("name" in data).toBe(false);
+		expect("type" in data).toBe(false);
+		expect(result.truncated).toBe(true);
+		expect(result.raw).toEqual(payload);
+	});
+
+	test("session_info_changed truncates an oversized session name", () => {
+		const name = `named session ${"x".repeat(500)}`;
+		const payload = { name };
+		const result = sanitizeBridgeEvent("session_info_changed", payload, { ...baseConfig, previewBytes: 32 });
+		const data = result.data as Record<string, unknown>;
+
+		expect(data.nameBytes).toBe(Buffer.byteLength(name, "utf8"));
+		expect(data.nameLength).toBe(name.length);
+		expect((data.namePreview as string).length).toBeLessThanOrEqual(32);
+		expect(data.nameTruncated).toBe(true);
+		expect(result.truncated).toBe(true);
+		expect(result.raw).toEqual(payload);
+	});
+
+	test("session_info_changed emits an empty descriptor when the name is cleared", () => {
+		const payload = { type: "session_info_changed", name: undefined };
+		const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
+
+		expect(result.data).toEqual({});
+		expect(result.truncated).toBe(true);
+	});
+
+	test("session_info_changed passes non-record payloads through untouched", () => {
+		for (const payload of [undefined, null, "renamed", 42, ["renamed"]]) {
+			const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
+			expect(result.data).toEqual(payload);
+			expect(result.truncated).toBe(false);
+			expect(result.raw).toBeUndefined();
+		}
+	});
+
+	test("session_info_changed ignores a non-string name", () => {
+		const result = sanitizeBridgeEvent("session_info_changed", { name: 7 }, baseConfig);
+		const data = result.data as Record<string, unknown>;
+
+		expect("namePreview" in data).toBe(false);
+		expect("nameBytes" in data).toBe(false);
+	});
+
 	test("message_update reads role/contentIndex/delta from assistantMessageEvent envelope", () => {
 		const payload = {
 			assistantMessageEvent: {

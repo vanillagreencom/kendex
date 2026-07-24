@@ -76,7 +76,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Show compact statusline | Render or disable the QOL statusline row. |
 | Replace built-in footer | Hide Pi's default footer while the QOL statusline is enabled. |
 | Use π prompt editor | Use the compact prompt editor. |
-| Show session name title | Show the session name above the prompt and in the tmux pane title. |
+| Show session name title | Show the session name above the prompt and in the tmux pane title; refreshes as soon as Pi reports a session metadata change. |
 | Sync session name to tmux window name | Rename the tmux window to `π <session>`. |
 | Input bottom padding | Blank lines below the prompt. |
 | Show dirty marker | Append `*` to the branch when the worktree is dirty. |

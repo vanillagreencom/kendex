@@ -22,6 +22,7 @@ const COMPACTED_EVENT_NAMES = new Set([
 	"tool_execution_update",
 	"tool_execution_end",
 	"agent_end",
+	"session_info_changed",
 	"session_compact",
 	"session_tree",
 ]);
@@ -103,6 +104,8 @@ function compactKnownEvent(eventName: string, payload: unknown, previewBytes: nu
 			return compactToolExecution(eventName, payload, previewBytes);
 		case "agent_end":
 			return compactAgentEnd(payload, previewBytes);
+		case "session_info_changed":
+			return compactSessionInfoChanged(payload, previewBytes);
 		case "session_compact":
 		case "session_tree":
 			return compactSessionTree(payload, previewBytes);
@@ -325,6 +328,28 @@ function pickAgentEndMessageCount(source: Record<string, unknown>): number | und
 	if (typeof source.messages_count === "number" && Number.isFinite(source.messages_count)) return source.messages_count;
 	if (asRecord(source.message)) return 1;
 	return undefined;
+}
+
+function compactSessionInfoChanged(payload: unknown, previewBytes: number): CompactResult {
+	const source = asRecord(payload);
+	if (!source) return { compact: payload, truncated: false };
+
+	// Pi sends `{ type, name }` and nothing else; `name` is undefined when the
+	// session name is cleared, so an empty compact is a legitimate outcome.
+	const name = pickString(source, "name");
+	const compact: Record<string, unknown> = {};
+	if (name !== undefined) {
+		const previewed = previewString(name, previewBytes);
+		compact.nameBytes = Buffer.byteLength(name, "utf8");
+		compact.nameLength = name.length;
+		compact.namePreview = previewed.preview;
+		if (previewed.truncated) compact.nameTruncated = true;
+	}
+
+	// The descriptor replaces the payload record wholesale (every unrecognized
+	// key is dropped), so report the replacement and let the raw spill keep the
+	// original — same contract as compactInputEvent/compactAgentEnd.
+	return { compact, truncated: true };
 }
 
 function compactSessionTree(payload: unknown, previewBytes: number): CompactResult {

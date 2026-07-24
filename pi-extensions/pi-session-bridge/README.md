@@ -7,7 +7,7 @@ Control a running Pi session from outside the TUI. The interactive Pi terminal s
 ## Highlights
 
 - External clients send prompts, steering, follow-ups, and aborts through the bridge.
-- Subscribe to live Pi events (messages, tool calls, agent end) without scraping panes.
+- Subscribe to live Pi events (messages, tool calls, session metadata changes, agent end) without scraping panes.
 - Local extensions can publish activity updates to bridge clients without adding chat messages.
 - Discover active Pi sessions through registry files; target by pid, cwd, session, or name.
 - `pi-bridge` CLI handles common operations; contributor-facing protocol notes live in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
