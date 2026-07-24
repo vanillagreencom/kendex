@@ -106,7 +106,9 @@ qa_shaped_incomplete() {
 # reviewer/schemas/review-finding.md § "Item Fields (blockers/suggestions)"
 # (all seven marked Required=Yes for both arrays; `category` additionally
 # Required for suggestions, and constrained to {fix,issue} because routing keys
-# on it). Gated on the qa_metadata declaration for parity with
+# on it; `priority` must be a number in 1..4 and `estimate` a number in 1..5
+# per the schema's field table, so a present-but-out-of-range value is caught
+# too). Gated on the qa_metadata declaration for parity with
 # qa_shaped_incomplete: artifacts without qa_metadata keep the pre-existing
 # tolerance documented in reviewer review-finding.md. Empty arrays carry no
 # items and stay valid. Prints the first offending item's diagnostic on stdout
@@ -133,7 +135,20 @@ finding_item_detail() {
                      and ((["fix","issue"] | index($item.category | tostring)) == null)
                   then ["category(not fix|issue)"] else [] end )
                 as $badcat
-              | ($missing + $badcat) as $problems
+              # priority in 1..4, estimate in 1..5 per review-finding.md — a present
+              # but non-numeric or out-of-range value is unusable, not just the
+              # null case $missing already covers (vstack#810). Only checked when
+              # the field is present (a null value already falls under $missing)
+              # and the item is an object (a non-object is fully flagged there too).
+              | ( if (($item | type) == "object")
+                  then ( [ {f:"priority", v:$item.priority, lo:1, hi:4},
+                           {f:"estimate", v:$item.estimate, lo:1, hi:5} ]
+                         | map(select(.v != null
+                             and (((.v | type) != "number") or (.v < .lo) or (.v > .hi))))
+                         | map("\(.f)(not \(.lo)..\(.hi))") )
+                  else [] end )
+                as $badnum
+              | ($missing + $badcat + $badnum) as $problems
               | if ($problems | length) > 0
                 then "\($arr)[\($i)]: missing/invalid \($problems | join(", "))"
                 else empty end

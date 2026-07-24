@@ -415,6 +415,34 @@ printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":
 out="$("$CHECK" --file "$okblk")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file blocker without category is valid (category is suggestions-only)"
 
+# priority/estimate range + type per review-finding.md (priority 1..4, estimate
+# 1..5, vstack#810): a present-but-out-of-range or non-numeric value is unusable
+badpri="$worktree/tmp/review-external-20260810-090909.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":5,"estimate":2,"category":"fix"}],"qa_metadata":{}}' > "$badpri"
+set +e; out="$("$CHECK" --file "$badpri")"; rc=$?; set -e
+assert_eq "$rc" "1" "--file priority out of 1..4 exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file out-of-range priority reports reason=incomplete"
+assert_substr "$(jq -r '.detail' <<<"$out")" "priority" "--file out-of-range priority detail names priority"
+
+badest="$worktree/tmp/review-external-20260810-101010.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":2,"estimate":"2","category":"issue"}],"qa_metadata":{}}' > "$badest"
+set +e; out="$("$CHECK" --file "$badest")"; rc=$?; set -e
+assert_eq "$rc" "1" "--file non-numeric estimate exits 1"
+assert_substr "$(jq -r '.detail' <<<"$out")" "estimate" "--file string estimate detail names estimate"
+
+# blockers carry the same numeric constraint (priority 0 is below range)
+badblkpri="$worktree/tmp/review-external-20260810-111111.json"
+printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":0,"estimate":3}],"suggestions":[],"qa_metadata":{}}' > "$badblkpri"
+set +e; out="$("$CHECK" --file "$badblkpri")"; rc=$?; set -e
+assert_eq "$rc" "1" "--file blocker priority below 1..4 exits 1"
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[0]" "--file blocker out-of-range detail names the blockers array"
+
+# boundary values (priority 1 and 4, estimate 1 and 5) are valid — not off-by-one rejected
+okbound="$worktree/tmp/review-external-20260810-121212.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":4,"estimate":5,"category":"fix"}],"qa_metadata":{}}' > "$okbound"
+out="$("$CHECK" --file "$okbound")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file priority=4 estimate=5 boundary values are valid"
+
 # artifacts WITHOUT qa_metadata keep the pre-existing tolerance — malformed items
 # do NOT trip the check (parity with qa_shaped_incomplete's gating)
 noqa_bad="$worktree/tmp/review-external-20260810-080808.json"
