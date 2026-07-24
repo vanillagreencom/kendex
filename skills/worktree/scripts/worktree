@@ -1429,10 +1429,11 @@ worktree_lock_reason() {
 
 # Refuse to act on a worktree that carries a native `git worktree lock`.
 # `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
-# so a locked worktree is unremovable and callers must establish that before
-# mutating anything inside it. Git's own refusal arrives only after the caller
-# has already touched the tree, so report the lock reason here — sessions
-# record their owner in it — plus the unlock path (#800).
+# so a locked worktree is unremovable. This is a DIAGNOSTIC precheck, not the
+# safety mechanism: git's refusal is authoritative and race-free, but it names
+# neither the owning session nor the way out. Sessions record `owner=<id>` in
+# the lock reason, so surface that plus the unlock path (#800). Callers must
+# still leave the tree intact until git itself succeeds.
 refuse_locked_worktree() {
   local wt="$1" action="$2"
   local lock_reason=""
@@ -2015,17 +2016,29 @@ case "${1:-}" in
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
-      # Removability is decided before any mutation. A locked worktree cannot
-      # be removed, and stripping its configured symlinks first left a live
-      # session's worktree without .agents/.claude/.env.local once git refused
-      # the removal (#800). Runs after the ownership guard so a foreign or main
-      # checkout is rejected on identity, never on another repo's lock state.
+      # Diagnostic precheck: a locked worktree cannot be removed, and git's own
+      # refusal names neither the owning session nor the unlock command (#800).
+      # Runs after the ownership guard so a foreign or main checkout is rejected
+      # on identity, never on another repo's lock state.
       if ! refuse_locked_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
-      remove_symlinks "$WT_PATH"
-      git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH"
+      # Let git remove the INTACT tree — it deletes the worktree contents itself,
+      # so there is nothing to pre-strip. Stripping the configured symlinks first
+      # left a live session's worktree without .agents/.claude/.env.local
+      # whenever git then refused the removal (#800), and no precheck can close
+      # that window: a lock acquired between the check and the strip lands right
+      # back in the original failure mode. Because the tree is untouched until
+      # git succeeds, ANY refusal — raced lock included — preserves it. This is
+      # the same ordering `cleanup` adopted in #784, for the same reason.
+      REMOVE_OUTPUT=""
+      if ! REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH" 2>&1)"; then
+        echo "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
+        [[ -n "$REMOVE_OUTPUT" ]] && printf '%s\n' "$REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        echo "Its configured symlinks and branch were left untouched." >&2
+        exit 1
+      fi
       # Safety net: remove directory if git left it behind
       [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
     fi
