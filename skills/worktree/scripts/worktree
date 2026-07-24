@@ -743,46 +743,6 @@ symlink_into_worktree() {
   fi
 }
 
-# Remove symlinks created by 'create' from a worktree
-remove_symlinks() {
-  local wt="$1"
-  # Clean configured symlinks
-  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
-  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
-    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
-    if ! ensure_worktree_path_safe "$wt" "$path" false; then
-      echo "Warning: Skipping configured symlink cleanup for '$path' because a parent is a symlink." >&2
-      continue
-    fi
-    rm -f "$wt/$path" 2>/dev/null
-    # Try to clean empty parent dirs
-    local parent="$(dirname "$wt/$path")"
-    while [[ "$parent" != "$wt" && "$parent" != "/" ]]; do
-      rmdir "$parent" 2>/dev/null || break
-      parent="$(dirname "$parent")"
-    done
-  done
-  # Clean configured relative/internal symlinks
-  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
-  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
-    [[ "$spec" == *=* ]] || continue
-    local path="${spec%%=*}"
-    [[ -n "$path" ]] || continue
-    path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
-    if ! ensure_worktree_path_safe "$wt" "$path" false; then
-      echo "Warning: Skipping configured relative symlink cleanup for '$path' because a parent is a symlink." >&2
-      continue
-    fi
-    rm -f "$wt/$path" 2>/dev/null
-    # Try to clean empty parent dirs
-    local parent="$(dirname "$wt/$path")"
-    while [[ "$parent" != "$wt" && "$parent" != "/" ]]; do
-      rmdir "$parent" 2>/dev/null || break
-      parent="$(dirname "$parent")"
-    done
-  done
-}
-
 # Apply all symlinks and copies to a worktree
 setup_worktree_links() {
   local wt="$1"

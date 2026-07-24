@@ -247,9 +247,15 @@ assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/setting
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/CLAUDE.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
 
-# Locked worktree: remove refuses before mutating anything. `git worktree
-# remove --force` cannot override a lock, so this pre-mutation guard is the only
-# thing keeping a live session's configured symlinks in place (#800).
+# Locked worktree: `git worktree remove --force` cannot override a lock, so
+# removal fails here. TWO mechanisms are asserted below, and they are not the
+# same thing (#800):
+#   1. Symlink preservation comes from never pre-stripping — the tree stays
+#      intact until git itself succeeds, so ANY refusal (including a lock raced
+#      in after the precheck) leaves it whole. This is the actual safety net.
+#   2. The lock precheck is a DIAGNOSTIC: it names the owning session and the
+#      unlock command, which git's own refusal does not. It is racy by nature
+#      and is not what protects the symlinks.
 LOCKED_ROOT="$TMP_ROOT/locked"
 make_repo "$LOCKED_ROOT/main"
 printf 'agents\n' > "$LOCKED_ROOT/main/AGENTS.md"
