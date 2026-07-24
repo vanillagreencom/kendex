@@ -107,7 +107,7 @@ export function classifyClaudeExecutableBytes(bytes: Uint8Array): ClaudeExecutab
 }
 
 export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExecutablePreflightResult {
-	let realCwd = cwd;
+	let realCwd: string;
 	try {
 		const cwdStat = statSync(cwd);
 		if (!cwdStat.isDirectory()) {
@@ -132,7 +132,7 @@ export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExec
 		});
 	}
 
-	let realPath = path;
+	let realPath: string;
 	try {
 		const stat = statSync(path);
 		if (!stat.isFile()) {

@@ -42522,7 +42522,7 @@ function classifyClaudeExecutableBytes(bytes) {
   return "unknown";
 }
 function preflightClaudeExecutable(path, cwd) {
-  let realCwd = cwd;
+  let realCwd;
   try {
     const cwdStat = statSync2(cwd);
     if (!cwdStat.isDirectory()) {
@@ -42546,7 +42546,7 @@ function preflightClaudeExecutable(path, cwd) {
       cause: err
     });
   }
-  let realPath = path;
+  let realPath;
   try {
     const stat = statSync2(path);
     if (!stat.isFile()) {
