@@ -78,6 +78,17 @@ conflicting flags fail before any GitHub lookup or mutation. A nonzero forced
 mutation returns exit `1` unless the exact-head post-state is already `MERGED`.
 Auto-merge or queue enrollment active before the call cannot mask the failure.
 
+That gate is deliberately narrower than GitHub's
+`required_conversation_resolution`, which requires *all* conversations resolved
+with no outdated/active distinction: an outdated thread no longer refers to the
+current diff and is not actionable. It is also policy, not mechanism —
+`pr-merge` gates only merges that go through it, and a raw `gh pr merge` or the
+UI Merge button bypasses it. Conversely, where branch protection *is* enabled,
+an outdated thread can become unreachable in the UI while still blocking the
+merge (404 on click, zero visible conversations, merge refused); `pr-threads`
+plus `resolve-thread` clear it by thread id through GraphQL. See SKILL.md
+§ PR blocked with no visible conversations.
+
 ## Git HTTPS Fallback
 
 Use `scripts/git-https-auth` for the GitHub network operations in workflows

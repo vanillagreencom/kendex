@@ -26,7 +26,7 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 |---------|---------|
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
 | `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
-| `pr-threads <N> [--unresolved]` | Get the complete paginated thread list/count; fails rather than returning a partial list. |
+| `pr-threads <N> [--unresolved]` | Get the complete paginated thread list/count, outdated included; fails rather than returning a partial list. See *PR blocked with no visible conversations*. |
 | `pr-review-status <N> [--baseline-ts TS --baseline-threads N]` | Check review state, determine if action needed |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
@@ -41,7 +41,7 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured |
 | `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review |
-| `resolve-thread <PRRT_...>` | Mark thread(s) resolved |
+| `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. See *PR blocked with no visible conversations*. |
 | `unresolve-thread <PRRT_...>` | Reopen thread(s) |
 | `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. Prefer `--body-file` for Markdown with backticks; inline body is safe only for plain strings. |
 | `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. Same body-file preference as `post-reply`. |
@@ -131,14 +131,28 @@ PR with neither queue nor auto-merge proof fails closed.
 Actionable review threads (unresolved and not outdated) are a hard local gate.
 They make `can_merge` false and block both immediate merge and `--auto` before
 any merge or queue mutation. A failed or malformed thread lookup also blocks,
-because an unknown review state cannot be treated as clean. The documented
-`--force` flag is the only deliberate override and skips every safety check.
+because an unknown review state cannot be treated as clean.
 
-`--force` has immediate-only semantics and cannot be combined with `--auto`;
-the conflicting flags fail before any GitHub lookup or mutation. If its
-guarded `gh pr merge` mutation fails and the exact-head post-state is not
-`MERGED`, `pr-merge` returns BLOCKED even when classic auto-merge or a
-merge-queue entry was already active.
+Two bounds on that gate:
+
+- **Narrower than branch protection.** GitHub's
+  `required_conversation_resolution` requires *all* conversations resolved and
+  draws no outdated/active distinction. `pr-merge` deliberately counts only
+  threads that are unresolved *and* not outdated, because a thread pinned to a
+  diff that no longer exists cannot be acted on. A repo relying on `pr-merge`
+  alone therefore has a narrower guarantee than one relying on branch
+  protection.
+- **Policy, not mechanism.** `pr-merge` is the enforcement point only for
+  merges that go through it. A raw `gh pr merge` or the GitHub UI Merge button
+  bypasses the skill entirely, so a repo whose CI does not independently gate
+  threads has no thread enforcement on those paths.
+
+The documented `--force` flag is the only deliberate override of that gate and
+skips every safety check. It has immediate-only semantics and cannot be
+combined with `--auto`; the conflicting flags fail before any GitHub lookup or
+mutation. If its guarded `gh pr merge` mutation fails and the exact-head
+post-state is not `MERGED`, `pr-merge` returns BLOCKED even when classic
+auto-merge or a merge-queue entry was already active.
 Pre-existing deferred state is not proof that the forced immediate attempt
 succeeded. An authoritative exact-head `MERGED` post-state remains success;
 non-force and `--auto` idempotent pending outcomes retain exit `75`.
@@ -149,6 +163,25 @@ UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should
 `changes_requested` — caller must fix and re-push). Programmatic callers can
 check the `transient` field in the `--check` JSON output before deciding to
 retry.
+
+### PR blocked with no visible conversations
+
+Under `required_conversation_resolution`, an outdated thread can become
+unreachable in the UI while still blocking the merge: after a rebase or
+force-push the commented commits are gone, clicking the unresolved
+conversation 404s, and the PR shows zero visible conversations yet refuses to
+merge (github/community discussions #144455, #10592, #184355). GraphQL
+`resolveReviewThread` still acts on threads the UI cannot render, so this skill
+is the escape hatch:
+
+```bash
+github.sh pr-threads 42                  # complete list, outdated included
+github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
+```
+
+`pr-threads` follows every page and fails rather than returning a partial list,
+so a thread id absent from its output is genuinely absent. Repeat
+`resolve-thread` per blocking id until the merge clears.
 
 ### PR Merge Check Output
 
