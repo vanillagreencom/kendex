@@ -265,10 +265,21 @@ merge. Detach them first.
    ```
    One flag covers both repo shapes with no detection: on merge-queue repos GitHub enqueues the PR; on plain repos it arms auto-merge to fire when CI and branch protection clear. `--auto` never bypasses the § 3 readiness gates — GitHub still requires the checks and approval to complete before the merge fires. For any other BLOCKED cause (conflicts, `ci_failed:`, `changes_requested:`), do not queue — surface the failure and return to § 3.2.
 
-   Exit `75` = QUEUED FOR AUTO-MERGE — treat as success-pending and run the watch loop below. Ejection is per-PR: a failed merge-group run removes only this PR from the queue while other queued PRs re-test and merge independently, so each session's own merge-pr watch owns recovery for its own PR and parallel sessions never need to coordinate.
+   Exit `75` = QUEUED FOR AUTO-MERGE — treat as success-pending and run the queue watch below. Ejection is per-PR: a failed merge-group run removes only this PR from the queue while other queued PRs re-test and merge independently, so each session's own merge-pr watch owns recovery for its own PR and parallel sessions never need to coordinate.
 
-   **Watch loop** (Claude Code shell shape) — each poll runs the two commands below, then routes; `sleep 30` between polls, at most 20 polls (~10 min).
-   > If you are running in **Codex**: that `sleep`-poll shape is rejected by the `approval=never` classifier and has **no queue-watch waiter to substitute** — `ci-wait` covers CI status and `await-mergeable` covers merge-state, neither watches merge-queue membership (known gap, tracked in vstack#819). Run each poll's two commands as separate single tool calls with no `sleep` and no loop, re-entering between polls; if that is not possible, stop after the first poll and report the PR as still-queued per the last row of the routing table — the merge stays armed and fires on its own.
+   **Watch the queue** — one command, every harness. It blocks until the merge-queue outcome is decided:
+
+   ```bash
+   .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 600 --json
+   ```
+
+   The printed `verdict` routes the table below directly, and `status` is `complete`/`timeout`/`error`. Exit `0` only for `merged`; `1` for `ejected`/`disarmed`/`closed`/`queued`/`not_queued`/non-auth error; `3` on GitHub auth failure. The script holds `WAS_QUEUED` — whether any earlier poll observed the PR queued or armed — inside its own loop, which is the state a per-poll re-entry cannot carry, and it delegates the failed-required-check disarm probe to `ci-wait` internally (`--no-check-probe` opts out). Never poll `gh pr view --json mergeable` — it stays UNKNOWN after merge and loops forever.
+
+   > If you are running in **Codex**: run exactly that one command and route on its `verdict`. Do not hand-roll the poll loop below — `sleep`, `for`/`while`, and multi-command blocks are rejected outright by the `approval=never` classifier, and a per-poll re-entry has no memory of `WAS_QUEUED`, so it cannot distinguish an ejected PR from one that was never queued (vstack#819).
+
+   <details><summary>Raw per-poll signals (Claude Code, for inspecting a verdict)</summary>
+
+   In the **Claude Code** shell shape, each poll runs the two commands below, then routes on the same table; `sleep 30` between polls, at most 20 polls (~10 min). `queue-wait` reads exactly these two signals, so use them only to inspect what it saw — not as a substitute for it.
 
    ```bash
    gh pr view [PR_NUMBER] --json state,mergedAt
@@ -276,15 +287,19 @@ merge. Detach them first.
    ```bash
    gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { state } autoMergeRequest { enabledAt } } } }' -F owner='{owner}' -F repo='{repo}' -F number=[PR_NUMBER]
    ```
-   `gh pr view --json` exposes no queue-membership field (verified against gh 2.96.0), so the GraphQL query is required; gh fills the `{owner}`/`{repo}` placeholders from the current repo. Track across polls whether any earlier poll observed the PR queued or armed (`isInMergeQueue == true`, `mergeQueueEntry` non-null, or `autoMergeRequest` non-null) — use that as `WAS_QUEUED`. Never poll `gh pr view --json mergeable` — stays UNKNOWN after merge, loops forever.
+   `gh pr view --json` exposes no queue-membership field (verified against gh 2.96.0), so the GraphQL query is required; gh fills the `{owner}`/`{repo}` placeholders from the current repo. `WAS_QUEUED` is true once any poll has observed `isInMergeQueue == true`, `mergeQueueEntry` non-null, or `autoMergeRequest` non-null.
 
-   | Observation | Meaning | Action |
-   |-------------|---------|--------|
-   | `state == "MERGED"` | Merge landed | → step 3 |
-   | `OPEN`, still queued or armed, no failed required check | Waiting on checks / queue position | Continue polling |
-   | `OPEN`, `WAS_QUEUED`, now `isInMergeQueue == false` and `mergeQueueEntry == null`, not merged | **Ejected** — the merge-group CI run failed and GitHub removed this PR from the queue | Recovery cycle below |
-   | `OPEN` on a plain auto-merge repo, `autoMergeRequest == null` after `--auto` armed it, or a required check failed (probe: `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 60 --json` → `verdict=fail`) | Auto-merge disarmed by a check failure | Recovery cycle below |
-   | Poll bound reached, still queued/armed | Deep queue | Report still-queued: the merge stays armed and fires when checks and protection clear. Skip steps 3-6 (they assume a landed merge) and note in § 7 that sync/cleanup should be re-run via `merge-pr [PR_NUMBER]` once merged |
+   </details>
+
+   | `queue-wait` verdict | Observation | Meaning | Action |
+   |----------------------|-------------|---------|--------|
+   | `merged` | `state == "MERGED"` | Merge landed | → step 3 |
+   | — (keeps polling) | `OPEN`, still queued or armed, no failed required check | Waiting on checks / queue position | Continue polling |
+   | `ejected` | `OPEN`, `WAS_QUEUED`, now `isInMergeQueue == false` and `mergeQueueEntry == null`, not merged | **Ejected** — the merge-group CI run failed and GitHub removed this PR from the queue | Recovery cycle below |
+   | `disarmed` | `OPEN` on a plain auto-merge repo, `autoMergeRequest == null` after `--auto` armed it, or a required check failed (`queue-wait` probes with `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 30 --json` → `verdict=fail`; `cause` says which) | Auto-merge disarmed by a check failure | Recovery cycle below |
+   | `closed` | `state == "CLOSED"`, never merged | The PR was closed out from under the merge | Skip steps 3-6 and hand back to the user |
+   | `queued` | Poll bound reached, still queued/armed | Deep queue | Report still-queued: the merge stays armed and fires when checks and protection clear. Skip steps 3-6 (they assume a landed merge) and note in § 7 that sync/cleanup should be re-run via `merge-pr [PR_NUMBER]` once merged |
+   | `not_queued` | No poll ever saw the PR queued or armed (arming grace expired) | The `--auto` merge never armed — nothing will fire on its own | Re-run `pr-merge [PR_NUMBER] --auto` once; if it still does not arm, surface the failure and hand back |
 
    **Recovery cycle** — no manual CI-fixing; route the failure back into ci-fix automatically. Before the first recovery cycle, read the budget:
 
@@ -301,7 +316,7 @@ merge. Detach them first.
       ```bash
       .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
       ```
-   3. **Re-arm and resume**: re-run `pr-merge [PR_NUMBER] --auto` (command above) and restart the watch loop from the top with a fresh poll budget.
+   3. **Re-arm and resume**: re-run `pr-merge [PR_NUMBER] --auto` (command above), then re-run `queue-wait [PR_NUMBER] 30 600 --json` with a fresh poll budget.
 
 3. **Sync issue tracker cache** — **Linear only** (merged PRs close issues via magic words; cache must reflect done states):
    ```bash

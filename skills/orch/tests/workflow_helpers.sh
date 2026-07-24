@@ -150,6 +150,18 @@ assert_file_contains "$orch_skill" 'Replace polling loops with the orch waiters 
 assert_file_contains "$orch_skill" '`.agents/skills/orch/scripts/approval-wait` (review approval)' "orch skill routes approval polling to the pathed orch approval-wait"
 assert_file_contains "$dev_skill" 'approval required by policy, but AskForApproval is set to Never' "dev skill carries the never-approval runtime pointer"
 
+# vstack#819 — the merge-queue watch is the third waiter. Its § 3.2 loop is the
+# same rejected `sleep`-poll shape, and no per-poll re-entry can carry
+# WAS_QUEUED, so the Codex runtime block and the merge-pr workflow must both
+# route to the pathed queue-wait script rather than a degraded single poll.
+merge_workflow="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
+assert_file_contains "$orch_skill" '`.agents/skills/orch/scripts/queue-wait` (merge-queue' "orch skill routes queue polling to the pathed orch queue-wait (vstack#819)"
+assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/queue-wait [PR_NUMBER]' "merge-pr queue watch invokes the queue-wait script"
+assert_file_not_contains "$merge_workflow" 'no queue-watch waiter to substitute' "merge-pr no longer documents the degraded single-poll Codex fallback"
+[[ -x "$REPO_ROOT/skills/orch/scripts/queue-wait" ]] \
+  && assert_eq "ok" "ok" "queue-wait script exists and is executable" \
+  || assert_eq "missing" "ok" "queue-wait script exists and is executable"
+
 # vstack#661 — the same Codex policy also rejects some porcelain verbs (top-level
 # `git rebase`) outright; the runtime block must route that rejection to the
 # worktree skill's guarded restack path and its documented cherry-pick replay
