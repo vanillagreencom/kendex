@@ -63,7 +63,7 @@ after success. A different local rewrite, remote movement while conflict
 resolution is pending, or a moved remote at push time fails closed. Plain
 pushes are still used with `--no-rebase`.
 
-`remove` deletes the worktree before deleting the local branch. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
+`remove` deletes the worktree before deleting the local branch. A worktree carrying a native `git worktree lock` cannot be removed, so `remove` checks the lock before touching anything: it exits non-zero with a diagnostic naming the lock reason (sessions record their owner there) and the `git worktree unlock` command, leaving the worktree, its configured symlinks, and its branch untouched. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
 
 `cleanup` fetches `origin`, considers non-main registered worktrees, proves each branch is merged into `origin/<default>` (or the local default branch when the remote ref is unavailable), asks Git to remove the intact worktree, then deletes the proven-merged local branch. If Git cannot remove a worktree, cleanup exits nonzero and preserves its path, configured symlinks, and branch for manual recovery. If branch deletion fails after worktree removal, cleanup also exits nonzero and names the remaining branch.
 

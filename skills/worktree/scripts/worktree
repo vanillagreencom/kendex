@@ -1427,6 +1427,28 @@ worktree_lock_reason() {
   printf '%s\n' "${reason:-locked}"
 }
 
+# Refuse to act on a worktree that carries a native `git worktree lock`.
+# `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
+# so a locked worktree is unremovable and callers must establish that before
+# mutating anything inside it. Git's own refusal arrives only after the caller
+# has already touched the tree, so report the lock reason here — sessions
+# record their owner in it — plus the unlock path (#800).
+refuse_locked_worktree() {
+  local wt="$1" action="$2"
+  local lock_reason=""
+  lock_reason="$(worktree_lock_reason "$wt" || true)"
+  [[ -n "$lock_reason" ]] || return 0
+
+  echo "Error: $wt is a locked worktree; refusing to $action." >&2
+  echo "  Worktree: $wt" >&2
+  echo "  Lock reason: $lock_reason" >&2
+  echo "Nothing in the worktree was modified." >&2
+  echo "A lock usually means a live session owns this worktree; confirm it is finished first." >&2
+  echo "To release the lock and retry:" >&2
+  echo "  git -C \"$PROJECT_ROOT\" worktree unlock \"$wt\"" >&2
+  return 1
+}
+
 refuse_existing_worktree() {
   local issue="$1" wt="$2"
   local branch="" dirty="clean" upstream="" counts="" behind="0" ahead="0"
@@ -1991,6 +2013,14 @@ case "${1:-}" in
       # symlinked base dir must not have its symlinks stripped or its
       # registration touched.
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
+        exit 1
+      fi
+      # Removability is decided before any mutation. A locked worktree cannot
+      # be removed, and stripping its configured symlinks first left a live
+      # session's worktree without .agents/.claude/.env.local once git refused
+      # the removal (#800). Runs after the ownership guard so a foreign or main
+      # checkout is rejected on identity, never on another repo's lock state.
+      if ! refuse_locked_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)

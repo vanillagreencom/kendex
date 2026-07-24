@@ -247,6 +247,46 @@ assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/setting
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/CLAUDE.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
 
+# Locked worktree: remove refuses before mutating anything. `git worktree
+# remove --force` cannot override a lock, so this pre-mutation guard is the only
+# thing keeping a live session's configured symlinks in place (#800).
+LOCKED_ROOT="$TMP_ROOT/locked"
+make_repo "$LOCKED_ROOT/main"
+printf 'agents\n' > "$LOCKED_ROOT/main/AGENTS.md"
+mkdir -p "$LOCKED_ROOT/main/.agents" "$LOCKED_ROOT/main/.claude/agents"
+printf 'lib\n' > "$LOCKED_ROOT/main/.agents/lib.sh"
+git -C "$LOCKED_ROOT/main" add AGENTS.md
+git -C "$LOCKED_ROOT/main" commit -q -m agents
+cat > "$LOCKED_ROOT/main/.env.local" <<'ENV'
+WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
+WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
+ENV
+git -C "$LOCKED_ROOT/main" worktree add -q -b issue-locked "$LOCKED_ROOT/trees/issue-locked" main
+(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LOCKED_ROOT/trees/issue-locked") >/dev/null
+git -C "$LOCKED_ROOT/main" worktree lock "$LOCKED_ROOT/trees/issue-locked" --reason "session guard: owner=issue-locked"
+set +e
+locked_out=$(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-LOCKED 2>"$LOCKED_ROOT/locked.err")
+locked_code=$?
+set -e
+assert_eq "$locked_code" "1" "locked worktree removal exits nonzero"
+assert_contains "$(cat "$LOCKED_ROOT/locked.err")" "session guard: owner=issue-locked" "locked removal diagnostic names the owning session"
+assert_contains "$(cat "$LOCKED_ROOT/locked.err")" "worktree unlock" "locked removal diagnostic gives the unlock command"
+assert_not_contains "$locked_out" "Removed:" "locked removal does not report a removal"
+assert_git_worktree "$LOCKED_ROOT/trees/issue-locked" "locked worktree survives refused removal"
+assert_branch_exists "$LOCKED_ROOT/main" "issue-locked" "locked branch survives refused removal"
+assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.env.local" "$LOCKED_ROOT/main/.env.local" "refused removal leaves .env.local symlink intact"
+assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.agents" "$LOCKED_ROOT/main/.agents" "refused removal leaves .agents symlink intact"
+assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/agents" "$LOCKED_ROOT/main/.claude/agents" "refused removal leaves configured dir symlink intact"
+assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/CLAUDE.md" "../AGENTS.md" "refused removal leaves relative symlink intact"
+
+# The guard refuses only while the lock is held: unlocking restores the normal
+# removal path, symlink cleanup included.
+git -C "$LOCKED_ROOT/main" worktree unlock "$LOCKED_ROOT/trees/issue-locked"
+unlocked_out=$(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-LOCKED 2>"$LOCKED_ROOT/unlocked.err")
+assert_eq "$unlocked_out" "Removed: $LOCKED_ROOT/trees/issue-locked" "unlocked worktree removal exits cleanly"
+assert_path_absent "$LOCKED_ROOT/trees/issue-locked" "unlocked worktree removed"
+assert_branch_absent "$LOCKED_ROOT/main" "issue-locked" "unlocked merged branch deleted"
+
 # Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
 # an already-created app worktree; codex-cleanup is a non-destructive hook and
 # leaves worktree/branch deletion to the app.
