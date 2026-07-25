@@ -1,6 +1,6 @@
 #!/bin/bash
 # Portable git worktree manager
-# Usage: worktree create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup [ID] [options]
+# Usage: worktree create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID] [options]
 #   create options:
 #     --base BRANCH   Checkout an existing remote branch into the worktree
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
@@ -697,6 +697,35 @@ exclude_from_worktree_index() {
   grep -qxF "$path" "$info_exclude" 2>/dev/null || echo "$path" >> "$info_exclude"
 }
 
+# Replace "$2" with a symlink to "$1" without ever leaving "$2" absent.
+#
+# The naive `rm` + `ln` pair has an observable window between the two calls in
+# which the destination exists in neither state, so a crash, a signal, or a
+# concurrent reader lands on a missing path (#857). Building the link under a
+# temp name in the same directory and renaming it over the destination closes
+# that window: rename(2) is atomic and replaces the old entry in place.
+#
+# The destination must NOT be followed when it is a symlink to a directory —
+# which is the normal steady state here, since these links point at dirs like
+# `.agents`. A plain `mv` would deposit the temp link *inside* the target. GNU
+# spells "treat the destination as a plain name" as `mv -T`, BSD/macOS spells
+# it `mv -h`, and neither accepts the other's flag; try both so this works on
+# the Bash 3.2 / BSD-userland macOS boxes the skill supports.
+#
+# Returns non-zero WITHOUT touching the destination when neither flag is
+# available, so callers keep the historical rm+ln behaviour as a fallback.
+atomic_symlink_swap() {
+  local src="$1" dst="$2" tmp
+  tmp="$dst.wt-tmp.$$"
+  rm -f "$tmp" 2>/dev/null
+  ln -s "$src" "$tmp" 2>/dev/null || return 1
+  if mv -T "$tmp" "$dst" 2>/dev/null || mv -h "$tmp" "$dst" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  return 1
+}
+
 symlink_into_worktree() {
   local path="$1" wt="$2"
   local src="$PROJECT_ROOT/$path"
@@ -719,13 +748,12 @@ symlink_into_worktree() {
       git -C "$wt" update-index --assume-unchanged "$path" 2>/dev/null || true
     fi
     mkdir -p "$(dirname "$dst")"
-    if [[ -L "$dst" || -f "$dst" ]]; then
-      rm -f "$dst"
-    elif [[ -e "$dst" ]]; then
+    if [[ -e "$dst" && ! -L "$dst" && ! -f "$dst" ]]; then
       echo "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
       return 1
     fi
-    ln -s "$src" "$dst"
+    # File/symlink destinations can be replaced by rename with no window at all.
+    atomic_symlink_swap "$src" "$dst" || { rm -f "$dst"; ln -s "$src" "$dst"; }
   elif [[ -d "$src" ]]; then
     # Directory symlink — if tracked by git, also mark files assume-unchanged
     # to prevent staging issues. (The exclude entry above already hides the
@@ -752,11 +780,17 @@ symlink_into_worktree() {
         xargs -r git -C "$wt" update-index --assume-unchanged 2>/dev/null
     fi
 
-    # Always remove existing dir/file before symlinking — rebase can replace
-    # symlinks with real directories when tracked files exist underneath
-    rm -rf "$dst" 2>/dev/null
     mkdir -p "$(dirname "$dst")"
-    ln -sfn "$src" "$dst"
+    # A REAL directory here (rebase replaces symlinks with real directories when
+    # tracked files exist underneath) cannot be replaced by rename, so it still
+    # has to be removed first and that window is unavoidable. Everything else —
+    # including the normal case, a symlink to a directory — goes through the
+    # atomic swap. Where the removal is needed, the replacement link is already
+    # built, so the gap is a single rename rather than an rm plus a symlink.
+    if [[ -d "$dst" && ! -L "$dst" ]]; then
+      rm -rf "$dst" 2>/dev/null
+    fi
+    atomic_symlink_swap "$src" "$dst" || { rm -rf "$dst" 2>/dev/null; ln -sfn "$src" "$dst"; }
   fi
 }
 
@@ -857,7 +891,11 @@ install_worktree_dependencies() {
   fi
 }
 
-setup_codex_worktree() {
+# Provisioning applied to a worktree that some OTHER tool created — Codex
+# Desktop Environments, or Claude Code's WorktreeCreate hook. Nothing here is
+# app-specific; it is the same setup `create` applies once git has made the
+# worktree, which is why both entry points share it.
+setup_app_worktree() {
   local wt="$1"
 
   setup_worktree_links "$wt" || return 1
@@ -1560,7 +1598,7 @@ case "${1:-}" in
       fi
       cancel_pending_restack_authorization "$WT_PATH"
       release_issue_claim_lock
-      if ! setup_codex_worktree "$WT_PATH"; then
+      if ! setup_app_worktree "$WT_PATH"; then
         echo "Warning: Restack was aborted successfully, but worktree setup could not be reapplied. Fix the WORKTREE_* configuration, then run: $0 fix-links '$WT_PATH'" >&2
       fi
       echo "Aborted guarded restack and restored $RESTACK_BRANCH: $WT_PATH"
@@ -1613,7 +1651,7 @@ case "${1:-}" in
     RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
     finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID" || exit 1
     release_issue_claim_lock
-    setup_codex_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH"
     echo "Completed guarded restack for $RESTACK_BRANCH: $WT_PATH"
     ;;
 
@@ -1720,7 +1758,7 @@ case "${1:-}" in
         exit 1
       fi
       release_issue_claim_lock
-      if ! setup_codex_worktree "$WT_PATH"; then
+      if ! setup_app_worktree "$WT_PATH"; then
         echo "Error: Local branch '$RECOVERY_BRANCH' was recovered with its commits intact, but configured worktree setup failed." >&2
         echo "Fix the WORKTREE_* configuration, then run: $0 fix-links '$WT_PATH'" >&2
         exit 1
@@ -1827,7 +1865,7 @@ case "${1:-}" in
       fi
       # Refresh setup (rebase may have replaced symlinks with tracked content)
       release_issue_claim_lock
-      setup_codex_worktree "$WT_PATH"
+      setup_app_worktree "$WT_PATH"
       echo "$WT_PATH"
       exit 0
     fi
@@ -1870,7 +1908,7 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
-      setup_codex_worktree "$WT_PATH"
+      setup_app_worktree "$WT_PATH"
       echo "$WT_PATH"
       exit 0
     fi
@@ -1939,7 +1977,7 @@ case "${1:-}" in
       fi
     fi
 
-    setup_codex_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH"
     echo "$WT_PATH"
     ;;
 
@@ -2268,7 +2306,7 @@ case "${1:-}" in
     if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
       exit 1
     fi
-    setup_codex_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH"
     echo "Configured Codex worktree: $WT_PATH"
     ;;
 
@@ -2317,7 +2355,7 @@ case "${1:-}" in
     if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$TARGET_BRANCH" >/dev/null 2>&1; then
       git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$TARGET_BRANCH" "$TARGET_BRANCH" >/dev/null 2>&1 || true
     fi
-    setup_codex_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH"
     echo "Codex worktree branch ready: $TARGET_BRANCH ($WT_PATH)"
     ;;
 
@@ -2338,8 +2376,48 @@ case "${1:-}" in
     echo "Codex cleanup hook complete; app owns worktree deletion: $WT_PATH"
     ;;
 
+  claude-setup)
+    # Claude Code owns worktree creation for `--worktree` sessions, subagents
+    # with `isolation: worktree`, and desktop parallel sessions — all of which
+    # run a bare `git worktree add` and so produce a worktree with no `.agents`,
+    # no `.claude/*` links and no `.env.local`. Wire this from a consumer repo's
+    # `.claude/settings.json` WorktreeCreate hook; because that hook lives in
+    # PROJECT-level settings it applies to every Claude config-dir variant on
+    # the machine (CLAUDE_CONFIG_DIR only moves user-level config).
+    #
+    # Same provisioning as codex-setup — see setup_app_worktree.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
+      exit 1
+    fi
+    setup_app_worktree "$WT_PATH"
+    echo "Configured Claude worktree: $WT_PATH"
+    ;;
+
+  claude-cleanup)
+    # Claude Code owns worktree/branch deletion. Non-destructive for the same
+    # reason as codex-cleanup: mutating tracked symlink paths before the app has
+    # actually removed the worktree can leave it dirty.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    echo "Claude cleanup hook complete; app owns worktree deletion: $WT_PATH"
+    ;;
+
   *)
-    echo "Usage: $0 create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup [ID|/path] [options]" >&2
+    echo "Usage: $0 create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     exit 1
     ;;
 esac

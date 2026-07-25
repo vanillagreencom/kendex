@@ -18,7 +18,7 @@ Portable git worktree manager. Worktrees live outside the repo root by default �
 
 Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved (`list`/`remove`/`push`/`restack`/`create --reuse`); there is no auto-migration. Path comparisons are canonical (physical, symlink-resolved on both sides), so a worktree registered under a legacy symlinked spelling and addressed via its physical path — or vice versa — is recognized as the same tree, never as a foreign one.
 
-Issue IDs used to derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`; examples such as `issue-779`, `CC-123`, and `ds-enforcement` are valid. Direct path arguments for mutating commands must be registered worktrees of this repository's common Git directory. `fix-links`, `codex-setup`, `codex-branch`, and `remove` refuse the main checkout and foreign worktrees; Codex app-created worktrees remain supported because they are registered git worktrees even when they live outside `WORKTREE_BASE_DIR`.
+Issue IDs used to derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`; examples such as `issue-779`, `CC-123`, and `ds-enforcement` are valid. Direct path arguments for mutating commands must be registered worktrees of this repository's common Git directory. `fix-links`, `codex-setup`, `codex-branch`, `claude-setup`, and `remove` refuse the main checkout and foreign worktrees; Codex app-created worktrees remain supported because they are registered git worktrees even when they live outside `WORKTREE_BASE_DIR`.
 
 Resolves project root via `git rev-parse`, detects default branch automatically, and reads project-specific config from `.env`, `vstack.settings.toml`, then `.env.local` (`.env.local` wins).
 
@@ -42,6 +42,8 @@ Resolves project root via `git rev-parse`, detects default branch automatically,
 | `codex-setup` | Apply env/config setup to a Codex Desktop app-created worktree |
 | `codex-branch` | Normalize a Codex Desktop app-created branch to an issue branch |
 | `codex-cleanup` | Non-destructive Codex Desktop cleanup hook; app owns deletion |
+| `claude-setup` | Apply env/config setup to a Claude Code-created worktree (`WorktreeCreate` hook) |
+| `claude-cleanup` | Non-destructive Claude Code cleanup hook; app owns deletion |
 
 `push ISSUE_ID` normally resolves through the configured worktree registry. When run from a checkout whose current branch already matches the normalized issue branch, it pushes that active checkout instead. This supports Codex Desktop app-created worktrees that are valid git worktrees but are not registered under `WORKTREE_BASE_DIR`.
 
@@ -83,6 +85,17 @@ Let Codex Desktop own app-created worktree creation and deletion. Configure proj
 ```
 
 For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before orchestration if the harness did not already normalize the branch.
+
+### Claude Code hooks
+
+Claude Code creates worktrees itself for `--worktree` sessions, subagents with `isolation: worktree`, and desktop parallel sessions. Those run a bare `git worktree add`, so the worktree has no `.agents`, no `.claude/*` links and no `.env.local`. Point the `WorktreeCreate` hook in the consumer repo's `.claude/settings.json` at `claude-setup` to apply the same provisioning `create` does:
+
+```bash
+.agents/skills/worktree/scripts/worktree claude-setup "$CLAUDE_WORKTREE_PATH"
+.agents/skills/worktree/scripts/worktree claude-cleanup "$CLAUDE_WORKTREE_PATH"
+```
+
+Keep this in **project-level** settings: the hook then applies to every Claude auth/config-dir variant on the machine, since `CLAUDE_CONFIG_DIR` only relocates user-level config.
 
 ### `create` flags
 
