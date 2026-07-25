@@ -42418,8 +42418,12 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
 }
 
 // src/connector-inventory.ts
+var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
 var DEFAULT_API_BASE = "https://api.anthropic.com";
 var OAUTH_BETA_HEADER = "oauth-2025-04-20";
+function connectorServerNamespace(connectorName) {
+  return `${CONNECTOR_NS_PREFIX}${connectorName.trim().replace(/\s+/g, "_")}__`;
+}
 function credentialCandidatePaths(env = process.env) {
   const roots = [];
   const configDir = env.CLAUDE_CONFIG_DIR?.trim();
@@ -43014,12 +43018,12 @@ var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Atlassian__*"
 ];
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
-var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
-var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX}Gmail__`;
-var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX}Google_Calendar__`;
-var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX}Google_Drive__`;
-var CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX}Slack__`;
-var CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX}Atlassian__`;
+var CONNECTOR_NS_PREFIX2 = "mcp__claude_ai_";
+var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX2}Gmail__`;
+var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX2}Google_Calendar__`;
+var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX2}Google_Drive__`;
+var CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX2}Slack__`;
+var CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX2}Atlassian__`;
 var CONNECTOR_READ_VERBS = /* @__PURE__ */ new Set([
   "list",
   "search",
@@ -43171,10 +43175,10 @@ var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
 ];
 function isConnectorWriteTool(name) {
-  if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
-  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX.length);
-  if (sep2 <= CONNECTOR_NS_PREFIX.length) return true;
-  const server = name.slice(CONNECTOR_NS_PREFIX.length, sep2);
+  if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
+  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
+  if (sep2 <= CONNECTOR_NS_PREFIX2.length) return true;
+  const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep2);
   const words = connectorNameWords(name.slice(sep2 + "__".length));
   const serverWords = connectorNameWords(server);
   let skipped = 0;
@@ -45309,17 +45313,21 @@ export {
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
   connectorQueryOptions,
+  connectorServerNamespace,
   connectorWriteDenyHook,
   connectorWriteModeFor,
   connectorWriteModeFromEnv,
   connectorsEnabledFor,
   connectorsEnabledFromEnv,
+  connectorsListUrl,
   createStreamIdleWatchdog,
+  credentialCandidatePaths,
   index_default as default,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
   isConnectorWriteTool,
   isExtraUsageRequiredMessage,
+  listAccountConnectors,
   mapToolName,
   normalizeRateLimitUtilization,
   preflightClaudeExecutable,
@@ -45327,6 +45335,7 @@ export {
   processStreamEvent,
   reportToolResultMismatch,
   resolveClaudeExecutable,
+  resolveClaudeOAuth,
   resolveConfiguredEffort,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,

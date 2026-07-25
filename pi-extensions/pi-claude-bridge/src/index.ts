@@ -16,6 +16,24 @@ import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
 import { readFileSync as nodeReadFileSync } from "node:fs";
 import { resolveGetModels } from "./pi-ai-compat.js";
 import { listAccountConnectors, resolveClaudeOAuth } from "./connector-inventory.js";
+// Re-exported from the extension entry point ON PURPOSE. Consuming apps
+// regenerate their vendored package.json with a CLOSED exports map
+// ({".": "./bundle/index.js"}), which makes Node reject BOTH a subpath import
+// and a deep path into the package (ERR_PACKAGE_PATH_NOT_EXPORTED) — verified.
+// So the ./connector-inventory entry point alone does not reach them. Naming
+// these here puts them in bundle/index.js's own export list, which is the one
+// path their existing manifest already allows, and incidentally keeps esbuild
+// from tree-shaking helpers index.ts never calls itself.
+export {
+	connectorServerNamespace,
+	connectorsListUrl,
+	credentialCandidatePaths,
+	listAccountConnectors,
+	resolveClaudeOAuth,
+	type ClaudeOAuthCredentials,
+	type ConnectorEntry,
+	type ConnectorInventory,
+} from "./connector-inventory.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";

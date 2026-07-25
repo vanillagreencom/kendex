@@ -31,6 +31,33 @@ before(async () => {
 	artifact = await import(`file://${artifactPath}`);
 });
 
+// The entry point consuming apps can actually reach. They regenerate their
+// vendored package.json with a CLOSED exports map ({".": "./bundle/index.js"}),
+// and Node rejects every unlisted subpath AND deep path under such a map
+// (ERR_PACKAGE_PATH_NOT_EXPORTED, verified). So the dedicated
+// ./connector-inventory entry is unreachable for them and the ROOT bundle is
+// the only allowed path — which makes this the load-bearing case, not the
+// secondary one.
+describe("root bundle re-export (the path a closed exports map allows)", () => {
+	let root;
+
+	before(async () => {
+		const rootPath = join(here, "..", "bundle", "index.js");
+		assert.ok(existsSync(rootPath), "bundle/index.js missing — run `npm run build`");
+		root = await import(`file://${rootPath}`);
+	});
+
+	it("exposes the connector API from the extension entry point", () => {
+		for (const name of ["listAccountConnectors", "resolveClaudeOAuth", "connectorServerNamespace"]) {
+			assert.equal(typeof root[name], "function", `${name} is not reachable from bundle/index.js`);
+		}
+	});
+
+	it("still registers the pi extension as its default export", () => {
+		assert.equal(typeof root.default, "function");
+	});
+});
+
 describe("shipped connector API", () => {
 	it("exports the documented programmatic surface", () => {
 		for (const name of [

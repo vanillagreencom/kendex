@@ -154,7 +154,13 @@ The older way to answer "does this account have Slack?" was a capability probe: 
 import { listAccountConnectors, resolveClaudeOAuth } from "@vanillagreen/pi-claude-bridge/connector-inventory";
 ```
 
-That entry point is a separate build output. It cannot come from `bundle/index.js`, which exports only pi's extension registration and is tree-shaken against what `index.ts` itself calls — `connectorServerNamespace` was dropped from it entirely for that reason. `tests/unit-connector-inventory-artifact.mjs` loads the built artifact rather than `src/` so a source change without a rebuild fails. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
+Consuming apps that regenerate their vendored `package.json` with a closed exports map (`{".": "./bundle/index.js"}`) cannot reach that subpath — Node rejects every unlisted subpath *and* deep path under such a map. The same functions are therefore re-exported from the package root, which is the path those manifests allow:
+
+```ts
+import { listAccountConnectors } from "@vanillagreen/pi-claude-bridge";
+```
+
+The dedicated entry point is a separate build output. It cannot come from `bundle/index.js`, which exports only pi's extension registration and is tree-shaken against what `index.ts` itself calls — `connectorServerNamespace` was dropped from it entirely for that reason. `tests/unit-connector-inventory-artifact.mjs` loads the built artifact rather than `src/` so a source change without a rebuild fails. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
 
 ## Extra usage and rate limits
 
