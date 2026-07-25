@@ -238,6 +238,11 @@ Real instance (2026-07-24): a live connector enumeration went upstream as the ex
 
 The corollary that resolves most cases: checking your own code's *behavior* against a fact corroborates it (it tests whether the code copes). Checking a *list you populated* does not (it tests your memory of what you typed).
 
+Two ways the tags fail in practice, both observed:
+
+- **Reading the artifact instead of the source.** Control-flow claims derived from a vendored, minified, post-bundler copy are not `[live]` readings of the code — they are `[inferred]` from a lossy transform. This is structurally likely here for the same reason as the round-trip: consuming repos hold bundles, not sources, so the nearest copy is the wrong one. Cite `src/` with file and line; if only a bundle is at hand, say so and downgrade the claim.
+- **Tone upgrading a tag.** `[inferred]` labelled honestly and then described as "the most promising lead" functions as `[live]` for every reader. The tag is not a disclaimer that buys stronger prose — if the surrounding sentence would survive being read as verified, the tag is not doing its job.
+
 Same family as the date-stamping rule below — both let a future reader judge how far to trust a line without re-deriving it.
 
 ## Cross-Repo Review Gate
