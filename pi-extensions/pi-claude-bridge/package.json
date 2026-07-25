@@ -160,7 +160,7 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=bundle/index.js --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=bundle/index.js --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent && esbuild src/connector-inventory.ts --bundle --platform=node --format=esm --target=node22 --outfile=bundle/connector-inventory.js",
     "prepack": "npm run build",
     "test:unit": "node --import tsx --test tests/unit-*.mjs",
     "test": "set -a && [ -f .env.test ] && . ./.env.test; set +a && npm run test:unit && tests/int-smoke.sh && tests/int-multi-turn.sh && tests/int-cache.sh && node --import tsx --test tests/int-*.mjs",
@@ -198,5 +198,9 @@
     "@earendil-works/pi-coding-agent": {
       "optional": true
     }
+  },
+  "exports": {
+    ".": "./bundle/index.js",
+    "./connector-inventory": "./bundle/connector-inventory.js"
   }
 }

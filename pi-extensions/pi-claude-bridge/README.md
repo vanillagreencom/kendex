@@ -148,7 +148,13 @@ The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-opus-
 
 The older way to answer "does this account have Slack?" was a capability probe: a model turn that enumerated connectors via `ToolSearch`. A search returns what the search surfaced — a lower bound — and nothing in the result said so, so an account with Slack attached could produce an inventory without Slack and no failure signal (vstack#838). This command calls the account's connector list endpoint instead, so the answer is complete by construction.
 
-`listAccountConnectors()` in `src/connector-inventory.ts` is the programmatic form for host apps. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
+`listAccountConnectors()` is the programmatic form for host apps. Import it from the package's `./connector-inventory` entry point:
+
+```ts
+import { listAccountConnectors, resolveClaudeOAuth } from "@vanillagreen/pi-claude-bridge/connector-inventory";
+```
+
+That entry point is a separate build output. It cannot come from `bundle/index.js`, which exports only pi's extension registration and is tree-shaken against what `index.ts` itself calls — `connectorServerNamespace` was dropped from it entirely for that reason. `tests/unit-connector-inventory-artifact.mjs` loads the built artifact rather than `src/` so a source change without a rebuild fails. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
 
 ## Extra usage and rate limits
 
