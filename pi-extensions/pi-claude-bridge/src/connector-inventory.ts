@@ -47,6 +47,16 @@ export type ConnectorInventory =
 	| { ok: true; complete: true; connectors: ConnectorEntry[]; reason?: undefined }
 	| { ok: false; complete: false; connectors?: undefined; reason: string };
 
+// SCOPING IS BY TOKEN, NOT BY ORG. Verified live: the org UUID in the path is
+// ignored — an all-zero UUID and the literal string "not-a-uuid" both returned
+// the bearer token's own account, identically to the real org. A multi-account
+// host therefore CANNOT select an account by passing its organizationUuid; the
+// only thing that selects an account is which credential the token came from
+// (i.e. which CLAUDE_CONFIG_DIR was read). Getting that wrong yields a
+// confident, well-formed answer for the WRONG account.
+//
+// The real UUID is still sent rather than a placeholder, so the call keeps
+// working if the API starts enforcing it.
 export type ClaudeOAuthCredentials = {
 	accessToken: string;
 	organizationUuid: string;

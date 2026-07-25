@@ -54,6 +54,14 @@ All three sessions send into each other's tmux panes. The failure modes are not 
 - **Verify delivery by a short distinctive fragment.** Long phrases wrap across lines and a `grep` for them returns zero on a message that landed fine. Search the scrollback (`capture-pane -S -300`), not just the visible pane.
 - **Backticks in the message body get shell-expanded** by the sending shell and silently drop identifiers. Quote with single quotes, or avoid them.
 
+## Connector Enumeration Is Token-Scoped
+
+Deterministic connector enumeration (vstack#848) answers "which connectors does this account have" by calling the account rather than asking the model. One property is easy to get wrong and fails silently:
+
+- **The organization UUID in the request path is ignored.** Verified live — an all-zero UUID and the literal string `not-a-uuid` both returned the bearer token's own account, identical to passing the real org. The **token alone** selects the account.
+- **So a multi-account host cannot scope by org.** Selecting an account means selecting the credential — which `CLAUDE_CONFIG_DIR` gets read — not passing that account's UUID. This matters for named-multi-account work: passing account B's org UUID with account A's token returns **account A's connectors, marked complete**, with nothing anomalous in the result.
+- Treat a connector inventory as belonging to whichever credential produced it, and carry the account identity alongside it rather than inferring it from the request you made.
+
 ## Capability Probe Contract
 
 For any probe whose result other repos store and act on — connector inventories being the live case.
