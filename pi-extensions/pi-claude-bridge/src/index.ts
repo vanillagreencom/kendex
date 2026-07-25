@@ -7,7 +7,7 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, buildModels, fallbackModelForPrimaryModel } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, stackDepth, pushContext, popContext } from "./query-state.js";
+import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, popContext, toolCallDrainCause } from "./query-state.js";
 import { loadConfig, normalizeEffortLevel, recordProjectTrust, type Config } from "./config.js";
 import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
 import { extractAgentsAppend } from "./agents-md.js";
@@ -913,8 +913,8 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		// Prevent stale deferred messages from being replayed by parent on pop
 		abortCtx.deferredUserMessages = [];
 		reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
-		for (const pending of abortCtx.pendingToolCalls.values()) { pending.resolve({ content: [{ type: "text", text: "Operation aborted" }] }); }
-		abortCtx.pendingToolCalls.clear();
+		const drained = drainPendingToolCalls(abortCtx, "abort");
+		if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
 		abortCtx.pendingResults.clear();
 		requestAbort();
 	};
@@ -1025,10 +1025,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			activeStreamIdleWatchdogs.delete(abortCtx);
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
 			if (ctx().activeQuery === sdkQuery) {
-				reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: wasAborted || options?.signal?.aborted || streamIdleTimedOut });
-				// Drain pending handlers for this query
-				for (const pending of ctx().pendingToolCalls.values()) { pending.resolve({ content: [{ type: "text", text: "Query ended" }] }); }
-				ctx().pendingToolCalls.clear();
+				const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+				reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: cause !== "query-end" });
+				// Drain pending handlers for this query as errors naming the cause —
+				// their results are never coming.
+				const drained = drainPendingToolCalls(ctx(), cause);
+				if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
 				ctx().pendingResults.clear();
 
 				if (isReentrant) {

@@ -27189,6 +27189,30 @@ function extractAllToolResults(messages) {
 }
 
 // src/query-state.ts
+var DRAIN_CAUSE_TEXT = {
+  "abort": "the turn was aborted",
+  "stream-idle-timeout": "the Claude Code stream went idle and the turn timed out",
+  "query-end": "the query ended"
+};
+function interruptedToolCallResult(cause) {
+  return {
+    content: [{ type: "text", text: `Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+    isError: true
+  };
+}
+function toolCallDrainCause(flags) {
+  if (flags.wasAborted || flags.signalAborted) return "abort";
+  if (flags.streamIdleTimedOut) return "stream-idle-timeout";
+  return "query-end";
+}
+function drainPendingToolCalls(queryCtx, cause) {
+  const drained = queryCtx.pendingToolCalls.size;
+  if (drained === 0) return 0;
+  const result = interruptedToolCallResult(cause);
+  for (const pending of queryCtx.pendingToolCalls.values()) pending.resolve(result);
+  queryCtx.pendingToolCalls.clear();
+  return drained;
+}
 function normalizeForCompare(value) {
   if (Array.isArray(value)) return value.map(normalizeForCompare);
   if (value && typeof value === "object") {
@@ -44888,10 +44912,8 @@ function streamClaudeAgentSdk(model, context, options) {
     wasAborted = true;
     abortCtx.deferredUserMessages = [];
     reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
-    for (const pending of abortCtx.pendingToolCalls.values()) {
-      pending.resolve({ content: [{ type: "text", text: "Operation aborted" }] });
-    }
-    abortCtx.pendingToolCalls.clear();
+    const drained = drainPendingToolCalls(abortCtx, "abort");
+    if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
     abortCtx.pendingResults.clear();
     requestAbort();
   };
@@ -44983,11 +45005,10 @@ function streamClaudeAgentSdk(model, context, options) {
     activeStreamIdleWatchdogs.delete(abortCtx);
     if (options?.signal) options.signal.removeEventListener("abort", onAbort);
     if (ctx().activeQuery === sdkQuery) {
-      reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: wasAborted || options?.signal?.aborted || streamIdleTimedOut });
-      for (const pending of ctx().pendingToolCalls.values()) {
-        pending.resolve({ content: [{ type: "text", text: "Query ended" }] });
-      }
-      ctx().pendingToolCalls.clear();
+      const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+      reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: cause !== "query-end" });
+      const drained = drainPendingToolCalls(ctx(), cause);
+      if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
       ctx().pendingResults.clear();
       if (isReentrant) {
         popContext();

@@ -14,6 +14,48 @@ export interface PendingToolCall {
 	resolve: (result: McpResult) => void;
 }
 
+// Why pending MCP handlers were drained without a real tool result. A drained
+// handler is waiting on a result pi will now never deliver, so the drain must
+// resolve as an error — never as a successful result whose text merely says the
+// turn died, which a consumer cannot tell apart from a tool that genuinely
+// returned that string. The cause is carried because an abort, an idle timeout,
+// and a plain end-with-stragglers are different things to act on.
+export type ToolCallDrainCause = "abort" | "stream-idle-timeout" | "query-end";
+
+const DRAIN_CAUSE_TEXT: Record<ToolCallDrainCause, string> = {
+	"abort": "the turn was aborted",
+	"stream-idle-timeout": "the Claude Code stream went idle and the turn timed out",
+	"query-end": "the query ended",
+};
+
+export function interruptedToolCallResult(cause: ToolCallDrainCause): McpResult {
+	return {
+		content: [{ type: "text", text: `Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+		isError: true,
+	};
+}
+
+// Precedence matches the forceRotate expression at the query-teardown site: an
+// explicit abort (pi's signal or our own abort handler) outranks a stream-idle
+// timeout, which outranks a plain end with stragglers.
+export function toolCallDrainCause(flags: { wasAborted?: boolean; signalAborted?: boolean; streamIdleTimedOut?: boolean }): ToolCallDrainCause {
+	if (flags.wasAborted || flags.signalAborted) return "abort";
+	if (flags.streamIdleTimedOut) return "stream-idle-timeout";
+	return "query-end";
+}
+
+/** Resolves every handler still waiting on `queryCtx` with an error result naming
+ *  `cause`, clears the map, and returns how many were drained. Scoped to the one
+ *  context it is given — never touches a sibling or parent query's handlers. */
+export function drainPendingToolCalls(queryCtx: QueryContext, cause: ToolCallDrainCause): number {
+	const drained = queryCtx.pendingToolCalls.size;
+	if (drained === 0) return 0;
+	const result = interruptedToolCallResult(cause);
+	for (const pending of queryCtx.pendingToolCalls.values()) pending.resolve(result);
+	queryCtx.pendingToolCalls.clear();
+	return drained;
+}
+
 export interface TurnToolCallRecord {
 	id: string;
 	toolName: string;
