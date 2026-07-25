@@ -63,6 +63,31 @@ All three sessions send into each other's tmux panes. The failure modes are not 
 - **Verify delivery by a short distinctive fragment.** Long phrases wrap across lines and a `grep` for them returns zero on a message that landed fine. Search the scrollback (`capture-pane -S -300`), not just the visible pane.
 - **Backticks in the message body get shell-expanded** by the sending shell and silently drop identifiers. Quote with single quotes, or avoid them.
 
+## An Export Surface Is A Security Surface — Re-vendor Before You Re-export
+
+**Action for the next drovr session, carried here because drovr ran out of context before confirming it.** drovr's vendored `pi-claude-bridge` sits at `071b3c67`, which contains a high-severity ReDoS in `connectorsListUrl` (`apiBase.replace(/\/+$/, "")`, a backtracking regex on a caller-supplied parameter). It is **harmless there** because that function is not exported from the root bundle, so nothing can hand it a hostile `apiBase` — internal callers only ever pass the default constant.
+
+**Re-vendor to `9d78051a` (vstack#851) before adding any local re-export of that module.** Exporting first would make the unfixed regex you already carry reachable. The re-vendor is not only adding the enumeration capability; it is removing a latent defect.
+
+The general rule this instance taught, which applies to every export any of us adds:
+
+- **A latent defect becomes reachable the moment you export it.** The CodeQL alert on vstack#851 fired *only* once the module gained a real export surface — making the API genuinely callable made its inputs genuinely untrusted. The code had been identical for three merges before that.
+- **Fix and export in the same change.** vstack#851 and memsira#284 both did, which is why no merged state in either repo was ever simultaneously reachable and vulnerable. The dangerous window existed only in intermediate *branch* pushes — which is the concrete argument for never vendoring from an unmerged branch, with a real near-miss attached rather than as a principle.
+
+## When A Grep Surprises You, The Pattern Is The First Suspect
+
+Three grep-shaped errors in one night across two agents, all producing confident wrong statements:
+
+- A shell-escaped pattern matched nothing useful and reported that a just-verified fix **had not landed**.
+- A whole-artifact grep for the same regex returned hits from **unrelated bundled libraries**, reporting a fix present that belonged to different code.
+- `grep -c` on an identifier proved it **appears in** an artifact and was read as proof it is **exported from** it. Those are different questions; only the second determines whether a caller can use it.
+
+The rules:
+
+- **When a grep result surprises you, re-measure a different way before writing it down.** Read the actual site. A surprising result is far more often a broken pattern than surprising code.
+- **A whole-artifact grep answers a question about the artifact, not about the site you care about.** Scope the search to the call site, or read it.
+- **Appearing, being exported, and being resolvable are three different properties.** Verify the specific one your claim depends on.
+
 ## Installed Connectors Are Not Attached Connectors
 
 Deterministic enumeration (vstack#848) reports what an **account has installed**. Whether a connector's MCP server has finished attaching inside the `claude` child about to run a turn is a different question, answered by a different mechanism, and the two can legitimately disagree.
