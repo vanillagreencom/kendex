@@ -95,6 +95,23 @@ The rules:
 - **A whole-artifact grep answers a question about the artifact, not about the site you care about.** Scope the search to the call site, or read it.
 - **Appearing, being exported, and being resolvable are three different properties.** Verify the specific one your claim depends on.
 
+## A Probe That Cannot Produce A Positive Proves Nothing
+
+Three wrong conclusions in one day on vstack#832, all the same shape: a null result from a probe with no power to produce a positive one, written up as a finding.
+
+- `claude --debug -p "Reply with OK"` returned no connector activity, and that was reported as **the CLI never attempts connector loading**. The prompt needs no tools, so it could not have shown otherwise.
+- An SDK harness read the `init` message and saw zero MCP servers. claude.ai connectors are documented in that same log as *"running fully async (nonblocking)"* — they land **after** `init` by construction, so an init-only read returns zero whether or not they ever load.
+- Both negatives were then used to eliminate candidates (machine, account, CLI version, option shape). Each elimination was individually sound and the conclusion was still wrong, because the real variable — `CLAUDE_CONFIG_DIR` — was never on the list.
+
+The rules:
+
+- **Before trusting a negative, say what a positive would have looked like in that exact output.** If you cannot point at the line, count, or field that would have differed, the probe has no power and its zero means nothing. This is the cheapest of all these checks and it is the one skipped most.
+- **Prefer an output where a positive has a known shape.** The probe that finally worked captured the CLI debug log, where success was already known to read `[claudeai-mcp] Fetched N servers` — a line quoted in the issue from a rig where it works. It returned `Fetched 3 servers` against a framing that predicted none.
+- **Build the power check into the probe's own output.** Report the corroborating counts next to the answer (`totalStderrLines`, `mcpRelatedLines`, the startup marker) so a later reader can judge a negative without re-running anything. A probe that reports only its verdict asks to be trusted; one that reports its own reach can be checked.
+- **An underpowered probe is worse than no probe**, because it launders an assumption into evidence and then eliminates the candidates that would have found the real cause.
+
+Same failure as `[live]` tone-upgrading above, one layer earlier: there the tag outran the observation, here the observation could not have existed. Related, for probes whose results other repos store: the Capability Probe Contract below.
+
 ## Installed Connectors Are Not Attached Connectors
 
 Deterministic enumeration (vstack#848) reports what an **account has installed**. Whether a connector's MCP server has finished attaching inside the `claude` child about to run a turn is a different question, answered by a different mechanism, and the two can legitimately disagree.
