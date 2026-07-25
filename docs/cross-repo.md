@@ -49,7 +49,8 @@ Agreed shape for drovr, memsira, and hyprtrade (settled 2026-07-24). Empirically
 All three sessions send into each other's tmux panes. The failure modes are not obvious.
 
 - **A pane showing an interactive prompt is not a composer.** `send-keys` into one is unsafe *even without pressing Enter* — the keystrokes are themselves input, and digits or arrows can move a selection. Capture the pane and confirm an empty composer before sending, not just before Enter.
-- **Re-capture after sending, before Enter.** If the composer holds anything that is not your own just-sent text — an in-progress draft, an earlier queued line, a menu — do not press Enter. Surface the collision instead.
+- **Re-capture after sending, before Enter.** If the composer holds a menu, a selection list, or any other interactive prompt, do not press Enter — surface the collision instead.
+- **Text after `❯` is usually NOT a draft.** Claude Code renders the last submitted message as dim hint text in an empty composer, and `capture-pane` strips the dimming, so an idle pane looks exactly like one holding an unsent draft. Reading it as a draft blocks legitimate coordination: on 2026-07-25 this rule stopped a steward from notifying both overseers about a merged change, and both panes turned out to be idle. Judge by pane state, not by the presence of text — a pane showing a completed recap or an idle prompt is safe to send into, and typing replaces hint text harmlessly. Treat a real draft as the exception it is, and if genuinely unsure, ask rather than assuming either way.
 - **Verify delivery by a short distinctive fragment.** Long phrases wrap across lines and a `grep` for them returns zero on a message that landed fine. Search the scrollback (`capture-pane -S -300`), not just the visible pane.
 - **Backticks in the message body get shell-expanded** by the sending shell and silently drop identifiers. Quote with single quotes, or avoid them.
 

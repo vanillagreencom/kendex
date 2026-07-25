@@ -236,12 +236,14 @@ Set non-sensitive defaults in committed `vstack.settings.toml` under `[env]`. Ex
 | Variable | Effect |
 |----------|--------|
 | `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths and `~` are used as-is. Default: `../.worktrees/<checkout-name>` (external per-repo dir beside the checkout). Do not point it inside the repo root: worktree build outputs under the repo can exhaust recursive file-watcher (inotify) budgets |
-| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from main checkout into each worktree; include `.env.local` only if worktrees should share local secrets/overrides |
+| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from main checkout into each worktree; include `.env.local` only if worktrees should share local secrets/overrides. Point entries at untracked runtime paths — see the tracked-content caveat below |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `path=target` symlinks created inside each worktree, with relative targets resolving from the link location |
 | `WORKTREE_COPIES` | Space-separated files copied from main checkout into each worktree |
 | `WORKTREE_MKDIRS` | Space-separated directories created inside each worktree with `mkdir -p`; use for gitignored scratch dirs such as `tmp` |
 
 Configured setup paths (`WORKTREE_SYMLINKS`, `WORKTREE_COPIES`, `WORKTREE_MKDIRS`, and the path side of `WORKTREE_RELATIVE_SYMLINKS`) must be worktree-relative literal paths without `.`, `..`, absolute, backslash, or shell glob metacharacter components (`*`, `?`, `[`, `]`). A configured symlink path cannot also be, contain, or parent another configured setup path, because later mkdir/copy/link operations would follow the symlink target. Existing symlink parents are rejected before writes. Copy and mkdir destinations also reject leaf symlinks. File and relative-symlink destinations may replace an existing leaf symlink or file without following it, but refuse a real directory leaf.
+
+**Symlink untracked paths only.** When a `WORKTREE_SYMLINKS` directory entry contains tracked files, setup marks them `assume-unchanged` so the symlink does not show as a typechange. Git then refuses to write those paths in that worktree — `cherry-pick`, `checkout`, and `merge` fail with *"local changes would be overwritten"* while `git status` reports clean, which is a hard failure to diagnose. That behavior exists for projects migrating away from committing harness config; it is wrong when the project still tracks the content. Setup warns and names the shadowed files. The fix is to narrow the entry to the untracked subpaths: symlink `.pi/agents` and `.pi/APPEND_SYSTEM.md` rather than `.pi`, so tracked `.pi/prompts/*.md` stay real files in every worktree.
 
 Example: share local env plus generated Claude assets, but keep `.claude/CLAUDE.md` pointed at each worktree's own `AGENTS.md`:
 

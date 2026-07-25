@@ -730,8 +730,25 @@ symlink_into_worktree() {
     # Directory symlink — if tracked by git, also mark files assume-unchanged
     # to prevent staging issues. (The exclude entry above already hides the
     # symlink itself; assume-unchanged covers the path's tracked contents.)
-    if git -C "$wt" ls-files "$path/" 2>/dev/null | grep -q .; then
-      git -C "$wt" ls-files "$path/" 2>/dev/null | \
+    #
+    # This is right for a project migrating AWAY from committing harness config,
+    # but silently wrong when the project legitimately tracks files under the
+    # symlinked dir: assume-unchanged makes git refuse to write them in this
+    # worktree, so cherry-pick/checkout/merge fail with "local changes would be
+    # overwritten" while `git status` reports clean. Warn with the shadowed
+    # paths so the fix (narrow the symlink to the untracked subpaths) is
+    # obvious. Warn, not error — the migration case above is legitimate.
+    local shadowed
+    shadowed="$(git -C "$wt" ls-files "$path/" 2>/dev/null)"
+    if [[ -n "$shadowed" ]]; then
+      {
+        echo "Warning: WORKTREE_SYMLINKS entry '$path' shadows $(printf '%s\n' "$shadowed" | grep -c .) tracked file(s) in this worktree:"
+        printf '%s\n' "$shadowed" | sed 's/^/  - /'
+        echo "  They are now assume-unchanged here, so git cannot write them in this worktree"
+        echo "  (cherry-pick/checkout/merge will fail while 'git status' looks clean)."
+        echo "  If the project still tracks these, narrow the entry to the untracked subpaths."
+      } >&2
+      printf '%s\n' "$shadowed" | \
         xargs -r git -C "$wt" update-index --assume-unchanged 2>/dev/null
     fi
 
