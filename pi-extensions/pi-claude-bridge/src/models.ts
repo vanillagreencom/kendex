@@ -3,15 +3,19 @@
 // Extracted from index.ts so tests can import without activating the extension.
 
 export const FABLE_MODEL_ID = "claude-fable-5";
+// Opus 4.8 is both a selectable model and the safety-fallback target for the two
+// primaries whose classifiers can decline a turn (Fable 5, Opus 5).
 export const FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
+export const OPUS_5_MODEL_ID = "claude-opus-5";
 export const SONNET_5_MODEL_ID = "claude-sonnet-5";
 
 export function fallbackModelForPrimaryModel(modelId: string): string | undefined {
-	return modelId === FABLE_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : undefined;
+	return modelId === FABLE_MODEL_ID || modelId === OPUS_5_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : undefined;
 }
 
 export const MODEL_IDS_IN_ORDER = [
 	FABLE_MODEL_ID,
+	OPUS_5_MODEL_ID,
 	FABLE_FALLBACK_MODEL_ID,
 	"claude-opus-4-7",
 	"claude-opus-4-6",
@@ -40,6 +44,15 @@ const FALLBACK_MODELS: Record<string, BridgeModelMetadata> = {
 		contextWindow: 1000000,
 		maxTokens: 128000,
 	},
+	[OPUS_5_MODEL_ID]: {
+		id: OPUS_5_MODEL_ID,
+		name: "Claude Opus 5",
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+		input: ["text", "image"],
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	},
 	[FABLE_FALLBACK_MODEL_ID]: {
 		id: FABLE_FALLBACK_MODEL_ID,
 		name: "Claude Opus 4.8",
@@ -58,6 +71,13 @@ const FALLBACK_MODELS: Record<string, BridgeModelMetadata> = {
 		maxTokens: 128000,
 	},
 };
+
+// Human label for the safety-fallback notice. Every id that participates in a
+// fallbackModelForPrimaryModel pairing has an entry above; the raw id is the
+// last-resort label so an unmapped pairing still reads sensibly.
+export function modelDisplayName(modelId: string): string {
+	return FALLBACK_MODELS[modelId]?.name ?? modelId;
+}
 
 // Project pi-ai's model entries down to the fields pi's registerProvider expects,
 // keep MODEL_IDS_IN_ORDER ordering, and fill bridge-owned future IDs when pi-ai

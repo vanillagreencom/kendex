@@ -27088,12 +27088,14 @@ function convertPiMessages(messages, customToolNameToSdk) {
 // src/models.ts
 var FABLE_MODEL_ID = "claude-fable-5";
 var FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
+var OPUS_5_MODEL_ID = "claude-opus-5";
 var SONNET_5_MODEL_ID = "claude-sonnet-5";
 function fallbackModelForPrimaryModel(modelId) {
-  return modelId === FABLE_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : void 0;
+  return modelId === FABLE_MODEL_ID || modelId === OPUS_5_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : void 0;
 }
 var MODEL_IDS_IN_ORDER = [
   FABLE_MODEL_ID,
+  OPUS_5_MODEL_ID,
   FABLE_FALLBACK_MODEL_ID,
   "claude-opus-4-7",
   "claude-opus-4-6",
@@ -27105,6 +27107,15 @@ var FALLBACK_MODELS = {
   [FABLE_MODEL_ID]: {
     id: FABLE_MODEL_ID,
     name: "Claude Fable 5",
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    input: ["text", "image"],
+    contextWindow: 1e6,
+    maxTokens: 128e3
+  },
+  [OPUS_5_MODEL_ID]: {
+    id: OPUS_5_MODEL_ID,
+    name: "Claude Opus 5",
     reasoning: true,
     thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     input: ["text", "image"],
@@ -27129,6 +27140,9 @@ var FALLBACK_MODELS = {
     maxTokens: 128e3
   }
 };
+function modelDisplayName(modelId) {
+  return FALLBACK_MODELS[modelId]?.name ?? modelId;
+}
 function buildModels(piAiModels) {
   return MODEL_IDS_IN_ORDER.map((id) => piAiModels.find((m) => m.id === id) ?? FALLBACK_MODELS[id]).filter((m) => m != null).map(({ id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
     id,
@@ -44567,8 +44581,11 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
           const fallbackModel = message.fallback_model;
           updateTurnOutputModel(fallbackModel);
           debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
-          if (originalModel === FABLE_MODEL_ID && fallbackModel === FABLE_FALLBACK_MODEL_ID) {
-            safeNotify("Claude bridge switched Fable 5 to Opus 4.8 after Claude Code safety fallback.", "info");
+          if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
+            safeNotify(
+              `Claude bridge switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
+              "info"
+            );
           }
         }
         break;

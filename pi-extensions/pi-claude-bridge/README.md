@@ -11,7 +11,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 ## Highlights
 
-- `claude-bridge/claude-fable-5`, Sonnet 5, Opus 4.8, Opus 4.7, Sonnet 4.6, and Haiku in `/model`.
+- `claude-bridge/claude-fable-5`, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku in `/model`. `/model opus` selects Opus 5; older Opus releases stay selectable by full ID.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
 - Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
 - Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
@@ -138,9 +138,9 @@ Host apps that embed the bridge and own every config dir explicitly can set `CLA
 
 Bridge settings come only from the authoritative `<PI_CODING_AGENT_DIR>/claude-bridge.json`; logs still resolve under `PI_CODING_AGENT_DIR`. Normal Pi CLI usage (flag unset) is unchanged.
 
-### Fable 5 caveat
+### Fable 5 and Opus 5 caveat
 
-The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. For Fable 5, the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
+The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-opus-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. Fable 5 and Opus 5 both run classifiers that can decline a turn, so for each of them the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
 
 ## Extra usage and rate limits
 

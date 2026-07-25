@@ -4,7 +4,7 @@ import { type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-c
 import { createSdkMcpServer, query, type EffortLevel, type SDKMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { PROVIDER_ID, messageContentToText } from "./convert.js";
-import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, buildModels, fallbackModelForPrimaryModel } from "./models.js";
+import { buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, popContext, toolCallDrainCause } from "./query-state.js";
@@ -450,8 +450,13 @@ async function consumeQuery(
 					const fallbackModel = (message as any).fallback_model;
 					updateTurnOutputModel(fallbackModel);
 					debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
-					if (originalModel === FABLE_MODEL_ID && fallbackModel === FABLE_FALLBACK_MODEL_ID) {
-						safeNotify("Claude bridge switched Fable 5 to Opus 4.8 after Claude Code safety fallback.", "info");
+					// Notify only for reroutes we configured, so an unexpected pairing from
+					// Claude Code is still logged above but not announced as one of ours.
+					if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
+						safeNotify(
+							`Claude bridge switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
+							"info",
+						);
 					}
 				}
 				break;
