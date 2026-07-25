@@ -18,6 +18,7 @@ Two ways the tags fail in practice, both observed:
 
 - **Reading the artifact instead of the source.** Control-flow claims derived from a vendored, minified, post-bundler copy are not `[live]` readings of the code — they are `[inferred]` from a lossy transform. This is structurally likely here for the same reason as the round-trip: consuming repos hold bundles, not sources, so the nearest copy is the wrong one. Cite `src/` with file and line; if only a bundle is at hand, say so and downgrade the claim.
 - **Tone upgrading a tag.** `[inferred]` labelled honestly and then described as "the most promising lead" functions as `[live]` for every reader. The tag is not a disclaimer that buys stronger prose — if the surrounding sentence would survive being read as verified, the tag is not doing its job.
+- **Claims about what another repo has shipped.** These need a tag and a source more than any other kind, because the repo being described is the only one that can check the claim and it never sees it. Two handoffs once each asserted the other had already built a feature; neither cited anything, both were wrong, and the work sat unbuilt while each pointed at the other. The claim carried no tag at all — untagged is how it travelled.
 
 Same family as the date-stamping rule below — both let a future reader judge how far to trust a line without re-deriving it.
 
