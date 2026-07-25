@@ -44,6 +44,15 @@ Agreed shape for drovr, memsira, and hyprtrade (settled 2026-07-24). Empirically
 - **Date-stamp measured state, and re-measure before relying on it.** During the conversation that produced this section, two sessions reported hyprtrade branch-protection values that a later read contradicted within the hour. Nobody captured a timestamped before/after, so a genuine mid-flight change and an inaccurate first read are **indistinguishable after the fact** — do not cite either earlier number as evidence of anything. That ambiguity is the actual lesson: with several sessions reading and mutating the same repos concurrently, an unreproducible measurement is worthless, so capture the command output with a timestamp or treat the value as unknown. State as of 2026-07-25 00:42Z, measured directly rather than taken from the sessions' reports — all three converged on **both** layers: every repo has classic `conv_res=true` plus an active thread ruleset with `bypass_actors: []`, `required_review_thread_resolution: true`, `required_approving_review_count: 0`. `enforce_admins` still differs (hyprtrade `true`; drovr and memsira `false`) and that is fine — it is no longer the mechanism. Note this list replaced an earlier one within about an hour, when drovr enabled its classic flag on the strength of the defense-in-depth bullet above; that is the rule working, not a contradiction, and a later audit disagreeing again is expected.
 
 
+## Do Not Restate Another Repo's Status From A Stale Check
+
+On 2026-07-25 a steward broadcast to both product repos carried one sentence — "still pending: re-vendoring for Opus 5" — that was stale for **both**. Each overseer corrected it independently; each was right. The check behind it was ~an hour old and both repos had merged in the interval.
+
+- **Re-verify a cross-repo status claim at send time, or attribute it.** "As of my check at 11:40" is honest; a bare "still pending" asserts current state you have not observed.
+- **A broadcast multiplies the error.** The same stale sentence went to two repos and cost two overseers a correction round. Per-repo claims deserve per-repo verification even when the rest of the message is shared.
+- **Prefer asking to asserting** for the other repo's half of a handoff: "has the re-vendor landed?" costs nothing and cannot be stale.
+- The correction convention worked exactly as intended — the described repo corrected the claim, and that is why the error was cheap. Do not let that make the claim careless in the first place.
+
 ## Driving Another Session's Pane
 
 All three sessions send into each other's tmux panes. The failure modes are not obvious.
@@ -53,6 +62,16 @@ All three sessions send into each other's tmux panes. The failure modes are not 
 - **Text after `❯` is usually NOT a draft.** Claude Code renders the last submitted message as dim hint text in an empty composer, and `capture-pane` strips the dimming, so an idle pane looks exactly like one holding an unsent draft. Reading it as a draft blocks legitimate coordination: on 2026-07-25 this rule stopped a steward from notifying both overseers about a merged change, and both panes turned out to be idle. Judge by pane state, not by the presence of text — a pane showing a completed recap or an idle prompt is safe to send into, and typing replaces hint text harmlessly. Treat a real draft as the exception it is, and if genuinely unsure, ask rather than assuming either way.
 - **Verify delivery by a short distinctive fragment.** Long phrases wrap across lines and a `grep` for them returns zero on a message that landed fine. Search the scrollback (`capture-pane -S -300`), not just the visible pane.
 - **Backticks in the message body get shell-expanded** by the sending shell and silently drop identifiers. Quote with single quotes, or avoid them.
+
+## Installed Connectors Are Not Attached Connectors
+
+Deterministic enumeration (vstack#848) reports what an **account has installed**. Whether a connector's MCP server has finished attaching inside the `claude` child about to run a turn is a different question, answered by a different mechanism, and the two can legitimately disagree.
+
+They used to be conflated by accident. The search-driven probe could only surface tools that had already attached, so an inventory implied availability — wrongly, but conservatively: it under-reported, and under-reporting fails safe. Deterministic enumeration removes that accidental coupling, so the failure now points the other way.
+
+- **Installed is a property of the account. Attached is a property of one process at one instant.** A correct `complete: true` inventory can name Slack while `mcp__claude_ai_Slack__*` is not yet callable in that sidecar.
+- **A write gate that consults the inventory alone will green-light a call that then finds no tool.** Treat an inventory as necessary but not sufficient for availability and keep an attach-time check on the call path.
+- This is the successor hazard to the attach race (vstack#832), not a restatement of it — that issue stays open precisely because enumeration does not address tool availability.
 
 ## Connector Enumeration Is Token-Scoped
 

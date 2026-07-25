@@ -12,7 +12,20 @@
 // result carries BOTH `directoryUuid` (the catalog identity) and
 // `installedServerId` (this account's installed instance). A marketplace catalog
 // entry has no installed-server id, which is what establishes this as the
-// attached set rather than the registry listing.
+// INSTALLED set rather than the registry listing.
+//
+// INSTALLED IS NOT ATTACHED. This endpoint reports what the ACCOUNT has
+// installed. It says nothing about whether a given connector's MCP server has
+// finished attaching inside the `claude` child that is about to run a turn —
+// this is a plain HTTPS call and does not consult that process at all. The two
+// were previously conflated by accident: the ToolSearch probe could only report
+// what was already attached, so an inventory implied availability (wrongly, but
+// conservatively — it under-reported, which fails safe). They are now separately
+// observable and can legitimately disagree: a correct `complete: true` inventory
+// can name Slack while `mcp__claude_ai_Slack__*` is not yet callable in this
+// process (vstack#832). Treat an inventory as NECESSARY BUT NOT SUFFICIENT for
+// availability and keep an attach-time check on the call path; do not derive
+// "can I call this tool right now" from this result.
 //
 // Because the answer comes from the account rather than a model turn, the result
 // is complete by construction — hence `complete: true` on success, and no
