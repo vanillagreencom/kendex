@@ -226,6 +226,20 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 - **Pi hook parity.** Pi gets its hooks via the `pi-extensions/pi-hooks` extension (native TS port of `hooks/*.sh` against Pi's `tool_call`/`tool_result`/`turn_end` events). Any change to a hook script must land in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
 - **Pi upstream lifecycle fix.** When touching pi-agents-tmux completion or print/json lifecycle workarounds, recheck `earendil-works/pi#2023` for upstream true-idle / scheduled-continuation fixes.
 
+## Recording Facts Across Repos
+
+When a session records a fact other sessions will act on, tag how it is known. Vendoring makes the alternative actively dangerous: anything merged here lands in the consuming repos' trees, so their greps of the vendored artifact will keep "confirming" whatever was asserted upstream.
+
+- **`[live]`** — observed directly against a real system. Note the method and its limits.
+- **`[corroborated]`** — checked against a source **not derived from the same observation**. Not "additionally verified", which is a phrasing you cannot fail: it certifies whatever you already believe. Naming the second source is the test, because that is when you notice it is your own output.
+- **`[inferred]`** — reasoned from docs or code, not observed.
+
+Real instance (2026-07-24): a live connector enumeration went upstream as the exact-id lists in vstack#821, vendored into the consuming repos, and a later grep of that bundle read back as independent agreement with the enumeration it came from — in a note that had itself recorded, two paragraphs earlier, that the entries did not exist before #821.
+
+The corollary that resolves most cases: checking your own code's *behavior* against a fact corroborates it (it tests whether the code copes). Checking a *list you populated* does not (it tests your memory of what you typed).
+
+Same family as the date-stamping rule below — both let a future reader judge how far to trust a line without re-deriving it.
+
 ## Cross-Repo Review Gate
 
 Agreed shape for drovr, memsira, and hyprtrade (settled 2026-07-24). Empirically tested on two repos independently — memsira PR #272 and drovr PR #262, each a live PR with a real unresolved thread — not inferred from docs. Recorded here so it is not re-litigated per repo.
