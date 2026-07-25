@@ -204,6 +204,7 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 
 - **No project-specific references.** Zero mentions of specific apps, crate names, paths, or tools in `agents/`, `skills/`, `hooks/`.
 - **Validate ctx7 IDs.** Every library ID in SKILL.md ctx7 tables must resolve via `npx ctx7@latest docs <id> "test"`.
+- **Green CI is not proof it works.** For anything driving a real subprocess (pi-extensions, the bridge, hooks), a suite that stubs the transport only proves the stubs agree. Run the real path before calling it done, and say which you ran.
 - **Test after CLI changes.** `cd cli && cargo test`. Integration: `cli/scripts/integration-check.sh` — installs into a throwaway temp project and verifies the scope. Running `cargo run -- add .. --all --copy` from inside the checkout installs into the checkout itself (project scope = nearest project root from CWD), so it is not the validation path.
 - **Hooks must be portable.** No hardcoded paths.
 - **Skill scripts and tests are Bash 3.2 (macOS default).** No `mapfile`/`readarray`, `declare -A`/`local -A`, `${var,,}`, or `exec {fd}>`; guard empty-array expansion with `"${arr[@]+"${arr[@]}"}"`. Per-skill lint tests enforce this.
