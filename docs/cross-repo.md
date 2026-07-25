@@ -45,3 +45,11 @@ All three sessions send into each other's tmux panes. The failure modes are not 
 - **Re-capture after sending, before Enter.** If the composer holds anything that is not your own just-sent text — an in-progress draft, an earlier queued line, a menu — do not press Enter. Surface the collision instead.
 - **Verify delivery by a short distinctive fragment.** Long phrases wrap across lines and a `grep` for them returns zero on a message that landed fine. Search the scrollback (`capture-pane -S -300`), not just the visible pane.
 - **Backticks in the message body get shell-expanded** by the sending shell and silently drop identifiers. Quote with single quotes, or avoid them.
+
+## Capability Probe Contract
+
+For any probe whose result other repos store and act on — connector inventories being the live case.
+
+- **An empty result is not evidence of absence.** It must never overwrite a known-good inventory; mark the snapshot as a failed check and render "couldn't check", not "not connected", so a retry cannot erase what was already known.
+- **A partial result is not evidence of absence either, and it is more dangerous.** An empty probe looks wrong; a partial one looks successful. A search-driven probe returns a lower bound — whatever the search surfaced — so a result can be genuinely non-failing and still incomplete. `probe_failed = false` answers "did the probe error", never "is this list complete".
+- **Consumers may only treat a result as an enumeration if it says it is one.** Absent an explicit completeness signal, treat every probe result as a lower bound and never conclude a capability is missing from it.
