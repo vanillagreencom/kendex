@@ -13,7 +13,9 @@ import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
+import { readFileSync as nodeReadFileSync } from "node:fs";
 import { resolveGetModels } from "./pi-ai-compat.js";
+import { listAccountConnectors, resolveClaudeOAuth } from "./connector-inventory.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
@@ -1076,6 +1078,38 @@ function showBridgeStatus(ctx: { ui: ExtensionUIContext; cwd?: string }): void {
 	].join("\n"), "info");
 }
 
+// Read a credential file, treating any read error as "absent" — a missing or
+// unreadable candidate must fall through to the next one, not abort resolution.
+function readCredentialFile(path: string): string | undefined {
+	try {
+		return nodeReadFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
+}
+
+// Deterministic connector enumeration for the host app (vstack#838). Reports the
+// failure reason rather than an empty list, so "no connectors" and "could not
+// check" stay distinguishable.
+async function reportConnectorInventory(ctx: { ui: ExtensionUIContext }): Promise<void> {
+	const credentials = resolveClaudeOAuth(readCredentialFile);
+	if (!credentials) {
+		ctx.ui.notify("Claude bridge: no Claude OAuth credentials found — cannot enumerate connectors.", "error");
+		return;
+	}
+	const inventory = await listAccountConnectors({ credentials });
+	if (!inventory.ok) {
+		ctx.ui.notify(`Claude bridge: connector enumeration failed — ${inventory.reason}`, "error");
+		return;
+	}
+	if (inventory.connectors.length === 0) {
+		ctx.ui.notify("Claude bridge: this account has no connectors installed.", "info");
+		return;
+	}
+	const names = inventory.connectors.map((c) => c.name).join(", ");
+	ctx.ui.notify(`Claude bridge: ${inventory.connectors.length} connector(s) installed — ${names}`, "info");
+}
+
 function registerBridgeCommands(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[COMMANDS_REGISTERED_KEY]) return;
@@ -1111,6 +1145,10 @@ function registerBridgeCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("claude-bridge:extra", {
 		description: "Run Claude Code /extra-usage through claude-bridge",
 		handler: async (_args: string, ctx) => runExtraUsage(ctx),
+	});
+	pi.registerCommand("claude-bridge:connectors", {
+		description: "List the Claude account's installed claude.ai connectors",
+		handler: async (_args: string, ctx) => reportConnectorInventory(ctx),
 	});
 }
 

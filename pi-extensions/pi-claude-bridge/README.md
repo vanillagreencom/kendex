@@ -142,6 +142,14 @@ Bridge settings come only from the authoritative `<PI_CODING_AGENT_DIR>/claude-b
 
 The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-opus-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. Fable 5 and Opus 5 both run classifiers that can decline a turn, so for each of them the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
 
+## Connector inventory
+
+`/claude-bridge:connectors` lists the Claude account's installed claude.ai connectors by asking the account, not the model.
+
+The older way to answer "does this account have Slack?" was a capability probe: a model turn that enumerated connectors via `ToolSearch`. A search returns what the search surfaced — a lower bound — and nothing in the result said so, so an account with Slack attached could produce an inventory without Slack and no failure signal (vstack#838). This command calls the account's connector list endpoint instead, so the answer is complete by construction.
+
+`listAccountConnectors()` in `src/connector-inventory.ts` is the programmatic form for host apps. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
+
 ## Extra usage and rate limits
 
 Claude Code's `/extra-usage` local command works through the Claude Agent SDK. In Pi, use `/claude-bridge:extra` to run that flow from claude-bridge. Persist automatic launch on extra-usage errors with **Allow extra usage helper** in `/extensions:settings`.
