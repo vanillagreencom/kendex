@@ -24,13 +24,15 @@ Manages Architecture Decision Records (ADRs) — represented in this skill as nu
 | Command | Purpose | Output |
 |---------|---------|--------|
 | `search --issue [ID]` | Find decisions linked to an issue | JSON `[{id, decision, path}]` |
-| `search "[KEYWORDS]"` | Ranked keyword search (AND, scored) | JSON `[{id, decision, path, score}]` |
+| `search "[KEYWORDS]"` | Ranked keyword search (AND, scored) over INDEX summaries **and** decision bodies | JSON `[{id, decision, path, score}]` |
 | `search "a\|b"` | Regex OR search | JSON `[{id, decision, path}]` |
 | `list` | List all active decisions | JSON `[{id, decision, path}]` |
 | `next-id` | Get next available DXXX | Single `DXXX` line |
 | `get [DXXX]` | Get decision details | JSON `{id, decision, status, date, path}` |
 
 Options: `--limit N` (default: 5) for search results.
+
+Keyword and regex search cover both the `INDEX.md` summary columns (decision, rationale, id) and the prose of each linked decision document, so a content keyword that never appears in a one-line summary still finds the decision that governs it. Summary matches score above body-only matches, which surface below them. `search --issue ID` is an explicit linkage lookup and deliberately does not scan bodies.
 
 ## Workflows
 

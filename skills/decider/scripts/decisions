@@ -3,6 +3,7 @@
 #
 # Usage:
 #   decisions search "FFI error handling"       Ranked keyword search (AND, scored)
+#                                               Matches INDEX summaries AND document bodies
 #   decisions search --issue PROJ-189            Find decisions linked to an issue
 #   decisions search "seqlock|mmap"             Regex OR (pipe = regex mode)
 #   decisions list                              List all active decisions (compact)
@@ -197,6 +198,10 @@ Usage: decisions <action> [options]
 
 Actions:
   search <query>       Ranked search (multi-word = AND, scored by relevance)
+                       Matches the INDEX summary columns (decision, rationale,
+                       id) AND the linked decision document bodies. Summary
+                       matches outrank body-only matches. --issue mode is an
+                       explicit linkage lookup and does not scan bodies.
   search --issue ID    Find decisions linked to a specific issue
   list                 List all active decisions (compact)
   next-id              Get next available DXXX
@@ -231,6 +236,42 @@ Examples:
   decisions next-id                        # Next available DXXX
   decisions get D017                       # Details for D017
 EOF
+}
+
+# Which indexed decision BODIES match each term.
+#
+# Search matched only the INDEX.md summary columns (decision, rationale, id), so
+# a keyword appearing prominently in a decision's prose but not its one-line
+# summary returned [] — indistinguishable from "no decision governs this area",
+# which is the opposite of the truth and silently passes the pre-mutation guards
+# in orch review-pr/dev-fix and the tpm-audit conflict check (vstack#853).
+#
+# One grep per TERM (not per document) over only the files the index links, so
+# cost scales with query length rather than corpus size, and unindexed or stray
+# files in the directory cannot influence results. Emits {path: [terms...]}.
+body_term_hits() {
+  local rows_json="$1"; shift
+  local paths_file hits
+  paths_file=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$paths_file'" RETURN
+  echo "$rows_json" | jq -r '.[] | select(.path != null and .path != "") | .path' > "$paths_file"
+  if [[ ! -s "$paths_file" ]]; then echo '{}'; return 0; fi
+
+  hits=$(
+    for term in "$@"; do
+      [[ -z "$term" ]] && continue
+      # -l lists matching files; failures (unreadable/absent) are not matches.
+      tr '\n' '\0' < "$paths_file" \
+        | xargs -0 -r grep -ilE -- "$term" 2>/dev/null \
+        | while IFS= read -r f; do printf '%s\t%s\n' "$f" "$term"; done
+    done
+  )
+
+  printf '%s' "$hits" | jq -R -s '
+    split("\n") | map(select(length > 0) | split("\t") | {path: .[0], term: .[1]})
+    | group_by(.path) | map({key: .[0].path, value: [.[].term]}) | from_entries
+  '
 }
 
 search_decisions() {
@@ -272,32 +313,47 @@ search_decisions() {
   else
     # Check if query contains regex operators — if so, use raw regex mode
     if echo "$query" | grep -qE '[|()\\]'; then
-      echo "$all" | jq --arg q "$query" --argjson limit "$limit" '[
+      local rx_bodies
+      rx_bodies=$(body_term_hits "$all" "$query")
+      echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$rx_bodies" '[
         .[] | select(
           (.decision | test($q; "i")) or
           (.rationale | test($q; "i")) or
-          (.id | test($q; "i"))
+          (.id | test($q; "i")) or
+          (($bodies[.path] // []) | length > 0)
         ) | {id, decision, path}
       ] | .[:$limit]'
     else
       # Multi-word AND search with relevance scoring
-      echo "$all" | jq --arg q "$query" --argjson limit "$limit" '
+      local terms_arr kw_bodies
+      # Same split jq performs below, so grep and jq agree on term boundaries.
+      read -r -a terms_arr <<< "$(echo "$query" | tr '[:upper:]' '[:lower:]')"
+      kw_bodies=$(body_term_hits "$all" "${terms_arr[@]}")
+      echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$kw_bodies" '
         # Split query into terms
         ($q | ascii_downcase | split(" ") | map(select(length > 0))) as $terms |
 
         [.[] |
-          # Check ALL terms match somewhere (AND logic)
+          # Check ALL terms match somewhere (AND logic). A term counts if it is
+          # in the summary columns OR in the decision document body, so AND can
+          # be satisfied across both — one term in the title, another in prose.
           . as $row |
           ($row.decision + " " + $row.rationale + " " + $row.id | ascii_downcase) as $all_text |
-          if ($terms | all(. as $t | $all_text | test($t))) then
-            # Score: title match = 3pts, id match = 3pts, rationale = 1pt per term
+          (($bodies[$row.path] // []) | map(ascii_downcase)) as $body_terms |
+          if ($terms | all(. as $t | ($all_text | test($t)) or ($body_terms | index($t) != null))) then
+            # Score: title = 3pts, id = 3pts, rationale = 1pt, body = 0.5pt per
+            # term. Summary weights are unchanged, and body scores below
+            # rationale, so a body-only hit always sorts under every summary
+            # match — existing results stay on top and the new ones surface below
+            # them rather than displacing them.
             ($row.decision | ascii_downcase) as $title |
             ($row.id | ascii_downcase) as $did |
             ($row.rationale | ascii_downcase) as $rat |
             ([$terms[] | . as $t |
               (if ($title | test($t)) then 3 else 0 end) +
               (if ($did | test($t)) then 3 else 0 end) +
-              (if ($rat | test($t)) then 1 else 0 end)
+              (if ($rat | test($t)) then 1 else 0 end) +
+              (if ($body_terms | index($t) != null) then 0.5 else 0 end)
             ] | add) as $score |
             {id: $row.id, decision: $row.decision, path: $row.path, score: $score}
           else empty end
