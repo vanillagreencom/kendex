@@ -74,6 +74,12 @@ The general rule this instance taught, which applies to every export any of us a
 - **A latent defect becomes reachable the moment you export it.** The CodeQL alert on vstack#851 fired *only* once the module gained a real export surface — making the API genuinely callable made its inputs genuinely untrusted. The code had been identical for three merges before that.
 - **Fix and export in the same change.** vstack#851 and memsira#284 both did, which is why no merged state in either repo was ever simultaneously reachable and vulnerable. The dangerous window existed only in intermediate *branch* pushes — which is the concrete argument for never vendoring from an unmerged branch, with a real near-miss attached rather than as a principle.
 
+## A Bundled Package With Externals Will Not Import From An Arbitrary Directory
+
+`pi-claude-bridge`'s `bundle/index.js` keeps `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as externals, so importing the package root only works from a tree where those resolve — inside the consuming app, not from a repo root or a scratch directory.
+
+**The failure mode is a false negative that looks exactly like a real one.** A root import from the wrong directory returns `ERR_MODULE_NOT_FOUND`, which reads as "the export is missing" and invites an upstream bug report. Both consuming sessions hit this within minutes of each other; one had been warned and recognised it, the other would have filed upstream. Run the import from the directory that declares the dependency before concluding anything about the export.
+
 ## When A Grep Surprises You, The Pattern Is The First Suspect
 
 Three grep-shaped errors in one night across two agents, all producing confident wrong statements:
@@ -85,6 +91,7 @@ Three grep-shaped errors in one night across two agents, all producing confident
 The rules:
 
 - **When a grep result surprises you, re-measure a different way before writing it down.** Read the actual site. A surprising result is far more often a broken pattern than surprising code.
+- **A result that CONFIRMS what you expected deserves the same suspicion, and gets less.** Of the three errors above, two produced surprising numbers and were caught quickly; the third produced a comfortable, confirming count (`grep -c charCodeAt` over a 2MB bundle returning 19) and went unexamined precisely because it agreed. Confirmation is where the check is skipped.
 - **A whole-artifact grep answers a question about the artifact, not about the site you care about.** Scope the search to the call site, or read it.
 - **Appearing, being exported, and being resolvable are three different properties.** Verify the specific one your claim depends on.
 
