@@ -23,6 +23,12 @@ Two ways the tags fail in practice, both observed:
 
 Same family as the date-stamping rule below — both let a future reader judge how far to trust a line without re-deriving it.
 
+## Deciding Which Repo Owns a Change
+
+**Ownership follows the dependency, not the vocabulary.** Ask one question: does this change need anything from another repo? If not, it is yours — however much shared language it borrows.
+
+"Shared" is a vibe and cannot be checked; the dependency question can. The failure it prevents is the one recorded above, where two handoffs each assigned a feature to the other and neither built it — that is this bug's specific instance, and the vocabulary trap is its general form. A mechanism can be upstream in one use and purely local in another: probe convergence used as an attach-race gate is the bridge's, while the same convergence used as inventory reconciliation needs nothing upstream and belongs to the app. Calling both "the convergence work" makes the second read as upstream-blocked and stalls it behind a repo that owes it nothing.
+
 ## Cross-Repo Review Gate
 
 Agreed shape for drovr, memsira, and hyprtrade (settled 2026-07-24). Empirically tested on two repos independently — memsira PR #272 and drovr PR #262, each a live PR with a real unresolved thread — not inferred from docs. Recorded here so it is not re-litigated per repo.
