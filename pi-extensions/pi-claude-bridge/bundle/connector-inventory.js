@@ -47,7 +47,12 @@ function nonEmptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : void 0;
 }
 function connectorsListUrl(organizationUuid, apiBase = DEFAULT_API_BASE) {
-  return `${apiBase.replace(/\/+$/, "")}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
+  return `${trimTrailingSlashes(apiBase)}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
+}
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
 }
 async function listAccountConnectors(deps) {
   const { credentials, apiBase, signal } = deps;

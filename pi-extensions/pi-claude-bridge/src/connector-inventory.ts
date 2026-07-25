@@ -150,7 +150,18 @@ function nonEmptyString(value: unknown): string | undefined {
 }
 
 export function connectorsListUrl(organizationUuid: string, apiBase: string = DEFAULT_API_BASE): string {
-	return `${apiBase.replace(/\/+$/, "")}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
+	return `${trimTrailingSlashes(apiBase)}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
+}
+
+// Linear-time trailing-slash trim. This was `apiBase.replace(/\/+$/, "")`, which
+// CodeQL correctly flags as a polynomial regex on uncontrolled input: `apiBase`
+// is a caller-supplied parameter, and an anchored `+` backtracks on a long run
+// of slashes. It only became reachable as library input once this module gained
+// a real export surface, which is exactly the exposure the export was for.
+function trimTrailingSlashes(value: string): string {
+	let end = value.length;
+	while (end > 0 && value.charCodeAt(end - 1) === 47 /* "/" */) end--;
+	return value.slice(0, end);
 }
 
 export type ListConnectorsDeps = {
