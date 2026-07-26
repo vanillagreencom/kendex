@@ -369,7 +369,15 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
  * while the connector attaches ~1s later and is never asked. Measured end to end
  * on 40 cold sidecars (memsira, 2026-07-26): a connector tool call happened in
  * 7/20 baseline runs versus 20/20 with the declaration, and "I don't have access"
- * went 13/20 → 0/20, one-sided Fisher exact p = 6.4e-6.
+ * went 13/20 → 0/20, one-sided Fisher exact p = 6.4e-6. Confirmed at seven
+ * declarations over a further 30 runs: 5/10 → 10/10 calls, 5/10 → 0/10 denials.
+ *
+ * It is also FASTER, which is the opposite of what the startup barrier suggests.
+ * The barrier is real but small and sub-linear — manifest build 490ms none /
+ * 1996ms one / 2574ms seven, so seven costs +578ms over one, not 7x. Meanwhile
+ * first token drops from a 9840ms median (worst 35.7s) to 6887ms (worst 7.8s),
+ * because declaring removes the model's speculative ToolSearch and dead ends.
+ * The barrier buys back more than it spends.
  *
  * `alwaysLoad` is the mechanism: it blocks startup until the server is connected
  * (5s cap) precisely "since the tools must be present when the turn-1 prompt is
