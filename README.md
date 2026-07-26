@@ -76,6 +76,10 @@ Claude Code · Cursor · OpenCode · Codex · Pi
 `vstack add` writes a `vstack.toml` at your project root. Edit it to customize per-agent behavior, then run `vstack refresh` to apply. Generated agent files are overwritten on refresh — `vstack.toml` is the stable home for overrides.
 
 ```toml
+# Where this project's OWN skills live (must be a top-level key, above any table).
+# Refresh links each subdirectory into .agents/skills/<name>.
+project-skills-dir = "project-skills"
+
 # Skills assigned to each agent.
 [agent-skills]
 rust = ["github", "worktree"]
@@ -118,6 +122,13 @@ project-local `.agents` directory. Failures leave the lock and installed files
 unchanged. Project hook removal uses the same strict preflight before changing
 hook files, settings, locks, or generated agents; global removal remains
 independent of project configuration.
+
+Skills vstack did not install belong in `project-skills-dir` (tracked), never as
+real directories inside `.agents`. Refresh links each one into
+`.agents/skills/<name>`, which keeps `.agents` fully untracked — otherwise it
+becomes a hybrid tree, and a rebase materializes the symlink into a real
+directory holding only the tracked files, silently dropping every installed
+skill beneath it.
 
 Key rules:
 

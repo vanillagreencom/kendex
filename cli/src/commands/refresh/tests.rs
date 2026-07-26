@@ -940,3 +940,170 @@ fn refresh_rejects_agent_name_that_escapes_output_dir() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// #859: project-owned skills relocated OUT of `.agents` and linked back in.
+///
+/// The convention exists to keep `.agents` free of tracked content: a project
+/// that commits skills inside it makes the directory a hybrid tracked/untracked
+/// tree, and a rebase then materializes the symlink into a real directory
+/// holding only the tracked subset (#856).
+#[test]
+fn refresh_links_relocated_project_skills_into_agents() {
+    let root = tmpdir("relocated-project-skills-link");
+    let project = root.join("project");
+    let source_dir = project.join("project-skills/benchmark");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(project.join(".agents/skills")).unwrap();
+    let source_md = source_dir.join("SKILL.md");
+    std::fs::write(
+        &source_md,
+        "---\nname: benchmark\ndescription: Local benchmark\n---\n\n# Benchmark\n\nBody.\n",
+    )
+    .unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig {
+        project_skills_dir: Some("project-skills".into()),
+        ..ProjectConfig::default()
+    };
+    project_config
+        .skill_instructions
+        .insert("benchmark".into(), "Project rule.".into());
+
+    let link = project.join(".agents/skills/benchmark");
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(
+        stats.failures.is_empty(),
+        "relocate-and-link refresh failed: {:?}",
+        stats.failures
+    );
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        std::path::Path::new("../../project-skills/benchmark"),
+        "refresh must link .agents/skills/<name> at the relocated source"
+    );
+    // Instructions belong in the TRACKED source file, not in a copy under .agents.
+    assert!(
+        std::fs::read_to_string(&source_md)
+            .unwrap()
+            .contains("## Project Instructions\n\nProject rule.")
+    );
+    assert!(stats.project_owned_skills.contains("benchmark"));
+
+    // Idempotent: an already-correct link is left exactly as it is.
+    let again = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(again.failures.is_empty());
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        std::path::Path::new("../../project-skills/benchmark")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A real directory at the destination is somebody's committed skill or a
+/// materialized harness dir. Deleting either to make room for a link would be
+/// the very bug this feature exists to prevent.
+#[test]
+fn refresh_refuses_to_replace_a_real_directory_with_a_project_skills_link() {
+    let root = tmpdir("relocated-project-skills-clobber");
+    let project = root.join("project");
+    std::fs::create_dir_all(project.join("project-skills/benchmark")).unwrap();
+    std::fs::write(
+        project.join("project-skills/benchmark/SKILL.md"),
+        "---\nname: benchmark\ndescription: relocated\n---\n\n# Benchmark\n",
+    )
+    .unwrap();
+    let squatter = project.join(".agents/skills/benchmark");
+    std::fs::create_dir_all(&squatter).unwrap();
+    let squatter_md = squatter.join("SKILL.md");
+    let squatter_body = "---\nname: benchmark\ndescription: committed in place\n---\n\n# Committed\n";
+    std::fs::write(&squatter_md, squatter_body).unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig {
+        project_skills_dir: Some("project-skills".into()),
+        ..ProjectConfig::default()
+    };
+
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(
+        stats
+            .failures
+            .iter()
+            .any(|f| f.error.contains("refusing to replace existing non-symlink path")),
+        "expected a refusal, got: {:?}",
+        stats.failures
+    );
+    assert!(!squatter.is_symlink(), "the real directory must survive");
+    assert_eq!(std::fs::read_to_string(&squatter_md).unwrap(), squatter_body);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The relaxation is scoped to the CONFIGURED directory. Without the opt-in a
+/// link pointing out of `.agents/skills` is still refused, which is the guard
+/// that keeps an arbitrary escape from being followed.
+#[test]
+fn refresh_still_refuses_an_unconfigured_link_out_of_the_skills_root() {
+    let root = tmpdir("relocated-project-skills-unconfigured");
+    let project = root.join("project");
+    std::fs::create_dir_all(project.join("elsewhere/benchmark")).unwrap();
+    std::fs::create_dir_all(project.join(".agents/skills")).unwrap();
+    std::fs::write(
+        project.join("elsewhere/benchmark/SKILL.md"),
+        "---\nname: benchmark\ndescription: unconfigured\n---\n\n# Benchmark\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        "../../elsewhere/benchmark",
+        project.join(".agents/skills/benchmark"),
+    )
+    .unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig::default(); // no project-skills-dir
+
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(
+        stats
+            .failures
+            .iter()
+            .any(|f| f.error.contains("outside skills root")),
+        "expected the escape guard to still fire, got: {:?}",
+        stats.failures
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `project-skills-dir` must stay inside the project and outside `.agents`.
+#[test]
+fn refresh_rejects_project_skills_dir_inside_agents() {
+    let root = tmpdir("relocated-project-skills-inside-agents");
+    let project = root.join("project");
+    std::fs::create_dir_all(project.join(".agents/mine/benchmark")).unwrap();
+    std::fs::create_dir_all(project.join(".agents/skills")).unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig {
+        project_skills_dir: Some(".agents/mine".into()),
+        ..ProjectConfig::default()
+    };
+
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    assert!(
+        stats
+            .failures
+            .iter()
+            .any(|f| f.error.contains("must live outside .agents")),
+        "expected rejection, got: {:?}",
+        stats.failures
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}

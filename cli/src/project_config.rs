@@ -68,6 +68,18 @@ pub struct ProjectConfig {
     pub agent_instructions: HashMap<String, String>,
     #[serde(rename = "skill-instructions")]
     pub skill_instructions: HashMap<String, String>,
+    /// Directory holding project-owned skills that live OUTSIDE `.agents`,
+    /// relative to the project root (e.g. `project-skills`). Refresh links each
+    /// `<dir>/<name>` into `.agents/skills/<name>`.
+    ///
+    /// The point is to keep `.agents` free of tracked content. A project that
+    /// commits its own skills *inside* `.agents` makes that directory a hybrid
+    /// tracked/untracked tree, and a rebase then materializes the symlink into
+    /// a real directory holding only the tracked subset — silently dropping
+    /// every vstack-installed skill under it (#856). Relocating the tracked
+    /// half removes the cause rather than detecting the damage.
+    #[serde(rename = "project-skills-dir", default)]
+    pub project_skills_dir: Option<String>,
     #[serde(rename = "custom-hooks", default)]
     pub custom_hooks: Vec<CustomHook>,
 }

@@ -198,11 +198,28 @@ pub fn refresh_items_in_scope(
         }
     };
 
+    let relocated_project_skills = if global {
+        None
+    } else {
+        match resolve_relocated_project_skills(project_root, project_config) {
+            Ok(relocated) => relocated,
+            Err(err) => {
+                stats.fail("project-skills-dir", None, err);
+                return stats;
+            }
+        }
+    };
+
     if let Some(skills_root) = project_owned_skills_root.as_ref() {
+        // Link first, so the instruction pass below sees the links it manages.
+        if let Some(relocated) = relocated_project_skills.as_ref() {
+            link_relocated_project_skills(skills_root, relocated, &pass, &mut stats);
+        }
         refresh_project_owned_skill_instructions(
             lock,
             project_config,
             skills_root,
+            relocated_project_skills.as_ref(),
             &pass,
             &mut stats,
         );
@@ -492,6 +509,167 @@ struct ProjectOwnedSkillsRoot {
     canonical: PathBuf,
 }
 
+/// The configured out-of-`.agents` home for project-owned skills.
+struct RelocatedProjectSkills {
+    /// Project-root-relative directory exactly as configured, used to build the
+    /// `../../<dir>/<name>` link target.
+    relative: String,
+    canonical: PathBuf,
+}
+
+/// Resolve `project-skills-dir` from `vstack.toml`.
+///
+/// Returns `Ok(None)` when unset, or set but not yet created — an absent
+/// directory is a project that has not adopted the convention, not an error.
+/// Everything else fails closed: the directory must stay inside the project and
+/// must not sit inside `.agents`, which is the tree the convention exists to
+/// keep free of tracked content.
+fn resolve_relocated_project_skills(
+    project_root: &Path,
+    project_config: &crate::project_config::ProjectConfig,
+) -> Result<Option<RelocatedProjectSkills>> {
+    let Some(configured) = project_config.project_skills_dir.as_deref() else {
+        return Ok(None);
+    };
+    let relative = configured.trim().trim_end_matches('/');
+    if relative.is_empty() {
+        return Ok(None);
+    }
+    if Path::new(relative).is_absolute() || relative.split('/').any(|part| part == "..") {
+        anyhow::bail!(
+            "project-skills-dir must be a relative path inside the project, got: {relative}"
+        );
+    }
+
+    let dir = project_root.join(relative);
+    let canonical = match dir.canonicalize() {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed to resolve project-skills-dir {}: {err}",
+                dir.display()
+            ));
+        }
+    };
+    let project_root_canon = project_root
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve project root: {err}"))?;
+    if !canonical.starts_with(&project_root_canon) {
+        anyhow::bail!(
+            "refusing project-skills-dir outside the project root: {}",
+            dir.display()
+        );
+    }
+    if !canonical.is_dir() {
+        anyhow::bail!("project-skills-dir is not a directory: {}", dir.display());
+    }
+    if canonical.starts_with(project_root_canon.join(".agents")) {
+        anyhow::bail!(
+            "project-skills-dir must live outside .agents (that is the point of relocating it): {}",
+            dir.display()
+        );
+    }
+    Ok(Some(RelocatedProjectSkills {
+        relative: relative.to_string(),
+        canonical,
+    }))
+}
+
+/// Link each `<project-skills-dir>/<name>` into `.agents/skills/<name>`.
+///
+/// Only ever replaces an existing SYMLINK. A real directory already sitting at
+/// the destination is somebody's committed skill or a materialized harness dir,
+/// and silently deleting either would be the bug this feature exists to avoid.
+fn link_relocated_project_skills(
+    skills_root: &ProjectOwnedSkillsRoot,
+    relocated: &RelocatedProjectSkills,
+    pass: &impl Fn(&str) -> bool,
+    stats: &mut RefreshStats,
+) {
+    let entries = match std::fs::read_dir(&relocated.canonical) {
+        Ok(entries) => entries,
+        Err(err) => {
+            stats.fail(
+                &relocated.relative,
+                None,
+                format!("failed to enumerate project-skills-dir: {err}"),
+            );
+            return;
+        }
+    };
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => dirs.push(entry.path()),
+            Err(err) => {
+                stats.fail(
+                    &relocated.relative,
+                    None,
+                    format!("failed to enumerate project-skills-dir: {err}"),
+                );
+                return;
+            }
+        }
+    }
+    dirs.sort();
+
+    for source in dirs {
+        let Some(name) = source.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !pass(name) || crate::path_safety::validate_item_name(name).is_err() {
+            continue;
+        }
+        if !source.join("SKILL.md").is_file() {
+            continue;
+        }
+
+        let dest = skills_root.path.join(name);
+        let target = format!("../../{}/{}", relocated.relative, name);
+        match std::fs::symlink_metadata(&dest) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                if std::fs::read_link(&dest).is_ok_and(|current| current == Path::new(&target)) {
+                    continue; // already correct
+                }
+                if let Err(err) = std::fs::remove_file(&dest) {
+                    stats.fail(name, None, format!("failed to replace stale link: {err}"));
+                    continue;
+                }
+            }
+            Ok(_) => {
+                stats.fail(
+                    name,
+                    None,
+                    format!(
+                        "refusing to replace existing non-symlink path with a project-skills link: {}",
+                        dest.display()
+                    ),
+                );
+                continue;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                stats.fail(name, None, format!("failed to inspect {}: {err}", dest.display()));
+                continue;
+            }
+        }
+
+        if let Some(parent) = dest.parent()
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            stats.fail(name, None, format!("failed to create .agents/skills: {err}"));
+            continue;
+        }
+        if let Err(err) = std::os::unix::fs::symlink(&target, &dest) {
+            stats.fail(name, None, format!("failed to link project skill: {err}"));
+            continue;
+        }
+        stats.mark_content_changed(name);
+    }
+}
+
 /// Validate the ownership boundary used by all project refresh writes.
 ///
 /// This must run before lock reconciliation, hook pruning, or installation.
@@ -580,6 +758,7 @@ fn refresh_project_owned_skill_instructions(
     lock: &config::LockFile,
     project_config: &ProjectConfig,
     skills_root: &ProjectOwnedSkillsRoot,
+    relocated: Option<&RelocatedProjectSkills>,
     pass: &impl Fn(&str) -> bool,
     stats: &mut RefreshStats,
 ) {
@@ -631,7 +810,15 @@ fn refresh_project_owned_skill_instructions(
                 continue;
             }
         };
-        if !skill_dir_canon.starts_with(&skills_root.canonical) {
+        // A skill dir normally has to resolve inside `.agents/skills`. The one
+        // exception is a link into the configured `project-skills-dir`, which is
+        // the whole point of the relocate-and-link convention — without this the
+        // convention is not merely unsupported, it hard-fails the refresh.
+        // Still fails closed for anything resolving anywhere else.
+        let inside_skills_root = skill_dir_canon.starts_with(&skills_root.canonical);
+        let inside_relocated = relocated
+            .is_some_and(|reloc| skill_dir_canon.starts_with(&reloc.canonical));
+        if !inside_skills_root && !inside_relocated {
             stats.fail(
                 name,
                 None,
