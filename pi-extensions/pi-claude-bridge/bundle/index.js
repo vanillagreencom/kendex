@@ -42557,18 +42557,70 @@ function errorText(error51) {
   return error51 instanceof Error ? error51.message : String(error51);
 }
 
+// src/connector-cache.ts
+import { createHash } from "node:crypto";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync6, writeFileSync } from "node:fs";
+import { dirname as dirname4, join as join6 } from "node:path";
+var CACHE_VERSION = 1;
+var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+function connectorCacheScopeKey(env = process.env) {
+  return env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+}
+function connectorCachePath(scopeKey = connectorCacheScopeKey()) {
+  const digest = createHash("sha256").update(scopeKey).digest("hex").slice(0, 16);
+  return join6(piUserDir(), "connector-cache", `${digest}.json`);
+}
+function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.now()) {
+  let raw;
+  try {
+    raw = readFileSync6(connectorCachePath(scopeKey), "utf8");
+  } catch {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (parsed?.version !== CACHE_VERSION) return void 0;
+  if (parsed?.scope !== scopeKey) return void 0;
+  const savedAt = typeof parsed?.savedAt === "number" ? parsed.savedAt : 0;
+  if (!savedAt || now - savedAt > MAX_AGE_MS || savedAt > now) return void 0;
+  if (!Array.isArray(parsed?.connectors)) return void 0;
+  const connectors = parsed.connectors.filter(
+    (entry) => entry && typeof entry.name === "string" && entry.name.trim()
+  );
+  return connectors.length > 0 ? connectors : void 0;
+}
+function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), now = Date.now()) {
+  if (!Array.isArray(connectors) || connectors.length === 0) return false;
+  const path = connectorCachePath(scopeKey);
+  try {
+    mkdirSync2(dirname4(path), { recursive: true, mode: 448 });
+    writeFileSync(
+      path,
+      JSON.stringify({ version: CACHE_VERSION, scope: scopeKey, savedAt: now, connectors }),
+      { mode: 384 }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/debug.ts
-import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
-import { dirname as dirname4, join as join6 } from "path";
+import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync3 } from "fs";
+import { dirname as dirname5, join as join7 } from "path";
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(piUserDir(), "claude-bridge.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join7(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join6(piUserDir(), "claude-bridge-diag.log");
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join7(piUserDir(), "claude-bridge-diag.log");
 }
 if (DEBUG) {
   try {
-    mkdirSync2(dirname4(DEBUG_LOG_PATH), { recursive: true });
-    mkdirSync2(dirname4(diagLogPath()), { recursive: true, mode: 448 });
+    mkdirSync3(dirname5(DEBUG_LOG_PATH), { recursive: true });
+    mkdirSync3(dirname5(diagLogPath()), { recursive: true, mode: 448 });
   } catch {
   }
 }
@@ -42593,12 +42645,12 @@ function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
   const seq = nextCliDebugSeq++;
   const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join6(dirname4(DEBUG_LOG_PATH), "cc-cli-logs");
+  const logDir = join7(dirname5(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
-    mkdirSync2(logDir, { recursive: true });
+    mkdirSync3(logDir, { recursive: true });
   } catch {
   }
-  const debugFile = join6(logDir, `${ts2}-${tag}-${seq}.log`);
+  const debugFile = join7(logDir, `${ts2}-${tag}-${seq}.log`);
   debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
   return {
     debug: true,
@@ -42616,7 +42668,7 @@ function diagDump(label, data) {
     const entry = { ts: ts2, moduleInstanceId, label, ...data };
     const path = diagLogPath();
     try {
-      mkdirSync2(dirname4(path), { recursive: true, mode: 448 });
+      mkdirSync3(dirname5(path), { recursive: true, mode: 448 });
     } catch {
     }
     appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
@@ -42632,12 +42684,12 @@ function diagDump(label, data) {
 
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync as readFileSync6, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
-import { delimiter, join as join7 } from "path";
+import { accessSync, constants as fsConstants, readFileSync as readFileSync7, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { delimiter, join as join8 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join7(dir, name);
+    const candidate = join8(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -42753,7 +42805,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let fileType;
   try {
-    fileType = classifyClaudeExecutableBytes(readFileSync6(realPath).subarray(0, 16));
+    fileType = classifyClaudeExecutableBytes(readFileSync7(realPath).subarray(0, 16));
   } catch (err) {
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
       code: codeValue(err, "EACCES"),
@@ -43270,17 +43322,17 @@ function connectorDeclarationsDisabled(env = process.env) {
 
 // node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
 import { randomUUID } from "crypto";
-import { mkdirSync as mkdirSync3, writeFileSync, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
-import { dirname as dirname5 } from "path";
-import { readFileSync as readFileSync7 } from "fs";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
+import { dirname as dirname6 } from "path";
+import { readFileSync as readFileSync8 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
 import { homedir as homedir3 } from "os";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
 function parseJsonlFile(path) {
-  return parseJsonl(readFileSync7(path, "utf-8"));
+  return parseJsonl(readFileSync8(path, "utf-8"));
 }
 function parseRecord(line) {
   const raw = JSON.parse(line);
@@ -43293,7 +43345,7 @@ function serializeRecord(record2) {
 }
 var MAX_SANITIZED_LENGTH = 200;
 function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join8(homedir3(), ".claude");
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join9(homedir3(), ".claude");
 }
 function normalizeProjectPath(projectPath) {
   try {
@@ -43311,10 +43363,10 @@ function projectPathToHash(projectPath) {
   return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
 }
 function getProjectDir(projectPath, claudeDir) {
-  return join8(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+  return join9(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
 }
 function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join8(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+  return join9(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
 }
 function repairToolPairing(messages) {
   const result = [];
@@ -43649,15 +43701,15 @@ var Session = class {
   /** Write pending records to disk. Creates the file/directory if needed. */
   save() {
     if (this._pendingRecords.length === 0) return;
-    const dir = dirname5(this.jsonlPath);
+    const dir = dirname6(this.jsonlPath);
     if (!existsSync6(dir)) {
-      mkdirSync3(dir, { recursive: true });
+      mkdirSync4(dir, { recursive: true });
     }
     const data = this._pendingRecords.map((r) => serializeRecord(r) + "\n").join("");
     if (this._fileExists) {
       appendFileSync3(this.jsonlPath, data, "utf-8");
     } else {
-      writeFileSync(this.jsonlPath, data, "utf-8");
+      writeFileSync2(this.jsonlPath, data, "utf-8");
       this._fileExists = true;
     }
     this._records.push(...this._pendingRecords);
@@ -43712,7 +43764,7 @@ function readSession(jsonlPath, projectPath) {
 }
 
 // src/session-persistence.ts
-import { createHash } from "crypto";
+import { createHash as createHash2 } from "crypto";
 import { realpathSync as realpathSync4, statSync as statSync4 } from "fs";
 import { resolve as pathResolve } from "path";
 
@@ -43803,7 +43855,7 @@ function fingerprintMessages(messages) {
     }
     return message;
   });
-  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+  return createHash2("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 function readBuiltSessionContext(sessionManager) {
   const built = typeof sessionManager?.buildSessionContext === "function" ? sessionManager.buildSessionContext() : void 0;
@@ -45262,6 +45314,9 @@ function primeConnectorServers() {
         Object.keys(servers).join(", ") || "none"
       );
       connectorServerCache.set(key, servers);
+      if (writeCachedConnectors(inventory.connectors, key)) {
+        debug(`connectors: cached ${inventory.connectors.length} entries`);
+      }
     } catch (error51) {
       debug("connectors: declaration lookup threw; declaring none", error51);
       connectorServerCache.set(key, {});
@@ -45275,7 +45330,12 @@ function connectorServersSnapshot() {
   const ready = connectorServerCache.get(key);
   if (ready) return ready;
   primeConnectorServers();
-  return {};
+  const cached2 = readCachedConnectors(key);
+  if (!cached2) return {};
+  const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached2 });
+  if (Object.keys(servers).length === 0) return {};
+  debug(`connectors: turn-1 declarations from cache \u2014 ${Object.keys(servers).join(", ")}`);
+  return servers;
 }
 async function reportConnectorInventory(ctx2) {
   const credentials = resolveClaudeOAuth(readCredentialFile);
@@ -45393,6 +45453,8 @@ export {
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
+  connectorCachePath,
+  connectorCacheScopeKey,
   connectorDeclarationsDisabled,
   connectorMcpServers,
   connectorProxyUrl,
@@ -45419,6 +45481,7 @@ export {
   primeConnectorServers,
   processAssistantMessage,
   processStreamEvent,
+  readCachedConnectors,
   reportToolResultMismatch,
   resolveClaudeExecutable,
   resolveClaudeOAuth,
@@ -45429,7 +45492,8 @@ export {
   streamIdleTimeoutMsFromEnv,
   toolIsolationForQuery,
   uniqueNonEmptyLines,
-  wrapClaudeSpawnErrorForSdk
+  wrapClaudeSpawnErrorForSdk,
+  writeCachedConnectors
 };
 /*! Bundled license information:
 

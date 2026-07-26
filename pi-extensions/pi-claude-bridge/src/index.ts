@@ -36,10 +36,12 @@ export {
 	type ConnectorEntry,
 	type ConnectorInventory,
 } from "./connector-inventory.js";
+export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
 import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
+import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -1171,6 +1173,12 @@ export function primeConnectorServers(): void {
 			debug(`connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
 				Object.keys(servers).join(", ") || "none");
 			connectorServerCache.set(key, servers);
+			// Persist so the NEXT cold process has this synchronously. Priming always
+			// loses the race against turn 1 in its own process; a cache written by an
+			// earlier run is the only thing turn 1 can read in time (vstack#870).
+			if (writeCachedConnectors(inventory.connectors, key)) {
+				debug(`connectors: cached ${inventory.connectors.length} entries`);
+			}
 		} catch (error) {
 			debug("connectors: declaration lookup threw; declaring none", error);
 			connectorServerCache.set(key, {});
@@ -1185,8 +1193,18 @@ function connectorServersSnapshot(): Record<string, unknown> {
 	const key = connectorScopeKey();
 	const ready = connectorServerCache.get(key);
 	if (ready) return ready;
+	// Always start (or continue) the live fetch — the cache is a head start, not
+	// a replacement, and the refresh keeps the next process current.
 	primeConnectorServers();
-	return {};
+	// Fall back to the previous run's inventory, read synchronously. This is the
+	// only thing that can populate turn 1 of a cold process, because priming
+	// cannot finish before the first query is built (vstack#870).
+	const cached = readCachedConnectors(key);
+	if (!cached) return {};
+	const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached });
+	if (Object.keys(servers).length === 0) return {};
+	debug(`connectors: turn-1 declarations from cache — ${Object.keys(servers).join(", ")}`);
+	return servers;
 }
 
 // Deterministic connector enumeration for the host app (vstack#838). Reports the
