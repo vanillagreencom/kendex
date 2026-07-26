@@ -95,8 +95,16 @@ type Json = Record<string, any>;
  * fully-qualified tool names (memsira's executor hard-codes them into
  * `--allowedTools` and its system prompt, and never globs a namespace) would
  * be allowed to call neither copy reliably. Verified live: keyed as the CLI's
- * name the entries merge (27 servers, one namespace); keyed otherwise both
- * appear (28 servers).
+ * name there is ONE server entry and one namespace (27 servers); keyed otherwise
+ * both appear (28 servers).
+ *
+ * What merges is the NAMESPACE, not the connection. Under the shared name the
+ * declaration and the CLI's own loader each still connect: across 40 cold runs
+ * the baseline logged 1 Slack connect (7 proxy connects total) and the declared
+ * arm logged 2 Slack connects (8 total), in 20 of 20 runs with no exceptions.
+ * Declaring N connectors therefore costs ~2N connections, not N. They run in
+ * parallel — slowest-connect per run moved from a 1192ms median to 1278ms, worst
+ * 1544ms, well inside the 5s cap — but that was measured with ONE declaration.
  */
 export function connectorServerName(connectorName: string): string {
 	return `claude.ai ${connectorName.trim()}`;
