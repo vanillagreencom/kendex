@@ -89,6 +89,27 @@ fi
 # Load project config and secrets. .env.local still wins for compatibility.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/vstack-env.sh
+# A rebase replaces a symlinked harness dir with a REAL directory holding only
+# the tracked subset, so the untracked skills under it — including this script's
+# own lib — silently vanish (#856). Sourcing a missing lib exits 127 with
+# Bash's own message, which names neither the cause nor the recovery; that is
+# how the live incident presented. Fail loudly instead.
+#
+# The remediation must say "from the main checkout": in the observed incident
+# this script's own copy inside the worktree was among the missing files, so
+# pointing the operator at a worktree-local binary sends them to something that
+# is not there.
+if [[ ! -f "$SCRIPT_DIR/lib/vstack-env.sh" ]]; then
+  {
+    echo "Error: worktree support library is missing: $SCRIPT_DIR/lib/vstack-env.sh"
+    echo "  This is the signature of a materialized harness directory: a rebase replaced"
+    echo "  the symlink with a real directory containing only the tracked files, dropping"
+    echo "  everything installed by vstack."
+    echo "  Recover by running fix-links FROM THE MAIN CHECKOUT (this copy is incomplete):"
+    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links '$PWD'"
+  } >&2
+  exit 1
+fi
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 
@@ -795,6 +816,48 @@ symlink_into_worktree() {
 }
 
 # Apply all symlinks and copies to a worktree
+# Detect a materialized harness directory at USE time (#856).
+#
+# A rebase replaces a configured symlink with a real directory holding only the
+# tracked files underneath it, dropping every vstack-installed path there. The
+# worktree then looks clean to git — `git status` reports nothing, so
+# `git checkout --` is a no-op — and the damage only surfaces later as scripts
+# failing exit 127 on files they used to be able to source.
+#
+# This is deliberately a WARNING, not a failure: the command the operator asked
+# for may not touch the affected paths, and a hard error would be a regression
+# for them. It runs at the points where materialization has just become likely
+# (post-rebase) rather than via a git hook — see the issue thread for why
+# `core.hooksPath` is the wrong mechanism: it replaces the hooks directory
+# wholesale and would disable the consumer's own hooks.
+warn_if_links_materialized() {
+  local wt="$1" path="" materialized=""
+  [[ -n "$wt" && -d "$wt" ]] || return 0
+  validate_worktree_setup_config >/dev/null 2>&1 || return 0
+
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+    # Only a path that SHOULD be a link and exists as a non-link is damage.
+    [[ -e "$PROJECT_ROOT/$path" ]] || continue
+    if [[ -e "$wt/$path" && ! -L "$wt/$path" ]]; then
+      materialized="$materialized  - $path"$'\n'
+    fi
+  done
+
+  [[ -n "$materialized" ]] || return 0
+  {
+    echo "Warning: harness paths in this worktree are real directories, not symlinks:"
+    printf '%s' "$materialized"
+    echo "  A rebase materialized them, so vstack-installed files under those paths are gone."
+    echo "  git status will look clean — it tracks only the files that survived."
+    echo "  Restore them by running fix-links FROM THE MAIN CHECKOUT, because this"
+    echo "  worktree's own copy of the script may be among the missing files:"
+    echo "    cd '$PROJECT_ROOT' && .agents/skills/worktree/scripts/worktree fix-links '$wt'"
+  } >&2
+  return 0
+}
+
 setup_worktree_links() {
   local wt="$1"
   validate_worktree_setup_config || return 1
@@ -2205,6 +2268,11 @@ case "${1:-}" in
     if ! require_registered_project_worktree "$WT_PATH" "push it"; then
       exit 1
     fi
+    # Push is the usual first command after a MANUAL rebase — the case the
+    # script never sees, and so the case nothing repairs. `create --reuse` and
+    # the restack controls re-run setup themselves, so they self-heal and do
+    # not need the warning; this one does.
+    warn_if_links_materialized "$WT_PATH"
     if [[ "$AUTO_REBASE" == true ]]; then
       validate_worktree_setup_config || exit 1
     fi
