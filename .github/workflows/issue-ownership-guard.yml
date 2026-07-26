@@ -56,7 +56,13 @@ jobs:
           #      - bare path fragments under asset-ish dirs, even without backticks
           : > "$tokens"
           grep -oE '`[^`]+`' "$body" | sed 's/`//g' >> "$tokens" || true
-          grep -oE '(tools|\.config|skills|agents|hooks|pi-extensions)/[A-Za-z0-9._/-]+' "$body" >> "$tokens" || true
+          # The optional `.agents/` prefix is load-bearing, not decoration. Without
+          # it the alternation matches `agents` MID-WORD inside `.agents/skills/`,
+          # emitting a phantom `agents/skills/` token that exists nowhere and so
+          # scores a foreign hit — on the standard install path, i.e. the exact
+          # vocabulary legitimate vstack issues use (#865). Matching the longer
+          # form from index 0 leaves no tail for the phantom to match.
+          grep -oE '(\.agents/)?(tools|\.config|skills|agents|hooks|pi-extensions)/[A-Za-z0-9._/-]+' "$body" >> "$tokens" || true
           sort -u "$tokens" -o "$tokens"
 
           # CLI verbs, flags, and common tool words that appear in legitimate
@@ -79,6 +85,12 @@ jobs:
           while IFS= read -r tok; do
             tok="$(printf '%s' "$tok" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             if [ -z "$tok" ]; then continue; fi
+
+            # `.agents/` is the INSTALL MIRROR of this repo's own assets, and it is
+            # gitignored — so it is absent from the CI checkout and every reference
+            # to it would otherwise resolve to "missing". Strip the prefix and judge
+            # the asset it names: `.agents/skills/worktree` is `skills/worktree`.
+            tok="${tok#.agents/}"
 
             # vstack's own global state dir (~/.config/vstack) is not foreign.
             # tools/* and .config/* otherwise do not exist here — clearly foreign.
