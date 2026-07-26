@@ -424,7 +424,7 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass` before this workflow. Standalone: workflow state `json_paths` is non-empty |
-| 2 | CI green | § 5 result is `status=complete`, `verdict=pass` (equivalently: `gh pr checks [PR_NUMBER]` shows all checks passing) |
+| 2 | CI green | § 5 result is `status=complete`, `verdict=pass` |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
 | 4 | Reviewer-gate verdict | Mode-aware per the § 4 `GATE_MODE`. `approval`: § 4 ended `approved` — `reviewDecision == "APPROVED"`, or, when `reviewDecision` is empty (no required-review protection), at least one reviewer whose latest review is APPROVED and none whose latest review is CHANGES_REQUESTED. `review`: § 4 ended `reviewed` — a non-author review of the current head with zero unresolved threads. Either mode: also met when `pr_approval.forced` (user Force merge) or `pr_approval.reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` reviewer-down degrade) is recorded. `off` (`pr_review.mode == "off"`, recorded alongside the legacy `pr_approval.gate == "off"`): not applicable for this repo |
 
@@ -435,6 +435,10 @@ A PR merges on exactly four gates — all deterministic. Bot-SPECIFIC signals (e
    If `json_paths` is empty, no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]` before merge.
 
 2. **Gate 2** — verify the recorded § 5 result: met when the final CI result was `status=complete`, `verdict=pass`. Do not re-run ci-wait.
+
+   **`ci-wait verdict=pass` is NOT the same as "every check in the rollup is green"** (vstack#876). `ci-wait` correlates the head's checks with its Actions runs and judges the current substantive run; `gh pr checks` and `github.sh pr-merge --check` read the whole rollup, which can still hold failures from a SECOND same-head workflow run — e.g. a duplicate dispatch whose jobs come back as zero-second failures or cancellations. Both readings can be correct at once: `CI Required` green for the substantive run, `pr-merge --check` reporting `can_merge=false` from the duplicate's leftovers.
+
+   So a `pr-merge --check` refusal immediately after a green § 5 does **not** invalidate the § 5 verdict, and it is not a reason to re-run ci-wait. Identify which run each reported failure belongs to (`gh pr checks [PR_NUMBER] --json name,state,link,workflow` — the run id is in `link`) before treating it as a real CI failure. If every reported failure belongs to a superseded or duplicate run while the repo's required aggregate is green, that is the known #876 disagreement: report it to the user with the run ids rather than silently forcing or silently abandoning the merge.
 
 3. **Gate 3 — final live check**:
    ```bash

@@ -285,103 +285,16 @@ is_transient_failure() {
 }
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
-# workflow so stale checks from a SUPERSEDED workflow run don't leak into the
-# current PR/head status (vstack#492, vstack#607). `gh pr checks` is already the
-# check rollup for the PR's current head; the run IDs in each Actions link let us
-# correlate duplicate contexts on that head.
-#
-# A later workflow dispatch is not always authoritative. Approval-gated CI can
-# receive a COMMENTED review event after the APPROVED event; that later run is an
-# intentional all-SKIPPED no-op while the earlier approved run is still active.
-# Therefore, per workflow, choose the latest run containing at least one
-# non-skipped check. Only fall back to the latest all-skipped run when no
-# substantive run exists at all.
-#
-# Custom commit statuses such as `CI Required` link to an Actions run but have
-# an empty `workflow` in `gh pr checks`. If such a status still points at an old
-# run while a newer substantive run from the same workflow is pending or has no
-# failures, rewrite the stale status to EXPECTED. It stays pending until that
-# newer run publishes its own status. A newer failed/cancelled run remains a
-# terminal failure, and a missing replacement status eventually hits the normal
-# waiter timeout, preserving fail-closed behavior.
-#
-# Checks with no parseable run in `link` (external contexts, default-setup
-# `.../runs/<CHECK_RUN_ID>` links, or older gh output with no link) are always
-# kept, deduped by name keeping the latest `startedAt`.
-scope_current_run() {
-  jq -c '
-    def runid:
-      (.link // "")
-      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
-      | (if . == null then null else tonumber end);
-    def bucket:
-      (.bucket // (
-        if (.state == "SUCCESS") then "pass"
-        elif (.state == "SKIPPED") then "skipping"
-        elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-        elif (.state == "CANCELLED") then "cancel"
-        else "fail"
-        end
-      ));
-    def status_target:
-      ((.link // "") | test("/actions/runs/[0-9]+/?$"));
-    map(. + {
-      "_runid": runid,
-      "_bucket": bucket,
-      "_status_target": status_target
-    })
-    | ([.[] | select(._runid == null)]) as $norun
-    | ([.[] | select(._runid != null and ((.workflow // "") != ""))]) as $jobs
-    | ([.[] | select(._runid != null and ((.workflow // "") == ""))]) as $run_statuses
-    | ($jobs
-        | group_by(.workflow)
-        | map(
-            group_by(._runid)
-            | map({
-                workflow: (.[0].workflow // ""),
-                runid: .[0]._runid,
-                checks: .,
-                substantive: any(.[]; ._bucket != "skipping"),
-                failed: ([.[] | select((._bucket != "pass") and (._bucket != "skipping") and (._bucket != "pending"))] | length)
-              })
-            | (map(select(.substantive))) as $substantive
-            | if ($substantive | length) > 0 then
-                ($substantive | max_by(.runid))
-              else
-                max_by(.runid)
-              end
-          )) as $selected_runs
-    | ($selected_runs | map(.checks) | add // []) as $scoped_jobs
-    | ($run_statuses
-        | group_by(.name)
-        | map(max_by(._runid))) as $latest_statuses
-    | ($latest_statuses
-        | map(
-            . as $status
-            | ([$jobs[]
-                | select(._runid == $status._runid)
-                | .workflow]
-                | unique
-                | .[0] // "") as $source_workflow
-            | ([$selected_runs[]
-                | select(.workflow == $source_workflow and .runid > $status._runid)]
-                | max_by(.runid)?) as $newer_run
-            | if ($status._status_target
-                  and $source_workflow != ""
-                  and $newer_run != null
-                  and $newer_run.failed == 0) then
-                .state = "EXPECTED"
-                | .bucket = "pending"
-                | ._bucket = "pending"
-              else
-                .
-              end
-          )) as $scoped_statuses
-    | ($norun | group_by(.name) | map(sort_by(.startedAt // "") | last)) as $norun_deduped
-    | ($scoped_jobs + $scoped_statuses + $norun_deduped)
-    | map(del(._runid, ._bucket, ._status_target))
-  '
-}
+# workflow. Shared with github `pr-merge.sh` so the waiter and the merge gate
+# cannot disagree about which run is current (vstack#876) — see the library for
+# the full rationale.
+CI_RUN_CORRELATION_LIB="$SCRIPT_DIR/../../github/scripts/lib/ci-run-correlation.sh"
+if [[ ! -f "$CI_RUN_CORRELATION_LIB" ]]; then
+  echo "ci-wait: missing required library $CI_RUN_CORRELATION_LIB (github skill not installed?)" >&2
+  exit 1
+fi
+# shellcheck source=../../github/scripts/lib/ci-run-correlation.sh
+source "$CI_RUN_CORRELATION_LIB"
 
 # Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).

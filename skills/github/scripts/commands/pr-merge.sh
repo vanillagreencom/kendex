@@ -39,44 +39,12 @@ source "$SCRIPT_DIR/../lib/pr-branch.sh"
 # CI completes. Callers should `await-mergeable` and retry rather than fix.
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
-# Scope a `gh pr checks` array to the current authoritative run per workflow so
-# stale checks from a SUPERSEDED workflow run don't leak into the current
-# PR/head status (vstack#492). A single canceled prior run left Lint/Integration/
-# etc. as CANCELLED; with no newer instance of those jobs yet created, they were
-# the only copies and were wrongly counted as current failures.
-#
-# Approach: parse each check's owning workflow RUN_ID from its `link`
-# (`.../actions/runs/<RUN_ID>/job/<JOB_ID>`), group run-bearing checks by their
-# `workflow`, and within each workflow keep ONLY the checks belonging to that
-# workflow's LATEST run (max RUN_ID). This (a) drops an old run's checks when a
-# newer run of the same workflow exists, and (b) — the reported case — drops the
-# old canceled job even when the newer run hasn't recreated it yet, leaving it
-# correctly absent (reported as not-yet-created/pending, not failed). Distinct
-# workflows are never collapsed (e.g. a separate "License Key Guard" workflow is
-# preserved). Checks with no parseable run in `link` (external/required contexts,
-# default-setup `.../runs/<CHECK_RUN_ID>` links, or older gh output with no link)
-# are always kept, deduped by name keeping the latest `startedAt`. An all-empty
-# link/startedAt array (older gh) passes through unchanged.
-#
-# This must stay aligned with orch ci-wait's scope_current_run (byte-for-byte).
-scope_current_run() {
-  jq -c '
-    def runid:
-      (.link // "")
-      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
-      | (if . == null then null else tonumber end);
-    map(. + {"_runid": runid})
-    | ([.[] | select(._runid == null)]) as $norun
-    | ([.[] | select(._runid != null)]) as $withrun
-    | ($withrun
-        | group_by(.workflow)
-        | map((map(._runid) | max) as $mx | map(select(._runid == $mx)))
-        | add // []) as $scoped
-    | ($norun | group_by(.name) | map(sort_by(.startedAt // "") | last)) as $norun_deduped
-    | ($scoped + $norun_deduped)
-    | map(del(._runid))
-  '
-}
+# Scope a `gh pr checks` array to the current authoritative substantive run per
+# workflow. Shared with orch `ci-wait` so the merge gate and the waiter cannot
+# disagree about which run is current (vstack#876) — see the library for the
+# full rationale.
+# shellcheck source=../lib/ci-run-correlation.sh
+source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
 
 show_help() {
     cat <<'EOF'
