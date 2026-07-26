@@ -33,6 +33,7 @@
 
 const CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
 const DEFAULT_API_BASE = "https://api.anthropic.com";
+const DEFAULT_PROXY_BASE = "https://mcp-proxy.anthropic.com/v1/mcp";
 // OAuth-token requests to the Anthropic API require this beta header; without it
 // endpoints reject the bearer credential.
 const OAUTH_BETA_HEADER = "oauth-2025-04-20";
@@ -43,6 +44,13 @@ export type ConnectorEntry = {
 	installedServerId?: string;
 	/** Catalog identity, shared across accounts that install the same connector. */
 	directoryUuid?: string;
+	/**
+	 * Account-side install state. `"connected"` marks the connectors the CLI
+	 * actually attempts; everything else it never gives a `Starting connection`
+	 * line at all. Verified live 2026-07-26: 7 `connected` / 20 `unknown` on the
+	 * app account, and the CLI connected exactly those 7.
+	 */
+	installState?: string;
 	description?: string;
 	isAuthless?: boolean;
 };
@@ -76,6 +84,35 @@ export type ClaudeOAuthCredentials = {
 };
 
 type Json = Record<string, any>;
+
+/**
+ * The server name Claude Code itself registers a claude.ai connector under.
+ *
+ * This is the `mcpServers` KEY to use when declaring a connector explicitly, and
+ * it is load-bearing rather than cosmetic: the key IS the tool namespace. Keyed
+ * as anything else, the same connector appears twice — once from our
+ * declaration and once from the CLI's own loader — and consumers that pin
+ * fully-qualified tool names (memsira's executor hard-codes them into
+ * `--allowedTools` and its system prompt, and never globs a namespace) would
+ * be allowed to call neither copy reliably. Verified live: keyed as the CLI's
+ * name the entries merge (27 servers, one namespace); keyed otherwise both
+ * appear (28 servers).
+ */
+export function connectorServerName(connectorName: string): string {
+	return `claude.ai ${connectorName.trim()}`;
+}
+
+/**
+ * The claude.ai MCP proxy endpoint for one installed connector.
+ *
+ * Verified live 2026-07-26 that the proxy accepts EITHER the `mcpsrv_…` id from
+ * `GET /v1/mcp_servers` or the `installedServerId` UUID this module already
+ * returns — both connected and served identical tools with the CLI's own
+ * connector loading disabled, so the id form is not a constraint on callers.
+ */
+export function connectorProxyUrl(installedServerId: string, proxyBase: string = DEFAULT_PROXY_BASE): string {
+	return `${trimTrailingSlashes(proxyBase)}/${encodeURIComponent(installedServerId)}`;
+}
 
 /**
  * Tool-namespace prefix for a connector, e.g. `Google Calendar` →
@@ -246,6 +283,7 @@ export async function listAccountConnectors(deps: ListConnectorsDeps): Promise<C
 			name,
 			installedServerId: nonEmptyString(entry?.installedServerId),
 			directoryUuid: nonEmptyString(entry?.directoryUuid),
+			installState: nonEmptyString(entry?.installState),
 			description: nonEmptyString(entry?.description),
 			isAuthless: typeof entry?.isAuthless === "boolean" ? entry.isAuthless : undefined,
 		});

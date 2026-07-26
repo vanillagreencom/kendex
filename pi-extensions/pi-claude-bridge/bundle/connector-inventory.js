@@ -1,7 +1,14 @@
 // src/connector-inventory.ts
 var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
 var DEFAULT_API_BASE = "https://api.anthropic.com";
+var DEFAULT_PROXY_BASE = "https://mcp-proxy.anthropic.com/v1/mcp";
 var OAUTH_BETA_HEADER = "oauth-2025-04-20";
+function connectorServerName(connectorName) {
+  return `claude.ai ${connectorName.trim()}`;
+}
+function connectorProxyUrl(installedServerId, proxyBase = DEFAULT_PROXY_BASE) {
+  return `${trimTrailingSlashes(proxyBase)}/${encodeURIComponent(installedServerId)}`;
+}
 function connectorServerNamespace(connectorName) {
   return `${CONNECTOR_NS_PREFIX}${connectorName.trim().replace(/\s+/g, "_")}__`;
 }
@@ -103,6 +110,7 @@ async function listAccountConnectors(deps) {
       name,
       installedServerId: nonEmptyString(entry?.installedServerId),
       directoryUuid: nonEmptyString(entry?.directoryUuid),
+      installState: nonEmptyString(entry?.installState),
       description: nonEmptyString(entry?.description),
       isAuthless: typeof entry?.isAuthless === "boolean" ? entry.isAuthless : void 0
     });
@@ -129,6 +137,8 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 export {
+  connectorProxyUrl,
+  connectorServerName,
   connectorServerNamespace,
   connectorsListUrl,
   credentialCandidatePaths,

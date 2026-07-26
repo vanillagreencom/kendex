@@ -125,6 +125,17 @@ They used to be conflated by accident. The search-driven probe could only surfac
 - **A write gate that consults the inventory alone will green-light a call that then finds no tool.** Treat an inventory as necessary but not sufficient for availability and keep an attach-time check on the call path.
 - This is the successor hazard to the attach race (vstack#832), not a restatement of it — that issue stays open precisely because enumeration does not address tool availability.
 
+## The Connector Server Key Is The Tool Namespace — Must-Agree Across Repos
+
+Settled by measurement 2026-07-26 (vstack#832) and recorded here because every repo that touches connector tool names depends on it.
+
+**The bridge declares each connected connector in `mcpServers` keyed by the CLI's own server name — `claude.ai <Connector>`, e.g. `claude.ai Slack`.** That key is not cosmetic: it *is* the tool namespace.
+
+- **Keyed as anything else, the connector appears twice.** Verified live: keying a declaration `claudeai-slack` while the CLI loads its own `claude.ai Slack` yields **28** servers and two namespaces for one connector; keying it `claude.ai Slack` merges to **27** and one namespace. Reusing the connector's *id* is not sufficient — the id was identical in both runs.
+- **This is a hard requirement for consumers that pin fully-qualified tool names.** memsira's executor hard-codes them into `--allowedTools` and its system prompt and never globs a namespace, so a second namespace means tools nothing is permitted to call. Any repo doing the same must assume the `claude.ai <Connector>` form.
+- **Do not health-check a stable deferred-tool count.** `Dynamic tool loading` still reports `0/N` with N varying (0/20 … 0/66 observed on identical inputs) because the CLI's own async connector fetch still races. What the declaration changes is that the *declared* server's tools are present when the turn-1 manifest is built, whichever way that race goes. Asserting a fixed N will flake.
+- **Only `installState === "connected"` connectors are declared.** The rest are never attempted by the CLI either, so declaring them would ask `alwaysLoad` to block startup on servers that cannot connect.
+
 ## Connector Enumeration Is Token-Scoped
 
 Deterministic connector enumeration (vstack#848) answers "which connectors does this account have" by calling the account rather than asking the model. One property is easy to get wrong and fails silently:

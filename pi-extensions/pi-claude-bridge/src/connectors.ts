@@ -1,6 +1,7 @@
 import { type HookCallback, type query } from "@anthropic-ai/claude-agent-sdk";
 import { normalizeConnectorWriteMode, type Config, type ConnectorWriteMode } from "./config.js";
 import { MCP_SERVER_NAME } from "./skills.js";
+import { connectorProxyUrl, connectorServerName, type ConnectorInventory } from "./connector-inventory.js";
 
 // Disable Claude Code built-ins in the provider path. Pi owns tool execution;
 // Claude reaches Pi tools through the bridged MCP server instead.
@@ -356,4 +357,55 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
 		disallowedTools,
 		allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS],
 	};
+}
+
+/**
+ * Explicit `mcpServers` declarations for the account's CONNECTED connectors.
+ *
+ * Why this exists (vstack#832): claude.ai connectors load async and non-blocking,
+ * and the turn-1 tool manifest is built at +410-665ms — roughly 300ms BEFORE the
+ * CLI has even fetched the connector list. The model therefore composes its first
+ * answer against a manifest containing no connectors and says it has no access,
+ * while the connector attaches ~1s later and is never asked. Measured end to end
+ * on 40 cold sidecars (memsira, 2026-07-26): a connector tool call happened in
+ * 7/20 baseline runs versus 20/20 with the declaration, and "I don't have access"
+ * went 13/20 → 0/20, one-sided Fisher exact p = 6.4e-6.
+ *
+ * `alwaysLoad` is the mechanism: it blocks startup until the server is connected
+ * (5s cap) precisely "since the tools must be present when the turn-1 prompt is
+ * built". It is a field on the server config, so the connector has to be a server
+ * WE declare — the CLI's own loader never applies it.
+ *
+ * Two things here are load-bearing and were established by measurement, not
+ * inference:
+ *
+ * 1. The key MUST be the CLI's own server name (`connectorServerName`). The key
+ *    is the tool namespace, so any other key yields the connector twice under two
+ *    namespaces. Consumers that pin fully-qualified tool names rather than
+ *    globbing a namespace then break.
+ * 2. Only `installState === "connected"` connectors are declared. The rest are
+ *    never attempted by the CLI either, and declaring them would mean asking
+ *    `alwaysLoad` to block startup on servers that cannot connect.
+ *
+ * Deliberately NOT typed against the SDK's `McpServerConfig`: that exported union
+ * omits the `claudeai-proxy` variant entirely, and its `McpClaudeAIProxyServerConfig`
+ * has no `alwaysLoad` field — while the runtime zod schema in the shipped CLI does.
+ * Typings and runtime disagree; the runtime honours `alwaysLoad` (verified live),
+ * so this builds the object the runtime accepts and casts once, here, with the
+ * reason recorded rather than spread across call sites.
+ */
+export function connectorMcpServers(inventory: ConnectorInventory): Record<string, unknown> {
+	if (!inventory.ok) return {};
+	const servers: Record<string, unknown> = {};
+	for (const entry of inventory.connectors) {
+		if (entry.installState !== "connected") continue;
+		if (!entry.installedServerId) continue;
+		servers[connectorServerName(entry.name)] = {
+			type: "claudeai-proxy",
+			url: connectorProxyUrl(entry.installedServerId),
+			id: entry.installedServerId,
+			alwaysLoad: true,
+		};
+	}
+	return servers;
 }

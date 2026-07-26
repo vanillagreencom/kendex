@@ -25,6 +25,8 @@ import { listAccountConnectors, resolveClaudeOAuth } from "./connector-inventory
 // path their existing manifest already allows, and incidentally keeps esbuild
 // from tree-shaking helpers index.ts never calls itself.
 export {
+	connectorProxyUrl,
+	connectorServerName,
 	connectorServerNamespace,
 	connectorsListUrl,
 	credentialCandidatePaths,
@@ -37,7 +39,7 @@ export {
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
-import { connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
+import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
 import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -49,7 +51,7 @@ import { ensureTurnStarted, finalizeCurrentStream, parsePartialJson, processAssi
 // bundle/index.js.
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
-export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
+export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -576,6 +578,11 @@ function applyProviderRegistration(trigger: string): void {
 	const decision = decideRegistration({ credentialed, isPrimary, registered });
 	debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
 	if (decision === "register") {
+		// Start the connector inventory now, not on the first turn: the query path
+		// can only read a synchronous snapshot, so priming here is what gets the
+		// declarations in place before turn 1 (vstack#832). Fire and forget —
+		// registration must not wait on the network.
+		if (connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
 		// Claim ordering: stream guard BEFORE registerProvider so a concurrent
 		// subagent can never observe a registered provider without an owner.
 		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
@@ -781,6 +788,10 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// Connector WRITE control: read-only by default (writes denied); the one-shot
 	// approved-write executor sets CLAUDE_BRIDGE_CONNECTOR_WRITE=allow / config.
 	const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
+	// Declare the account's connected connectors explicitly so `alwaysLoad` can
+	// hold startup until they attach — otherwise the turn-1 manifest is built
+	// before the CLI has fetched them (vstack#832).
+	const connectorServers = enableCloudMcp ? connectorServersSnapshot() : {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
 	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : undefined;
@@ -852,7 +863,9 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		extraArgs,
 		...(effort ? { effort } : {}),
 		...(settingSources ? { settingSources } : {}),
-		...(mcpServers ? { mcpServers } : {}),
+		...(mcpServers || Object.keys(connectorServers).length > 0
+			? { mcpServers: { ...(mcpServers ?? {}), ...connectorServers } as NonNullable<Parameters<typeof query>[0]["options"]>["mcpServers"] }
+			: {}),
 		...(resumeSessionId ? { resume: resumeSessionId } : {}),
 		...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
 		spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
@@ -1104,6 +1117,76 @@ function readCredentialFile(path: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+// Connector declarations for the query path (vstack#832), cached per credential
+// scope. The inventory is one HTTPS round trip; doing it per TURN would add that
+// latency to every message, and an account's connector set does not change
+// mid-session. Keyed by CLAUDE_CONFIG_DIR because that is what selects the
+// account — the org UUID in the request path is ignored, so two accounts on one
+// host differ only by which credential directory was read.
+//
+// FAILS OPEN. If credentials or the inventory call fail we return no
+// declarations and the turn proceeds exactly as it does today: connectors may
+// race, which is the bug, but a network blip must not break the turn outright.
+const connectorServerCache = new Map<string, Record<string, unknown>>();
+const connectorServerPending = new Set<string>();
+
+function connectorScopeKey(): string {
+	return process.env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+}
+
+// Kick off the inventory fetch for the current credential scope. Fire and
+// forget: the query path can only read a SYNCHRONOUS snapshot, because
+// streamClaudeAgentSdk returns a stream and claims the SDK query handle in the
+// same tick — there is no await boundary to hang a fetch on without
+// restructuring abort handling.
+//
+// Primed at provider registration so the result is in hand well before the
+// first turn (the call measured ~400ms against app startup). If a turn arrives
+// first it declares nothing and behaves exactly as it does today — the race is
+// back for that one turn, which is the bug, but never worse than the status quo.
+//
+// FAILS OPEN throughout: no credentials, a failed inventory, or a thrown call
+// all resolve to "declare nothing" rather than breaking the turn.
+export function primeConnectorServers(): void {
+	const key = connectorScopeKey();
+	if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
+	connectorServerPending.add(key);
+	void (async () => {
+		try {
+			const credentials = resolveClaudeOAuth(readCredentialFile);
+			if (!credentials) {
+				debug("connectors: no OAuth credentials; declaring none");
+				connectorServerCache.set(key, {});
+				return;
+			}
+			const inventory = await listAccountConnectors({ credentials });
+			if (!inventory.ok) {
+				debug(`connectors: inventory failed (${inventory.reason}); declaring none`);
+				connectorServerCache.set(key, {});
+				return;
+			}
+			const servers = connectorMcpServers(inventory);
+			debug(`connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
+				Object.keys(servers).join(", ") || "none");
+			connectorServerCache.set(key, servers);
+		} catch (error) {
+			debug("connectors: declaration lookup threw; declaring none", error);
+			connectorServerCache.set(key, {});
+		} finally {
+			connectorServerPending.delete(key);
+		}
+	})();
+}
+
+/** Synchronous snapshot for the query path; `{}` until priming resolves. */
+function connectorServersSnapshot(): Record<string, unknown> {
+	const key = connectorScopeKey();
+	const ready = connectorServerCache.get(key);
+	if (ready) return ready;
+	primeConnectorServers();
+	return {};
 }
 
 // Deterministic connector enumeration for the host app (vstack#838). Reports the
