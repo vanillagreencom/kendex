@@ -689,6 +689,64 @@ run from the checkout that owns that path, or replace it with a project-local .a
     )
 }
 
+/// `git rev-parse --git-common-dir` for `dir`, canonicalized. `None` when `dir`
+/// is not inside a Git repository, when git is unavailable, or when the answer
+/// cannot be resolved — every one of which must fail closed at the call site.
+fn git_common_dir(dir: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["-C", dir.to_str()?, "rev-parse", "--git-common-dir"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    // `--git-common-dir` is relative to the queried directory unless git is new
+    // enough to have been asked for an absolute path, so resolve it against
+    // `dir` rather than the process cwd.
+    let reported = Path::new(&raw);
+    let absolute = if reported.is_absolute() {
+        reported.to_path_buf()
+    } else {
+        dir.join(reported)
+    };
+    absolute.canonicalize().ok()
+}
+
+/// Positive proof that `target` lives in a working tree of the SAME repository
+/// as `project_root` — both resolve to one `--git-common-dir`.
+///
+/// This is not a relaxation of the containment boundary; it answers a different
+/// and stronger question. Lexical containment asks "is this path under the
+/// project directory", which cannot tell another checkout of the repository the
+/// operator is already working in from an arbitrary directory elsewhere on
+/// disk. vstack's own `worktree` skill provisions the first case: every issue
+/// worktree gets a `.agents` symlink into the main checkout so a ~100 MB harness
+/// library is shared rather than copied per branch (vstack#886). Refusing that
+/// made refresh unusable from any worktree.
+///
+/// Everything else still fails closed. A target that is not a repository has no
+/// common dir; a target in a DIFFERENT repository has a different one.
+fn is_same_repository_worktree(project_root: &Path, target: &Path) -> bool {
+    // `git -C` needs a directory. `target` is normally the canonical
+    // `.agents`/`.agents/skills` directory, but probe its parent if it is not.
+    let probe = if target.is_dir() {
+        target
+    } else {
+        match target.parent() {
+            Some(parent) => parent,
+            None => return false,
+        }
+    };
+    match (git_common_dir(project_root), git_common_dir(probe)) {
+        (Some(project_common), Some(target_common)) => project_common == target_common,
+        _ => false,
+    }
+}
+
 fn resolve_project_owned_skills_root(
     project_root: &Path,
 ) -> Result<Option<ProjectOwnedSkillsRoot>> {
@@ -703,7 +761,9 @@ fn resolve_project_owned_skills_root(
             let skills_dir_canon = skills_dir
                 .canonicalize()
                 .map_err(|err| anyhow::anyhow!("failed to resolve project-owned skills: {err}"))?;
-            if !skills_dir_canon.starts_with(&project_root_canon) {
+            if !skills_dir_canon.starts_with(&project_root_canon)
+                && !is_same_repository_worktree(&project_root_canon, &skills_dir_canon)
+            {
                 anyhow::bail!("{}", escaped_project_owned_skills_message(&skills_dir));
             }
             if !skills_dir_canon.is_dir() {
@@ -733,7 +793,9 @@ fn resolve_project_owned_skills_root(
             let agents_dir_canon = agents_dir
                 .canonicalize()
                 .map_err(|err| anyhow::anyhow!("failed to resolve .agents directory: {err}"))?;
-            if !agents_dir_canon.starts_with(&project_root_canon) {
+            if !agents_dir_canon.starts_with(&project_root_canon)
+                && !is_same_repository_worktree(&project_root_canon, &agents_dir_canon)
+            {
                 anyhow::bail!("{}", escaped_project_owned_skills_message(&skills_dir));
             }
             if !agents_dir_canon.is_dir() {

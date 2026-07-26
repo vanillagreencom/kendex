@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::{InstallMethod, LockEntry, LockFile};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn lock_hook(name: &str, harnesses: Vec<&str>) -> LockEntry {
@@ -36,6 +36,29 @@ fn source_hook_from_path(name: &str, harnesses: Option<Vec<&str>>, source_path: 
         script: String::new(),
         source_path,
     }
+}
+
+/// Run a git command in `dir`, reporting only whether it succeeded. Tests that
+/// need a real repository skip themselves when git is unavailable rather than
+/// failing a host that simply has no git.
+fn git_ok(dir: &Path, args: &[&str]) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn init_repo_with_commit(dir: &Path) -> bool {
+    git_ok(dir, &["init", "-q", "-b", "main"])
+        && git_ok(dir, &["config", "user.email", "test@example.com"])
+        && git_ok(dir, &["config", "user.name", "Test"])
+        && git_ok(dir, &["config", "commit.gpgsign", "false"])
+        && std::fs::write(dir.join(".vstack-test-base"), "base\n").is_ok()
+        && git_ok(dir, &["add", "-A"])
+        && git_ok(dir, &["commit", "-q", "-m", "base"])
 }
 
 fn tmpdir(label: &str) -> PathBuf {
@@ -722,6 +745,108 @@ fn refresh_rejects_symlinked_agents_ancestor_before_reading_outside_skill() {
     assert!(err.to_string().contains("outside project root"), "{err:#}");
     assert_eq!(std::fs::read(&outside_skill).unwrap(), outside_bytes);
     assert!(!project.join(".vstack-lock.json").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_accepts_agents_symlink_into_a_sibling_worktree_of_the_same_repo() {
+    use std::os::unix::fs::symlink;
+
+    // vstack's own `worktree` skill provisions exactly this layout: an issue
+    // worktree's `.agents` is a symlink into the main checkout, so a large
+    // harness library is shared instead of copied per branch. The lexical
+    // containment test refused it, which made refresh unusable from any
+    // worktree (vstack#886).
+    let root = tmpdir("project-owned-sibling-worktree");
+    let main = root.join("main");
+    let trees = root.join("trees");
+    std::fs::create_dir_all(main.join(".agents/skills/benchmark")).unwrap();
+    std::fs::create_dir_all(&trees).unwrap();
+    if !init_repo_with_commit(&main) {
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+    let worktree = trees.join("issue-1");
+    if !git_ok(&main, &["worktree", "add", "-q", "-b", "issue-1", worktree.to_str().unwrap()]) {
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+    // The worktree's `.agents` resolves into the main checkout — never a path
+    // prefix of the worktree root.
+    let _ = std::fs::remove_dir_all(worktree.join(".agents"));
+    symlink(main.join(".agents"), worktree.join(".agents")).unwrap();
+    std::fs::write(
+        worktree.join("vstack.toml"),
+        "[skill-instructions]\nbenchmark = \"Project instruction.\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        main.join(".agents/skills/benchmark/SKILL.md"),
+        "---\nname: benchmark\ndescription: Project owned\n---\n\nBody.\n",
+    )
+    .unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig::load_strict(&worktree).unwrap();
+    let stats =
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &worktree, None);
+
+    assert!(
+        stats.failures.is_empty(),
+        "a same-repository worktree symlink must not fail refresh: {:?}",
+        stats.failures
+    );
+    assert!(
+        stats.project_owned_skills.contains("benchmark"),
+        "the shared project-owned skill should be managed, got {:?}",
+        stats.project_owned_skills
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_still_rejects_agents_symlink_into_a_different_repository() {
+    use std::os::unix::fs::symlink;
+
+    // The same-repository escape hatch is proof of identity, not a blanket
+    // "any git repo will do". A DIFFERENT repository has a different
+    // --git-common-dir and must still fail closed, exactly as a bare directory
+    // does (vstack#886).
+    let root = tmpdir("project-owned-foreign-repo");
+    let project = root.join("project");
+    let foreign = root.join("foreign");
+    let foreign_skill_dir = foreign.join(".agents/skills/benchmark");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&foreign_skill_dir).unwrap();
+    if !init_repo_with_commit(&project) || !init_repo_with_commit(&foreign) {
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+    symlink(foreign.join(".agents"), project.join(".agents")).unwrap();
+    std::fs::write(
+        project.join("vstack.toml"),
+        "[skill-instructions]\nbenchmark = \"Do not escape.\"\n",
+    )
+    .unwrap();
+    let foreign_skill = foreign_skill_dir.join("SKILL.md");
+    let foreign_bytes = b"---\nname: benchmark\ndescription: Foreign\n---\n\nUntouched.\n";
+    std::fs::write(&foreign_skill, foreign_bytes).unwrap();
+
+    let lock = LockFile::default();
+    let sources = Vec::new();
+    let mut project_config = ProjectConfig::load_strict(&project).unwrap();
+    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+
+    assert_eq!(stats.failures.len(), 1);
+    assert_eq!(stats.failures[0].item, ".agents/skills");
+    assert!(stats.failures[0].error.contains("outside project root"));
+    assert!(stats.project_owned_skills.is_empty());
+    assert_eq!(std::fs::read(&foreign_skill).unwrap(), foreign_bytes);
 
     let _ = std::fs::remove_dir_all(root);
 }

@@ -116,10 +116,14 @@ the local skill has no lock entry. For project-owned skills, vstack maintains
 only its marked `Project Instructions` block; updates and removals are
 idempotent and leave the rest of the skill and unrelated project files intact.
 Project skill installs and refreshes preflight the `.agents/skills` ownership
-boundary before changing project-owned skills. If `.agents` resolves outside
-the selected checkout, run the command from the checkout that owns it or use a
-project-local `.agents` directory. Failures leave the lock and installed files
-unchanged. Project hook removal uses the same strict preflight before changing
+boundary before changing project-owned skills. A `.agents` symlink into another
+working tree of the **same** repository is accepted — that is the layout the
+`worktree` skill provisions, so refresh works from an issue worktree and writes
+through to the shared `.agents` (same-repository identity is proved by
+`git rev-parse --git-common-dir`, not assumed from the path). If `.agents`
+resolves outside the selected checkout **and** outside its repository, run the
+command from the checkout that owns it or use a project-local `.agents`
+directory. Failures leave the lock and installed files unchanged. Project hook removal uses the same strict preflight before changing
 hook files, settings, locks, or generated agents; global removal remains
 independent of project configuration.
 
