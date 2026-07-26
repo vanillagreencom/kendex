@@ -237,11 +237,38 @@ Some execution policies reject top-level `git rebase` porcelain outright — Cod
     .agents/skills/worktree/scripts/worktree fix-links <ID>
     ```
 
+## Session guard (ownership leases)
+
+`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is recorded as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone. That needs no cooperation from whoever runs the cleanup, which a private marker file would.
+
+**Not yet wired into `create`/`remove`/`cleanup`** — drive it explicitly for now (vstack#877 tracks the lifecycle integration; see the note at the end of this section for why it is not automatic yet). Owner defaults to `$VSTACK_SESSION_OWNER`, else `$USER`; the workflow sets it to the issue ID:
+
+```bash
+scripts/worktree-session-guard claim   <PATH> --owner <ID>
+scripts/worktree-session-guard status  <PATH> --owner <ID>   # read-only probe
+scripts/worktree-session-guard release <PATH> --owner <ID>
+scripts/worktree-session-guard sweep --dry-run               # every lease past the TTL
+```
+
+**Exit codes** — `status` answers "may I work here?" by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. Use `status`, not `claim`, to probe: `claim` takes or rewrites the lease.
+
+**Limits, stated rather than papered over.**
+
+The lease is scoped to the OWNER string, which the workflow sets to the issue ID, so two sessions on the same issue share one lease and either may release it. What refuses a second implementer is bare `create <ID>`, which surveys worktrees, refs, and open PRs and exits 75 on existing ownership; `create --reuse|--restack` skips that refusal by design (#571), so **nothing prevents a second implementer there**. The per-issue claim lock is not that gate either — it is a repository-local flock held only inside one `create` invocation.
+
+Staleness is heartbeat age with **no liveness check**. The recorded pid and host identify who took a claim but are never consulted, so a session that is still running and has **outlived its TTL without refreshing** is indistinguishable from an abandoned one and will be unlocked by `release --stale` or `sweep`. Nothing refreshes a lease automatically and nothing runs `sweep` automatically; confirm the owner is really gone before releasing.
+
+The guard requires `flock(1)` and checks only whether it is on PATH — it is a capability, not a platform, so **wherever flock is available, the claim is mandatory**, including a macOS host whose Homebrew setup installs it. Without flock the session is unguarded rather than protected.
+
+A Git worktree lock does not block writes, commits, or rebases inside the worktree, and `git worktree remove -f -f` or a plain `rm -rf` still destroy a claimed tree — `status` and `list` exist so such a removal can be attributed afterwards.
+
+**Why the lifecycle wiring is not in yet.** Claiming on `create` and releasing only on `remove` leaves every worktree claimed for its whole life, so a lease-aware `cleanup` stops collecting merged worktrees entirely unless `--stale` is passed — a behaviour change for every consumer, not a local one. Deciding whether that is the right trade (or whether a provably-merged branch should release the lease, since the work has landed) is a policy call, so the mechanism ships first and the wiring waits on that decision.
+
 ## System Dependencies
 
 - `git`
 - authenticated `gh` for new-work PR ownership discovery
-- `flock` for repository-local per-issue claim serialization
+- `flock` for repository-local per-issue claim serialization and for the session guard
 - Bash 3.2+ (macOS system bash is supported)
 
 ## Configuration

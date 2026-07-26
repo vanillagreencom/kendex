@@ -1,0 +1,998 @@
+#!/usr/bin/env bash
+# Ownership guard for issue worktrees (vstack#877).
+#
+# Ported from hyprtrade's tools/worktree-session-guard, which was written after
+# an incident there (CC-1000) where cleanup passes and second base directories
+# repeatedly destroyed LIVE issue worktrees — registration, local branch, and
+# uncommitted work — while sessions were still working in them. Nothing about
+# the mechanism was project-specific, and the worktree skill already documented
+# the choreography it automates, so it belongs here rather than in a copy per
+# consumer repo.
+#
+# A session that is working an issue claims the issue's worktree here. The claim
+# is recorded as a native Git worktree lock whose reason line carries the lease,
+# so cleanup that goes through Git porcelain fails closed instead of destroying
+# live work:
+#
+#   git worktree remove [--force]   refuses a locked worktree
+#   git worktree prune              never prunes a locked registration, even
+#                                   after the directory itself is gone
+#
+# Using the native lock (rather than a private marker file) is deliberate: it
+# needs no cooperation from the cleanup owner, and the vstack worktree CLI
+# already reads and reports worktree lock reasons.
+#
+# The lease is scoped to the OWNER string, which the documented workflow sets to
+# the issue ID. Two sessions working the same issue therefore share one lease:
+# either may refresh or release it, and this guard cannot tell them apart.
+#
+# What refuses a second implementer is bare `worktree create <ID>`, which
+# surveys worktrees, local and remote refs, and open PRs, and exits 75 on
+# existing ownership. The vstack per-issue claim lock is not that gate: it is a
+# repository-local flock taken and released inside one `create` invocation, so
+# it only makes that discovery race-free against a concurrent `create`. It is
+# never held for the length of a session.
+#
+# `create --reuse|--restack` skips the refusal by design (vstack#571), so
+# nothing prevents a second implementer there. Passing `--reuse` IS the
+# operator's assertion of ownership; a live sibling on the same issue has to be
+# coordinated out of band, and reuse should never be run against a worktree
+# this session did not itself claim.
+#
+# Limits, stated rather than papered over:
+#
+#   * REQUIRES flock(1). The gate is a capability, not a platform: every
+#     mutating command serializes through flock, and the code checks only
+#     whether flock is on PATH. So
+#     wherever flock is available, the claim is mandatory — including a macOS
+#     host whose Homebrew setup installs flock. On a host WITHOUT flock, claim, refresh, release and
+#     sweep all fail and that session is unguarded rather than protected.
+#     Nothing else in the repository depends on the guard, so the rest of the
+#     workflow is unaffected.
+#   * `git worktree remove -f -f` and a plain `rm -rf` still destroy a claimed
+#     worktree. `status` and `list` exist so such a removal can be attributed
+#     afterwards; `list` still reports a registration whose directory is gone.
+#   * The vstack `worktree remove` wrapper hands the INTACT tree to
+#     `git worktree remove --force`; it does not pre-strip the configured
+#     symlinks. Nothing is mutated before git runs, so when this guard's lock
+#     makes git refuse the removal, the worktree is left exactly as it was.
+#     Pre-stripping was the old behavior vstack#800 was filed about — the
+#     installed script carries the fix and cites #800 as history only, and
+#     `cleanup` took the same ordering in vstack#784. Git's deletion is not
+#     transactional, so a failure partway through can still leave the tree
+#     partially removed; repair with `worktree fix-links` run from the main
+#     checkout.
+#   * A Git worktree lock does NOT block writes, commits, or rebases inside the
+#     worktree. In particular `worktree create --reuse|--restack` skips the
+#     lock-reason refusal entirely and rebases the claimed branch. Probe with
+#     `status PATH --owner NAME` before reuse; the lock will not do it, and
+#     `claim` is not a probe because it takes or rewrites the lease. The probe
+#     catches a DIFFERENT issue's live claim; nothing prevents a second
+#     implementer there on the same issue.
+#   * `git branch -D` refusal is a property of the branch being checked out in
+#     any registered worktree, not of the lock. The claim's contribution is
+#     keeping the registration alive so that refusal keeps applying.
+#   * Nothing refreshes a lease automatically. `--ttl-minutes` is therefore age
+#     since the last explicit `claim`/`refresh`, and the default must exceed the
+#     longest expected session. Nothing runs `sweep` automatically either, so a
+#     lease past its TTL is released only when an operator asks.
+#   * Staleness is heartbeat age with NO liveness check, so a still-running
+#     session that outlived its TTL without refreshing is indistinguishable
+#     from an abandoned one and will be unlocked by `release --stale` or
+#     `sweep`. Confirm the owner is really gone before releasing.
+
+set -euo pipefail
+
+GUARD_MARKER='vstack-session-guard'
+GUARD_VERSION='v1'
+DEFAULT_TTL_MINUTES=720
+
+EXIT_USAGE=1
+EXIT_NO_LEASE=3
+EXIT_UNMANAGED=4
+EXIT_ENUMERATION=5
+EXIT_OWNED=75
+
+usage() {
+	cat <<'EOF'
+Usage: worktree-session-guard <command> [PATH] [options]
+
+Commands:
+  claim PATH        Claim the worktree for this issue (idempotent for the same
+                    owner, which refreshes the heartbeat in place).
+  refresh PATH      Extend the lease's heartbeat without ever unlocking.
+  release PATH      Release the lease so cleanup may proceed.
+  status PATH       Print the worktree's lock state as JSON. With --owner, the
+                    exit code alone answers "may I work here?" — this is the
+                    read-only ownership probe; `claim` is not, because it takes
+                    or rewrites the lease.
+  list              Print one JSON object per linked worktree of the repository,
+                    including registrations whose directory no longer exists.
+                    The main checkout is never listed.
+  sweep             Release EVERY guard lease of the repository past the TTL.
+                    To recover one abandoned worktree, prefer
+                    `release PATH --stale --owner NAME`; run sweep --dry-run
+                    first, since its blast radius is every lease past the TTL.
+
+PATH is the root of a linked worktree; the main checkout is refused. `release`
+and `status` also accept a worktree whose directory has already been destroyed,
+resolving it through the repository registration instead.
+
+Options:
+  --owner NAME       Lease owner; the workflow sets this to the issue ID
+                     (default: $VSTACK_SESSION_OWNER, else $HT_SESSION_OWNER,
+                     else $USER). Allowed characters: A-Z a-z 0-9 . _ : @ + -
+                     Applies to: claim, refresh, release, status. status
+                     compares owners when --owner is passed OR
+                     a session-owner env var is set, and never falls back to $USER;
+                     with neither it says on stderr that it compared nothing.
+  --ttl-minutes N    Staleness horizon, in minutes since the lease's last claim
+                     or refresh (default: 720, at most 10 digits). Applies to:
+                     release, sweep.
+  --stale            release: also accept a foreign lease past the TTL.
+  --force            release: accept a foreign lease regardless of age.
+  --dry-run          sweep: report what would be released, release nothing.
+  --repo DIR         Any checkout of the target repository (default: current
+                     directory). Applies to: release, status, list, sweep;
+                     needed for release/status when PATH no longer exists.
+
+Staleness is heartbeat age and nothing else. The recorded pid and host identify
+who took a claim but are never consulted, so there is NO liveness check: a
+session that is still running and has outlived its TTL without refreshing WILL
+be treated as abandoned, and `release --stale` or `sweep` will unlock it.
+Nothing refreshes a lease automatically, so run `refresh` if a session will
+outlive the TTL, raise the TTL, or confirm the owner is really gone before
+releasing.
+
+Exit codes:
+  0  success (status: a guard lease is present, and is yours if --owner was
+     given)
+  1  usage, precondition, or Git failure
+  3  status: the worktree carries no lock at all
+  4  status: the worktree is locked outside this guard
+     sweep: a guard lease was left in place because it is unreadable
+  5  list/sweep: the repository's worktrees could not be enumerated, so
+     nothing was examined (never reported as a clean repository)
+ 75  the worktree is claimed by a different owner (claim, refresh, release,
+     status --owner); or is locked outside this guard (claim, refresh,
+     release; status reports that as 4); or, for release --stale, the lease is
+     not yet past the TTL (any owner)
+EOF
+}
+
+fail() {
+	printf 'worktree-session-guard: %s\n' "$1" >&2
+	exit "$EXIT_USAGE"
+}
+
+warn() {
+	printf 'worktree-session-guard: WARN: %s\n' "$1" >&2
+}
+
+now_epoch() { date -u +%s; }
+
+# GNU and BSD date disagree on how to format an epoch. Try GNU first, then BSD,
+# and fail closed rather than writing a lease with an empty timestamp.
+iso_from_epoch() {
+	local epoch="$1" formatted=''
+	formatted="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+	if [[ -z "$formatted" ]]; then
+		formatted="$(date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+	fi
+	[[ -n "$formatted" ]] || fail "no usable date(1): cannot format epoch $epoch"
+	printf '%s\n' "$formatted"
+}
+
+# Canonicalize an existing directory without depending on GNU realpath.
+canonical_dir() {
+	local path="$1"
+	[[ -d "$path" ]] || return 1
+	(cd -P -- "$path" && pwd -P)
+}
+
+# Lexical absolute path, for a worktree whose directory no longer exists and
+# therefore cannot be canonicalized by entering it.
+normalize_abs_path() {
+	local path="$1" out='' part
+	local -a parts=()
+	[[ "$path" == /* ]] || path="$PWD/$path"
+	IFS='/' read -r -a parts <<<"$path"
+	for part in ${parts[@]+"${parts[@]}"}; do
+		case "$part" in
+		'' | '.') continue ;;
+		'..') out="${out%/*}" ;;
+		*) out="$out/$part" ;;
+		esac
+	done
+	printf '%s\n' "${out:-/}"
+}
+
+sanitize_owner() {
+	local owner="$1"
+	[[ -n "$owner" ]] || fail "owner must not be empty; pass --owner or set VSTACK_SESSION_OWNER"
+	[[ ${#owner} -le 64 ]] || fail "owner must be at most 64 characters: $owner"
+	[[ "$owner" =~ ^[A-Za-z0-9._:@+-]+$ ]] \
+		|| fail "owner may only contain A-Z a-z 0-9 . _ : @ + - (got: $owner)"
+	printf '%s\n' "$owner"
+}
+
+# Host is diagnostic only, so coerce it into the lease charset instead of
+# failing a claim on an unusual hostname.
+sanitize_host() {
+	local host="${HOSTNAME:-}"
+	[[ -n "$host" ]] || host="$(uname -n 2>/dev/null || true)"
+	[[ -n "$host" ]] || host="unknown-host"
+	host="${host//[^A-Za-z0-9._:@+-]/-}"
+	printf '%s\n' "$host"
+}
+
+# Two ways a TTL can make the staleness comparison lie, both rejected here:
+# a leading zero makes bash read the value as octal and abort the expression
+# mid-evaluation, and a value large enough to overflow signed 64-bit arithmetic
+# makes the most conservative-looking TTL release every lease. Ten digits is
+# roughly 19,000 years. The comparison itself is minutes-to-minutes, so no
+# multiplication can overflow either.
+require_ttl_minutes() {
+	local value="$1"
+	[[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] \
+		|| fail "--ttl-minutes must be a non-negative integer without leading zeros: $value"
+	[[ ${#value} -le 10 ]] \
+		|| fail "--ttl-minutes must be at most 10 digits: $value"
+}
+
+resolve_repo() {
+	local requested="$1" resolved
+	resolved="$(canonical_dir "$requested")" || fail "not a directory: $requested"
+	git -C "$resolved" rev-parse --git-dir >/dev/null 2>&1 \
+		|| fail "not inside a Git repository: $resolved"
+	printf '%s\n' "$resolved"
+}
+
+common_dir_of() {
+	git -C "$1" rev-parse --path-format=absolute --git-common-dir
+}
+
+# Print the registration directory ($GIT_COMMON_DIR/worktrees/<id>) for a
+# worktree path. Works whether or not the worktree directory still exists,
+# which is what makes a destroyed worktree recoverable instead of a wedge.
+# The worktree root a registration points at. Git records an absolute gitdir by
+# default, but a RELATIVE one under `worktree add --relative-paths` or
+# worktree.useRelativePaths (Git >= 2.48) — resolved against the registration
+# directory, not the repository root.
+registration_worktree_path() {
+	local entry="$1" recorded
+	[[ -f "$entry/gitdir" ]] || return 1
+	recorded="$(head -n 1 -- "$entry/gitdir")"
+	[[ -n "$recorded" ]] || return 1
+	[[ "$recorded" == /* ]] || recorded="$(normalize_abs_path "$entry/$recorded")"
+	printf '%s\n' "${recorded%/.git}"
+}
+
+registration_dir_for() {
+	local repo="$1" target="$2" common_dir entry recorded canonical
+	common_dir="$(common_dir_of "$repo")"
+	[[ -d "$common_dir/worktrees" ]] || return 1
+	for entry in "$common_dir"/worktrees/*; do
+		recorded="$(registration_worktree_path "$entry" || true)"
+		[[ -n "$recorded" ]] || continue
+		if [[ "$recorded" == "$target" ]]; then
+			printf '%s\n' "$entry"
+			return 0
+		fi
+		# The registry can hold a symlinked spelling of a path the caller gave
+		# canonically (or vice versa); compare both ways before giving up.
+		if canonical="$(canonical_dir "$recorded")" && [[ "$canonical" == "$target" ]]; then
+			printf '%s\n' "$entry"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Registered worktree paths, for a diagnostic that names the spelling the
+# caller should have used instead of only echoing the one that failed.
+registered_worktree_spellings() {
+	local repo="$1" common_dir entry recorded
+	common_dir="$(common_dir_of "$repo")"
+	[[ -d "$common_dir/worktrees" ]] || return 0
+	for entry in "$common_dir"/worktrees/*; do
+		recorded="$(registration_worktree_path "$entry" || true)"
+		[[ -n "$recorded" ]] || continue
+		printf '  %s\n' "$recorded"
+	done
+}
+
+# Resolve PATH to a linked worktree of REPO, refusing the main checkout and a
+# subdirectory of a worktree. Sets RESOLVED_WORKTREE and RESOLVED_REGISTRATION
+# (globals rather than a printed pair, so a path containing spaces survives).
+#
+# require_present=true is used by claim/refresh, which cannot operate on a
+# worktree that is not there. release/status pass false so a lease left behind
+# by a destroyed worktree can still be inspected and cleared.
+resolve_worktree() {
+	local repo="$1" requested="$2" require_present="$3"
+	local resolved git_dir common_dir top registration searched spellings
+
+	if resolved="$(canonical_dir "$requested")"; then
+		git_dir="$(git -C "$resolved" rev-parse --path-format=absolute --git-dir 2>/dev/null)" \
+			|| fail "not inside a Git repository: $resolved"
+		common_dir="$(git -C "$resolved" rev-parse --path-format=absolute --git-common-dir)"
+		[[ "$git_dir" != "$common_dir" ]] \
+			|| fail "refusing the main checkout; only linked worktrees are guarded: $resolved"
+		top="$(git -C "$resolved" rev-parse --path-format=absolute --show-toplevel)"
+		top="$(canonical_dir "$top")" || fail "worktree root is unreadable: $top"
+		[[ "$top" == "$resolved" ]] || fail "not a worktree root: $resolved (use $top)"
+	else
+		[[ "$require_present" != true ]] || fail "not a directory: $requested"
+		resolved="$(normalize_abs_path "$requested")"
+	fi
+
+	registration="$(registration_dir_for "$repo" "$resolved" || true)"
+	if [[ -z "$registration" ]]; then
+		# Name the repository that was actually searched. Without --repo it is
+		# derived from the target, so echoing that back would print the same
+		# path on both sides of the message and tell the reader nothing.
+		searched="$(common_dir_of "$repo")"
+		spellings="$(registered_worktree_spellings "$repo")"
+		printf 'worktree-session-guard: not a registered worktree of the repository at %s: %s\n' \
+			"$searched" "$resolved" >&2
+		if [[ ! -d "$resolved" ]]; then
+			printf 'That directory is gone, so the path could not be canonicalized; it must be given exactly as registered.\n' >&2
+		fi
+		if [[ -z "$spellings" ]]; then
+			printf 'That repository has no linked worktrees. Pass --repo DIR naming a checkout of the repository that registered this worktree.\n' >&2
+		else
+			printf 'Pass --repo DIR to search a different repository. Registered worktrees:\n' >&2
+			printf '%s\n' "$spellings" >&2
+		fi
+		exit "$EXIT_USAGE"
+	fi
+	RESOLVED_WORKTREE="$resolved"
+	RESOLVED_REGISTRATION="$registration"
+}
+
+# Serialize claim/refresh/release/sweep. The lock file lives in the shared
+# common dir, so one acquisition covers every worktree of the repository — a
+# sweep must take it ONCE around its whole loop, never per iteration, or it
+# drops the mutex between worktrees.
+acquire_guard_lock() {
+	local repo="$1" common_dir lock_path
+	command -v flock >/dev/null 2>&1 \
+		|| fail "this guard requires flock(1) to serialize mutations and it is not on PATH, so this worktree is unguarded rather than guarded-and-failing. Install flock to enable the guard on this host."
+	common_dir="$(common_dir_of "$repo")"
+	lock_path="$common_dir/ht-worktree-session-guard.lock"
+	exec 9>"$lock_path" || fail "cannot open the session-guard lock file: $lock_path"
+	flock -x 9 || fail "cannot acquire the session-guard lock: $lock_path"
+}
+
+# Lock states, distinguished because "locked with no reason" (a plain
+# `git worktree lock`) must not be reported as "not locked at all".
+LOCK_STATE_NONE=none
+LOCK_STATE_EMPTY=empty
+LOCK_STATE_REASON=reason
+
+# Sets LEASE_STATE and LEASE_TEXT for a registration directory.
+read_lease() {
+	local lock_file="$1/locked"
+	LEASE_TEXT=''
+	if [[ ! -f "$lock_file" ]]; then
+		LEASE_STATE="$LOCK_STATE_NONE"
+		return 0
+	fi
+	LEASE_TEXT="$(head -n 1 -- "$lock_file" 2>/dev/null || true)"
+	if [[ -z "$LEASE_TEXT" ]]; then
+		LEASE_STATE="$LOCK_STATE_EMPTY"
+	else
+		LEASE_STATE="$LOCK_STATE_REASON"
+	fi
+}
+
+# A lease is ours only at the exact marker AND version. Matching the marker
+# alone would adopt a future version's lock — or a hand-written one that merely
+# starts with the marker — and `release --force` would then unlock it, breaking
+# the documented promise never to touch a lock taken outside this guard.
+#
+# The bare-version form is accepted so a v1 lease truncated to nothing but its
+# prefix stays recoverable through the usual quarantine path rather than
+# becoming an unreleasable foreign lock.
+lease_is_ours() {
+	case "$1" in
+	"$GUARD_MARKER $GUARD_VERSION" | "$GUARD_MARKER $GUARD_VERSION "*) return 0 ;;
+	esac
+	return 1
+}
+
+# True when the registration currently carries a guard lease.
+lease_is_managed() {
+	[[ "$LEASE_STATE" == "$LOCK_STATE_REASON" ]] || return 1
+	lease_is_ours "$LEASE_TEXT"
+}
+
+lease_field() {
+	local lease="$1" key="$2" rest
+	rest="${lease#* $key=}"
+	[[ "$rest" != "$lease" ]] || return 1
+	printf '%s\n' "${rest%% *}"
+}
+
+# Human-readable description of whatever holds the lock, for refusal and
+# displacement messages. Never ends at a bare colon.
+lease_description() {
+	local state="$1" text="$2"
+	case "$state" in
+	"$LOCK_STATE_EMPTY") printf '(locked with no reason recorded)\n' ;;
+	"$LOCK_STATE_REASON") printf '%s\n' "$text" ;;
+	*) printf '(no lock)\n' ;;
+	esac
+}
+
+lease_line() {
+	local owner="$1" host="$2" claimed_epoch="$3" heartbeat_epoch="$4"
+	local claimed_iso heartbeat_iso
+	claimed_iso="$(iso_from_epoch "$claimed_epoch")"
+	heartbeat_iso="$(iso_from_epoch "$heartbeat_epoch")"
+	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s' \
+		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$$" "$host" \
+		"$claimed_iso" "$claimed_epoch" "$heartbeat_iso" "$heartbeat_epoch"
+}
+
+# An epoch the guard did not write is not trusted arithmetic input: past int64
+# the subtraction wraps and about half the wrapped range reads as an enormous
+# age, which would release the lease the tool means to quarantine. The digit
+# cap matches --ttl-minutes, but the units differ: ten digits of SECONDS reach
+# year 2286, where ten digits of minutes reach far further.
+epoch_is_sane() {
+	[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+	[[ ${#1} -le 10 ]] || return 1
+}
+
+lease_age_seconds() {
+	local lease="$1" now="$2" heartbeat_epoch
+	heartbeat_epoch="$(lease_field "$lease" heartbeat_epoch || true)"
+	epoch_is_sane "$heartbeat_epoch" || return 1
+	printf '%s\n' "$((now - 10#$heartbeat_epoch))"
+}
+
+# Rewrite the lock reason in place. The worktree is never unlocked, because an
+# unlock/relock cycle would open exactly the window this guard exists to close.
+# Shared by claim's same-owner branch and refresh, so the lease format has one
+# writer.
+rewrite_lease() {
+	local registration="$1" owner="$2" existing="$3" now="$4"
+	local lock_file="$1/locked" tmp_file lease claimed_epoch
+
+	[[ -f "$lock_file" ]] || fail "worktree is not locked: $registration"
+	# A corrupted claim time is replaced rather than carried forward, so it
+	# cannot reach iso_from_epoch and abort the refresh with a date(1) error.
+	claimed_epoch="$(lease_field "$existing" claimed_epoch || true)"
+	epoch_is_sane "$claimed_epoch" || claimed_epoch="$now"
+	lease="$(lease_line "$owner" "$(sanitize_host)" "$claimed_epoch" "$now")"
+
+	tmp_file="$lock_file.ht-tmp.$$"
+	printf '%s\n' "$lease" >"$tmp_file" || {
+		rm -f -- "$tmp_file"
+		fail "failed to stage the session lease for $registration"
+	}
+	mv -f -- "$tmp_file" "$lock_file" || {
+		rm -f -- "$tmp_file"
+		fail "failed to update the session lease for $registration"
+	}
+}
+
+# Control characters are escaped, never deleted. This output is the documented
+# attribution mechanism after a removal, so a path or lock reason that comes
+# back altered is worse than one that comes back obviously broken. Escaping a
+# newline also keeps `list` at one JSON object per line.
+#
+# A NUL byte cannot reach here: bash strings are NUL-terminated, so the shell
+# drops one at assignment long before this.
+json_escape() {
+	local value="$1" out char rest code
+	value="${value//\\/\\\\}"
+	value="${value//\"/\\\"}"
+	value="${value//$'\b'/\\b}"
+	value="${value//$'\f'/\\f}"
+	value="${value//$'\n'/\\n}"
+	value="${value//$'\r'/\\r}"
+	value="${value//$'\t'/\\t}"
+	# Whatever remains has no short form, so spell it \u00xx. Guarded because
+	# the character-at-a-time rewrite is only needed for the rare input.
+	if [[ "$value" != "${value//[[:cntrl:]]/}" ]]; then
+		out=''
+		rest="$value"
+		while [[ -n "$rest" ]]; do
+			char="${rest:0:1}"
+			rest="${rest:1}"
+			printf -v code '%d' "'$char"
+			if ((code < 32)); then
+				printf -v char '\\u%04x' "$code"
+			fi
+			out+="$char"
+		done
+		value="$out"
+	fi
+	printf '%s\n' "$value"
+}
+
+# One JSON object per worktree. `locked` is true for ANY worktree lock;
+# `managed` is true only when that lock is a guard lease. The two are
+# deliberately independent, so a foreign lock is never byte-identical to an
+# unlocked worktree.
+emit_status_json() {
+	local worktree="$1" state="$2" lease="$3" now="$4" present="$5"
+	local locked=false managed=false
+	local owner='' pid='' host='' claimed_at='' heartbeat_at='' age=-1
+
+	[[ "$state" == "$LOCK_STATE_NONE" ]] || locked=true
+	if [[ "$state" == "$LOCK_STATE_REASON" ]] && lease_is_ours "$lease"; then
+		managed=true
+		owner="$(lease_field "$lease" owner || true)"
+		pid="$(lease_field "$lease" pid || true)"
+		host="$(lease_field "$lease" host || true)"
+		claimed_at="$(lease_field "$lease" claimed || true)"
+		heartbeat_at="$(lease_field "$lease" heartbeat || true)"
+		age="$(lease_age_seconds "$lease" "$now" || printf '%s' -1)"
+	fi
+
+	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"lock_reason":"%s"}\n' \
+		"$(json_escape "$worktree")" "$present" "$locked" "$managed" \
+		"$(json_escape "$owner")" "$(json_escape "$pid")" "$(json_escape "$host")" \
+		"$(json_escape "$claimed_at")" "$(json_escape "$heartbeat_at")" \
+		"$age" "$(json_escape "$lease")"
+}
+
+# Paths of every linked worktree of REPO, main checkout excluded. Driven by
+# `git worktree list --porcelain`, which still reports a registration whose
+# directory has been destroyed — the case this tool most needs to see.
+#
+# The enumeration is captured in the caller's shell, not consumed through a
+# process substitution: a substitution discards Git's exit status, and a sweep
+# that could not enumerate anything would then report a clean repository. That
+# is the worst failure mode available to a recovery command.
+linked_worktree_paths() {
+	local repo="$1" porcelain line path
+	porcelain="$(git -C "$repo" worktree list --porcelain)" || return 1
+	while IFS= read -r line; do
+		case "$line" in
+		'worktree '*) path="${line#worktree }" ;;
+		*) continue ;;
+		esac
+		if registration_dir_for "$repo" "$path" >/dev/null; then
+			printf '%s\n' "$path"
+		fi
+	done <<<"$porcelain"
+}
+
+# Enumerate into a newline-delimited list, failing closed with a diagnostic
+# that names the repository whose worktrees could not be listed.
+enumerate_or_fail() {
+	local repo="$1" command="$2" listing
+	if ! listing="$(linked_worktree_paths "$repo")"; then
+		printf 'worktree-session-guard: %s could not enumerate the worktrees of %s; nothing was examined\n' \
+			"$command" "$repo" >&2
+		exit "$EXIT_ENUMERATION"
+	fi
+	printf '%s' "$listing"
+}
+
+unlock_worktree() {
+	local repo="$1" worktree="$2"
+	git -C "$repo" worktree unlock "$worktree" \
+		|| fail "failed to unlock worktree: $worktree"
+}
+
+lease_identity() {
+	local lease="$1" owner pid host heartbeat
+	owner="$(lease_field "$lease" owner || printf unknown)"
+	pid="$(lease_field "$lease" pid || printf unknown)"
+	host="$(lease_field "$lease" host || printf unknown)"
+	heartbeat="$(lease_field "$lease" heartbeat || printf unknown)"
+	printf 'owner=%s pid=%s host=%s heartbeat=%s\n' "$owner" "$pid" "$host" "$heartbeat"
+}
+
+# Describe the lease about to be destroyed, so displacing another owner's claim
+# leaves a trace after the lease itself is gone.
+warn_displaced_lease() {
+	local worktree="$1" lease="$2" age="$3"
+	warn "displacing lease on $worktree: $(lease_identity "$lease") age=${age:-unknown}"
+}
+
+# The same record for an ordinary same-owner release. It is not a displacement
+# — releasing your own lease is the expected end of a session — but an owner
+# match only proves the same issue, so the released lease is still recorded
+# rather than vanishing silently.
+note_released_lease() {
+	local worktree="$1" lease="$2"
+	printf 'worktree-session-guard: releasing lease on %s: %s\n' \
+		"$worktree" "$(lease_identity "$lease")" >&2
+}
+
+# The single canonical stale-release sequence, shared by `sweep` and
+# `release --stale`. The caller must already hold the guard lock; the lease is
+# re-read HERE, under that lock, so a claim or refresh that landed after an
+# earlier read cannot be discarded.
+#
+# Returns: 0 released (or would release, when dry_run), 10 lease is still live,
+# 11 no guard lease to release, 12 lease heartbeat unusable (unreadable, out of
+# range, or dated in the future).
+release_lease_if_stale() {
+	local repo="$1" worktree="$2" registration="$3" ttl_minutes="$4" dry_run="$5"
+	local now age
+
+	read_lease "$registration"
+	lease_is_managed || return 11
+
+	now="$(now_epoch)"
+	age="$(lease_age_seconds "$LEASE_TEXT" "$now")" || return 12
+	# A heartbeat in the future cannot be aged against, and bash division
+	# truncates toward zero, so -59s would read as 0 minutes old and satisfy
+	# --ttl-minutes 0. Treat it as untrustworthy and quarantine it instead.
+	((age >= 0)) || return 12
+	# Minutes against minutes: multiplying the TTL out to seconds is what let a
+	# huge --ttl-minutes wrap negative and mark every lease stale.
+	((age / 60 >= 10#$ttl_minutes)) || return 10
+
+	if [[ "$dry_run" == true ]]; then
+		printf 'would release %s (heartbeat %ss old)\n' "$worktree" "$age"
+		return 0
+	fi
+	warn_displaced_lease "$worktree" "$LEASE_TEXT" "${age}s"
+	unlock_worktree "$repo" "$worktree"
+	printf 'released %s (heartbeat %ss old)\n' "$worktree" "$age"
+}
+
+cmd_claim() {
+	local repo="$1" target="$2" owner="$3"
+	local worktree registration now lease existing_owner
+
+	resolve_worktree "$repo" "$target" true
+	worktree="$RESOLVED_WORKTREE"
+	registration="$RESOLVED_REGISTRATION"
+	acquire_guard_lock "$repo"
+	now="$(now_epoch)"
+
+	read_lease "$registration"
+	if [[ "$LEASE_STATE" != "$LOCK_STATE_NONE" ]]; then
+		if ! lease_is_managed; then
+			printf 'worktree-session-guard: %s is locked outside this guard: %s\n' \
+				"$worktree" "$(lease_description "$LEASE_STATE" "$LEASE_TEXT")" >&2
+			printf 'Resolve the existing lock before claiming it.\n' >&2
+			exit "$EXIT_OWNED"
+		fi
+		existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
+		if [[ "$existing_owner" != "$owner" ]]; then
+			printf 'worktree-session-guard: %s is claimed by owner=%s: %s\n' \
+				"$worktree" "${existing_owner:-unknown}" "$LEASE_TEXT" >&2
+			printf 'Use a different worktree, or release a stale lease with: tools/worktree-session-guard release %s --stale\n' \
+				"$worktree" >&2
+			exit "$EXIT_OWNED"
+		fi
+		rewrite_lease "$registration" "$owner" "$LEASE_TEXT" "$now"
+		printf 'refreshed %s\n' "$worktree"
+		return 0
+	fi
+
+	lease="$(lease_line "$owner" "$(sanitize_host)" "$now" "$now")"
+	git -C "$repo" worktree lock --reason "$lease" "$worktree" \
+		|| fail "failed to lock worktree: $worktree"
+	printf 'claimed %s\n' "$worktree"
+}
+
+cmd_refresh() {
+	local repo="$1" target="$2" owner="$3"
+	local worktree registration now existing_owner
+
+	resolve_worktree "$repo" "$target" true
+	worktree="$RESOLVED_WORKTREE"
+	registration="$RESOLVED_REGISTRATION"
+	acquire_guard_lock "$repo"
+	now="$(now_epoch)"
+
+	read_lease "$registration"
+	[[ "$LEASE_STATE" != "$LOCK_STATE_NONE" ]] \
+		|| fail "no session claim to refresh on $worktree; run claim first"
+
+	if ! lease_is_managed; then
+		printf 'worktree-session-guard: %s is locked outside this guard: %s\n' \
+			"$worktree" "$(lease_description "$LEASE_STATE" "$LEASE_TEXT")" >&2
+		exit "$EXIT_OWNED"
+	fi
+	existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
+	if [[ "$existing_owner" != "$owner" ]]; then
+		printf 'worktree-session-guard: %s is claimed by owner=%s, not %s\n' \
+			"$worktree" "${existing_owner:-unknown}" "$owner" >&2
+		exit "$EXIT_OWNED"
+	fi
+
+	rewrite_lease "$registration" "$owner" "$LEASE_TEXT" "$now"
+	printf 'refreshed %s\n' "$worktree"
+}
+
+cmd_release() {
+	local repo="$1" target="$2" owner="$3" ttl_minutes="$4" allow_stale="$5" force="$6"
+	local worktree registration existing_owner age now rc=0
+
+	resolve_worktree "$repo" "$target" false
+	worktree="$RESOLVED_WORKTREE"
+	registration="$RESOLVED_REGISTRATION"
+	acquire_guard_lock "$repo"
+
+	read_lease "$registration"
+	if [[ "$LEASE_STATE" == "$LOCK_STATE_NONE" ]]; then
+		printf 'already released %s\n' "$worktree"
+		return 0
+	fi
+	if ! lease_is_managed; then
+		# Same condition claim and refresh report, so the same exit code: a
+		# caller branching on 75 must not see this as a usage error.
+		printf 'worktree-session-guard: %s is locked outside this guard; refusing to unlock: %s\n' \
+			"$worktree" "$(lease_description "$LEASE_STATE" "$LEASE_TEXT")" >&2
+		exit "$EXIT_OWNED"
+	fi
+
+	existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
+	if [[ "$existing_owner" == "$owner" && "$allow_stale" != true ]]; then
+		# The ordinary "I am done here" release, e.g. orch at merge time. The
+		# lease is recorded before it is destroyed: an owner match only proves
+		# the same ISSUE, so this may be a sibling session's live claim.
+		note_released_lease "$worktree" "$LEASE_TEXT"
+		unlock_worktree "$repo" "$worktree"
+		printf 'released %s\n' "$worktree"
+		return 0
+	fi
+
+	if [[ "$force" == true ]]; then
+		now="$(now_epoch)"
+		age="$(lease_age_seconds "$LEASE_TEXT" "$now" || true)"
+		warn_displaced_lease "$worktree" "$LEASE_TEXT" "${age:+${age}s}"
+		unlock_worktree "$repo" "$worktree"
+		printf 'released %s\n' "$worktree"
+		return 0
+	fi
+
+	if [[ "$allow_stale" != true ]]; then
+		printf 'worktree-session-guard: %s is claimed by owner=%s, not %s: %s\n' \
+			"$worktree" "${existing_owner:-unknown}" "$owner" "$LEASE_TEXT" >&2
+		exit "$EXIT_OWNED"
+	fi
+
+	# --stale means the same thing whoever owns the lease: release it only if
+	# its heartbeat is past the TTL. Exempting the owner match would make the
+	# flag dead exactly where the recovery procedure relies on it, because the
+	# lease is keyed to the issue and a sibling session matches it.
+	release_lease_if_stale "$repo" "$worktree" "$registration" "$ttl_minutes" false || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	10)
+		printf 'worktree-session-guard: %s is claimed by owner=%s and is not stale (ttl %sm)\n' \
+			"$worktree" "${existing_owner:-unknown}" "$ttl_minutes" >&2
+		exit "$EXIT_OWNED"
+		;;
+	12) fail "lease on $worktree has an unusable heartbeat (unreadable, out of range, or dated in the future); recover with: tools/worktree-session-guard release $worktree --force" ;;
+	*) fail "lease on $worktree changed while releasing it; re-run release" ;;
+	esac
+}
+
+# The read-only ownership probe. With --owner it answers "may I work here?" in
+# the exit code alone, which is what the reuse guidance depends on; `claim`
+# cannot serve that purpose because it takes or rewrites the lease.
+cmd_status() {
+	local repo="$1" target="$2" owner="$3"
+	local worktree registration now present=true existing_owner
+	resolve_worktree "$repo" "$target" false
+	worktree="$RESOLVED_WORKTREE"
+	registration="$RESOLVED_REGISTRATION"
+	[[ -d "$worktree" ]] || present=false
+	now="$(now_epoch)"
+	read_lease "$registration"
+	emit_status_json "$worktree" "$LEASE_STATE" "$LEASE_TEXT" "$now" "$present"
+
+	if [[ "$LEASE_STATE" == "$LOCK_STATE_NONE" ]]; then
+		return "$EXIT_NO_LEASE"
+	fi
+	if ! lease_is_managed; then
+		return "$EXIT_UNMANAGED"
+	fi
+	if [[ -z "$owner" ]]; then
+		# Exit 0 here means only "a guard lease exists", so say so rather than
+		# letting a caller read it as "this worktree is mine".
+		printf 'worktree-session-guard: no ownership comparison performed (pass --owner or set VSTACK_SESSION_OWNER); a guard lease exists on %s\n' \
+			"$worktree" >&2
+		return 0
+	fi
+	existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
+	if [[ "$existing_owner" != "$owner" ]]; then
+		printf 'worktree-session-guard: %s is claimed by owner=%s, not %s\n' \
+			"$worktree" "${existing_owner:-unknown}" "$owner" >&2
+		return "$EXIT_OWNED"
+	fi
+	return 0
+}
+
+cmd_list() {
+	local repo="$1" now path registration present listing
+	now="$(now_epoch)"
+	listing="$(enumerate_or_fail "$repo" list)"
+	[[ -n "$listing" ]] || return 0
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		registration="$(registration_dir_for "$repo" "$path" || true)"
+		[[ -n "$registration" ]] || continue
+		present=true
+		[[ -d "$path" ]] || present=false
+		read_lease "$registration"
+		emit_status_json "$path" "$LEASE_STATE" "$LEASE_TEXT" "$now" "$present"
+	done <<<"$listing"
+}
+
+# Releasing an abandoned lease is the safety valve that keeps this guard from
+# permanently wedging cleanup — including for a worktree whose directory was
+# destroyed, which is the incident this guard exists for. It only ever touches
+# guard-owned leases past the TTL; a foreign lock and a live lease are left
+# exactly as they are.
+cmd_sweep() {
+	local repo="$1" ttl_minutes="$2" dry_run="$3"
+	local path registration released=0 unreadable=0 rc listing
+
+	# Once, around the whole loop: the lock file is per-repository, so
+	# re-acquiring it per worktree would drop the mutex between iterations.
+	acquire_guard_lock "$repo"
+
+	# Enumerate before claiming anything about the repository's state: an
+	# enumeration failure must not be reported as "no stale session claims".
+	listing="$(enumerate_or_fail "$repo" sweep)"
+
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		registration="$(registration_dir_for "$repo" "$path" || true)"
+		[[ -n "$registration" ]] || continue
+		rc=0
+		release_lease_if_stale "$repo" "$path" "$registration" "$ttl_minutes" "$dry_run" || rc=$?
+		case "$rc" in
+		0) released=$((released + 1)) ;;
+		12)
+			unreadable=$((unreadable + 1))
+			warn "lease on $path has an unusable heartbeat (unreadable, out of range, or dated in the future) and was left in place; recover with: tools/worktree-session-guard release $path --force"
+			;;
+		esac
+	done <<<"$listing"
+
+	# A dry run mutates nothing, so its summary must never say anything was
+	# released — an operator reading "released" while deciding what to recover
+	# would be reading a mutation that did not happen.
+	if [[ "$unreadable" -gt 0 ]]; then
+		if [[ "$dry_run" == true ]]; then
+			printf '%s stale session claim(s) would be released; %s unusable lease(s) left in place\n' \
+				"$released" "$unreadable"
+		else
+			printf '%s stale session claim(s) released; %s unusable lease(s) left in place\n' \
+				"$released" "$unreadable"
+		fi
+		return "$EXIT_UNMANAGED"
+	fi
+	[[ "$released" -gt 0 ]] || printf 'no stale session claims\n'
+}
+
+# Reject an option the selected command does not act on, rather than accepting
+# it and doing something other than what the caller asked.
+require_flag_applies() {
+	local flag="$1" command="$2" applicable="$3"
+	case " $applicable " in
+	*" $command "*) return 0 ;;
+	esac
+	fail "$flag does not apply to $command (applies to: $applicable)"
+}
+
+main() {
+	local command="${1:-}"
+	case "$command" in
+	-h | --help | '')
+		usage
+		exit 0
+		;;
+	claim | refresh | release | status | list | sweep) shift ;;
+	*)
+		printf 'Unknown command: %s\n' "$command" >&2
+		usage >&2
+		exit "$EXIT_USAGE"
+		;;
+	esac
+
+	local target='' repo='' owner="${VSTACK_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
+	local ttl_minutes="$DEFAULT_TTL_MINUTES"
+	local allow_stale=false force=false dry_run=false owner_explicit=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--owner)
+			[[ $# -ge 2 ]] || fail "--owner requires a value"
+			require_flag_applies --owner "$command" "claim refresh release status"
+			owner="$2"
+			owner_explicit=true
+			shift 2
+			;;
+		--ttl-minutes)
+			[[ $# -ge 2 ]] || fail "--ttl-minutes requires a value"
+			require_flag_applies --ttl-minutes "$command" "release sweep"
+			require_ttl_minutes "$2"
+			ttl_minutes="$2"
+			shift 2
+			;;
+		--repo)
+			[[ $# -ge 2 ]] || fail "--repo requires a value"
+			require_flag_applies --repo "$command" "release status list sweep"
+			repo="$2"
+			shift 2
+			;;
+		--stale)
+			require_flag_applies --stale "$command" "release"
+			allow_stale=true
+			shift
+			;;
+		--force)
+			require_flag_applies --force "$command" "release"
+			force=true
+			shift
+			;;
+		--dry-run)
+			require_flag_applies --dry-run "$command" "sweep"
+			dry_run=true
+			shift
+			;;
+		-*)
+			printf 'Unknown option: %s\n' "$1" >&2
+			usage >&2
+			exit "$EXIT_USAGE"
+			;;
+		*)
+			[[ -z "$target" ]] || fail "unexpected extra argument: $1"
+			target="$1"
+			shift
+			;;
+		esac
+	done
+
+	case "$command" in
+	list | sweep)
+		[[ -z "$target" ]] || fail "$command takes --repo DIR, not a positional path"
+		;;
+	*)
+		target="${target:-.}"
+		# Without an explicit --repo, the target worktree is itself a checkout
+		# of the repository, so nothing depends on where the caller stands.
+		# A destroyed worktree has to fall back to the current directory.
+		if [[ -z "$repo" && -d "$target" ]]; then
+			repo="$target"
+		fi
+		;;
+	esac
+
+	case "$command" in
+	claim | refresh | release) owner="$(sanitize_owner "$owner")" ;;
+	status)
+		# The session-owner env var is the session's declared identity, so honour it as
+		# the comparison owner. $USER is not: it would mismatch every issue-ID
+		# lease and make the probe cry wolf. When neither is available the
+		# probe still runs, but says out loud that it compared nothing, so a 0
+		# cannot be read as "this worktree is mine".
+		if [[ "$owner_explicit" == true || -n "${VSTACK_SESSION_OWNER:-}" || -n "${HT_SESSION_OWNER:-}" ]]; then
+			owner="$(sanitize_owner "$owner")"
+		else
+			owner=''
+		fi
+		;;
+	esac
+
+	repo="$(resolve_repo "${repo:-.}")"
+
+	case "$command" in
+	claim) cmd_claim "$repo" "$target" "$owner" ;;
+	refresh) cmd_refresh "$repo" "$target" "$owner" ;;
+	release) cmd_release "$repo" "$target" "$owner" "$ttl_minutes" "$allow_stale" "$force" ;;
+	status) cmd_status "$repo" "$target" "$owner" ;;
+	list) cmd_list "$repo" ;;
+	sweep) cmd_sweep "$repo" "$ttl_minutes" "$dry_run" ;;
+	esac
+}
+
+main "$@"

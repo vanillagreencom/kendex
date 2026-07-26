@@ -6,10 +6,26 @@ Git worktree lifecycle management with env/config symlinks.
 
 ```text
 skills/worktree/
-├── SKILL.md          # Agent-facing skill definition
+├── SKILL.md                     # Agent-facing skill definition
 └── scripts/
-    └── worktree      # Entry point
+    ├── worktree                 # Entry point
+    └── worktree-session-guard   # Ownership leases (see below)
 ```
+
+## Session guard
+
+`worktree-session-guard` records a session's claim on an issue worktree as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` leaves the registration alone. Using the native lock rather than a private marker file is deliberate: it needs no cooperation from whoever runs the cleanup.
+
+The `worktree` entry point does **not** drive it yet — claim and release explicitly (vstack#877). Wiring `create` to claim while only `remove` releases would leave every worktree claimed for its whole life, which turns a lease-aware `cleanup` into a no-op unless `--stale` is passed; that trade is a policy decision, so the mechanism ships ahead of the integration. `VSTACK_SESSION_OWNER` sets the owner, which the workflow sets to the issue ID.
+
+`status PATH --owner NAME` is the read-only ownership probe and answers by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. `claim` is not a probe — it takes or rewrites the lease.
+
+Limits worth knowing before relying on it:
+
+- The lease is keyed on the owner string (the issue ID), so two sessions on the same issue share one lease. Bare `create <ID>` is what refuses a second implementer; `create --reuse|--restack` skips that refusal by design, so **nothing prevents a second implementer there**.
+- Staleness is heartbeat age with no liveness probe, so a session still running that has **outlived its TTL without refreshing** will be treated as abandoned by `release --stale` and `sweep`.
+- The guard requires `flock(1)` and checks only whether it is on PATH — a capability, not a platform — so **wherever flock is available, the claim is mandatory**. Without flock the session is unguarded rather than protected.
+- `git worktree remove -f -f` and `rm -rf` still destroy a claimed worktree; `status` and `list` exist to attribute that afterwards.
 
 ## Setup
 
