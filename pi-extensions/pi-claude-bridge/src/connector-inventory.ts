@@ -113,10 +113,16 @@ export function connectorServerName(connectorName: string): string {
 /**
  * The claude.ai MCP proxy endpoint for one installed connector.
  *
- * Verified live 2026-07-26 that the proxy accepts EITHER the `mcpsrv_…` id from
- * `GET /v1/mcp_servers` or the `installedServerId` UUID this module already
- * returns — both connected and served identical tools with the CLI's own
- * connector loading disabled, so the id form is not a constraint on callers.
+ * The `url` field is REQUIRED by the runtime schema, but the CLI does not
+ * connect to it: for `type: "claudeai-proxy"` it derives the endpoint from `id`.
+ * Caught live — pointing `url` at a local server that never responds still
+ * logged `Using claude.ai proxy at …/mcpsrv_01Wcus…` and connected. So this
+ * builds the honest value for a required field; it is `id` that must be right.
+ *
+ * That also explains why both id forms work: the `mcpsrv_…` id from
+ * `GET /v1/mcp_servers` and the `installedServerId` UUID this module returns
+ * each connected and served identical tools with the CLI's own connector
+ * loading disabled. Both resolve at the proxy; neither depends on `url`.
  */
 export function connectorProxyUrl(installedServerId: string, proxyBase: string = DEFAULT_PROXY_BASE): string {
 	return `${trimTrailingSlashes(proxyBase)}/${encodeURIComponent(installedServerId)}`;

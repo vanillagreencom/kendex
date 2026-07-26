@@ -58,3 +58,26 @@ test("a failed inventory declares nothing rather than throwing", () => {
 	// connectors race again for that session.
 	assert.deepEqual(connectorMcpServers({ ok: false, complete: false, reason: "boom" }), {});
 });
+
+test("CLAUDE_BRIDGE_CONNECTOR_DECLARE=off disables declarations without disabling connectors", () => {
+	// The alwaysLoad barrier's worst-case bound is not established (5s per the
+	// SDK doc comment vs 30000ms in the CLI's own log), so an account with slow
+	// connectors needs a way out that does not cost them connectors entirely.
+	const inv = { ok: true, complete: true, connectors: [
+		{ name: "Slack", installedServerId: "id-slack", installState: "connected" },
+	] };
+	const prev = process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE;
+	try {
+		for (const off of ["off", "0", "false", "no", "OFF"]) {
+			process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = off;
+			assert.deepEqual(connectorMcpServers(inv), {}, `expected ${off} to disable`);
+		}
+		for (const on of ["", "on", "1", "true"]) {
+			process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = on;
+			assert.deepEqual(Object.keys(connectorMcpServers(inv)), ["claude.ai Slack"], `expected ${on || "<empty>"} to keep declarations`);
+		}
+	} finally {
+		if (prev === undefined) delete process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE;
+		else process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = prev;
+	}
+});

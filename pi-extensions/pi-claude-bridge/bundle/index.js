@@ -43249,6 +43249,7 @@ function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
 }
 function connectorMcpServers(inventory) {
   if (!inventory.ok) return {};
+  if (connectorDeclarationsDisabled()) return {};
   const servers = {};
   for (const entry of inventory.connectors) {
     if (entry.installState !== "connected") continue;
@@ -43261,6 +43262,10 @@ function connectorMcpServers(inventory) {
     };
   }
   return servers;
+}
+function connectorDeclarationsDisabled(env = process.env) {
+  const v4 = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();
+  return v4 === "off" || v4 === "0" || v4 === "false" || v4 === "no";
 }
 
 // node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
@@ -45388,6 +45393,7 @@ export {
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
   classifyClaudeExecutableBytes,
+  connectorDeclarationsDisabled,
   connectorMcpServers,
   connectorProxyUrl,
   connectorQueryOptions,

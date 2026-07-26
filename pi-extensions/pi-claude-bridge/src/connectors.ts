@@ -396,6 +396,14 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
  */
 export function connectorMcpServers(inventory: ConnectorInventory): Record<string, unknown> {
 	if (!inventory.ok) return {};
+	// Escape hatch. `alwaysLoad` holds startup until each declared server
+	// connects, and the bound on that wait is NOT established: the SDK doc
+	// comment says a 5s cap while the CLI logs `timeout of 30000ms`, and four
+	// attempts to force a genuine mid-handshake hang each failed fast for a
+	// different reason, so the worst case was never observed. An account with
+	// slow or numerous connectors therefore has an unquantified turn-1 delay,
+	// and this switch turns declarations off without giving up connectors.
+	if (connectorDeclarationsDisabled()) return {};
 	const servers: Record<string, unknown> = {};
 	for (const entry of inventory.connectors) {
 		if (entry.installState !== "connected") continue;
@@ -408,4 +416,16 @@ export function connectorMcpServers(inventory: ConnectorInventory): Record<strin
 		};
 	}
 	return servers;
+}
+
+
+/**
+ * `CLAUDE_BRIDGE_CONNECTOR_DECLARE=off` (or `0`/`false`/`no`) disables explicit
+ * connector declarations while leaving connectors themselves enabled. Falls back
+ * to the pre-#832 behaviour: connectors still load, they just race the turn-1
+ * manifest again.
+ */
+export function connectorDeclarationsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	const v = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();
+	return v === "off" || v === "0" || v === "false" || v === "no";
 }
