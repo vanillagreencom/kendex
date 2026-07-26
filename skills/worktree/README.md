@@ -16,7 +16,19 @@ skills/worktree/
 
 `worktree-session-guard` records a session's claim on an issue worktree as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` leaves the registration alone. Using the native lock rather than a private marker file is deliberate: it needs no cooperation from whoever runs the cleanup.
 
-The `worktree` entry point does **not** drive it yet — claim and release explicitly (vstack#877). Wiring `create` to claim while only `remove` releases would leave every worktree claimed for its whole life, which turns a lease-aware `cleanup` into a no-op unless `--stale` is passed; that trade is a policy decision, so the mechanism ships ahead of the integration. `VSTACK_SESSION_OWNER` sets the owner, which the workflow sets to the issue ID.
+`VSTACK_SESSION_OWNER` sets the owner, which the workflow sets to the issue ID.
+
+**Claiming is explicit; the destructive commands respect a lease** (vstack#877):
+
+| Command | Behaviour |
+|---|---|
+| `create` | never claims |
+| `create --reuse\|--restack` | refuses a foreign lease by name (exit 75), refreshes its own in place |
+| `remove` | releases its own lease first, so a claiming session can tear down its tree; a foreign lease refuses the removal |
+| `cleanup` | never collects a claimed worktree, and reports every skip |
+| `cleanup --stale [--ttl-minutes N]` | also releases and collects leases past the TTL (default 720) |
+
+`create` deliberately does not claim: a lease means "a live session is working here", which only something that knows a session's lifetime can assert — orch claims in `orch/workflows/start.md`. If `create` claimed, every worktree would stay claimed for life and `cleanup` would collect nothing without `--stale`; releasing on a merged branch was the other candidate and it guts the guarantee, since uncommitted work in a merged tree is what the originating incident lost.
 
 `status PATH --owner NAME` is the read-only ownership probe and answers by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. `claim` is not a probe — it takes or rewrites the lease.
 

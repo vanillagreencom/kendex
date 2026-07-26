@@ -241,7 +241,7 @@ Some execution policies reject top-level `git rebase` porcelain outright — Cod
 
 `scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is recorded as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone. That needs no cooperation from whoever runs the cleanup, which a private marker file would.
 
-**Not yet wired into `create`/`remove`/`cleanup`** — drive it explicitly for now (vstack#877 tracks the lifecycle integration; see the note at the end of this section for why it is not automatic yet). Owner defaults to `$VSTACK_SESSION_OWNER`, else `$USER`; the workflow sets it to the issue ID:
+**Claiming is explicit; the destructive commands are wired** (vstack#877). Owner defaults to `$VSTACK_SESSION_OWNER`, else `$USER`; the workflow sets it to the issue ID:
 
 ```bash
 scripts/worktree-session-guard claim   <PATH> --owner <ID>
@@ -251,6 +251,22 @@ scripts/worktree-session-guard sweep --dry-run               # every lease past 
 ```
 
 **Exit codes** — `status` answers "may I work here?" by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. Use `status`, not `claim`, to probe: `claim` takes or rewrites the lease.
+
+**`--repo` applies only to `release`/`status`/`list`/`sweep`.** `claim` and `refresh` reject it, because the target worktree is itself a checkout of the repository. Passing it makes every claim fail, and a best-effort wrapper around that swallows the error — the guard then looks installed while silently never claiming, with `status` returning 3 as the only symptom.
+
+### Lifecycle
+
+| Command | Behaviour |
+|---|---|
+| `worktree create` | **Never claims.** A fresh worktree is unclaimed. |
+| `worktree create --reuse\|--restack` | Refuses a foreign lease by name (exit 75); **refreshes** its own in place, so a long reuse cycle cannot age past the TTL and be swept. |
+| `worktree remove` | Releases **its own** lease before removing, so a claiming session can tear down its own tree. A foreign lease is left alone and refuses the removal, naming the owner. |
+| `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed, since our own lease still means work is in progress. Every skip is reported; a quiet cleanup means nothing was held back. |
+| `worktree cleanup --stale [--ttl-minutes N]` | Additionally releases and collects leases past the TTL (default 720) — the abandoned-session recovery path. |
+
+**Claiming is the caller's job, deliberately.** A lease means "a live session is working here", and only something that knows a session's lifetime can say that truthfully. orch claims in `orch/workflows/start.md` once the worktree is the session's, and `remove` releases at teardown.
+
+If `create` claimed instead, every worktree would stay claimed for life — nothing but an explicit `remove` releases — so a lease-aware `cleanup` would collect nothing without `--stale`, trading a silent-destruction bug for a silent-accumulation one. Releasing on a provably merged branch was the other candidate and it guts the guarantee: a merged branch does not mean an idle tree, and uncommitted work in one is exactly what the incident behind this guard lost.
 
 **Limits, stated rather than papered over.**
 
@@ -262,7 +278,7 @@ The guard requires `flock(1)` and checks only whether it is on PATH — it is a 
 
 A Git worktree lock does not block writes, commits, or rebases inside the worktree, and `git worktree remove -f -f` or a plain `rm -rf` still destroy a claimed tree — `status` and `list` exist so such a removal can be attributed afterwards.
 
-**Why the lifecycle wiring is not in yet.** Claiming on `create` and releasing only on `remove` leaves every worktree claimed for its whole life, so a lease-aware `cleanup` stops collecting merged worktrees entirely unless `--stale` is passed — a behaviour change for every consumer, not a local one. Deciding whether that is the right trade (or whether a provably-merged branch should release the lease, since the work has landed) is a policy call, so the mechanism ships first and the wiring waits on that decision.
+Without `$VSTACK_SESSION_OWNER` (or `$HT_SESSION_OWNER`) the owner falls back to `$USER`, which is a login rather than a session: two sessions on one machine then share an identity, and either can `remove` a tree the other claimed. `cleanup` is unaffected — it skips every lease regardless of owner — so the exposure is limited to explicitly naming another session's worktree. Set the session owner to make a lease name one session.
 
 ## System Dependencies
 

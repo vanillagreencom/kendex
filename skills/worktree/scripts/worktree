@@ -15,6 +15,13 @@
 #     continue        Continue an exact tool-created, paused restack
 #     skip            Skip the current commit in that paused restack
 #     abort           Abort that paused restack and clear pending authorization
+#   cleanup options:
+#     --stale         Also collect worktrees whose session guard lease is past
+#                     the TTL (an abandoned session)
+#     --ttl-minutes N Staleness horizon for --stale (default: 720)
+#
+# Session guard: `create` never claims a lease — see the "Session guard
+# lifecycle" block below for why, and orch's workflows/start.md for who does.
 #
 # Layout: main checkout (repo) + external worktree parent dir
 #   default: <parent-of-checkout>/.worktrees/<checkout-name>/{id}
@@ -1630,6 +1637,154 @@ worktree_lock_reason() {
   printf '%s\n' "${reason:-locked}"
 }
 
+# ─── Session guard lifecycle (#877) ──────────────────────────────────────────
+#
+# `worktree-session-guard` wraps git's native worktree lock with owner/TTL lease
+# semantics. Claiming is deliberately NOT automatic — `create` never takes a
+# lease.
+#
+# The reason is that a lease means "a live session is working here", and only
+# something that knows a session's lifetime can say that truthfully. If `create`
+# claimed, every worktree would stay claimed for life (nothing but an explicit
+# `remove` releases), so a lease-aware `cleanup` would collect nothing without
+# `--stale` — trading a silent-destruction bug for a silent-accumulation one.
+# Claiming therefore stays with the caller that knows when work starts and ends;
+# orch does it in `workflows/start.md`.
+#
+# What IS automatic is the destructive side, because that is where the incident
+# was (hyprtrade CC-1000, worktrees destroyed under live sessions):
+#
+#   cleanup           never collects a worktree under a guard lease; `--stale`
+#                     collects leases past the TTL
+#   remove            releases only the caller's OWN lease, so a claiming
+#                     session can still tear down its own tree
+#   create --reuse    refuses a foreign lease by name, refreshes its own
+#
+SESSION_GUARD="$SCRIPT_DIR/worktree-session-guard"
+readonly SESSION_GUARD_DEFAULT_TTL_MINUTES=720
+
+session_guard_available() {
+  [[ -x "$SESSION_GUARD" ]]
+}
+
+# Mirror the guard's own owner resolution so `claim` and `remove` cannot
+# disagree about identity. $USER is a login, not a session: two sessions on one
+# machine share it. orch sets VSTACK_SESSION_OWNER to the issue ID, which is
+# what makes a lease name one session.
+session_guard_owner() {
+  printf '%s' "${VSTACK_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
+}
+
+# Read-only ownership probe. Sets SESSION_GUARD_PROBE_ERR to the guard's own
+# stderr so a caller can quote it verbatim (it names the owning session).
+# Returns the guard's status exit code: 0 ours, 3 no lock, 4 locked outside the
+# guard, 75 someone else's.
+#
+# `--repo` is passed deliberately: `status`/`release` accept it, so the probe
+# does not depend on the caller's cwd. `claim`/`refresh` REJECT it — see
+# refresh_own_session_lease.
+probe_session_lease() {
+  local wt="$1" owner="$2" rc=0
+  SESSION_GUARD_PROBE_ERR=""
+  SESSION_GUARD_PROBE_ERR="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>&1 >/dev/null)" || rc=$?
+  return "$rc"
+}
+
+# Release this session's OWN lease on a worktree it is about to remove. Without
+# this a session that claimed its worktree cannot tear it down — the lease is a
+# native git lock, so `refuse_locked_worktree` and git itself both refuse. It
+# must therefore run BEFORE that precheck, and after the ownership guard so a
+# foreign repository's lease is never touched.
+#
+# Only an owner-matching guard lease is released. A foreign lease, a lock taken
+# outside the guard, and an unreadable state are all left exactly as they are
+# and fall through to the precheck, which names the owner and the way out.
+release_own_session_lease() {
+  local wt="$1" owner rc=0
+  session_guard_available || return 0
+  owner="$(session_guard_owner)"
+  [[ -n "$owner" ]] || return 0
+  probe_session_lease "$wt" "$owner" || rc=$?
+  # 0 alone means "a guard lease exists AND it is ours".
+  [[ "$rc" -eq 0 ]] || return 0
+  if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" >/dev/null; then
+    echo "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
+    echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
+    return 1
+  fi
+  echo "Released session guard lease (owner=$owner): $wt" >&2
+  return 0
+}
+
+# `--reuse`/`--restack` re-enter an existing worktree, which is the
+# second-implementer gap of #571 for the session-lifetime case. A foreign lease
+# is refused by name; our own is refreshed so a long reuse cycle cannot age past
+# the TTL and be swept while it is still working.
+reuse_respects_session_lease() {
+  local wt="$1" owner rc=0
+  session_guard_available || return 0
+  owner="$(session_guard_owner)"
+  [[ -n "$owner" ]] || return 0
+  probe_session_lease "$wt" "$owner" || rc=$?
+  case "$rc" in
+    3) return 0 ;;  # no lock at all
+    4) return 0 ;;  # locked outside the guard — refuse_locked_worktree's business
+    0) ;;
+    75)
+      echo "Error: $wt is claimed by another session; refusing to reuse it." >&2
+      [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+      echo "Coordinate with the owning session instead of reusing its worktree." >&2
+      return 1
+      ;;
+    *)
+      echo "Error: could not read the session guard state of $wt (exit $rc); refusing to reuse it." >&2
+      [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+      return 1
+      ;;
+  esac
+  # `refresh` REJECTS `--repo` — it applies only to release/status/list/sweep.
+  # Passing it fails every refresh, and a best-effort wrapper would swallow that
+  # so the guard looks wired while silently never refreshing. Do not add it.
+  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
+    echo "Error: could not refresh this session's guard lease on $wt." >&2
+    return 1
+  fi
+  return 0
+}
+
+# `cleanup` is the untargeted sweeper, so it is the operation that destroyed
+# live worktrees in the incident this guard exists for. It never removes a
+# claimed worktree — not even one claimed by THIS session, since our own lease
+# still means work is in progress there.
+cleanup_lease_permits_removal() {
+  local wt="$1" rc=0
+  session_guard_available || return 0
+  "$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    3) return 0 ;;     # no lock at all
+    0 | 75) ;;         # a guard lease is present — ours (0) or another's (75)
+    4)
+      echo "Skipped (locked outside the session guard): $wt" >&2
+      return 1
+      ;;
+    *)
+      echo "Skipped (session guard state could not be read, exit $rc): $wt" >&2
+      return 1
+      ;;
+  esac
+  if [[ "$CLEANUP_STALE" != true ]]; then
+    echo "Skipped (a session holds a guard lease): $wt" >&2
+    echo "  Let that session release it, or pass --stale to collect leases past the ${CLEANUP_TTL_MINUTES}m TTL." >&2
+    return 1
+  fi
+  if "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1; then
+    echo "Released stale session guard lease: $wt" >&2
+    return 0
+  fi
+  echo "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
+  return 1
+}
+
 # Refuse to act on a worktree that carries a native `git worktree lock`.
 # `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
 # so a locked worktree is unremovable. This is a DIAGNOSTIC precheck, not the
@@ -1969,6 +2124,11 @@ case "${1:-}" in
         refuse_existing_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fi
 
+      # A guard lease is the session-lifetime half of that same ownership
+      # signal: refuse another session's tree by name, refresh our own so a
+      # long reuse cycle cannot age past the TTL (#877). Before any mutation.
+      reuse_respects_session_lease "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+
       # Network/ref discovery must succeed before the claim lock or any setup
       # mutation. Repeat it under the per-issue lock immediately before reuse.
       discover_ownership_remote_heads || exit 1
@@ -2229,6 +2389,13 @@ case "${1:-}" in
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
+      # A session that claimed this worktree must be able to tear it down, and
+      # its lease IS a native git lock — so the release has to come before the
+      # lock precheck below, not after it (#877). Only our own lease is
+      # released; a foreign one falls through and the precheck names its owner.
+      if ! release_own_session_lease "$WT_PATH"; then
+        exit 1
+      fi
       # Diagnostic precheck: a locked worktree cannot be removed, and git's own
       # refusal names neither the owning session nor the unlock command (#800).
       # Runs after the ownership guard so a foreign or main checkout is rejected
@@ -2291,6 +2458,44 @@ case "${1:-}" in
     ;;
 
   cleanup)
+    CLEANUP_STALE=false
+    CLEANUP_TTL_MINUTES="$SESSION_GUARD_DEFAULT_TTL_MINUTES"
+    shift || true
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --help|-h)
+          echo "Usage: $0 cleanup [--stale] [--ttl-minutes N]"
+          echo ""
+          echo "Remove worktrees whose branch is already merged into origin/$DEFAULT_BRANCH."
+          echo "A worktree held by a session guard lease is never collected, and every"
+          echo "skip is reported — a quiet cleanup means nothing was held back."
+          echo ""
+          echo "Options:"
+          echo "  --stale             Also collect worktrees whose guard lease is past the TTL"
+          echo "                      (an abandoned session). Releases the lease, then removes."
+          echo "  --ttl-minutes N     Staleness horizon for --stale (default: $SESSION_GUARD_DEFAULT_TTL_MINUTES)"
+          exit 0
+          ;;
+        --stale) CLEANUP_STALE=true; shift ;;
+        --ttl-minutes)
+          if [[ $# -lt 2 ]]; then
+            echo "Error: --ttl-minutes requires a value" >&2
+            exit 1
+          fi
+          if ! [[ "$2" =~ ^[0-9]{1,10}$ ]]; then
+            echo "Error: --ttl-minutes must be a non-negative integer of at most 10 digits" >&2
+            exit 1
+          fi
+          CLEANUP_TTL_MINUTES="$2"
+          shift 2
+          ;;
+        *)
+          echo "Error: unknown option '$1' for cleanup" >&2
+          echo "Run: $0 cleanup --help" >&2
+          exit 1
+          ;;
+      esac
+    done
     git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
     CLEANUP_FAILED=false
     CLEANUP_MERGE_TARGET="origin/$DEFAULT_BRANCH"
@@ -2313,6 +2518,11 @@ case "${1:-}" in
       if [[ -n "$BRANCH" ]] && \
          git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && \
          git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
+        # A merged branch does NOT mean an idle tree: uncommitted work in it is
+        # exactly what the CC-1000 incident lost. Ask the lease, not the branch.
+        if ! cleanup_lease_permits_removal "$wt"; then
+          continue
+        fi
         CLEANUP_REMOVE_OUTPUT=""
         if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
           CLEANUP_FAILED=true
@@ -2620,7 +2830,7 @@ case "${1:-}" in
     ;;
 
   *)
-    echo "Usage: $0 create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    echo "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     exit 1
     ;;
 esac
