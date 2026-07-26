@@ -81,35 +81,85 @@ OUT="$(run_scope "$TWO")"
   && pass "distinct workflows are both preserved" \
   || fail "distinct workflows are both preserved (got $(names_of "$OUT"))"
 
-echo "=== vstack#876 reported shape (documents CURRENT behaviour, not a fix) ==="
+echo "=== vstack#876 reported shape ==="
 
-# The reported rollup: a completed substantive run whose required aggregate
-# passed, plus a SECOND same-head run of the same workflow whose jobs came back
-# as zero-second failures/cancellations.
+# The reported rollup, with the run ids and job `startedAt` values taken from
+# the real head (vanillagreencom/hyprtrade#419 @ 1d9b5e7):
 #
-# Scoping alone does NOT drop that second run: a run full of failures counts as
-# substantive (it has non-skipped checks), so it wins on run id. `pr-merge
-# --check` therefore still reports ci_failed while the required aggregate is
-# green — which is exactly the disagreement #876 describes, and it is NOT
-# resolved by unifying the scoping. This assertion exists so that is recorded as
-# known behaviour rather than assumed fixed; a change that makes the second run
-# lose should update this test deliberately.
+#   run 30201902682  pull_request_review, attempt 1, CANCELLED by concurrency
+#                    jobs 12:21:43-12:21:56 — the "zero-second failures"
+#   run 30201726860  pull_request, attempt 2 (a RERUN), SUCCESS
+#                    jobs 12:22:07-12:23:31, `CI Required` published 12:28:48
+#
+# The rerun carries the LOWER run id because a new attempt reuses the original
+# run's id, so max-run-id picked the cancelled run and leaked its artifacts into
+# `pr-merge --check` while `ci-wait` — already rerun-aware via vstack#699 —
+# reported pass. Ranking on when the checks actually ran resolves that: the
+# rerun's jobs start after the cancelled run's.
 DUP='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/30201726860/job/1"},
- {"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:05:00Z","link":"https://x/actions/runs/30201726860"},
- {"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:06:00Z","link":"https://x/actions/runs/30201902682/job/9"},
- {"name":"build","state":"CANCELLED","bucket":"cancel","workflow":"CI","startedAt":"2026-07-26T10:06:00Z","link":"https://x/actions/runs/30201902682/job/10"}
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:22:11Z","link":"https://x/actions/runs/30201726860/job/1"},
+ {"name":"CI Gate Publisher","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:23:26Z","link":"https://x/actions/runs/30201726860/job/2"},
+ {"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T12:28:48Z","link":"https://x/actions/runs/30201726860"},
+ {"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T12:21:56Z","link":"https://x/actions/runs/30201902682/job/9"},
+ {"name":"build","state":"CANCELLED","bucket":"cancel","workflow":"CI","startedAt":"2026-07-26T12:21:45Z","link":"https://x/actions/runs/30201902682/job/10"}
 ]'
 OUT="$(run_scope "$DUP")"
-if jq -e '[.[] | select(.state == "FAILURE" or .state == "CANCELLED")] | length == 2' >/dev/null <<<"$OUT"; then
-  pass "the second same-head run's failures still survive scoping (#876 remains open)"
+if jq -e '[.[] | select(.state == "FAILURE" or .state == "CANCELLED")] | length == 0' >/dev/null <<<"$OUT"; then
+  pass "the cancelled duplicate run's failures are scoped out (#876)"
 else
-  fail "the second same-head run's failures still survive scoping (#876 remains open)"
+  fail "the cancelled duplicate run's failures are scoped out (#876) (got $OUT)"
 fi
 if jq -e '[.[] | select(.name == "CI Required" and .state == "SUCCESS")] | length == 1' >/dev/null <<<"$OUT"; then
-  pass "the required aggregate stays green alongside those failures"
+  pass "the required aggregate stays green and is not rewritten"
 else
-  fail "the required aggregate stays green alongside those failures"
+  fail "the required aggregate stays green and is not rewritten (got $OUT)"
+fi
+if jq -e 'all(.[]; (.link | test("/runs/30201902682/") | not))' >/dev/null <<<"$OUT"; then
+  pass "no check from the cancelled run reaches the merge gate"
+else
+  fail "no check from the cancelled run reaches the merge gate (got $OUT)"
+fi
+
+echo "=== rank ordering guardrails ==="
+
+# Fail-closed must survive the switch away from run-id order. A newer run that
+# is still QUEUED has no usable timestamp; it must NOT lose to a completed older
+# run, or a merge could proceed while replacement work is in flight.
+QUEUED='[
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
+ {"name":"build","state":"QUEUED","bucket":"pending","workflow":"CI","startedAt":"0001-01-01T00:00:00Z","link":"https://x/actions/runs/200/job/2"}
+]'
+OUT="$(run_scope "$QUEUED")"
+if [[ "$(jq -r '.[0].link' <<<"$OUT")" == *"/runs/200/"* ]] && [[ "$(jq 'length' <<<"$OUT")" == 1 ]]; then
+  pass "a queued newer run with no timestamp still wins (run-id fallback)"
+else
+  fail "a queued newer run with no timestamp still wins (run-id fallback) (got $OUT)"
+fi
+
+# A genuinely later run that failed is still a failure — time ordering must not
+# become a way for an older green run to mask a real regression.
+LATERFAIL='[
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
+ {"name":"build","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"https://x/actions/runs/200/job/2"}
+]'
+OUT="$(run_scope "$LATERFAIL")"
+if [[ "$(jq -r '.[0].state' <<<"$OUT")" == "FAILURE" ]] && [[ "$(jq 'length' <<<"$OUT")" == 1 ]]; then
+  pass "a later failing run stays terminal"
+else
+  fail "a later failing run stays terminal (got $OUT)"
+fi
+
+# The stale-aggregate rewrite follows the same ordering as run selection.
+STALE='[
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
+ {"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:01:00Z","link":"https://x/actions/runs/100"},
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"https://x/actions/runs/200/job/2"}
+]'
+OUT="$(run_scope "$STALE")"
+if jq -e '[.[] | select(.name == "CI Required" and .state == "EXPECTED")] | length == 1' >/dev/null <<<"$OUT"; then
+  pass "an aggregate pointing at a superseded run is held pending"
+else
+  fail "an aggregate pointing at a superseded run is held pending (got $OUT)"
 fi
 
 echo
