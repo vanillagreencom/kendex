@@ -43281,7 +43281,7 @@ function connectorWriteDenyOutput(toolName) {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through Memsira's gated approval flow.`
+      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through the host application's gated approval flow.`
     }
   };
 }

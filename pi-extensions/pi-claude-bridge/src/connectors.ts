@@ -159,6 +159,22 @@ function connectorNameWords(segment: string): string[] {
 // Explicit known write tool names (current claude.ai connectors). Passed to the
 // SDK disallowedTools so today's writes are removed from the model's context by
 // exact tool id (the CLI matcher only supports exact ids or a whole-server glob).
+//
+// PUBLIC CONTRACT — this list and `isConnectorWriteTool` have downstream
+// dependents that gate real user-facing approvals on them (vstack#892):
+//
+//   memsira  routes connector writes through its own gated approval flow
+//   drovr    keeps its chat sidecar permanently write-`deny` and runs an
+//            approved write as a separate one-shot `claude -p` scoped by
+//            `--allowedTools` to exactly one connector tool (drovr#288)
+//
+// Both pin the actions they expose against this classification, because "the
+// sidecar structurally cannot do this itself" is THIS module's claim, not
+// theirs. RECLASSIFYING AN ENTRY HERE AS A READ WOULD MAKE A CONSUMER'S
+// CONFIRMATION CARD BYPASSABLE. Additions are safe and expected; removals and
+// read-verb reclassifications are breaking — coordinate first, see
+// docs/cross-repo.md. `unit-connectors.mjs` pins the set so a change has to be
+// deliberate.
 export const CONNECTOR_WRITE_TOOLS = [
 	`${CONNECTOR_NS_GMAIL}create_draft`,
 	`${CONNECTOR_NS_GMAIL}create_label`,
@@ -307,6 +323,12 @@ export function connectorWriteDenyHook(): HookCallback {
 	};
 }
 
+// The deny reason is handed verbatim to the `claude` child's model, so it must
+// stay PRODUCT-NEUTRAL: this is shared source and every consuming app shows it.
+// Naming one host told a different app's model to use a product it has never
+// heard of, which is confusing at exactly the moment someone is debugging a
+// refused write (vstack#892). Each host describes its own approval flow in its
+// own prompt; this string only has to say that one exists.
 function connectorWriteDenyOutput(toolName: string) {
 	return {
 		hookSpecificOutput: {
@@ -314,7 +336,7 @@ function connectorWriteDenyOutput(toolName: string) {
 			permissionDecision: "deny" as const,
 			permissionDecisionReason:
 				`Connector write tool "${toolName}" is blocked in read-only connector mode. ` +
-				`Connector writes must go through Memsira's gated approval flow.`,
+				`Connector writes must go through the host application's gated approval flow.`,
 		},
 	};
 }

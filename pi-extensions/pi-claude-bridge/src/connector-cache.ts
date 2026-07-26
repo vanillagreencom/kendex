@@ -17,6 +17,19 @@
 // Everything here is best-effort. A missing, unreadable, corrupt, stale, or
 // wrong-version cache returns undefined and the caller falls back to today's
 // behaviour — the same fail-open contract as the inventory call itself.
+//
+// The ON-DISK FORMAT HAS AN EXTERNAL READER (vstack#892). drovr quarantines this
+// bundle to its sidecar process, so rather than calling `listAccountConnectors`
+// in-process it re-implements the reader half — path
+// `<piUserDir()>/connector-cache/<sha256(CLAUDE_CONFIG_DIR).hex[0..16]>.json`,
+// payload `{version, scope, savedAt, connectors}`, 7-day max age — as the
+// "is this connector installed" half of its write gate.
+//
+// That coupling fails OPEN on drift by design, so a format change degrades them
+// from two gates to one rather than breaking them. It is still worth making the
+// change knowingly: bump CACHE_VERSION so their staleness check rejects rather
+// than misreads, and say so in the changelog. `unit-connector-cache.mjs` pins
+// the path shape and payload keys.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

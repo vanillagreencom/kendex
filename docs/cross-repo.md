@@ -141,6 +141,40 @@ Settled by measurement 2026-07-26 (vstack#832) and recorded here because every r
 - **Fail-open is live-observed, not just constructed.** One run in 20 spontaneously started 26 connections and 18 of them failed; the declared Slack still connected, the model still called `mcp__claude_ai_Slack__slack_search_channels`, and the turn answered correctly. That same run is the reason to keep an escape hatch: the account-side connection picture is not stable run to run.
 - **Only `installState === "connected"` connectors are declared.** The rest are never attempted by the CLI either, so declaring them would ask `alwaysLoad` to block startup on servers that cannot connect.
 
+## Connector Write Classification Is A Gate Two Apps Depend On — Must-Agree
+
+Recorded 2026-07-26 (vstack#892), because two consuming apps now gate real
+user-facing approvals on a classification that lives in shared source.
+
+- **`CONNECTOR_WRITE_TOOLS` and `isConnectorWriteTool` are public, not internal**
+  (`pi-extensions/pi-claude-bridge/src/connectors.ts`). memsira routes connector
+  writes through its own gated approval flow. drovr keeps its chat sidecar
+  permanently write-`deny` and runs an approved write as a separate one-shot
+  `claude -p` scoped by `--allowedTools` to exactly one connector tool
+  (drovr#288). Both pin the actions they expose against this classification,
+  because *"the sidecar structurally cannot do this itself"* is the **bridge's**
+  claim, not theirs.
+- **Reclassifying an entry as a READ makes a consumer's confirmation card
+  bypassable, and nothing downstream notices.** Additions are safe and expected;
+  removals and read-verb renames are breaking. Coordinate before changing one.
+  `unit-connectors.mjs` asserts every listed id still classifies as a write and
+  that each connector family stays represented, so the change has to be
+  deliberate.
+- **The connector-cache file format has an external reader.** drovr quarantines
+  the bundle to its sidecar process, so instead of calling
+  `listAccountConnectors` in-process it re-implements the reader half — path
+  `<piUserDir()>/connector-cache/<sha256(CLAUDE_CONFIG_DIR).hex[0..16]>.json`,
+  payload `{version, scope, savedAt, connectors}`, 7-day max age — as the "is
+  this connector installed" half of its write gate. That coupling **fails open**
+  on drift, so a format change degrades them from two gates to one rather than
+  breaking them; bump `CACHE_VERSION` so their staleness check rejects rather
+  than misreads.
+- **Anything the deny path says is shown verbatim to every consumer's model.**
+  The `PreToolUse` deny reason is handed straight to the `claude` child, so
+  product-specific wording in it tells one app's model to use another app's
+  product. It named Memsira until #892; keep it product-neutral and let each
+  host describe its own approval flow in its own prompt. Guarded by a test.
+
 ## Connector Enumeration Is Token-Scoped
 
 Deterministic connector enumeration (vstack#848) answers "which connectors does this account have" by calling the account rather than asking the model. One property is easy to get wrong and fails silently:
