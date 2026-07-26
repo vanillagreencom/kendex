@@ -160,5 +160,43 @@ set -e
 assert_eq "$([[ -f "$worktree/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" \
   "rejected fix (no items) writes no artifact file"
 
+# --- vstack#884: a qualified validation result is recordable ---
+# `validate` stays a closed enumeration (orch gates on it); the note is the
+# additive channel for a caveat the enumeration cannot express. Without it a
+# pass-only-on-re-run is recorded as a bare "pass" and the caveat is lost from
+# the artifact orch treats as authoritative.
+NOTE="80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
+noted="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-note --round-id "$RID" \
+  --branch b --commit c --validate pass --validate-note "$NOTE")"
+assert_eq "$(jq -r '.validate' "$noted")" "pass" "--validate-note leaves validate strictly enumerated"
+assert_eq "$(jq -r '.validate_note' "$noted")" "$NOTE" "--validate-note is recorded verbatim"
+
+# A FAILING run can carry a caveat too — the note is not pass-only.
+failnote="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-failnote --round-id "$RID" \
+  --branch b --commit c --validate "FAILING: lint" --validate-note "lint fails only under --release")"
+assert_eq "$(jq -r '.validate' "$failnote")" "FAILING: lint" "a note does not relax a FAILING verdict"
+assert_eq "$(jq -r '.validate_note' "$failnote")" "lint fails only under --release" "FAILING artifacts can carry a note"
+
+# Omitted: the field is present and null, so consumers never have to distinguish
+# "absent key" from "no note".
+plain="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-nonote --round-id "$RID" \
+  --branch b --commit c --validate pass)"
+assert_eq "$(jq -r 'has("validate_note")' "$plain")" "true" "validate_note is always present"
+assert_eq "$(jq -r '.validate_note' "$plain")" "null" "an omitted note is null, not empty string"
+
+# An empty or whitespace-only note looks like a recorded caveat while carrying
+# nothing, so it is refused rather than stored.
+assert_exit2 "whitespace-only --validate-note exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
+  --validate pass --validate-note "   "
+assert_exit2 "--validate-note with no value exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
+  --validate pass --validate-note
+
+# The note must never become a way to smuggle a third verdict past the gate.
+assert_exit2 "--validate still rejects an out-of-domain verdict even with a note" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
+  --validate pass_with_notes --validate-note "explained"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

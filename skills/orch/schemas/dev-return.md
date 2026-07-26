@@ -39,8 +39,8 @@ artifact):
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement|fix \
   --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] \
-  --validate [pass|"FAILING: c1,c2"] [--qa-label LABEL]... [--bundled] [--no-summary] \
-  [--summary-file PATH] [--item N DECISION REASONING]...
+  --validate [pass|"FAILING: c1,c2"] [--validate-note TEXT] [--qa-label LABEL]... \
+  [--bundled] [--no-summary] [--summary-file PATH] [--item N DECISION REASONING]...
 ```
 
 It is a sanctioned single-command invocation (harness-safe: one command with
@@ -59,6 +59,7 @@ backticks) so the command stays classifier-safe under Codex `approval=never`.
   "branch": "user/proj-123",
   "commit": "abc123f",
   "validate": "pass",
+  "validate_note": "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash",
   "qa_labels": ["needs-review"],
   "summary_posted": true,
   "summary": null,
@@ -79,12 +80,35 @@ backticks) so the command stays classifier-safe under Codex `approval=never`.
 | `issue` | Yes | `--issue` | Normalized workflow-state key (Parent ID when bundled); grammar `^[A-Za-z0-9._-]+$`, no `..` |
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
 | `commit` | Yes | `--commit` | HEAD SHA after the commit (prior HEAD if no commit was needed) |
-| `validate` | Yes | `--validate` | `"pass"` or `"FAILING: check1,check2"` |
+| `validate` | Yes | `--validate` | `"pass"` or `"FAILING: check1,check2"` — strictly enumerated, so it stays machine-checkable |
+| `validate_note` | Optional | `--validate-note TEXT` | Free-text qualifier the enumeration cannot express, or `null`. See below |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none (implement only) |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the § 9.1 summary was posted to a tracker (Linear); GitHub/ad-hoc rounds set `false` |
 | `summary` | Optional | `--summary-file PATH` | The completion-summary CONTENT, or `null`. Carries the summary for GitHub/ad-hoc rounds (returned to the orchestrator, not posted) so a lost return is recoverable |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement, else `false` |
 | `items` | Conditional | `--item N DECISION REASONING` (repeatable) | See kind rules |
+
+## Recording a qualified validation result
+
+`validate` is deliberately a closed enumeration — orch gates on it, so it must
+stay machine-checkable. But a real run is not always cleanly one or the other: a
+lane can fail once and pass on re-run over the identical diff, which is worth
+investigating and worth recording. Without somewhere to put that, the artifact
+says a bare `pass` and the caveat is lost from the record orch treats as
+authoritative, surviving only if the agent happens to mention it
+conversationally (vstack#884).
+
+`--validate-note` is that place. It never relaxes `--validate`:
+
+```bash
+--validate pass \
+--validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
+```
+
+`dev-artifact-check` echoes both `validate` and `validate_note` in its output, so
+the note reaches the orchestrator that accepts the completion rather than only
+the file. An empty or whitespace-only note is rejected (exit 2) — it would look
+like a recorded caveat while carrying nothing.
 
 ## Kind rules
 

@@ -459,8 +459,14 @@ Do NOT post handoff to the completed issue — that conflates audiences. Handoff
 **Before returning — write your completion artifact.** With every row above checked (commit, QA labels, and summary now final), run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json`). Do NOT hand-author the JSON — the writer builds it deterministically (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation outlasted the turn (§ 5, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating the whole task. Run it AFTER commit/labels/summary so every field is final:
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--qa-label [LABEL]]...
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
+**A pass that needed a re-run is still a `pass` — but say so.** Keep `--validate` strictly `pass` or `FAILING: …`; when the result is qualified (a lane that failed once and passed on re-run over the identical diff, a flake you had to investigate), add `--validate-note` so the caveat lands in the durable record instead of only in your return message (vstack#884):
+
+```bash
+--validate pass --validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
+```
+
 
 `--issue [ARTIFACT_KEY]` is the value of the delegation's `Artifact Key:` line — the **normalized workflow-state key** (`issue-N` for GitHub, `PROJ-123` for Linear), NOT the tracker-native `OWNER/REPO#N`. Orch resolves the artifact by that exact key, so keying it to anything else (or to the bare GitHub number) leaves the receipt un-found. `--round-id` is the `[DEV_ROUND_ID]` from the `Round ID:` line — it binds this receipt to your delegation (the writer names the file `tmp/dev-return-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`). `--validate` is `pass` or `FAILING: check1,check2` (matching your commit/return); pass one `--qa-label` per applied § 8 label, none if there were none. **GitHub/ad-hoc rounds** (summary not posted to a tracker): also append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md` so the summary content is recoverable from the artifact if your return is lost. It is a single sanctioned command (harness-safe — no shell redirection in your command) and prints the artifact path. **Bundled** (§ 11): add `--bundled` and one `--item` per sub-issue, key `--issue` to `[ARTIFACT_KEY]` (the Parent ID) — see § 11.
 
@@ -516,7 +522,7 @@ Do NOT push or submit PR — orchestrator handles after review passes.
 3. **Write the completion artifact** — run `dev-return-write` (schema: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)), keyed to the Parent ID, before sending the return. The orchestrator treats it as the durable completion record for the bundle, so a lost return message is recoverable without redoing the work:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
    ```
 
    `--issue [ARTIFACT_KEY]` is the delegation's `Artifact Key:` line — for a bundle that is the Parent's normalized workflow-state key (`issue-N`/`PROJ-123`), NOT the tracker-native form; orch resolves the bundle artifact by that key. `--round-id` is the `[DEV_ROUND_ID]` from the `Round ID:` line (per group, if the bundle was delegated in groups). `--bundled` requires at least one `--item` — one per sub-issue result (`--item 1 Applied "..."`), `DECISION` ∈ Applied|Skipped|Blocked, `REASONING` non-empty plain text (no backticks). `--commit` is the last sub-issue's HEAD; add one `--qa-label` per aggregated QA label. The writer rejects a bundled artifact with no items, so populate them from the sub-issue tree.

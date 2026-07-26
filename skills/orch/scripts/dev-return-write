@@ -19,9 +19,16 @@
 #
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
-#     --branch BRANCH --commit SHA --validate STR \
+#     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
 #     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
 #     [--item N DECISION REASONING]...
+#
+# --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
+# machine-checkable. --validate-note is the additive channel for a QUALIFIED
+# result the enumeration cannot express — a lane that passed only on re-run, a
+# flake that had to be investigated, a caveat worth carrying (vstack#884).
+# Without it the caveat is lost from the record orch treats as authoritative,
+# surviving only if the agent happens to mention it conversationally.
 #
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
@@ -34,6 +41,7 @@
 #     "branch": "[BRANCH]",                   // required
 #     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
 #     "validate": "pass" | "FAILING: c1,c2",  // required, "pass" or "FAILING:…"
+#     "validate_note": "…" | null,            // --validate-note, free text
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary-file content (GitHub/ad-hoc recovery)
@@ -68,13 +76,15 @@ usage() {
   cat <<'EOF'
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
-    --branch BRANCH --commit SHA --validate STR \
+    --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
     [--item N DECISION REASONING]...
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
+--validate-note carries a qualified result the enumeration cannot express (a lane
+that passed only on re-run, a flake worth recording); it never relaxes --validate.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 EOF
@@ -101,6 +111,7 @@ round_id=""
 branch=""
 commit=""
 validate=""
+validate_note=""
 summary_file=""
 bundled=false
 summary_posted=true
@@ -118,6 +129,7 @@ while (( $# > 0 )); do
     --branch)       need "$1" $#; branch="$2"; shift 2 ;;
     --commit)       need "$1" $#; commit="$2"; shift 2 ;;
     --validate)     need "$1" $#; validate="$2"; shift 2 ;;
+    --validate-note) need "$1" $#; validate_note="$2"; shift 2 ;;
     --summary-file) need "$1" $#; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
@@ -163,6 +175,12 @@ check_id_token --round-id "$round_id"
 [[ -n "$validate" ]] || die "--validate is required (non-empty)"
 [[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
   || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
+# An empty or whitespace-only note is worse than none: it looks like a recorded
+# caveat while carrying nothing. Reject it rather than storing "".
+if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
+  [[ -n "${validate_note//[[:space:]]/}" ]] \
+    || die "--validate-note must contain non-whitespace text"
+fi
 if [[ -n "$summary_file" ]]; then
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
 fi
@@ -223,6 +241,7 @@ jq -n \
   --arg branch "$branch" \
   --arg commit "$commit" \
   --arg validate "$validate" \
+  --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
   --argjson summary_posted "$summary_posted" \
   "${summary_arg[@]}" \
@@ -236,6 +255,7 @@ jq -n \
      branch: $branch,
      commit: $commit,
      validate: $validate,
+     validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
      summary_posted: $summary_posted,
      summary: $summary,

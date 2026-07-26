@@ -324,5 +324,43 @@ state_schema="$REPO_ROOT/skills/orch/schemas/workflow-state.md"
 assert_file_contains "$state_schema" "dev_delegated_at" "workflow-state schema documents dev_delegated_at"
 assert_file_contains "$state_schema" "dev_round_id" "workflow-state schema documents dev_round_id"
 
+# --- vstack#884: the note has to reach the orchestrator, not just the file ---
+# This output IS what orch accepts a completion on, so a caveat stored in the
+# artifact but never echoed would be as lost as one never recorded.
+noted_file="$worktree/tmp/noted.json"
+NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
+jq -n --arg note "$NOTE" '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",
+  commit:"c",validate:"pass",validate_note:$note,qa_labels:[],summary_posted:true,summary:null,
+  bundled:false,items:[]}' > "$noted_file"
+out="$("$CHECK" --file "$noted_file")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "an artifact carrying a validate_note is valid"
+assert_eq "$(jq -r '.validate' <<<"$out")" "pass" "the check echoes the enumerated verdict"
+assert_eq "$(jq -r '.validate_note' <<<"$out")" "$NOTE" "the check echoes the qualifier to the orchestrator"
+
+# Artifacts written before the field existed must keep validating unchanged.
+legacy_file="$worktree/tmp/legacy.json"
+jq -n '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",commit:"c",
+  validate:"pass",qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$legacy_file"
+out="$("$CHECK" --file "$legacy_file")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "an artifact with no validate_note key is still valid"
+assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "an absent note reports null"
+
+# Wrong-typed or empty notes are malformed receipts, not silently-ignored ones.
+for bad in '""' '42' 'true' '[]'; do
+  bad_file="$worktree/tmp/badnote.json"
+  jq -n --argjson n "$bad" '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",
+    commit:"c",validate:"pass",validate_note:$n,qa_labels:[],summary_posted:true,summary:null,
+    bundled:false,items:[]}' > "$bad_file"
+  assert_eq "$("$CHECK" --file "$bad_file" 2>/dev/null | jq -r '.reason')" "invalid" \
+    "validate_note $bad is rejected as invalid"
+done
+
+# A missing artifact still reports the stable shape with null qualifiers.
+out="$("$CHECK" --file "$worktree/tmp/nope.json" 2>/dev/null || true)"
+assert_eq "$(jq -r '.validate' <<<"$out")" "null" "a missing artifact reports validate=null"
+assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "a missing artifact reports validate_note=null"
+
+assert_file_contains "$dev_return_schema" "validate_note" "dev-return schema documents validate_note"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

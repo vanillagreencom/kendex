@@ -19,6 +19,7 @@
 # skills/orch/schemas/dev-return.md):
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
+#     "validate_note": "…"|null (optional free-text qualifier — vstack#884),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
 #
@@ -93,10 +94,21 @@ check_id_token() {
     || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
 }
 
+# `validate` and `validate_note` are surfaced here, not just stored in the file:
+# this output IS what the orchestrator reads to accept a completion, so a
+# qualified result recorded in the artifact and never echoed would be as lost as
+# one that was never recorded (vstack#884). Both are null when the artifact is
+# missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3"
+  local ok="$1" path="$2" reason="$3" validate=null validate_note=null
+  if [[ -n "$path" && -f "$path" ]]; then
+    validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
+    validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
+  fi
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
-    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}'
+    --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason,
+      validate: $validate, validate_note: $validate_note}'
 }
 
 # The artifact's internal round_id must equal the expected token. Guards against
@@ -118,6 +130,8 @@ has_required_fields() {
       and ((.branch? | type) == "string") and (.branch != "")
       and ((.commit? | type) == "string") and (.commit != "")
       and ((.validate? | type) == "string") and (.validate != "")
+      and ((.validate_note? | type) as $t | $t == "null" or $t == null
+           or ($t == "string" and (.validate_note != "")))
       and ((.round_id? | type) == "string") and (.round_id != "")
       and ((.schema_version? | type) == "number")
   ' "$1" >/dev/null 2>&1
