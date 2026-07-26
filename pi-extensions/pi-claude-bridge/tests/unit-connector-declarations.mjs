@@ -16,14 +16,33 @@ test("declares only connectors the account reports as connected", () => {
 	assert.deepEqual(Object.keys(servers), ["claude.ai Slack"]);
 });
 
-test("keys each server by the CLI's own name, because the key IS the namespace", () => {
-	// Keyed as anything else the connector appears twice under two namespaces,
-	// which breaks consumers that pin fully-qualified tool names.
+test("COMPATIBILITY CONTRACT: the server key is `claude.ai <Connector>` — changing it breaks memsira", () => {
+	// This is a cross-repo contract, not a style choice. Read this before
+	// "improving" the key format.
+	//
+	// The mcpServers key IS the tool namespace. memsira's claude_tools.rs
+	// hard-codes FULLY-QUALIFIED connector tool names into `--allowedTools` and
+	// into its executor system prompt, and never globs a namespace. So if this
+	// format changes, every memsira connector WRITE silently stops matching a
+	// real tool and surfaces to the user as "unavailable" rather than as an
+	// error naming the cause — the worst possible failure shape, because it
+	// looks like a missing connector rather than a broken contract.
+	//
+	// Keyed as anything else, the connector also appears TWICE (28 servers vs
+	// 27), once from our declaration and once from the CLI's own loader.
+	//
+	// If this test fails, you are making a breaking change for a downstream
+	// repo. Coordinate with memsira first; see docs/cross-repo.md
+	// "The Connector Server Key Is The Tool Namespace — Must-Agree Across Repos".
+	assert.equal(connectorServerName("Slack"), "claude.ai Slack");
+	assert.equal(connectorServerName("Google Calendar"), "claude.ai Google Calendar");
+	assert.equal(connectorServerName("  Figma  "), "claude.ai Figma", "trimmed, not otherwise rewritten");
+	// No case-folding, no separator substitution, no id in the key — the tool
+	// namespace derives from this string and memsira pins the result verbatim.
 	const servers = connectorMcpServers(ok([
 		{ name: "Google Calendar", installedServerId: "id-cal", installState: "connected" },
 	]));
 	assert.deepEqual(Object.keys(servers), ["claude.ai Google Calendar"]);
-	assert.equal(connectorServerName("Google Calendar"), "claude.ai Google Calendar");
 });
 
 test("emits the claudeai-proxy shape with alwaysLoad set", () => {
