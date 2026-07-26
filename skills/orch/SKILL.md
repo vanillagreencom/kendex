@@ -16,6 +16,8 @@ metadata:
 
 # Orchestration
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 ## STOP — Required Setup
 
 Load IN ORDER before anything else. Do not proceed if any fails.

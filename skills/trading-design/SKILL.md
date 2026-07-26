@@ -13,6 +13,8 @@ metadata:
 
 # Professional Trading UI Design
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Stack-agnostic. Does not define specific tokens, colors, or pixel values — those belong in your design system.
 
 ## Skill Guidelines

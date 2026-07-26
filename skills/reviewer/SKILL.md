@@ -13,6 +13,8 @@ metadata:
 
 # Reviewer
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Code-review, whole-codebase review, and QA-review workflows plus the structured-finding schema. Load this skill when:
 
 - You are doing a code review (any reviewer specialist: correctness, quality, arch, security, error, test, doc, perf, safety, structure) and need to know how to classify findings or format the verdict.

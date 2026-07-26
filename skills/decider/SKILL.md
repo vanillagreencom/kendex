@@ -13,6 +13,8 @@ metadata:
 
 # Decider
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Manages Architecture Decision Records (ADRs) — represented in this skill as numbered `DXXX` architectural decision documents indexed in `INDEX.md` (by default under `docs/decisions/`) — with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
 
 ```bash

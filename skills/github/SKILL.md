@@ -13,6 +13,8 @@ metadata:
 
 # GitHub Queries
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 CLI wrapper for GitHub API operations used in PR workflows. Provides structured JSON output, bot account support, and configurable issue ID extraction.
 
 ```bash

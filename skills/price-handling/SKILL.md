@@ -13,6 +13,8 @@ metadata:
 
 # Price Handling Patterns
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 f64 price handling rules for trading systems -- epsilon comparison, tick-size rounding, feed normalization, and display formatting.
 
 ## Resources

@@ -14,6 +14,8 @@ metadata:
 
 # Worktree Management
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Portable git worktree manager. Worktrees live outside the repo root by default — `<parent-of-checkout>/.worktrees/<checkout-name>/{id}` — so recursive editor/file watchers on the repo never ingest worktree build outputs, and sibling repos cannot collide on a shared parent dir. Projects can override the worktree parent directory with `WORKTREE_BASE_DIR`.
 
 Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved (`list`/`remove`/`push`/`restack`/`create --reuse`); there is no auto-migration. Path comparisons are canonical (physical, symlink-resolved on both sides), so a worktree registered under a legacy symlinked spelling and addressed via its physical path — or vice versa — is recognized as the same tree, never as a foreign one.

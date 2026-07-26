@@ -14,6 +14,8 @@ metadata:
 
 # iced-shadcn
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Component design skill for building shadcn Base UI-inspired components in Iced. Covers architecture decisions, family decomposition, implementation methodology, and parity audits.
 
 ## Resources

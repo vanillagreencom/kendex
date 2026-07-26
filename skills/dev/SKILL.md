@@ -16,6 +16,8 @@ metadata:
 
 # Dev Workflows
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Dev-agent workflows for specialist agents receiving delegations from an orchestrator.
 
 ## Workflows

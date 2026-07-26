@@ -13,6 +13,8 @@ metadata:
 
 # Iced 0.14
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Framework skill for building any Iced 0.14 UI.
 
 ## Reading order

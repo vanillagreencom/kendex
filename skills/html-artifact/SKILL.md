@@ -14,6 +14,8 @@ metadata:
 
 # HTML Artifact
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Use when the user wants a human-readable artifact from a conversation, plan, approach, report, review, explainer, prototype, or custom editor instead of a long reply or Markdown file.
 
 Rules:

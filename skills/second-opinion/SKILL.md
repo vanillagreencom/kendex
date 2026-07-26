@@ -14,6 +14,8 @@ metadata:
 
 # Second Opinion
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Cross-model second opinion via external AI CLI. Auto-detects the current harness and calls the opposite:
 
 | Running in | Calls |

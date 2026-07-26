@@ -90,7 +90,7 @@ fn init_skill(name: &str) -> Result<()> {
 
 fn skill_body(name: &str) -> String {
     format!(
-        "---\nname: {name}\ndescription: TODO — describe this skill\nlicense: MIT\nuser-invocable: true\n# dependencies:\n#   required: [skill-a, skill-b]\n#   optional: [skill-c]\nmetadata:\n  author: your-name\n  # source: your-project\n  # repository: \"https://github.com/owner/repo\"\n  # bugs: \"https://github.com/owner/repo/issues\"\n  version: \"1.0.0\"\n---\n\n# {title}\n\nTODO — skill instructions.\n",
+        "---\nname: {name}\ndescription: TODO — describe this skill\nlicense: MIT\nuser-invocable: true\n# dependencies:\n#   required: [skill-a, skill-b]\n#   optional: [skill-c]\nmetadata:\n  author: your-name\n  # source: your-project\n  # repository: \"https://github.com/owner/repo\"\n  # bugs: \"https://github.com/owner/repo/issues\"\n  version: \"1.0.0\"\n---\n\n# {title}\n\n> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.\n\nTODO — skill instructions.\n",
         title = title_case(name),
     )
 }
@@ -160,6 +160,9 @@ mod tests {
         assert!(body.contains("  # source: your-project"));
         assert!(body.contains("  # repository: \"https://github.com/owner/repo\""));
         assert!(body.contains("  # bugs: \"https://github.com/owner/repo/issues\""));
+        // A new skill must point at the routing command, not only at a bugs URL:
+        // the ownership guard is a backstop for issues that bypassed it (#863).
+        assert!(body.contains("Run `vstack report`"));
     }
 
     #[test]

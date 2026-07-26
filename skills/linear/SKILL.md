@@ -13,6 +13,8 @@ metadata:
 
 # Linear CLI
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and structured output.
 
 ```bash

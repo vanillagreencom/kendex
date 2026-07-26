@@ -16,6 +16,8 @@ metadata:
 
 # Project Management
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 User-facing wrappers and TPM-execution workflows for project-level planning, audit, roadmap, and research-driven decomposition.
 
 ## Commands

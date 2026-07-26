@@ -16,6 +16,8 @@ metadata:
 
 # Deep Research
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Use this skill for evidence-backed research reports, architectural investigations, vendor/library comparisons, technology choices, and workflow-owned `findings.md` reports.
 
 ## Harness Routing

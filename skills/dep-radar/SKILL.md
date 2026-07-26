@@ -16,6 +16,8 @@ metadata:
 
 # dep-radar — pinned-version sweep, safe auto-update, and capability report
 
+> **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
+
 Repos pin versions deliberately (reproducibility, SHA verification, supply-chain
 safety). The cost of pinning is drift: model lists lag pinned SDKs, pinned
 runtime binaries fall behind upstream contract changes. This skill is the
