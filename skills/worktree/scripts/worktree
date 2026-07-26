@@ -706,16 +706,55 @@ current_checkout_path_for_issue() {
 # `worktree remove` refuses without --force. Git does NOT consult the
 # per-worktree git-dir's info/exclude; only the common dir's is read
 # (https://git-scm.com/docs/gitignore#_pattern_format), so we must write
-# there. The shared exclude file is harmless for the main checkout because
-# the same paths exist there as real gitignored directories.
+# there.
+#
+# That shared file is the problem this function has to work around (#878). The
+# entry is meant for a SYMLINK in a worktree, but it lands in a file every
+# checkout of the repo reads — including main, where the same path is a REAL
+# directory. A bare `harness` entry therefore marks that whole directory ignored
+# in main, and `git add harness/tracked-file` starts refusing with "The
+# following paths are ignored by one of your .gitignore files" while `git
+# status` still lists the file as modified. It outlives the worktree, too.
+#
+# The fix uses the very asymmetry documented above: a TRAILING-SLASH pattern
+# matches a real directory but NOT a symlink pointing at one. So when the path
+# has tracked content, follow the bare entry with `!<path>/`, which re-includes
+# the real directory in main while leaving the worktree's symlink ignored. Order
+# matters — gitignore takes the LAST matching pattern — so the negation is
+# always rewritten after the bare entry.
+#
+# The negation is added ONLY when the path actually holds tracked files.
+# Runtime-only paths (the common case — vstack's own `.agents` mirror is hidden
+# in main by this entry alone, with no .gitignore rule behind it) must keep the
+# plain blanket entry, or main fills with untracked noise. The condition is
+# re-evaluated on every call, so a path that gains or loses tracked content
+# self-heals in both directions.
+#
+# Other tools write to this file too (Claude Code adds its own `**/.claude/*`
+# entries), so only our own exact lines are ever added or removed.
 exclude_from_worktree_index() {
-  local wt="$1" path="$2"
+  local wt="$1" path="$2" has_tracked="${3:-false}"
   [[ -z "$path" ]] && return 0
-  local common_dir info_exclude
+  local common_dir info_exclude negation tmp
   common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)" || return 0
   info_exclude="$common_dir/info/exclude"
+  negation="!$path/"
   mkdir -p "$(dirname "$info_exclude")"
+
+  # Drop any existing negation first: when it is still wanted it gets appended
+  # below, which also guarantees it sits AFTER the bare entry.
+  if [[ -f "$info_exclude" ]] && grep -qxF "$negation" "$info_exclude" 2>/dev/null; then
+    tmp="$info_exclude.wt-tmp.$$"
+    if grep -vxF "$negation" "$info_exclude" > "$tmp" 2>/dev/null; then
+      mv "$tmp" "$info_exclude"
+    else
+      rm -f "$tmp" 2>/dev/null
+    fi
+  fi
+
   grep -qxF "$path" "$info_exclude" 2>/dev/null || echo "$path" >> "$info_exclude"
+  [[ "$has_tracked" == true ]] && echo "$negation" >> "$info_exclude"
+  return 0
 }
 
 # Replace "$2" with a symlink to "$1" without ever leaving "$2" absent.
@@ -759,7 +798,24 @@ symlink_into_worktree() {
     echo "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
     return 1
   fi
-  exclude_from_worktree_index "$wt" "$path"
+  # Whether this path holds tracked content decides the SHAPE of the exclude
+  # entry (#878): a path with tracked files needs the `!<path>/` negation so the
+  # real directory in the main checkout stays stageable. Covers both the file
+  # entry and the directory's contents, so it is computed once here rather than
+  # separately in each branch below.
+  #
+  # Ask BOTH indexes. The damage this guards against lands in the main checkout,
+  # so main is the authority — a worktree branch that predates the commit which
+  # started tracking the path would otherwise report "untracked" and leave main
+  # broken. Either index seeing tracked content is enough: the negation only
+  # re-includes a REAL directory, so it is inert in a worktree where the path is
+  # a symlink.
+  local tracked_here=false
+  if [[ -n "$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null || true)" ]] ||
+     [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path" "$path/" 2>/dev/null || true)" ]]; then
+    tracked_here=true
+  fi
+  exclude_from_worktree_index "$wt" "$path" "$tracked_here"
 
   if [[ -f "$src" ]]; then
     # File symlink — if the path is tracked in the worktree (common before a
