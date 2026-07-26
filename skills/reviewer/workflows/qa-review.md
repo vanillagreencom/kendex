@@ -119,6 +119,20 @@ targeted regression output.
 1. **Build JSON** per [`../schemas/review-finding.md`](../schemas/review-finding.md), filename `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
    - `[AGENT]` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
    - Standard fields: `agent`, `timestamp`, `verdict`, `summary`, `blockers[]`, `suggestions[]`
+   - **Every `blockers[]` and `suggestions[]` item requires all of these.** `review-artifact-check` rejects the whole artifact if one item omits one field, and the rejection costs a re-delegation round-trip:
+
+     | Field | Value |
+     |-------|-------|
+     | `id` | Sequential number within its array |
+     | `title` | Concise title, 5-10 words |
+     | `location` | Path plus symbol, **no line numbers** — e.g. ``"rust-core/src/runtime/driver.rs (`RuntimeDriver::run_cycle`)"``. Line or hunk evidence goes in `description`, where it cannot go stale |
+     | `description` | The problem statement. Not `detail` |
+     | `recommendation` | Actionable fix steps. Not `remediation` |
+     | `priority` | Integer **1-4** only (P1 Urgent … P4 Low). There is no P5 — a finding below P4 is a P4 or is not worth reporting |
+     | `estimate` | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
+     | `category` | **Suggestions only**: `fix` (apply in this PR) or `issue` (track separately). The orchestrator routes on this, so an item without it is silently dropped |
+
+     `file`/`line` are not fields — they are one `location` string. Full reference: [`../schemas/review-finding.md`](../schemas/review-finding.md).
    - If performance QA agent: include `benchmark_commit` from § 2.5
    - `qa_metadata.[agent_type]` populated per your agent (project-configurable):
 

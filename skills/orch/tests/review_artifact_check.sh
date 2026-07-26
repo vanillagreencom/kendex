@@ -517,5 +517,81 @@ assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" 
 assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
 assert_file_contains "$submit_pr" 'reason `incomplete`' "submit-pr documents the incomplete-artifact rejection (vstack#678)"
 
+# --- vstack#885: the rejection has to teach the schema, not just flag it ---
+# Four artifacts were rejected in one session by agents that followed the
+# workflow text without opening the schema file. Two reached for `priority: 5`;
+# two used plausible-but-wrong field names (`detail`, `remediation`, `file`+
+# `line`). The rejection is relayed verbatim to the agent that must redo the
+# work, so it names the whole expected item shape.
+REQ_SPEC="every blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue)"
+
+# The check exits 1 on a rejected artifact, which is the case under test here —
+# swallow it so `set -e`/`pipefail` do not abort the suite on an expected failure.
+detail_of() { "$CHECK" --file "$1" 2>/dev/null | jq -r '.detail // ""' || true; }
+
+# priority: 5 — the "lower than the lowest" instinct.
+p5="$TMP_ROOT/p5.json"
+jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
+  suggestions:[{id:1,title:"t",location:"a.rs (`f`)",description:"d",recommendation:"r",
+  priority:5,estimate:2,category:"fix"}],qa_metadata:{safety:{}}}' > "$p5"
+d="$(detail_of "$p5")"
+assert_substr "$d" "suggestions[0]: missing/invalid priority(not 1..4)" \
+  "priority 5 is still reported as out of range"
+assert_substr "$d" "$REQ_SPEC" "the priority rejection states the 1-4 range and the full item shape"
+
+# `detail` instead of `description`, with id/estimate/category omitted.
+alias1="$TMP_ROOT/alias1.json"
+jq -n '{agent:"reviewer-arch",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
+  suggestions:[{title:"t",location:"a.rs",detail:"d",recommendation:"r",priority:3}],
+  qa_metadata:{arch_review:{}}}' > "$alias1"
+d="$(detail_of "$alias1")"
+assert_substr "$d" "suggestions[0]: missing/invalid id, description, estimate, category" \
+  "a detail/description swap is reported by field name"
+assert_substr "$d" "$REQ_SPEC" "the swap rejection names the correct field set"
+
+# file+line instead of location, remediation instead of recommendation.
+alias2="$TMP_ROOT/alias2.json"
+jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
+  suggestions:[{title:"t",file:"a.rs",line:12,description:"d",remediation:"r",priority:3}],
+  qa_metadata:{safety:{}}}' > "$alias2"
+d="$(detail_of "$alias2")"
+assert_substr "$d" "suggestions[0]: missing/invalid id, location, recommendation, estimate, category" \
+  "file/line and remediation are reported as the missing canonical fields"
+assert_substr "$d" "no line numbers" "the rejection states that location carries no line numbers"
+
+# Aliases are NOT accepted — one canonical spelling, taught rather than guessed.
+assert_eq "$("$CHECK" --file "$alias1" 2>/dev/null | jq -r '.reason' || true)" "incomplete" \
+  "an aliased field name is still rejected, not silently accepted"
+
+# A well-formed item produces no detail at all.
+good="$TMP_ROOT/good.json"
+jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
+  suggestions:[{id:1,title:"t",location:"a.rs (`f`)",description:"d",recommendation:"r",
+  priority:4,estimate:2,category:"issue"}],qa_metadata:{safety:{}}}' > "$good"
+assert_eq "$("$CHECK" --file "$good" | jq -r '.reason')" "valid" "a schema-correct artifact is still valid"
+assert_eq "$(detail_of "$good")" "" "a valid artifact carries no detail"
+
+# --- The authoring path must carry the requirements, not just the recovery path ---
+# This is the actual defect in vstack#885: an agent that follows the workflow
+# text without opening the schema file had strictly less information than the
+# rejection it would then receive.
+qa_review="$REPO_ROOT/skills/reviewer/workflows/qa-review.md"
+assert_file_contains "$qa_review" "priority" "qa-review 2.6 names the priority field inline"
+assert_file_contains "$qa_review" "1-4" "qa-review 2.6 states the priority range inline"
+assert_file_contains "$qa_review" "no line numbers" "qa-review 2.6 states the location shape inline"
+assert_file_contains "$qa_review" "recommendation" "qa-review 2.6 names recommendation inline"
+assert_file_contains "$qa_review" "fix" "qa-review 2.6 names the suggestion categories inline"
+
+reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
+assert_file_contains "$reviewer_skill" "Output Contract" "reviewer SKILL has an output-contract section"
+assert_file_contains "$reviewer_skill" "1-4" "reviewer SKILL states the priority range"
+assert_file_contains "$reviewer_skill" "no 5" "reviewer SKILL says there is no P5"
+assert_file_contains "$reviewer_skill" 'not `detail`' "reviewer SKILL warns against the detail alias"
+assert_file_contains "$reviewer_skill" 'not `remediation`' "reviewer SKILL warns against the remediation alias"
+assert_file_contains "$reviewer_skill" "no line numbers" "reviewer SKILL states the location shape"
+
+review_pr_recovery="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+assert_file_contains "$review_pr_recovery" "integer 1-4" "review-pr's rejection text states the priority range"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

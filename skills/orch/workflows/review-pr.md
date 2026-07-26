@@ -269,7 +269,7 @@ Run `review-artifact-check` on every return message and every watchdog sweep. It
 
 **If `ok == false` after a return message** — the return is **incomplete** (even if its `File:` path looks valid or the message body contains JSON). Send that agent **exactly one** re-delegation:
 
-> Your review return is incomplete: `review-artifact-check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md` (each `blockers[]`/`suggestions[]` item needs `id`, `title`, `location`, `description`, `recommendation`, `priority`, `estimate`; suggestions also `category ∈ {fix,issue}`), then return `Verdict:` and `File:` again.
+> Your review return is incomplete: `review-artifact-check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md` (each `blockers[]`/`suggestions[]` item needs `id`, `title`, `location` — path plus symbol, no line numbers — `description`, `recommendation`, `priority` as an integer 1-4, `estimate` 1-5; suggestions also `category ∈ {fix,issue}`), then return `Verdict:` and `File:` again.
 
 If `review-artifact-check` still reports `ok == false` after the re-delegation return (or the agent hits its § 3.2 deadline), mark the agent `unresponsive` — do not re-delegate a second time.
 

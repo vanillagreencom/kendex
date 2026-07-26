@@ -54,6 +54,27 @@ All reviewer agents share this baseline stance, then narrow it through their own
 
 Return `pass` only when your review domain has no verified blocker in scope. Put a finding in `blockers[]` when the scoped code introduces or contains a domain regression, an unjustified fallback-standard violation, or unresolved high-risk uncertainty that can be verified only by the author. Put a finding in `suggestions[]` only when it is actionable but non-blocking.
 
+## Output Contract
+
+Your review artifact is validated deterministically by orch's `review-artifact-check`. A single malformed item rejects the **whole** artifact and costs a re-delegation round-trip, so get the item shape right the first time.
+
+Every `blockers[]` and `suggestions[]` item requires all of:
+
+| Field | Value |
+|-------|-------|
+| `id` | Sequential number within its array |
+| `title` | Concise title, 5-10 words |
+| `location` | One string: path plus symbol, **no line numbers** — e.g. ``"rust-core/src/runtime/driver.rs (`RuntimeDriver::run_cycle`)"``. There are no `file`/`line` fields; line or hunk evidence belongs in `description`, where it cannot go stale |
+| `description` | The problem statement. The field is `description`, not `detail` |
+| `recommendation` | Actionable fix steps. The field is `recommendation`, not `remediation` |
+| `priority` | Integer **1-4** only — P1 Urgent, P2 High, P3 Normal, P4 Low |
+| `estimate` | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
+| `category` | **Suggestions only**: `fix` (apply in this PR) or `issue` (track separately). The orchestrator routes suggestions on this field, so an item without it matches no filter and is silently dropped |
+
+**`priority` has no 5.** The instinct to reach for one is real — it usually means "the least important thing in this report" — but the scale ends at 4, and the schema has no place to record that ranking. Use P4, or drop the finding: a finding that does not justify P4 is one of the cosmetic items the approval bar above already excludes.
+
+Full schema, including `questions[]` and `qa_metadata`: [`schemas/review-finding.md`](./schemas/review-finding.md).
+
 ## Reviewer Scope Boundaries
 
 Use this table to avoid duplicate findings across parallel reviewers. If domains overlap, the primary owner reports the item; secondary reviewers report only when they add materially different evidence, impact, or remediation.
