@@ -858,6 +858,75 @@ warn_if_links_materialized() {
   return 0
 }
 
+# Undo symlink shadowing so git can check out through the configured paths
+# (#873, #874).
+#
+# `symlink_into_worktree` replaces a configured directory with a symlink and
+# marks the tracked files underneath it --assume-unchanged. Git then refuses any
+# checkout that would rewrite those paths — "Your local changes to the following
+# files would be overwritten by checkout", ending in "could not detach HEAD" —
+# so `git rebase` in the create --reuse/--restack path dies before it starts.
+# `git status --porcelain` is empty throughout, because assume-unchanged is
+# exactly what hides them, which is what makes the failure so confusing.
+#
+# Restoring the index's own content as real files removes the conflict without
+# touching any user work: what we discard is a symlink the tool itself laid
+# down, and the tracked content it hid is recreated from the index verbatim.
+# Callers re-apply setup afterwards, which re-links and re-marks the paths.
+#
+# No-op unless a configured entry actually shadows tracked files, so the
+# ordinary runtime-only symlink case is left completely alone.
+unshadow_tracked_symlink_paths() {
+  local wt="$1" path="" tracked="" checkout_err=""
+  local -a shadowed=()
+  [[ -n "$wt" && -d "$wt" ]] || return 0
+  validate_worktree_setup_config >/dev/null 2>&1 || return 0
+
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+    tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null || true)"
+    [[ -n "$tracked" ]] || continue
+
+    # Clear the bit first: while it is set, git will not write these paths even
+    # once the link is gone.
+    printf '%s\n' "$tracked" | \
+      xargs -r git -C "$wt" update-index --no-assume-unchanged 2>/dev/null || true
+
+    # Only a symlink needs removing. A real directory here means a previous
+    # rebase already materialized it (#856); its tracked content is genuine and
+    # a checkout can write straight through it.
+    if [[ -L "$wt/$path" ]] && ! rm -f "$wt/$path" 2>/dev/null; then
+      echo "Error: Could not remove the '$path' symlink in $wt to restore the tracked files it shadows." >&2
+      return 1
+    fi
+    shadowed[${#shadowed[@]}]="$path"
+  done
+
+  [[ ${#shadowed[@]} -gt 0 ]] || return 0
+
+  if ! checkout_err="$(git -C "$wt" checkout -- ${shadowed[@]+"${shadowed[@]}"} 2>&1)"; then
+    echo "Error: Could not restore the tracked files shadowed by WORKTREE_SYMLINKS in $wt:" >&2
+    sed 's/^/  /' <<<"$checkout_err" >&2
+    echo "Re-link the worktree, then retry:" >&2
+    echo "  cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Re-apply setup after a reuse/restack attempt that un-shadowed the configured
+# paths and then failed. Without this the worktree is left holding real tracked
+# directories where the harness links belong, which is a valid git state but a
+# broken harness.
+restore_unshadowed_worktree_setup() {
+  local wt="$1"
+  setup_app_worktree "$wt" && return 0
+  echo "Warning: Worktree setup could not be reapplied after the failed rebase; harness links may be missing." >&2
+  echo "  Restore them from the main checkout: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+  return 0
+}
+
 setup_worktree_links() {
   local wt="$1"
   validate_worktree_setup_config || return 1
@@ -1864,6 +1933,13 @@ case "${1:-}" in
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
         else
           REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
+          # Configured symlinks that shadow tracked files make git refuse to
+          # detach HEAD, so the rebase below cannot even start (#873, #874).
+          # Undo the shadowing first; every terminal path re-applies setup.
+          if ! unshadow_tracked_symlink_paths "$WT_PATH"; then
+            restore_unshadowed_worktree_setup "$WT_PATH"
+            exit 1
+          fi
           prepare_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" "$REUSE_BASE_OID" || exit 1
           if REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
@@ -1874,6 +1950,7 @@ case "${1:-}" in
               # Rebase never started (e.g. uncommitted changes) — nothing to
               # abort or resolve; surface git's own message.
               cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
               echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
               sed 's/^/  /' <<<"$REBASE_OUTPUT" >&2
               exit 1
@@ -1883,6 +1960,7 @@ case "${1:-}" in
               git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || MARKER_ABORT_OK=false
               if [[ "$MARKER_ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
                 cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
               fi
               echo "Error: Could not bind the paused rebase to its tool-created restack token; refusing guarded recovery." >&2
               exit 1
@@ -1905,6 +1983,7 @@ case "${1:-}" in
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || ABORT_OK=false
             if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
               cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
             fi
             echo "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
             if [[ -n "$CONFLICT_FILES" ]]; then

@@ -260,6 +260,8 @@ Configured setup paths (`WORKTREE_SYMLINKS`, `WORKTREE_COPIES`, `WORKTREE_MKDIRS
 
 **Symlink untracked paths only.** When a `WORKTREE_SYMLINKS` directory entry contains tracked files, setup marks them `assume-unchanged` so the symlink does not show as a typechange. Git then refuses to write those paths in that worktree — `cherry-pick`, `checkout`, and `merge` fail with *"local changes would be overwritten"* while `git status` reports clean, which is a hard failure to diagnose. That behavior exists for projects migrating away from committing harness config; it is wrong when the project still tracks the content. Setup warns and names the shadowed files. The fix is to narrow the entry to the untracked subpaths: symlink `.pi/agents` and `.pi/APPEND_SYSTEM.md` rather than `.pi`, so tracked `.pi/prompts/*.md` stay real files in every worktree.
 
+`create --reuse` and `create --restack` no longer fail on this. Before rebasing, they clear the `assume-unchanged` bits, drop the configured symlinks, and restore the shadowed files from the index, so git can detach HEAD; setup is re-applied on every terminal path — success, a rebase that never started, an aborted conflict, and `restack continue`/`restack abort`. A `--restack` that pauses on conflicts deliberately stays un-shadowed, so conflicts are resolved against real files; the links come back when the restack finishes or is aborted. This makes reuse work against an entry that shadows tracked files, but it does not make that configuration correct — narrowing the entry is still the right fix, and setup still warns.
+
 Example: share local env plus generated Claude assets, but keep `.claude/CLAUDE.md` pointed at each worktree's own `AGENTS.md`:
 
 ```toml
