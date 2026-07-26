@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Decide whether a fix round needs re-review, deterministically (vstack#875).
+#
+# `git-diff-summary` answers "what KIND of files changed". Review routing was
+# using that as a proxy for "how RISKY is this change", and the two are not the
+# same question. A round classified `support` skipped re-review outright — no
+# matter how large the diff was, and no matter that it was written to clear
+# blockers the reviewers had just found.
+#
+# That is exactly where the damage concentrates. Build and validation tooling is
+# where a silent false-green does the most harm, because every other gate reads
+# its signal. In the round that produced this script (hyprtrade CC-1143), a
+# 996-insertion `support` diff resolving 8 blockers would have shipped
+# unreviewed; the re-review a human asked for found 3 more blockers, two of them
+# new false-greens introduced by the fixes themselves.
+#
+# So route on the risk signals directly, and make every skip visible.
+#
+# Usage:
+#   refix-route [-C DIR] --base REF [--blockers-fixed N] [--summary-file FILE]
+#
+#   -C DIR              run against this worktree (default: cwd)
+#   --base REF          the pre-delegate SHA/ref the fix round started from
+#   --blockers-fixed N  how many BLOCKERS this round set out to fix (default 0).
+#                       Suggestions do not count: the signal is "this round was
+#                       written under blocker pressure", not "work happened".
+#   --summary-file F    use this git-diff-summary JSON instead of running it
+#                       (testing, and re-using a summary already computed)
+#
+# Prints one JSON object:
+#   {decision, class, reason, files_changed, insertions, deletions,
+#    changed_lines, scope, risk_flags, blockers_fixed, threshold_lines}
+#
+#   decision: "rereview" | "skip"
+#   class:    "none" | "risk" | "production" | "blockers" | "size" | "small"
+#
+# Callers map `class` to their own section numbers — the routing tables keep
+# owning where to go, this owns whether to go back at all.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DIR="."
+BASE=""
+BLOCKERS_FIXED=0
+SUMMARY_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C) DIR="${2:?-C requires a path}"; shift 2 ;;
+    --base) BASE="${2:?--base requires a ref}"; shift 2 ;;
+    --blockers-fixed) BLOCKERS_FIXED="${2:?--blockers-fixed requires a count}"; shift 2 ;;
+    --summary-file) SUMMARY_FILE="${2:?--summary-file requires a path}"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "refix-route: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if ! [[ "$BLOCKERS_FIXED" =~ ^[0-9]+$ ]]; then
+  echo "refix-route: --blockers-fixed must be a non-negative integer, got '$BLOCKERS_FIXED'" >&2
+  exit 2
+fi
+
+# Total changed lines that still routes to re-review. A `support` diff bigger
+# than this gets looked at again even when no blocker prompted it: past a
+# certain size a "fix" is new surface, not a correction. Tunable per repo
+# because what counts as a big tooling change differs; orch-env applies the
+# documented default when unset or non-numeric.
+THRESHOLD_LINES="$("$SCRIPT_DIR/orch-env" PR_REVIEW_REFIX_MAX_LINES 200)"
+
+if [[ -n "$SUMMARY_FILE" ]]; then
+  [[ -f "$SUMMARY_FILE" ]] || { echo "refix-route: no such summary file: $SUMMARY_FILE" >&2; exit 2; }
+  SUMMARY="$(cat "$SUMMARY_FILE")"
+else
+  [[ -n "$BASE" ]] || { echo "refix-route: --base is required (or pass --summary-file)" >&2; exit 2; }
+  SUMMARY="$("$SCRIPT_DIR/../../github/scripts/git-diff-summary" -C "$DIR" "$BASE")"
+fi
+
+if ! jq -e . >/dev/null 2>&1 <<<"$SUMMARY"; then
+  echo "refix-route: git-diff-summary did not produce valid JSON" >&2
+  exit 1
+fi
+
+jq -c \
+  --argjson blockers "$BLOCKERS_FIXED" \
+  --argjson threshold "$THRESHOLD_LINES" '
+  (.files_changed // 0)            as $files |
+  (.insertions // 0)               as $ins |
+  (.deletions // 0)                as $del |
+  (.risk_flags // [])              as $flags |
+  (.scope // "support")            as $scope |
+  ($ins + $del)                    as $lines |
+
+  # Ordered so the reported reason is the FIRST thing that made it risky, which
+  # is what an operator reading the log wants to know.
+  (if $files == 0 then
+     {decision: "skip",     class: "none",
+      reason: "no files changed"}
+   elif ($flags | length) > 0 then
+     {decision: "rereview", class: "risk",
+      reason: ("risk flags present: " + ($flags | join(", ")))}
+   elif $scope == "production" then
+     {decision: "rereview", class: "production",
+      reason: "production scope"}
+   elif $blockers > 0 then
+     {decision: "rereview", class: "blockers",
+      reason: (($blockers | tostring) + " blocker(s) fixed in this round")}
+   elif $lines > $threshold then
+     {decision: "rereview", class: "size",
+      reason: (($lines | tostring) + " changed lines exceeds threshold " + ($threshold | tostring))}
+   else
+     {decision: "skip",     class: "small",
+      reason: ("support scope, no blockers, " + ($lines | tostring) + " changed lines within threshold " + ($threshold | tostring))}
+   end)
+  + {
+      files_changed: $files,
+      insertions: $ins,
+      deletions: $del,
+      changed_lines: $lines,
+      scope: $scope,
+      risk_flags: $flags,
+      blockers_fixed: $blockers,
+      threshold_lines: $threshold
+    }
+' <<<"$SUMMARY"

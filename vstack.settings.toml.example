@@ -42,6 +42,13 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # checks have registered yet. Raise for repos whose CI dispatches only after a
 # review approval (approval-gated jobs / merge queue) with slow dispatch.
 
+PR_REVIEW_REFIX_MAX_LINES = "200"
+# Used by: orch (`review-pr`, via `refix-route`). Total changed lines
+# (insertions + deletions) a support-scope fix round may reach before it is
+# re-reviewed anyway. A round that cleared blockers is always re-reviewed
+# regardless of this value; this is the backstop for large rounds that no
+# blocker prompted.
+
 CI_FIX_MAX_CYCLES = "6"
 # Used by: orch (`submit-pr` / `merge-pr`). Max automated ci-fix cycles per PR
 # submission or merge recovery before reporting the persistent CI failure back

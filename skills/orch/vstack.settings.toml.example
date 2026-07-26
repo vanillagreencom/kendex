@@ -70,6 +70,13 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # to the user.
 CI_FIX_MAX_CYCLES = "6"
 
+# Used by: orch (`review-pr`, via `refix-route`). Total changed lines
+# (insertions + deletions) a support-scope fix round may reach before it is
+# re-reviewed anyway. A round that cleared blockers is always re-reviewed
+# regardless of this value; this is the backstop for large rounds that no
+# blocker prompted.
+PR_REVIEW_REFIX_MAX_LINES = "200"
+
 # Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
 # agent-session budget of the harness runtime, counting the primary session.
 # "0" = unlimited: every reviewer launches up front and persists through

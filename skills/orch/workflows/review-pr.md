@@ -382,21 +382,36 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    - `items`: [SELECTED_ITEMS — format each as `#[N] | [Agent] | [Location]` with Description + Recommendation]
    - `source`: `pr-review`
 
-3. **Route based on fix scope**:
+3. **Route based on fix risk**:
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pre_delegate_sha
-   .agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] $PRE_SHA
    ```
-   Use the workflow-state output as `PRE_SHA`.
+   Use the output as `PRE_SHA`.
 
-   | `files_changed` | `risk_flags` | `scope` | Route |
-   |-----------------|--------------|---------|-------|
-   | `0` | — | — | § 5 |
-   | `>0` | non-empty | any | → § 2 (full re-review, all agents) |
-   | `>0` | empty | `production` | Selective shutdown (below) → § 2 |
-   | `>0` | empty | `support` | § 5 |
+   ```bash
+   .agents/skills/orch/scripts/refix-route -C [WORKTREE_PATH] --base $PRE_SHA --blockers-fixed [BLOCKERS_FIXED]
+   ```
+   `BLOCKERS_FIXED` is the count of **blockers** among the items delegated in step 2 — the ones presented under the `Blockers` heading. Fix suggestions do not count; the signal is that this round was written under blocker pressure. Pass `0` when only suggestions were selected.
 
-   **Selective shutdown** (row 3):
+   `refix-route` prints `{decision, class, reason, …}`. Route on `class`:
+
+   | `class` | Meaning | Route |
+   |---------|---------|-------|
+   | `none` | no files changed | § 5 |
+   | `risk` | risk flags present | → § 2 (full re-review, all agents) |
+   | `production` | production scope | Selective shutdown (below) → § 2 |
+   | `blockers` | this round cleared blockers | → § 2 (full re-review, all agents) |
+   | `size` | support scope, but past the size threshold | → § 2 (full re-review, all agents) |
+   | `small` | support scope, no blockers, under threshold | Record the skip (below) → § 5 |
+
+   Do not infer the route from `scope` alone. `scope` answers *what kind of files changed*, not *how risky the change is* — a `support` diff is build and validation tooling, which is exactly where a silent false-green does the most damage because every other gate reads its signal (vstack#875).
+
+   **Record the skip** (`small`): re-review was skipped by policy, so say so rather than letting it pass unremarked — report `reason` from the `refix-route` output to the user, and record it:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
+   ```
+
+   **Selective shutdown** (`production`):
    a. Read review JSONs. Reporting agents = agents whose JSON contained items.
    b. Shutdown non-reporting agents. Keep reporting agents alive for potential fix cycles.
    c. Update state: `.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_agents '[REPORTERS_ONLY]'`
@@ -513,14 +528,20 @@ Follow § 4 pattern (collect → present → ask user → delegate via `workflow
 - **Table header**: `QA Agent` instead of `Agent`. Title: `QA Review Items — [ISSUE_ID]`.
 - **Source**: `qa-review` in `workflows/dev-fix.md` context.
 - **`qa_agent`**: pass QA agent name to `workflows/dev-fix.md` context.
-- **Route after fix**:
+- **Route after fix**: same `refix-route` call as § 4 step 3, with `BLOCKERS_FIXED` counted from the QA blockers delegated in this round.
 
-   | `files_changed` | `risk_flags` | `scope` | Route |
-   |-----------------|--------------|---------|-------|
-   | `0` | — | — | § 8 |
-   | `>0` | non-empty | any | § 2 (full PR review) |
-   | `>0` | empty | `production` | § 6 (focused QA re-check) |
-   | `>0` | empty | `support` | § 8 |
+   ```bash
+   .agents/skills/orch/scripts/refix-route -C [WORKTREE_PATH] --base $PRE_SHA --blockers-fixed [BLOCKERS_FIXED]
+   ```
+
+   | `class` | Route |
+   |---------|-------|
+   | `none` | § 8 |
+   | `risk` | § 2 (full PR review) |
+   | `production` | § 6 (focused QA re-check) |
+   | `blockers` | § 6 (focused QA re-check) |
+   | `size` | § 6 (focused QA re-check) |
+   | `small` | Record the skip (§ 4 step 3) → § 8 |
 
 ## 8. Review Summary
 
@@ -674,15 +695,21 @@ Issue suggestions: [N] items → § 9 audit
 5. **Assess re-review scope**:
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pre_delegate_sha
-   .agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] $PRE_SHA
    ```
-   Use the workflow-state output as `PRE_SHA`.
+   Use the output as `PRE_SHA`.
 
-   | `risk_flags` | `scope` | Action | Route |
-   |--------------|---------|--------|-------|
-   | non-empty | any | — | → § 1 (full re-review) |
-   | empty | `production` | `.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] skip_qa true` | → § 1 |
-   | empty | `support` | — | → § 11 |
+   ```bash
+   .agents/skills/orch/scripts/refix-route -C [WORKTREE_PATH] --base $PRE_SHA
+   ```
+   No `--blockers-fixed` here: a child delegation is not a blocker-fix round, so the `blockers` class cannot arise. The size backstop still applies.
+
+   | `class` | Action | Route |
+   |---------|--------|-------|
+   | `none` | — | → § 11 |
+   | `risk` | — | → § 1 (full re-review) |
+   | `production` | `.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] skip_qa true` | → § 1 |
+   | `size` | — | → § 1 (full re-review) |
+   | `small` | Record the skip (§ 4 step 3) | → § 11 |
 
 ## 11. Return State
 

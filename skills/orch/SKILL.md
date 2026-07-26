@@ -168,6 +168,7 @@ Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
 | `PR_REVIEW_ON_TIMEOUT` | Deadline behavior when no reviewer posts (credits exhausted): `block` (default) → `timeout`, workflow prompts; `proceed` → `proceeded` (exit 0) recorded as a reviewer-down override so a dead reviewer never stalls the fleet, but only with zero unresolved threads (open threads return `comments` first) and CI/comment-hygiene gates still apply; a `changes_requested` always blocks |
 | `PR_REVIEW_OUTAGE_CONTEXT` | Makes `proceed` end-to-end where CI independently gates on review evidence: names a commit-status context orch posts as `success` on a proceeded head, which the repo-side gate accepts (`outageok` term) + refire-bridge re-runs (DEVELOPMENT.md "Reviewer-outage recognition"). Empty (default) = orch-side-only. SECURITY: branch-protection relaxation bounded by the genuine-silence predicate + bot-only status trust; trusted publishers only |
 | `orch-env` | Print the effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > supplied default; numeric defaults reject non-numeric values) — how workflows read `CI_FIX_MAX_CYCLES` |
+| `refix-route` | Decide whether a fix round needs re-review — prints `{decision, class, reason, …}` from the diff summary plus the round's blocker count. Route on `class`, never on `scope` alone (`review-pr` § 4 / § 7 / § 10) |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `open-terminal` | Launch-only handoff helper for Linear/GitHub worktrees |
 | `parallel-groups` | Local cache for safe parallel handoff analysis |
@@ -227,6 +228,7 @@ Audit input and roadmap-plan schemas live in `project-management/schemas/` — c
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
+| `PR_REVIEW_REFIX_MAX_LINES` | Total changed lines (insertions + deletions) a support-scope fix round may reach before `review-pr` re-reviews it anyway. A round that cleared blockers is re-reviewed regardless (read via `refix-route`) | `200` |
 | `REVIEWER_SLOT_BUDGET` | Total concurrent agent-session budget of the runtime, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`). `0` = unlimited: all reviewers launch up front and persist. When the reviewer set exceeds the available slots (budget − primary − live dev/QA sessions), review workflows run reviewers in bounded waves. If the runtime contradicts an unlimited budget with a thread-limit spawn failure, the review demotes to bounded waves sized by the observed successful spawns and recommends the observed budget (`review-pr.md` § 2.2). Codex collaboration runtime: set to the config-declared cap (MultiAgentV2 default `4` total including the primary; `features.multi_agent_v2.max_concurrent_threads_per_session` in `~/.codex/config.toml`) | `0` |
 
 ## System Dependencies
