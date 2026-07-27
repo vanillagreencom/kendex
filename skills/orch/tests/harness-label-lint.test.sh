@@ -122,6 +122,7 @@ DOCS=(
   "$SKILLS_ROOT/orch/SKILL.md"
   "$SKILLS_ROOT/orch/DEVELOPMENT.md"
   "$SKILLS_ROOT"/orch/workflows/*.md
+  "$SKILLS_ROOT"/orch/references/*.md
   "$SKILLS_ROOT"/orch/schemas/*.md
   "$SKILLS_ROOT/dev/SKILL.md"
   "$SKILLS_ROOT"/dev/workflows/*.md

@@ -77,7 +77,7 @@ scan_ws_blocks() {
 echo "=== orch workflow-state single-command lint ==="
 
 # --- Part a: the real orch docs must be clean ------------------------------
-DOCS=("$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md)
+DOCS=("$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md)
 offenders=""
 for doc in "${DOCS[@]}"; do
   out="$(scan_ws_blocks "$doc")"

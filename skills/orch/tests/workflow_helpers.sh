@@ -224,7 +224,7 @@ assert_file_contains "$merge_workflow" 'pinned at the original triggering event'
 
 # vstack#643 — Greptile is gone; orch docs and workflows must stay
 # reviewer-agnostic ('reptile' catches both capitalizations).
-for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$orch_skill" "$REPO_ROOT/skills/orch/README.md" "$REPO_ROOT/skills/orch/DEVELOPMENT.md"; do
+for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$REPO_ROOT"/skills/orch/references/*.md "$orch_skill" "$REPO_ROOT/skills/orch/README.md" "$REPO_ROOT/skills/orch/DEVELOPMENT.md"; do
   assert_file_not_contains "$doc" 'reptile' "$(basename "$doc") carries no stale Greptile reference"
 done
 
@@ -594,7 +594,7 @@ assert_file_contains "$orch_development" 'whatever cap the machine config declar
 assert_file_contains "$orch_development" 'openai/codex#22779' "orch DEVELOPMENT cites completed-subagent slot retention as the stale-slot mechanism"
 assert_file_contains "$orch_development" 'vstack#701' "orch DEVELOPMENT links the mechanism to the stale-slot accounting observations"
 assert_file_contains "$orch_readme" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch README budget row names the cap config key"
-for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$orch_skill" "$orch_readme" "$orch_development" "$state_schema"; do
+for doc in "$REPO_ROOT"/skills/orch/workflows/*.md "$REPO_ROOT"/skills/orch/references/*.md "$orch_skill" "$orch_readme" "$orch_development" "$state_schema"; do
   assert_file_not_contains "$doc" 'four total' "$(basename "$doc") no longer asserts the Codex thread cap as fixed"
 done
 if [[ -f "$settings_example" ]]; then

@@ -72,6 +72,7 @@ echo "=== orch/dev env-assignment-prefix command lint ==="
 DOCS=(
   "$SKILLS_ROOT/orch/SKILL.md"
   "$SKILLS_ROOT"/orch/workflows/*.md
+  "$SKILLS_ROOT"/orch/references/*.md
   "$SKILLS_ROOT/dev/SKILL.md"
   "$SKILLS_ROOT"/dev/workflows/*.md
 )

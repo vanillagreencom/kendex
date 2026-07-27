@@ -38,7 +38,7 @@ scan_bad_lookup() {
 echo "=== orch decider issue-lookup syntax lint (vstack#641) ==="
 
 # --- Part a: the real orch docs must be clean ------------------------------
-DOCS=("$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md)
+DOCS=("$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md)
 offenders=""
 for doc in "${DOCS[@]}"; do
   out="$(scan_bad_lookup "$doc")"

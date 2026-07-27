@@ -50,6 +50,7 @@ assert_order() {
 echo "=== Codex orch runtime agent type guidance ==="
 
 skill="$REPO_ROOT/skills/orch/SKILL.md"
+codex_runtime_ref="$REPO_ROOT/skills/orch/references/codex-runtime.md"
 review_pr="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 review="$REPO_ROOT/skills/orch/workflows/review.md"
 dev_start="$REPO_ROOT/skills/orch/workflows/dev-start.md"
@@ -103,8 +104,11 @@ assert_contains "$dev_start" "keep the logical selected agent name in bootstrap/
 assert_contains "$dev_start" "\"runtime_agent_type\": \"[RUNTIME_AGENT_TYPE]\"" "dev-start records runtime agent type"
 assert_contains "$dev_start" "\"agent_type_fallback\": [FALLBACK_REASON_JSON_OR_NULL]" "dev-start records fallback reason"
 
-assert_contains "$skill" "target a worktree environment whose \`startingState\` is \`type=\"branch\"\`" "Codex app handoff uses branch starting state at top level"
-assert_contains "$skill" "If preflight reports a warning, present the exact message and continue only after explicit user acceptance" "Codex app handoff warning requires user acceptance"
+# The app-handoff mechanism moved to references/codex-runtime.md (issue #902);
+# SKILL.md keeps the route. Same guarantees, new home.
+assert_contains "$skill" "references/codex-runtime.md" "SKILL.md routes Codex app handoff to the runtime reference"
+assert_contains "$codex_runtime_ref" "target a worktree environment whose \`startingState\` is \`type=\"branch\"\`" "Codex app handoff uses branch starting state in the runtime reference"
+assert_contains "$codex_runtime_ref" "If preflight reports a warning, present the exact message and continue only after explicit user acceptance" "Codex app handoff warning requires user acceptance"
 assert_contains "$handoff" "Use the output as \`BASE_BRANCH\`" "handoff resolves base branch before app thread creation"
 assert_contains "$handoff" ".agents/skills/orch/scripts/codex-app-agent-preflight ." "handoff invokes generated-agent preflight helper"
 assert_contains "$handoff" "Continue only after the user explicitly accepts" "handoff permits warning only after user acceptance"
