@@ -183,6 +183,73 @@ describe("child-executed tools are never mirrored as Pi tool calls", () => {
 	});
 });
 
+describe("usage across a Pi turn that spans several child messages", () => {
+	beforeEach(() => resetStack());
+
+	it("accumulates what each finished child message billed", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		// Child message 1: the connector call. Big cache write, tiny output.
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { model: model.id, usage: { input_tokens: 10, output_tokens: 0, cache_creation_input_tokens: 55685 } },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 3 } }), new Map(), model);
+
+		// Child message 2: the answer. Its own separate billed call.
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { model: model.id, usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 53631, cache_creation_input_tokens: 2083 } },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 110 } }), new Map(), model);
+
+		assert.equal(c.turnOutput.usage.input, 15, "both calls' input is billed");
+		assert.equal(c.turnOutput.usage.output, 113);
+		assert.equal(c.turnOutput.usage.cacheRead, 53631);
+		assert.equal(c.turnOutput.usage.cacheWrite, 57768, "the first message's cache write must not be dropped");
+		assert.equal(c.turnOutput.usage.totalTokens, 15 + 113 + 53631 + 57768);
+	});
+
+	it("replaces rather than doubles within one child message", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { model: model.id, usage: { input_tokens: 10, output_tokens: 0 } },
+		}), new Map(), model);
+		// Anthropic re-reports the same message's growing output.
+		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 40 } }), new Map(), model);
+		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 90 } }), new Map(), model);
+
+		assert.equal(c.turnOutput.usage.input, 10);
+		assert.equal(c.turnOutput.usage.output, 90, "cumulative-per-message counters must not be summed");
+	});
+
+	it("starts fresh for the next Pi message", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { model: model.id, usage: { input_tokens: 10, output_tokens: 7 } },
+		}), new Map(), model);
+
+		c.resetTurnState(model);
+		installFakeStream();
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { model: model.id, usage: { input_tokens: 4, output_tokens: 2 } },
+		}), new Map(), model);
+
+		assert.equal(c.turnOutput.usage.input, 4, "a new Pi message does not inherit the old turn's total");
+		assert.equal(c.turnOutput.usage.output, 2);
+	});
+});
+
 describe("child-executed tool results", () => {
 	beforeEach(() => resetStack());
 

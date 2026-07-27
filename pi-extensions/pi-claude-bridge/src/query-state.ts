@@ -153,6 +153,33 @@ export class QueryContext {
 	 *  and an index is released as soon as a new block starts there. */
 	childExecutedStreamIndexes = new Set<number>();
 
+	// Usage accounting for a Pi turn that spans SEVERAL child assistant messages.
+	//
+	// Every child message is a separate billed API call, and each reports its own
+	// counters — `message_start`/`message_delta` REPLACE rather than accumulate. A
+	// Pi turn used to end at the first tool call, so one Pi message meant one child
+	// message and replacing was right. A turn containing a child-executed connector
+	// call now keeps running across the child's follow-up messages, so replacing
+	// would silently drop everything the earlier ones billed (measured: 55,685
+	// cache-write tokens lost on a single connector turn).
+	//
+	// So: `turnUsageCarry` holds the totals of the child messages already COMPLETE
+	// in this Pi turn, `currentMessageUsage` holds the one in flight, and the Pi
+	// message reports their sum. Summing is the correct model for input and cache
+	// too — each call bills its own.
+	turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+	/** Fold the in-flight child message's counters into the turn total and start a
+	 *  fresh one. Called at each `message_start`; a no-op on the turn's first. */
+	carryCurrentMessageUsage(): void {
+		this.turnUsageCarry.input += this.currentMessageUsage.input;
+		this.turnUsageCarry.output += this.currentMessageUsage.output;
+		this.turnUsageCarry.cacheRead += this.currentMessageUsage.cacheRead;
+		this.turnUsageCarry.cacheWrite += this.currentMessageUsage.cacheWrite;
+		this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	}
+
 	// Per-turn (reset together)
 	turnOutput: AssistantMessage | null = null;
 	turnStarted = false;
@@ -176,6 +203,10 @@ export class QueryContext {
 		this.turnSawStreamEvent = false;
 		this.turnSawToolCall = false;
 		this.handledTerminalError = false;
+		// Usage accounting IS per-Pi-message, so it resets with the message it
+		// describes — unlike tool-call tracking below.
+		this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+		this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 		// Tool-call tracking is NOT reset here — it persists across the
 		// tool-result delivery callback for the same assistant message. New
 		// assistant messages call resetToolTracking() explicitly.

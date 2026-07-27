@@ -8,10 +8,21 @@ import { mapToolArgs, mapToolName } from "./tool-mapping.js";
 // --- Usage helpers ---
 
 function updateUsage(output: AssistantMessage, usage: Record<string, number | undefined>, model: Model<any>): void {
-	if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
-	if (usage.output_tokens != null) output.usage.output = usage.output_tokens;
-	if (usage.cache_read_input_tokens != null) output.usage.cacheRead = usage.cache_read_input_tokens;
-	if (usage.cache_creation_input_tokens != null) output.usage.cacheWrite = usage.cache_creation_input_tokens;
+	// Anthropic reports per-message counters and RE-reports them as the message
+	// grows, so the in-flight message's figures are replaced, not added. What is
+	// added is every child message already finished in this Pi turn — see
+	// `turnUsageCarry` in query-state.ts for why a turn can span several.
+	const c = ctx();
+	const current = c.currentMessageUsage;
+	const carry = c.turnUsageCarry;
+	if (usage.input_tokens != null) current.input = usage.input_tokens;
+	if (usage.output_tokens != null) current.output = usage.output_tokens;
+	if (usage.cache_read_input_tokens != null) current.cacheRead = usage.cache_read_input_tokens;
+	if (usage.cache_creation_input_tokens != null) current.cacheWrite = usage.cache_creation_input_tokens;
+	output.usage.input = carry.input + current.input;
+	output.usage.output = carry.output + current.output;
+	output.usage.cacheRead = carry.cacheRead + current.cacheRead;
+	output.usage.cacheWrite = carry.cacheWrite + current.cacheWrite;
 	output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 	calculateCost(model, output.usage);
 	const promptTokens = output.usage.input + output.usage.cacheRead + output.usage.cacheWrite;
@@ -77,6 +88,9 @@ export function processStreamEvent(
 
 	if (event?.type === "message_start") {
 		c.resetToolTracking();
+		// A new child message begins: bank what the previous one billed before its
+		// counters are replaced. No-op on the first message of a Pi turn.
+		c.carryCurrentMessageUsage();
 		updateTurnOutputModel(event.message?.model);
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
 		return;

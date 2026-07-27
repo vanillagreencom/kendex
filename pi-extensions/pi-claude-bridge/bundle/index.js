@@ -27287,6 +27287,31 @@ var QueryContext = class {
    *  a child-executed tool_use. Scoped to one message: cleared at message_start,
    *  and an index is released as soon as a new block starts there. */
   childExecutedStreamIndexes = /* @__PURE__ */ new Set();
+  // Usage accounting for a Pi turn that spans SEVERAL child assistant messages.
+  //
+  // Every child message is a separate billed API call, and each reports its own
+  // counters — `message_start`/`message_delta` REPLACE rather than accumulate. A
+  // Pi turn used to end at the first tool call, so one Pi message meant one child
+  // message and replacing was right. A turn containing a child-executed connector
+  // call now keeps running across the child's follow-up messages, so replacing
+  // would silently drop everything the earlier ones billed (measured: 55,685
+  // cache-write tokens lost on a single connector turn).
+  //
+  // So: `turnUsageCarry` holds the totals of the child messages already COMPLETE
+  // in this Pi turn, `currentMessageUsage` holds the one in flight, and the Pi
+  // message reports their sum. Summing is the correct model for input and cache
+  // too — each call bills its own.
+  turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  /** Fold the in-flight child message's counters into the turn total and start a
+   *  fresh one. Called at each `message_start`; a no-op on the turn's first. */
+  carryCurrentMessageUsage() {
+    this.turnUsageCarry.input += this.currentMessageUsage.input;
+    this.turnUsageCarry.output += this.currentMessageUsage.output;
+    this.turnUsageCarry.cacheRead += this.currentMessageUsage.cacheRead;
+    this.turnUsageCarry.cacheWrite += this.currentMessageUsage.cacheWrite;
+    this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  }
   // Per-turn (reset together)
   turnOutput = null;
   turnStarted = false;
@@ -27318,6 +27343,8 @@ var QueryContext = class {
     this.turnSawStreamEvent = false;
     this.turnSawToolCall = false;
     this.handledTerminalError = false;
+    this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   }
   resetToolTracking() {
     this.turnToolCallIds = [];
@@ -44278,10 +44305,17 @@ function mapToolArgs(toolName, args) {
 // src/assistant-stream.ts
 import { calculateCost } from "@earendil-works/pi-ai";
 function updateUsage(output, usage, model) {
-  if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
-  if (usage.output_tokens != null) output.usage.output = usage.output_tokens;
-  if (usage.cache_read_input_tokens != null) output.usage.cacheRead = usage.cache_read_input_tokens;
-  if (usage.cache_creation_input_tokens != null) output.usage.cacheWrite = usage.cache_creation_input_tokens;
+  const c = ctx();
+  const current = c.currentMessageUsage;
+  const carry = c.turnUsageCarry;
+  if (usage.input_tokens != null) current.input = usage.input_tokens;
+  if (usage.output_tokens != null) current.output = usage.output_tokens;
+  if (usage.cache_read_input_tokens != null) current.cacheRead = usage.cache_read_input_tokens;
+  if (usage.cache_creation_input_tokens != null) current.cacheWrite = usage.cache_creation_input_tokens;
+  output.usage.input = carry.input + current.input;
+  output.usage.output = carry.output + current.output;
+  output.usage.cacheRead = carry.cacheRead + current.cacheRead;
+  output.usage.cacheWrite = carry.cacheWrite + current.cacheWrite;
   output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
   calculateCost(model, output.usage);
   const promptTokens = output.usage.input + output.usage.cacheRead + output.usage.cacheWrite;
@@ -44340,6 +44374,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
   }
   if (event?.type === "message_start") {
     c.resetToolTracking();
+    c.carryCurrentMessageUsage();
     updateTurnOutputModel(event.message?.model);
     if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
     return;
