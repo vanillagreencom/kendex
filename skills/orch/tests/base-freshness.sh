@@ -61,7 +61,9 @@ git -C "$UPSTREAM" config user.email test@example.com
 git -C "$UPSTREAM" config user.name Test
 git -C "$UPSTREAM" config commit.gpgsign false
 commit_upstream base
-git init -q --bare "$ORIGIN"
+# -b main pins the bare repo's HEAD; without it the clone below checks out
+# whatever ambient init.defaultBranch names, which differs across machines.
+git init -q --bare -b main "$ORIGIN"
 git -C "$UPSTREAM" remote add origin "$ORIGIN"
 git -C "$UPSTREAM" push -q -u origin main
 
