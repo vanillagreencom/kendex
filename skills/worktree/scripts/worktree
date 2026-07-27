@@ -1742,8 +1742,21 @@ worktree_lock_reason() {
 SESSION_GUARD="$SCRIPT_DIR/worktree-session-guard"
 readonly SESSION_GUARD_DEFAULT_TTL_MINUTES=720
 
+# An unavailable guard must be loud: every lifecycle integration would
+# otherwise silently no-op, and cleanup collecting live worktrees again is
+# the incident the guard exists to prevent, reintroduced by an install gap
+# (#912). Warned once per invocation, not once per worktree. The guard itself
+# no longer requires flock — it falls back to a mkdir mutex — so "the script
+# is not executable" is the remaining way to lose the guard silently; a guard
+# that cannot take its lock fails its own commands loudly.
+SESSION_GUARD_WARNED=false
 session_guard_available() {
-  [[ -x "$SESSION_GUARD" ]]
+  [[ -x "$SESSION_GUARD" ]] && return 0
+  if [[ "$SESSION_GUARD_WARNED" != true ]]; then
+    SESSION_GUARD_WARNED=true
+    echo "Warning: worktree-session-guard is not executable at $SESSION_GUARD; session leases were NOT checked or released, so worktrees are unguarded." >&2
+  fi
+  return 1
 }
 
 # The session's environment identity, mirroring the guard's own default owner

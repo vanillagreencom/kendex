@@ -25,16 +25,14 @@ GUARD="${GUARD:-$ROOT_DIR/scripts/worktree-session-guard}"
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_GLOBAL=/dev/null
 
-# Every mutating command serializes through flock(1), so the suite can only run
-# where flock is installed — a capability check, not a platform one, matching
-# the guard itself. The worktree suite runs this unconditionally, so where
-# the primitive is missing it skips instead of aborting on its first claim,
-# following the repo convention for capability-gated tooling tests (see
-# the rest of the worktree suite).
-if ! command -v flock >/dev/null 2>&1; then
-	printf 'SKIP: worktree session guard needs flock(1), which is not on PATH \n' >&2
-	exit 0
-fi
+# Mutating commands serialize through flock(1) where it is on PATH and
+# through the guard's mkdir-mutex fallback otherwise, so the suite runs
+# either way — a flock-less host exercises the fallback throughout instead of
+# SKIPping green (vstack#912). The few cases that themselves need flock to
+# hold the guard lock externally are gated individually below, and the
+# fallback additionally gets a dedicated flock-hidden section.
+HAVE_FLOCK=true
+command -v flock >/dev/null 2>&1 || HAVE_FLOCK=false
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -621,18 +619,25 @@ lock_reason_of "$sweep_repo" "$sweep_wt" >/dev/null || fail "sweep --dry-run mus
 # Serialization: sweep must re-read the lease UNDER the guard mutex. Hold the
 # mutex externally, let a refresh land while sweep is blocked on it, and the
 # refreshed lease must survive.
-guard_lock="$sweep_repo/.git/ht-worktree-session-guard.lock"
+guard_lock="$sweep_repo/.git/vstack-worktree-session-guard.lock"
 stale_epoch=$(($(date -u +%s) - 86400))
 forge_lease "$sweep_repo" "$sweep_wt" \
 	"vstack-session-guard v1 owner=CC-1000 pid=1 host=h claimed=old claimed_epoch=$stale_epoch heartbeat=old heartbeat_epoch=$stale_epoch"
 sweep_out="$tmp_dir/sweep-race.out"
 
+# Holding the guard lock externally needs flock in the TEST; the flock-hidden
+# section below covers the mkdir mutex's blocking behaviour instead.
+#
 # The evidence that sweep reached the mutex is procfs-only. Rather than degrade
 # to a timing guess that would pass against a read-before-lock implementation,
 # the case announces that it did not run. Portable coverage is CC-1026.
-if [[ ! -r /proc/self/fd ]]; then
+if [[ "$HAVE_FLOCK" != true ]]; then
+	printf 'SKIP: sweep serialization race holds the guard lock with flock(1), which is not on PATH\n' >&2
+	# The forged day-old lease above would otherwise leak into later cases.
+	"$GUARD" release "$sweep_wt" --owner CC-1000 --force >/dev/null 2>&1 || true
+	"$GUARD" claim "$sweep_wt" --owner CC-1000 >/dev/null
+elif [[ ! -r /proc/self/fd ]]; then
 	printf 'SKIP: sweep serialization race needs procfs to observe the blocked child (CC-1026)\n' >&2
-else
 	exec 8>"$guard_lock"
 	flock -x 8
 	# A 60-minute TTL separates the two states: the day-old lease sweep saw
@@ -1070,6 +1075,82 @@ run_guard list --repo "$enum_repo"
 assert_eq "$RUN_RC" "0" "list must succeed once enumeration works again"
 assert_eq "$(line_count "$run_out")" "1" "list must report the enumeration fixture"
 
+# ── mkdir mutex fallback (flock hidden from PATH) ────────────────────
+
+# Stock macOS ships no flock(1); the guard falls back to a mkdir mutex so the
+# claim stays mandatory there rather than every mutation failing and the
+# session running unguarded (vstack#912). Exercised by invoking the guard
+# with a PATH holding only the tools it needs — and no flock — so this
+# section runs even where the host has flock.
+noflock_bin="$tmp_dir/noflock-bin"
+mkdir -p "$noflock_bin"
+for tool in bash git date uname dirname basename head cat mv rm mkdir sleep ps mktemp; do
+	tool_path="$(command -v "$tool" || true)"
+	[[ -n "$tool_path" ]] || continue
+	ln -s "$tool_path" "$noflock_bin/$tool"
+done
+run_noflock() {
+	RUN_RC=0
+	env PATH="$noflock_bin" "$GUARD" "$@" >"$run_out" 2>"$run_err" || RUN_RC=$?
+}
+# The whole section is vacuous if flock leaks into the restricted PATH.
+if env PATH="$noflock_bin" bash -c 'command -v flock' >/dev/null 2>&1; then
+	fail "the restricted PATH still resolves flock; the fallback is not being exercised"
+fi
+
+read -r nf_repo nf_wt <<<"$(new_fixture noflock nofeat)"
+[[ -d "$nf_repo" && -d "$nf_wt" ]] || fail "noflock fixture was not created"
+nf_mutex="$nf_repo/.git/vstack-worktree-session-guard.lock.d"
+
+run_noflock claim "$nf_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "claim without flock (mkdir mutex)"
+assert_contains "$run_out" "claimed"
+lock_reason_of "$nf_repo" "$nf_wt" | grep -Fq "owner=CC-1000" \
+	|| fail "the mkdir-mutex claim must record a native lock lease"
+[[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must be released when the command exits"
+
+run_noflock claim "$nf_wt" --owner CC-999
+assert_eq "$RUN_RC" "75" "a foreign claim is still refused without flock"
+
+run_noflock status "$nf_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "status without flock"
+
+run_noflock sweep --repo "$nf_repo"
+assert_eq "$RUN_RC" "0" "sweep without flock"
+assert_contains "$run_out" "no stale session claims"
+lock_reason_of "$nf_repo" "$nf_wt" >/dev/null || fail "a flock-less sweep released a live lease"
+
+# A mutex left by a dead holder must be broken, not spun on until timeout.
+if ! command -v ps >/dev/null 2>&1; then
+	printf 'SKIP: dead-holder mutex breaking needs ps(1) to prove the holder is gone\n' >&2
+else
+	sleep 0.01 &
+	dead_pid=$!
+	wait "$dead_pid" 2>/dev/null || true
+	mkdir -p "$nf_mutex"
+	printf '%s\n' "$dead_pid" >"$nf_mutex/pid"
+	run_noflock refresh "$nf_wt" --owner CC-1000
+	assert_eq "$RUN_RC" "0" "a dead holder's mkdir mutex is broken and the command proceeds"
+	assert_contains "$run_err" "breaking the session-guard mutex"
+fi
+
+# A live holder's mutex blocks a contender rather than being stolen.
+mkdir -p "$nf_mutex"
+printf '%s\n' "$$" >"$nf_mutex/pid"
+env PATH="$noflock_bin" "$GUARD" refresh "$nf_wt" --owner CC-1000 \
+	>"$tmp_dir/noflock-blocked.out" 2>&1 &
+blocked_pid=$!
+sleep 1
+if ! kill -0 "$blocked_pid" 2>/dev/null; then
+	fail "a contender must wait on a live holder's mkdir mutex, not proceed past it"
+fi
+rm -rf "$nf_mutex"
+wait "$blocked_pid" || fail "the contender must acquire the mutex once the holder releases it"
+
+run_noflock release "$nf_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "release without flock"
+[[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must not outlive the release"
+
 # ── The documented exit-code contract ────────────────────────────────
 
 # The skill's agent-facing documents restate the exit codes agents are told to branch
@@ -1105,12 +1186,14 @@ for doc in references/session-guard.md README.md scripts/worktree-session-guard;
 	assert_contains_prose "$ROOT_DIR/$doc" "outlived its TTL without refreshing"
 done
 
-# The guard's availability is a capability, not a platform: it checks only
-# whether flock is on PATH, and a Homebrew macOS setup installs flock. Pinning the capability framing keeps a reader on a configured macOS
-# host from skipping a claim that would in fact have protected them — the
-# under-promise direction is the harmful one here.
+# The guard's availability is a capability, not a platform: flock where it is
+# on PATH, the mkdir mutex otherwise. Pinning the capability framing keeps a
+# reader on a flock-less host from skipping a claim that would in fact have
+# protected them — the under-promise direction is the harmful one here. Every
+# copy must state the same guarantee, or one of them under-promises.
 for doc in references/session-guard.md README.md scripts/worktree-session-guard; do
-	assert_contains_prose "$ROOT_DIR/$doc" "wherever flock is available, the claim is mandatory"
+	assert_contains_prose "$ROOT_DIR/$doc" \
+		"wherever the repository's common dir is writable, the claim is mandatory"
 done
 
 printf 'PASS: worktree session guard regressions\n'

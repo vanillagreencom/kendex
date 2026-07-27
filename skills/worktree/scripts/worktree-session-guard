@@ -41,14 +41,13 @@
 #
 # Limits, stated rather than papered over:
 #
-#   * REQUIRES flock(1). The gate is a capability, not a platform: every
-#     mutating command serializes through flock, and the code checks only
-#     whether flock is on PATH. So
-#     wherever flock is available, the claim is mandatory — including a macOS
-#     host whose Homebrew setup installs flock. On a host WITHOUT flock, claim, refresh, release and
-#     sweep all fail and that session is unguarded rather than protected.
-#     Nothing else in the repository depends on the guard, so the rest of the
-#     workflow is unaffected.
+#   * Serializes every mutating command through flock(1) when it is on PATH,
+#     and through a mkdir mutex beside the lock file otherwise — stock macOS
+#     ships no flock. The gate is a capability, not a platform, so
+#     wherever the repository's common dir is writable, the claim is mandatory
+#     — flock-less hosts included (vstack#912). Only when neither mechanism
+#     can take the lock does a mutating command fail, and it fails loudly
+#     rather than leaving the session silently unguarded.
 #   * `git worktree remove -f -f` and a plain `rm -rf` still destroy a claimed
 #     worktree. `status` and `list` exist so such a removal can be attributed
 #     afterwards; `list` still reports a registration whose directory is gone.
@@ -172,7 +171,11 @@ EOF
 # containing a newline into two bogus entries (vstack#911). The trap is
 # installed once here so a later addition cannot silently replace it.
 GUARD_SCRATCH=''
+GUARD_MKDIR_LOCK=''
 guard_cleanup() {
+	if [[ -n "$GUARD_MKDIR_LOCK" ]]; then
+		rm -rf -- "$GUARD_MKDIR_LOCK"
+	fi
 	if [[ -n "$GUARD_SCRATCH" ]]; then
 		rm -rf -- "$GUARD_SCRATCH"
 	fi
@@ -379,18 +382,75 @@ resolve_worktree() {
 	RESOLVED_REGISTRATION="$registration"
 }
 
+# Liveness of a mkdir-mutex holder. ps(1) sees other users' processes where
+# `kill -0` gets EPERM and would call a live holder dead; with no usable pid,
+# or no ps at all, the holder is presumed alive and the contender keeps
+# waiting — a mutex is never broken on unprovable evidence.
+mkdir_lock_holder_gone() {
+	local pid="$1"
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	command -v ps >/dev/null 2>&1 || return 1
+	! ps -o pid= -p "$pid" >/dev/null 2>&1
+}
+
+# Fallback mutex for hosts without flock(1): mkdir is atomic on POSIX
+# filesystems, so exactly one contender creates the directory. Unlike a flock
+# the kernel does not release it when the holder dies, so the holder records
+# its pid, and a contender breaks the mutex only when that pid is provably
+# gone — claiming the break by rename first, so two concurrent breakers
+# cannot both remove it and one of them delete a third contender's fresh
+# acquisition.
+acquire_mkdir_lock() {
+	local dir="$1" holder tries=0
+	while ! mkdir -- "$dir" 2>/dev/null; do
+		if [[ ! -e "$dir" ]]; then
+			# mkdir failed with nothing in the way: the common dir itself is
+			# unwritable, so no locking mechanism can work here.
+			fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
+		fi
+		holder="$(cat -- "$dir/pid" 2>/dev/null || true)"
+		if mkdir_lock_holder_gone "$holder"; then
+			if mv -- "$dir" "$dir.stale.$$" 2>/dev/null; then
+				warn "breaking the session-guard mutex left by dead pid $holder: $dir"
+				rm -rf -- "$dir.stale.$$"
+			fi
+			continue
+		fi
+		tries=$((tries + 1))
+		if [[ "$tries" -ge 600 ]]; then
+			fail "cannot acquire the session-guard mutex after 60s: $dir is held by pid ${holder:-unknown}. If no guard process is running, remove it: rm -rf '$dir'"
+		fi
+		sleep 0.1
+	done
+	printf '%s\n' "$$" >"$dir/pid" || {
+		rm -rf -- "$dir"
+		fail "cannot record the session-guard mutex holder in $dir"
+	}
+	GUARD_MKDIR_LOCK="$dir"
+}
+
 # Serialize claim/refresh/release/sweep. The lock file lives in the shared
 # common dir, so one acquisition covers every worktree of the repository — a
 # sweep must take it ONCE around its whole loop, never per iteration, or it
 # drops the mutex between worktrees.
+#
+# flock(1) is preferred because the kernel releases it however the holder
+# dies; without it (stock macOS) the mkdir mutex keeps the claim mandatory
+# instead of letting every mutation fail and the session run unguarded
+# (vstack#912). The two mechanisms do not lock each other out; they serialize
+# correctly because every guard process on a host resolves the same mechanism
+# from the same PATH — the same single-host assumption the lock's location in
+# the common dir already makes.
 acquire_guard_lock() {
 	local repo="$1" common_dir lock_path
-	command -v flock >/dev/null 2>&1 \
-		|| fail "this guard requires flock(1) to serialize mutations and it is not on PATH, so this worktree is unguarded rather than guarded-and-failing. Install flock to enable the guard on this host."
 	common_dir="$(common_dir_of "$repo")"
-	lock_path="$common_dir/ht-worktree-session-guard.lock"
-	exec 9>"$lock_path" || fail "cannot open the session-guard lock file: $lock_path"
-	flock -x 9 || fail "cannot acquire the session-guard lock: $lock_path"
+	lock_path="$common_dir/vstack-worktree-session-guard.lock"
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$lock_path" || fail "cannot open the session-guard lock file: $lock_path"
+		flock -x 9 || fail "cannot acquire the session-guard lock: $lock_path"
+		return 0
+	fi
+	acquire_mkdir_lock "$lock_path.d"
 }
 
 # Lock states, distinguished because "locked with no reason" (a plain

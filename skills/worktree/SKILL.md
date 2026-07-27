@@ -121,7 +121,7 @@ Claiming is the caller's job: orch claims in `orch/workflows/start.md` once the 
 
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization and for the session guard; Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 

@@ -18,7 +18,7 @@ The lease is scoped to the OWNER string, which the workflow sets to the issue ID
 
 Staleness is heartbeat age with **no liveness check**. The recorded pid and host identify who took a claim but are never consulted, so a session that is still running and has **outlived its TTL without refreshing** is indistinguishable from an abandoned one and will be unlocked by `release --stale` or `sweep`. Nothing refreshes a lease automatically and nothing runs `sweep` automatically; confirm the owner is really gone before releasing.
 
-The guard requires `flock(1)` and checks only whether it is on PATH — it is a capability, not a platform, so **wherever flock is available, the claim is mandatory**, including a macOS host whose Homebrew setup installs it. Without flock the session is unguarded rather than protected.
+The guard serializes every mutating command through `flock(1)` when it is on PATH, and through a `mkdir` mutex beside the lock file otherwise — it is a capability, not a platform, so **wherever the repository's common dir is writable, the claim is mandatory**, stock flock-less macOS included. When neither mechanism can take the lock (an unwritable common dir), mutating commands fail loudly rather than leaving the session silently unguarded.
 
 A Git worktree lock does not block writes, commits, or rebases inside the worktree, and `git worktree remove -f -f` or a plain `rm -rf` still destroy a claimed tree — `status` and `list` exist so such a removal can be attributed afterwards.
 
