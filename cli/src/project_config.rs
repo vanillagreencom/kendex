@@ -1603,19 +1603,55 @@ fn repair_project_config_structure(path: &Path) {
     }
 }
 
+/// Refresh the canonical banner at the top of `vstack.toml`.
+///
+/// This USED TO splice `header + content[launch_instructions_marker..]`, which
+/// silently deleted everything between the banner and that marker (vstack#896).
+/// That region is not spare space: TOML requires top-level keys to appear BEFORE
+/// the first table header, so `project-skills-dir` — and any comment explaining
+/// it — has to live exactly there. A consumer that set it lost the key on the
+/// first refresh that rewrote the file, which then made refresh refuse that
+/// project's own skills and exit non-zero on every subsequent run.
+///
+/// Replace only the leading comment block, and keep the rest verbatim.
 fn sync_project_config_header(content: &str) -> String {
-    let header = project_config_header();
-    let marker_start = content
-        .find("# ── Launch Instructions")
-        .or_else(|| content.find("# ── Execute on Launch"))
-        .or_else(|| section_start(content, "[agent-launch-instructions]"));
-    let Some(marker_start) = marker_start else {
-        return content.to_string();
-    };
+    // Only touch files that look like a vstack.toml: a leading `# ─` banner and
+    // a recognizable body. Both guards are the pre-existing preconditions.
     if !content.trim_start().starts_with("# ─") {
         return content.to_string();
     }
-    format!("{}\n\n\n{}", header.trim_end(), &content[marker_start..])
+    if content
+        .find("# ── Launch Instructions")
+        .or_else(|| content.find("# ── Execute on Launch"))
+        .or_else(|| section_start(content, "[agent-launch-instructions]"))
+        .is_none()
+    {
+        return content.to_string();
+    }
+
+    let header = project_config_header();
+    let rest = content[leading_comment_block_end(content)..].trim_start_matches('\n');
+    if rest.is_empty() {
+        let mut out = header.trim_end().to_string();
+        if content.ends_with('\n') {
+            out.push('\n');
+        }
+        return out;
+    }
+    format!("{}\n\n\n{}", header.trim_end(), rest)
+}
+
+/// Byte offset just past the leading run of comment lines. Blank lines and
+/// anything else end the block, so only the banner itself is consumed.
+fn leading_comment_block_end(content: &str) -> usize {
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        if !line.trim_start().starts_with('#') {
+            break;
+        }
+        offset += line.len();
+    }
+    offset
 }
 
 fn launch_instructions_heading() -> String {
@@ -2577,6 +2613,92 @@ fn strip_skills_reference(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    // ── vstack#896: the banner sync must not eat the preamble ──────────────
+    //
+    // `sync_project_config_header` used to splice
+    // `header + content[launch_instructions_marker..]`, deleting everything
+    // between. TOML requires top-level keys to precede the first table header,
+    // so `project-skills-dir` lives exactly in that region — it was destroyed on
+    // the first refresh that rewrote the file, which then made refresh refuse
+    // that project's own skills and exit non-zero forever after.
+
+    fn header_sync_fixture(body: &str) -> String {
+        format!(
+            "{}\n\n\n{}",
+            super::project_config_header().trim_end(),
+            body
+        )
+    }
+
+    const LAUNCH_BODY: &str = "# ── Launch Instructions ───────────────────────────────\n#\n[agent-launch-instructions]\nresearcher = \"x\"\n";
+
+    #[test]
+    fn sync_header_preserves_a_top_level_key_before_the_first_table() {
+        let content = header_sync_fixture(&format!(
+            "# ── Project-Owned Skills ──\n# why this key exists\nproject-skills-dir = \"project-skills\"\n\n\n{LAUNCH_BODY}"
+        ));
+        let out = super::sync_project_config_header(&content);
+        assert!(
+            out.contains("project-skills-dir = \"project-skills\""),
+            "the key must survive a header sync:\n{out}"
+        );
+        assert!(
+            out.contains("# why this key exists"),
+            "its explanatory comment must survive too:\n{out}"
+        );
+        assert!(out.contains("[agent-launch-instructions]"));
+    }
+
+    #[test]
+    fn sync_header_is_idempotent_with_a_top_level_key_present() {
+        let content = header_sync_fixture(&format!(
+            "project-skills-dir = \"project-skills\"\n\n\n{LAUNCH_BODY}"
+        ));
+        let once = super::sync_project_config_header(&content);
+        let twice = super::sync_project_config_header(&once);
+        assert_eq!(once, twice, "a second sync must change nothing");
+        assert_eq!(
+            content, once,
+            "a file already in canonical shape must be left byte-identical"
+        );
+    }
+
+    #[test]
+    fn sync_header_still_replaces_a_stale_banner() {
+        // The sync must keep doing its job: an outdated banner is refreshed,
+        // and only the banner is refreshed.
+        let content = format!(
+            "# ─ old banner line\n# another stale line\n\n\nproject-skills-dir = \"p\"\n\n\n{LAUNCH_BODY}"
+        );
+        let out = super::sync_project_config_header(&content);
+        assert!(out.starts_with(super::project_config_header().trim_end()));
+        assert!(!out.contains("old banner line"), "stale banner must go:\n{out}");
+        assert!(
+            out.contains("project-skills-dir = \"p\""),
+            "user content after the banner must stay:\n{out}"
+        );
+    }
+
+    #[test]
+    fn sync_header_leaves_a_non_vstack_file_alone() {
+        // No leading `# ─` banner: not ours to rewrite.
+        let content = format!("# some other file\n\nproject-skills-dir = \"p\"\n\n{LAUNCH_BODY}");
+        assert_eq!(super::sync_project_config_header(&content), content);
+        // Banner but no recognizable body: also untouched.
+        let no_body = format!("{}\n\n\nkey = 1\n", super::project_config_header().trim_end());
+        assert_eq!(super::sync_project_config_header(&no_body), no_body);
+    }
+
+    #[test]
+    fn leading_comment_block_end_stops_at_the_first_non_comment_line() {
+        let content = "# a\n# b\n\nkey = 1\n";
+        let end = super::leading_comment_block_end(content);
+        assert_eq!(&content[end..], "\nkey = 1\n");
+        // An all-comment file consumes everything rather than running past the end.
+        let all = "# a\n# b\n";
+        assert_eq!(super::leading_comment_block_end(all), all.len());
+    }
+
     use super::*;
 
     // vstack: regression. `normalize_attached_section_headers` used to
