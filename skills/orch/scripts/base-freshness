@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# base-freshness — fetch the base branch and report ahead/behind as JSON so
+# workflows gate the review cycle on a current base instead of trusting
+# whatever a reused worktree happens to sit on.
+#
+# Usage: base-freshness [worktree]
+#
+# Fetches only the resolved base branch's remote-tracking ref (explicit
+# refspec, so mirror-style fetch configs cannot rewrite unrelated refs),
+# through the GitHub skill's git-https-auth wrapper when available, then
+# prints one JSON object:
+#
+#   {"branch", "base_branch", "base_ref", "ahead", "behind", "fresh"}
+#
+# Exit codes:
+#   0  check completed, base is current (behind = 0)
+#   4  check completed, base is STALE (behind > 0) — rebase before review
+#   1  freshness could not be established (no origin, fetch failed);
+#      callers must treat this as stale, never as fresh
+#   2  usage error
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "${1:-}" in
+    --help|-h)
+        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    -*)
+        echo "Error: unknown flag '$1' (usage: base-freshness [worktree])" >&2
+        exit 2
+        ;;
+esac
+
+worktree="${1:-.}"
+
+if ! git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: '$worktree' is not a git worktree" >&2
+    exit 2
+fi
+
+if ! git -C "$worktree" remote get-url origin >/dev/null 2>&1; then
+    echo "Error: no 'origin' remote in $worktree; base freshness cannot be verified" >&2
+    exit 1
+fi
+
+branch="$(git -C "$worktree" branch --show-current || true)"
+base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")"
+base_ref="refs/remotes/origin/$base_branch"
+
+git_https_auth="$SCRIPT_DIR/../../github/scripts/git-https-auth"
+fetch_ok=true
+if [[ -x "$git_https_auth" ]]; then
+    "$git_https_auth" -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" >/dev/null || fetch_ok=false
+else
+    git -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" >/dev/null || fetch_ok=false
+fi
+if [[ "$fetch_ok" != true ]]; then
+    echo "Error: could not fetch origin/$base_branch; base freshness cannot be verified" >&2
+    exit 1
+fi
+
+counts="$(git -C "$worktree" rev-list --left-right --count "$base_ref...HEAD")"
+read -r behind ahead <<<"$counts"
+
+fresh=false
+[[ "$behind" -eq 0 ]] && fresh=true
+
+jq -n \
+    --arg branch "$branch" \
+    --arg base_branch "$base_branch" \
+    --arg base_ref "$base_ref" \
+    --argjson ahead "$ahead" \
+    --argjson behind "$behind" \
+    --argjson fresh "$fresh" \
+    '{branch: $branch, base_branch: $base_branch, base_ref: $base_ref, ahead: $ahead, behind: $behind, fresh: $fresh}'
+
+[[ "$fresh" == true ]] || exit 4

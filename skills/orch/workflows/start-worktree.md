@@ -19,11 +19,22 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 - `ISSUE_ID=issue-N`
 - `GITHUB_REPO=OWNER/REPO`
 
-**Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 2` with context:
-- `lifecycle`: `"managed"`
-- `issue_id`: normalized issue ID from argument or branch
-- `tracker`: `[TRACKER]` when parsed
-- `github_repo`: `[GITHUB_REPO]` when parsed
+1. **Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 1 step 2` with context:
+   - `lifecycle`: `"managed"`
+   - `issue_id`: normalized issue ID from argument or branch
+   - `tracker`: `[TRACKER]` when parsed
+   - `github_repo`: `[GITHUB_REPO]` when parsed
+
+2. **Gate on base freshness.** This expedited path reuses a worktree created earlier, so prove the base is current before any agent spends budget on it:
+   ```bash
+   .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
+   ```
+   - Exit 0 (`behind = 0`) → § 2.
+   - Exit 4 (`behind > 0`) → rebase through the supported reuse path, then re-run the gate; it must exit 0 before § 2:
+     ```bash
+     .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --reuse
+     ```
+   - Exit 1, or a reuse that cannot complete → report the divergence (`behind` count, base branch) and stop for the operator. Never enter § 2 or § 3 on an unverified base.
 
 ---
 

@@ -84,6 +84,8 @@ Use `skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` to print the base 
 
 Use `skills/orch/scripts/git-context branch|head|issue-from-branch|repo-root|common-root|timestamp [WORKTREE_PATH]` when workflow guidance needs git-derived values without inline command substitution, pipelines, or `cd && ...` chains.
 
+Use `skills/orch/scripts/base-freshness [WORKTREE_PATH]` to fetch the resolved base branch (through `git-https-auth` when available) and print ahead/behind JSON. Exit 0 means current, exit 4 means the branch is behind `origin/<base>` (rebase via `worktree create <ID> --reuse` before reviewing), exit 1 means freshness could not be verified. The worktree start workflow runs it before the review cycle so a reused worktree never reviews a stale base.
+
 Use `skills/orch/scripts/workflow-state exists --json ISSUE_ID` when a workflow needs structured existence status without relying on shell exit-code capture.
 
 Use `skills/orch/scripts/workflow-state set-git-head ISSUE_ID FIELD [WORKTREE_PATH]` and `set-now ISSUE_ID FIELD` for common state writes that would otherwise require nested `$(git ...)` or `$(date ...)` snippets.
