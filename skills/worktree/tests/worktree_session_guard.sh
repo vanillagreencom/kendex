@@ -717,6 +717,19 @@ assert_not_contains "$run_out" "no stale session claims"
 assert_contains "$run_err" "release $sweep_wt --force"
 assert_not_contains "$run_err" "tools/worktree-session-guard"
 
+# `status` against the same unreadable lease: still a guard lease (the marker
+# and version match), but with no parsable fields it must report empty
+# attribution and heartbeat_age_seconds -1 rather than fabricate values. This
+# is the unreadable mode the out-of-range heartbeat_epoch case above does not
+# cover.
+run_guard status "$sweep_wt"
+assert_eq "$RUN_RC" "0" "status on an unreadable v1 lease still reports a guard lease"
+json_parse "$run_out"
+assert_eq "$(json_field "$run_out" managed)" "true" "unreadable v1 lease is still managed"
+assert_eq "$(json_field "$run_out" owner)" "" "unreadable lease reports no invented owner"
+assert_eq "$(json_field "$run_out" heartbeat_age_seconds)" "-1" \
+	"unreadable lease must not report a computed age"
+
 run_guard release "$sweep_wt" --owner CC-1000 --force
 assert_eq "$RUN_RC" "0" "--force recovery of an unreadable lease"
 # The lease cannot be parsed, so the displacement notice reports it as unknown
@@ -875,6 +888,13 @@ esac
 # Escaping rather than deleting a control character is also what keeps one
 # JSON object on one line, which `list` depends on.
 assert_eq "$(line_count "$run_out")" "1" "status must emit exactly one JSON line"
+
+# `status <wt> --owner X` against a lock this guard does not manage must be 4,
+# not 75: lease_is_managed's verdict precedes any owner comparison. The
+# lifecycle integrations branch on exactly that difference — 4 is the lock
+# precheck's business, 75 is a foreign session — and do opposite things.
+run_guard status "$sweep_wt" --owner CC-1000
+assert_eq "$RUN_RC" "4" "status --owner of a foreign-locked worktree is 4, not 75"
 
 git -C "$sweep_repo" worktree unlock "$sweep_wt"
 

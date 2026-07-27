@@ -629,11 +629,17 @@ emit_status_json() {
 		"$age" "$(json_escape "$lease")"
 }
 
-# Paths of every linked worktree of REPO, main checkout excluded, written
-# NUL-delimited to OUT. Driven by `git worktree list --porcelain -z`, which
-# still reports a registration whose directory has been destroyed — the case
-# this tool most needs to see — and whose NUL delimiting is the only spelling
-# that survives a path containing a newline (vstack#911).
+# Every linked worktree of REPO, main checkout excluded, written to OUT as
+# NUL-delimited PATH REGISTRATION pairs. Driven by
+# `git worktree list --porcelain -z`, which still reports a registration whose
+# directory has been destroyed — the case this tool most needs to see — and
+# whose NUL delimiting is the only spelling that survives a path containing a
+# newline (vstack#911).
+#
+# The registration directory is resolved here, once, and emitted alongside the
+# path: it is the same lookup that filters the main checkout out, and list and
+# sweep both need it, so re-resolving it per consumer cost an N-worktree repo
+# 2N registry scans (vstack#913).
 #
 # The enumeration goes to a file, not through a process substitution or a
 # variable: a substitution discards Git's exit status — a sweep that could not
@@ -641,15 +647,15 @@ emit_status_json() {
 # mode available to a recovery command — and a variable cannot hold the NUL
 # delimiter at all.
 linked_worktree_paths() {
-	local repo="$1" out="$2" line path
+	local repo="$1" out="$2" line path registration
 	git -C "$repo" worktree list --porcelain -z >"$out.porcelain" || return 1
 	while IFS= read -r -d '' line; do
 		case "$line" in
 		'worktree '*) path="${line#worktree }" ;;
 		*) continue ;;
 		esac
-		if registration_dir_for "$repo" "$path" >/dev/null; then
-			printf '%s\0' "$path"
+		if registration="$(registration_dir_for "$repo" "$path")"; then
+			printf '%s\0%s\0' "$path" "$registration"
 		fi
 	done <"$out.porcelain" >"$out"
 }
@@ -907,10 +913,8 @@ cmd_list() {
 	local repo="$1" now path registration present
 	now="$(now_epoch)"
 	enumerate_or_fail "$repo" list
-	while IFS= read -r -d '' path; do
-		[[ -n "$path" ]] || continue
-		registration="$(registration_dir_for "$repo" "$path" || true)"
-		[[ -n "$registration" ]] || continue
+	while IFS= read -r -d '' path && IFS= read -r -d '' registration; do
+		[[ -n "$path" && -n "$registration" ]] || continue
 		present=true
 		[[ -d "$path" ]] || present=false
 		read_lease "$registration"
@@ -935,10 +939,8 @@ cmd_sweep() {
 	# enumeration failure must not be reported as "no stale session claims".
 	enumerate_or_fail "$repo" sweep
 
-	while IFS= read -r -d '' path; do
-		[[ -n "$path" ]] || continue
-		registration="$(registration_dir_for "$repo" "$path" || true)"
-		[[ -n "$registration" ]] || continue
+	while IFS= read -r -d '' path && IFS= read -r -d '' registration; do
+		[[ -n "$path" && -n "$registration" ]] || continue
 		rc=0
 		release_lease_if_stale "$repo" "$path" "$registration" "$ttl_minutes" "$dry_run" || rc=$?
 		case "$rc" in
