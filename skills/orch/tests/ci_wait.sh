@@ -50,6 +50,10 @@
 # updated_at, and its failure stays terminal (cases 29-31).
 set -euo pipefail
 
+# The invoking shell's real auth env must not reach the cases below — the
+# sanitizer cases assert on exactly the tokens each case injects.
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"

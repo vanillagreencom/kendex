@@ -2,6 +2,10 @@
 # Regression tests for env-first GitHub token loading.
 set -euo pipefail
 
+# The invoking shell's real auth env must not reach the cases below — every
+# token each case sees is injected by the case itself.
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"

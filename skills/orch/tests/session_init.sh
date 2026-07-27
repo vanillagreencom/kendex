@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# The invoking shell's real auth env must not reach the cases below — token
+# and 1Password-resolution cases assert on exactly what each case injects.
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN LINEAR_API_KEY
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/skills/orch/scripts/session-init"
