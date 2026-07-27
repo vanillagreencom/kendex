@@ -27303,14 +27303,32 @@ var QueryContext = class {
   // too — each call bills its own.
   turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  /** Fold the in-flight child message's counters into the turn total and start a
-   *  fresh one. Called at each `message_start`; a no-op on the turn's first. */
-  carryCurrentMessageUsage() {
+  /** Anthropic id of the child message `currentMessageUsage` describes. */
+  currentMessageId;
+  /**
+   * Declare which child message the following usage belongs to, banking the
+   * previous one's counters into the turn total.
+   *
+   * Keyed on the MESSAGE ID rather than on the call site, because both paths
+   * that see a message boundary can fire for the SAME message: `message_start`
+   * arrives on the stream, and the SDK then yields that message again in
+   * completed form. Banking per call site double-counted whenever the completed
+   * copy took the no-stream-events branch — which it does whenever a message
+   * produced no content blocks, since `turnSawStreamEvent` only tracks those.
+   *
+   * With no id on either side (older/streamless shapes) this degrades to
+   * banking on every call, which is what each caller means when it cannot
+   * prove otherwise.
+   */
+  beginChildMessage(messageId) {
+    const id = typeof messageId === "string" && messageId.length > 0 ? messageId : void 0;
+    if (id !== void 0 && id === this.currentMessageId) return;
     this.turnUsageCarry.input += this.currentMessageUsage.input;
     this.turnUsageCarry.output += this.currentMessageUsage.output;
     this.turnUsageCarry.cacheRead += this.currentMessageUsage.cacheRead;
     this.turnUsageCarry.cacheWrite += this.currentMessageUsage.cacheWrite;
     this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    this.currentMessageId = id;
   }
   // Per-turn (reset together)
   turnOutput = null;
@@ -27345,6 +27363,7 @@ var QueryContext = class {
     this.handledTerminalError = false;
     this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    this.currentMessageId = void 0;
   }
   resetToolTracking() {
     this.turnToolCallIds = [];
@@ -44374,7 +44393,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
   }
   if (event?.type === "message_start") {
     c.resetToolTracking();
-    c.carryCurrentMessageUsage();
+    c.beginChildMessage(event.message?.id);
     updateTurnOutputModel(event.message?.model);
     if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
     return;
@@ -44561,6 +44580,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
     return;
   }
   c.resetToolTracking();
+  c.beginChildMessage(assistantMsg.id);
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}`);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {

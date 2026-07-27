@@ -169,15 +169,33 @@ export class QueryContext {
 	// too — each call bills its own.
 	turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 	currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	/** Anthropic id of the child message `currentMessageUsage` describes. */
+	currentMessageId: string | undefined;
 
-	/** Fold the in-flight child message's counters into the turn total and start a
-	 *  fresh one. Called at each `message_start`; a no-op on the turn's first. */
-	carryCurrentMessageUsage(): void {
+	/**
+	 * Declare which child message the following usage belongs to, banking the
+	 * previous one's counters into the turn total.
+	 *
+	 * Keyed on the MESSAGE ID rather than on the call site, because both paths
+	 * that see a message boundary can fire for the SAME message: `message_start`
+	 * arrives on the stream, and the SDK then yields that message again in
+	 * completed form. Banking per call site double-counted whenever the completed
+	 * copy took the no-stream-events branch — which it does whenever a message
+	 * produced no content blocks, since `turnSawStreamEvent` only tracks those.
+	 *
+	 * With no id on either side (older/streamless shapes) this degrades to
+	 * banking on every call, which is what each caller means when it cannot
+	 * prove otherwise.
+	 */
+	beginChildMessage(messageId?: unknown): void {
+		const id = typeof messageId === "string" && messageId.length > 0 ? messageId : undefined;
+		if (id !== undefined && id === this.currentMessageId) return; // same message
 		this.turnUsageCarry.input += this.currentMessageUsage.input;
 		this.turnUsageCarry.output += this.currentMessageUsage.output;
 		this.turnUsageCarry.cacheRead += this.currentMessageUsage.cacheRead;
 		this.turnUsageCarry.cacheWrite += this.currentMessageUsage.cacheWrite;
 		this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+		this.currentMessageId = id;
 	}
 
 	// Per-turn (reset together)
@@ -207,6 +225,7 @@ export class QueryContext {
 		// describes — unlike tool-call tracking below.
 		this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 		this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+		this.currentMessageId = undefined;
 		// Tool-call tracking is NOT reset here — it persists across the
 		// tool-result delivery callback for the same assistant message. New
 		// assistant messages call resetToolTracking() explicitly.

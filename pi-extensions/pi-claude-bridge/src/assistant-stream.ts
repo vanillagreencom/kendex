@@ -89,8 +89,9 @@ export function processStreamEvent(
 	if (event?.type === "message_start") {
 		c.resetToolTracking();
 		// A new child message begins: bank what the previous one billed before its
-		// counters are replaced. No-op on the first message of a Pi turn.
-		c.carryCurrentMessageUsage();
+		// counters are replaced. No-op on the turn's first, and no-op if this same
+		// message was already declared (see beginChildMessage).
+		c.beginChildMessage(event.message?.id);
 		updateTurnOutputModel(event.message?.model);
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
 		return;
@@ -338,6 +339,11 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 		return;
 	}
 	c.resetToolTracking();
+	// The no-stream-events path also sees a message boundary. It is keyed on the
+	// message ID rather than trusted blindly, because this branch is ALSO reached
+	// for a message whose `message_start` already streamed — any message that
+	// produced no content blocks, since `turnSawStreamEvent` only tracks those.
+	c.beginChildMessage(assistantMsg.id);
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {

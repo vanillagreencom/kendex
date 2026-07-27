@@ -194,14 +194,14 @@ describe("usage across a Pi turn that spans several child messages", () => {
 		// Child message 1: the connector call. Big cache write, tiny output.
 		processStreamEvent(streamEvent({
 			type: "message_start",
-			message: { model: model.id, usage: { input_tokens: 10, output_tokens: 0, cache_creation_input_tokens: 55685 } },
+			message: { id: "msg_1", model: model.id, usage: { input_tokens: 10, output_tokens: 0, cache_creation_input_tokens: 55685 } },
 		}), new Map(), model);
 		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 3 } }), new Map(), model);
 
 		// Child message 2: the answer. Its own separate billed call.
 		processStreamEvent(streamEvent({
 			type: "message_start",
-			message: { model: model.id, usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 53631, cache_creation_input_tokens: 2083 } },
+			message: { id: "msg_2", model: model.id, usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 53631, cache_creation_input_tokens: 2083 } },
 		}), new Map(), model);
 		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 110 } }), new Map(), model);
 
@@ -227,6 +227,70 @@ describe("usage across a Pi turn that spans several child messages", () => {
 
 		assert.equal(c.turnOutput.usage.input, 10);
 		assert.equal(c.turnOutput.usage.output, 90, "cumulative-per-message counters must not be summed");
+	});
+
+	it("accumulates on the no-stream-events path too", () => {
+		// The SDK can deliver a turn as complete `assistant` messages with no
+		// stream events. That path is where a new child message begins for it, so
+		// it must bank the previous one exactly as `message_start` does.
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processAssistantMessage({
+			type: "assistant",
+			message: { id: "msg_1", content: [{ type: "text", text: "first" }], usage: { input_tokens: 10, output_tokens: 20 } },
+		}, model, new Map());
+		processAssistantMessage({
+			type: "assistant",
+			message: { id: "msg_2", content: [{ type: "text", text: "second" }], usage: { input_tokens: 5, output_tokens: 7 } },
+		}, model, new Map());
+
+		assert.equal(c.turnOutput.usage.input, 15);
+		assert.equal(c.turnOutput.usage.output, 27, "the first assistant message's output must not be dropped");
+	});
+
+	it("does not double-count a message whose message_start already streamed", () => {
+		// The regression this guards: a child message that emits message_start but
+		// NO content blocks leaves `turnSawStreamEvent` false, so the SDK's completed
+		// copy of that SAME message lands on the no-stream-events path. Banking per
+		// call site counted it twice; banking per message id does not.
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "message_start",
+			message: { id: "msg_1", model: model.id, usage: { input_tokens: 10, output_tokens: 0 } },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({ type: "message_delta", delta: {}, usage: { output_tokens: 40 } }), new Map(), model);
+		// The SDK's completed copy of the SAME message (same id).
+		processAssistantMessage({
+			type: "assistant",
+			message: { id: "msg_1", content: [{ type: "text", text: "hi" }], usage: { input_tokens: 10, output_tokens: 40 } },
+		}, model, new Map());
+
+		assert.equal(c.turnOutput.usage.input, 10, "one message must be billed once");
+		assert.equal(c.turnOutput.usage.output, 40);
+	});
+
+	it("still accumulates when the SDK reports no message ids", () => {
+		// Older/streamless shapes carry no id. Each call then means what it says.
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processAssistantMessage({
+			type: "assistant",
+			message: { content: [{ type: "text", text: "a" }], usage: { input_tokens: 3, output_tokens: 4 } },
+		}, model, new Map());
+		processAssistantMessage({
+			type: "assistant",
+			message: { content: [{ type: "text", text: "b" }], usage: { input_tokens: 3, output_tokens: 4 } },
+		}, model, new Map());
+
+		assert.equal(c.turnOutput.usage.input, 6);
+		assert.equal(c.turnOutput.usage.output, 8);
 	});
 
 	it("starts fresh for the next Pi message", () => {
