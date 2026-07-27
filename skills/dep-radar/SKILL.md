@@ -18,13 +18,10 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Repos pin versions deliberately (reproducibility, SHA verification, supply-chain
-safety). The cost of pinning is drift: model lists lag pinned SDKs, pinned
-runtime binaries fall behind upstream contract changes. This skill is the
-refresh loop that keeps pinning current: **inventory → detect → research →
-classify → upgrade-with-fixes → report the narrow owner tier**. The bias is
-toward upgrading — apply the bump and fix its fallout in the same per-surface
-PR, deferring only on a strong concrete blocker.
+The refresh loop that keeps deliberate version pinning current: **inventory →
+detect → research → classify → upgrade-with-fixes → report the narrow owner
+tier**. The bias is toward upgrading — apply the bump and fix its fallout in
+the same per-surface PR, deferring only on a strong concrete blocker.
 
 The skill is the generic engine; everything repo-specific lives in a per-repo
 inventory that the skill itself generates and maintains (Phase 0). Nothing here
@@ -36,8 +33,6 @@ go through it. Load `worktree` when applying more than one surface in a run, so
 each surface's branch gets an isolated working copy.
 
 ## Operating policy (the contract with the product owner)
-
-The contract, verbatim:
 
 > AUTO-with-fixes (default): security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo's full test suite gates the sync.
 >
@@ -55,40 +50,12 @@ The contract, verbatim:
 >
 > Inventory owner-rules may demote auto→report, never promote report→auto.
 
-Elaborated:
-
-- **Bias to upgrade — auto-with-fixes is the default.** One PR per surface
-  (never batch); merge only if all checks pass. The auto tier covers security
-  advisories; patch/minor bumps of routine deps; pinned-runtime-binary
-  version+SHA refreshes sourced only from the official release manifest; and —
-  this is the shift — pinned AI/agent SDKs, agent tooling, pinned runtime
-  binaries, and npm/cargo **majors**. For those, do the bump and fix its
-  fallout in the same per-surface workstream: migrate changed APIs, re-vendor
-  bundled-extension bridges, and repair the tests and CI the bump breaks. A
-  bump being "major" is not itself a reason to defer.
-- **Fixability is the deciding test.** Before applying a breaking major,
-  investigate what it breaks (Phase 2 changelog/impact research) — then the
-  question is only *can the fallout be fixed in this PR?* If yes, do the bump
-  and fix it. Defer only when the breakage is genuinely unfixable: a specific,
-  named obstacle you actually hit — an upstream that dropped a capability the
-  repo depends on with no migration path, a required transitive that does not
-  yet support the new version — never generic "it's a major, might break"
-  caution. When uncertain, attempt the upgrade; if it fails, report only what
-  actually failed, with the error output. A deferred-untried bump teaches
-  nothing; a tried-and-reported failure teaches exactly what blocks it.
-- **Report, never auto-apply — exactly three things**: model-weight swaps;
-  changes to durable/recorded data scope (what the repo persists or records);
-  and anything an inventory owner-rule explicitly demotes. Nothing else is
-  report-by-default. New user-facing capabilities a bump unlocks are noted in
-  the run report as opportunities, but the bump that carries them is still
-  applied.
-- **Every pinned surface needs a wired upstream check.** A surface whose
-  inventory row has no upstream check command is an inventory defect: Phase 1
-  silently skips it, so the run must wire the check (Phase 0/1) before that
-  surface can be swept. Do not leave a pin unwatched.
-- Every run ends with a dated report even when nothing was applied.
-- Inventory owner rules override the generic tiers in the report direction
-  only: a rule can demote auto→report, never promote report→auto.
+Fixability is the deciding test for a breaking major: investigate what it
+breaks (Phase 2), then the question is only *can the fallout be fixed in this
+PR?* Defer only on a specific, named obstacle you actually hit — an upstream
+that dropped a capability the repo depends on with no migration path, a
+required transitive that does not yet support the new version — never generic
+"it's a major, might break" caution.
 
 ## Phase 0 — inventory (self-maintaining)
 
@@ -106,8 +73,7 @@ command** — a surface with a blank or missing check is an inventory defect (Ph
   surface, and have the owner glance at the tiers.
 - **Every run**: diff discovered pins against the inventory; add new surfaces
   (each with an upstream check), drop removed ones, and note the change in the
-  run report. If an existing row has no upstream check command, treat it as a
-  defect to fix this run — wire the check rather than leaving the pin unwatched.
+  run report.
 
 ## Phase 1 — detect (cheap; makes scheduled runs nearly free)
 
@@ -116,8 +82,7 @@ for each surface via its inventory upstream check command. If a surface has no
 check command, that is an inventory defect — wire it (per Phase 0) rather than
 silently skipping the pin. If nothing changed since last-seen, update
 `checked_at`, write a one-line report, and stop — an idle run should cost a few
-registry calls, not a build. (Skip-if-unchanged, same principle as tiered-CI
-nightlies.)
+registry calls, not a build.
 
 ## Phase 2 — research
 
@@ -129,14 +94,9 @@ RPC protocol, a model catalog).
 
 ## Phase 3 — classify
 
-Sort every finding into **auto** / **report** per the policy plus the
-inventory's per-surface tier and owner rules. Default is **auto-with-fixes**:
-SDK, agent-tooling, and runtime-binary bumps, npm/cargo majors, and
-bundled-extension fork syncs all classify auto unless a strong concrete blocker
-or an inventory owner-rule demotes them. Only three things are report-by-default
-— model-weight swaps, changes to durable/recorded data scope, and anything an
-owner-rule explicitly demotes. When uncertain, classify auto and attempt it; a
-failed attempt becomes a report item carrying its error output.
+Sort every finding into **auto** / **report** per the operating policy plus the
+inventory's per-surface tier and owner rules. When uncertain, classify auto and
+attempt it; a failed attempt becomes a report item carrying its error output.
 
 ## Phase 4 — apply the auto tier
 
@@ -151,10 +111,9 @@ what was verified. Use the `github` skill for PR creation, CI waits, and merge;
 respect the repo's review/merge-queue conventions.
 
 If a bump hits a strong concrete blocker mid-apply (an unmigratable API break, a
-transitive that does not support the new version), stop and make it a report
-item with the exact error output — do not ship a partial bump. New user-facing
-capabilities a bump unlocks are logged in Phase 5 as opportunities, but the bump
-itself still ships.
+transitive that does not support the new version) or its verification fails,
+stop and make it a report item with the exact error output — do not ship a
+partial bump.
 
 ## Phase 5 — report
 
@@ -212,21 +171,8 @@ here.
 
 ## Guardrails
 
-- One PR per surface; never batch. A surface's fallout fixes belong in THAT
-  surface's PR — "same workstream" is never license to fold surfaces together.
-- If a bump's verification fails, do not ship a partial bump; report the
-  failure with error output instead.
-- Every pinned surface must have a wired upstream check command; a surface
-  lacking one is an inventory defect the run must fix, not skip.
-- Never swap model weights automatically. Never auto-rebase a true patched
-  vendor fork of a large upstream — but a bundled-extension fork (script-synced,
-  provenance-tracked) may be synced and its patches rebased in the auto tier
-  when the consuming repo's full test suite gates the sync.
 - Migration-bearing dep bumps (DB/storage tooling): check the repo's
   merge-order/version-gap hazards before merging.
-- Honor every owner rule recorded in the inventory (these override the
-  generic tiers in the report direction only — a rule can demote auto→report,
-  never promote report→auto).
 - Harness-safe shell: run upstream checks and verify commands as single simple
   commands — no loops, no command substitution, no composition — so runs
   survive restrictive harness approval policies.

@@ -18,6 +18,10 @@ metadata:
 
 Brief description of what this skill covers (1-2 sentences).
 
+<!-- SKILL.md loads on every use: keep it to what every agent needs on every
+     load — commands, contracts, rules. Depth goes in references/ and
+     workflows/ files read on demand. No history, no issue citations. -->
+
 <!-- CLI skills: add entry point here
 ```bash
 .agents/skills/skill-name/scripts/entry-point <command> [options]

@@ -18,7 +18,7 @@ Repeated `--additional-query` values are sent as Exa `additionalQueries` in one 
 
 After generating a report, run `scripts/deep-research validate findings.md findings.raw.json` for deterministic post-run checks (required sections, query-expansion metadata consistency, synthesis presence, duplicated sections). It prints `{ok, errors, warnings}` and exits non-zero on errors.
 
-The findings format is mode-adaptive: `lite`, `standard`, and `full` use the same required sections, while mode/source/query counts are recorded in `## Research Metadata`. This avoids separate templates drifting over time.
+The findings format is mode-adaptive: `lite`, `standard`, and `full` use the same required sections, while mode/source/query counts are recorded in `## Research Metadata`.
 
 Format references:
 
@@ -27,4 +27,4 @@ Format references:
 
 Raw Exa/provider payloads belong in the sidecar JSON only. Do not embed raw JSON or fenced raw metadata blocks in `findings.md`.
 
-Pi `web_research` uses Exa highlights and, for `standard`/`full`, structured output (`outputSchema`) plus source summaries when available. `lite` avoids the default output schema after live Exa testing showed empty result sets with `deep-lite` + structured output. Evidence excerpts are sanitized before rendering so Markdown headings from source pages do not become giant quoted headings in reports.
+Pi `web_research` uses Exa highlights and, for `standard`/`full`, structured output (`outputSchema`) plus source summaries when available; `lite` does not request the structured output schema. Evidence excerpts are sanitized before rendering so Markdown headings from source pages do not render as quoted headings in reports.

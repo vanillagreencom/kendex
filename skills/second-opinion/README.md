@@ -2,23 +2,7 @@
 
 Cross-model code review and consultation via external AI CLI. Auto-detects your current harness and calls the opposite — Claude calls Codex, Codex calls Claude, Pi calls Claude.
 
-## Structure
-
-```
-skills/second-opinion/
-├── SKILL.md                    # Agent-facing routing table + config
-├── README.md                   # This file
-├── vstack.settings.toml.example # Defaults merged into project settings
-├── schemas/
-│   └── review-finding-prompt.md  # JSON schema (shared by review + audit)
-├── scripts/
-│   └── second-opinion          # CLI wrapper
-└── workflows/
-    ├── review.md               # Code review → JSON
-    ├── challenge.md            # Adversarial analysis → text
-    ├── audit.md                # Code examination → JSON
-    └── quick.md                # Quick question → text
-```
+Four modes: `review` (code review → JSON), `challenge` (adversarial analysis → text), `audit` (code examination → JSON), `quick` (question → text).
 
 ## Prerequisites
 
@@ -99,6 +83,4 @@ The orch skill's `review-pr` workflow optionally offers an external review at §
 
 The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the branch diff (standalone lifecycle), draining bot-class findings at local speed instead of blocking on asynchronous GitHub review bots.
 
-In `review` and `audit` modes the artifact's `timestamp` field is wrapper-stamped: after the model responds, the script overwrites `timestamp` with its own UTC wall clock (`date -u`), so the recorded time reflects when the wrapper wrote the file rather than a value the reviewing model serialized. Both orch workflows pass a delegated-at boundary to `review-artifact-check --file`, which rejects an artifact whose filesystem mtime predates that boundary — freshness never depends on a model-supplied timestamp.
-
-`review` mode also derives its scope from the worktree before calling the external CLI: branch, diff range, diffstat, and changed-file list are embedded in the prompt. If the first response yields no parseable JSON — or parseable JSON missing the required `verdict`/`blockers`/`suggestions`/`questions` fields (a truncated extraction that silently lost the findings) — the one-shot retry resends the full original request (scope included) with the captured response, so the retry never runs context-free. An empty diff fails with exit 3 instead of producing an artifact; a response that self-reports no review was performed (`qa_metadata.review_performed: false`) or omits the required `qa_metadata` object is preserved as `<output>.noreview.json` and fails with exit 4; and a response still structurally incomplete after the retry is preserved as `<output>.incomplete.json` and fails with exit 4 — so a "pass" artifact always corresponds to a complete review that actually happened. If the external CLI itself never produces a review — a non-zero exit (quota, auth, network), a timeout, or an empty response on a zero exit — the wrapper preserves whatever partial output existed as `<output>.failed.json`, echoes the CLI's own error text on stderr, and fails with exit 5, so a down lane fails loudly instead of recording a silent success. `review-artifact-check` rejects self-reported no-review artifacts on its side too (reason `no_review`), and qa-shaped artifacts that lost their finding arrays (reason `incomplete`).
+The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the artifact `timestamp` is wrapper-stamped (never model-supplied), the review scope is derived from the worktree and embedded in the prompt, incomplete or no-review responses are preserved beside the artifact (`.incomplete.json` / `.noreview.json`, exit 4) instead of becoming it, an empty diff fails with exit 3, and a CLI that never answers fails with exit 5 (`.failed.json`). See SKILL.md § Error Handling for the exit-code contract.

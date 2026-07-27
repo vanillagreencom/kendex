@@ -33,7 +33,6 @@ assert_file_contains "$skill_md" 'satisfied history, not stale metadata' "comple
 assert_file_contains "$skill_md" 'Linear itself already treats the dependent issue as unblocked' "Linear auto-unblock semantics stated"
 assert_file_contains "$skill_md" 'never remove or "fix" it, and audits must never classify it as stale' "removal and stale classification forbidden"
 assert_file_contains "$skill_md" 'gates cleared, ready to schedule' "scheduling signal is the only legitimate audit output"
-assert_file_contains "$skill_md" 'STALE blocked_by METADATA' "observed failure mode kept as cautionary rationale"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -172,7 +172,7 @@ Under `required_conversation_resolution`, an outdated thread can become
 unreachable in the UI while still blocking the merge: after a rebase or
 force-push the commented commits are gone, clicking the unresolved
 conversation 404s, and the PR shows zero visible conversations yet refuses to
-merge (github/community discussions #144455, #10592, #184355). GraphQL
+merge. GraphQL
 `resolveReviewThread` still acts on threads the UI cannot render, so this skill
 is the escape hatch:
 

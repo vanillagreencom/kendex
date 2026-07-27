@@ -6,7 +6,7 @@
 
 ## 1. Environment Setup
 
-Keep shell commands harness-safe: use one simple command per call with explicit arguments. Avoid inline shell loops, command substitution, heredocs, pipelines used only to pass values, and redirected writes to `tmp/`; Codex may treat those helper shapes as approval-required under `never` approval. For required multi-file reads, read each file directly. For generated Markdown/JSON files, use the harness file-write/edit tool or `apply_patch` instead of shell redirection. When a fix item requires searching backtick-bearing text (Markdown inline code), never put a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes (vstack#721; canonical rule: reviewer SKILL.md § Harness-Safe Shell).
+Keep shell commands harness-safe: use one simple command per call with explicit arguments. Avoid inline shell loops, command substitution, heredocs, pipelines used only to pass values, and redirected writes to `tmp/`; Codex may treat those helper shapes as approval-required under `never` approval. For required multi-file reads, read each file directly. For generated Markdown/JSON files, use the harness file-write/edit tool or `apply_patch` instead of shell redirection. When a fix item requires searching backtick-bearing text (Markdown inline code), never put a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes (canonical rule: reviewer SKILL.md § Harness-Safe Shell).
 
 ---
 
@@ -62,7 +62,7 @@ Related improvements OK — unrelated changes should become separate issues.
 # Run the project's build/test/lint validation command
 ```
 
-**Long-running validation (vstack#770, vstack#818).** If this run can outlast a turn, follow [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation): the invariant is that the completion tail (commit → artifact → return, § 4.2, § 6) is never lost; the wait mechanics are your harness's.
+**Long-running validation.** If this run can outlast a turn, follow [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation): the invariant is that the completion tail (commit → artifact → return, § 4.2, § 6) is never lost; the wait mechanics are your harness's.
 
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`
@@ -118,12 +118,12 @@ Criteria: Would this save 5+ minutes in a future session? If yes, update. One su
 
 ## 6. Return
 
-**Before returning — write your completion artifact.** After the § 4.2 commit, run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`) — do NOT hand-author the JSON (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). Pass one `--item` per review item you were delegated, from the decision table below — the orchestrator checks the artifact covers EXACTLY the delegated item set, so include every item (Applied, Skipped, and Blocked alike). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation outlasted the turn (§ 4, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating. Run it AFTER the commit so `commit`/`validate` are final:
+**Before returning — write your completion artifact.** After the § 4.2 commit, run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`) — do NOT hand-author the JSON (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). Pass one `--item` per review item you were delegated, from the decision table below — the orchestrator checks the artifact covers EXACTLY the delegated item set, so include every item (Applied, Skipped, and Blocked alike). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation outlasted the turn (§ 4) — the orchestrator recovers your completion from this file instead of re-delegating. Run it AFTER the commit so `commit`/`validate` are final:
 
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --item [N] [DECISION] [REASONING] [--item ...]
 ```
-**A pass that needed a re-run is still a `pass` — but say so.** Keep `--validate` strictly `pass` or `FAILING: …`; when the result is qualified (a lane that failed once and passed on re-run over the identical diff, a flake you had to investigate), add `--validate-note` so the caveat lands in the durable record instead of only in your return message (vstack#884):
+**A pass that needed a re-run is still a `pass` — but say so.** Keep `--validate` strictly `pass` or `FAILING: …`; when the result is qualified (a lane that failed once and passed on re-run over the identical diff, a flake you had to investigate), add `--validate-note` so the caveat lands in the durable record instead of only in your return message:
 
 ```bash
 --validate pass --validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"

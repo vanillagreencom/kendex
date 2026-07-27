@@ -67,20 +67,6 @@ Set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` when it is
 
 If the decisions directory does not exist (never initialized), read-only lookups (`search`, `list`) emit an empty JSON array with a stderr note and exit 0 — no decisions recorded is not an error. `next-id` and `get` still require an initialized directory, and a configured path that exists but is not a directory is always a hard error.
 
-## Decision Lifecycle
-
-```
-Research Complete → Create Decision (§ 6.1)
-                        ↓
-                 INDEX.md + DXXX-descriptor.md
-                        ↓
-            ┌───────────┴───────────┐
-            ↓                       ↓
-    Search/Reference         Update/Supersede
-    (review, audit,          (new research,
-     implementation)          revisit conditions met)
-```
-
 ## Quick Reference
 
 ### Creating Decisions

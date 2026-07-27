@@ -130,7 +130,7 @@ Before planning, check your domain's code (per your agent's Domain Setup):
 - Linear only: update estimate if scope differs: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`
   - Estimates: 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
 - **If bundled**: Plan sub-issue order based on dependencies/overlap.
-- **Normalize env-prefixed required commands** (vstack#714). If the issue spec or delegation carries a required command shaped `VAR=value cmd args` (e.g. `LC_ALL=C tools/test-ci-changes`), accept it as the bare `cmd args` plus an environment precondition — never the prefixed shape, which Codex `approval=never` rejects. Before running it (§ 5), confirm the ambient environment satisfies the precondition with one simple command (`printenv VAR`; `locale` for locale variables), then run the bare command unchanged. `env VAR=value cmd args` is not an acceptable substitute. If the ambient environment cannot satisfy the precondition, report it as a blocker in your return instead of running under the wrong environment. Canonical rule: orch SKILL.md § Harness-Safe Shell.
+- **Normalize env-prefixed required commands.** If the issue spec or delegation carries a required command shaped `VAR=value cmd args` (e.g. `LC_ALL=C tools/test-ci-changes`), accept it as the bare `cmd args` plus an environment precondition — never the prefixed shape, which Codex `approval=never` rejects. Before running it (§ 5), confirm the ambient environment satisfies the precondition with one simple command (`printenv VAR`; `locale` for locale variables), then run the bare command unchanged. `env VAR=value cmd args` is not an acceptable substitute. If the ambient environment cannot satisfy the precondition, report it as a blocker in your return instead of running under the wrong environment. Canonical rule: orch SKILL.md § Harness-Safe Shell.
 
 ### 2.5 Domain-Specific Setup
 
@@ -264,9 +264,9 @@ Update relevant docs if implementation changes documented APIs or architecture.
 
 Run required verification commands in their normalized form from § 2.4 — ambient precondition check first, then the bare command; never an env-assignment prefix, and never an `env`-wrapped substitute.
 
-Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (vstack#721; canonical rule: reviewer SKILL.md § Harness-Safe Shell).
+Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (canonical rule: reviewer SKILL.md § Harness-Safe Shell).
 
-**Long-running validation (vstack#770, vstack#818).** If this run can outlast a turn, follow [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation): the invariant is that the completion tail (commit → QA labels → summary → artifact → return, § 7-10) is never lost; the wait mechanics are your harness's.
+**Long-running validation.** If this run can outlast a turn, follow [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation): the invariant is that the completion tail (commit → QA labels → summary → artifact → return, § 7-10) is never lost; the wait mechanics are your harness's.
 
 **On failure:**
 - **First run**: Use `--fail-fast` to stop early, fix, then `--recheck`
@@ -456,12 +456,12 @@ Do NOT post handoff to the completed issue — that conflates audiences. Handoff
 | Summary posted | Always | § 9.1 |
 | Downstream handoff | Blocks + context needed | § 9.2 |
 
-**Before returning — write your completion artifact.** With every row above checked (commit, QA labels, and summary now final), run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json`). Do NOT hand-author the JSON — the writer builds it deterministically (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation outlasted the turn (§ 5, vstack#770) — the orchestrator recovers your completion from this file instead of re-delegating the whole task. Run it AFTER commit/labels/summary so every field is final:
+**Before returning — write your completion artifact.** With every row above checked (commit, QA labels, and summary now final), run `dev-return-write` to write the durable completion record (named `tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json`). Do NOT hand-author the JSON — the writer builds it deterministically (schema + full field reference: [`../../orch/schemas/dev-return.md`](../../orch/schemas/dev-return.md)). The orchestrator treats this artifact as the durable completion record: if your return message is lost — e.g. a long validation outlasted the turn (§ 5) — the orchestrator recovers your completion from this file instead of re-delegating the whole task. Run it AFTER commit/labels/summary so every field is final:
 
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
-**A pass that needed a re-run is still a `pass` — but say so.** Keep `--validate` strictly `pass` or `FAILING: …`; when the result is qualified (a lane that failed once and passed on re-run over the identical diff, a flake you had to investigate), add `--validate-note` so the caveat lands in the durable record instead of only in your return message (vstack#884):
+**A pass that needed a re-run is still a `pass` — but say so.** Keep `--validate` strictly `pass` or `FAILING: …`; when the result is qualified (a lane that failed once and passed on re-run over the identical diff, a flake you had to investigate), add `--validate-note` so the caveat lands in the durable record instead of only in your return message:
 
 ```bash
 --validate pass --validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"

@@ -40,7 +40,7 @@ Use this skill for evidence-backed research reports, architectural investigation
 - If `EXA_API_KEY` is missing, fail with clear setup instructions. `EXA_API_KEY` may be a direct key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
 - Use `--mode standard` by default. Use `--mode lite` for fast spikes and `--mode full` for strategic/high-risk decisions. Explicit `--type`, `--num-results`, and `--text-max-characters` override mode defaults.
 - Use one adaptive findings format for all modes. The mode changes depth/source volume and Exa content settings, not the required report sections; record mode and source counts in `## Research Metadata`.
-- In Pi, `web_research` uses Exa `/search` with deep search type, `systemPrompt`, text extraction, highlights, and, for `standard`/`full`, summaries plus structured `outputSchema`. `lite` avoids the default schema because live Exa `deep-lite` tests returned empty result sets when structured output was requested. Project/user settings may override mode profiles via `pi-web-tools.exaResearchModes`.
+- In Pi, `web_research` uses Exa `/search` with deep search type, `systemPrompt`, text extraction, highlights, and, for `standard`/`full`, summaries plus structured `outputSchema`. `lite` does not request the structured output schema. Project/user settings may override mode profiles via `pi-web-tools.exaResearchModes`.
 
 ## Script Usage
 

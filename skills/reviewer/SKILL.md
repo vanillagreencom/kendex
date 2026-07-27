@@ -71,7 +71,7 @@ Every `blockers[]` and `suggestions[]` item requires all of:
 | `estimate` | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
 | `category` | **Suggestions only**: `fix` (apply in this PR) or `issue` (track separately). The orchestrator routes suggestions on this field, so an item without it matches no filter and is silently dropped |
 
-**`priority` has no 5.** The instinct to reach for one is real — it usually means "the least important thing in this report" — but the scale ends at 4, and the schema has no place to record that ranking. Use P4, or drop the finding: a finding that does not justify P4 is one of the cosmetic items the approval bar above already excludes.
+**`priority` has no 5.** The scale ends at 4. Use P4, or drop the finding: a finding that does not justify P4 is one of the cosmetic items the approval bar above already excludes.
 
 Full schema, including `questions[]` and `qa_metadata`: [`schemas/review-finding.md`](./schemas/review-finding.md).
 

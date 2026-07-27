@@ -2,37 +2,7 @@
 
 TPM methodology for roadmap planning, cycle planning, issue auditing, prioritization, and progress tracking. Workflows analyze issue tracker state and return structured JSON recommendations — the orchestrator or user handles execution.
 
-The methodology lives in reference documents, workflows, and schemas. A small
-portable helper resolves repository-aware verification paths for audits.
-
-## Structure
-
-```
-skills/project-management/
-├── SKILL.md                                # Skill definition for AI agents and skill-aware harnesses
-├── README.md                               # This file — human-facing docs
-├── references/
-│   ├── issues.md                           # Issue creation, fields, sub-issues, estimates, templates
-│   ├── initiatives-projects.md             # Initiative/project lifecycle, naming, breakdown
-│   ├── dependencies.md                     # Blocking rules, relation types, remediation
-│   ├── prioritization.md                   # Scoring formula, factor definitions, trade-offs
-│   └── labels.md                           # Issue-label inventory preflight, taxonomy contract, exclusivity, lifecycle
-├── templates/
-│   ├── issue-description-template.md        # Standard issue body structure
-│   └── parent-issue-template.md             # Bundle/coordination parent issue structure
-├── workflows/
-│   ├── tpm-cycle-plan.md                   # Analyze backlog, compute architecture order for cycle
-│   ├── tpm-roadmap-plan.md                 # Cross-project analysis, architecture gaps
-│   ├── tpm-audit.md                        # Audit issues/projects for relations, hierarchy
-│   └── tpm-audit-project-order.md          # Analyze project dependencies and ordering
-├── scripts/
-│   └── verification-scope                  # Resolve changed paths or tracked source roots for audits
-└── schemas/
-    ├── cycle-plan-output.md                # Cycle planning JSON output schema
-    ├── roadmap-plan-output.md              # Roadmap analysis JSON output schema
-    ├── audit-output.md                     # Issue/project audit JSON output schema
-    └── audit-project-order-output.md       # Project order audit JSON output schema
-```
+The methodology lives in reference documents, workflows, and schemas (see the tables in `SKILL.md`). A small portable helper (`scripts/verification-scope`) resolves repository-aware verification paths for audits.
 
 ## Skill Dependencies
 
