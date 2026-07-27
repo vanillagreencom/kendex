@@ -40,15 +40,15 @@ skill-templates/         Templates for new skills
 - **Discovered dynamically.** CLI scans `agents/`, `skills/`, `hooks/`, `pi-extensions/` at runtime. No hardcoded lists.
 - **Canonical source is harness-agnostic.** Translation happens in `cli/src/harness/`.
 - **Agent `role` drives access control.** `analyst` → planning/research/recon artifacts. `reviewer` → report-only/subagent (may write reports, not product code). `engineer` → full access/primary. `manager` → analysis/report artifacts.
-- **Skill dependencies and ownership use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md. Shipped VStack skills also declare `metadata.source`, `metadata.repository`, and `metadata.bugs` so agents can route upstream failures only to the owning project.
-- **Report ownership is identity-based.** Installed lock entries stamp the source GitHub `owner/repo` as `source_repo` when it can be resolved. `vstack report` uses skill/agent frontmatter first, then `source_repo` or a live source Git origin for agents/hooks; a vstack-shaped local directory alone is never proof of upstream ownership.
-- **Hooks diverge by harness.** Claude Code: native shell hooks + settings.json + agent frontmatter. Cursor: safety `.mdc` rules. OpenCode: `.opencode/agents/*.md` + instructions. Codex: native shell hooks under `<scope>/.codex/hooks/` registered in `<scope>/.codex/hooks.json` with `[features] hooks = true` in `config.toml` — events without a codex equivalent (e.g. Claude's `TaskCompleted`) fall back to inline prose in `developer_instructions`. Pi: native TS implementations in the `@vanillagreen/pi-hooks` extension, listening on `tool_call`/`tool_result`/`turn_end`; each hook independently toggleable in pi-extension-manager.
-- **Pi extensions are npm-shaped.** vstack copies them to `<scope>/packages/<name>`, runs `npm install --omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund` there when `package.json` has `dependencies` or `optionalDependencies`, and registers the path in Pi's `settings.json` `packages` array.
-- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install; users add/remove and refresh. Markdown-based harnesses get `skills:` frontmatter; Codex agents get a "Required Skills" instruction section.
+- **Skill dependencies and ownership use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md. Shipped VStack skills also declare `metadata.source`, `metadata.repository`, and `metadata.bugs` so agents can route upstream failures to the owning project.
+- **Report ownership is identity-based.** Installed lock entries stamp the source GitHub `owner/repo` as `source_repo` when resolvable. `vstack report` uses skill/agent frontmatter first, then `source_repo` or a live source Git origin; a vstack-shaped local directory alone is never proof of upstream ownership.
+- **Hooks diverge by harness.** Claude Code: native shell hooks + settings.json + agent frontmatter. Cursor: safety `.mdc` rules. OpenCode: `.opencode/agents/*.md` + instructions. Codex: native shell hooks under `<scope>/.codex/hooks/` registered in `<scope>/.codex/hooks.json` with `[features] hooks = true`; events without a Codex equivalent fall back to inline prose in `developer_instructions`. Pi: native TS implementations in `@vanillagreen/pi-hooks` listening on `tool_call`/`tool_result`/`turn_end`, each independently toggleable in pi-extension-manager.
+- **Pi extensions are npm-shaped.** vstack copies them to `<scope>/packages/<name>`, runs a prod-only, lockfile-free `npm install` there when the package declares dependencies, and registers the path in Pi's `settings.json` `packages` array.
+- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching; `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` gets `[agent-skills]` populated at install; users edit and refresh. Markdown harnesses get `skills:` frontmatter; Codex agents get a "Required Skills" instruction section.
 - **Reconciliation is automatic.** After every `vstack add`, all installed agents are regenerated with the current full set of installed skills and hooks.
-- **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parents. `$HOME` is rejected as a project root when only user-level harness dirs (`~/.claude`, `~/.pi`, etc.) exist there with no `.vstack-lock.json`, so project-scope writes never accidentally route into user state.
-- **Runtime settings are split from secrets.** Portable skill scripts load `.env`, then `vstack.settings.toml` / `.vstack/settings.toml` `[env]`, then `.env.local`. Put committed non-sensitive defaults in `vstack.settings.toml`; reserve `.env.local` for secrets, API keys, private URLs, signing keys, and personal overrides. Existing `.env.local` settings remain supported for compatibility.
-- **Skill settings templates are opt-in.** A skill can ship `vstack.settings.toml.example`; project-scope `vstack add` and `vstack refresh` merge its `[env]` defaults into `<project>/vstack.settings.toml`, creating the file when missing and never overwriting existing keys. Global installs do not write project settings.
+- **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json` or a harness dir (`.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, `.agents/`) by walking parents. `$HOME` with only user-level harness dirs and no lock file is rejected, so project-scope writes never route into user state.
+- **Runtime settings are split from secrets.** Portable skill scripts load `.env`, then `vstack.settings.toml` / `.vstack/settings.toml` `[env]`, then `.env.local`. Committed non-sensitive defaults go in `vstack.settings.toml`; secrets, keys, and personal overrides in `.env.local`.
+- **Skill settings templates are opt-in.** A skill can ship `vstack.settings.toml.example`; project-scope `add`/`refresh` merge its `[env]` defaults into `<project>/vstack.settings.toml`, creating the file when missing and never overwriting existing keys. Global installs do not write project settings.
 
 ## Formats
 
@@ -77,7 +77,7 @@ metadata:
   version: "1.0.0"
 ```
 
-Use the ownership fields only when the skill is shipped by VStack. Non-VStack skills should point at their own upstream instead of `vanillagreencom/vstack`.
+Use the ownership fields only for VStack-shipped skills; non-VStack skills point at their own upstream.
 
 Optional skill settings template (`skills/*/vstack.settings.toml.example`):
 ```toml
@@ -85,8 +85,6 @@ Optional skill settings template (`skills/*/vstack.settings.toml.example`):
 
 MY_SKILL_TIMEOUT = "300"
 ```
-
-Project installs merge these defaults into `vstack.settings.toml` so shared non-secret settings are available as soon as the skill is installed.
 
 ### Hook header (`hooks/*.sh`)
 ```bash
@@ -101,10 +99,10 @@ Project installs merge these defaults into `vstack.settings.toml` so shared non-
 # ---
 ```
 
-`harnesses:` accepts a YAML list or comma-separated string. Use it for hooks whose wire format or event has no parallel in another harness (e.g. `TaskCompleted` is Claude-Code-only; codex's nearest equivalent is `Stop` with different blocking semantics).
+`harnesses:` accepts a YAML list or comma-separated string. Use it for hooks whose wire format or event has no parallel in another harness (`TaskCompleted` is Claude-Code-only).
 
 ### Pi extension package (`pi-extensions/<name>/package.json`)
-Npm-shaped manifest. vstack discovers any subdir containing `package.json`. Packages publish under `@vanillagreen/`; unscoped names work as `--pi-extension <name>` filters via the rename table.
+Npm-shaped manifest. vstack discovers any subdir containing `package.json`. Packages publish under `@vanillagreen/`; unscoped names work as `--pi-extension <name>` filters.
 ```json
 {
   "name": "@vanillagreen/pi-qol",
@@ -117,7 +115,7 @@ Npm-shaped manifest. vstack discovers any subdir containing `package.json`. Pack
   }
 }
 ```
-On install vstack copies `pi-extensions/<name>/` into `<scope>/packages/<name>` and adds `./packages/<name>` to Pi's `settings.json` `packages` array. Existing entries and other settings keys are preserved; legacy absolute-path entries are replaced with the relative form. The catalog of currently-shipped extensions lives in [README.md](README.md#pi-extensions) — don't duplicate it here.
+On install vstack copies the package into `<scope>/packages/<name>` and adds `./packages/<name>` to Pi's `settings.json` `packages` array, preserving other entries. The catalog of shipped extensions lives in [README.md](README.md#pi-extensions) — don't duplicate it here.
 
 ### Mapping config (`vstack.toml`)
 ```toml
@@ -172,16 +170,7 @@ rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_sub
 trading-design = "Dark theme, green/red accents."
 ```
 
-`vstack refresh` applies `[skill-instructions]` to locked installs and to
-canonical project-owned `.agents/skills/<name>/SKILL.md` files without lock
-entries. For project-owned skills, only the vstack-marked project-instructions
-block is managed; repeated refreshes, updates, and removals preserve all other
-skill content and unrelated project files.
-Mutating project refresh paths load configuration strictly and validate the
-canonical `.agents/skills` ownership boundary before lock reconciliation,
-hook pruning, or installation. Project hook removal performs the same strict
-preflight before changing hook files, settings, locks, or generated agents;
-global removal remains forgiving and independent of project configuration.
+`vstack refresh` applies `[skill-instructions]` to locked installs and to canonical project-owned `.agents/skills/<name>/SKILL.md` files; only the vstack-marked block is managed — all other skill content and unrelated project files are preserved. Mutating project refresh and hook-removal paths load configuration strictly and validate the `.agents/skills` ownership boundary before changing locks, hooks, settings, or generated agents; global removal stays forgiving.
 
 ## Per-Harness Model Mapping
 
@@ -191,50 +180,51 @@ global removal remains forgiving and independent of project configuration.
 | `sonnet` | `sonnet` | `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `openai-codex/gpt-5.6-sol` |
 | `haiku` | `haiku` | `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `openai-codex/gpt-5.6-sol` |
 
-Each canonical agent declares its own `effort:` in frontmatter. Harnesses write it verbatim after per-harness frontmatter overrides are applied — no cross-harness translation, no derivation from `model`. Valid values: `low`, `medium`, `high`, `xhigh` (and Claude additionally accepts `max`). Claude and Pi `opus` agents inherit the parent model by default; cheaper agents such as `scout` may pin an explicit model. Users can override models in project `[agent-frontmatter.<harness>]` tables.
+Each canonical agent declares its own `effort:` (`low` | `medium` | `high` | `xhigh`; Claude also accepts `max`), written verbatim after per-harness frontmatter overrides — no cross-harness translation, no derivation from `model`. Claude and Pi `opus` agents inherit the parent model by default; cheaper agents may pin one. Users override models in project `[agent-frontmatter.<harness>]`.
 
 ## Per-Harness Tool Overrides
 
-- Prefer `deny-tools`. Claude Code writes it as native `disallowedTools`, seeds `background` from Pi `pane` on first install (`pane = true` → `background = false`, `pane = false` → `background = true`) and preserves later edits, and omits `isolation`/`memory` unless configured. Pi emits `deny-tools` for `pi-agents-tmux` (default = active parent tools minus denials); generated Pi reviewer agents additionally deny `tasks_write` so isolated review fan-outs do not mutate task panels. OpenCode defaults generated agents to `mode: subagent`, still exposes `mode` for rare primary-agent overrides, emits `permission: <tool>: deny` entries from the same deny list, and applies the subagent default denies (`task`; `question` except planner) only in subagent mode — `mode = "primary"` agents get empty generated `deny-tools`, and refresh clears a stale generated-shaped deny list (exactly `["task"]` or `["task", "question"]`) on primary agents; a user-authored list matching that exact shape is indistinguishable and also cleared, so keep explicit primary-agent denies non-generated-shaped (any extra entry). OpenCode also maps `color` to hex values, and writes reasoning under `options.reasoningEffort` with summary/verbosity defaults.
-- Cursor and Codex don't use the same per-agent tool-deny frontmatter; Codex subagents use sandbox/approval configuration instead.
-- Per-harness frontmatter overrides live under `[agent-frontmatter.<harness>]`; use `deny-tools` rather than allowlists so harness defaults remain available while unsafe tools are blocked.
-- Pi `allowed-subagents` is the restricted delegation allowlist for `delegate_subagent`. Engineer agents default to `["scout"]` so dev agents can dispatch read-only reconnaissance into a fresh bg lane without gaining full `subagent` orchestration. Non-engineer roles default to empty (no delegation) and gain `delegate_subagent` in `deny-tools`. Set `allowed-subagents = []` in `[agent-frontmatter.pi]` to disable the engineer default. Accepted aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`. Pane targets are rejected at runtime by `delegate_subagent`.
+- Prefer `deny-tools` over allowlists — harness defaults stay available while unsafe tools are blocked. Claude Code writes native `disallowedTools`, seeds `background` from Pi `pane` on first install (preserving later edits), and omits `isolation`/`memory` unless configured. Pi emits `deny-tools` for `pi-agents-tmux`; generated Pi reviewer agents also deny `tasks_write` so review fan-outs don't mutate task panels. OpenCode generates agents as `mode: subagent` with default denies (`task`; `question` except planner), emits `permission: <tool>: deny` entries, maps `color` to hex, and writes reasoning under `options.reasoningEffort`. `mode = "primary"` agents get no generated denies, and refresh clears a generated-shaped deny list (exactly `["task"]` or `["task", "question"]`) on primary agents — keep intentional primary-agent denies non-generated-shaped (any extra entry).
+- Cursor and Codex don't take per-agent tool denies; Codex subagents use sandbox/approval configuration.
+- Pi `allowed-subagents` is the `delegate_subagent` allowlist. Engineer agents default to `["scout"]` so dev agents can dispatch read-only recon; other roles default to empty and get `delegate_subagent` denied. Set `allowed-subagents = []` to disable the engineer default. Aliases: `allowedSubagents`, `subagent-agents`, `subagent_agents`. Pane targets are rejected at runtime.
 
 ## Rules
 
+- **Engineer over patch.** When an issue or finding prompts a change, fix the mechanism, not the prose. Never add defensive caveat blocks or issue-number citations to skill/agent md files — provenance belongs in git history and code comments. If a skill needs a paragraph of explanation to be used safely, that is a tool gap: make it just work instead.
+- **SKILL.md is progressive disclosure.** Always-loaded content is only what every agent needs on every load; depth goes in `references/` and `workflows/` files read on demand. No history, no editorializing, nothing irrelevant.
 - **No project-specific references.** Zero mentions of specific apps, crate names, paths, or tools in `agents/`, `skills/`, `hooks/`.
 - **Validate ctx7 IDs.** Every library ID in SKILL.md ctx7 tables must resolve via `npx ctx7@latest docs <id> "test"`.
 - **Green CI is not proof it works.** For anything driving a real subprocess (pi-extensions, the bridge, hooks), a suite that stubs the transport only proves the stubs agree. Run the real path before calling it done, and say which you ran.
-- **Test after CLI changes.** `cd cli && cargo test`. Integration: `cli/scripts/integration-check.sh` — installs into a throwaway temp project and verifies the scope. Running `cargo run -- add .. --all --copy` from inside the checkout installs into the checkout itself (project scope = nearest project root from CWD), so it is not the validation path.
+- **Test after CLI changes.** `cd cli && cargo test`; integration via `cli/scripts/integration-check.sh` (throwaway temp project). `cargo run -- add` from inside the checkout installs into the checkout itself — not a validation path.
 - **Hooks must be portable.** No hardcoded paths.
 - **Skill scripts and tests are Bash 3.2 (macOS default).** No `mapfile`/`readarray`, `declare -A`/`local -A`, `${var,,}`, or `exec {fd}>`; guard empty-array expansion with `"${arr[@]+"${arr[@]}"}"`. Per-skill lint tests enforce this.
-- **New `tests/*.sh` and `scripts/*` files need the executable bit** (`chmod +x` before committing; file-write tools create 644). CI fails non-executable files; `scripts/lib/` sourced libraries are the exception.
-- **Worktrees live OUTSIDE the repo root** at `~/dev/.worktrees/vstack/<id>` (never in-repo `trees/` — editor-watcher incident, #692). The worktree skill handles this; just use the path `create` prints.
+- **New `tests/*.sh` and `scripts/*` files need the executable bit** (`chmod +x` before committing). CI fails non-executable files; `scripts/lib/` sourced libraries are the exception.
+- **Worktrees live OUTSIDE the repo root** at `~/dev/.worktrees/vstack/<id>`, never in-repo `trees/`. Use the path `worktree create` prints.
 - **Child workflows return JSON to parent.** Subagent workflows output JSON in `<output_format>` tags; the calling primary agent writes files.
-- **Workflow shell examples must be harness-safe.** Use simple commands with explicit arguments. Avoid inline `$(...)`, shell loops, heredocs, array-building snippets, and redirected writes in required workflow steps; Codex may classify those helper shapes as approval-required under `never` approval. Use helper scripts (`git-context`, `workflow-state`) for derived values, use harness file-write/edit tools or `apply_patch` for tmp Markdown/JSON files, and read multiple required docs with separate file reads instead of a shell `for` loop.
-- **Keep CLI version and GitHub release tag in sync.** `cli/Cargo.toml` version and the GitHub release/tag must always match. Don't bump or release without explicit ask.
+- **Workflow shell examples must be harness-safe.** Simple commands with explicit arguments. No inline `$(...)`, shell loops, heredocs, or redirected writes in required workflow steps — Codex may classify those shapes as approval-required. Use helper scripts (`git-context`, `workflow-state`) for derived values, harness file tools for tmp files, and separate reads instead of shell loops.
+- **Keep CLI version and GitHub release tag in sync.** Don't bump or release without explicit ask.
 - **`vstack add` scope is destructive — read the printed summary.** Every non-interactive run prints `Scope: PROJECT (...)` vs `GLOBAL (...)`, method, and every item written. Confirm both before claiming success.
-- **Never `--global` without an item filter.** CLI refuses `--global -y` unless `--all` or one of `--agent`/`--skill`/`--hook`/`--pi-extension` is set. Item filters are exclusive — passing any restricts the install to only those kinds, EXCEPT `--agent` which auto-includes dependent skills referenced via `[agent-skills]` + `[role-skills]` (opt out with `--no-auto-skills`). Auto-included skills are listed in the scope summary.
-- **Scope flag is uniform.** `list`, `check`, `refresh`, `remove` accept `--scope project|global|all`. `-g`/`--global` = `--scope global`. Default: `all` for read-only (`list`, `check`, `refresh`), `project` for `remove`. `vstack refresh` with no args reinstalls items at every scope they're locked at.
-- **Verify after refresh.** `vstack refresh -v` prints per-item `old→new` hash. `vstack verify [-g] [name…]` confirms source matches lock and byte-matches install dir for Pi packages. Use both before claiming a change is live.
-- **Docs and instruction payloads ship with the code change.** Any change to a hook, skill, agent, or Pi extension must update — in the same commit — affected READMEs, AGENTS.md, `vstack.toml`, `vstack.settings.toml.example`, `.env.local.example`, `package.json`, agent instruction payloads (`appendSystem` files / before_agent_start hook prose), and any cross-referencing docs. A behavior change without its docs/instructions update is incomplete.
+- **Never `--global` without an item filter.** CLI refuses `--global -y` unless `--all` or an item filter is set. Item filters are exclusive, except `--agent` auto-includes dependent skills from `[agent-skills]` + `[role-skills]` (opt out with `--no-auto-skills`); auto-included skills appear in the scope summary.
+- **Scope flag is uniform.** `list`, `check`, `refresh`, `remove` accept `--scope project|global|all`; `-g` = `--scope global`. Default: `all` for read-only, `project` for `remove`. Bare `vstack refresh` reinstalls items at every scope they're locked at.
+- **Verify after refresh.** `vstack refresh -v` prints per-item `old→new` hash; `vstack verify [-g] [name…]` confirms source matches lock and byte-matches Pi package installs. Use both before claiming a change is live.
+- **Docs and instruction payloads ship with the code change.** Any change to a hook, skill, agent, or Pi extension updates — in the same commit — affected READMEs, AGENTS.md, `vstack.toml`, settings examples, `package.json`, and agent instruction payloads. A behavior change without its docs update is incomplete.
 - **Edit skills directly.** Edit `skills/<name>/SKILL.md` in place. No separate `rules/` directories or per-skill `AGENTS.md` files.
-- **Never touch harness mirror dirs.** `.agents/`, `.claude/`, `.opencode/`, `.pi/`, and `.codex/` are installed harness outputs, not canonical packages. Edit only `agents/`, `skills/`, `hooks/`, and `pi-extensions/`; harness mirrors regenerate on `vstack add` / `vstack refresh`.
-- **New tmux windows, never split the active pane.** Create a new tmux window in the current session for any spawned handoff work. Prefer `skills/orch/scripts/open-terminal` for issue handoff.
-- **Always create vstack worktrees via the worktree skill.** Use `skills/worktree/scripts/worktree create <id>` (not raw `git worktree add`) so `.env.local`, harness mirror dirs, bot identity, and per-worktree config are wired in. Bare `create` is a new-work claim and exits 75 without rebasing when a worktree, branch, or PR already owns the ID; inspect/monitor that work instead of spawning a duplicate, and never batch issue creates in a loop that can hide an earlier nonzero result. A supported `create --reuse` / `create --restack` rewrite carries an exact, worktree-local lease authorization into `worktree push`; use that path instead of a manual force-push. Continue, skip, or abort a paused supported restack through `worktree restack continue|skip|abort`, not top-level `git rebase` control commands, so the tool can validate the state token, recorded worktree, branch, base, remote OID, and lease boundary.
-- **Worktree scratch goes in `<worktree>/tmp/`, not at worktree root or `/tmp/`.** Agent task briefs, intermediate result JSONs, review hand-offs, and similar ephemeral artifacts belong in the worktree's gitignored `tmp/` dir (auto-created when listed in `WORKTREE_MKDIRS`). Worktree root is for tracked content only.
-- **READMEs are user-facing only.** Describe what the thing is, how to use it, features, settings/options, and install/setup. Technical/development detail goes in `DEVELOPMENT.md`; agent skill instructions live in the matching `SKILL.md`.
-- **Pi hook parity.** Pi gets its hooks via the `pi-extensions/pi-hooks` extension (native TS port of `hooks/*.sh` against Pi's `tool_call`/`tool_result`/`turn_end` events). Any change to a hook script must land in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
-- **Pi upstream lifecycle fix.** When touching pi-agents-tmux completion or print/json lifecycle workarounds, recheck `earendil-works/pi#2023` for upstream true-idle / scheduled-continuation fixes.
-- **Cross-repo conventions live in [`docs/cross-repo.md`](./docs/cross-repo.md).** Fact-provenance tagging and the shared review-gate shape, for work that spans the consuming repos.
+- **Never touch harness mirror dirs.** `.agents/`, `.claude/`, `.opencode/`, `.pi/`, and `.codex/` are installed outputs, not canonical packages. Edit only `agents/`, `skills/`, `hooks/`, and `pi-extensions/`; mirrors regenerate on `add`/`refresh`.
+- **New tmux windows, never split the active pane.** Prefer `skills/orch/scripts/open-terminal` for issue handoff.
+- **Create vstack worktrees via the worktree skill** (`skills/worktree/scripts/worktree create <id>`), never raw `git worktree add`. Bare `create` is a new-work claim and exits 75 when a worktree, branch, or PR already owns the ID — inspect that work instead of duplicating it. Rebase or republish only through `create --reuse`/`--restack` and `worktree restack continue|skip|abort`, never a manual rebase or force-push.
+- **Worktree scratch goes in `<worktree>/tmp/`**, not the worktree root or `/tmp/`. Worktree root is for tracked content only.
+- **READMEs are user-facing only.** What it is, how to use it, features, settings/options, install. Technical/development detail goes in `DEVELOPMENT.md`; agent instructions live in `SKILL.md`.
+- **Pi hook parity.** Any change to a hook script lands in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
+- **Pi upstream lifecycle fix.** When touching pi-agents-tmux completion or print/json lifecycle workarounds, recheck `earendil-works/pi#2023` for upstream fixes.
+- **Cross-repo conventions live in [`docs/cross-repo.md`](./docs/cross-repo.md).** Fact-provenance tagging and the shared review-gate shape.
 
 ## Updating Pi Extensions
 
-`vstack update-pi[ --check][ --scope global|project]` reinstalls only stale Pi packages. Source of truth: `<scope>/.vstack-source.json` plus `npm:` entries in Pi `settings.json`. Installed versions compare against `pi-extensions/<name>/package.json` (vstack repos) or `npm view <name> version` (npm). Different packages can come from different vstack repos — grouped by `(scope, sourceRepo)` and reinstalled independently. Stale index entries (referenced package no longer installed) are dropped. The pi-extension-manager extension reads the same index for its `↑ X.Y.Z` badge.
+`vstack update-pi [--check] [--scope global|project]` reinstalls only stale Pi packages. Source of truth: `<scope>/.vstack-source.json` plus `npm:` entries in Pi `settings.json`. Installed versions compare against `pi-extensions/<name>/package.json` (vstack repos) or `npm view` (npm); packages group by `(scope, sourceRepo)` and reinstall independently. Stale index entries are dropped. pi-extension-manager reads the same index for its update badge.
 
 ## Pi APPEND_SYSTEM.md load order
 
-Pi core auto-discovers exactly one `APPEND_SYSTEM.md`: `<cwd>/.pi/APPEND_SYSTEM.md` first, falling back to `~/.pi/agent/APPEND_SYSTEM.md` only if the project file is missing. Not concatenated by core. Claude bridge can opt into forwarding both with `includeAppendSystemPromptMd`.
+Pi core loads exactly one `APPEND_SYSTEM.md`: `<cwd>/.pi/APPEND_SYSTEM.md`, falling back to `~/.pi/agent/APPEND_SYSTEM.md` — never concatenated. The Claude bridge can forward both with `includeAppendSystemPromptMd`.
 
 ## Pi Extension UI Rules
 
@@ -247,17 +237,15 @@ Pi core auto-discovers exactly one `APPEND_SYSTEM.md`: `<cwd>/.pi/APPEND_SYSTEM.
 
 For any `pi-extensions/**` or Pi package behavior change:
 1. **Validate before finishing.** Confirm new code is reachable from where it's invoked. Cross-extension calls: `pi.getCommands()` is metadata only; bridge via `globalThis[Symbol.for("vstack.pi.<topic>")]` (see modal-lock, thinking-timer, question-service). If you can't live-test in Pi, say so.
-2. **Commit intended Pi package changes** unless user says not to. Stage only intended files; mention unrelated dirty files. If signing fails, retry with `--no-gpg-sign`.
-3. **After commit, run `vstack refresh -g`** so the global Pi install picks up committed source state. Refresh after commit, not before. Report commit hash and refresh result.
+2. **Commit intended Pi package changes** unless told not to. Stage only intended files; mention unrelated dirty files. If signing fails, retry with `--no-gpg-sign`.
+3. **After commit, run `vstack refresh -g`** so the global Pi install picks up committed source. Refresh after commit, not before. Report commit hash and refresh result.
 4. **Don't claim done/fixed/committed/ready until commit + refresh are complete.** If skipped, say so and why.
 
-Worktree/feature branch dev: test via local project Pi settings for that checkout; don't add vstack repo sources pointing at temp/worktree paths.
+Worktree/feature-branch dev: test via that checkout's local Pi settings; don't point vstack repo sources at temp/worktree paths.
 
 ### Pi slash-command expansion
 
-- `sendUserMessage` still skips slash/skill expansion (`expandPromptTemplates: false`). `pi-bridge send` compensates with hybrid dispatch: client-side expansion for `/skill:<name>` and prompt templates, own-pane `tmux send-keys -l` for extension/TUI commands, raw `sendUserMessage` for plain text/fallback.
-- Repeated `/skill:<name>` sends in the same Pi session emit a short `Skill <name> (previously loaded). Invocation: ...` reminder instead of re-expanding the full SKILL.md body. The cache is keyed by `(session_id, skill_name, SKILL.md content hash)`; content-hash changes force a fresh full expansion; `session_shutdown` evicts that session; pi-bridge restart clears the in-memory cache; and the bridge bounds the cache to the 100 most recent sessions.
-- From an extension, `ctx.ui.pasteToEditor("/skill:foo\n")` pastes text; newline is bracketed-paste content, not a guaranteed submit. Prefer `pi-bridge send "/skill:foo ..."` when controlling another session.
+`sendUserMessage` skips slash/skill expansion; `pi-bridge send` compensates with hybrid dispatch (client-side `/skill:` and prompt-template expansion, own-pane keystrokes for extension/TUI commands, raw send for plain text). Prefer `pi-bridge send` over `ctx.ui.pasteToEditor` when controlling another session — a pasted newline is bracketed-paste content, not a guaranteed submit. Mechanics and the repeated-send skill cache live in `pi-extensions/pi-session-bridge/`.
 
 ## Build & Test
 
