@@ -1746,12 +1746,27 @@ session_guard_available() {
   [[ -x "$SESSION_GUARD" ]]
 }
 
-# Mirror the guard's own owner resolution so `claim` and `remove` cannot
-# disagree about identity. $USER is a login, not a session: two sessions on one
-# machine share it. orch sets VSTACK_SESSION_OWNER to the issue ID, which is
-# what makes a lease name one session.
+# The session's environment identity, mirroring the guard's own default owner
+# resolution. $USER is a login, not a session: two sessions on one machine
+# share it. This ladder is the fallback identity; issue-addressed commands
+# derive their primary identity from the issue ID via issue_session_owner.
 session_guard_owner() {
   printf '%s' "${VSTACK_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
+}
+
+# Owner identity carried by an issue-addressed command (`remove <ID>`,
+# `create <ID> --reuse`). The documented claim in orch's workflows/start.md is
+# `claim [WT_PATH] --owner [ISSUE_ID]`, so on a default install — where no
+# session-owner env var is set — the issue ID IS the identity the lease
+# carries, and deriving it from the command's own argument is what makes claim
+# and release agree without any session env plumbing (#907). Prints nothing
+# when the ID cannot be a lease owner: the guard caps owners at 64 characters
+# (the issue-ID charset is already a subset of the owner charset), and an
+# unusable owner would turn every probe into a usage failure.
+issue_session_owner() {
+  local issue="${1:-}"
+  [[ -n "$issue" && ${#issue} -le 64 && "$issue" =~ ^[A-Za-z0-9._:@+-]+$ ]] || return 0
+  printf '%s' "$issue"
 }
 
 # Read-only ownership probe. Sets SESSION_GUARD_PROBE_ERR to the guard's own
@@ -1775,17 +1790,33 @@ probe_session_lease() {
 # must therefore run BEFORE that precheck, and after the ownership guard so a
 # foreign repository's lease is never touched.
 #
-# Only an owner-matching guard lease is released. A foreign lease, a lock taken
-# outside the guard, and an unreadable state are all left exactly as they are
-# and fall through to the precheck, which names the owner and the way out.
+# Ownership is proved by probe, once per identity the caller can claim: the
+# issue ID the command was addressed with first (that is the identity start.md
+# claims with, #907), then the session env ladder. Only an owner-matching
+# guard lease is released. A foreign lease, a lock taken outside the guard,
+# and an unreadable state are all left exactly as they are and fall through to
+# the precheck, which names the owner and the way out.
 release_own_session_lease() {
-  local wt="$1" owner rc=0
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc
   session_guard_available || return 0
-  owner="$(session_guard_owner)"
+  env_owner="$(session_guard_owner)"
+  if [[ "$env_owner" == "$issue_owner" ]]; then
+    env_owner=""
+  fi
+  for candidate in "$issue_owner" "$env_owner"; do
+    [[ -n "$candidate" ]] || continue
+    rc=0
+    probe_session_lease "$wt" "$candidate" || rc=$?
+    # 0 alone means "a guard lease exists AND this identity owns it"; 75 is an
+    # identity mismatch the next candidate may still resolve. Anything else
+    # (no lease, foreign lock, unreadable) holds for every identity alike.
+    case "$rc" in
+      0) owner="$candidate"; break ;;
+      75) continue ;;
+      *) return 0 ;;
+    esac
+  done
   [[ -n "$owner" ]] || return 0
-  probe_session_lease "$wt" "$owner" || rc=$?
-  # 0 alone means "a guard lease exists AND it is ours".
-  [[ "$rc" -eq 0 ]] || return 0
   if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" >/dev/null; then
     echo "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
     echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
@@ -1800,27 +1831,41 @@ release_own_session_lease() {
 # is refused by name; our own is refreshed so a long reuse cycle cannot age past
 # the TTL and be swept while it is still working.
 reuse_respects_session_lease() {
-  local wt="$1" owner rc=0
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
   session_guard_available || return 0
-  owner="$(session_guard_owner)"
-  [[ -n "$owner" ]] || return 0
-  probe_session_lease "$wt" "$owner" || rc=$?
-  case "$rc" in
-    3) return 0 ;;  # no lock at all
-    4) return 0 ;;  # locked outside the guard — refuse_locked_worktree's business
-    0) ;;
-    75)
-      echo "Error: $wt is claimed by another session; refusing to reuse it." >&2
-      [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
-      echo "Coordinate with the owning session instead of reusing its worktree." >&2
-      return 1
-      ;;
-    *)
-      echo "Error: could not read the session guard state of $wt (exit $rc); refusing to reuse it." >&2
-      [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
-      return 1
-      ;;
-  esac
+  env_owner="$(session_guard_owner)"
+  if [[ "$env_owner" == "$issue_owner" ]]; then
+    env_owner=""
+  fi
+  # Same identity order as release_own_session_lease: the issue ID the command
+  # was addressed with (the identity start.md claims with, #907), then the
+  # session env ladder. A 75 only means "not this identity's lease" — the next
+  # candidate may still own it; every other state holds for all identities.
+  for candidate in "$issue_owner" "$env_owner"; do
+    [[ -n "$candidate" ]] || continue
+    rc=0
+    probe_session_lease "$wt" "$candidate" || rc=$?
+    case "$rc" in
+      3) return 0 ;;  # no lock at all
+      4) return 0 ;;  # locked outside the guard — refuse_locked_worktree's business
+      0) owner="$candidate"; break ;;
+      75) continue ;;
+      *)
+        echo "Error: could not read the session guard state of $wt (exit $rc); refusing to reuse it." >&2
+        [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+        return 1
+        ;;
+    esac
+  done
+  if [[ -z "$owner" ]]; then
+    # No identity at all (no issue-usable ID and an empty env ladder) means
+    # nothing was probed; proceed as before rather than refusing on silence.
+    [[ "$rc" -eq 75 ]] || return 0
+    echo "Error: $wt is claimed by another session; refusing to reuse it." >&2
+    [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+    echo "Coordinate with the owning session instead of reusing its worktree." >&2
+    return 1
+  fi
   # `refresh` REJECTS `--repo` — it applies only to release/status/list/sweep.
   # Passing it fails every refresh, and a best-effort wrapper would swallow that
   # so the guard looks wired while silently never refreshing. Do not add it.
@@ -1836,9 +1881,18 @@ reuse_respects_session_lease() {
 # claimed worktree — not even one claimed by THIS session, since our own lease
 # still means work is in progress there.
 cleanup_lease_permits_removal() {
-  local wt="$1" rc=0
+  local wt="$1" issue_owner="${2:-}" rc=0
+  local -a owner_args=()
   session_guard_available || return 0
-  "$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
+  # The probe carries the issue identity derived from the worktree's branch
+  # when one is derivable (#907). It changes nothing here — 0 and 75 land in
+  # the same arm, because our own lease still means work is in progress — but
+  # keeps every lifecycle probe naming the best-known identity rather than
+  # whatever the environment happens to hold.
+  if [[ -n "$issue_owner" ]]; then
+    owner_args=(--owner "$issue_owner")
+  fi
+  "$SESSION_GUARD" status "$wt" ${owner_args[@]+"${owner_args[@]}"} --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     3) return 0 ;;     # no lock at all
     0 | 75) ;;         # a guard lease is present — ours (0) or another's (75)
@@ -2256,7 +2310,8 @@ case "${1:-}" in
       # A guard lease is the session-lifetime half of that same ownership
       # signal: refuse another session's tree by name, refresh our own so a
       # long reuse cycle cannot age past the TTL (#877). Before any mutation.
-      reuse_respects_session_lease "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      reuse_respects_session_lease "$WT_PATH" "$(issue_session_owner "$ISSUE")" \
+        || exit "$ACTIVE_WORK_EXIT"
 
       # Network/ref discovery must succeed before the claim lock or any setup
       # mutation. Repeat it under the per-issue lock immediately before reuse.
@@ -2599,11 +2654,15 @@ case "${1:-}" in
       echo "Run: $0 remove --help" >&2
       exit 1
     fi
-    # Accept either issue ID or direct path
+    # Accept either issue ID or direct path. An issue-addressed removal also
+    # carries the issue ID as an owner identity for the lease release (#907);
+    # a path-addressed one has only the session env ladder.
+    REMOVE_ISSUE_OWNER=""
     if [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
       WT_PATH="$(worktree_path_for_issue "$ARG")"
+      REMOVE_ISSUE_OWNER="$(issue_session_owner "$ARG")"
     fi
     # Auto-relocate if cwd is inside the worktree being removed. Both sides
     # are physical (pwd -P); the boundary-aware match avoids treating a
@@ -2630,7 +2689,7 @@ case "${1:-}" in
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it (#877). Only our own lease is
       # released; a foreign one falls through and the precheck names its owner.
-      if ! release_own_session_lease "$WT_PATH"; then
+      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
         exit 1
       fi
       # Diagnostic precheck: a locked worktree cannot be removed, and git's own
@@ -2757,7 +2816,7 @@ case "${1:-}" in
          git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
         # A merged branch does NOT mean an idle tree: uncommitted work in it is
         # exactly what the CC-1000 incident lost. Ask the lease, not the branch.
-        if ! cleanup_lease_permits_removal "$wt"; then
+        if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
           continue
         fi
         CLEANUP_REMOVE_OUTPUT=""

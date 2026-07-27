@@ -359,6 +359,10 @@ assert_contains "$branch_err" "cannot delete branch"
 run_guard claim "$wt" --owner CC-999
 assert_eq "$RUN_RC" "75" "claiming a worktree held by another owner"
 assert_contains "$run_err" "is claimed by owner=CC-1000"
+# The recovery command must name the guard's own resolved path — the ported
+# text pointed at hyprtrade's tools/ location, which consumers do not have.
+assert_contains "$run_err" "release $wt --stale"
+assert_not_contains "$run_err" "tools/worktree-session-guard"
 lock_reason_of "$repo" "$wt" | grep -Fq "owner=CC-1000" \
 	|| fail "a refused claim must leave the existing lease untouched"
 
@@ -706,6 +710,7 @@ assert_eq "$RUN_RC" "4" "sweep with an unreadable lease"
 assert_contains "$run_out" "unusable lease(s) left in place"
 assert_not_contains "$run_out" "no stale session claims"
 assert_contains "$run_err" "release $sweep_wt --force"
+assert_not_contains "$run_err" "tools/worktree-session-guard"
 
 run_guard release "$sweep_wt" --owner CC-1000 --force
 assert_eq "$RUN_RC" "0" "--force recovery of an unreadable lease"

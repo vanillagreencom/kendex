@@ -87,6 +87,12 @@ GUARD_MARKER='vstack-session-guard'
 GUARD_VERSION='v1'
 DEFAULT_TTL_MINUTES=720
 
+# This script's own resolved path, for diagnostics that print recovery
+# commands. Consumers install the skill in different places, so the message
+# must name the copy that is actually running, not a hardcoded location
+# (vstack#907 — the ported text pointed at hyprtrade's tools/ path).
+GUARD_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
 EXIT_USAGE=1
 EXIT_NO_LEASE=3
 EXIT_UNMANAGED=4
@@ -663,8 +669,8 @@ cmd_claim() {
 		if [[ "$existing_owner" != "$owner" ]]; then
 			printf 'worktree-session-guard: %s is claimed by owner=%s: %s\n' \
 				"$worktree" "${existing_owner:-unknown}" "$LEASE_TEXT" >&2
-			printf 'Use a different worktree, or release a stale lease with: tools/worktree-session-guard release %s --stale\n' \
-				"$worktree" >&2
+			printf 'Use a different worktree, or release a stale lease with: %s release %s --stale\n' \
+				"$GUARD_SELF" "$worktree" >&2
 			exit "$EXIT_OWNED"
 		fi
 		rewrite_lease "$registration" "$owner" "$LEASE_TEXT" "$now"
@@ -768,7 +774,7 @@ cmd_release() {
 			"$worktree" "${existing_owner:-unknown}" "$ttl_minutes" >&2
 		exit "$EXIT_OWNED"
 		;;
-	12) fail "lease on $worktree has an unusable heartbeat (unreadable, out of range, or dated in the future); recover with: tools/worktree-session-guard release $worktree --force" ;;
+	12) fail "lease on $worktree has an unusable heartbeat (unreadable, out of range, or dated in the future); recover with: $GUARD_SELF release $worktree --force" ;;
 	*) fail "lease on $worktree changed while releasing it; re-run release" ;;
 	esac
 }
@@ -852,7 +858,7 @@ cmd_sweep() {
 		0) released=$((released + 1)) ;;
 		12)
 			unreadable=$((unreadable + 1))
-			warn "lease on $path has an unusable heartbeat (unreadable, out of range, or dated in the future) and was left in place; recover with: tools/worktree-session-guard release $path --force"
+			warn "lease on $path has an unusable heartbeat (unreadable, out of range, or dated in the future) and was left in place; recover with: $GUARD_SELF release $path --force"
 			;;
 		esac
 	done <<<"$listing"

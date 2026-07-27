@@ -25,7 +25,7 @@ Route by shape. `git checkout -- .agents` is **never** the recovery: the path ho
 
 `worktree-session-guard` records a session's claim on an issue worktree as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` leaves the registration alone. Using the native lock rather than a private marker file is deliberate: it needs no cooperation from whoever runs the cleanup.
 
-`VSTACK_SESSION_OWNER` sets the owner, which the workflow sets to the issue ID.
+`VSTACK_SESSION_OWNER` sets the owner, which the workflow sets to the issue ID. Issue-addressed lifecycle commands (`remove <ID>`, `create <ID> --reuse`) also derive an owner from the issue ID itself — matching the workflow's claim — so a claiming session's release works on a default install where no session env var is set; the env ladder is still probed as a second identity and covers path-addressed calls.
 
 **Claiming is explicit; the destructive commands respect a lease** (vstack#877):
 
