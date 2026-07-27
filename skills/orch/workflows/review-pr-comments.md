@@ -328,6 +328,8 @@ Issue suggestions: [N] items → § 6.2 audit
    ```
    Use the printed token as `[DEV_ROUND_ID]`; note this group's delegated item numbers (`#[N]`) as `[ITEM_NUMBERS]` (comma-separated) for step 5's exact item-set check.
 
+   **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
+
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix only; the agent owns process per `dev/workflows/dev-fix.md`.
 
    <delegation_format>

@@ -24,7 +24,7 @@ Load IN ORDER before anything else; do not proceed if any fails: 1. `github`. 2.
 
 > **MODE SWITCH**: Loading this skill puts you in **orchestrator mode**. Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill.
 
-> If you are running in **Claude Code**: Always create a team before launching agents; spawn and delegate within the team context so agents share state and can be messaged for re-delegation. Create tasks before spawning (or within the existing team context) — task creation notifications wake idle agents prematurely. Ask questions with the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields have caused duplicate delivery on idle wake-up.
+> If you are running in **Claude Code**: Always create a team before launching agents; spawn and delegate within the team context so agents share state and can be messaged for re-delegation. Task creation and assignment notifications wake a live agent immediately — assignment is a wake, not only spawn-time creation. Fresh spawn: create tasks before spawning, so they exist before the agent does. Re-delegation to a live agent: send the delegation message before creating and assigning the task — an agent woken by the assignment alone starts from the bare `task_assignment` payload without the delegation. Ask questions with the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields have caused duplicate delivery on idle wake-up.
 
 > If you are running in **Codex**: Under `approval_policy = never` the CLI classifies shell CONTROL SYNTAX — loops, multi-command blocks, env-assignment prefixes, substitution (a literal backtick counts), redirection — as approval-required regardless of the inner commands, rejecting the shape with `approval required by policy, but AskForApproval is set to Never`. That error means the command *shape* was flagged, not access: do not retry the same shape and do not wait for approval (none can arrive) — rewrite as one simple command per tool call. Replace polling loops with the orch waiters `.agents/skills/orch/scripts/ci-wait` (CI status), `.agents/skills/orch/scripts/approval-wait` (review approval), and `.agents/skills/orch/scripts/queue-wait` (merge-queue / auto-merge outcome) — orch scripts, never `github.sh` subcommands. A policy-rejected top-level `git rebase` has a documented replacement: the worktree skill's guarded `create <ID> --reuse --replay` path with `worktree restack continue|skip|abort` controls (worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback)) — never an improvised force-push. Authoring rules: [§ Harness-Safe Shell](#harness-safe-shell); full shape catalogue and rewrite patterns: [references/codex-runtime.md](references/codex-runtime.md).
 >
@@ -213,7 +213,7 @@ Stages: `SPAWN (bootstrap) → DELEGATE → WORK (agent executes itself, no sub-
 
 #### Dev Agent Persistence
 
-Dev agents persist for the entire session; re-delegate them for review-fix, QA-fix, comment-fix, and CI-fix cycles (each re-delegation: create new tasks → send delegation). Shut down only on explicit user request or a stall confirmed via the [escalation sequence](#wait-for-agent-return-before-acting) — quiet ≠ stalled; idle ≠ stuck.
+Dev agents persist for the entire session; re-delegate them for review-fix, QA-fix, comment-fix, and CI-fix cycles (each re-delegation: send delegation → create and assign new tasks — task assignment wakes a live agent, so the delegation goes first). Shut down only on explicit user request or a stall confirmed via the [escalation sequence](#wait-for-agent-return-before-acting) — quiet ≠ stalled; idle ≠ stuck.
 
 #### Review Agent Lifecycle Management
 
@@ -243,7 +243,7 @@ The acceptance decision table lives in the delegating workflow — `dev-start.md
 
 **Invalid stall signals** (never sufficient alone or combined): return-message timeout, clean git status/diff/log, no modified files — a worktree also looks clean during an agent's research/planning phase. The sole positive signal that overrides a missing return is a valid `dev-artifact-check` for the current `dev_round_id`.
 
-**Escalation** — **quiet ≠ stalled**: only after the 10-minute quiet window from delegation AND a confirmed stall (task status unchanged across multiple idle cycles; no new session-log entries for 10+ minutes; or agent process exited / zero CPU). Then: (1) re-message once specifying the missing step; (2) wait 5 min, re-check — new activity → go idle; (3) still inactive → shut down → respawn → re-create tasks → re-delegate.
+**Escalation** — **quiet ≠ stalled**: only after the 10-minute quiet window from delegation AND a confirmed stall (task status unchanged across multiple idle cycles; no new session-log entries for 10+ minutes; or agent process exited / zero CPU). Then: (1) re-message once specifying the missing step; (2) wait 5 min, re-check — new activity → go idle; (3) still inactive → shut down → re-create tasks → respawn → re-delegate.
 
 #### Orchestrator Never Fixes Code
 

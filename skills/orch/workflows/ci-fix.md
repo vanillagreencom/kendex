@@ -119,6 +119,8 @@ If `.exists` is `true`, read `.team_name`:
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
+**In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
+
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
 

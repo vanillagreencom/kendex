@@ -124,6 +124,8 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```
    Use the printed token as `[DEV_ROUND_ID]`. Also note the delegated review-item numbers (the `#[N]` in `[FORMATTED_ITEMS]`) as `[ITEM_NUMBERS]` (comma-separated) for step 6's exact item-set check.
 
+   **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
+
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix, not procedure steps. The agent owns validate/commit/return per `dev/workflows/dev-fix.md`.
    - ✅ `"Read X from parent state and forward to child — fix in parent so descendants inherit."`
    - ❌ `"1. Apply fix. 2. Run validate. 3. Commit. 4. Let orchestrator handle linkage."`
