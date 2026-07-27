@@ -12,6 +12,15 @@ skills/worktree/
     └── worktree-session-guard   # Ownership leases (see below)
 ```
 
+## Recovering a broken `.agents` link
+
+Route by shape. `git checkout -- .agents` is **never** the recovery: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken.
+
+- `.agents` missing, or a real directory rather than a symlink (`test -L .agents` fails) → `worktree fix-links <ID|PATH>`, run **from the main checkout** (the worktree's own copy of the script is reached through the broken link).
+- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`; such a file never lives under a symlinked path.
+
+`fix-links` is also the repair after anything that can replace a configured symlink with tracked content: a manual rebase, a partially-completed `remove`, or a restack replay. A worktree whose `.agents` is not a symlink cannot be trusted for local verification until it is fixed.
+
 ## Session guard
 
 `worktree-session-guard` records a session's claim on an issue worktree as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` leaves the registration alone. Using the native lock rather than a private marker file is deliberate: it needs no cooperation from whoever runs the cleanup.

@@ -237,6 +237,28 @@ Some execution policies reject top-level `git rebase` porcelain outright — Cod
     .agents/skills/worktree/scripts/worktree fix-links <ID>
     ```
 
+## Recovering a broken `.agents` link
+
+The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a worktree back into the main checkout, so a large harness library is shared rather than copied per branch. When one goes missing or turns into a real directory, **route the recovery by shape** — the wrong instinct here is a git command that cannot possibly help.
+
+**`git checkout -- .agents` is never the recovery.** The path holds no tracked content, so there is nothing for git to restore; the command succeeds and changes nothing, which reads as "recovered" while the link is still broken.
+
+| Symptom | Recovery |
+|---|---|
+| `.agents` missing, or a real directory instead of a symlink (`test -L .agents` fails) | `worktree fix-links <ID\|PATH>` — **from the main checkout** |
+| A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — such a file never lives under a symlinked path |
+
+**Run `fix-links` from the main checkout, not from the broken worktree.** The worktree's own copy of this script is reached *through* the link that is broken, so invoking it from there is the one place it may not exist:
+
+```bash
+cd /path/to/main/checkout
+.agents/skills/worktree/scripts/worktree fix-links <ID|WORKTREE_PATH>
+```
+
+`fix-links` is also the repair after any operation that can replace a configured symlink with tracked content — a manual rebase, a partially-completed `remove`, or a restack replay (see step 11 above).
+
+**A worktree whose `.agents` is not a symlink cannot be trusted for local verification.** Project tooling resolving paths through it is reading either nothing or the wrong checkout's copy. Fix the link before believing any result from that tree — and prefer tooling that fails closed with a diagnostic naming the missing file over tooling that silently degrades.
+
 ## Session guard (ownership leases)
 
 `scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is recorded as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone. That needs no cooperation from whoever runs the cleanup, which a private marker file would.
