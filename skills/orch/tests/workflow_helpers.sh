@@ -344,7 +344,12 @@ assert_file_contains "$orch_skill" 'orch-env REVIEWER_SLOT_BUDGET 0' "orch skill
 assert_file_contains "$orch_skill" 'persistent when the budget allows, waves when it does not' "orch skill states the budget-conditional lifecycle policy"
 assert_file_contains "$orch_skill" 'never in reviewer session memory' "orch skill states the artifact-state invariant"
 assert_file_contains "$orch_skill" 'collab spawn failed: agent thread limit reached' "orch skill Codex note names the thread-limit error"
-assert_file_contains "$orch_skill" 'to the cap the machine config declares' "orch skill Codex note sets the budget to the config-declared cap"
+# vstack#900: the cap is no longer hand-read from config with caveats — the
+# adapter reports it, including the silently-ignored-legacy-key trap. The
+# derivation is behaviourally tested in spawn_adapter.sh; the doc only has to
+# route there and still say what the budget is for.
+assert_file_contains "$orch_skill" 'spawn-adapter slots' "orch skill routes the cap query through the adapter"
+assert_file_contains "$orch_skill" 'Set the reported budget' "orch skill says to set the reported budget"
 assert_file_contains "$orch_readme" 'REVIEWER_SLOT_BUDGET' "orch README documents the reviewer slot budget setting"
 assert_file_contains "$orch_development" '## Reviewer Slot Budget' "orch DEVELOPMENT carries the slot-budget design rationale"
 assert_file_contains "$state_schema" 'review_wave_done' "workflow-state schema documents wave completion tracking"
@@ -575,7 +580,13 @@ assert_file_contains "$orch_development" 'extract the guard decision into a scri
 # stale-slot accounting (vstack#701). No orch doc may still state the cap as
 # an inherent "four total" runtime property.
 assert_file_contains "$orch_skill" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch skill Codex note names the MultiAgentV2 cap config key"
-assert_file_contains "$orch_skill" 'MultiAgentV2 silently ignores it' "orch skill Codex note names the agents.max_threads silent-bypass hazard"
+# vstack#900: the silent-ignore hazard is now DETECTED and reported by
+# `spawn-adapter slots` rather than described in prose an orchestrator has to
+# remember. Behaviourally tested in spawn_adapter.sh (a config with only
+# agents.max_threads set still reports the default cap, with a warning naming
+# both the ignore and the key that would work). The doc only has to route there.
+assert_file_contains "$orch_skill" 'silently ignored' "orch skill Codex note still names the silent-ignore hazard"
+assert_file_contains "$orch_skill" 'spawn-adapter slots' "orch skill routes the hazard check through the adapter"
 assert_file_contains "$orch_skill" 'a running session keeps its old cap until restarted' "orch skill Codex note carries the restart requirement"
 assert_file_contains "$orch_development" 'features.multi_agent_v2.max_concurrent_threads_per_session' "orch DEVELOPMENT budget section names the cap config key"
 assert_file_contains "$orch_development" 'the legacy `agents.max_threads` is silently ignored while MultiAgentV2 is active' "orch DEVELOPMENT names the silently-ignored legacy key"
@@ -616,11 +627,17 @@ assert_file_contains "$orch_development" 'add the publisher job → flip protect
 # report artifacts, delegation records) stays the canonical hyphenated
 # name; the underscore form is runtime metadata
 # (`review_agent_runtime_types[...].task_name`).
-assert_file_contains "$orch_skill" 'accepts only lowercase letters, digits, and underscores (`[a-z0-9_]`) and rejects hyphenated names before launch (vstack#751)' "orch skill Codex note names the task_name schema constraint"
-assert_file_contains "$orch_skill" 'translating hyphens to underscores in the runtime `task_name` only (`reviewer-arch` → `task_name=reviewer_arch`' "orch skill pins the hyphens→underscores task_name-only translation"
-assert_file_contains "$orch_skill" 'Attempt this translation before any `worker` fallback' "orch skill orders translation before the worker fallback"
-assert_file_contains "$orch_skill" 'a `task_name` schema rejection is a naming mismatch, not a missing agent type' "orch skill separates schema rejection from missing agent types"
-assert_file_contains "$orch_skill" 'the underscore `task_name` is a runtime detail recorded, like the worker fallback, in runtime metadata (`review_agent_runtime_types[reviewer-name].task_name`)' "orch skill records the translated task_name as runtime metadata only"
+# vstack#900: these five pinned the task_name translation rules as literal
+# sentences. The rules are now APPLIED by `spawn-adapter spawn` and pinned
+# behaviourally in spawn_adapter.sh — translation happens, agent_type stays
+# canonical, worker requires an explicit reason, the record keys on the
+# canonical identity, and the runtime spelling is confined to runtime_metadata.
+# An already-translated name is refused outright, which the prose could only ask
+# for. What the doc must still do is route there and keep the identity rule.
+assert_file_contains "$orch_skill" 'spawn-adapter spawn' "orch skill routes spawn parameters through the adapter"
+assert_file_contains "$orch_skill" 'canonical hyphenated' "orch skill tells the caller to pass the canonical name"
+assert_file_contains "$orch_skill" 'runtime_metadata' "orch skill says where the runtime spelling belongs"
+assert_file_contains "$orch_skill" 'never one' "orch skill keeps a schema rejection out of the fallback path"
 for doc in "$review_pr_workflow" "$review_workflow"; do
   assert_file_contains "$doc" 'The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751)' "$(basename "$doc") names the task_name schema constraint"
   assert_file_contains "$doc" '(`reviewer-arch` → `task_name=reviewer_arch`, `agent_type` unchanged)' "$(basename "$doc") pins the task_name-only translation example"

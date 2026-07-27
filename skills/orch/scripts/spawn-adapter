@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# spawn-adapter — turn a canonical vstack agent name into the exact spawn
+# parameters the Codex collaboration runtime accepts, and report the runtime's
+# concurrent-thread budget (vstack#900).
+#
+# Both halves existed only as agent-facing prose in orch/SKILL.md: two
+# >1,500-character paragraphs encoding workarounds for external constraints.
+# Prose makes every orchestrator re-derive the same translation and re-fumble
+# the same traps — recording the runtime name in the identity key, or raising a
+# config key the runtime silently ignores. The mechanics belong here; the
+# workflow keeps only the intent.
+#
+# Usage:
+#   spawn-adapter spawn <canonical-agent-name> [--fallback-reason TEXT]
+#   spawn-adapter slots [--config PATH]
+#
+#   spawn   Emit the spawn decision as one JSON object: canonical identity,
+#           resolved agent_type, translated task_name, and the runtime-metadata
+#           record shape. With --fallback-reason, resolves agent_type to the
+#           generic worker and records the reason.
+#   slots   Print the runtime's effective concurrent-thread cap and the
+#           REVIEWER_SLOT_BUDGET it implies, as JSON.
+#
+# THE IDENTITY RULE, enforced here so it cannot drift: the canonical hyphenated
+# name is the identity everywhere orch records anything — workflow-state keys,
+# report artifacts, delegation records. `task_name` and a worker fallback are
+# RUNTIME details, and belong only in runtime metadata. This tool emits both,
+# clearly separated, so a caller cannot accidentally key state on the runtime
+# spelling.
+
+set -uo pipefail
+
+PROG="spawn-adapter"
+
+die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 2; }
+
+usage() { sed -n '/^# Usage:/,/^# THE IDENTITY RULE/p' "$0" | sed 's/^# \{0,1\}//' | sed '$d'; }
+
+command -v jq >/dev/null 2>&1 || die "jq is required"
+
+# The spawn API's task_name schema accepts only [a-z0-9_] and rejects a
+# hyphenated name BEFORE launch (vstack#751). Translating is therefore not a
+# fallback — a schema rejection is a naming mismatch, never a missing agent
+# type, and must not be mistaken for one.
+translate_task_name() {
+	printf '%s' "$1" | tr '[:upper:]-' '[:lower:]_'
+}
+
+cmd_spawn() {
+	local canonical="" fallback_reason="" have_fallback=false
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--fallback-reason)
+				[[ $# -ge 2 ]] || die "--fallback-reason requires a value"
+				fallback_reason="$2"; have_fallback=true; shift 2 ;;
+			--fallback-reason=*)
+				fallback_reason="${1#--fallback-reason=}"; have_fallback=true; shift ;;
+			-*) die "unknown option: $1" ;;
+			*)
+				[[ -z "$canonical" ]] || die "unexpected extra argument: $1"
+				canonical="$1"; shift ;;
+		esac
+	done
+	[[ -n "$canonical" ]] || die "spawn requires a canonical agent name"
+	# Guard the identity rule at the boundary: an underscore name here means the
+	# caller already translated and is about to key state on the runtime
+	# spelling, which is the exact mistake this tool exists to prevent.
+	if [[ "$canonical" == *_* ]]; then
+		die "'$canonical' looks like an already-translated runtime name; pass the canonical hyphenated agent name (the tool does the translation)"
+	fi
+	[[ "$canonical" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] \
+		|| die "'$canonical' is not a valid agent name ([A-Za-z0-9][A-Za-z0-9-]*)"
+	if [[ "$have_fallback" == true && -z "$fallback_reason" ]]; then
+		die "--fallback-reason must be non-empty; the reason is recorded, not decorative"
+	fi
+
+	local task_name agent_type
+	task_name="$(translate_task_name "$canonical")"
+	if [[ "$have_fallback" == true ]]; then
+		agent_type="worker"
+	else
+		agent_type="$canonical"
+	fi
+
+	jq -nc \
+		--arg canonical "$canonical" \
+		--arg agent_type "$agent_type" \
+		--arg task_name "$task_name" \
+		--arg reason "$fallback_reason" \
+		--argjson fallback "$have_fallback" '
+		{
+		  canonical: $canonical,
+		  spawn: {
+		    agent_type: $agent_type,
+		    task_name: $task_name,
+		    fork_context: false
+		  },
+		  fallback: $fallback,
+		  # Everything orch RECORDS keys on the canonical name. The runtime
+		  # spelling and any fallback live only under runtime_metadata.
+		  record: {
+		    identity_key: $canonical,
+		    runtime_metadata: (
+		      { task_name: $task_name, agent_type: $agent_type }
+		      + (if $fallback then { fallback_reason: $reason } else {} end)
+		    )
+		  }
+		}'
+}
+
+# The Codex collaboration runtime caps concurrent agent threads, counting the
+# primary session. MultiAgentV2 reads
+# `features.multi_agent_v2.max_concurrent_threads_per_session`; the legacy
+# `agents.max_threads` is SILENTLY IGNORED by it, so raising only that key
+# changes nothing (openai/codex#33447, openai/codex#33039). A running session
+# also keeps its old cap until restarted. Reporting the discrepancy is the whole
+# point — it is the trap that costs a wasted config edit and a confusing
+# `agent thread limit reached` at spawn time.
+MULTI_AGENT_DEFAULT_CAP=4
+
+read_toml_int() {
+	# $1 = file, $2 = section (empty for top level), $3 = key
+	local file="$1" section="$2" key="$3"
+	[[ -f "$file" ]] || return 1
+	awk -v section="$section" -v key="$key" '
+		/^[[:space:]]*\[/ {
+			cur = $0
+			sub(/^[[:space:]]*\[/, "", cur); sub(/\][[:space:]]*$/, "", cur)
+			next
+		}
+		{
+			line = $0
+			sub(/#.*$/, "", line)
+			if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+				if (cur == section) {
+					sub(/^[^=]*=[[:space:]]*/, "", line)
+					gsub(/[^0-9]/, "", line)
+					if (line != "") { print line; exit }
+				}
+			}
+		}
+	' "$file"
+}
+
+cmd_slots() {
+	local config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--config) [[ $# -ge 2 ]] || die "--config requires a value"; config="$2"; shift 2 ;;
+			--config=*) config="${1#--config=}"; shift ;;
+			*) die "unknown argument: $1" ;;
+		esac
+	done
+
+	local v2 legacy present=true
+	[[ -f "$config" ]] || present=false
+	v2="$(read_toml_int "$config" "features.multi_agent_v2" "max_concurrent_threads_per_session" 2>/dev/null || true)"
+	legacy="$(read_toml_int "$config" "agents" "max_threads" 2>/dev/null || true)"
+
+	# The v2 key is authoritative. Absent it, the runtime uses its own default —
+	# NOT the legacy value, however tempting that reading is.
+	local effective source warning=""
+	if [[ -n "$v2" ]]; then
+		effective="$v2"; source="features.multi_agent_v2.max_concurrent_threads_per_session"
+	else
+		effective="$MULTI_AGENT_DEFAULT_CAP"; source="MultiAgentV2 default"
+		if [[ -n "$legacy" ]]; then
+			warning="agents.max_threads is set to $legacy but MultiAgentV2 ignores it; the effective cap is still $effective. Set features.multi_agent_v2.max_concurrent_threads_per_session (openai/codex#33447, #33039)."
+		fi
+	fi
+	if [[ -n "$v2" && -n "$legacy" && "$v2" != "$legacy" ]]; then
+		warning="agents.max_threads ($legacy) disagrees with the authoritative features.multi_agent_v2.max_concurrent_threads_per_session ($v2); the v2 key wins."
+	fi
+
+	jq -nc \
+		--arg config "$config" --arg source "$source" --arg warning "$warning" \
+		--argjson present "$present" \
+		--argjson effective "$effective" \
+		--argjson v2 "${v2:-null}" --argjson legacy "${legacy:-null}" '
+		{
+		  config_path: $config,
+		  config_present: $present,
+		  effective_cap: $effective,
+		  cap_source: $source,
+		  keys: { "features.multi_agent_v2.max_concurrent_threads_per_session": $v2,
+		          "agents.max_threads": $legacy },
+		  # The cap counts the PRIMARY session, so the budget orch should carry
+		  # is the cap itself — review workflows subtract the primary and any
+		  # live sessions themselves.
+		  recommended_reviewer_slot_budget: ($effective | tostring),
+		  warning: (if $warning == "" then null else $warning end),
+		  note: "A running session keeps its old cap until restarted."
+		}'
+}
+
+case "${1:-}" in
+	spawn) shift; cmd_spawn "$@" ;;
+	slots) shift; cmd_slots "$@" ;;
+	-h|--help) usage; exit 0 ;;
+	"") usage >&2; exit 2 ;;
+	*) die "unknown subcommand: ${1} (expected spawn or slots)" ;;
+esac

@@ -58,12 +58,23 @@ readme="$REPO_ROOT/skills/orch/README.md"
 development="$REPO_ROOT/skills/orch/DEVELOPMENT.md"
 
 assert_not_contains "$skill" "Spawn workers with \`fork_context: false\`" "Codex top-level guidance does not default to worker"
-assert_contains "$skill" "Spawn generated vstack agents with \`agent_type\` set to the actual generated agent name" "Codex top-level guidance requires generated agent_type"
-assert_contains "$skill" "Reviewers returned by \`list-review-agents\` must first spawn as \`agent_type=<reviewer-name>\`" "Codex top-level guidance names reviewer agent_type first"
-assert_contains "$skill" "dev agents selected from \`agent:X\` labels must first spawn as \`agent_type=X\`" "Codex top-level guidance names dev agent_type first"
-assert_contains "$skill" "after the generated-agent spawn is attempted and the Codex spawn API rejects or does not expose that generated \`agent_type\`" "Codex top-level guidance permits rejected generated-agent fallback"
-assert_contains "$skill" "preserve the logical selected agent name in reports and workflow-state keys" "Codex top-level guidance preserves logical agent identity"
-assert_contains "$skill" "record the runtime \`agent_type=worker\` and fallback reason separately" "Codex top-level guidance records fallback separately"
+# vstack#900 moved the spawn mechanics out of this prose and into
+# `scripts/spawn-adapter`, so the six assertions that used to pin literal
+# sentences here now live as BEHAVIOURAL tests in `spawn_adapter.sh`:
+# agent_type resolves to the canonical name, worker only on an explicit
+# --fallback-reason, the record keys on the canonical identity, and the runtime
+# spelling plus fallback reason are confined to runtime_metadata.
+#
+# What remains worth pinning in the doc is that it still ROUTES to the adapter
+# and still states the identity rule — a workflow that stopped saying either
+# would leave orchestrators hand-rolling the translation again, which is the
+# regression this issue existed to prevent.
+assert_contains "$skill" "spawn-adapter spawn" "Codex guidance routes spawns through the adapter"
+assert_contains "$skill" "canonical hyphenated" "Codex guidance tells the caller to pass the canonical name"
+assert_contains "$skill" "identity everywhere orch records anything" "Codex guidance states the identity rule"
+assert_contains "$skill" "runtime_metadata" "Codex guidance says where the runtime spelling belongs"
+assert_contains "$skill" "fallback-reason" "Codex guidance names the explicit fallback path"
+assert_contains "$skill" "never one" "Codex guidance keeps a schema rejection out of the fallback path"
 
 assert_contains "$review_pr" "first call the harness spawn API with \`agent_type\` equal to that reviewer name" "review-pr requires reviewer runtime agent_type first"
 assert_contains "$review_pr" "unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated \`agent_type\`" "review-pr permits generated-agent unavailable fallback"
