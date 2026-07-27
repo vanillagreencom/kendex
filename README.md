@@ -12,6 +12,8 @@ Author skills, agents, and hooks once. Install them into Claude Code, Cursor, Op
 [![Codex](https://img.shields.io/badge/Codex-supported-0EA5E9?style=flat-square)](#supported-tools)
 [![Pi](https://img.shields.io/badge/Pi-supported-0EA5E9?style=flat-square)](#supported-tools)
 
+> ✨ **Also check out [VGS](https://github.com/vanillagreencom/vgs)** — our newly released Hyprland / Niri quickshell. 🚀
+
 ![vstack TUI](docs/assets/vstack-tui.png)
 
 ---
