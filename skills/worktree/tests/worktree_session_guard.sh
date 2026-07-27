@@ -908,6 +908,63 @@ assert_contains "$run_out" '"managed":false'
 head -n 1 "$run_out" >"$tmp_dir/list-first.json"
 json_parse "$tmp_dir/list-first.json"
 
+# ── Newline-containing worktree paths ────────────────────────────────
+
+# Git permits a worktree path containing a newline. Reading only the first
+# line of a registration's gitdir file, or splitting the porcelain listing on
+# newlines, makes such a worktree unresolvable — and sweep, the untargeted
+# recovery pass, then reports "no stale session claims" while the abandoned
+# lease sits unexamined (vstack#911). The fixture is built by hand because the
+# suite's fixture helper passes paths through word-splitting `read`.
+nl_repo="$tmp_dir/newline-repo"
+nl_wt="$tmp_dir/newline-$(printf '\nwt')"
+mkdir -p "$nl_repo"
+git init -q -b main "$nl_repo"
+git -C "$nl_repo" config user.email guard-test@example.invalid
+git -C "$nl_repo" config user.name guard-test
+printf 'seed\n' >"$nl_repo/seed.txt"
+git -C "$nl_repo" add seed.txt
+git -C "$nl_repo" -c commit.gpgsign=false commit -qm seed
+git -C "$nl_repo" worktree add -q -b newline-feat "$nl_wt" main \
+	|| fail "git refused to create the newline-path fixture"
+
+run_guard claim "$nl_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "claim on a newline-containing path"
+assert_contains "$run_out" "claimed"
+lock_reason_of "$nl_repo" "$nl_wt" | grep -Fq "owner=CC-1000" \
+	|| fail "the newline-path claim must record a native lock lease"
+
+run_guard status "$nl_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "status on a newline-containing path"
+json_parse "$run_out"
+assert_eq "$(json_field "$run_out" managed)" "true" "newline path managed flag"
+assert_eq "$(json_field "$run_out" path)" "$nl_wt" \
+	"the newline path must round-trip through the status JSON"
+assert_eq "$(line_count "$run_out")" "1" "newline path stays one JSON line"
+
+run_guard list --repo "$nl_repo"
+assert_eq "$RUN_RC" "0" "list with a newline-containing path"
+assert_eq "$(line_count "$run_out")" "1" \
+	"list must report the newline-path worktree exactly once, not split it"
+assert_contains "$run_out" "\"owner\":\"CC-1000\""
+
+run_guard release "$nl_wt" --owner CC-1000
+assert_eq "$RUN_RC" "0" "release on a newline-containing path"
+if lock_reason_of "$nl_repo" "$nl_wt" >/dev/null 2>&1; then
+	fail "release must unlock the newline-path worktree"
+fi
+
+# The severe case: a stale lease on such a path must be FOUND. A sweep that
+# cannot enumerate the path reports a clean repository instead.
+"$GUARD" claim "$nl_wt" --owner CC-1000 >/dev/null
+run_guard sweep --repo "$nl_repo" --ttl-minutes 0
+assert_eq "$RUN_RC" "0" "sweep with a stale lease on a newline-containing path"
+assert_contains "$run_out" "released"
+assert_not_contains "$run_out" "no stale session claims"
+if lock_reason_of "$nl_repo" "$nl_wt" >/dev/null 2>&1; then
+	fail "sweep must release the stale newline-path lease"
+fi
+
 # ── Relative-path worktree registrations ─────────────────────────────
 
 # Git >= 2.48 records a gitdir relative to the registration directory under

@@ -166,6 +166,24 @@ Exit codes:
 EOF
 }
 
+# Scratch space for worktree enumeration, created on first use. Enumeration
+# must travel NUL-delimited through a file: a bash variable cannot hold a NUL
+# byte, and the newline-delimited capture it replaces split a worktree path
+# containing a newline into two bogus entries (vstack#911). The trap is
+# installed once here so a later addition cannot silently replace it.
+GUARD_SCRATCH=''
+guard_cleanup() {
+	if [[ -n "$GUARD_SCRATCH" ]]; then
+		rm -rf -- "$GUARD_SCRATCH"
+	fi
+}
+trap guard_cleanup EXIT
+
+require_guard_scratch() {
+	[[ -z "$GUARD_SCRATCH" ]] || return 0
+	GUARD_SCRATCH="$(mktemp -d)" || fail "cannot create a scratch directory"
+}
+
 fail() {
 	printf 'worktree-session-guard: %s\n' "$1" >&2
 	exit "$EXIT_USAGE"
@@ -268,7 +286,11 @@ common_dir_of() {
 registration_worktree_path() {
 	local entry="$1" recorded
 	[[ -f "$entry/gitdir" ]] || return 1
-	recorded="$(head -n 1 -- "$entry/gitdir")"
+	# The whole file, not its first line: a worktree path may contain a newline
+	# (vstack#911). Command substitution strips the trailing newline git writes
+	# — and only that one, since the recorded value always ends in "/.git", so
+	# no trailing newline can be part of the path itself.
+	recorded="$(cat -- "$entry/gitdir")"
 	[[ -n "$recorded" ]] || return 1
 	[[ "$recorded" == /* ]] || recorded="$(normalize_abs_path "$entry/$recorded")"
 	printf '%s\n' "${recorded%/.git}"
@@ -547,38 +569,44 @@ emit_status_json() {
 		"$age" "$(json_escape "$lease")"
 }
 
-# Paths of every linked worktree of REPO, main checkout excluded. Driven by
-# `git worktree list --porcelain`, which still reports a registration whose
-# directory has been destroyed — the case this tool most needs to see.
+# Paths of every linked worktree of REPO, main checkout excluded, written
+# NUL-delimited to OUT. Driven by `git worktree list --porcelain -z`, which
+# still reports a registration whose directory has been destroyed — the case
+# this tool most needs to see — and whose NUL delimiting is the only spelling
+# that survives a path containing a newline (vstack#911).
 #
-# The enumeration is captured in the caller's shell, not consumed through a
-# process substitution: a substitution discards Git's exit status, and a sweep
-# that could not enumerate anything would then report a clean repository. That
-# is the worst failure mode available to a recovery command.
+# The enumeration goes to a file, not through a process substitution or a
+# variable: a substitution discards Git's exit status — a sweep that could not
+# enumerate anything would then report a clean repository, the worst failure
+# mode available to a recovery command — and a variable cannot hold the NUL
+# delimiter at all.
 linked_worktree_paths() {
-	local repo="$1" porcelain line path
-	porcelain="$(git -C "$repo" worktree list --porcelain)" || return 1
-	while IFS= read -r line; do
+	local repo="$1" out="$2" line path
+	git -C "$repo" worktree list --porcelain -z >"$out.porcelain" || return 1
+	while IFS= read -r -d '' line; do
 		case "$line" in
 		'worktree '*) path="${line#worktree }" ;;
 		*) continue ;;
 		esac
 		if registration_dir_for "$repo" "$path" >/dev/null; then
-			printf '%s\n' "$path"
+			printf '%s\0' "$path"
 		fi
-	done <<<"$porcelain"
+	done <"$out.porcelain" >"$out"
 }
 
-# Enumerate into a newline-delimited list, failing closed with a diagnostic
-# that names the repository whose worktrees could not be listed.
+# Enumerate into a NUL-delimited scratch file named by ENUMERATED_WORKTREES,
+# failing closed with a diagnostic that names the repository whose worktrees
+# could not be listed. Runs in the caller's shell, so the exit reaches the
+# operator instead of dying inside a substitution.
 enumerate_or_fail() {
-	local repo="$1" command="$2" listing
-	if ! listing="$(linked_worktree_paths "$repo")"; then
+	local repo="$1" command="$2"
+	require_guard_scratch
+	ENUMERATED_WORKTREES="$GUARD_SCRATCH/worktrees"
+	if ! linked_worktree_paths "$repo" "$ENUMERATED_WORKTREES"; then
 		printf 'worktree-session-guard: %s could not enumerate the worktrees of %s; nothing was examined\n' \
 			"$command" "$repo" >&2
 		exit "$EXIT_ENUMERATION"
 	fi
-	printf '%s' "$listing"
 }
 
 unlock_worktree() {
@@ -816,11 +844,10 @@ cmd_status() {
 }
 
 cmd_list() {
-	local repo="$1" now path registration present listing
+	local repo="$1" now path registration present
 	now="$(now_epoch)"
-	listing="$(enumerate_or_fail "$repo" list)"
-	[[ -n "$listing" ]] || return 0
-	while IFS= read -r path; do
+	enumerate_or_fail "$repo" list
+	while IFS= read -r -d '' path; do
 		[[ -n "$path" ]] || continue
 		registration="$(registration_dir_for "$repo" "$path" || true)"
 		[[ -n "$registration" ]] || continue
@@ -828,7 +855,7 @@ cmd_list() {
 		[[ -d "$path" ]] || present=false
 		read_lease "$registration"
 		emit_status_json "$path" "$LEASE_STATE" "$LEASE_TEXT" "$now" "$present"
-	done <<<"$listing"
+	done <"$ENUMERATED_WORKTREES"
 }
 
 # Releasing an abandoned lease is the safety valve that keeps this guard from
@@ -838,7 +865,7 @@ cmd_list() {
 # exactly as they are.
 cmd_sweep() {
 	local repo="$1" ttl_minutes="$2" dry_run="$3"
-	local path registration released=0 unreadable=0 rc listing
+	local path registration released=0 unreadable=0 rc
 
 	# Once, around the whole loop: the lock file is per-repository, so
 	# re-acquiring it per worktree would drop the mutex between iterations.
@@ -846,9 +873,9 @@ cmd_sweep() {
 
 	# Enumerate before claiming anything about the repository's state: an
 	# enumeration failure must not be reported as "no stale session claims".
-	listing="$(enumerate_or_fail "$repo" sweep)"
+	enumerate_or_fail "$repo" sweep
 
-	while IFS= read -r path; do
+	while IFS= read -r -d '' path; do
 		[[ -n "$path" ]] || continue
 		registration="$(registration_dir_for "$repo" "$path" || true)"
 		[[ -n "$registration" ]] || continue
@@ -861,7 +888,7 @@ cmd_sweep() {
 			warn "lease on $path has an unusable heartbeat (unreadable, out of range, or dated in the future) and was left in place; recover with: $GUARD_SELF release $path --force"
 			;;
 		esac
-	done <<<"$listing"
+	done <"$ENUMERATED_WORKTREES"
 
 	# A dry run mutates nothing, so its summary must never say anything was
 	# released — an operator reading "released" while deciding what to recover
