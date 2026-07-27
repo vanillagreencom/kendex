@@ -16,7 +16,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { publishQuestionActivity } from "./activity.js";
+import { publishQuestionActivity, publishQuestionDebug } from "./activity.js";
+import { emitAnswerSteer } from "./answer-steer.js";
 import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
 import {
 	DEFAULT_CUSTOM_LABEL,
@@ -530,6 +531,7 @@ function toPendingView(pending: PendingQuestion): PendingQuestionView {
 }
 
 let emitQuestionOpenedEvent: ((event: QuestionEvent) => void) | undefined;
+let unsubscribeAnswerSteer: (() => void) | undefined;
 
 function notifyQuestionOpened(ctx: ExtensionContext, event: QuestionEvent): void {
 	const service = (globalThis as unknown as Record<PropertyKey, unknown>)[QOL_NOTIFICATION_SERVICE_SYMBOL] as QolNotificationService | undefined;
@@ -569,6 +571,7 @@ class QuestionServiceImpl implements QuestionService {
 					action: "answers" in finalResult ? "answered" : "rejected",
 					closedAt: new Date().toISOString(),
 					openedAt,
+					request,
 					requestId: request.id,
 					result: finalResult,
 					source: completeSource,
@@ -1009,6 +1012,19 @@ export default function questions(pi: ExtensionAPI): void {
 	emitQuestionOpenedEvent = (event) => pi.events.emit(QUESTION_OPENED_EVENT, { requestId: event.requestId, request: event.request, source: event.source });
 	let activeCtx: ExtensionContext | undefined;
 
+	let steerUnavailableNoted = false;
+	const noteSteerUnavailable = () => {
+		if (steerUnavailableNoted) return;
+		steerUnavailableNoted = true;
+		publishQuestionDebug("answersAsUserMessage: sendUserMessage steer delivery unavailable; answers stay in tool output only");
+	};
+	unsubscribeAnswerSteer?.();
+	unsubscribeAnswerSteer = service.subscribe((event) => {
+		if (event.action !== "answered" || !event.result || !("answers" in event.result)) return;
+		if (!settingBoolean("answersAsUserMessage", false, activeCtx?.cwd)) return;
+		emitAnswerSteer(pi, event.request, event.result.answers, noteSteerUnavailable);
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		recordProjectTrust(ctx);
 		activeCtx = ctx;
@@ -1017,6 +1033,8 @@ export default function questions(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		service.shutdown();
+		unsubscribeAnswerSteer?.();
+		unsubscribeAnswerSteer = undefined;
 		emitQuestionOpenedEvent = undefined;
 	});
 

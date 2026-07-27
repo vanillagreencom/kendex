@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { buildQuestionActivity, publishQuestionActivity, type PiActivityEvent, type QuestionActivityEvent } from "../activity.js";
+import { buildQuestionActivity, publishQuestionActivity, publishQuestionDebug, type PiActivityEvent, type QuestionActivityEvent } from "../activity.js";
 
 const BROKER_SYMBOL = Symbol.for("vstack.pi.activity");
 
@@ -63,5 +63,18 @@ describe("question activity", () => {
 			result: { cancelled: true, requestId: "que_1" },
 		}));
 		expect(event).toMatchObject({ importance: "normal", severity: "warning", type: "question.rejected" });
+	});
+
+	test("question.debug breadcrumbs publish via the broker and stay silent without one", () => {
+		publishQuestionDebug("no broker installed");
+		const events = installBroker();
+		publishQuestionDebug("answersAsUserMessage: steer delivery unavailable");
+		expect(events).toEqual([{
+			importance: "noisy",
+			severity: "debug",
+			source: "pi-questions",
+			summary: "answersAsUserMessage: steer delivery unavailable",
+			type: "question.debug",
+		}]);
 	});
 });

@@ -13,6 +13,7 @@ Structured inline questions for Pi. Multi-tab categories, built-in free-text fal
 - Wrapped option labels stay readable in narrow panes.
 - `pi-session-bridge` integration lets external clients list, answer, and reject pending questions.
 - When the bridge is loaded, question opened/answered/rejected lifecycle points publish structured `question.*` activity broker events without adding chat messages.
+- Optional **Answers as user message** setting (off by default) mirrors each answered question into the conversation as a steer-delivered user message for observer extensions such as [pi-automode](https://github.com/czottmann/pi-automode).
 - `pi-qol` notification hook fires before prompts open.
 
 ## Install
@@ -89,8 +90,21 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | Visible option rows | Rows shown before scrolling. |
 | Default question header | Fallback title when a request has no header. |
 | Bridge replies enabled | Allow `pi-session-bridge` to answer/reject pending questions. |
+| Answers as user message | Off by default. Mirror each answered question into the conversation as a steer-delivered user message. See [Answers as user messages](#answers-as-user-messages). |
 
 Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across vstack Pi extensions while leaving tool/model/user content unchanged.
+
+## Answers as user messages
+
+Off by default. Enable **Answers as user message** in `/extensions:settings` to have every answered question also delivered to the agent as one steer user message, with the question quoted and the chosen answers below:
+
+```
+> Which path?
+
+Use current branch
+```
+
+Multi-question requests emit one block per tab, prefixed with the tab header (`> Path: Which path?`); a tab with nothing selected shows `(no selection)`; cancelled or dismissed questions send nothing. Enable this when observer extensions such as [pi-automode](https://github.com/czottmann/pi-automode) need to read decisions from the conversation stream — they classify user messages but ignore tool output for security reasons. On Pi cores without `sendUserMessage` steer delivery, the setting silently falls back to tool output only.
 
 ## Bridge control
 

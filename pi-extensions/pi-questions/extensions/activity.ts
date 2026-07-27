@@ -42,6 +42,20 @@ export function publishQuestionActivity(event: QuestionActivityEvent): void {
 	}
 }
 
+export function publishQuestionDebug(summary: string): void {
+	try {
+		activityBroker()?.publish({
+			importance: "noisy",
+			severity: "debug",
+			source: "pi-questions",
+			summary,
+			type: "question.debug",
+		});
+	} catch {
+		// Debug breadcrumbs are best-effort and must never affect question lifecycle.
+	}
+}
+
 export function buildQuestionActivity(event: QuestionActivityEvent): PiActivityEvent {
 	const header = event.request?.header || event.request?.questions?.[0]?.header || "Question";
 	const type = event.action === "opened" ? "question.opened" : event.action === "answered" ? "question.answered" : "question.rejected";

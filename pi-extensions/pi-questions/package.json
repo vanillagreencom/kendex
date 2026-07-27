@@ -48,6 +48,15 @@
           "requiresReload": true
         },
         {
+          "key": "answersAsUserMessage",
+          "label": "Answers as user message",
+          "description": "After a question is answered, also deliver the question and chosen answers to the agent as a steer user message so observer extensions that ignore tool output (e.g. pi-automode) can read decisions from the conversation. Off by default: the extra message changes model-visible context.",
+          "type": "boolean",
+          "default": false,
+          "category": "General",
+          "apply": "live"
+        },
+        {
           "key": "glyphStyle",
           "label": "Glyph style",
           "description": "Glyphs for vstack-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
