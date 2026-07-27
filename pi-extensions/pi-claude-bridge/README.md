@@ -134,14 +134,11 @@ Legacy `.pi/claude-bridge.json` configuration keeps these options nested under `
 
 For both, the env var wins over config. `connectorWriteMode` only matters when connectors are enabled. Any value other than exactly `allow` is treated as `deny` (fail-closed).
 
-With `connectorWriteMode: "deny"` (the default), connector sessions are **read-only**: search/read/fetch/list tools stay available, but mutating tools (Gmail `create_draft`/labels, Calendar `create_event`/`update_event`/`delete_event`/`respond_to_event`, Drive `create_file`/`copy_file`) are denied. Enforcement is two-layered:
-
-- **Model context:** the known write tools are passed as `disallowedTools` (exact tool ids), so the model does not see them. (Note: the CLI's MCP permission matcher only supports exact tool names or a whole-server `mcp__server__*` glob — partial tool-segment globs are inert — so exact ids are what actually removes today's writes.)
-- **Runtime:** a `PreToolUse` hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is **fail-closed** and covers the whole `mcp__claude_ai_<Server>__` space — a tool there is a write unless its name *begins* with a known read verb (`list`, `search`, `get`, `read`, `fetch`, …). The verb is matched as a word across naming styles, since connector servers differ: `search_threads` (Gmail), `slack_read_channel` (Slack, server-prefixed), `getJiraIssue` (Atlassian, camelCase) are all reads; a leading word that merely repeats the server name is skipped first. A name that opens with a read verb but also names a mutation (`getOrCreateChannel`) is a write, and so is a name that does not parse as `<server>__<tool>`. This covers both not-yet-known write tools (e.g. a future Gmail `send_message` or Drive `delete_file`) and connectors beyond the Google trio: claude.ai connectors attach account-wide, so a Slack/Atlassian/org-custom connector is visible in a connector session, and its writes are denied by the same rule.
+With `connectorWriteMode: "deny"` (the default), connector sessions are **read-only**: search/read/fetch/list tools stay available, while mutating tools are denied twice — the known write tools are removed from the model's tool list, and a runtime hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is fail-closed across every connector on the account: a connector tool counts as a write unless its name begins with a known read verb, so not-yet-known write tools and future connectors are denied by the same rule.
 
 Set `allow` only for a one-shot write-executor session that has already obtained explicit user approval — never for an interactive connector chat.
 
-> **`allow` is per-process, not global.** Memsira's approved-write executor enables writes by setting `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Do not set `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar — that would make every connector session in that process write-capable, defeating the approval gate.
+> **`allow` is per-process, not global.** A host's approved-write executor should set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Do not set `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar — that would make every connector session in that process write-capable, defeating the approval gate.
 
 ### Isolated mode (embedding hosts)
 
@@ -161,9 +158,7 @@ The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-opus-
 
 ## Connector inventory
 
-`/claude-bridge:connectors` lists the Claude account's installed claude.ai connectors by asking the account, not the model.
-
-The older way to answer "does this account have Slack?" was a capability probe: a model turn that enumerated connectors via `ToolSearch`. A search returns what the search surfaced — a lower bound — and nothing in the result said so, so an account with Slack attached could produce an inventory without Slack and no failure signal (vstack#838). This command calls the account's connector list endpoint instead, so the answer is complete by construction.
+`/claude-bridge:connectors` lists the Claude account's installed claude.ai connectors by asking the account, not the model, so the answer is complete by construction.
 
 `listAccountConnectors()` is the programmatic form for host apps. Import it from the package's `./connector-inventory` entry point:
 
@@ -171,13 +166,13 @@ The older way to answer "does this account have Slack?" was a capability probe: 
 import { listAccountConnectors, resolveClaudeOAuth } from "@vanillagreen/pi-claude-bridge/connector-inventory";
 ```
 
-Consuming apps that regenerate their vendored `package.json` with a closed exports map (`{".": "./bundle/index.js"}`) cannot reach that subpath — Node rejects every unlisted subpath *and* deep path under such a map. The same functions are therefore re-exported from the package root, which is the path those manifests allow:
+The same functions are re-exported from the package root for consuming apps whose vendored `package.json` uses a closed exports map (`{".": "./bundle/index.js"}`), which blocks every subpath:
 
 ```ts
 import { listAccountConnectors } from "@vanillagreen/pi-claude-bridge";
 ```
 
-The dedicated entry point is a separate build output. It cannot come from `bundle/index.js`, which exports only pi's extension registration and is tree-shaken against what `index.ts` itself calls — `connectorServerNamespace` was dropped from it entirely for that reason. `tests/unit-connector-inventory-artifact.mjs` loads the built artifact rather than `src/` so a source change without a rebuild fails. It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
+It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
 
 ## Extra usage and rate limits
 

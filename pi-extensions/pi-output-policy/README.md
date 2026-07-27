@@ -9,9 +9,9 @@ Large-output policy for Pi tool results: minimization, bounded truncation, and f
 Output policy enforces two related but distinct budgets:
 
 - **Compact renderer UI** — how big a tool block can be without breaking Pi's TUI. Caps line width, hard line count, and absolute block size.
-- **Model transcript / session JSONL** — how much each tool result adds to the request body that gets resent on every turn. Long runs with many "fine" 50–200 KB results have crashed with `HTTP 507: exceeded request buffer limit while retrying upstream` even when no individual block was UI-pathological.
+- **Model transcript / session JSONL** — how much each tool result adds to the request body that gets resent on every turn. Long runs with many individually "fine" 50–200 KB results can exceed provider request-buffer limits even when no single block is UI-pathological.
 
-Earlier defaults only had teeth on the first budget. The default `balanced` policy mode now also constrains the second, while leaving the full text on disk via per-session artifacts.
+The default `balanced` policy mode constrains both budgets while leaving the full text on disk via per-session artifacts.
 
 ## Policy modes
 
