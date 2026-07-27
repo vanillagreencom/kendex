@@ -86,9 +86,22 @@ The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a 
 | Symptom | Recovery |
 |---|---|
 | `.agents` missing, or a real directory instead of a symlink (`test -L .agents` fails) | `worktree fix-links <ID\|PATH>` — **from the main checkout** |
-| A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — such a file never lives under a symlinked path |
+| A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — run in the checkout the file really lives in |
+
+A tracked file *can* sit under a symlinked path — a project may symlink a directory it also tracks content in — and there `git checkout` from the worktree writes through the link into the main checkout while `assume-unchanged` keeps `git status` clean in both; recover at the real path in the owning checkout ([references/config.md](references/config.md)).
 
 **Run `fix-links` from the main checkout, not from the broken worktree** — the worktree's own copy of this script is reached *through* the link that is broken, so invoking it from there is the one place it may not exist. `fix-links` is also the repair after any operation that can replace a configured symlink with tracked content — a manual rebase or a partially-completed `remove`. Until the link is fixed, do not trust local verification from that tree: [references/recovery.md](references/recovery.md).
+
+**Consumers: carry this inline; do not point here.** In a consumer install this section is itself read through `.agents`, so from the worktree whose link is broken it is unreachable exactly when it is needed — a consumer repo's own tracked file (`AGENTS.md` / `CLAUDE.md`) is readable in that state, so that is where the recovery text belongs. Copy it verbatim:
+
+```text
+Broken `.agents` in a worktree (missing, or a real directory): from the MAIN checkout run
+`.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` — never from the worktree,
+and never `git checkout -- .agents` (the path holds no tracked content, so the command
+changes nothing while the link stays broken). A genuinely corrupt tracked file is the other
+case: `git checkout -- <path>`, run in the checkout the file really lives in (the main
+checkout when the path sits under a configured symlink).
+```
 
 ## Session guard (ownership leases)
 

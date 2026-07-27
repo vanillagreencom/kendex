@@ -17,7 +17,7 @@ skills/worktree/
 Route by shape. `git checkout -- .agents` is **never** the recovery: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken.
 
 - `.agents` missing, or a real directory rather than a symlink (`test -L .agents` fails) → `worktree fix-links <ID|PATH>`, run **from the main checkout** (the worktree's own copy of the script is reached through the broken link).
-- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`; such a file never lives under a symlinked path.
+- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`, run in the checkout the file really lives in — the main checkout when the path sits under a configured symlink (a worktree write goes through the link into the main checkout, and `assume-unchanged` keeps `git status` clean in both).
 
 `fix-links` is also the repair after anything that can replace a configured symlink with tracked content: a manual rebase, a partially-completed `remove`, or a restack replay. A worktree whose `.agents` is not a symlink cannot be trusted for local verification until it is fixed.
 
