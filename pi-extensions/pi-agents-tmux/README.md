@@ -153,7 +153,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 
 ### Execution
 
-There is one execution-concurrency knob — `maxConcurrency` — and it caps concurrent one-shot/background agent execution in the parallel dispatch queue. Persistent pane agents occupy the queue only until they are launched/enqueued; after that they are not long-running bg workers for this limit. Earlier versions exposed `maxParallelTasks` as an internal chunk size; that key is now a no-op kept only for settings-file compatibility and safe to delete.
+There is one execution-concurrency knob — `maxConcurrency` — and it caps concurrent one-shot/background agent execution in the parallel dispatch queue. Persistent pane agents occupy the queue only until they are launched/enqueued. The legacy `maxParallelTasks` key is a no-op kept for settings-file compatibility and safe to delete.
 
 | Setting | What it does |
 | --- | --- |

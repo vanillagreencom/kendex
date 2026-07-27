@@ -55,9 +55,6 @@ That opens an interactive installer where you pick which agents, skills, hooks, 
 ## How It Works
 
 A source repo is a package registry. vstack discovers what's there, asks which pieces you want, then writes the right files for each tool.
-Installed lock entries record both the selected source path/string and, when
-available, its GitHub `owner/repo` identity so later refreshes and issue reports
-keep working after a checkout moves.
 
 ```text
 source repo
@@ -111,28 +108,17 @@ rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "questio
 ```
 
 `vstack refresh` applies `[skill-instructions]` to both locked skills and
-canonical project-owned skills at `.agents/skills/<name>/SKILL.md`, even when
-the local skill has no lock entry. For project-owned skills, vstack maintains
-only its marked `Project Instructions` block; updates and removals are
-idempotent and leave the rest of the skill and unrelated project files intact.
-Project skill installs and refreshes preflight the `.agents/skills` ownership
-boundary before changing project-owned skills. A `.agents` symlink into another
-working tree of the **same** repository is accepted — that is the layout the
-`worktree` skill provisions, so refresh works from an issue worktree and writes
-through to the shared `.agents` (same-repository identity is proved by
-`git rev-parse --git-common-dir`, not assumed from the path). If `.agents`
-resolves outside the selected checkout **and** outside its repository, run the
-command from the checkout that owns it or use a project-local `.agents`
-directory. Failures leave the lock and installed files unchanged. Project hook removal uses the same strict preflight before changing
-hook files, settings, locks, or generated agents; global removal remains
-independent of project configuration.
+project-owned skills at `.agents/skills/<name>/SKILL.md`. For project-owned
+skills, vstack maintains only its marked `Project Instructions` block and
+leaves the rest of the skill untouched. A `.agents` symlink into another
+working tree of the same repository is accepted (the layout the `worktree`
+skill provisions); if `.agents` resolves outside the repository entirely, run
+the command from the checkout that owns it.
 
-Skills vstack did not install belong in `project-skills-dir` (tracked), never as
-real directories inside `.agents`. Refresh links each one into
-`.agents/skills/<name>`, which keeps `.agents` fully untracked — otherwise it
-becomes a hybrid tree, and a rebase materializes the symlink into a real
-directory holding only the tracked files, silently dropping every installed
-skill beneath it.
+Skills vstack did not install belong in `project-skills-dir` (tracked), never
+as real directories inside `.agents`. Refresh links each one into
+`.agents/skills/<name>`, which keeps `.agents` fully untracked — a hybrid
+tracked/untracked `.agents` tree loses installed skills on rebase.
 
 Key rules:
 
@@ -248,8 +234,6 @@ Hook installation per harness:
 - **Pi** — same hook behaviors ship as a first-class Pi extension, `@vanillagreen/pi-hooks`. It listens on Pi's `tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls. Each hook is independently toggleable from the pi-extension-manager settings panel.
 
 Use `harnesses:` in a hook's frontmatter to scope it explicitly (e.g. `harnesses: [claude-code]`).
-
-**Parity:** changes to a hook script must land in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` — see [AGENTS.md](AGENTS.md) for the rule.
 
 ### Pi Extensions
 

@@ -105,12 +105,10 @@ Run required validation for the changed areas:
   ```bash
   cd cli && cargo test
   ```
-- If CLI behavior/install paths changed, run an integration smoke in a temp dir, e.g.:
+- If CLI behavior/install paths changed, run the repo integration check, which installs into a throwaway temp project and verifies the printed scope summary:
   ```bash
-  tmp=$(mktemp -d)
-  (cd "$tmp" && cargo run --manifest-path /mnt/Tertiary/dev/vstack/cli/Cargo.toml -- add /mnt/Tertiary/dev/vstack --all --copy -y)
+  cli/scripts/integration-check.sh
   ```
-  Read the printed scope summary and verify it is project-scoped in the temp dir.
 - If Pi extensions changed in the release range, run each affected package's validation (`npm run check`, or available typecheck/test/build scripts) and consider `/npm-deploy` separately.
 - If docs/examples changed only, run enough checks to confirm examples are still true.
 - Do not release on failing validation unless the user explicitly accepts the risk.
