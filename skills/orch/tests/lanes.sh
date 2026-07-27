@@ -8,10 +8,14 @@
 # quoted for something it was not taken relative to" failure.
 set -uo pipefail
 
+# Resolve siblings from the TEST directory, never from a repo root: the CLI
+# integration check runs this same suite from an INSTALLED layout
+# (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not
+# exist. Same reason the sibling open-terminal test does it this way.
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-LANES="$REPO_ROOT/skills/orch/scripts/lanes"
-OPEN_TERMINAL="$REPO_ROOT/skills/orch/scripts/open-terminal"
+SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
+LANES="$SCRIPTS_DIR/lanes"
+OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -207,8 +211,31 @@ assert_eq "$?" "1" "a malformed --max-pct is rejected"
 
 echo "=== open-terminal --lane wiring ==="
 
+# open-terminal validates $WORKTREE_CLI before it reaches any lane logic, and a
+# fresh checkout has no `.agents` install mirror for it to find. Stub it, so
+# these assertions test the lane path instead of the absence of a mirror.
+OT_STUB_BIN="$TMP_ROOT/ot-bin"; mkdir -p "$OT_STUB_BIN"
+cat > "$OT_STUB_BIN/worktree" <<'STUBEOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "create" ]] && { d="$(mktemp -d)"; printf '%s\n' "$d"; exit 0; }
+exit 0
+STUBEOF
+cat > "$OT_STUB_BIN/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 1
+STUBEOF
+chmod +x "$OT_STUB_BIN/worktree" "$OT_STUB_BIN/gh"
+run_ot() { PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+
 # Assert against what a user actually sees, not against a parse of the source.
-HELP_OUT="$("$OPEN_TERMINAL" --help 2>&1)"
+# --help must work with no git repository in sight. It used to die with git's
+# exit 128 and no output at all, because the PROJECT_ROOT command substitution
+# failed under `set -e` before argument parsing ever ran.
+NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
+help_rc=0
+HELP_OUT="$( (cd "$NOREPO" && PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$OPEN_TERMINAL" --help) 2>&1 )" || help_rc=$?
+assert_eq "$help_rc" "0" "open-terminal --help exits 0 outside a git repository"
 assert_contains "$HELP_OUT" "--lane <spec>" "open-terminal --help documents --lane"
 assert_contains "$HELP_OUT" "--lane-max-pct" "open-terminal --help documents the threshold flag"
 
@@ -230,7 +257,7 @@ assert_contains "$(cat "$OPEN_TERMINAL")" 'cmd="env $LANE_ENV $cmd"' \
 
 # An explicit lane that is not a directory is a typo, not a config dir.
 set +e
-bogus_out=$("$OPEN_TERMINAL" --harness claude --lane /nonexistent/lane CC-1 2>&1)
+bogus_out=$(run_ot --harness claude --lane /nonexistent/lane CC-1 2>&1)
 bogus_rc=$?
 set -e
 assert_eq "$bogus_rc" "1" "an explicit --lane that is not a directory is refused"

@@ -5,7 +5,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
+# `|| true` is load-bearing under `set -e`: outside a git repo this command
+# substitution exits non-zero and killed the whole script before argument
+# parsing, so even `--help` died with git's exit 128 and no output. Help and
+# argument validation must not require a repository; the commands that genuinely
+# need one already check $WORKTREE_CLI and report it by name.
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
