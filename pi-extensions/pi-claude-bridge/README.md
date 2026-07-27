@@ -108,6 +108,8 @@ Turn this on and the model can use whatever your Claude account already has conn
 
 Sessions are **read-only** by default: the model can look things up, but cannot send, post, or change anything unless you explicitly turn writes on below.
 
+Connector tools run inside Claude Code rather than in Pi, so Pi shows the model's answer but no tool card for the lookup itself. (Before this was handled, Pi showed a card claiming `Tool … not found` for calls that had actually succeeded — so an answer built on real data looked invented.)
+
 Extension-manager settings use flat package-scoped keys:
 
 ```json

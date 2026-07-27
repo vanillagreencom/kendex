@@ -46,7 +46,7 @@ import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSes
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
-import { ensureTurnStarted, finalizeCurrentStream, parsePartialJson, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
+import { ensureTurnStarted, finalizeCurrentStream, noteChildExecutedToolResults, parsePartialJson, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
 
 // Re-exports: the module decomposition must not change the bundle entry's
 // public surface — unit tests and downstream consumers import these from
@@ -58,7 +58,7 @@ export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from ".
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
-export { processAssistantMessage, processStreamEvent } from "./assistant-stream.js";
+export { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "./assistant-stream.js";
 
 // Compat (#2): use factory if available (pi-ai ≥0.66), else fall back to constructor (gsd-pi etc.)
 const _piAi = piAi as any;
@@ -485,7 +485,11 @@ async function consumeQuery(
 				}
 				break;
 			case "user":
-				break; // SDK echo of user prompt — not needed
+				// Mostly the SDK echoing the prompt back — nothing to render. The one
+				// thing worth reading is a child-executed tool's real result, which
+				// arrives here and nowhere else.
+				noteChildExecutedToolResults(message);
+				break;
 			case "rate_limit_event": {
 				const info = (message as any).rate_limit_info;
 				debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));

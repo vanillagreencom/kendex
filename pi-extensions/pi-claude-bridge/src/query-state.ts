@@ -140,6 +140,19 @@ export class QueryContext {
 	deferredUserMessages: string[] = [];
 	handledTerminalError = false;
 
+	// Tool calls the CHILD executes itself (claude.ai connectors — see
+	// isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
+	// those track calls Pi owes a result for, and Pi owes nothing here. Kept only
+	// so the child's real result can be recognized when it comes back on the SDK's
+	// `user` message, and so the streamed block's deltas can be skipped silently
+	// instead of logging as "unmatched" (which reads like a bug).
+	/** tool_use id → raw SDK tool name. */
+	childExecutedToolCalls = new Map<string, string>();
+	/** Anthropic content-block indexes of the current assistant message that carry
+	 *  a child-executed tool_use. Scoped to one message: cleared at message_start,
+	 *  and an index is released as soon as a new block starts there. */
+	childExecutedStreamIndexes = new Set<number>();
+
 	// Per-turn (reset together)
 	turnOutput: AssistantMessage | null = null;
 	turnStarted = false;
@@ -176,6 +189,15 @@ export class QueryContext {
 		this.resolvedToolResultIds.clear();
 		this.unmatchedToolResultIds.clear();
 		this.reportedToolResultMismatch = false;
+		this.childExecutedToolCalls.clear();
+		this.childExecutedStreamIndexes.clear();
+	}
+
+	/** Note a tool_use the child runs itself. `streamIndex` is present only on the
+	 *  streamed path, where later deltas/stops for that block must be skipped. */
+	noteChildExecutedToolCall(id: string | undefined, rawName: string, streamIndex?: number): void {
+		if (id) this.childExecutedToolCalls.set(id, rawName);
+		if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
 	}
 
 	recordToolCall(id: string | undefined, toolName: string, args: Record<string, unknown> = {}): void {

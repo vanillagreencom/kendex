@@ -27275,6 +27275,18 @@ var QueryContext = class {
   reportedToolResultMismatch = false;
   deferredUserMessages = [];
   handledTerminalError = false;
+  // Tool calls the CHILD executes itself (claude.ai connectors — see
+  // isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
+  // those track calls Pi owes a result for, and Pi owes nothing here. Kept only
+  // so the child's real result can be recognized when it comes back on the SDK's
+  // `user` message, and so the streamed block's deltas can be skipped silently
+  // instead of logging as "unmatched" (which reads like a bug).
+  /** tool_use id → raw SDK tool name. */
+  childExecutedToolCalls = /* @__PURE__ */ new Map();
+  /** Anthropic content-block indexes of the current assistant message that carry
+   *  a child-executed tool_use. Scoped to one message: cleared at message_start,
+   *  and an index is released as soon as a new block starts there. */
+  childExecutedStreamIndexes = /* @__PURE__ */ new Set();
   // Per-turn (reset together)
   turnOutput = null;
   turnStarted = false;
@@ -27315,6 +27327,14 @@ var QueryContext = class {
     this.resolvedToolResultIds.clear();
     this.unmatchedToolResultIds.clear();
     this.reportedToolResultMismatch = false;
+    this.childExecutedToolCalls.clear();
+    this.childExecutedStreamIndexes.clear();
+  }
+  /** Note a tool_use the child runs itself. `streamIndex` is present only on the
+   *  streamed path, where later deltas/stops for that block must be skipped. */
+  noteChildExecutedToolCall(id, rawName, streamIndex) {
+    if (id) this.childExecutedToolCalls.set(id, rawName);
+    if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
   }
   recordToolCall(id, toolName, args = {}) {
     if (!id) return;
@@ -43240,6 +43260,9 @@ var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
   `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
 ];
+function isChildExecutedTool(name) {
+  return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX2);
+}
 function isConnectorWriteTool(name) {
   if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
   const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
@@ -44324,6 +44347,12 @@ function processStreamEvent(message, customToolNameToPi, model) {
   if (event?.type === "content_block_start") {
     c.turnSawStreamEvent = true;
     ensureTurnStarted();
+    c.childExecutedStreamIndexes.delete(event.index);
+    if (event.content_block?.type === "tool_use" && isChildExecutedTool(event.content_block.name)) {
+      c.noteChildExecutedToolCall(event.content_block.id, event.content_block.name, event.index);
+      debug(`processStreamEvent: child-executed tool ${event.content_block.name} [${event.content_block.id}] \u2014 not mirrored as a Pi tool call`);
+      return;
+    }
     if (event.content_block?.type === "text") {
       c.turnBlocks.push({ type: "text", text: "", index: event.index });
       c.currentPiStream.push({ type: "text_start", contentIndex: c.turnBlocks.length - 1, partial: c.turnOutput });
@@ -44349,6 +44378,10 @@ function processStreamEvent(message, customToolNameToPi, model) {
     return;
   }
   if (event?.type === "content_block_delta") {
+    if (c.childExecutedStreamIndexes.has(event.index)) {
+      c.turnSawStreamEvent = true;
+      return;
+    }
     const index = c.turnBlocks.findIndex((b) => b.index === event.index);
     const block = c.turnBlocks[index];
     if (!block) {
@@ -44374,6 +44407,10 @@ function processStreamEvent(message, customToolNameToPi, model) {
     return;
   }
   if (event?.type === "content_block_stop") {
+    if (c.childExecutedStreamIndexes.has(event.index)) {
+      c.turnSawStreamEvent = true;
+      return;
+    }
     const index = c.turnBlocks.findIndex((b) => b.index === event.index);
     const block = c.turnBlocks[index];
     if (!block) {
@@ -44420,6 +44457,11 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
   let sawToolUse = false;
   for (const block of assistantMsg.content) {
     if (block.type !== "tool_use") continue;
+    if (isChildExecutedTool(block.name)) {
+      c.noteChildExecutedToolCall(block.id, block.name);
+      debug(`assistant message: child-executed tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
+      continue;
+    }
     sawToolUse = true;
     const existingIdx = c.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === block.id);
     const name = mapToolName(block.name, customToolNameToPi);
@@ -44451,6 +44493,19 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
   }
   if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
   return sawToolUse;
+}
+function noteChildExecutedToolResults(message) {
+  const c = ctx();
+  if (c.childExecutedToolCalls.size === 0) return;
+  const content = message.message?.content;
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (block?.type !== "tool_result") continue;
+    const name = c.childExecutedToolCalls.get(block.tool_use_id);
+    if (!name) continue;
+    const size = typeof block.content === "string" ? block.content.length : Array.isArray(block.content) ? block.content.length : 0;
+    debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${block.is_error === true} contentSize=${size}`);
+  }
 }
 function processAssistantMessage(message, model, customToolNameToPi) {
   const c = ctx();
@@ -44488,6 +44543,11 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       if (block.thinking) c.currentPiStream?.push({ type: "thinking_delta", contentIndex: idx, delta: block.thinking, partial: c.turnOutput });
       c.currentPiStream?.push({ type: "thinking_end", contentIndex: idx, content: block.thinking ?? "", partial: c.turnOutput });
     } else if (block.type === "tool_use") {
+      if (isChildExecutedTool(block.name)) {
+        c.noteChildExecutedToolCall(block.id, block.name);
+        debug(`processAssistantMessage fallback: child-executed tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
+        continue;
+      }
       ensureTurnStarted();
       c.turnSawToolCall = true;
       const mappedName = mapToolName(block.name, customToolNameToPi);
@@ -44806,8 +44866,8 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
         }
         break;
       case "user":
+        noteChildExecutedToolResults(message);
         break;
-      // SDK echo of user prompt — not needed
       case "rate_limit_event": {
         const info = message.rate_limit_info;
         debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
@@ -45477,6 +45537,7 @@ export {
   listAccountConnectors,
   mapToolName,
   normalizeRateLimitUtilization,
+  noteChildExecutedToolResults,
   preflightClaudeExecutable,
   primeConnectorServers,
   processAssistantMessage,
