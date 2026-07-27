@@ -165,16 +165,22 @@ parse_claude_usage() {
 		def pct($p): (($p | numbers) // 0) | round | (if (. > 1e12 or . < 0) then 0 else . end);
 		(.five_hour  // null) as $s
 		| (.seven_day // null) as $w
-		| ([.limits[]? | select(type == "object")
-		     | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]
-		   | max_by(.percent // 0))
-		  // (if .seven_day_sonnet != null then
-		        {percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
-		         scope: {model: {display_name: "Sonnet"}}}
-		      elif .seven_day_opus != null then
-		        {percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
-		         scope: {model: {display_name: "Opus"}}}
-		      else null end) as $m
+		# The parentheses around the whole `//` are LOAD-BEARING, not style.
+		# jq 1.7 and jq 1.8 disagree on `A // B as $x | C`: 1.7 binds it as
+		# `A // (B as $x | C)`, so a non-null A short-circuits and emits A itself
+		# instead of ever reaching C. That produced a silent empty parse under the
+		# jq on CI while passing locally on 1.8. Never rely on the relative
+		# precedence of `//` and `as`.
+		| ((([.limits[]? | select(type == "object")
+		      | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]
+		     | max_by(.percent // 0)))
+		   // (if .seven_day_sonnet != null then
+		         {percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
+		          scope: {model: {display_name: "Sonnet"}}}
+		       elif .seven_day_opus != null then
+		         {percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
+		          scope: {model: {display_name: "Opus"}}}
+		       else null end)) as $m
 		| {
 		    session_5h_pct:  (if $s then pct($s.utilization) else null end),
 		    weekly_pct:      (if $w then pct($w.utilization) else null end),
