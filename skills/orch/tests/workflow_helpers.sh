@@ -435,7 +435,7 @@ assert_file_contains "$orch_skill" 'Never author a workflow step that assumes to
 assert_file_contains "$orch_skill" 'no user authorization or delegation can lift' "orch skill states the rejection is harness-side classification"
 assert_file_contains "$orch_skill" '§ Policy-blocked rebase (cherry-pick replay fallback)' "orch skill routes to the canonical worktree recipe"
 assert_file_contains "$orch_skill" 'report a blocker instead of improvising' "orch skill makes dirty-tree/merge-commit ranges a blocker"
-assert_file_contains "$dev_skill" 'a policy-blocked `git rebase` (vstack#722)' "dev skill carries the rebase-rejection rule"
+assert_file_contains "$dev_skill" 'a policy-blocked `git rebase`' "dev skill carries the rebase-rejection rule"
 assert_file_contains "$dev_skill" '§ Policy-blocked rebase (cherry-pick replay fallback)' "dev skill routes to the canonical worktree recipe"
 
 # vstack#660 — GitHub-issue orchestration stores workflow state under the
