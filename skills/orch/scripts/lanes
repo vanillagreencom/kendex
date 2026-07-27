@@ -1,0 +1,460 @@
+#!/usr/bin/env bash
+# lanes — enumerate the harness auth "lanes" on this machine and measure each
+# one's live usage, so a fleet launch can pick the account with real headroom
+# instead of relying on supervisor memory (vstack#894).
+#
+# The failure this exists for: when one account hits its limit mid-fleet, every
+# session on that account stalls at once. Observed 2026-07-26 on hyprtrade — an
+# account-level limit froze 5 of 7 workers simultaneously and each had to be
+# migrated by hand.
+#
+# SCOPE: mechanism only — inventory, measurement, and a default chooser.
+# Policy (which model/effort tier, per-lane preferences, reserve thresholds)
+# belongs in each consumer's own wrapper, because it is the part that differs
+# per project. This deliberately exposes the numbers rather than deciding with
+# them.
+#
+# Usage:
+#   lanes list [--harness claude|codex|all] [--refresh] [--json]
+#   lanes pick [--harness claude|codex] [--max-pct N] [--json]
+#
+#   list  Print every lane found, measured. Table by default, --json for the
+#         structured record.
+#   pick  Print the launch env prefix for the lane with the most headroom
+#         (e.g. `CLAUDE_CONFIG_DIR=/home/me/.eclaude`). Exit 3 when no lane is
+#         under --max-pct, so a caller can fail closed rather than launch into
+#         a wall.
+#
+# Options:
+#   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
+#   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
+#                    percent used (default: 90)
+#   --refresh        Permit OAuth token refresh for a lane whose access token
+#                    has expired. OFF by default — see "Why refresh is opt-in".
+#   --json           Machine-readable output
+#
+# Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
+# constraint, not an average. An account at 5% session but 95% weekly has 5%
+# headroom, and averaging would have called it 50% and sent the fleet into it.
+#
+# Why refresh is opt-in:
+#   Refreshing rotates the refresh token in the credentials file, which other
+#   tools on the machine share (a Waybar usage widget doing the same thing is
+#   the reference case). A lane chooser that silently rotates OAuth tokens
+#   during a fleet launch trades a visible "unknown" for an invisible auth
+#   failure across every session. Reporting the lane as `expired` and letting
+#   the operator decide is the safer default; --refresh takes the same flock the
+#   reference implementation uses and re-reads under it.
+#
+# Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
+# so bearer tokens go to curl over stdin via `-K -`.
+#
+# Testing: set ORCH_LANES_FETCH_CMD to a command receiving
+# `<harness> <config_dir>` on argv and printing the raw usage JSON on stdout.
+# The network layer is the only impure part; everything else is pure parsing.
+
+set -uo pipefail
+
+PROG="lanes"
+
+CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
+CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
+CLAUDE_OAUTH_BETA="oauth-2025-04-20"
+CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/wham/usage}"
+
+# ~5h, with tolerance — Codex reports window durations that vary by account.
+SESSION_WINDOW_S=18000
+
+die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 1; }
+
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+
+# ── Enumeration ──────────────────────────────────────────────────────────────
+#
+# A lane is a config directory holding harness credentials. Claude keeps them in
+# `<dir>/.credentials.json`, Codex in `<dir>/auth.json`.
+#
+# Discovery is by convention — `~/.claude` plus any `~/.*claude*` directory —
+# because that is how multi-account setups on this machine are actually laid out
+# (a per-account config dir plus a shell alias that exports CLAUDE_CONFIG_DIR).
+# ORCH_LANE_DIRS overrides discovery entirely for a setup that does not follow it.
+#
+# Directories WITHOUT credentials are still listed, with status=no_credentials.
+# Dropping them silently makes a mis-set config dir look like it does not exist.
+
+claude_lane_dirs() {
+	if [[ -n "${ORCH_LANE_DIRS:-}" ]]; then
+		# Split on ':' without word-splitting or globbing the values — a config
+		# dir may legitimately contain spaces or bracket characters.
+		local IFS=':' entry
+		for entry in $ORCH_LANE_DIRS; do
+			[[ -n "$entry" ]] && printf '%s\n' "$entry"
+		done
+		return
+	fi
+	local home="${LANES_HOME:-$HOME}" d
+	{
+		[[ -d "$home/.claude" ]] && printf '%s\n' "$home/.claude"
+		for d in "$home"/.*claude*; do
+			[[ -d "$d" ]] || continue
+			printf '%s\n' "$d"
+		done
+	} 2>/dev/null | awk '!seen[$0]++'
+}
+
+codex_lane_dirs() {
+	local home="${LANES_HOME:-$HOME}"
+	if [[ -n "${CODEX_HOME:-}" ]]; then
+		printf '%s\n' "$CODEX_HOME"
+		return
+	fi
+	[[ -d "$home/.codex" ]] && printf '%s\n' "$home/.codex"
+	return 0
+}
+
+# The alias is the config dir's own name, which is also the command name a shell
+# wrapper would conventionally use for it (`~/.eclaude` -> `eclaude`). It is
+# purely a label: launching emits the config-dir env var, which works whether or
+# not such a wrapper exists, so nothing probes PATH to decide it.
+lane_alias_for() {
+	local base
+	base="$(basename "$1")"
+	printf '%s' "${base#.}"
+}
+
+# ── Usage fetch (the only impure layer) ──────────────────────────────────────
+
+fetch_usage() {
+	local harness="$1" dir="$2" token="$3" account_id="${4:-}"
+	if [[ -n "${ORCH_LANES_FETCH_CMD:-}" ]]; then
+		"$ORCH_LANES_FETCH_CMD" "$harness" "$dir"
+		return $?
+	fi
+	command -v curl >/dev/null 2>&1 || return 1
+	local resp code
+	if [[ "$harness" == "claude" ]]; then
+		resp=$(curl -s --max-time 10 -w '\n%{http_code}' "$CLAUDE_USAGE_URL" \
+			-H "anthropic-beta: $CLAUDE_OAUTH_BETA" -K - <<-CURLCFG
+			header = "Authorization: Bearer ${token}"
+		CURLCFG
+		) || return 1
+	else
+		local args=(-s --max-time 10 -w $'\n%{http_code}' "$CODEX_USAGE_URL")
+		[[ -n "$account_id" ]] && args+=(-H "chatgpt-account-id: $account_id")
+		resp=$(curl "${args[@]}" -K - <<-CURLCFG
+			header = "Authorization: Bearer ${token}"
+		CURLCFG
+		) || return 1
+	fi
+	code="${resp##*$'\n'}"
+	resp="${resp%$'\n'"$code"}"
+	[[ "$code" == "200" ]] || return 1
+	printf '%s' "$resp"
+}
+
+# ── Parsing ──────────────────────────────────────────────────────────────────
+#
+# Claude: `.five_hour` and `.seven_day` carry utilization/resets_at directly.
+# The model-scoped weekly window moved out of the legacy seven_day_sonnet /
+# seven_day_opus fields into `limits[]` entries with kind=="weekly_scoped";
+# take the most-consumed one and fall back to the legacy fields, so an older
+# response still parses. The label is whatever the API says, never hard-coded.
+
+parse_claude_usage() {
+	jq -c '
+		def pct($p): (($p | numbers) // 0) | round | (if (. > 1e12 or . < 0) then 0 else . end);
+		(.five_hour  // null) as $s
+		| (.seven_day // null) as $w
+		| ([.limits[]? | select(type == "object")
+		     | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]
+		   | max_by(.percent // 0))
+		  // (if .seven_day_sonnet != null then
+		        {percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
+		         scope: {model: {display_name: "Sonnet"}}}
+		      elif .seven_day_opus != null then
+		        {percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
+		         scope: {model: {display_name: "Opus"}}}
+		      else null end) as $m
+		| {
+		    session_5h_pct:  (if $s then pct($s.utilization) else null end),
+		    weekly_pct:      (if $w then pct($w.utilization) else null end),
+		    model_pct:       (if $m then pct($m.percent) else null end),
+		    model_label:     (if $m then ($m.scope.model.display_name // "weekly (model)") else null end),
+		    resets: {
+		      session: (if $s then ($s.resets_at // null) else null end),
+		      weekly:  (if $w then ($w.resets_at // null) else null end),
+		      model:   (if $m then ($m.resets_at // null) else null end)
+		    }
+		  }
+	'
+}
+
+# Codex: primary/secondary windows do NOT map to session/weekly by position.
+# Their DURATIONS vary by account and shift over time — a weekly-only account
+# reports its 7-day limit as the *primary* window with a null secondary, and
+# routing by position then labels a 7-day window "5h" and invents a 0% weekly.
+# Route each window by its own limit_window_seconds instead.
+parse_codex_usage() {
+	local session_window="$1"
+	jq -c --argjson sw "$session_window" '
+		def pct($p): (($p | numbers) // 0) | floor | (if (. > 1e12 or . < 0) then 0 else . end);
+		def win($w): {
+			pct: pct($w.used_percent),
+			resets_at: (($w.reset_at | numbers) // null),
+			window_s: ((($w.limit_window_seconds | numbers) // 0) | floor)
+		};
+		[ (.rate_limit.primary_window   // null),
+		  (.rate_limit.secondary_window // null) ]
+		| map(select(. != null) | win(.))
+		# Within 50% of the 5h window counts as the session bucket; anything
+		# materially longer (daily, weekly, monthly) is the long window.
+		| ((map(select(.window_s > 0 and .window_s <= ($sw * 3 / 2))) | first) // null) as $s
+		| ((map(select(.window_s == 0 or .window_s > ($sw * 3 / 2))) | first) // null) as $w
+		| {
+		    session_5h_pct: (if $s then $s.pct else null end),
+		    weekly_pct:     (if $w then $w.pct else null end),
+		    model_pct:      null,
+		    model_label:    null,
+		    resets: {
+		      session: (if $s then $s.resets_at else null end),
+		      weekly:  (if $w then $w.resets_at else null end),
+		      model:   null
+		    }
+		  }
+	'
+}
+
+# ── Per-lane measurement ─────────────────────────────────────────────────────
+
+# Emit one lane record. Never fails the whole run for one bad lane: an
+# unreadable or unauthenticated lane is reported with a status and skipped by
+# `pick`, because a fleet launch must still see the lanes that DO work.
+measure_lane() {
+	local harness="$1" dir="$2" allow_refresh="$3"
+	local alias creds status="ok" detail="" plan="" token="" account_id="" expires_ms=0 now_s
+	alias="$(lane_alias_for "$dir")"
+	now_s=$(date +%s)
+
+	if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
+
+	if [[ ! -f "$creds" ]]; then
+		emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
+		return
+	fi
+	if ! jq -e . "$creds" >/dev/null 2>&1; then
+		emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
+		return
+	fi
+
+	if [[ "$harness" == "claude" ]]; then
+		token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$creds")
+		plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
+		expires_ms=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")
+		expires_ms="${expires_ms%%.*}"
+		[[ "$expires_ms" =~ ^[0-9]+$ ]] || expires_ms=0
+	else
+		token=$(jq -r 'try (.tokens.access_token // .OPENAI_API_KEY // empty) catch empty' "$creds")
+		account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
+	fi
+
+	if [[ -z "$token" ]]; then
+		emit_lane "$alias" "$harness" "$dir" "no_credentials" "no access token in $creds" "$plan" '{}'
+		return
+	fi
+
+	# An expired access token is reported, not silently refreshed — see the
+	# header. --refresh opts in.
+	if [[ "$expires_ms" -gt 0 ]] && (( expires_ms / 1000 <= now_s )); then
+		if [[ "$allow_refresh" != "true" ]]; then
+			emit_lane "$alias" "$harness" "$dir" "expired" \
+				"access token expired; re-run with --refresh, or use the harness once to renew it" "$plan" '{}'
+			return
+		fi
+		if ! token="$(refresh_claude_token "$dir" "$creds")"; then
+			emit_lane "$alias" "$harness" "$dir" "expired" "token refresh failed" "$plan" '{}'
+			return
+		fi
+	fi
+
+	local raw buckets
+	if ! raw="$(fetch_usage "$harness" "$dir" "$token" "$account_id")" || [[ -z "$raw" ]]; then
+		emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}'
+		return
+	fi
+	if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
+		emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}'
+		return
+	fi
+	if [[ "$harness" == "claude" ]]; then
+		buckets="$(parse_claude_usage <<<"$raw")"
+	else
+		buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$raw")"
+	fi
+	[[ -n "$buckets" ]] || buckets='{}'
+	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets"
+}
+
+# Refresh under an flock on the credentials file, re-reading inside the lock:
+# a peer tool may have rotated the refresh token between our first read and
+# this attempt, and refreshing with the stale one fails while the credentials
+# are actually fine.
+refresh_claude_token() {
+	local dir="$1" creds="$2" lock="$dir/.lanes-refresh.lock" rt client_id resp new_at
+	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
+	[[ -n "$client_id" ]] || return 1
+	exec 9>"$lock" || return 1
+	flock -w 30 9 || return 1
+	rt=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' "$creds")
+	[[ -n "$rt" ]] || { exec 9>&-; return 1; }
+	resp=$(jq -nc --arg ci "$client_id" --arg rt "$rt" \
+		'{grant_type:"refresh_token", client_id:$ci, refresh_token:$rt}' \
+		| curl -s --max-time 25 -X POST "$CLAUDE_TOKEN_URL" \
+			-H "Content-Type: application/json" -H "anthropic-beta: $CLAUDE_OAUTH_BETA" \
+			--data-binary @-) || { exec 9>&-; return 1; }
+	new_at=$(jq -r 'try (.access_token // empty) catch empty' <<<"$resp")
+	[[ -n "$new_at" ]] || { exec 9>&-; return 1; }
+	local tmp new_rt
+	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$resp")
+	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { exec 9>&-; return 1; }
+	jq --arg at "$new_at" --arg rt "${new_rt:-$rt}" \
+		'.claudeAiOauth.accessToken = $at | .claudeAiOauth.refreshToken = $rt' \
+		"$creds" >"$tmp" && mv "$tmp" "$creds" || { rm -f "$tmp"; exec 9>&-; return 1; }
+	exec 9>&-
+	printf '%s' "$new_at"
+}
+
+# headroom = 100 - the BINDING bucket. A lane with an unknown bucket set gets
+# null headroom and is never picked: "we could not measure it" must not read as
+# "it is empty".
+#
+# A lane that authenticated fine but reported NO usable bucket is downgraded to
+# `no_usage_data` rather than left as `ok`. Observed on an enterprise plan, which
+# authenticates and returns a usage object carrying none of the consumer
+# windows. Leaving it `ok` with blank numbers reads as "measured, and idle",
+# which is the one thing it must not read as.
+emit_lane() {
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7"
+	jq -nc \
+		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
+		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
+		--argjson b "$buckets" '
+		($b // {}) as $b
+		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
+		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
+		| {
+		    alias: $alias,
+		    harness: $harness,
+		    config_dir: $dir,
+		    status: $st,
+		    plan: (if $plan == "" then null else $plan end),
+		    session_5h_pct: ($b.session_5h_pct // null),
+		    weekly_pct: ($b.weekly_pct // null),
+		    model_pct: ($b.model_pct // null),
+		    model_label: ($b.model_label // null),
+		    headroom_pct: (if ($st == "ok") then (100 - ($known | max)) else null end),
+		    resets: ($b.resets // {session: null, weekly: null, model: null}),
+		    detail: (if $st == "no_usage_data" and $detail == ""
+		             then "authenticated, but the usage response carried no session/weekly window"
+		             elif $detail == "" then null else $detail end)
+		  }'
+}
+
+collect_lanes() {
+	local harness_filter="$1" allow_refresh="$2" d
+	{
+		if [[ "$harness_filter" == "all" || "$harness_filter" == "claude" ]]; then
+			while IFS= read -r d; do
+				[[ -n "$d" ]] || continue
+				measure_lane claude "$d" "$allow_refresh"
+			done < <(claude_lane_dirs)
+		fi
+		if [[ "$harness_filter" == "all" || "$harness_filter" == "codex" ]]; then
+			while IFS= read -r d; do
+				[[ -n "$d" ]] || continue
+				measure_lane codex "$d" "$allow_refresh"
+			done < <(codex_lane_dirs)
+		fi
+	} | jq -s '.'
+}
+
+render_table() {
+	jq -r '
+		def col($s; $n): ($s | tostring) as $t
+		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
+		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
+		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM"] | @tsv),
+		(.[] | [ .alias, .harness, .status, (.plan // "-"),
+		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
+		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end)
+		       ] | @tsv)
+	' | column -t -s "$(printf '\t')"
+}
+
+# `pick` fails closed. Exit 3 when nothing qualifies, so a caller can tell
+# "every lane is full" (actionable: wait, or raise the threshold) apart from
+# "the helper broke" (exit 1).
+cmd_pick() {
+	local harness="$1" max_pct="$2" as_json="$3" allow_refresh="$4" lanes chosen
+	lanes="$(collect_lanes "$harness" "$allow_refresh")"
+	chosen="$(jq -c --argjson max "$max_pct" '
+		[ .[] | select(.status == "ok" and .headroom_pct != null and (100 - .headroom_pct) < $max) ]
+		| sort_by(-.headroom_pct) | first // null
+	' <<<"$lanes")"
+	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
+		{
+			printf '%s: no %s lane is below %s%% used.\n' "$PROG" "$harness" "$max_pct"
+			printf 'Lanes considered:\n'
+			render_table <<<"$lanes"
+		} >&2
+		return 3
+	fi
+	if [[ "$as_json" == "true" ]]; then
+		printf '%s\n' "$chosen"
+		return 0
+	fi
+	jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
+	       else "CODEX_HOME=" + .config_dir end' <<<"$chosen"
+}
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+need_jq
+
+SUB="${1:-}"
+[[ -n "$SUB" ]] || { sed -n '/^# Usage:/,/^# Options:/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+shift || true
+
+HARNESS=""
+MAX_PCT=90
+AS_JSON=false
+ALLOW_REFRESH=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--harness) HARNESS="${2:-}"; shift 2 ;;
+		--harness=*) HARNESS="${1#--harness=}"; shift ;;
+		--max-pct) MAX_PCT="${2:-}"; shift 2 ;;
+		--max-pct=*) MAX_PCT="${1#--max-pct=}"; shift ;;
+		--json) AS_JSON=true; shift ;;
+		--refresh) ALLOW_REFRESH=true; shift ;;
+		--help|-h) sed -n '/^# Usage:/,/^# Headroom/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		*) die "unknown option: $1" ;;
+	esac
+done
+
+[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die "--max-pct must be an integer 0-100"
+
+case "$SUB" in
+	list)
+		HARNESS="${HARNESS:-all}"
+		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die "--harness must be claude, codex, or all"
+		out="$(collect_lanes "$HARNESS" "$ALLOW_REFRESH")"
+		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
+		;;
+	pick)
+		HARNESS="${HARNESS:-claude}"
+		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die "pick --harness must be claude or codex"
+		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
+		;;
+	*) die "unknown subcommand: $SUB (expected list or pick)" ;;
+esac

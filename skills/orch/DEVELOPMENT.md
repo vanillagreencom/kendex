@@ -222,6 +222,80 @@ The script never runs git/tracker checks; git/tracker corroboration and exact-co
 binding (`.commit == git rev-parse HEAD`) live in the orch acceptance decision table
 (`dev-start.md` § 3 / `dev-fix.md`).
 
+## Launch Lanes (multi-account fleet selection)
+
+`lanes` answers "which harness account should this session launch under" for
+machines carrying more than one. The failure it exists for is account-level, not
+session-level: when one account hits its limit mid-fleet, **every** session on it
+stalls at once. Observed 2026-07-26 on hyprtrade — an account limit froze 5 of 7
+workers simultaneously, each migrated by hand (vstack#894).
+
+**Mechanism upstream, policy downstream.** `lanes` enumerates, measures, and
+offers one default chooser. Which model/effort tier a lane should run, per-lane
+preferences, and reserve thresholds are per-project and belong in each
+consumer's own wrapper. The upstream surface deliberately exposes the numbers
+instead of deciding with them.
+
+### Headroom is the binding bucket
+
+`headroom_pct = 100 - max(session_5h, weekly, model_weekly)`.
+
+Not an average. An account at 5% session and 95% weekly has **5%** headroom;
+averaging calls it 50% free and sends the fleet into exactly the wall this
+helper exists to avoid.
+
+### Everything unmeasurable is refused, never assumed idle
+
+A lane is only pickable at `status: ok` with at least one parsed window. These
+all yield `headroom_pct: null` and are skipped by `pick`:
+
+| status | meaning |
+|---|---|
+| `no_credentials` | config dir present, no credential file or no token |
+| `expired` | access token past its expiry (see below) |
+| `unreachable` | usage query failed — offline, rate-limited, or rejected |
+| `no_usage_data` | authenticated, but the response carried no session/weekly window (observed on an enterprise plan) |
+| `error` | credential or response was not parseable |
+
+`pick` exits **3** when nothing qualifies, distinct from 1 for a real failure, so
+a caller can tell "every account is full" (wait, or raise the threshold) from
+"the helper broke". `open-terminal --lane auto` maps that to a refusal that
+launches nothing.
+
+### Token refresh is opt-in
+
+Refreshing rotates the refresh token in the credentials file, which other tools
+on the machine share — a Waybar usage widget doing the same thing is the
+reference case, and it already carries a lock-and-re-read for the peer-rotation
+race. A lane chooser that silently rotates OAuth tokens during a fleet launch
+trades a visible `expired` for an invisible auth failure across every session,
+so the default is to report and let the operator decide. `--refresh` opts in and
+takes the same flock, re-reading the credentials inside it.
+
+### Two API shapes, one gotcha each
+
+- **Claude** — `five_hour` / `seven_day` carry `utilization` + `resets_at`. The
+  model-scoped weekly window moved OUT of the legacy `seven_day_sonnet` /
+  `seven_day_opus` fields into `limits[]` entries with `kind == "weekly_scoped"`;
+  take the most-consumed one, fall back to the legacy fields, and read the label
+  from `scope.model.display_name` rather than hard-coding a model name.
+- **Codex** — `primary_window` / `secondary_window` do **not** map to
+  session/weekly by position. Their durations vary by account and shift over
+  time: a weekly-only account reports its 7-day limit as the *primary* window
+  with a null secondary. Routing by position then labels a 7-day window "5h" and
+  invents a phantom 0% weekly. Route each window by its own
+  `limit_window_seconds`.
+
+### Testing
+
+The network layer is the only impure part and is injected via
+`ORCH_LANES_FETCH_CMD` (a command receiving `<harness> <config_dir>` and printing
+raw usage JSON), so the suite runs offline against fixed responses. Asserting
+against live accounts would pin whatever today's usage happens to be.
+
+Bearer tokens never reach argv — anything on the box can read
+`/proc/<pid>/cmdline` — so they go to curl over stdin via `-K -`.
+
 ## Tests
 
 ```bash

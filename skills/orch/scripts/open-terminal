@@ -11,6 +11,7 @@ SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
+LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 
 TRACKER="linear"
@@ -18,6 +19,9 @@ REPO=""
 TERMINAL_MODE=""
 HARNESS=""
 CMD_TEMPLATE=""
+LANE=""
+LANE_MAX_PCT="${ORCH_LANE_MAX_PCT:-90}"
+LANE_ENV=""
 ITEMS=()
 
 usage() {
@@ -29,6 +33,12 @@ Options:
   --tmux            Open tmux windows in the current session
   --ghostty         Open Ghostty/GUI terminals
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
+  --lane <spec>     Launch under a chosen harness account. `auto` picks the
+                    account with the most headroom for --harness; `auto:<h>`
+                    picks for harness <h>; any other value is used as a literal
+                    config dir. Refuses to launch when no lane is under the
+                    usage threshold, rather than launching into a wall.
+  --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
 USAGE
 }
 
@@ -44,6 +54,10 @@ while [[ $# -gt 0 ]]; do
     --harness=*) HARNESS="${1#--harness=}"; shift ;;
     --cmd) CMD_TEMPLATE="$2"; shift 2 ;;
     --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; shift ;;
+    --lane) LANE="$2"; shift 2 ;;
+    --lane=*) LANE="${1#--lane=}"; shift ;;
+    --lane-max-pct) LANE_MAX_PCT="$2"; shift 2 ;;
+    --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) ITEMS+=("$1"); shift ;;
   esac
@@ -54,6 +68,45 @@ done
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { echo "Error: --tracker must be linear or github" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { echo "Error: --harness or --cmd required" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { echo "Error: codex-app handoff requires Codex Desktop codex_app thread tools; open-terminal only launches terminal harnesses" >&2; exit 1; }
+
+# Resolve the launch lane BEFORE creating any worktree. A fleet launch that
+# discovers "every account is full" after spawning three worktrees has already
+# done the expensive, hard-to-undo half of the work (vstack#894).
+#
+# The lane becomes an env prefix on the launched command rather than a different
+# binary, so it works whether or not the machine has a shell alias per account.
+if [[ -n "$LANE" ]]; then
+  case "$LANE" in
+    auto|auto:*)
+      lane_harness="${LANE#auto}"
+      lane_harness="${lane_harness#:}"
+      [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
+      [[ -n "$lane_harness" ]] || { echo "Error: --lane auto needs --harness, or use --lane auto:<harness>" >&2; exit 1; }
+      [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+      lane_rc=0
+      LANE_ENV="$("$LANES_CLI" pick --harness "$lane_harness" --max-pct "$LANE_MAX_PCT")" || lane_rc=$?
+      if [[ "$lane_rc" -ne 0 ]]; then
+        # lanes exits 3 for "every lane is over the threshold" and 1 for a real
+        # failure. Both stop the launch; only the first is the operator's call.
+        if [[ "$lane_rc" -eq 3 ]]; then
+          echo "Error: no $lane_harness lane under ${LANE_MAX_PCT}% used; nothing was launched." >&2
+          echo "  Wait for a reset, raise --lane-max-pct, or pass an explicit --lane <config-dir>." >&2
+        else
+          echo "Error: could not resolve a lane (lanes exited $lane_rc); nothing was launched." >&2
+        fi
+        exit 1
+      fi
+      ;;
+    *)
+      [[ -d "$LANE" ]] || { echo "Error: --lane '$LANE' is not a directory (expected 'auto', 'auto:<harness>', or a config dir)" >&2; exit 1; }
+      case "$HARNESS" in
+        codex) LANE_ENV="CODEX_HOME=$LANE" ;;
+        *)     LANE_ENV="CLAUDE_CONFIG_DIR=$LANE" ;;
+      esac
+      ;;
+  esac
+  echo "Lane: $LANE_ENV"
+fi
 
 if [[ -z "$TERMINAL_MODE" ]]; then
   if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
@@ -140,8 +193,15 @@ for raw in "${ITEMS[@]}"; do
     title="gh-$item"
   fi
   cmd="$(start_cmd "$item" "$repo")"
+  # The lane is recorded in the launched command itself, so `ps` and the tmux
+  # window both show which account a stalled session belongs to.
+  [[ -n "$LANE_ENV" ]] && cmd="env $LANE_ENV $cmd"
   if [[ "$TERMINAL_MODE" == "tmux" ]]; then open_tmux "$wt" "$title" "$cmd"; else open_gui "$wt" "$title" "$cmd"; fi
   launched=$((launched + 1))
 done
 
-echo "Done: launched $launched handoff session(s)."
+if [[ -n "$LANE_ENV" ]]; then
+  echo "Done: launched $launched handoff session(s) on lane $LANE_ENV."
+else
+  echo "Done: launched $launched handoff session(s)."
+fi
