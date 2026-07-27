@@ -8,7 +8,7 @@ Deep failure-mode specs behind the recovery routing in [../SKILL.md](../SKILL.md
 
 ## `cleanup` failure semantics
 
-`cleanup` fetches `origin`, considers non-main registered worktrees, proves each branch is merged into `origin/<default>` (or the local default branch when the remote ref is unavailable), asks Git to remove the intact worktree, then deletes the proven-merged local branch. If Git cannot remove a worktree, cleanup exits nonzero and preserves its path, configured symlinks, and branch for manual recovery. If branch deletion fails after worktree removal, cleanup also exits nonzero and names the remaining branch.
+`cleanup` fetches `origin`, considers non-main registered worktrees, proves each branch is merged into `origin/<default>` (or the local default branch when the remote ref is unavailable), skips branches with no commits of their own — a zero-commit worktree is pending work, not merged work, and every skip is reported — then asks Git to remove the intact worktree and deletes the proven-merged local branch. If Git cannot remove a worktree, cleanup exits nonzero and preserves its path, configured symlinks, and branch for manual recovery. If branch deletion fails after worktree removal, cleanup also exits nonzero and names the remaining branch.
 
 ## `create --recover-local` full spec
 

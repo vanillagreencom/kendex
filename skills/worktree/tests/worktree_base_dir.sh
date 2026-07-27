@@ -118,6 +118,18 @@ make_repo() {
   git -C "$root/$name" push -q -u origin main
 }
 
+# merge_worktree_branch REPO WT BRANCH: give WT's branch a unique commit and
+# merge it into main, so `cleanup` sees merged work rather than a zero-commit
+# pending worktree (#923).
+merge_worktree_branch() {
+  local repo="$1" wt="$2" branch="$3"
+  printf '%s\n' "$branch" >"$wt/$branch.txt"
+  git -C "$wt" add "$branch.txt"
+  git -C "$wt" commit -q -m "$branch: work"
+  git -C "$repo" merge -q --no-ff -m "merge $branch" "$branch"
+  git -C "$repo" push -q origin main
+}
+
 echo "=== default base dir: external .worktrees/<repo> beside the checkout ==="
 
 DEFAULT_ROOT="$TMP_ROOT/default"
@@ -134,6 +146,7 @@ default_create_out=$(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" create issu
 assert_eq "$default_create_out" "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" "create lands in the default external base dir"
 assert_path_exists "$DEFAULT_ROOT/.worktrees/repo-a/issue-default/.git" "default-created worktree is registered"
 assert_path_absent "$DEFAULT_ROOT/repo-a/trees" "create adds nothing under the repo root"
+merge_worktree_branch "$DEFAULT_ROOT/repo-a" "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" issue-default
 
 # cleanup parses the registry under the new layout, excludes the main checkout
 # by canonical comparison, and removes merged worktrees before deleting their
@@ -148,6 +161,7 @@ assert_branch_absent "$DEFAULT_ROOT/repo-a" "issue-default" "cleanup deletes the
 assert_path_exists "$DEFAULT_ROOT/repo-a/base.txt" "cleanup never touches the main checkout"
 
 invalid_cleanup_path=$(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" create issue-invalid-cleanup)
+merge_worktree_branch "$DEFAULT_ROOT/repo-a" "$invalid_cleanup_path" issue-invalid-cleanup
 printf 'WORKTREE_SYMLINKS="../outside"\n' >"$DEFAULT_ROOT/repo-a/.env"
 set +e
 (cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" cleanup >"$DEFAULT_ROOT/invalid-cleanup.out" 2>"$DEFAULT_ROOT/invalid-cleanup.err")
@@ -164,6 +178,7 @@ printf 'TEST_SHARED="shared"\n' >"$REMOVE_FAIL_ROOT/main/.env.local"
 printf 'WORKTREE_SYMLINKS=".env.local"\n' >"$REMOVE_FAIL_ROOT/main/.env"
 remove_fail_path=$(cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remove-failure)
 assert_eq "$(readlink "$remove_fail_path/.env.local")" "$REMOVE_FAIL_ROOT/main/.env.local" "removal-failure fixture starts with configured symlink intact"
+merge_worktree_branch "$REMOVE_FAIL_ROOT/main" "$remove_fail_path" issue-remove-failure
 mkdir -p "$REMOVE_FAIL_ROOT/bin"
 cat >"$REMOVE_FAIL_ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash

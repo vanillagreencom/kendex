@@ -2776,8 +2776,10 @@ case "${1:-}" in
           echo "Usage: $0 cleanup [--stale] [--ttl-minutes N]"
           echo ""
           echo "Remove worktrees whose branch is already merged into origin/$DEFAULT_BRANCH."
-          echo "A worktree held by a session guard lease is never collected, and every"
-          echo "skip is reported — a quiet cleanup means nothing was held back."
+          echo "A worktree held by a session guard lease is never collected, nor is a"
+          echo "zero-commit worktree — a branch with no commits of its own is pending"
+          echo "work, not merged work. Every skip is reported — a quiet cleanup means"
+          echo "nothing was held back."
           echo ""
           echo "Options:"
           echo "  --stale             Also collect worktrees whose guard lease is past the TTL"
@@ -2811,6 +2813,14 @@ case "${1:-}" in
     if ! git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_MERGE_TARGET" >/dev/null 2>&1; then
       CLEANUP_MERGE_TARGET="$DEFAULT_BRANCH"
     fi
+    # The target's first-parent chain, for telling merged work from a fresh
+    # worktree. Ancestry alone cannot: a zero-commit branch is contained in
+    # the target the moment `create` makes it, so cleanup collected brand-new
+    # worktrees in the create→claim window (#923). Work merged by ancestry
+    # reaches the target through a merge commit's side parent, so its tip is
+    # NOT on this chain; a tip that IS on it has no commits of its own —
+    # pending work, not merged work.
+    CLEANUP_MAINLINE="$(git -C "$PROJECT_ROOT" rev-list --first-parent "$CLEANUP_MERGE_TARGET" 2>/dev/null || true)"
     # Collect candidates first: NUL-delimited porcelain parsing survives paths
     # with spaces, and the main checkout is excluded by canonical comparison —
     # git may report it under an older lexical (symlinked) spelling that a
@@ -2827,6 +2837,14 @@ case "${1:-}" in
       if [[ -n "$BRANCH" ]] && \
          git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && \
          git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
+        # This runs BEFORE the lease probe: --stale must not release the lease
+        # of a worktree the skip is about to keep.
+        CLEANUP_TIP="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$BRANCH" || true)"
+        if [[ -z "$CLEANUP_TIP" ]] || grep -qxF "$CLEANUP_TIP" <<<"$CLEANUP_MAINLINE"; then
+          echo "Skipped (branch '$BRANCH' has no commits of its own — pending work, not merged): $wt" >&2
+          echo "  Zero-commit worktrees are never collected; drop it explicitly with: $0 remove \"$wt\"" >&2
+          continue
+        fi
         # A merged branch does NOT mean an idle tree: uncommitted work in it is
         # exactly what the CC-1000 incident lost. Ask the lease, not the branch.
         if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then

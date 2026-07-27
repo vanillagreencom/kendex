@@ -103,10 +103,18 @@ STUB
   chmod +x "$root/bin/gh"
 }
 
-# A merged worktree that `cleanup` would collect if nothing held it.
+# A merged worktree that `cleanup` would collect if nothing held it. The
+# branch carries a unique commit that reached main through a merge commit's
+# side parent: ancestry alone is not enough for collection — a zero-commit
+# branch sitting on the mainline is pending work and must survive (#923).
 add_merged_tree() {
   local root="$1" name="$2"
   git -C "$root/main" worktree add -q -b "$name" "$root/trees/$name" main
+  printf '%s\n' "$name" >"$root/trees/$name/$name.txt"
+  git -C "$root/trees/$name" add "$name.txt"
+  git -C "$root/trees/$name" commit -q -m "$name: work"
+  git -C "$root/main" merge -q --no-ff -m "merge $name" "$name"
+  git -C "$root/main" push -q origin main
 }
 
 echo "=== create does not claim ==="
@@ -270,6 +278,51 @@ assert_contains "$stale_out" "Cleaned: $HELD" "cleanup --stale collects a past-T
 assert_path_absent "$HELD" "the abandoned worktree is collected"
 assert_contains "$(cat "$CLEAN_ROOT/stale.err")" "Released stale session guard lease: $HELD" \
   "cleanup --stale says which lease it released"
+
+echo "=== cleanup skips zero-commit worktrees ==="
+
+# A freshly created branch has no commits of its own, so origin/main trivially
+# contains it and ancestry counts it as merged — which is how cleanup destroyed
+# a worktree seconds after `create`, inside the create→claim window (#923).
+ZC_ROOT="$TMP_ROOT/zero-commit"
+make_repo "$ZC_ROOT"
+add_merged_tree "$ZC_ROOT" "issue-merged"
+git -C "$ZC_ROOT/main" worktree add -q -b issue-pending "$ZC_ROOT/trees/issue-pending" main
+ZC_MERGED="$ZC_ROOT/trees/issue-merged"
+ZC_PENDING="$ZC_ROOT/trees/issue-pending"
+
+set +e
+zc_out=$(cd "$ZC_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ZC_ROOT/zc.err")
+zc_code=$?
+set -e
+zc_err="$(cat "$ZC_ROOT/zc.err")"
+assert_eq "$zc_code" "0" "cleanup exits 0 with a zero-commit worktree present"
+assert_contains "$zc_out" "Cleaned: $ZC_MERGED" "cleanup still collects a genuinely merged worktree"
+assert_path_absent "$ZC_MERGED" "the merged worktree is gone"
+assert_path_exists "$ZC_PENDING" "the zero-commit worktree survives cleanup"
+assert_contains "$zc_err" "Skipped (branch 'issue-pending' has no commits of its own — pending work, not merged): $ZC_PENDING" \
+  "the skip is reported and names the worktree"
+if git -C "$ZC_ROOT/main" show-ref --verify --quiet refs/heads/issue-pending; then
+  pass "the zero-commit branch survives cleanup"
+else
+  fail "the zero-commit branch survives cleanup"
+fi
+
+# --stale is the abandoned-SESSION path, not an abandoned-WORK path: a
+# zero-commit worktree is pending work even when its lease has aged out, so
+# --stale neither collects it nor releases the lease as a side effect.
+"$GUARD_SCRIPT" claim "$ZC_PENDING" --owner GONE-SESSION >/dev/null
+set +e
+(cd "$ZC_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --stale --ttl-minutes 0 \
+  >"$ZC_ROOT/zc-stale.out" 2>"$ZC_ROOT/zc-stale.err")
+zc_stale_code=$?
+set -e
+assert_eq "$zc_stale_code" "0" "cleanup --stale exits 0 with a claimed zero-commit worktree"
+assert_path_exists "$ZC_PENDING" "cleanup --stale does not collect a zero-commit worktree past the TTL"
+assert_contains "$(cat "$ZC_ROOT/zc-stale.err")" "no commits of its own" \
+  "cleanup --stale reports the zero-commit skip"
+assert_eq "$(guard_status_code "$ZC_PENDING" "$ZC_ROOT/main" --owner GONE-SESSION)" "0" \
+  "cleanup --stale leaves the pending worktree's lease in place"
 
 echo "=== cleanup option handling ==="
 
