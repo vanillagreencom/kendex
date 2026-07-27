@@ -18,11 +18,7 @@ metadata:
 
 Portable git worktree manager. Worktrees live outside the repo root by default — `<parent-of-checkout>/.worktrees/<checkout-name>/{id}` — so recursive editor/file watchers on the repo never ingest worktree build outputs, and sibling repos cannot collide on a shared parent dir. Projects can override the worktree parent directory with `WORKTREE_BASE_DIR`.
 
-Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved (`list`/`remove`/`push`/`restack`/`create --reuse`); there is no auto-migration. Path comparisons are canonical (physical, symlink-resolved on both sides), so a worktree registered under a legacy symlinked spelling and addressed via its physical path — or vice versa — is recognized as the same tree, never as a foreign one.
-
-Issue IDs used to derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`; examples such as `issue-779`, `CC-123`, and `ds-enforcement` are valid. Direct path arguments for mutating commands must be registered worktrees of this repository's common Git directory. `fix-links`, `codex-setup`, `codex-branch`, `claude-setup`, and `remove` refuse the main checkout and foreign worktrees; Codex app-created worktrees remain supported because they are registered git worktrees even when they live outside `WORKTREE_BASE_DIR`.
-
-Resolves project root via `git rev-parse`, detects default branch automatically, and reads project-specific config from `.env`, `vstack.settings.toml`, then `.env.local` (`.env.local` wins).
+Issue IDs used to derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`; examples such as `issue-779`, `CC-123`, and `ds-enforcement` are valid. Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved (`list`/`remove`/`push`/`restack`/`create --reuse`); there is no auto-migration. Path-argument rules and canonicalization: [references/config.md](references/config.md).
 
 ```bash
 .agents/skills/worktree/scripts/worktree <command> [options]
@@ -41,63 +37,16 @@ Resolves project root via `git rev-parse`, detects default branch automatically,
 | `exists` | Check if worktree exists for issue ID |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase |
-| `codex-setup` | Apply env/config setup to a Codex Desktop app-created worktree |
-| `codex-branch` | Normalize a Codex Desktop app-created branch to an issue branch |
-| `codex-cleanup` | Non-destructive Codex Desktop cleanup hook; app owns deletion |
-| `claude-setup` | Apply env/config setup to a Claude Code-created worktree (`WorktreeCreate` hook) |
-| `claude-cleanup` | Non-destructive Claude Code cleanup hook; app owns deletion |
+| `codex-setup` / `codex-branch` / `codex-cleanup` | Codex Desktop app-created worktree hooks — [references/hooks.md](references/hooks.md) |
+| `claude-setup` / `claude-cleanup` | Claude Code worktree hooks (`WorktreeCreate`) — [references/hooks.md](references/hooks.md) |
 
-`push ISSUE_ID` normally resolves through the configured worktree registry. When run from a checkout whose current branch already matches the normalized issue branch, it pushes that active checkout instead. This supports Codex Desktop app-created worktrees that are valid git worktrees but are not registered under `WORKTREE_BASE_DIR`.
+`push` auto-rebases onto the updated base; after an auto-rebase or a completed reuse/restack, the push uses a `--force-with-lease` pinned to the observed remote OID and fails closed on remote movement, while `--no-rebase` keeps a plain push. Lease authorization internals, the GitHub HTTPS auth fallback, and app-created-checkout resolution: [references/config.md](references/config.md).
 
-`push` and origin fetches use the GitHub skill's `git-https-auth` behavior when
-available: GitHub SSH remotes stay unchanged by default, but if `gh` auth is
-valid the git command gets temporary HTTPS rewrite and `gh auth git-credential`
-config. This lets Codex/GitHub-authenticated sessions push without a working
-SSH key. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to force the normal SSH
-path.
-
-When `push` performs its auto-rebase, the following push uses a scoped
-`--force-with-lease` pinned to the target branch OID known before the rebase.
-`create --reuse` and the supported `create --restack` conflict-recovery flow
-persist the same narrowly scoped authorization in the worktree: it records the
-exact observed remote OID and the exact successfully restacked local head.
-`push` accepts that rewritten head or later commits built on it, still pins the
-force-with-lease to the recorded remote OID, and consumes the authorization
-after success. A different local rewrite, remote movement while conflict
-resolution is pending, or a moved remote at push time fails closed. Plain
-pushes are still used with `--no-rebase`.
-
-`remove` deletes the worktree before deleting the local branch. Git removes the intact worktree; configured symlinks are never pre-stripped, so a refusal issued before deletion starts (a lock, for example) leaves the worktree, its symlinks, and its branch untouched, and Git's message is reported. Git's deletion is not atomic — a failure partway through can leave the worktree partially removed, so treat a removal failure as "inspect what remains" (`fix-links` restores configured symlinks) rather than "nothing happened"; the branch is never deleted on that path. A worktree carrying a native `git worktree lock` cannot be removed at all, so `remove` also checks the lock up front and exits non-zero with a diagnostic naming the lock reason (sessions record their owner there) and the `git worktree unlock` command — Git's own refusal names neither. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
-
-`cleanup` fetches `origin`, considers non-main registered worktrees, proves each branch is merged into `origin/<default>` (or the local default branch when the remote ref is unavailable), asks Git to remove the intact worktree, then deletes the proven-merged local branch. If Git cannot remove a worktree, cleanup exits nonzero and preserves its path, configured symlinks, and branch for manual recovery. If branch deletion fails after worktree removal, cleanup also exits nonzero and names the remaining branch.
-
-When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
+`remove` deletes the worktree before the branch and fails closed up front on a native `git worktree lock`; `cleanup` collects only branches proven merged into `origin/<default>`. Both preserve and name what a partial failure leaves behind — failure semantics and manual recovery: [references/recovery.md](references/recovery.md).
 
 Bare `create <ID>` is a new-work claim, not a discovery command. Every new-branch mode, including `--from`, checks the normalized issue branch, an explicit requested branch, and `BOT_NAME/<issue>` across worktrees, local/remote refs, and open PRs. Existing ownership exits 75 and leaves local branches unchanged. Origin remote-head or GitHub PR discovery failure exits 1 before worktree config, branch, or target-path mutation; never interpret an outage as absence. Unreachable secondary remotes are skipped with a warning — they cannot receive other sessions' pushes, so only origin is required for the claim gate; reachable secondary remotes still count as ownership signals. A repository-local normalized-issue claim lock holds the final repeated discovery through `git worktree add`, so concurrent claims cannot both mutate. Inspect or monitor owned work instead of spawning a second implementer. Run issue creates as separate commands and check each result; do not batch them in a shell loop whose final successful command can hide an earlier active-work exit.
 
 An existing owner may opt in with `create <ID> --reuse`, which refreshes setup after rebasing onto `origin/<default>`. Reuse/restack requires the target's exact canonical path to be registered to this repository's common Git directory; incomplete directories are preserved and exit 75. Use `--restack` only to pause that intentional rebase in a conflict state. To inspect existing remote work whose issue worktree is absent, use `create <ID> --pr <N>` or `--base <branch>` explicitly.
-
-### Codex Desktop hooks
-
-Let Codex Desktop own app-created worktree creation and deletion. Configure project setup/cleanup hooks to run:
-
-```bash
-"$CODEX_SOURCE_TREE_PATH/.agents/skills/worktree/scripts/worktree" codex-setup "$CODEX_WORKTREE_PATH"
-"$CODEX_SOURCE_TREE_PATH/.agents/skills/worktree/scripts/worktree" codex-cleanup "$CODEX_WORKTREE_PATH"
-```
-
-For issue workflows, run `codex-branch ISSUE_ID "$CODEX_WORKTREE_PATH"` before orchestration if the harness did not already normalize the branch.
-
-### Claude Code hooks
-
-Claude Code creates worktrees itself for `--worktree` sessions, subagents with `isolation: worktree`, and desktop parallel sessions. Those run a bare `git worktree add`, so the worktree has no `.agents`, no `.claude/*` links and no `.env.local`. Point the `WorktreeCreate` hook in the consumer repo's `.claude/settings.json` at `claude-setup` to apply the same provisioning `create` does:
-
-```bash
-.agents/skills/worktree/scripts/worktree claude-setup "$CLAUDE_WORKTREE_PATH"
-.agents/skills/worktree/scripts/worktree claude-cleanup "$CLAUDE_WORKTREE_PATH"
-```
-
-Keep this in **project-level** settings: the hook then applies to every Claude auth/config-dir variant on the machine, since `CLAUDE_CONFIG_DIR` only relocates user-level config.
 
 ### `create` flags
 
@@ -113,17 +62,7 @@ Keep this in **project-level** settings: the hook then applies to every Claude a
 
 ### Recovering a local-only branch after worktree loss
 
-If an issue worktree was removed outside this tool after commits were made but before the branch was pushed, the exact normalized issue branch can survive locally without any checkout. Recover it explicitly:
-
-```bash
-.agents/skills/worktree/scripts/worktree create ISSUE_ID --recover-local
-```
-
-Recovery is not a shortcut around the new-work claim gate. Bare `create <ID>` continues to exit 75 for the surviving local branch and points the owning session to this explicit mode. Recovery accepts only the exact normalized issue branch (for example, `CC-123` → `cc-123`), records its commit tip, recreates it at the currently configured `WORKTREE_BASE_DIR` path, verifies the same branch and tip were checked out, and reapplies all configured setup. It never rebases, resets, deletes, or rewrites the surviving branch.
-
-The command fails closed if the target path exists; any active, stale, or incomplete worktree registration owns the branch; the branch is missing, non-commit, the default branch, unrelated to `origin/<default>`, or has an upstream; or any matching remote branch, open PR, or alternate bot-prefixed candidate exists. Unlike an ordinary new-work claim, recovery requires every configured remote to be reachable because an unqueried secondary could already own the supposedly local-only branch. Remote/PR discovery is repeated under the normal per-issue claim lock before creation.
-
-The exact local branch tip is snapshotted before any fetch-capable step. Recovery refreshes only `origin/<default>` into its remote-tracking ref with an explicit forced, no-tags/no-prune refspec; the force accepts an authoritative default-branch rewrite but is constrained to `refs/remotes/origin/*`. It does not honor a configured mirror-style fetch refspec that could prune or rewrite `refs/heads/*`. The local branch must still equal the snapshot immediately before creation. Inspect and reconcile any refusal instead of forcing recovery.
+If an issue worktree was removed outside this tool after commits were made but before the branch was pushed, the exact normalized issue branch can survive locally without any checkout. Recover it explicitly with `create ISSUE_ID --recover-local`. Recovery is not a shortcut around the new-work claim gate: bare `create <ID>` continues to exit 75 for the surviving local branch and points the owning session to this explicit mode. Recovery accepts only the exact normalized issue branch and never rebases, resets, deletes, or rewrites it; it fails closed on any ownership signal or unreachable remote — full spec: [references/recovery.md](references/recovery.md).
 
 ### Reuse rebase conflicts
 
@@ -132,7 +71,7 @@ Bare `create` never rebases an existing worktree. After the owning session opts 
 1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, then run `worktree restack continue <ID>`; repeat if it stops again. If the current commit is already represented by the new base and should be omitted, use `worktree restack skip <ID>`. Use `worktree restack abort <ID>` to restore the pre-restack branch.
 2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
 
-The guarded actions accept only a registered worktree whose worktree-local restack authorization, tool-created state token, and Git sequencer metadata agree on the exact remote, branch, observed remote OID, original head, and target base. `continue` and `skip` re-check the remote before and after replay, finalize the exact rewritten-head lease when complete, and fail closed on missing, stale, or unrelated state. `abort` requires the same matching local state, restores the recorded original head, and clears only the pending authorization; remote movement does not make that restorative action unsafe. Published paused states created by the pre-token tool remain recoverable when all legacy authorization and sequencer fields match exactly. With no conflict, `--restack` completes the same intentional rebase as `--reuse`.
+With no conflict, `--restack` completes the same intentional rebase as `--reuse`. The guarded actions validate worktree-local authorization, the tool-created state token, and Git sequencer metadata before acting, and fail closed on missing, stale, or unrelated state — internals: [references/recovery.md](references/recovery.md).
 
 ### Policy-blocked rebase (cherry-pick replay fallback)
 
@@ -140,7 +79,7 @@ Some execution policies reject top-level `git rebase` porcelain outright (Codex 
 
 ## Recovering a broken `.agents` link
 
-The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a worktree back into the main checkout, so a large harness library is shared rather than copied per branch. When one goes missing or turns into a real directory, **route the recovery by shape** — the wrong instinct here is a git command that cannot possibly help.
+The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a worktree back into the main checkout, so a large harness library is shared rather than copied per branch. When one goes missing or turns into a real directory, **route the recovery by shape**.
 
 **`git checkout -- .agents` is never the recovery.** The path holds no tracked content, so there is nothing for git to restore; the command succeeds and changes nothing, which reads as "recovered" while the link is still broken.
 
@@ -149,22 +88,13 @@ The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a 
 | `.agents` missing, or a real directory instead of a symlink (`test -L .agents` fails) | `worktree fix-links <ID\|PATH>` — **from the main checkout** |
 | A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — such a file never lives under a symlinked path |
 
-**Run `fix-links` from the main checkout, not from the broken worktree.** The worktree's own copy of this script is reached *through* the link that is broken, so invoking it from there is the one place it may not exist:
-
-```bash
-cd /path/to/main/checkout
-.agents/skills/worktree/scripts/worktree fix-links <ID|WORKTREE_PATH>
-```
-
-`fix-links` is also the repair after any operation that can replace a configured symlink with tracked content — a manual rebase or a partially-completed `remove`.
-
-**A worktree whose `.agents` is not a symlink cannot be trusted for local verification.** Project tooling resolving paths through it is reading either nothing or the wrong checkout's copy. Fix the link before believing any result from that tree — and prefer tooling that fails closed with a diagnostic naming the missing file over tooling that silently degrades.
+**Run `fix-links` from the main checkout, not from the broken worktree** — the worktree's own copy of this script is reached *through* the link that is broken, so invoking it from there is the one place it may not exist. `fix-links` is also the repair after any operation that can replace a configured symlink with tracked content — a manual rebase or a partially-completed `remove`. Until the link is fixed, do not trust local verification from that tree: [references/recovery.md](references/recovery.md).
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is recorded as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone. That needs no cooperation from whoever runs the cleanup, which a private marker file would.
+`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is recorded as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone.
 
-**Claiming is explicit; the destructive commands are wired** (vstack#877). Owner defaults to `$VSTACK_SESSION_OWNER`, else `$USER`; the workflow sets it to the issue ID:
+**Claiming is explicit; the destructive commands are wired.** Owner defaults to `$VSTACK_SESSION_OWNER`, else `$USER`; the workflow sets it to the issue ID:
 
 ```bash
 scripts/worktree-session-guard claim   <PATH> --owner <ID>
@@ -187,55 +117,12 @@ scripts/worktree-session-guard sweep --dry-run               # every lease past 
 | `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed, since our own lease still means work is in progress. Every skip is reported; a quiet cleanup means nothing was held back. |
 | `worktree cleanup --stale [--ttl-minutes N]` | Additionally releases and collects leases past the TTL (default 720) — the abandoned-session recovery path. |
 
-**Claiming is the caller's job, deliberately.** A lease means "a live session is working here", and only something that knows a session's lifetime can say that truthfully. orch claims in `orch/workflows/start.md` once the worktree is the session's, and `remove` releases at teardown.
-
-If `create` claimed instead, every worktree would stay claimed for life — nothing but an explicit `remove` releases — so a lease-aware `cleanup` would collect nothing without `--stale`, trading a silent-destruction bug for a silent-accumulation one. Releasing on a provably merged branch was the other candidate and it guts the guarantee: a merged branch does not mean an idle tree, and uncommitted work in one is exactly what the incident behind this guard lost.
-
-**Limits, stated rather than papered over.**
-
-The lease is scoped to the OWNER string, which the workflow sets to the issue ID, so two sessions on the same issue share one lease and either may release it. What refuses a second implementer is bare `create <ID>`, which surveys worktrees, refs, and open PRs and exits 75 on existing ownership; `create --reuse|--restack` skips that refusal by design (#571), so **nothing prevents a second implementer there**. The per-issue claim lock is not that gate either — it is a repository-local flock held only inside one `create` invocation.
-
-Staleness is heartbeat age with **no liveness check**. The recorded pid and host identify who took a claim but are never consulted, so a session that is still running and has **outlived its TTL without refreshing** is indistinguishable from an abandoned one and will be unlocked by `release --stale` or `sweep`. Nothing refreshes a lease automatically and nothing runs `sweep` automatically; confirm the owner is really gone before releasing.
-
-The guard requires `flock(1)` and checks only whether it is on PATH — it is a capability, not a platform, so **wherever flock is available, the claim is mandatory**, including a macOS host whose Homebrew setup installs it. Without flock the session is unguarded rather than protected.
-
-A Git worktree lock does not block writes, commits, or rebases inside the worktree, and `git worktree remove -f -f` or a plain `rm -rf` still destroy a claimed tree — `status` and `list` exist so such a removal can be attributed afterwards.
-
-Without `$VSTACK_SESSION_OWNER` (or `$HT_SESSION_OWNER`) the owner falls back to `$USER`, which is a login rather than a session: two sessions on one machine then share an identity, and either can `remove` a tree the other claimed. `cleanup` is unaffected — it skips every lease regardless of owner — so the exposure is limited to explicitly naming another session's worktree. Set the session owner to make a lease name one session.
+Claiming is the caller's job: orch claims in `orch/workflows/start.md` once the worktree is the session's, and `remove` releases at teardown. Design rationale and the guard's limits — shared same-issue leases, staleness without liveness, flock availability, what the lock does not block, and the `$USER` owner fallback: [references/session-guard.md](references/session-guard.md).
 
 ## System Dependencies
 
-- `git`
-- authenticated `gh` for new-work PR ownership discovery
-- `flock` for repository-local per-issue claim serialization and for the session guard
-- Bash 3.2+ (macOS system bash is supported)
+`git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization and for the session guard; Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 
-Set non-sensitive defaults in committed `vstack.settings.toml` under `[env]`. Existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides.
-
-| Variable | Effect |
-|----------|--------|
-| `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths and `~` are used as-is. Default: `../.worktrees/<checkout-name>` (external per-repo dir beside the checkout). Do not point it inside the repo root: worktree build outputs under the repo can exhaust recursive file-watcher (inotify) budgets |
-| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from main checkout into each worktree; include `.env.local` only if worktrees should share local secrets/overrides. Point entries at untracked runtime paths — see the tracked-content caveat below |
-| `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `path=target` symlinks created inside each worktree, with relative targets resolving from the link location |
-| `WORKTREE_COPIES` | Space-separated files copied from main checkout into each worktree |
-| `WORKTREE_MKDIRS` | Space-separated directories created inside each worktree with `mkdir -p`; use for gitignored scratch dirs such as `tmp` |
-
-Configured setup paths (`WORKTREE_SYMLINKS`, `WORKTREE_COPIES`, `WORKTREE_MKDIRS`, and the path side of `WORKTREE_RELATIVE_SYMLINKS`) must be worktree-relative literal paths without `.`, `..`, absolute, backslash, or shell glob metacharacter components (`*`, `?`, `[`, `]`). A configured symlink path cannot also be, contain, or parent another configured setup path, because later mkdir/copy/link operations would follow the symlink target. Existing symlink parents are rejected before writes. Copy and mkdir destinations also reject leaf symlinks. File and relative-symlink destinations may replace an existing leaf symlink or file without following it, but refuse a real directory leaf.
-
-**Symlink untracked paths only.** When a `WORKTREE_SYMLINKS` directory entry contains tracked files, setup marks them `assume-unchanged` so the symlink does not show as a typechange. Git then refuses to write those paths in that worktree — `cherry-pick`, `checkout`, and `merge` fail with *"local changes would be overwritten"* while `git status` reports clean, which is a hard failure to diagnose. That behavior exists for projects migrating away from committing harness config; it is wrong when the project still tracks the content. Setup warns and names the shadowed files. The fix is to narrow the entry to the untracked subpaths: symlink `.pi/agents` and `.pi/APPEND_SYSTEM.md` rather than `.pi`, so tracked `.pi/prompts/*.md` stay real files in every worktree.
-
-`create --reuse` and `create --restack` no longer fail on this. Before rebasing, they clear the `assume-unchanged` bits, drop the configured symlinks, and restore the shadowed files from the index, so git can detach HEAD; setup is re-applied on every terminal path — success, a rebase that never started, an aborted conflict, and `restack continue`/`restack abort`. A `--restack` that pauses on conflicts deliberately stays un-shadowed, so conflicts are resolved against real files; the links come back when the restack finishes or is aborted. This makes reuse work against an entry that shadows tracked files, but it does not make that configuration correct — narrowing the entry is still the right fix, and setup still warns.
-
-The ignore entry setup writes for each symlinked path goes into the **common** git dir's `info/exclude`, which every checkout of the repo reads — including main, where that path is a real directory rather than a symlink. A plain entry there marked the whole directory ignored in main, so `git add <tracked file under it>` refused with *"The following paths are ignored by one of your .gitignore files"* while `git status` still listed the file as modified, and it outlived the worktree (#878). When the path holds tracked content, setup now follows the entry with `!<path>/`: a trailing-slash pattern matches a real directory but **not** a symlink pointing at one, so main keeps the directory while the worktree's symlink stays ignored. Runtime-only paths keep the plain entry — many projects (vstack's own `.agents` mirror included) rely on it alone to hide the mirror in main, with no `.gitignore` rule behind it, and a negation there would fill main with untracked noise. The shape is re-evaluated on every `create`/`fix-links` against both indexes, main being authoritative, so a path that gains or loses tracked content self-heals.
-
-Example: share local env plus generated Claude assets, but keep `.claude/CLAUDE.md` pointed at each worktree's own `AGENTS.md`:
-
-```toml
-[env]
-WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
-WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
-WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
-WORKTREE_MKDIRS = "tmp"
-```
+Set non-sensitive defaults in committed `vstack.settings.toml` under `[env]`. Existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. Setup is driven by `WORKTREE_BASE_DIR` (worktree parent directory), `WORKTREE_SYMLINKS`, `WORKTREE_RELATIVE_SYMLINKS`, `WORKTREE_COPIES`, and `WORKTREE_MKDIRS`. **Symlink untracked paths only** — an entry that shadows tracked files makes git refuse writes in that worktree while `git status` reports clean. Variable semantics, setup-path hardening, tracked-content and `info/exclude` mechanics, and a worked example: [references/config.md](references/config.md).

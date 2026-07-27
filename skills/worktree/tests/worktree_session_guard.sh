@@ -1031,7 +1031,7 @@ assert_contains_prose "$GUARD" \
 # the per-issue claim lock is only a mutex over concurrent create invocations.
 # The guard header is included because that is where the earlier
 # misattribution originated.
-for doc in SKILL.md README.md scripts/worktree-session-guard; do
+for doc in references/session-guard.md README.md scripts/worktree-session-guard; do
 	assert_contains_prose "$ROOT_DIR/$doc" "nothing prevents a second implementer there"
 done
 
@@ -1039,7 +1039,7 @@ done
 # release must name the failure mode rather than promise it cannot happen.
 # This is the second guarantee of this class to propagate across every
 # copy, so it is pinned like the others.
-for doc in SKILL.md README.md scripts/worktree-session-guard; do
+for doc in references/session-guard.md README.md scripts/worktree-session-guard; do
 	assert_contains_prose "$ROOT_DIR/$doc" "outlived its TTL without refreshing"
 done
 
@@ -1047,7 +1047,7 @@ done
 # whether flock is on PATH, and a Homebrew macOS setup installs flock. Pinning the capability framing keeps a reader on a configured macOS
 # host from skipping a claim that would in fact have protected them — the
 # under-promise direction is the harmful one here.
-for doc in SKILL.md README.md scripts/worktree-session-guard; do
+for doc in references/session-guard.md README.md scripts/worktree-session-guard; do
 	assert_contains_prose "$ROOT_DIR/$doc" "wherever flock is available, the claim is mandatory"
 done
 
