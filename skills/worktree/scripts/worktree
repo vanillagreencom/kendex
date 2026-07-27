@@ -11,6 +11,9 @@
 #     --restack       When reusing an existing worktree and the rebase onto
 #                     origin/<default> conflicts, stop in the conflict state
 #                     for resolution instead of aborting the rebase
+#     --replay        With --reuse/--restack: run the same restack as an
+#                     ordered cherry-pick replay with no rebase porcelain,
+#                     for execution policies that reject `git rebase`
 #   restack actions:
 #     continue        Continue an exact tool-created, paused restack
 #     skip            Skip the current commit in that paused restack
@@ -141,7 +144,7 @@ restack_state_get() {
 
 clear_restack_push_authorization() {
   local wt="$1" key=""
-  for key in remote branch expectedRemoteOid originalHead baseOid authorizedHead pending stateToken; do
+  for key in remote branch expectedRemoteOid originalHead baseOid authorizedHead pending stateToken mode; do
     git -C "$wt" config --worktree --unset-all "vstack-restack.$key" >/dev/null 2>&1 || true
   done
 }
@@ -189,6 +192,7 @@ cancel_pending_restack_authorization() {
   git -C "$wt" config --worktree --unset-all vstack-restack.baseOid >/dev/null 2>&1 || true
   git -C "$wt" config --worktree --unset-all vstack-restack.pending >/dev/null 2>&1 || true
   git -C "$wt" config --worktree --unset-all vstack-restack.stateToken >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all vstack-restack.mode >/dev/null 2>&1 || true
 }
 
 restack_original_head_authorized() {
@@ -276,6 +280,7 @@ finalize_pending_restack_authorization() {
   git -C "$wt" config --worktree --unset-all vstack-restack.baseOid >/dev/null 2>&1 || true
   git -C "$wt" config --worktree --unset-all vstack-restack.pending >/dev/null 2>&1 || true
   git -C "$wt" config --worktree --unset-all vstack-restack.stateToken >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all vstack-restack.mode >/dev/null 2>&1 || true
 }
 
 prepare_restack_authorization() {
@@ -1215,12 +1220,67 @@ restack_rebase_state_dir() {
   return 1
 }
 
+# The replay engine's paused state is Git's cherry-pick sequencer, which lives
+# in the worktree-private git dir and records the detach point in its `head`
+# file — the same role rebase-merge/onto plays for the rebase engine.
+restack_replay_state_dir() {
+  local wt="$1" path=""
+  path="$(git -C "$wt" rev-parse --git-path sequencer 2>/dev/null)" || return 1
+  [[ "$path" == /* ]] || path="$wt/$path"
+  [[ -d "$path" ]] || return 1
+  printf '%s\n' "$path"
+}
+
+replay_in_progress() {
+  local wt="$1" path=""
+  restack_replay_state_dir "$wt" >/dev/null 2>&1 && return 0
+  path="$(git -C "$wt" rev-parse --git-path CHERRY_PICK_HEAD 2>/dev/null)" || return 1
+  [[ "$path" == /* ]] || path="$wt/$path"
+  [[ -f "$path" ]]
+}
+
+restack_paused_state_dir() {
+  local wt="$1"
+  if [[ "$(restack_state_get "$wt" mode)" == replay ]]; then
+    restack_replay_state_dir "$wt"
+  else
+    restack_rebase_state_dir "$wt"
+  fi
+}
+
+restack_engine_in_progress() {
+  local wt="$1"
+  if [[ "$(restack_state_get "$wt" mode)" == replay ]]; then
+    replay_in_progress "$wt"
+  else
+    rebase_in_progress "$wt"
+  fi
+}
+
 mark_pending_restack_state() {
   local wt="$1" state_dir="" state_token=""
-  state_dir="$(restack_rebase_state_dir "$wt")" || return 1
+  state_dir="$(restack_paused_state_dir "$wt")" || return 1
   state_token="$(restack_state_get "$wt" stateToken)"
   [[ -n "$state_token" ]] || return 1
   printf '%s\n' "$state_token" >"$state_dir/vstack-restack-token"
+}
+
+# Complete a finished replay: the branch ref moves only after the whole replay
+# succeeded, then the worktree reattaches to it. This is the replay engine's
+# only branch mutation, shared by the clean create path and restack
+# continue/skip completion.
+finish_replay_branch_move() {
+  local wt="$1" branch="$2" base_oid="$3"
+  if ! git -C "$wt" merge-base --is-ancestor "$base_oid" HEAD; then
+    echo "Error: Replayed tip in $wt does not contain the recorded base $base_oid; refusing to move '$branch'." >&2
+    return 1
+  fi
+  if ! git -C "$wt" branch -f "$branch" HEAD >/dev/null 2>&1 || \
+     ! git -C "$wt" checkout "$branch" >/dev/null 2>&1 || \
+     [[ "$(git -C "$wt" branch --show-current 2>/dev/null || true)" != "$branch" ]]; then
+    echo "Error: Could not move '$branch' to the replayed tip and reattach $wt; inspect the worktree." >&2
+    return 1
+  fi
 }
 
 restack_state_refusal() {
@@ -1232,13 +1292,14 @@ restack_state_refusal() {
 validate_pending_restack_state() {
   local wt="$1" state_dir="" stored_remote="" stored_branch="" stored_expected=""
   local original_head="" base_oid="" pending="" state_token="" marker_token=""
-  local head_name="" rebase_original="" rebase_onto=""
+  local head_name="" rebase_original="" rebase_onto="" mode="" replay_head=""
 
   if ! is_registered_project_worktree "$wt"; then
     restack_state_refusal "$wt" "not a registered worktree of this repository"
     return 1
   fi
-  state_dir="$(restack_rebase_state_dir "$wt" 2>/dev/null || true)"
+  mode="$(restack_state_get "$wt" mode)"
+  state_dir="$(restack_paused_state_dir "$wt" 2>/dev/null || true)"
   if [[ -z "$state_dir" ]]; then
     restack_state_refusal "$wt" "missing a paused rebase"
     return 1
@@ -1276,17 +1337,35 @@ validate_pending_restack_state() {
     restack_state_refusal "$wt" "bound to a missing remote '$stored_remote'"
     return 1
   fi
-  if [[ ! -f "$state_dir/head-name" || ! -f "$state_dir/orig-head" || ! -f "$state_dir/onto" ]]; then
-    restack_state_refusal "$wt" "missing required Git rebase metadata"
-    return 1
-  fi
+  if [[ "$mode" == replay ]]; then
+    # Replay analog of the rebase metadata cross-check: the sequencer's head
+    # is the detach point (the recorded base), HEAD is still detached, and the
+    # branch ref has not moved off the recorded original head — the replay
+    # moves it only after the whole range succeeds.
+    if [[ ! -f "$state_dir/head" ]]; then
+      restack_state_refusal "$wt" "missing required Git sequencer metadata"
+      return 1
+    fi
+    replay_head="$(head -n 1 "$state_dir/head" 2>/dev/null || true)"
+    if [[ "$replay_head" != "$base_oid" ]] || \
+       [[ -n "$(git -C "$wt" branch --show-current 2>/dev/null || true)" ]] || \
+       [[ "$(git -C "$wt" rev-parse "refs/heads/$stored_branch" 2>/dev/null || true)" != "$original_head" ]]; then
+      restack_state_refusal "$wt" "not the replay recorded by the worktree tool"
+      return 1
+    fi
+  else
+    if [[ ! -f "$state_dir/head-name" || ! -f "$state_dir/orig-head" || ! -f "$state_dir/onto" ]]; then
+      restack_state_refusal "$wt" "missing required Git rebase metadata"
+      return 1
+    fi
 
-  head_name="$(head -n 1 "$state_dir/head-name" 2>/dev/null || true)"
-  rebase_original="$(head -n 1 "$state_dir/orig-head" 2>/dev/null || true)"
-  rebase_onto="$(head -n 1 "$state_dir/onto" 2>/dev/null || true)"
-  if [[ "$head_name" != "refs/heads/$stored_branch" || "$rebase_original" != "$original_head" || "$rebase_onto" != "$base_oid" ]]; then
-    restack_state_refusal "$wt" "not the rebase recorded by the worktree tool"
-    return 1
+    head_name="$(head -n 1 "$state_dir/head-name" 2>/dev/null || true)"
+    rebase_original="$(head -n 1 "$state_dir/orig-head" 2>/dev/null || true)"
+    rebase_onto="$(head -n 1 "$state_dir/onto" 2>/dev/null || true)"
+    if [[ "$head_name" != "refs/heads/$stored_branch" || "$rebase_original" != "$original_head" || "$rebase_onto" != "$base_oid" ]]; then
+      restack_state_refusal "$wt" "not the rebase recorded by the worktree tool"
+      return 1
+    fi
   fi
   if ! git -C "$wt" cat-file -e "${original_head}^{commit}" 2>/dev/null || \
      ! git -C "$wt" cat-file -e "${base_oid}^{commit}" 2>/dev/null || \
@@ -1925,19 +2004,37 @@ case "${1:-}" in
     # The first validation gives a useful error without taking a lock. Repeat
     # under the branch claim lock immediately before controlling the rebase.
     validate_pending_restack_state "$WT_PATH" || exit 1
+    RESTACK_MODE="$(restack_state_get "$WT_PATH" mode)"
 
     if [[ "$ACTION" == abort ]]; then
       RESTACK_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
-      if ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase --abort 2>&1)"; then
-        [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
-        echo "Error: Guarded restack abort failed; the pending state and authorization were preserved." >&2
-        exit 1
-      fi
-      if rebase_in_progress "$WT_PATH" || \
-         [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$RESTACK_ORIGINAL_HEAD" ]] || \
-         [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
-        echo "Error: Guarded restack abort did not restore the recorded branch and original HEAD; refusing to clear its state." >&2
-        exit 1
+      if [[ "$RESTACK_MODE" == replay ]]; then
+        # The replay never moved the branch ref, so aborting the cherry-pick
+        # restores the detach point and reattaching restores everything.
+        if ! REBASE_OUTPUT="$(git -C "$WT_PATH" cherry-pick --abort 2>&1)"; then
+          [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
+          echo "Error: Guarded restack abort failed; the pending state and authorization were preserved." >&2
+          exit 1
+        fi
+        if replay_in_progress "$WT_PATH" || \
+           ! git -C "$WT_PATH" checkout "$RESTACK_BRANCH" >/dev/null 2>&1 || \
+           [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$RESTACK_ORIGINAL_HEAD" ]] || \
+           [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+          echo "Error: Guarded restack abort did not restore the recorded branch and original HEAD; refusing to clear its state." >&2
+          exit 1
+        fi
+      else
+        if ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase --abort 2>&1)"; then
+          [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
+          echo "Error: Guarded restack abort failed; the pending state and authorization were preserved." >&2
+          exit 1
+        fi
+        if rebase_in_progress "$WT_PATH" || \
+           [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$RESTACK_ORIGINAL_HEAD" ]] || \
+           [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+          echo "Error: Guarded restack abort did not restore the recorded branch and original HEAD; refusing to clear its state." >&2
+          exit 1
+        fi
       fi
       cancel_pending_restack_authorization "$WT_PATH"
       release_issue_claim_lock
@@ -1950,9 +2047,24 @@ case "${1:-}" in
 
     validate_worktree_setup_config || exit 1
     validate_pending_restack_remote "$WT_PATH" || exit 1
+    RESTACK_BASE_OID="$(restack_state_get "$WT_PATH" baseOid)"
     REBASE_OUTPUT=""
     REBASE_STATUS=0
-    if [[ "$ACTION" == continue ]]; then
+    if [[ "$RESTACK_MODE" == replay ]]; then
+      if [[ "$ACTION" == continue ]]; then
+        if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" cherry-pick --continue 2>&1)"; then
+          :
+        else
+          REBASE_STATUS=$?
+        fi
+      else
+        if REBASE_OUTPUT="$(git -C "$WT_PATH" cherry-pick --skip 2>&1)"; then
+          :
+        else
+          REBASE_STATUS=$?
+        fi
+      fi
+    elif [[ "$ACTION" == continue ]]; then
       if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" rebase --continue 2>&1)"; then
         :
       else
@@ -1966,7 +2078,7 @@ case "${1:-}" in
       fi
     fi
 
-    if rebase_in_progress "$WT_PATH"; then
+    if restack_engine_in_progress "$WT_PATH"; then
       if ! validate_pending_restack_state "$WT_PATH"; then
         echo "Error: Git changed the paused rebase outside the recorded restack boundary; refusing further control." >&2
         exit 1
@@ -1980,7 +2092,15 @@ case "${1:-}" in
       echo "Error: Git ended the rebase with status $REBASE_STATUS; no rewritten push was authorized." >&2
       exit 1
     fi
-    if [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+    if [[ "$RESTACK_MODE" == replay ]]; then
+      # A completed pick sequence is not yet a completed restack: the branch
+      # ref moves only now, after the whole replay succeeded.
+      if ! finish_replay_branch_move "$WT_PATH" "$RESTACK_BRANCH" "$RESTACK_BASE_OID"; then
+        clear_restack_push_authorization "$WT_PATH"
+        echo "No rewritten push was authorized." >&2
+        exit 1
+      fi
+    elif [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
       clear_restack_push_authorization "$WT_PATH"
       echo "Error: Git did not restore the recorded branch '$RESTACK_BRANCH'; no rewritten push was authorized." >&2
       exit 1
@@ -2015,6 +2135,9 @@ case "${1:-}" in
       echo "                  branch; preserves commits and does not rebase"
       echo "  --restack       When reusing, stop in the conflict state for resolution"
       echo "                  instead of aborting the rebase"
+      echo "  --replay        With --reuse/--restack: run the same restack as an ordered"
+      echo "                  cherry-pick replay with no rebase porcelain, for execution"
+      echo "                  policies that reject 'git rebase'"
       exit 0
     fi
     ISSUE="${2:?Error: create requires an issue ID}"
@@ -2033,6 +2156,7 @@ case "${1:-}" in
     PR=""
     REUSE=false
     RESTACK=false
+    REPLAY=false
     RECOVER_LOCAL=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -2042,6 +2166,7 @@ case "${1:-}" in
         --reuse) REUSE=true; shift ;;
         --recover-local) RECOVER_LOCAL=true; shift ;;
         --restack) RESTACK=true; shift ;;
+        --replay) REPLAY=true; shift ;;
         # An unknown --flag must fail rather than be silently captured as a
         # branch name. A legitimate positional branch name (not leading with
         # '-') still falls through to the permissive arm below (#621).
@@ -2054,8 +2179,12 @@ case "${1:-}" in
       esac
     done
     if [[ "$RECOVER_LOCAL" == true ]] && \
-       [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" || "$REUSE" == true || "$RESTACK" == true ]]; then
-      echo "Error: --recover-local cannot be combined with a branch name, --base, --from, --pr, --reuse, or --restack." >&2
+       [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" || "$REUSE" == true || "$RESTACK" == true || "$REPLAY" == true ]]; then
+      echo "Error: --recover-local cannot be combined with a branch name, --base, --from, --pr, --reuse, --restack, or --replay." >&2
+      exit 1
+    fi
+    if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
+      echo "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
       exit 1
     fi
 
@@ -2149,6 +2278,22 @@ case "${1:-}" in
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
         else
           REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
+          if [[ "$REPLAY" == true ]]; then
+            # The rebase engine lets git itself refuse a dirty tree; the
+            # replay must refuse before detaching. Merge commits cannot be
+            # represented by an ordered cherry-pick, so they are refused up
+            # front rather than mid-replay. No mutation before either check.
+            if [[ -n "$(git -C "$WT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
+              echo "Error: $WT_PATH has uncommitted changes; refusing to replay over them." >&2
+              echo "Commit or discard them, then retry." >&2
+              exit 1
+            fi
+            if [[ "$(git -C "$WT_PATH" rev-list --merges --count "$REUSE_BASE_OID..HEAD" 2>/dev/null || echo 1)" -ne 0 ]]; then
+              echo "Error: The replay range origin/$DEFAULT_BRANCH..$CURRENT_BRANCH in $WT_PATH contains merge commits, which an ordered cherry-pick replay cannot represent." >&2
+              echo "Use the rebase engine ($0 create $ISSUE --reuse) or reconcile the merge manually." >&2
+              exit 1
+            fi
+          fi
           # Configured symlinks that shadow tracked files make git refuse to
           # detach HEAD, so the rebase below cannot even start (#873, #874).
           # Undo the shadowing first; every terminal path re-applies setup.
@@ -2157,7 +2302,99 @@ case "${1:-}" in
             exit 1
           fi
           prepare_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" "$REUSE_BASE_OID" || exit 1
-          if REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+          if [[ "$REPLAY" == true ]]; then
+            # Replay engine: detach at the base, cherry-pick the unique range
+            # in order, and let finish_replay_branch_move move the branch ref
+            # only after the whole replay succeeds. Same authorization
+            # lifecycle as the rebase engine, no rebase porcelain.
+            git -C "$WT_PATH" config --worktree vstack-restack.mode replay
+            REPLAY_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
+            if ! REPLAY_OUTPUT="$(git -C "$WT_PATH" checkout --detach "$REUSE_BASE_OID" 2>&1)"; then
+              cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              echo "Error: Could not detach at origin/$DEFAULT_BRANCH to start the replay in $WT_PATH:" >&2
+              sed 's/^/  /' <<<"$REPLAY_OUTPUT" >&2
+              exit 1
+            fi
+            REPLAY_STATUS=0
+            REPLAY_OUTPUT=""
+            if [[ "$(git -C "$WT_PATH" rev-list --count "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD")" -eq 0 ]]; then
+              : # branch is behind the new base; the replayed result is the base itself
+            elif REPLAY_OUTPUT="$(git -C "$WT_PATH" cherry-pick "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD" 2>&1)"; then
+              :
+            else
+              REPLAY_STATUS=$?
+            fi
+            if [[ "$REPLAY_STATUS" -ne 0 ]]; then
+              CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
+              if ! replay_in_progress "$WT_PATH"; then
+                # Replay never started — reattach and surface git's message.
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || true
+                cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
+                echo "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
+                sed 's/^/  /' <<<"$REPLAY_OUTPUT" >&2
+                exit 1
+              fi
+              if ! mark_pending_restack_state "$WT_PATH"; then
+                MARKER_ABORT_OK=true
+                git -C "$WT_PATH" cherry-pick --abort >/dev/null 2>&1 || MARKER_ABORT_OK=false
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || MARKER_ABORT_OK=false
+                if [[ "$MARKER_ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                  cancel_pending_restack_authorization "$WT_PATH"
+                  restore_unshadowed_worktree_setup "$WT_PATH"
+                fi
+                echo "Error: Could not bind the paused replay to its tool-created restack token; refusing guarded recovery." >&2
+                exit 1
+              fi
+              if [[ "$RESTACK" == true ]]; then
+                echo "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
+                if [[ -n "$CONFLICT_FILES" ]]; then
+                  echo "Conflicting files:" >&2
+                  sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+                fi
+                echo "The replay is paused in the worktree so the conflicts can be resolved:" >&2
+                echo "  1. Edit each conflicting file to remove the conflict markers." >&2
+                echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
+                echo "  3. $0 restack continue \"$WT_PATH\"    (repeat if it stops again)" >&2
+                echo "     If the resolved commit is empty: $0 restack skip \"$WT_PATH\"" >&2
+                echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
+                exit 1
+              fi
+              ABORT_OK=true
+              git -C "$WT_PATH" cherry-pick --abort >/dev/null 2>&1 || ABORT_OK=false
+              if [[ "$ABORT_OK" == true ]]; then
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || ABORT_OK=false
+              fi
+              if [[ "$ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
+              fi
+              echo "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
+              if [[ -n "$CONFLICT_FILES" ]]; then
+                echo "Conflicting files:" >&2
+                sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+              fi
+              if [[ "$ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                echo "The replay was aborted; the worktree is back on its pre-replay state with no conflicts left to resolve." >&2
+              else
+                echo "Automatic abort of the failed replay did NOT complete; the worktree may still hold cherry-pick state." >&2
+                echo "Retry through the guarded tool path: $0 restack abort \"$WT_PATH\"" >&2
+              fi
+              echo "Recovery options:" >&2
+              echo "  1. Redo the replay and stop in the conflict state to resolve it:" >&2
+              echo "       $0 create $ISSUE --restack --replay" >&2
+              echo "  2. Discard local divergence and recreate fresh from origin/$DEFAULT_BRANCH:" >&2
+              echo "       $0 remove $ISSUE && $0 create $ISSUE" >&2
+              exit 1
+            fi
+            if ! finish_replay_branch_move "$WT_PATH" "$CURRENT_BRANCH" "$REUSE_BASE_OID"; then
+              clear_restack_push_authorization "$WT_PATH"
+              echo "No rewritten push was authorized." >&2
+              exit 1
+            fi
+            finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
+          elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
           else
             # Capture conflict details before any abort erases the rebase state.
