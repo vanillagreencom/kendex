@@ -7,7 +7,7 @@ import { extensionApi, piUI, reportSyntheticToolResultRepair, setSharedSession, 
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
-import { findUnpairedToolUses } from "./tool-pairing-audit.js";
+import { findUnpairedToolUses, recoverLaterToolResults } from "./tool-pairing-audit.js";
 
 // --- Session persistence ---
 
@@ -119,19 +119,31 @@ export function restoreSharedSessionFromPi(ctx: { sessionManager?: unknown; cwd?
 	debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
 }
 
+const scheduledPersistenceTimers = new Set<ReturnType<typeof setTimeout>>();
+
+export function cancelScheduledSessionPersistence(): void {
+	for (const timer of scheduledPersistenceTimers) clearTimeout(timer);
+	scheduledPersistenceTimers.clear();
+}
+
 export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknown }): void {
 	if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
+	// Extension contexts become guarded/stale as soon as shutdown or replacement
+	// starts. Capture the plain SessionManager reference now and cancel the timer
+	// on shutdown rather than dereferencing the ctx proxy from the next tick.
+	const sessionManager = ctxLike.sessionManager;
 	const snapshot = { ...sharedSession };
 	const timer = setTimeout(() => {
+		scheduledPersistenceTimers.delete(timer);
 		try {
-			const built = readBuiltSessionContext(ctxLike.sessionManager);
+			const built = readBuiltSessionContext(sessionManager);
 			if (!built) return;
 			const cursor = Math.max(0, Math.min(snapshot.cursor, built.messages.length));
 			const data: PersistedBridgeSessionState = {
 				...snapshot,
 				cursor,
 				fingerprint: fingerprintMessages(built.messages.slice(0, cursor)),
-				piSessionId: typeof (ctxLike.sessionManager as any)?.getSessionId === "function" ? (ctxLike.sessionManager as any).getSessionId() : undefined,
+				piSessionId: typeof (sessionManager as any)?.getSessionId === "function" ? (sessionManager as any).getSessionId() : undefined,
 				updatedAt: new Date().toISOString(),
 			};
 			extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
@@ -140,6 +152,7 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			debug("persistSharedSession failed:", error);
 		}
 	}, 0);
+	scheduledPersistenceTimers.add(timer);
 	timer.unref?.();
 }
 
@@ -166,6 +179,16 @@ function convertAndImportMessages(
 	if (sanitizedIds.size > 0) {
 		debug(`convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
+	}
+	// A steer can make Pi split one parallel Claude batch across several visible
+	// assistant/tool-result pairs. Recover those real later results before the
+	// generic repair layer mistakes them for lost output.
+	const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
+	if (recoveredToolResults.length > 0) {
+		debug(
+			`convertAndImportMessages: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
+			recoveredToolResults.map((item) => item.id).join(", "),
+		);
 	}
 	// Pre-repair for debug logging; importMessages also repairs internally (idempotent).
 	const missingToolResults = findUnpairedToolUses(anthropicMessages);

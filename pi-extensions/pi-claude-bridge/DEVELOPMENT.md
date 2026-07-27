@@ -6,8 +6,12 @@ Implementation details for contributors. End-user setup, settings, and troublesh
 
 - The bridge runs Claude Code through the Claude Agent SDK while Pi remains the owner of the visible TUI and tool execution.
 - If the SDK stream yields a completed assistant tool-use message before `message_stop`, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately, and the matching tool results are delivered back before the turn continues.
+- If the SDK invokes an MCP handler before either normal boundary arrives, the bridge stages the invocation immediately and keeps the Pi stream open for a short grace window. This lets sibling handlers from the same parallel batch join the visible tool-use turn instead of being dropped behind the first invocation.
+- Handler claims prefer exact tool-name/argument matches. A sole same-name call may still claim after schema validation normalizes its arguments; multiple parallel calls with the same name remain strict and require exact arguments.
 - Tool results whose IDs were never registered in the active assistant tool-use turn are refused instead of being queued against another pending call. Remaining handlers receive an internal-error result so the turn cannot report false success.
-- If a query tears down while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn.
+- Tool calls already emitted to Pi stay tracked until their MCP handlers resolve, even when Claude Code starts the next assistant message first. Late handlers wait for the in-flight Pi result instead of opening a duplicate tool turn.
+- A steer can split one parallel Claude batch into multiple visible Pi tool turns. Session rebuild collects the real later sibling results back into the original batch before generic pairing repair, avoiding false `[no tool result recorded]` placeholders.
+- If a query tears down unexpectedly while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn. An explicit Pi abort still rebuilds safely but is treated as an expected interruption rather than an integrity error.
 
 ## Connector write enforcement
 

@@ -75,7 +75,7 @@ export function processStreamEvent(
 	}
 
 	if (event?.type === "message_start") {
-		c.resetToolTracking();
+		c.advanceToolTracking();
 		updateTurnOutputModel(event.message?.model);
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
 		return;
@@ -154,6 +154,7 @@ export function processStreamEvent(
 			c.updateToolCallArgs(block.id, block.arguments);
 			delete block.partialJson;
 			c.currentPiStream!.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: c.turnOutput });
+			c.markToolCallEmitted(block.id);
 		}
 		return;
 	}
@@ -213,7 +214,10 @@ function appendMissingToolUsesFromAssistant(
 			if ("partialJson" in existing) {
 				delete existing.partialJson;
 				delete existing.index;
-				c.currentPiStream?.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c.turnOutput });
+				if (c.currentPiStream) {
+					c.currentPiStream.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c.turnOutput });
+					c.markToolCallEmitted(block.id);
+				}
 			}
 			continue;
 		}
@@ -226,8 +230,11 @@ function appendMissingToolUsesFromAssistant(
 		});
 		const idx = c.turnBlocks.length - 1;
 		const toolBlock = c.turnBlocks[idx];
-		c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
-		c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+		if (c.currentPiStream) {
+			c.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
+			c.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+			c.markToolCallEmitted(block.id);
+		}
 	}
 	if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
 	return sawToolUse;
@@ -257,7 +264,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 		}
 		return;
 	}
-	c.resetToolTracking();
+	c.advanceToolTracking();
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
@@ -287,8 +294,11 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			});
 			const idx = c.turnBlocks.length - 1;
 			const toolBlock = c.turnBlocks[idx];
-			c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
-			c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+			if (c.currentPiStream) {
+				c.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
+				c.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
+				c.markToolCallEmitted(block.id);
+			}
 		} else if (block.type === "fallback") {
 			updateTurnOutputModel(block.to?.model);
 		} else {

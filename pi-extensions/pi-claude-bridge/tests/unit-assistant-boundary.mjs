@@ -1,6 +1,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { processAssistantMessage, processStreamEvent } from "../src/index.ts";
+import {
+	MCP_TOOL_USE_FINALIZE_GRACE_MS,
+	cancelMcpToolUseFinalization,
+	finalizeToolUseTurnFromMcpInvocation,
+	processAssistantMessage,
+	processStreamEvent,
+} from "../src/index.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
@@ -88,6 +94,42 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.deepEqual(events.map((event) => event.type), ["start", "toolcall_start", "toolcall_end", "done", "stream_end"]);
 	});
 
+	it("keeps the stream open long enough to include sibling MCP invocations", async () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+
+		finalizeToolUseTurnFromMcpInvocation(c, "toolu_parallel_a", "read", { path: "a.txt" });
+		assert.notEqual(c.currentPiStream, null, "first handler must not close the turn synchronously");
+		finalizeToolUseTurnFromMcpInvocation(c, "toolu_parallel_b", "bash", { command: "echo b" });
+		assert.notEqual(c.currentPiStream, null, "sibling handler must join the same open turn");
+
+		await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_USE_FINALIZE_GRACE_MS + 15));
+
+		assert.equal(c.currentPiStream, null);
+		assert.deepEqual(c.turnBlocks.map((block) => block.id), ["toolu_parallel_a", "toolu_parallel_b"]);
+		assert.deepEqual(
+			events.filter((event) => event.type === "toolcall_end").map((event) => event.toolCall.id),
+			["toolu_parallel_a", "toolu_parallel_b"],
+		);
+		assert.equal(events.at(-2).type, "done");
+		assert.equal(events.at(-2).reason, "toolUse");
+		assert.equal(events.at(-1).type, "stream_end");
+	});
+
+	it("cancels a pending MCP fallback boundary during abort teardown", async () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+
+		finalizeToolUseTurnFromMcpInvocation(c, "toolu_abort", "bash", { command: "sleep 1" });
+		cancelMcpToolUseFinalization(c);
+		await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_USE_FINALIZE_GRACE_MS + 15));
+
+		assert.notEqual(c.currentPiStream, null);
+		assert.equal(events.some((event) => event.type === "done"), false);
+	});
+
 	it("records assistant tool-use ids even after the stream already ended", () => {
 		const c = ctx();
 		c.resetTurnState(model);
@@ -130,6 +172,13 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.equal(c.turnBlocks.length, 2);
 		assert.equal(c.turnBlocks[1].name, "write");
 		assert.equal(c.turnBlocks[1].arguments.path, "out.txt");
+		assert.equal(c.wasToolCallEmitted("toolu_streamed"), false);
+		assert.equal(c.wasToolCallEmitted("toolu_missing_after_stop"), false);
+		assert.equal(
+			c.claimToolCall("write", { file_path: "out.txt", content: "ok" }).toolCallId,
+			"toolu_missing_after_stop",
+			"a late handler must be able to open the next Pi tool turn",
+		);
 	});
 
 	it("ignores a late bare message_stop so the next assistant fallback still renders text", () => {

@@ -86,7 +86,12 @@ export function reportSyntheticToolResultRepair(missing: MissingToolResult[], co
 	}
 }
 
-export function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
+export function reportToolResultMismatch(
+	queryCtx: QueryContext,
+	reason: string,
+	cwd: string | undefined,
+	opts: { expectedInterruption?: boolean; forceRotate?: boolean } = {},
+): boolean {
 	try {
 		if (queryCtx.reportedToolResultMismatch) return false;
 		const progress = queryCtx.toolResultProgress();
@@ -97,6 +102,15 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 		queryCtx.reportedToolResultMismatch = true;
 		if (sharedSession) {
 			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+		}
+		if (opts.expectedInterruption) {
+			debug(
+				`tool result delivery interrupted as expected during ${reason}; ` +
+				`delivered=${progress.deliveredCount}/${progress.expectedCount} ` +
+				`resolved=${progress.resolvedCount}/${progress.expectedCount} ` +
+				`waiting=${progress.waitingCount} queued=${progress.queuedCount}`,
+			);
+			return true;
 		}
 		const toolNameSummary = compactToolNameSummary(progress.toolNames);
 		diagDump("tool_result_delivery_mismatch", {

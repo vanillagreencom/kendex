@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { sanitizeToolId, convertPiMessages } from "../src/convert.js";
-import { findUnpairedToolUses } from "../src/tool-pairing-audit.js";
+import { findUnpairedToolUses, recoverLaterToolResults } from "../src/tool-pairing-audit.js";
 
 /** Shorthand: convert pi messages and return just the anthropic messages. */
 function convert(messages, customToolNameToSdk) {
@@ -248,6 +248,36 @@ describe("message structure", () => {
 		assert.equal(result[2].role, "user");
 		assert.equal(result[2].content, "please continue after tools");
 		assert.deepEqual(findUnpairedToolUses(result), []);
+	});
+
+	it("recovers real sibling results when a steer splits one parallel batch across later turns", () => {
+		const msgs = [
+			{ role: "assistant", content: [
+				{ type: "toolCall", id: "t1", name: "SlowTool", arguments: { seconds: 3 } },
+				{ type: "toolCall", id: "t2", name: "SlowTool", arguments: { seconds: 4 } },
+				{ type: "toolCall", id: "t3", name: "SlowTool", arguments: { seconds: 5 } },
+			] },
+			{ role: "toolResult", toolCallId: "t1", content: "first" },
+			{ role: "user", content: "steer" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "t2", name: "SlowTool", arguments: { seconds: 4 } }] },
+			{ role: "toolResult", toolCallId: "t2", content: "second" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "t3", name: "SlowTool", arguments: { seconds: 5 } }] },
+			{ role: "toolResult", toolCallId: "t3", content: "third" },
+		];
+
+		const result = convert(msgs);
+		assert.deepEqual(findUnpairedToolUses(result).map((item) => item.id), ["t2", "t3"]);
+		assert.deepEqual(
+			recoverLaterToolResults(result).map((item) => item.id),
+			["t2", "t3"],
+		);
+		assert.deepEqual(findUnpairedToolUses(result), []);
+		assert.deepEqual(
+			result[1].content.map((block) => block.tool_use_id),
+			["t1", "t2", "t3"],
+		);
+		assert.equal(result[1].content[1].content, "second");
+		assert.equal(result[1].content[2].content, "third");
 	});
 
 	it("mixed conversation: user → assistant(tool) → toolResult → assistant(text)", () => {

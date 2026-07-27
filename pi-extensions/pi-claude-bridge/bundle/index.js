@@ -27246,9 +27246,6 @@ function argsKey(value) {
 function sameArgs(left, right) {
   return argsKey(left) === argsKey(right);
 }
-function hasRecordedArgs(args) {
-  return Object.keys(args ?? {}).length > 0;
-}
 function unique(values) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -27269,6 +27266,7 @@ var QueryContext = class {
   turnToolCallIds = [];
   turnToolCalls = [];
   claimedToolCallIds = /* @__PURE__ */ new Set();
+  emittedToolCallIds = /* @__PURE__ */ new Set();
   deliveredToolResultIds = /* @__PURE__ */ new Set();
   resolvedToolResultIds = /* @__PURE__ */ new Set();
   unmatchedToolResultIds = /* @__PURE__ */ new Set();
@@ -27311,7 +27309,25 @@ var QueryContext = class {
     this.turnToolCallIds = [];
     this.turnToolCalls = [];
     this.claimedToolCallIds.clear();
+    this.emittedToolCallIds.clear();
     this.deliveredToolResultIds.clear();
+    this.resolvedToolResultIds.clear();
+    this.unmatchedToolResultIds.clear();
+    this.reportedToolResultMismatch = false;
+  }
+  /**
+   * Start tracking a new assistant message without forgetting tool calls whose
+   * MCP handlers have not resolved yet. Claude Code can emit the next assistant
+   * tool_use before dispatching the previous handler, so a full reset here would
+   * make that late handler claim the new call or become unmatched.
+   */
+  advanceToolTracking() {
+    const keepIds = new Set(this.turnToolCallIds.filter((id) => !this.resolvedToolResultIds.has(id)));
+    this.turnToolCallIds = this.turnToolCallIds.filter((id) => keepIds.has(id));
+    this.turnToolCalls = this.turnToolCalls.filter((call) => keepIds.has(call.id));
+    this.claimedToolCallIds = new Set([...this.claimedToolCallIds].filter((id) => keepIds.has(id)));
+    this.emittedToolCallIds = new Set([...this.emittedToolCallIds].filter((id) => keepIds.has(id)));
+    this.deliveredToolResultIds = new Set([...this.deliveredToolResultIds].filter((id) => keepIds.has(id)));
     this.resolvedToolResultIds.clear();
     this.unmatchedToolResultIds.clear();
     this.reportedToolResultMismatch = false;
@@ -27335,6 +27351,12 @@ var QueryContext = class {
   hasRecordedToolCall(id) {
     return Boolean(id && (this.turnToolCallIds.includes(id) || this.turnToolCalls.some((call) => call.id === id)));
   }
+  markToolCallEmitted(id) {
+    if (id) this.emittedToolCallIds.add(id);
+  }
+  wasToolCallEmitted(id) {
+    return Boolean(id && this.emittedToolCallIds.has(id));
+  }
   claimToolCall(toolName, args = {}) {
     const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
     const byName = unclaimed.filter((call) => call.toolName === toolName);
@@ -27346,7 +27368,7 @@ var QueryContext = class {
       chosen = exact[0];
       match = "tool-args";
       ambiguous = exact.length > 1;
-    } else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
+    } else if (byName.length === 1) {
       chosen = byName[0];
       match = "tool-name";
     }
@@ -42912,6 +42934,42 @@ function toolResultIds(content) {
   }
   return ids;
 }
+function recoverLaterToolResults(messages) {
+  const recovered = [];
+  for (let i = 0; i < messages.length; i++) {
+    const assistant = messages[i];
+    if (assistant?.role !== "assistant") continue;
+    const uses = toolUses(assistant.content);
+    if (uses.length === 0) continue;
+    const target = messages[i + 1];
+    if (target?.role !== "user") continue;
+    const present = toolResultIds(target.content);
+    const missing = uses.filter((use2) => !present.has(use2.id));
+    if (missing.length === 0) continue;
+    for (const use2 of missing) {
+      let sourceBlock;
+      let sourceUserIndex = -1;
+      for (let j2 = i + 2; j2 < messages.length; j2++) {
+        const candidate = messages[j2];
+        if (candidate?.role !== "user") continue;
+        sourceBlock = contentBlocks(candidate.content).find(
+          (block) => block.type === "tool_result" && block.tool_use_id === use2.id
+        );
+        if (sourceBlock) {
+          sourceUserIndex = j2;
+          break;
+        }
+      }
+      if (!sourceBlock) continue;
+      const targetBlocks = Array.isArray(target.content) ? target.content : typeof target.content === "string" && target.content ? [{ type: "text", text: target.content }] : [];
+      targetBlocks.push({ ...sourceBlock });
+      target.content = targetBlocks;
+      present.add(use2.id);
+      recovered.push({ id: use2.id, assistantIndex: i, sourceUserIndex, targetUserIndex: i + 1 });
+    }
+  }
+  return recovered;
+}
 function findUnpairedToolUses(messages) {
   const missing = [];
   for (let i = 0; i < messages.length; i++) {
@@ -42997,6 +43055,12 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
     queryCtx.reportedToolResultMismatch = true;
     if (sharedSession) {
       sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+    }
+    if (opts.expectedInterruption) {
+      debug(
+        `tool result delivery interrupted as expected during ${reason}; delivered=${progress.deliveredCount}/${progress.expectedCount} resolved=${progress.resolvedCount}/${progress.expectedCount} waiting=${progress.waitingCount} queued=${progress.queuedCount}`
+      );
+      return true;
     }
     const toolNameSummary = compactToolNameSummary(progress.toolNames);
     diagDump("tool_result_delivery_mismatch", {
@@ -43925,19 +43989,26 @@ function restoreSharedSessionFromPi(ctx2) {
   setSharedSession({ sessionId: persisted.sessionId, cursor, cwd: persisted.cwd });
   debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
 }
+var scheduledPersistenceTimers = /* @__PURE__ */ new Set();
+function cancelScheduledSessionPersistence() {
+  for (const timer of scheduledPersistenceTimers) clearTimeout(timer);
+  scheduledPersistenceTimers.clear();
+}
 function schedulePersistSharedSession(ctxLike) {
   if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
+  const sessionManager = ctxLike.sessionManager;
   const snapshot = { ...sharedSession };
   const timer = setTimeout(() => {
+    scheduledPersistenceTimers.delete(timer);
     try {
-      const built = readBuiltSessionContext(ctxLike.sessionManager);
+      const built = readBuiltSessionContext(sessionManager);
       if (!built) return;
       const cursor = Math.max(0, Math.min(snapshot.cursor, built.messages.length));
       const data = {
         ...snapshot,
         cursor,
         fingerprint: fingerprintMessages(built.messages.slice(0, cursor)),
-        piSessionId: typeof ctxLike.sessionManager?.getSessionId === "function" ? ctxLike.sessionManager.getSessionId() : void 0,
+        piSessionId: typeof sessionManager?.getSessionId === "function" ? sessionManager.getSessionId() : void 0,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
@@ -43946,6 +44017,7 @@ function schedulePersistSharedSession(ctxLike) {
       debug("persistSharedSession failed:", error51);
     }
   }, 0);
+  scheduledPersistenceTimers.add(timer);
   timer.unref?.();
 }
 function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
@@ -43961,6 +44033,13 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
     debug(
       `convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
       [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
+    );
+  }
+  const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
+  if (recoveredToolResults.length > 0) {
+    debug(
+      `convertAndImportMessages: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
+      recoveredToolResults.map((item) => item.id).join(", ")
     );
   }
   const missingToolResults = findUnpairedToolUses(anthropicMessages);
@@ -44316,7 +44395,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
     return;
   }
   if (event?.type === "message_start") {
-    c.resetToolTracking();
+    c.advanceToolTracking();
     updateTurnOutputModel(event.message?.model);
     if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
     return;
@@ -44395,6 +44474,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
       c.updateToolCallArgs(block.id, block.arguments);
       delete block.partialJson;
       c.currentPiStream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: c.turnOutput });
+      c.markToolCallEmitted(block.id);
     }
     return;
   }
@@ -44433,7 +44513,10 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
       if ("partialJson" in existing) {
         delete existing.partialJson;
         delete existing.index;
-        c.currentPiStream?.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c.turnOutput });
+        if (c.currentPiStream) {
+          c.currentPiStream.push({ type: "toolcall_end", contentIndex: existingIdx, toolCall: existing, partial: c.turnOutput });
+          c.markToolCallEmitted(block.id);
+        }
       }
       continue;
     }
@@ -44446,8 +44529,11 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
     });
     const idx = c.turnBlocks.length - 1;
     const toolBlock = c.turnBlocks[idx];
-    c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
-    c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
+    if (c.currentPiStream) {
+      c.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
+      c.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
+      c.markToolCallEmitted(block.id);
+    }
   }
   if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
   return sawToolUse;
@@ -44470,7 +44556,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
     }
     return;
   }
-  c.resetToolTracking();
+  c.advanceToolTracking();
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}`);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
@@ -44501,8 +44587,11 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       });
       const idx = c.turnBlocks.length - 1;
       const toolBlock = c.turnBlocks[idx];
-      c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
-      c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
+      if (c.currentPiStream) {
+        c.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
+        c.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
+        c.markToolCallEmitted(block.id);
+      }
     } else if (block.type === "fallback") {
       updateTurnOutputModel(block.to?.model);
     } else {
@@ -44658,7 +44747,9 @@ function resolveMcpTools(context, excludeToolName) {
   }
   return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
-function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
+var MCP_TOOL_USE_FINALIZE_GRACE_MS = 25;
+var pendingMcpToolUseFinalizers = /* @__PURE__ */ new WeakMap();
+function stageToolUseFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
   if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
   let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
   if (idx >= 0) {
@@ -44677,12 +44768,29 @@ function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, ma
     queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
     queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
   }
+  queryCtx.markToolCallEmitted(toolCallId);
   queryCtx.turnSawToolCall = true;
-  queryCtx.turnOutput.stopReason = "toolUse";
-  debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 SDK invoked the tool before message_stop/assistant message`);
-  queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-  queryCtx.currentPiStream.end();
-  queryCtx.currentPiStream = null;
+}
+function cancelMcpToolUseFinalization(queryCtx) {
+  const timer = pendingMcpToolUseFinalizers.get(queryCtx);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingMcpToolUseFinalizers.delete(queryCtx);
+}
+function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
+  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+  stageToolUseFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs);
+  if (pendingMcpToolUseFinalizers.has(queryCtx)) return;
+  const timer = setTimeout(() => {
+    pendingMcpToolUseFinalizers.delete(queryCtx);
+    if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+    queryCtx.turnOutput.stopReason = "toolUse";
+    debug(`mcp handler: finalizing tool_use turn after ${MCP_TOOL_USE_FINALIZE_GRACE_MS}ms grace (${queryCtx.claimedToolCallIds.size} handler(s)) \u2014 SDK invoked tools before message_stop/assistant message`);
+    queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
+    queryCtx.currentPiStream.end();
+    queryCtx.currentPiStream = null;
+  }, MCP_TOOL_USE_FINALIZE_GRACE_MS);
+  pendingMcpToolUseFinalizers.set(queryCtx, timer);
 }
 function buildMcpServers(tools, queryCtx) {
   if (!tools.length) return void 0;
@@ -44716,7 +44824,11 @@ function buildMcpServers(tools, queryCtx) {
         return result;
       }
       debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
-      finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+      if (queryCtx.wasToolCallEmitted(toolCallId)) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] already emitted to Pi; waiting for its in-flight result without opening a duplicate turn`);
+      } else {
+        finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+      }
       return new Promise((resolve5) => {
         queryCtx.pendingToolCalls.set(toolCallId, {
           toolName: tool.name,
@@ -45106,6 +45218,7 @@ function streamClaudeAgentSdk(model, context, options) {
     onTimeout: ({ idleMs, timeoutMs }) => {
       if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
       streamIdleTimedOut = true;
+      cancelMcpToolUseFinalization(abortCtx);
       abortCtx.deferredUserMessages = [];
       abortCtx.handledTerminalError = true;
       if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
@@ -45145,8 +45258,12 @@ function streamClaudeAgentSdk(model, context, options) {
   }
   const onAbort = () => {
     wasAborted = true;
+    cancelMcpToolUseFinalization(abortCtx);
     abortCtx.deferredUserMessages = [];
-    reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
+    reportToolResultMismatch(abortCtx, "abort", cwd, {
+      expectedInterruption: true,
+      forceRotate: true
+    });
     const drained = drainPendingToolCalls(abortCtx, "abort");
     if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
     abortCtx.pendingResults.clear();
@@ -45236,12 +45353,16 @@ function streamClaudeAgentSdk(model, context, options) {
     ctx().currentPiStream?.end();
     ctx().currentPiStream = null;
   }).finally(() => {
+    cancelMcpToolUseFinalization(abortCtx);
     streamIdleWatchdog?.dispose();
     activeStreamIdleWatchdogs.delete(abortCtx);
     if (options?.signal) options.signal.removeEventListener("abort", onAbort);
     if (ctx().activeQuery === sdkQuery) {
       const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-      reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: cause !== "query-end" });
+      reportToolResultMismatch(ctx(), "query teardown", cwd, {
+        expectedInterruption: cause === "abort",
+        forceRotate: cause !== "query-end"
+      });
       const drained = drainPendingToolCalls(ctx(), cause);
       if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
       ctx().pendingResults.clear();
@@ -45419,6 +45540,7 @@ function index_default(pi) {
     applyProviderRegistration(`session_start:${event.reason}`);
   });
   pi.on("session_shutdown", () => {
+    cancelScheduledSessionPersistence();
     clearSession("session_shutdown");
     releaseProviderTokens("session_shutdown");
   });
@@ -45447,11 +45569,14 @@ export {
   CONNECTOR_WRITE_TOOLS,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
+  MCP_TOOL_USE_FINALIZE_GRACE_MS,
   STREAM_IDLE_BACKOFF_HINT_MS,
   STREAM_IDLE_TIMEOUT_ENV,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
   buildStreamIdleTimeoutErrorMessage,
+  cancelMcpToolUseFinalization,
+  cancelScheduledSessionPersistence,
   classifyClaudeExecutableBytes,
   connectorCachePath,
   connectorCacheScopeKey,
@@ -45470,6 +45595,7 @@ export {
   createStreamIdleWatchdog,
   credentialCandidatePaths,
   index_default as default,
+  finalizeToolUseTurnFromMcpInvocation,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
   isConnectorWriteTool,

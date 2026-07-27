@@ -108,10 +108,6 @@ function sameArgs(left: unknown, right: unknown): boolean {
 	return argsKey(left) === argsKey(right);
 }
 
-function hasRecordedArgs(args: Record<string, unknown> | undefined): boolean {
-	return Object.keys(args ?? {}).length > 0;
-}
-
 function unique(values: Iterable<string | undefined>): string[] {
 	const out: string[] = [];
 	const seen = new Set<string>();
@@ -133,6 +129,7 @@ export class QueryContext {
 	turnToolCallIds: string[] = [];
 	turnToolCalls: TurnToolCallRecord[] = [];
 	claimedToolCallIds = new Set<string>();
+	emittedToolCallIds = new Set<string>();
 	deliveredToolResultIds = new Set<string>();
 	resolvedToolResultIds = new Set<string>();
 	unmatchedToolResultIds = new Set<string>();
@@ -172,7 +169,26 @@ export class QueryContext {
 		this.turnToolCallIds = [];
 		this.turnToolCalls = [];
 		this.claimedToolCallIds.clear();
+		this.emittedToolCallIds.clear();
 		this.deliveredToolResultIds.clear();
+		this.resolvedToolResultIds.clear();
+		this.unmatchedToolResultIds.clear();
+		this.reportedToolResultMismatch = false;
+	}
+
+	/**
+	 * Start tracking a new assistant message without forgetting tool calls whose
+	 * MCP handlers have not resolved yet. Claude Code can emit the next assistant
+	 * tool_use before dispatching the previous handler, so a full reset here would
+	 * make that late handler claim the new call or become unmatched.
+	 */
+	advanceToolTracking(): void {
+		const keepIds = new Set(this.turnToolCallIds.filter((id) => !this.resolvedToolResultIds.has(id)));
+		this.turnToolCallIds = this.turnToolCallIds.filter((id) => keepIds.has(id));
+		this.turnToolCalls = this.turnToolCalls.filter((call) => keepIds.has(call.id));
+		this.claimedToolCallIds = new Set([...this.claimedToolCallIds].filter((id) => keepIds.has(id)));
+		this.emittedToolCallIds = new Set([...this.emittedToolCallIds].filter((id) => keepIds.has(id)));
+		this.deliveredToolResultIds = new Set([...this.deliveredToolResultIds].filter((id) => keepIds.has(id)));
 		this.resolvedToolResultIds.clear();
 		this.unmatchedToolResultIds.clear();
 		this.reportedToolResultMismatch = false;
@@ -200,6 +216,14 @@ export class QueryContext {
 		return Boolean(id && (this.turnToolCallIds.includes(id) || this.turnToolCalls.some((call) => call.id === id)));
 	}
 
+	markToolCallEmitted(id: string | undefined): void {
+		if (id) this.emittedToolCallIds.add(id);
+	}
+
+	wasToolCallEmitted(id: string | undefined): boolean {
+		return Boolean(id && this.emittedToolCallIds.has(id));
+	}
+
 	claimToolCall(toolName: string, args: Record<string, unknown> = {}): ClaimedToolCall {
 		const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
 		const byName = unclaimed.filter((call) => call.toolName === toolName);
@@ -212,11 +236,13 @@ export class QueryContext {
 			chosen = exact[0];
 			match = "tool-args";
 			ambiguous = exact.length > 1;
-		} else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
-			// The SDK can invoke the MCP handler after content_block_start but
-			// before input_json_delta/content_block_stop finalizes arguments.
-			// Falling back to the sole same-name, argument-less call preserves that
-			// race without ever claiming a different tool type.
+		} else if (byName.length === 1) {
+			// The SDK validates handler input against the generated schema and may
+			// normalize it (for example, by dropping an unknown compatibility field)
+			// before invoking us. When there is exactly one unclaimed call with this
+			// tool name, it is still unambiguous even if the recorded and normalized
+			// arguments differ. Multiple same-name calls remain strict and require an
+			// exact argument match so parallel calls can never cross wires.
 			chosen = byName[0];
 			match = "tool-name";
 		}

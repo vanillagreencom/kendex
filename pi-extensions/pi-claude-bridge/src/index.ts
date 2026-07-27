@@ -42,7 +42,7 @@ import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWith
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
 import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
-import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
+import { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
@@ -54,7 +54,7 @@ import { ensureTurnStarted, finalizeCurrentStream, parsePartialJson, processAssi
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
-export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
+export { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
@@ -282,7 +282,11 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
  *  the handler blocks on a result pi will never deliver (deadlock). No-op when
  *  the turn already ended (stream null) or the tool call isn't part of the
  *  currently streamed turn. */
-function finalizeToolUseTurnFromMcpInvocation(
+export const MCP_TOOL_USE_FINALIZE_GRACE_MS = 25;
+
+const pendingMcpToolUseFinalizers = new WeakMap<QueryContext, ReturnType<typeof setTimeout>>();
+
+function stageToolUseFromMcpInvocation(
 	queryCtx: QueryContext,
 	toolCallId: string,
 	toolName: string,
@@ -312,12 +316,45 @@ function finalizeToolUseTurnFromMcpInvocation(
 		queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
 		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
 	}
+	queryCtx.markToolCallEmitted(toolCallId);
 	queryCtx.turnSawToolCall = true;
-	queryCtx.turnOutput.stopReason = "toolUse";
-	debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) — SDK invoked the tool before message_stop/assistant message`);
-	queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-	queryCtx.currentPiStream.end();
-	queryCtx.currentPiStream = null;
+}
+
+export function cancelMcpToolUseFinalization(queryCtx: QueryContext): void {
+	const timer = pendingMcpToolUseFinalizers.get(queryCtx);
+	if (!timer) return;
+	clearTimeout(timer);
+	pendingMcpToolUseFinalizers.delete(queryCtx);
+}
+
+/**
+ * Finish a Pi tool-use turn when Claude invokes an MCP handler before emitting
+ * its normal assistant boundary. MCP handlers from one parallel batch can
+ * arrive a few milliseconds apart; ending the stream synchronously on the
+ * first handler drops every later sibling from Pi, so their results can never
+ * be delivered. Stage each invocation immediately, then give the rest of the
+ * batch one short grace window to join before closing the turn.
+ */
+export function finalizeToolUseTurnFromMcpInvocation(
+	queryCtx: QueryContext,
+	toolCallId: string,
+	toolName: string,
+	mappedArgs: Record<string, unknown>,
+): void {
+	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+	stageToolUseFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs);
+	if (pendingMcpToolUseFinalizers.has(queryCtx)) return;
+
+	const timer = setTimeout(() => {
+		pendingMcpToolUseFinalizers.delete(queryCtx);
+		if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+		queryCtx.turnOutput.stopReason = "toolUse";
+		debug(`mcp handler: finalizing tool_use turn after ${MCP_TOOL_USE_FINALIZE_GRACE_MS}ms grace (${queryCtx.claimedToolCallIds.size} handler(s)) — SDK invoked tools before message_stop/assistant message`);
+		queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
+		queryCtx.currentPiStream.end();
+		queryCtx.currentPiStream = null;
+	}, MCP_TOOL_USE_FINALIZE_GRACE_MS);
+	pendingMcpToolUseFinalizers.set(queryCtx, timer);
 }
 
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
@@ -358,7 +395,11 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 				return result;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
-			finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+			if (queryCtx.wasToolCallEmitted(toolCallId)) {
+				debug(`mcp handler: ${tool.name} [${toolCallId}] already emitted to Pi; waiting for its in-flight result without opening a duplicate turn`);
+			} else {
+				finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+			}
 			return new Promise<McpResult>((resolve) => {
 				queryCtx.pendingToolCalls.set(toolCallId, {
 					toolName: tool.name,
@@ -910,6 +951,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			onTimeout: ({ idleMs, timeoutMs }) => {
 				if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
 				streamIdleTimedOut = true;
+				cancelMcpToolUseFinalization(abortCtx);
 				abortCtx.deferredUserMessages = [];
 				abortCtx.handledTerminalError = true;
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
@@ -950,9 +992,13 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	}
 	const onAbort = () => {
 		wasAborted = true;
+		cancelMcpToolUseFinalization(abortCtx);
 		// Prevent stale deferred messages from being replayed by parent on pop
 		abortCtx.deferredUserMessages = [];
-		reportToolResultMismatch(abortCtx, "abort", cwd, { forceRotate: true });
+		reportToolResultMismatch(abortCtx, "abort", cwd, {
+			expectedInterruption: true,
+			forceRotate: true,
+		});
 		const drained = drainPendingToolCalls(abortCtx, "abort");
 		if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
 		abortCtx.pendingResults.clear();
@@ -1061,12 +1107,16 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			ctx().currentPiStream = null;
 		})
 		.finally(() => {
+			cancelMcpToolUseFinalization(abortCtx);
 			streamIdleWatchdog?.dispose();
 			activeStreamIdleWatchdogs.delete(abortCtx);
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
 			if (ctx().activeQuery === sdkQuery) {
 				const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-				reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: cause !== "query-end" });
+				reportToolResultMismatch(ctx(), "query teardown", cwd, {
+					expectedInterruption: cause === "abort",
+					forceRotate: cause !== "query-end",
+				});
 				// Drain pending handlers for this query as errors naming the cause —
 				// their results are never coming.
 				const drained = drainPendingToolCalls(ctx(), cause);
@@ -1311,6 +1361,7 @@ export default function (pi: ExtensionAPI) {
 		applyProviderRegistration(`session_start:${event.reason}`);
 	});
 	pi.on("session_shutdown", () => {
+		cancelScheduledSessionPersistence();
 		clearSession("session_shutdown");
 		releaseProviderTokens("session_shutdown");
 	});
