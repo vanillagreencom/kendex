@@ -176,7 +176,7 @@ fi
 
 echo "=== issue-addressed calls derive the owner (default install) ==="
 
-# start.md claims with `--owner ISSUE_ID`, and a default install sets no
+# orch's initialize.md claims with `--owner ISSUE_ID`, and a default install sets no
 # session-owner env var — so `remove <ID>` must derive that same identity from
 # its own argument, or claim and release never agree (#907).
 DERIVE_ROOT="$TMP_ROOT/derive"
@@ -211,7 +211,7 @@ assert_contains "$(cat "$DERIVE_ROOT/derive2.err")" "(owner=SESSION-X)" \
 assert_path_absent "$D2" "the env-claimed worktree is gone"
 
 # `create <ID> --reuse` derives the same identity, so the session that claimed
-# per start.md can re-enter its own worktree without env plumbing.
+# per orch's initialize.md can re-enter its own worktree without env plumbing.
 env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER bash -c \
   "cd '$DERIVE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-d3" >/dev/null 2>&1
 D3="$DERIVE_ROOT/trees/issue-d3"

@@ -674,5 +674,27 @@ for workflow_path in dev-fix review-pr-comments ci-fix; do
     "$workflow_path re-delegation sends the delegation before task assignment"
 done
 
+# vstack#877/#926 — the session-guard lease is claimed on the shared
+# initialize path. The launcher-side claim in start.md was unreachable for
+# worktree-launched sessions: open-terminal creates the worktree and starts
+# the session inside it, `start` routes that session to start-worktree.md,
+# and neither it nor initialize.md claimed — so every session launched
+# through orch's own mandated path ran unprotected from `worktree cleanup`.
+# initialize.md § 1 now claims immediately after WORKTREE_PATH resolves;
+# start-worktree.md § 1 invokes that section, which covers the launched
+# path, and start.md's step is a pointer, never a drifting duplicate claim.
+# The --repo warning must travel with the claim command: claim/refresh
+# reject --repo, and a wrapper that swallows that error leaves the guard
+# looking installed while it silently never claims.
+initialize_workflow="$REPO_ROOT/skills/orch/workflows/initialize.md"
+start_workflow="$REPO_ROOT/skills/orch/workflows/start.md"
+assert_file_contains "$initialize_workflow" 'worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]' "initialize § 1 claims the session-guard lease after WORKTREE_PATH resolves"
+assert_file_contains "$initialize_workflow" 'Do **not** pass `--repo`' "initialize claim carries the --repo rejection warning"
+assert_file_contains "$initialize_workflow" 'silently never claims' "initialize claim warns that a swallowed --repo failure never claims"
+assert_file_contains "$initialize_workflow" 'Exit 75 means another session already holds the lease' "initialize claim keeps the foreign-lease coordination rule"
+assert_file_contains "$start_worktree_workflow" 'workflows/initialize.md § 1-2' "start-worktree § 1 routes through initialize, so launched sessions claim"
+assert_file_not_contains "$start_workflow" 'worktree-session-guard claim' "start.md carries no duplicate claim command to drift from initialize"
+assert_file_contains "$start_workflow" 'claimed by the working session in `initialize.md`' "start.md points at the shared initialize claim"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

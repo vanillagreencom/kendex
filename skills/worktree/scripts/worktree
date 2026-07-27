@@ -24,7 +24,7 @@
 #     --ttl-minutes N Staleness horizon for --stale (default: 720)
 #
 # Session guard: `create` never claims a lease — see the "Session guard
-# lifecycle" block below for why, and orch's workflows/start.md for who does.
+# lifecycle" block below for why, and orch's workflows/initialize.md for who does.
 #
 # Layout: main checkout (repo) + external worktree parent dir
 #   default: <parent-of-checkout>/.worktrees/<checkout-name>/{id}
@@ -1728,7 +1728,7 @@ worktree_lock_reason() {
 # `remove` releases), so a lease-aware `cleanup` would collect nothing without
 # `--stale` — trading a silent-destruction bug for a silent-accumulation one.
 # Claiming therefore stays with the caller that knows when work starts and ends;
-# orch does it in `workflows/start.md`.
+# orch does it in `workflows/initialize.md`.
 #
 # What IS automatic is the destructive side, because that is where the incident
 # was (hyprtrade CC-1000, worktrees destroyed under live sessions):
@@ -1768,8 +1768,8 @@ session_guard_owner() {
 }
 
 # Owner identity carried by an issue-addressed command (`remove <ID>`,
-# `create <ID> --reuse`). The documented claim in orch's workflows/start.md is
-# `claim [WT_PATH] --owner [ISSUE_ID]`, so on a default install — where no
+# `create <ID> --reuse`). The documented claim in orch's workflows/initialize.md
+# is `claim [WORKTREE_PATH] --owner [ISSUE_ID]`, so on a default install — where no
 # session-owner env var is set — the issue ID IS the identity the lease
 # carries, and deriving it from the command's own argument is what makes claim
 # and release agree without any session env plumbing (#907). Prints nothing
@@ -1804,8 +1804,8 @@ probe_session_lease() {
 # foreign repository's lease is never touched.
 #
 # Ownership is proved by probe, once per identity the caller can claim: the
-# issue ID the command was addressed with first (that is the identity start.md
-# claims with, #907), then the session env ladder. Only an owner-matching
+# issue ID the command was addressed with first (that is the identity orch's
+# initialize.md claims with, #907), then the session env ladder. Only an owner-matching
 # guard lease is released. A foreign lease, a lock taken outside the guard,
 # and an unreadable state are all left exactly as they are and fall through to
 # the precheck, which names the owner and the way out.
@@ -1851,7 +1851,7 @@ reuse_respects_session_lease() {
     env_owner=""
   fi
   # Same identity order as release_own_session_lease: the issue ID the command
-  # was addressed with (the identity start.md claims with, #907), then the
+  # was addressed with (the identity orch's initialize.md claims with, #907), then the
   # session env ladder. A 75 only means "not this identity's lease" — the next
   # candidate may still own it; every other state holds for all identities.
   for candidate in "$issue_owner" "$env_owner"; do

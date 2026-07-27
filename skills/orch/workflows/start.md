@@ -85,17 +85,7 @@ If the issue is not open, stop and ask for a different item.
    ```
    Exit 75 means a branch or open PR already owns the issue even though the configured path was absent; inspect/monitor it instead of delegating. Use the successful create output as `WT_PATH`.
 
-5. **Claim the worktree for this session.** `create` never claims — a lease means "a live session is working here", and this workflow is what knows that (vstack#877). Run it for a worktree you just created AND for an existing one you confirmed you own in step 3 above:
-
-   ```bash
-   .agents/skills/worktree/scripts/worktree-session-guard claim [WT_PATH] --owner [ISSUE_ID]
-   ```
-
-   While the lease is held, `worktree cleanup` will not collect this tree and another session's `create --reuse` is refused by name. `worktree remove` releases it at teardown, so nothing else has to.
-
-   Do **not** pass `--repo`: `claim` and `refresh` reject it, and a swallowed failure leaves the guard looking installed while it silently never claims.
-
-   Exit 75 means another session already holds the lease — treat it exactly like step 3's existing-worktree case and coordinate instead of proceeding. Exit 1 with a `flock` message means the host has no `flock`, so the session runs unguarded; continue, but do not assume the tree is protected.
+5. **Session-guard lease** — claimed by the working session in `initialize.md` § 1 step 4, which every § 5 route (continue-here, handoff, manual) reaches through `start-worktree.md` § 1. This launcher step never claims: a lease means "a live session is working here", and for a handoff that session is the launched one.
 
 ## 5. Handoff Or Continue
 

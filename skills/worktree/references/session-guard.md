@@ -8,7 +8,7 @@ Recording the lease as a native `git worktree lock` reason line needs no coopera
 
 ## Why claiming is the caller's job
 
-**Claiming is the caller's job, deliberately.** A lease means "a live session is working here", and only something that knows a session's lifetime can say that truthfully. orch claims in `orch/workflows/start.md` once the worktree is the session's, and `remove` releases at teardown.
+**Claiming is the caller's job, deliberately.** A lease means "a live session is working here", and only something that knows a session's lifetime can say that truthfully. orch claims in `orch/workflows/initialize.md` once the worktree is the session's, and `remove` releases at teardown.
 
 If `create` claimed instead, every worktree would stay claimed for life — nothing but an explicit `remove` releases — so a lease-aware `cleanup` would collect nothing without `--stale`, trading a silent-destruction bug for a silent-accumulation one. Releasing on a provably merged branch was the other candidate and it guts the guarantee: a merged branch does not mean an idle tree, and uncommitted work in one is exactly what the incident behind this guard lost.
 

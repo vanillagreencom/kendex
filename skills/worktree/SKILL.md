@@ -130,7 +130,7 @@ scripts/worktree-session-guard sweep --dry-run               # every lease past 
 | `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed, since our own lease still means work is in progress. Every skip is reported; a quiet cleanup means nothing was held back. |
 | `worktree cleanup --stale [--ttl-minutes N]` | Additionally releases and collects leases past the TTL (default 720) — the abandoned-session recovery path. |
 
-Claiming is the caller's job: orch claims in `orch/workflows/start.md` once the worktree is the session's, and `remove` releases at teardown. Design rationale and the guard's limits — shared same-issue leases, staleness without liveness, flock availability, what the lock does not block, and the `$USER` owner fallback: [references/session-guard.md](references/session-guard.md).
+Claiming is the caller's job: orch claims in `orch/workflows/initialize.md` once the worktree is the session's, and `remove` releases at teardown. Design rationale and the guard's limits — shared same-issue leases, staleness without liveness, flock availability, what the lock does not block, and the `$USER` owner fallback: [references/session-guard.md](references/session-guard.md).
 
 ## System Dependencies
 

@@ -38,12 +38,24 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
 3. **Set `WORKTREE_PATH`** to current working directory.
 
-4. **Sync cache** — **Linear only**:
+4. **Claim the worktree for this session.** `create` never claims — a lease means "a live session is working here", and a session initializing state in the worktree is that session. This shared step covers every route into a worktree session, including worktree-launched ones that never pass through `start.md`. **Skip if** `WORKTREE_PATH` is the main checkout, not a linked worktree (the guard refuses the main checkout).
+
+   ```bash
+   .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
+   ```
+
+   While the lease is held, `worktree cleanup` will not collect this tree and another session's `create --reuse` is refused by name. `worktree remove` releases it at teardown, so nothing else has to.
+
+   Do **not** pass `--repo`: `claim` and `refresh` reject it, and a swallowed failure leaves the guard looking installed while it silently never claims.
+
+   Exit 75 means another session already holds the lease — coordinate with that owner instead of proceeding ([Worktree Scope](../SKILL.md#worktree-scope)). Exit 1 with a `flock` message means the host has no `flock`, so the session runs unguarded; continue, but do not assume the tree is protected.
+
+5. **Sync cache** — **Linear only**:
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
 
-5. **Init workflow state**:
+6. **Init workflow state**:
    ```bash
    .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --team "[ISSUE_ID_LOWERCASE]" \
      --agent "[AGENT]" --worktree "[WORKTREE_PATH]" --branch "[BRANCH]"

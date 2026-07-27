@@ -37,7 +37,7 @@ Route by shape. `git checkout -- .agents` is **never** the recovery: the path ho
 | `cleanup` | never collects a claimed worktree, and reports every skip |
 | `cleanup --stale [--ttl-minutes N]` | also releases and collects leases past the TTL (default 720) |
 
-`create` deliberately does not claim: a lease means "a live session is working here", which only something that knows a session's lifetime can assert — orch claims in `orch/workflows/start.md`. If `create` claimed, every worktree would stay claimed for life and `cleanup` would collect nothing without `--stale`; releasing on a merged branch was the other candidate and it guts the guarantee, since uncommitted work in a merged tree is what the originating incident lost.
+`create` deliberately does not claim: a lease means "a live session is working here", which only something that knows a session's lifetime can assert — orch claims in `orch/workflows/initialize.md`. If `create` claimed, every worktree would stay claimed for life and `cleanup` would collect nothing without `--stale`; releasing on a merged branch was the other candidate and it guts the guarantee, since uncommitted work in a merged tree is what the originating incident lost.
 
 `status PATH --owner NAME` is the read-only ownership probe and answers by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. `claim` is not a probe — it takes or rewrites the lease.
 
