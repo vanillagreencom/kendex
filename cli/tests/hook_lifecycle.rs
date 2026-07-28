@@ -476,8 +476,12 @@ fn refresh_upserts_claude_hook_registration_when_event_changes() {
         .expect("PostCompact hook present");
     assert_eq!(post.len(), 1, "stale or duplicate hooks: {settings}");
     assert!(post[0].pointer("/matcher").is_none());
+    assert!(
+        post[0].pointer("/timeout").is_none(),
+        "timeout must not sit on the matcher group: {settings}"
+    );
     assert_eq!(
-        post[0].pointer("/timeout").and_then(|v| v.as_u64()),
+        post[0].pointer("/hooks/0/timeout").and_then(|v| v.as_u64()),
         Some(7)
     );
 }
