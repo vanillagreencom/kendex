@@ -442,8 +442,15 @@ async function consumeQuery(
 				break;
 			case "result":
 				if (!ctx().turnSawStreamEvent && message.subtype === "success") {
-					ensureTurnStarted();
 					const text = message.result || "";
+					// The no-stream-events assistant fallback may have already rendered
+					// this exact text (it does not set turnSawStreamEvent) — re-pushing
+					// it here is the other half of the duplicated-output bug.
+					if (ctx().turnBlocks.some((b: any) => b.type === "text" && b.text === text)) {
+						debug("consumeQuery: result text already rendered by assistant fallback; skipping duplicate");
+						break;
+					}
+					ensureTurnStarted();
 					ctx().turnBlocks.push({ type: "text", text });
 					const idx = ctx().turnBlocks.length - 1;
 					ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });

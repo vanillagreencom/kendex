@@ -44836,7 +44836,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   }
   c.beginChildMessage(assistantMsg.id);
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
-  const alreadyRendered = (type, content) => sameMessage && c.turnBlocks.some((b) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
+  const alreadyRendered = (type, content) => c.turnBlocks.some((b) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
       if (alreadyRendered("text", block.text)) continue;
@@ -45143,8 +45143,12 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
         break;
       case "result":
         if (!ctx().turnSawStreamEvent && message.subtype === "success") {
-          ensureTurnStarted();
           const text = message.result || "";
+          if (ctx().turnBlocks.some((b) => b.type === "text" && b.text === text)) {
+            debug("consumeQuery: result text already rendered by assistant fallback; skipping duplicate");
+            break;
+          }
+          ensureTurnStarted();
           ctx().turnBlocks.push({ type: "text", text });
           const idx = ctx().turnBlocks.length - 1;
           ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });

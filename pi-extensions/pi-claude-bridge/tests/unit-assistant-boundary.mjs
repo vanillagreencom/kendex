@@ -306,6 +306,24 @@ describe("no-stream-events fallback: same-message re-yields", () => {
 		assert.equal(events.filter((e) => e.type === "text_start").length, 2);
 	});
 
+	it("renders identical text only once even when the yields carry different ids", () => {
+		// A rejected turn's synthesized error message arrives as multiple yields
+		// whose ids differ or are absent — measured 2026-07-28: one pi message
+		// carried two byte-identical "You've hit your weekly limit" blocks.
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const text = "You've hit your weekly limit · resets Jul 30, 4am (America/Los_Angeles)";
+		const mk = (id) => ({ type: "assistant", message: { ...(id ? { id } : {}), content: [{ type: "text", text }] } });
+
+		processAssistantMessage(mk("msg_attempt_1"), model, new Map());
+		processAssistantMessage(mk("msg_attempt_2"), model, new Map());
+		processAssistantMessage(mk(undefined), model, new Map());
+
+		assert.equal(c.turnBlocks.filter((b) => b.type === "text").length, 1);
+		assert.equal(events.filter((e) => e.type === "text_start").length, 1);
+	});
+
 	it("does not duplicate a re-yielded tool call block and keeps claim state", () => {
 		const c = ctx();
 		c.resetTurnState(model);

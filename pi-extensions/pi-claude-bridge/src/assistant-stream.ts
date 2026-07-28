@@ -494,8 +494,15 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	// produced no content blocks, since `turnSawStreamEvent` only tracks those.
 	c.beginChildMessage(assistantMsg.id);
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
+	// Deduped against the WHOLE current turn, not just same-id re-yields: a
+	// rejected turn's synthesized error message ("You've hit your weekly limit")
+	// arrives as multiple assistant yields whose ids DIFFER or are absent
+	// (measured 2026-07-28: one pi message, two byte-identical text blocks), so
+	// an id-keyed guard alone still rendered it twice. A model legitimately
+	// producing two byte-identical full blocks in one turn is vanishingly rare;
+	// rendering such a duplicate once is the better failure mode.
 	const alreadyRendered = (type: string, content: string): boolean =>
-		sameMessage && c.turnBlocks.some((b: any) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
+		c.turnBlocks.some((b: any) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
 			if (alreadyRendered("text", block.text)) continue;
