@@ -27921,6 +27921,19 @@ var QueryContext = class {
   // instead of logging as "unmatched" (which reads like a bug).
   /** tool_use id → raw SDK tool name. */
   childExecutedToolCalls = /* @__PURE__ */ new Map();
+  /**
+   * The same calls, for the connector-call audit trail (see connector-audit.ts).
+   *
+   * Query-scoped and deliberately NOT cleared by resetToolTracking: that runs at
+   * every child message boundary, and a call issued in one child message is only
+   * reconciled after that message ends. Clearing it there would make an abandoned
+   * call unrecordable at teardown — which is the one case the trail exists for.
+   */
+  connectorCallAudit = /* @__PURE__ */ new Map();
+  /** Claude Code session id for this query, from the SDK's `system` init message.
+   *  Undefined until it arrives; the audit trail omits the field rather than
+   *  guessing. */
+  childSessionId;
   /** Anthropic content-block indexes of the current assistant message that carry
    *  a child-executed tool_use. Scoped to one message: cleared at message_start,
    *  and an index is released as soon as a new block starts there. */
@@ -28017,7 +28030,16 @@ var QueryContext = class {
   /** Note a tool_use the child runs itself. `streamIndex` is present only on the
    *  streamed path, where later deltas/stops for that block must be skipped. */
   noteChildExecutedToolCall(id, rawName, streamIndex) {
-    if (id) this.childExecutedToolCalls.set(id, rawName);
+    if (id) {
+      this.childExecutedToolCalls.set(id, rawName);
+      if (!this.connectorCallAudit.has(id)) {
+        this.connectorCallAudit.set(id, {
+          name: rawName,
+          ...this.childSessionId ? { childSessionId: this.childSessionId } : {},
+          recorded: false
+        });
+      }
+    }
     if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
   }
   recordToolCall(id, toolName, args = {}) {
@@ -43390,6 +43412,58 @@ function __testGetBridgeIntegrityState() {
   return { sharedSession };
 }
 
+// src/connector-audit.ts
+var CONNECTOR_CALL_CUSTOM_TYPE = "claude-bridge-connector-call";
+function connectorResultByteSize(content) {
+  if (content === void 0 || content === null) return void 0;
+  if (typeof content === "string") return Buffer.byteLength(content, "utf8");
+  try {
+    const json2 = JSON.stringify(content);
+    return typeof json2 === "string" ? Buffer.byteLength(json2, "utf8") : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function appendConnectorCallAudit(data) {
+  if (!extensionApi) return false;
+  try {
+    extensionApi.appendEntry(CONNECTOR_CALL_CUSTOM_TYPE, data);
+    return true;
+  } catch (error51) {
+    debug("appendConnectorCallAudit failed:", error51);
+    return false;
+  }
+}
+function recordConnectorCallResult(queryCtx, toolUseId, name, isError, byteSize) {
+  const pending = queryCtx.connectorCallAudit.get(toolUseId);
+  if (pending?.recorded) return false;
+  const childSessionId = pending?.childSessionId ?? queryCtx.childSessionId;
+  queryCtx.connectorCallAudit.set(toolUseId, { ...pending, name, childSessionId, recorded: true });
+  return appendConnectorCallAudit({
+    name,
+    toolUseId,
+    outcome: isError ? "error" : "ok",
+    ...byteSize !== void 0 ? { byteSize } : {},
+    ...childSessionId ? { childSessionId } : {}
+  });
+}
+function flushConnectorCallAudit(queryCtx, reason) {
+  let appended = 0;
+  for (const [toolUseId, state] of queryCtx.connectorCallAudit) {
+    if (state.recorded) continue;
+    queryCtx.connectorCallAudit.set(toolUseId, { ...state, recorded: true });
+    const childSessionId = state.childSessionId ?? queryCtx.childSessionId;
+    if (appendConnectorCallAudit({
+      name: state.name,
+      toolUseId,
+      outcome: "unobserved",
+      reason,
+      ...childSessionId ? { childSessionId } : {}
+    })) appended++;
+  }
+  return appended;
+}
+
 // node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
@@ -44558,8 +44632,10 @@ function noteChildExecutedToolResults(message) {
     if (block?.type !== "tool_result") continue;
     const name = c.childExecutedToolCalls.get(block.tool_use_id);
     if (!name) continue;
-    const size = typeof block.content === "string" ? block.content.length : Array.isArray(block.content) ? block.content.length : 0;
-    debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${block.is_error === true} contentSize=${size}`);
+    const isError = block.is_error === true;
+    const byteSize = connectorResultByteSize(block.content);
+    const audited = recordConnectorCallResult(c, block.tool_use_id, name, isError, byteSize);
+    debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${isError} byteSize=${byteSize ?? "unknown"} audited=${audited}`);
   }
 }
 function processAssistantMessage(message, model, customToolNameToPi) {
@@ -44912,6 +44988,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
       case "system":
         if (message.subtype === "init" && message.session_id) {
           capturedSessionId = message.session_id;
+          queryCtx.childSessionId = capturedSessionId;
         } else if (message.subtype === "model_refusal_fallback") {
           const originalModel = message.original_model;
           const fallbackModel = message.fallback_model;
@@ -45365,6 +45442,8 @@ function streamClaudeAgentSdk(model, context, options) {
       const drained = drainPendingToolCalls(ctx(), cause);
       if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
       ctx().pendingResults.clear();
+      const unobserved = flushConnectorCallAudit(ctx(), cause);
+      if (unobserved > 0) debug(`provider: query teardown recorded ${unobserved} connector call(s) with no observed result (cause=${cause})`);
       if (isReentrant) {
         popContext();
       } else {
@@ -45563,6 +45642,7 @@ export {
   ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD,
   CLAUDE_AI_CONNECTOR_TOOL_PATTERNS,
   CLAUDE_BRIDGE_TOOL_ISOLATION,
+  CONNECTOR_CALL_CUSTOM_TYPE,
   CONNECTOR_DISCOVERY_TOOLS,
   CONNECTOR_WRITE_TOOLS,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
@@ -45579,6 +45659,7 @@ export {
   connectorMcpServers,
   connectorProxyUrl,
   connectorQueryOptions,
+  connectorResultByteSize,
   connectorServerName,
   connectorServerNamespace,
   connectorWriteDenyHook,
@@ -45590,6 +45671,7 @@ export {
   createStreamIdleWatchdog,
   credentialCandidatePaths,
   index_default as default,
+  flushConnectorCallAudit,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
   isChildExecutedTool,
@@ -45604,6 +45686,7 @@ export {
   processAssistantMessage,
   processStreamEvent,
   readCachedConnectors,
+  recordConnectorCallResult,
   reportToolResultMismatch,
   resolveClaudeExecutable,
   resolveClaudeOAuth,

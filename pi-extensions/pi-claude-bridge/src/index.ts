@@ -41,6 +41,7 @@ import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
 import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
+import { flushConnectorCallAudit } from "./connector-audit.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
@@ -53,6 +54,7 @@ import { ensureTurnStarted, finalizeCurrentStream, noteChildExecutedToolResults,
 // bundle/index.js.
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
+export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, type ConnectorCallAuditData, type ConnectorCallOutcome } from "./connector-audit.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
@@ -481,6 +483,10 @@ async function consumeQuery(
 			case "system":
 				if ((message as any).subtype === "init" && (message as any).session_id) {
 					capturedSessionId = (message as any).session_id;
+					// Also on this message's query context, so the connector-call audit
+					// trail can name the child session that executed a call — including
+					// from the teardown flush, which runs outside this function's scope.
+					queryCtx.childSessionId = capturedSessionId;
 				} else if ((message as any).subtype === "model_refusal_fallback") {
 					const originalModel = (message as any).original_model;
 					const fallbackModel = (message as any).fallback_model;
@@ -1088,6 +1094,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 				const drained = drainPendingToolCalls(ctx(), cause);
 				if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
 				ctx().pendingResults.clear();
+
+				// Same idea for calls the CHILD owned: one whose result never came back
+				// is recorded as unobserved rather than left silent, so an answer in the
+				// transcript is never the only evidence a connector call was made.
+				const unobserved = flushConnectorCallAudit(ctx(), cause);
+				if (unobserved > 0) debug(`provider: query teardown recorded ${unobserved} connector call(s) with no observed result (cause=${cause})`);
 
 				if (isReentrant) {
 					popContext();  // merges deferred messages and restores parent

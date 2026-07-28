@@ -26,8 +26,23 @@ The classifier is namespace-based on purpose. "Any name Pi cannot resolve" would
 
 Two consequences worth knowing:
 
-- The child's real result is **observed, never re-delivered** (`noteChildExecutedToolResults`, fed from the SDK's `user` message). It already reached the model inside the child. The debug line records the tool name, error flag, and content size — never the payload, which is live account data and the bridge's debug log sits outside a host app's redaction boundary.
-- A connector call therefore leaves **no tool record in the Pi transcript at all**. Pi has no content-block type for a provider-executed tool call, so the honest options were "absent" or "present and wrong". Restoring visibility needs a Pi-side representation for delegated calls.
+- The child's real result is **observed, never re-delivered** (`noteChildExecutedToolResults`, fed from the SDK's `user` message). It already reached the model inside the child. The debug line records the tool name, error flag, and payload byte size — never the payload, which is live account data and the bridge's debug log sits outside a host app's redaction boundary.
+- A connector call still produces **no tool card**. Pi's assistant content is `text | thinking | toolCall`, and any `toolCall` block is dispatched by its agent loop, so there is no way to say "a call happened, someone else ran it" as content — the honest options were "absent" or "present and wrong". Rendering one needs a Pi-side representation for delegated calls, which is an upstream ask.
+
+### The audit trail
+
+What the transcript *can* carry is a record that is not content. Each child-executed call appends a session `CustomEntry` of type `claude-bridge-connector-call` (`src/connector-audit.ts`), which pi documents as *"Does NOT participate in LLM context (ignored by `buildSessionContext`)"*: it is never a content block, so the agent loop cannot dispatch it, and `convertPiMessages` reads messages rather than entries, so it is never projected back into the child's session. **Never use `CustomMessageEntry`** for this — the sibling type DOES enter context, which is the whole bug again.
+
+Each record is `{ name, toolUseId, outcome, byteSize?, childSessionId?, reason? }` — enough to pair it to the child's own transcript by `tool_use_id`, and no payload.
+
+Two things the shape is deliberate about:
+
+- `outcome` is `ok | error | **unobserved**`. A call whose result never came back (abort, stream-idle timeout, a query that just ended) is recorded at teardown naming the cause, beside the Pi-side `drainPendingToolCalls`. Silence there would leave an answer in the transcript as the only evidence a call was ever made — the same "can I trust this?" question the mirrored `Tool ... not found` answered wrongly.
+- Recording is keyed on the `tool_use` id, not on the call site. The SDK can re-yield a `user` message, and either path (result or teardown) can reach a call first; one call is one record, whichever gets there.
+
+The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that runs at every child message boundary, and clearing it there would make a call abandoned in an earlier child message unrecordable at teardown, which is the one case the trail exists for.
+
+Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
 ## Connector write enforcement
 

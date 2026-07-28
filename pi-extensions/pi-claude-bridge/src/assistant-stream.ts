@@ -1,5 +1,6 @@
 import { calculateCost, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { connectorResultByteSize, recordConnectorCallResult } from "./connector-audit.js";
 import { isChildExecutedTool } from "./connectors.js";
 import { debug } from "./debug.js";
 import { ctx } from "./query-state.js";
@@ -294,9 +295,13 @@ function appendMissingToolUsesFromAssistant(
  * anything true about these calls at all — the Pi transcript claimed they failed
  * and nothing anywhere claimed otherwise.
  *
- * The payload is NEVER logged, only its shape: a connector result is live account
- * data (mail, messages, documents) and the bridge's debug log sits outside a host
- * app's redaction boundary.
+ * The payload is NEVER logged or recorded, only its shape: a connector result is
+ * live account data (mail, messages, documents) and the bridge's debug log sits
+ * outside a host app's redaction boundary.
+ *
+ * Observing it is also what makes the call auditable: each one appends a session
+ * `CustomEntry` (connector-audit.ts) so the Pi session records that the call
+ * happened, without a content block Pi's agent loop could try to dispatch.
  */
 export function noteChildExecutedToolResults(message: SDKMessage): void {
 	const c = ctx();
@@ -307,10 +312,10 @@ export function noteChildExecutedToolResults(message: SDKMessage): void {
 		if (block?.type !== "tool_result") continue;
 		const name = c.childExecutedToolCalls.get(block.tool_use_id);
 		if (!name) continue;
-		const size = typeof block.content === "string"
-			? block.content.length
-			: Array.isArray(block.content) ? block.content.length : 0;
-		debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${block.is_error === true} contentSize=${size}`);
+		const isError = block.is_error === true;
+		const byteSize = connectorResultByteSize(block.content);
+		const audited = recordConnectorCallResult(c, block.tool_use_id, name, isError, byteSize);
+		debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${isError} byteSize=${byteSize ?? "unknown"} audited=${audited}`);
 	}
 }
 

@@ -110,6 +110,8 @@ Sessions are **read-only** by default: the model can look things up, but cannot 
 
 Connector tools run inside Claude Code rather than in Pi, so Pi shows the model's answer but no tool card for the lookup itself. (Before this was handled, Pi showed a card claiming `Tool … not found` for calls that had actually succeeded — so an answer built on real data looked invented.)
 
+Each of those lookups is still recorded in the session file as a `claude-bridge-connector-call` entry — the tool name, whether it succeeded, and how many bytes came back, never the contents. So "did it really look that up?" has an answer even though nothing is drawn in the transcript.
+
 Extension-manager settings use flat package-scoped keys:
 
 ```json

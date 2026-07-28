@@ -56,6 +56,18 @@ export function drainPendingToolCalls(queryCtx: QueryContext, cause: ToolCallDra
 	return drained;
 }
 
+/** One connector call's audit state for the life of a query. `recorded` means an
+ *  entry for it has already been appended (or attempted), so neither a re-yielded
+ *  result nor the teardown flush can record it twice. */
+export interface ConnectorCallAuditState {
+	name: string;
+	/** The child session that issued it, captured when the call was seen — a
+	 *  continuation query gets a new one, and a call is audited against the session
+	 *  that actually made it. */
+	childSessionId?: string;
+	recorded: boolean;
+}
+
 export interface TurnToolCallRecord {
 	id: string;
 	toolName: string;
@@ -148,6 +160,19 @@ export class QueryContext {
 	// instead of logging as "unmatched" (which reads like a bug).
 	/** tool_use id → raw SDK tool name. */
 	childExecutedToolCalls = new Map<string, string>();
+	/**
+	 * The same calls, for the connector-call audit trail (see connector-audit.ts).
+	 *
+	 * Query-scoped and deliberately NOT cleared by resetToolTracking: that runs at
+	 * every child message boundary, and a call issued in one child message is only
+	 * reconciled after that message ends. Clearing it there would make an abandoned
+	 * call unrecordable at teardown — which is the one case the trail exists for.
+	 */
+	connectorCallAudit = new Map<string, ConnectorCallAuditState>();
+	/** Claude Code session id for this query, from the SDK's `system` init message.
+	 *  Undefined until it arrives; the audit trail omits the field rather than
+	 *  guessing. */
+	childSessionId: string | undefined;
 	/** Anthropic content-block indexes of the current assistant message that carry
 	 *  a child-executed tool_use. Scoped to one message: cleared at message_start,
 	 *  and an index is released as soon as a new block starts there. */
@@ -246,7 +271,19 @@ export class QueryContext {
 	/** Note a tool_use the child runs itself. `streamIndex` is present only on the
 	 *  streamed path, where later deltas/stops for that block must be skipped. */
 	noteChildExecutedToolCall(id: string | undefined, rawName: string, streamIndex?: number): void {
-		if (id) this.childExecutedToolCalls.set(id, rawName);
+		if (id) {
+			this.childExecutedToolCalls.set(id, rawName);
+			// Both emission paths can see the same call (streamed block, then the
+			// SDK's completed copy), so never overwrite an existing audit state —
+			// that would resurrect one already recorded.
+			if (!this.connectorCallAudit.has(id)) {
+				this.connectorCallAudit.set(id, {
+					name: rawName,
+					...(this.childSessionId ? { childSessionId: this.childSessionId } : {}),
+					recorded: false,
+				});
+			}
+		}
 		if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
 	}
 
