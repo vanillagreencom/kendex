@@ -36,6 +36,7 @@ Review for noteworthy findings only — skip minor style issues. Exclude researc
 Apply the reviewer skill's General Review Ethos and Reviewer Scope Boundaries. Stay within this agent's domain; do not duplicate another specialist unless your domain adds distinct evidence, impact, or remediation.
 Read changed files and directly affected call paths from the worktree as needed before reporting non-trivial findings; the delegating agent does not need to inline full file contents.
 When running read-only checks to verify a finding, follow the reviewer skill's Harness-Safe Shell rule: one command per check, no compound or composed shells.
+Mutation-validating a test as evidence commits you to the reviewer skill's Mutation-Stability Pairing: the paired repeat runs, the fixed `mutation: …; stability: …` report line, and a finding — not a pass — on a stability failure.
 If a changed path was deleted, inspect it from the git diff or git history; do not try to `Read` the deleted working-tree path directly.
 
 ### 1.2 Read Decisions
