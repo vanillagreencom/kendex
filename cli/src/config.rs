@@ -843,10 +843,8 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
             return None;
         }
         path
-    } else if let Some(after) = url.strip_prefix("ssh://git@github.com/") {
-        after
     } else {
-        return None;
+        url.strip_prefix("ssh://git@github.com/")?
     };
     let after = after
         .trim_end_matches('/')
