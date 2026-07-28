@@ -110,6 +110,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `dev_round_id` | string | Unique per-delegation round token (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random suffix, distinct even across rapid same-second re-stamps), minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA implement-or-fix delegation and embedded in it. `dev-artifact-check` resolves `tmp/dev-return-[ISSUE_ID]-[dev_round_id].json` and requires its internal `round_id` to match — deterministic completion-artifact identity (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1) |
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `rereview_skipped` | string | `refix-route`'s `reason` when a fix round routed to submit WITHOUT re-review (class `small`). Present only when the skip happened — its absence means the round was re-reviewed or nothing changed. Recorded so a by-policy skip is visible after the fact instead of silent (vstack#875) |
+| `rereview_panel` | object | Targeted-panel composition when a fix round of class `blockers`/`size` re-reviewed with a scoped panel instead of the full set (`review-pr.md` § 4 step 3, vstack#944): `{agents: string[], reason}`. Recorded so panel scoping is visible after the fact, mirroring `rereview_skipped` |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |
 | `escalated_items` | object[] | Blockers that couldn't be fixed |
