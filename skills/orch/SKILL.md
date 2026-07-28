@@ -127,6 +127,7 @@ Put non-secret workflow settings in committed `vstack.settings.toml` under `[env
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
 | `PR_REVIEW_REFIX_MAX_LINES` | Changed-line ceiling a support-scope fix round may reach before `review-pr` re-reviews it anyway; a round that cleared blockers is re-reviewed regardless (read via `refix-route`) | `200` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`; `0` = unlimited). On the Codex collaboration runtime, set it to the config-declared cap (`features.multi_agent_v2.max_concurrent_threads_per_session`) reported by `spawn-adapter slots` | `0` |
+| `ORCH_DECISION_MODE` | Workflow decision-point behavior (read via `orch-env ORCH_DECISION_MODE ask`). `ask` presents every decision to the user; `auto-recommended` executes the workflow's recommended option at the `review-pr` § 4/§ 7 and `dev-fix` § 1 ask-user steps and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Decision-record revisits, scope expansion beyond the issue, benchmark-host protocol changes, and merge ALWAYS ask, in every mode (vstack#944) | `ask` |
 | Review-gate settings | `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_OUTAGE_CONTEXT` — [references/gates.md](references/gates.md) | — |
 
 System dependencies: `jq`; `bash` 4+; `flock` (util-linux) for atomic state updates.

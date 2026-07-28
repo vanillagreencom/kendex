@@ -351,6 +351,20 @@ Read agent JSONs, check for items where `category == "fix"`.
 
 **Omit empty categories.**
 
+**Resolve the decision mode** before asking:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+```
+
+Use the output as `DECISION_MODE`. **If `auto-recommended`**: do not present the ask — execute the workflow's recommended option (Blockers: `Fix now`; Fix suggestions: `All`) and log the auto-decision in the round record so the audit trail keeps every auto-decision visible:
+
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: [OPTION] — [REASON]"'
+```
+
+Report the same `auto-selected: [option] — [reason]` line to the user with the round output. `auto-recommended` never auto-decides these — they ALWAYS ask, in every mode: decision-record revisits, scope expansion beyond the issue being fixed, anything touching benchmark-host protocol, and merge (stays supervisor-owned). Any other `DECISION_MODE` value (including the `ask` default) presents the ask below unchanged.
+
 Ask user (omit categories with no items):
 
 | Category | Question | Type |
@@ -538,7 +552,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 
 **Never fix as main agent.**
 
-Follow § 4 pattern (collect → present → ask user → delegate via `workflows/dev-fix.md` → update state) with these overrides:
+Follow § 4 pattern (collect → present → ask user per the § 4 `ORCH_DECISION_MODE` resolution → delegate via `workflows/dev-fix.md` → update state) with these overrides:
 
 - **Items**: from QA agent JSONs. Exclude items already in `fixed_items` or `escalated_items`.
 - **Table header**: `QA Agent` instead of `Agent`. Title: `QA Review Items — [ISSUE_ID]`.

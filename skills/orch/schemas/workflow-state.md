@@ -111,6 +111,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
 | `rereview_skipped` | string | `refix-route`'s `reason` when a fix round routed to submit WITHOUT re-review (class `small`). Present only when the skip happened — its absence means the round was re-reviewed or nothing changed. Recorded so a by-policy skip is visible after the fact instead of silent (vstack#875) |
 | `rereview_panel` | object | Targeted-panel composition when a fix round of class `blockers`/`size` re-reviewed with a scoped panel instead of the full set (`review-pr.md` § 4 step 3, vstack#944): `{agents: string[], reason}`. Recorded so panel scoping is visible after the fact, mirroring `rereview_skipped` |
+| `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended` (vstack#944): one `auto-selected: [option] — [reason]` line per auto-executed ask-user step (`review-pr.md` § 4/§ 7, `dev-fix.md` § 1). Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |
 | `escalated_items` | object[] | Blockers that couldn't be fixed |

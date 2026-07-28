@@ -60,7 +60,19 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
    </output_format>
 
-4. **Ask user**: `Fix all` | Multi-select: `#N: [TITLE]` | `Cancel`
+4. **Resolve the decision mode**, then ask:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+   ```
+
+   **If the output is `auto-recommended`**: do not present the ask — take the recommended option (`Fix all`), log it in the round record, and → § 2. Decision-record revisits, scope expansion beyond the issue, anything touching benchmark-host protocol, and merge ALWAYS ask, in every mode.
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
+   ```
+
+   Otherwise **ask user**: `Fix all` | Multi-select: `#N: [TITLE]` | `Cancel`
 
    | Choice | Action |
    |--------|--------|
