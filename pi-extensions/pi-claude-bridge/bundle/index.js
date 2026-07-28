@@ -26912,6 +26912,663 @@ function splitPrefixSuffix(input, options = {}) {
   ];
 }
 
+// src/config.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
+import { homedir } from "os";
+import { dirname, join as join2, resolve as resolve2 } from "path";
+var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
+var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
+function expandHome(input) {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join2(homedir(), input.slice(2));
+  return input;
+}
+function piUserDir() {
+  return resolve2(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+}
+function isolatedFromEnv() {
+  const v4 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
+  return v4 === "1" || v4 === "true" || v4 === "yes" || v4 === "on";
+}
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function mergeDeep(target, source) {
+  for (const [key, value] of Object.entries(source)) {
+    const current = asRecord(target[key]);
+    const incoming = asRecord(value);
+    if (current && incoming) target[key] = mergeDeep({ ...current }, incoming);
+    else target[key] = value;
+  }
+  return target;
+}
+function projectSettingsPath(cwd) {
+  let current = resolve2(cwd);
+  while (true) {
+    const candidate = join2(current, ".pi", "settings.json");
+    if (existsSync2(candidate)) return candidate;
+    if (existsSync2(join2(current, ".pi")) || existsSync2(join2(current, ".git")) || existsSync2(join2(current, ".vstack-lock.json"))) return candidate;
+    const parent = dirname(current);
+    if (parent === current) return join2(resolve2(cwd), ".pi", "settings.json");
+    current = parent;
+  }
+}
+var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.project-trust");
+function projectTrustRegistry() {
+  const host = globalThis;
+  const existing = host[PROJECT_TRUST_SYMBOL];
+  if (existing) return existing;
+  const created = {};
+  host[PROJECT_TRUST_SYMBOL] = created;
+  return created;
+}
+function recordProjectTrust(ctx2) {
+  if (!ctx2.cwd) return;
+  if (isolatedFromEnv()) return;
+  let trusted = true;
+  try {
+    trusted = ctx2.isProjectTrusted?.() === true;
+  } catch {
+    trusted = false;
+  }
+  const registry2 = projectTrustRegistry();
+  if (!registry2.projectSettings) registry2.projectSettings = /* @__PURE__ */ new Map();
+  registry2.projectSettings.set(projectSettingsPath(ctx2.cwd), trusted);
+}
+function projectSettingsTrusted(settingsPath) {
+  return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
+}
+function settingsPaths(cwd) {
+  const user = join2(piUserDir(), "settings.json");
+  if (isolatedFromEnv()) return [];
+  const project = projectSettingsPath(cwd);
+  return projectSettingsTrusted(project) ? [user, project] : [user];
+}
+function tryParseJson(path) {
+  if (!existsSync2(path)) return {};
+  try {
+    return JSON.parse(readFileSync2(path, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+function readManagerConfig(cwd) {
+  const merged = {};
+  for (const path of settingsPaths(cwd)) {
+    if (!existsSync2(path)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync2(path, "utf8"));
+      const configRoot = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config);
+      const config2 = asRecord(configRoot?.[PACKAGE_ID]);
+      if (config2) mergeDeep(merged, config2);
+    } catch {
+    }
+  }
+  return merged;
+}
+function boolFrom(raw, key) {
+  return typeof raw[key] === "boolean" ? raw[key] : void 0;
+}
+function stringFrom(raw, key) {
+  const value = raw[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
+}
+function hasOwn(raw, key) {
+  return Object.prototype.hasOwnProperty.call(raw, key);
+}
+function normalizeConnectorWriteMode(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "deny" || normalized === "allow") return normalized;
+  return void 0;
+}
+function normalizeEffortLevel(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "none" || normalized === "auto" || normalized === "default") return void 0;
+  return VALID_EFFORT_LEVELS.has(normalized) ? normalized : void 0;
+}
+function normalizeModelEffortOverrides(value) {
+  let source = value;
+  if (typeof source === "string") {
+    const trimmed = source.trim();
+    if (!trimmed || trimmed === "{}") return void 0;
+    try {
+      source = JSON.parse(trimmed);
+    } catch {
+      return void 0;
+    }
+  }
+  const record2 = asRecord(source);
+  if (!record2) return void 0;
+  const out = {};
+  for (const [modelId, rawEffort] of Object.entries(record2)) {
+    const key = modelId.trim();
+    const effort = normalizeEffortLevel(rawEffort);
+    if (key && effort) out[key] = effort;
+  }
+  return Object.keys(out).length > 0 ? out : void 0;
+}
+function normalizeProviderConfig(provider) {
+  if (!provider) return {};
+  const raw = provider;
+  const out = { ...provider };
+  const forceEffort = normalizeEffortLevel(raw.forceEffort);
+  if (forceEffort) out.forceEffort = forceEffort;
+  else delete out.forceEffort;
+  const modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
+  if (modelEffortOverrides) out.modelEffortOverrides = modelEffortOverrides;
+  else delete out.modelEffortOverrides;
+  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+  if (connectorWriteMode) out.connectorWriteMode = connectorWriteMode;
+  else delete out.connectorWriteMode;
+  return out;
+}
+function managerToConfig(raw) {
+  const provider = {};
+  const promptContext = {};
+  const appendSystemPrompt = boolFrom(raw, "appendSystemPrompt");
+  if (appendSystemPrompt !== void 0) provider.appendSystemPrompt = appendSystemPrompt;
+  const allowExtraUsage = boolFrom(raw, "allowExtraUsage");
+  if (allowExtraUsage !== void 0) provider.allowExtraUsage = allowExtraUsage;
+  const fastMode = boolFrom(raw, "fastMode");
+  if (fastMode !== void 0) provider.fastMode = fastMode;
+  if (hasOwn(raw, "forceEffort")) {
+    provider.forceEffort = normalizeEffortLevel(raw.forceEffort);
+  }
+  if (hasOwn(raw, "modelEffortOverrides")) {
+    provider.modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
+  }
+  const strictMcpConfig = boolFrom(raw, "strictMcpConfig");
+  if (strictMcpConfig !== void 0) provider.strictMcpConfig = strictMcpConfig;
+  const enableConnectors = boolFrom(raw, "enableConnectors");
+  if (enableConnectors !== void 0) provider.enableConnectors = enableConnectors;
+  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
+  if (connectorWriteMode) provider.connectorWriteMode = connectorWriteMode;
+  const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
+  if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
+  const includeAppendSystemPromptMd = boolFrom(raw, "includeAppendSystemPromptMd");
+  if (includeAppendSystemPromptMd !== void 0) promptContext.includeAppendSystemPromptMd = includeAppendSystemPromptMd;
+  const includeProjectAgentsHook = boolFrom(raw, "includeProjectAgentsHook");
+  if (includeProjectAgentsHook !== void 0) promptContext.includeProjectAgentsHook = includeProjectAgentsHook;
+  const includeTaskPanelHook = boolFrom(raw, "includeTaskPanelHook");
+  if (includeTaskPanelHook !== void 0) promptContext.includeTaskPanelHook = includeTaskPanelHook;
+  const includeCavemanHook = boolFrom(raw, "includeCavemanHook");
+  if (includeCavemanHook !== void 0) promptContext.includeCavemanHook = includeCavemanHook;
+  return {
+    ...boolFrom(raw, "enabled") !== void 0 ? { enabled: boolFrom(raw, "enabled") } : {},
+    ...Object.keys(provider).length ? { provider } : {},
+    ...Object.keys(promptContext).length ? { promptContext } : {}
+  };
+}
+function loadConfig(cwd) {
+  const global2 = tryParseJson(join2(piUserDir(), "claude-bridge.json"));
+  const isolated = isolatedFromEnv();
+  const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
+  const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
+  const project = trustedProject ? tryParseJson(join2(dirname(projectSettings), "claude-bridge.json")) : {};
+  const manager = isolated ? {} : managerToConfig(readManagerConfig(cwd));
+  const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
+  return {
+    enabled: manager.enabled ?? project.enabled ?? global2.enabled ?? true,
+    provider,
+    promptContext: { ...global2.promptContext, ...project.promptContext, ...manager.promptContext }
+  };
+}
+
+// src/skills.ts
+var MCP_SERVER_NAME = "custom-tools";
+var MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
+function extractSkillsBlock(systemPrompt) {
+  if (!systemPrompt) return void 0;
+  const startMarker = "The following skills provide specialized instructions for specific tasks.";
+  const endMarker = "</available_skills>";
+  const start = systemPrompt.indexOf(startMarker);
+  if (start === -1) return void 0;
+  const end = systemPrompt.indexOf(endMarker, start);
+  if (end === -1) return void 0;
+  return rewriteSkillsBlock(systemPrompt.slice(start, end + endMarker.length).trim());
+}
+function rewriteSkillsBlock(skillsBlock) {
+  return skillsBlock.replace(
+    "Use the read tool to load a skill's file",
+    `Use the read tool (mcp__${MCP_SERVER_NAME}__read) to load a skill's file`
+  );
+}
+
+// src/connector-inventory.ts
+var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
+var DEFAULT_API_BASE = "https://api.anthropic.com";
+var DEFAULT_PROXY_BASE = "https://mcp-proxy.anthropic.com/v1/mcp";
+var OAUTH_BETA_HEADER = "oauth-2025-04-20";
+function connectorServerName(connectorName) {
+  return `claude.ai ${connectorName.trim()}`;
+}
+function connectorProxyUrl(installedServerId, proxyBase = DEFAULT_PROXY_BASE) {
+  return `${trimTrailingSlashes(proxyBase)}/${encodeURIComponent(installedServerId)}`;
+}
+function connectorServerNamespace(connectorName) {
+  return `${CONNECTOR_NS_PREFIX}${connectorName.trim().replace(/\s+/g, "_")}__`;
+}
+function credentialCandidatePaths(env = process.env) {
+  const roots = [];
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim();
+  if (configDir) roots.push(configDir);
+  const home = env.HOME?.trim();
+  if (home) roots.push(`${home}/.claude`, home);
+  const seen = /* @__PURE__ */ new Set();
+  const paths = [];
+  for (const root of roots) {
+    for (const name of [".credentials.json", ".claude.json"]) {
+      const p4 = `${root}/${name}`;
+      if (!seen.has(p4)) {
+        seen.add(p4);
+        paths.push(p4);
+      }
+    }
+  }
+  return paths;
+}
+function resolveClaudeOAuth(readFile, env = process.env) {
+  let accessToken;
+  let organizationUuid;
+  for (const path of credentialCandidatePaths(env)) {
+    const raw = readFile(path);
+    if (!raw) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    accessToken ??= nonEmptyString(parsed?.claudeAiOauth?.accessToken);
+    organizationUuid ??= nonEmptyString(parsed?.oauthAccount?.organizationUuid);
+    if (accessToken && organizationUuid) break;
+  }
+  if (!accessToken || !organizationUuid) return void 0;
+  return { accessToken, organizationUuid };
+}
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function connectorsListUrl(organizationUuid, apiBase = DEFAULT_API_BASE) {
+  return `${trimTrailingSlashes(apiBase)}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
+}
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
+}
+async function listAccountConnectors(deps) {
+  const { credentials, apiBase, signal } = deps;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const url2 = connectorsListUrl(credentials.organizationUuid, apiBase);
+  const fail = (reason) => ({ ok: false, complete: false, reason: redactSecret(reason, credentials.accessToken) });
+  let response;
+  try {
+    response = await fetchImpl(url2, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${credentials.accessToken}`,
+        "anthropic-beta": OAUTH_BETA_HEADER,
+        "Content-Type": "application/json"
+      },
+      body: "{}",
+      signal
+    });
+  } catch (error51) {
+    return fail(`connector list request failed: ${errorText(error51)}`);
+  }
+  let bodyText;
+  try {
+    bodyText = await response.text();
+  } catch (error51) {
+    return fail(`connector list response unreadable: ${errorText(error51)}`);
+  }
+  if (!response.ok) {
+    return fail(`connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return fail("connector list returned a non-JSON body");
+  }
+  if (!Array.isArray(parsed?.results)) {
+    return fail("connector list response had no results array");
+  }
+  const connectors = [];
+  for (const raw of parsed.results) {
+    const entry = raw;
+    const name = nonEmptyString(entry?.name);
+    if (!name) {
+      return fail("connector list contained an entry with no name");
+    }
+    connectors.push({
+      name,
+      installedServerId: nonEmptyString(entry?.installedServerId),
+      directoryUuid: nonEmptyString(entry?.directoryUuid),
+      installState: nonEmptyString(entry?.installState),
+      description: nonEmptyString(entry?.description),
+      isAuthless: typeof entry?.isAuthless === "boolean" ? entry.isAuthless : void 0
+    });
+  }
+  return { ok: true, complete: true, connectors };
+}
+function apiErrorSuffix(bodyText) {
+  try {
+    const message = JSON.parse(bodyText)?.error?.message;
+    return typeof message === "string" && message.trim() ? ` (${message.trim()})` : "";
+  } catch {
+    return "";
+  }
+}
+function redactSecret(text, secret) {
+  if (!secret || secret.length < 8) return text;
+  let out = text;
+  for (const form of /* @__PURE__ */ new Set([secret, encodeURIComponent(secret)])) {
+    out = out.split(form).join("[redacted]");
+  }
+  return out;
+}
+function errorText(error51) {
+  return error51 instanceof Error ? error51.message : String(error51);
+}
+
+// src/connectors.ts
+var DISALLOWED_BUILTIN_TOOLS = [
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "Glob",
+  "Grep",
+  "Bash",
+  "Agent",
+  "Task",
+  "NotebookEdit",
+  "EnterWorktree",
+  "ExitWorktree",
+  "CronList",
+  "CronCreate",
+  "CronDelete",
+  "TeamCreate",
+  "TeamDelete",
+  "TaskOutput",
+  "TaskStop",
+  "SendMessage",
+  "Skill",
+  "TodoRead",
+  "TodoWrite",
+  "ListMcpResources",
+  "ReadMcpResource",
+  "WebFetch",
+  "WebSearch",
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "ToolSearch",
+  "ScheduleWakeup"
+];
+var CLAUDE_BRIDGE_TOOL_ISOLATION = {
+  tools: [],
+  disallowedTools: DISALLOWED_BUILTIN_TOOLS,
+  allowedTools: [`mcp__${MCP_SERVER_NAME}__*`]
+};
+function connectorsEnabledFromEnv() {
+  const v4 = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
+  return v4 === "1" || v4 === "true" || v4 === "yes" || v4 === "on";
+}
+function connectorsEnabledFor(config2) {
+  return connectorsEnabledFromEnv() || config2?.provider?.enableConnectors === true;
+}
+var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
+  "mcp__claude_ai_Gmail__*",
+  "mcp__claude_ai_Google_Calendar__*",
+  "mcp__claude_ai_Google_Drive__*",
+  "mcp__claude_ai_Slack__*",
+  "mcp__claude_ai_Atlassian__*"
+];
+var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
+var CONNECTOR_NS_PREFIX2 = "mcp__claude_ai_";
+var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX2}Gmail__`;
+var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX2}Google_Calendar__`;
+var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX2}Google_Drive__`;
+var CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX2}Slack__`;
+var CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX2}Atlassian__`;
+var CONNECTOR_READ_VERBS = /* @__PURE__ */ new Set([
+  "list",
+  "search",
+  "get",
+  "read",
+  "fetch",
+  "find",
+  "download",
+  "describe",
+  "query",
+  "count",
+  "view",
+  "lookup",
+  "whoami"
+]);
+var CONNECTOR_MUTATION_WORDS = /* @__PURE__ */ new Set([
+  "create",
+  "update",
+  "delete",
+  "remove",
+  "add",
+  "edit",
+  "send",
+  "post",
+  "write",
+  "upload",
+  "publish",
+  "schedule",
+  "transition",
+  "archive",
+  "move",
+  "copy",
+  "revoke",
+  "assign",
+  "invite",
+  "share",
+  "rename",
+  "replace",
+  "set",
+  "merge",
+  "resolve",
+  "lock",
+  "unlock",
+  "acknowledge",
+  "ack",
+  "book",
+  "start",
+  "stop",
+  "terminate",
+  "restart",
+  "join",
+  "leave",
+  "star",
+  "unstar",
+  "forward",
+  "sync",
+  "approve",
+  "reject",
+  "close",
+  "reopen",
+  "cancel",
+  "enable",
+  "disable",
+  "grant",
+  "trigger",
+  "execute",
+  "apply",
+  "submit",
+  "pin",
+  "unpin",
+  "mute",
+  "unmute",
+  "subscribe",
+  "unsubscribe",
+  "follow",
+  "unfollow",
+  "clear",
+  "purge",
+  "reset",
+  "rotate",
+  "deploy",
+  "install",
+  "uninstall",
+  "save",
+  "store",
+  "put",
+  "patch",
+  "insert",
+  "append",
+  "prepend",
+  "duplicate",
+  "restore",
+  "revert",
+  "import",
+  "export",
+  "upsert",
+  "sign",
+  "complete",
+  "claim",
+  "release",
+  "promote",
+  "demote",
+  "escalate",
+  "resend",
+  "retry",
+  "react",
+  "vote"
+]);
+function connectorNameWords(segment) {
+  return segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((word) => word.toLowerCase());
+}
+var CONNECTOR_WRITE_TOOLS = [
+  `${CONNECTOR_NS_GMAIL}create_draft`,
+  `${CONNECTOR_NS_GMAIL}create_label`,
+  `${CONNECTOR_NS_GMAIL}label_message`,
+  `${CONNECTOR_NS_GMAIL}label_thread`,
+  `${CONNECTOR_NS_GMAIL}unlabel_message`,
+  `${CONNECTOR_NS_GMAIL}unlabel_thread`,
+  `${CONNECTOR_NS_GMAIL}apply_sensitive_label`,
+  `${CONNECTOR_NS_GMAIL}remove_sensitive_label`,
+  `${CONNECTOR_NS_CALENDAR}create_event`,
+  `${CONNECTOR_NS_CALENDAR}update_event`,
+  `${CONNECTOR_NS_CALENDAR}delete_event`,
+  `${CONNECTOR_NS_CALENDAR}respond_to_event`,
+  `${CONNECTOR_NS_DRIVE}create_file`,
+  `${CONNECTOR_NS_DRIVE}copy_file`,
+  // Slack + Atlassian writes, taken from a live enumeration of an account with
+  // both connectors attached. The PreToolUse hook already denies these by verb;
+  // listing them by id also removes them from the model's context in a
+  // read-only session (the CLI matcher needs exact ids). Additive only — an id
+  // missing here is still denied at call time.
+  `${CONNECTOR_NS_SLACK}slack_send_message`,
+  `${CONNECTOR_NS_SLACK}slack_send_message_draft`,
+  `${CONNECTOR_NS_SLACK}slack_schedule_message`,
+  `${CONNECTOR_NS_SLACK}slack_create_canvas`,
+  `${CONNECTOR_NS_SLACK}slack_update_canvas`,
+  `${CONNECTOR_NS_ATLASSIAN}createJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}editJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}transitionJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}addCommentToJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}addWorklogToJiraIssue`,
+  `${CONNECTOR_NS_ATLASSIAN}createIssueLink`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluencePage`,
+  `${CONNECTOR_NS_ATLASSIAN}updateConfluencePage`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluenceFooterComment`,
+  `${CONNECTOR_NS_ATLASSIAN}createConfluenceInlineComment`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassComponent`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
+  `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
+];
+function isChildExecutedTool(name) {
+  return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX2);
+}
+function isConnectorWriteTool(name) {
+  if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
+  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
+  if (sep2 <= CONNECTOR_NS_PREFIX2.length) return true;
+  const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep2);
+  const words = connectorNameWords(name.slice(sep2 + "__".length));
+  const serverWords = connectorNameWords(server);
+  let skipped = 0;
+  while (skipped < serverWords.length && words[skipped] === serverWords[skipped] && !CONNECTOR_MUTATION_WORDS.has(words[skipped])) skipped++;
+  const rest = words.slice(skipped);
+  if (rest.length === 0) return true;
+  if (!CONNECTOR_READ_VERBS.has(rest[0])) return true;
+  return rest.some((word) => CONNECTOR_MUTATION_WORDS.has(word));
+}
+function connectorWriteModeFromEnv() {
+  const v4 = (process.env.CLAUDE_BRIDGE_CONNECTOR_WRITE ?? "").trim().toLowerCase();
+  if (v4 === "allow") return "allow";
+  if (v4 === "deny") return "deny";
+  return void 0;
+}
+function connectorWriteModeFor(config2) {
+  const resolved = connectorWriteModeFromEnv() ?? normalizeConnectorWriteMode(config2?.provider?.connectorWriteMode);
+  return resolved === "allow" ? "allow" : "deny";
+}
+function connectorWriteDenyHook() {
+  return async (input) => {
+    try {
+      if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
+      return connectorWriteDenyOutput(String(input.tool_name));
+    } catch {
+      const toolName = typeof input?.tool_name === "string" ? input.tool_name : "<unknown>";
+      return connectorWriteDenyOutput(toolName);
+    }
+  };
+}
+function connectorWriteDenyOutput(toolName) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through the host application's gated approval flow.`
+    }
+  };
+}
+function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
+  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
+  if (!connectorsEnabled || writeMode === "allow") return isolation;
+  return { ...isolation, hooks: { PreToolUse: [{ hooks: [connectorWriteDenyHook()] }] } };
+}
+function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
+  if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+  const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOLS.includes(t));
+  if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
+  return {
+    disallowedTools,
+    allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS]
+  };
+}
+function connectorMcpServers(inventory) {
+  if (!inventory.ok) return {};
+  if (connectorDeclarationsDisabled()) return {};
+  const servers = {};
+  for (const entry of inventory.connectors) {
+    if (entry.installState !== "connected") continue;
+    if (!entry.installedServerId) continue;
+    servers[connectorServerName(entry.name)] = {
+      type: "claudeai-proxy",
+      url: connectorProxyUrl(entry.installedServerId),
+      id: entry.installedServerId,
+      alwaysLoad: true
+    };
+  }
+  return servers;
+}
+function connectorDeclarationsDisabled(env = process.env) {
+  const v4 = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();
+  return v4 === "off" || v4 === "0" || v4 === "false" || v4 === "no";
+}
+
 // src/convert.ts
 var PROVIDER_ID = "claude-bridge";
 var PI_TO_SDK_TOOL_NAME = {
@@ -26929,6 +27586,7 @@ function sanitizeToolId(id, cache) {
 }
 function mapPiToolNameToSdk(name, customToolNameToSdk) {
   if (!name) return "";
+  if (isChildExecutedTool(name)) return name;
   const normalized = name.toLowerCase();
   if (customToolNameToSdk) {
     const mapped = customToolNameToSdk.get(name) ?? customToolNameToSdk.get(normalized);
@@ -27155,26 +27813,6 @@ function buildModels(piAiModels) {
     thinkingLevelMap,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }));
-}
-
-// src/skills.ts
-var MCP_SERVER_NAME = "custom-tools";
-var MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
-function extractSkillsBlock(systemPrompt) {
-  if (!systemPrompt) return void 0;
-  const startMarker = "The following skills provide specialized instructions for specific tasks.";
-  const endMarker = "</available_skills>";
-  const start = systemPrompt.indexOf(startMarker);
-  if (start === -1) return void 0;
-  const end = systemPrompt.indexOf(endMarker, start);
-  if (end === -1) return void 0;
-  return rewriteSkillsBlock(systemPrompt.slice(start, end + endMarker.length).trim());
-}
-function rewriteSkillsBlock(skillsBlock) {
-  return skillsBlock.replace(
-    "Use the read tool to load a skill's file",
-    `Use the read tool (mcp__${MCP_SERVER_NAME}__read) to load a skill's file`
-  );
 }
 
 // src/extract-tool-results.ts
@@ -27484,210 +28122,6 @@ function popContext() {
   const parent = contextStack[contextStack.length - 1];
   parent.deferredUserMessages.push(..._ctx.deferredUserMessages);
   _ctx = contextStack.pop();
-}
-
-// src/config.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { homedir } from "os";
-import { dirname, join as join2, resolve as resolve2 } from "path";
-var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
-var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
-function expandHome(input) {
-  if (input === "~") return homedir();
-  if (input.startsWith("~/")) return join2(homedir(), input.slice(2));
-  return input;
-}
-function piUserDir() {
-  return resolve2(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
-}
-function isolatedFromEnv() {
-  const v4 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
-  return v4 === "1" || v4 === "true" || v4 === "yes" || v4 === "on";
-}
-function asRecord(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
-}
-function mergeDeep(target, source) {
-  for (const [key, value] of Object.entries(source)) {
-    const current = asRecord(target[key]);
-    const incoming = asRecord(value);
-    if (current && incoming) target[key] = mergeDeep({ ...current }, incoming);
-    else target[key] = value;
-  }
-  return target;
-}
-function projectSettingsPath(cwd) {
-  let current = resolve2(cwd);
-  while (true) {
-    const candidate = join2(current, ".pi", "settings.json");
-    if (existsSync2(candidate)) return candidate;
-    if (existsSync2(join2(current, ".pi")) || existsSync2(join2(current, ".git")) || existsSync2(join2(current, ".vstack-lock.json"))) return candidate;
-    const parent = dirname(current);
-    if (parent === current) return join2(resolve2(cwd), ".pi", "settings.json");
-    current = parent;
-  }
-}
-var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.project-trust");
-function projectTrustRegistry() {
-  const host = globalThis;
-  const existing = host[PROJECT_TRUST_SYMBOL];
-  if (existing) return existing;
-  const created = {};
-  host[PROJECT_TRUST_SYMBOL] = created;
-  return created;
-}
-function recordProjectTrust(ctx2) {
-  if (!ctx2.cwd) return;
-  if (isolatedFromEnv()) return;
-  let trusted = true;
-  try {
-    trusted = ctx2.isProjectTrusted?.() === true;
-  } catch {
-    trusted = false;
-  }
-  const registry2 = projectTrustRegistry();
-  if (!registry2.projectSettings) registry2.projectSettings = /* @__PURE__ */ new Map();
-  registry2.projectSettings.set(projectSettingsPath(ctx2.cwd), trusted);
-}
-function projectSettingsTrusted(settingsPath) {
-  return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-function settingsPaths(cwd) {
-  const user = join2(piUserDir(), "settings.json");
-  if (isolatedFromEnv()) return [];
-  const project = projectSettingsPath(cwd);
-  return projectSettingsTrusted(project) ? [user, project] : [user];
-}
-function tryParseJson(path) {
-  if (!existsSync2(path)) return {};
-  try {
-    return JSON.parse(readFileSync2(path, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-function readManagerConfig(cwd) {
-  const merged = {};
-  for (const path of settingsPaths(cwd)) {
-    if (!existsSync2(path)) continue;
-    try {
-      const parsed = JSON.parse(readFileSync2(path, "utf8"));
-      const configRoot = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config);
-      const config2 = asRecord(configRoot?.[PACKAGE_ID]);
-      if (config2) mergeDeep(merged, config2);
-    } catch {
-    }
-  }
-  return merged;
-}
-function boolFrom(raw, key) {
-  return typeof raw[key] === "boolean" ? raw[key] : void 0;
-}
-function stringFrom(raw, key) {
-  const value = raw[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
-}
-function hasOwn(raw, key) {
-  return Object.prototype.hasOwnProperty.call(raw, key);
-}
-function normalizeConnectorWriteMode(value) {
-  if (typeof value !== "string") return void 0;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "deny" || normalized === "allow") return normalized;
-  return void 0;
-}
-function normalizeEffortLevel(value) {
-  if (typeof value !== "string") return void 0;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "" || normalized === "none" || normalized === "auto" || normalized === "default") return void 0;
-  return VALID_EFFORT_LEVELS.has(normalized) ? normalized : void 0;
-}
-function normalizeModelEffortOverrides(value) {
-  let source = value;
-  if (typeof source === "string") {
-    const trimmed = source.trim();
-    if (!trimmed || trimmed === "{}") return void 0;
-    try {
-      source = JSON.parse(trimmed);
-    } catch {
-      return void 0;
-    }
-  }
-  const record2 = asRecord(source);
-  if (!record2) return void 0;
-  const out = {};
-  for (const [modelId, rawEffort] of Object.entries(record2)) {
-    const key = modelId.trim();
-    const effort = normalizeEffortLevel(rawEffort);
-    if (key && effort) out[key] = effort;
-  }
-  return Object.keys(out).length > 0 ? out : void 0;
-}
-function normalizeProviderConfig(provider) {
-  if (!provider) return {};
-  const raw = provider;
-  const out = { ...provider };
-  const forceEffort = normalizeEffortLevel(raw.forceEffort);
-  if (forceEffort) out.forceEffort = forceEffort;
-  else delete out.forceEffort;
-  const modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
-  if (modelEffortOverrides) out.modelEffortOverrides = modelEffortOverrides;
-  else delete out.modelEffortOverrides;
-  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
-  if (connectorWriteMode) out.connectorWriteMode = connectorWriteMode;
-  else delete out.connectorWriteMode;
-  return out;
-}
-function managerToConfig(raw) {
-  const provider = {};
-  const promptContext = {};
-  const appendSystemPrompt = boolFrom(raw, "appendSystemPrompt");
-  if (appendSystemPrompt !== void 0) provider.appendSystemPrompt = appendSystemPrompt;
-  const allowExtraUsage = boolFrom(raw, "allowExtraUsage");
-  if (allowExtraUsage !== void 0) provider.allowExtraUsage = allowExtraUsage;
-  const fastMode = boolFrom(raw, "fastMode");
-  if (fastMode !== void 0) provider.fastMode = fastMode;
-  if (hasOwn(raw, "forceEffort")) {
-    provider.forceEffort = normalizeEffortLevel(raw.forceEffort);
-  }
-  if (hasOwn(raw, "modelEffortOverrides")) {
-    provider.modelEffortOverrides = normalizeModelEffortOverrides(raw.modelEffortOverrides);
-  }
-  const strictMcpConfig = boolFrom(raw, "strictMcpConfig");
-  if (strictMcpConfig !== void 0) provider.strictMcpConfig = strictMcpConfig;
-  const enableConnectors = boolFrom(raw, "enableConnectors");
-  if (enableConnectors !== void 0) provider.enableConnectors = enableConnectors;
-  const connectorWriteMode = normalizeConnectorWriteMode(raw.connectorWriteMode);
-  if (connectorWriteMode) provider.connectorWriteMode = connectorWriteMode;
-  const claudePath = stringFrom(raw, "pathToClaudeCodeExecutable");
-  if (claudePath) provider.pathToClaudeCodeExecutable = claudePath;
-  const includeAppendSystemPromptMd = boolFrom(raw, "includeAppendSystemPromptMd");
-  if (includeAppendSystemPromptMd !== void 0) promptContext.includeAppendSystemPromptMd = includeAppendSystemPromptMd;
-  const includeProjectAgentsHook = boolFrom(raw, "includeProjectAgentsHook");
-  if (includeProjectAgentsHook !== void 0) promptContext.includeProjectAgentsHook = includeProjectAgentsHook;
-  const includeTaskPanelHook = boolFrom(raw, "includeTaskPanelHook");
-  if (includeTaskPanelHook !== void 0) promptContext.includeTaskPanelHook = includeTaskPanelHook;
-  const includeCavemanHook = boolFrom(raw, "includeCavemanHook");
-  if (includeCavemanHook !== void 0) promptContext.includeCavemanHook = includeCavemanHook;
-  return {
-    ...boolFrom(raw, "enabled") !== void 0 ? { enabled: boolFrom(raw, "enabled") } : {},
-    ...Object.keys(provider).length ? { provider } : {},
-    ...Object.keys(promptContext).length ? { promptContext } : {}
-  };
-}
-function loadConfig(cwd) {
-  const global2 = tryParseJson(join2(piUserDir(), "claude-bridge.json"));
-  const isolated = isolatedFromEnv();
-  const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
-  const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
-  const project = trustedProject ? tryParseJson(join2(dirname(projectSettings), "claude-bridge.json")) : {};
-  const manager = isolated ? {} : managerToConfig(readManagerConfig(cwd));
-  const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
-  return {
-    enabled: manager.enabled ?? project.enabled ?? global2.enabled ?? true,
-    provider,
-    promptContext: { ...global2.promptContext, ...project.promptContext, ...manager.promptContext }
-  };
 }
 
 // src/auth-presence.ts
@@ -42484,145 +42918,6 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
   return compat.getModels;
 }
 
-// src/connector-inventory.ts
-var CONNECTOR_NS_PREFIX = "mcp__claude_ai_";
-var DEFAULT_API_BASE = "https://api.anthropic.com";
-var DEFAULT_PROXY_BASE = "https://mcp-proxy.anthropic.com/v1/mcp";
-var OAUTH_BETA_HEADER = "oauth-2025-04-20";
-function connectorServerName(connectorName) {
-  return `claude.ai ${connectorName.trim()}`;
-}
-function connectorProxyUrl(installedServerId, proxyBase = DEFAULT_PROXY_BASE) {
-  return `${trimTrailingSlashes(proxyBase)}/${encodeURIComponent(installedServerId)}`;
-}
-function connectorServerNamespace(connectorName) {
-  return `${CONNECTOR_NS_PREFIX}${connectorName.trim().replace(/\s+/g, "_")}__`;
-}
-function credentialCandidatePaths(env = process.env) {
-  const roots = [];
-  const configDir = env.CLAUDE_CONFIG_DIR?.trim();
-  if (configDir) roots.push(configDir);
-  const home = env.HOME?.trim();
-  if (home) roots.push(`${home}/.claude`, home);
-  const seen = /* @__PURE__ */ new Set();
-  const paths = [];
-  for (const root of roots) {
-    for (const name of [".credentials.json", ".claude.json"]) {
-      const p4 = `${root}/${name}`;
-      if (!seen.has(p4)) {
-        seen.add(p4);
-        paths.push(p4);
-      }
-    }
-  }
-  return paths;
-}
-function resolveClaudeOAuth(readFile, env = process.env) {
-  let accessToken;
-  let organizationUuid;
-  for (const path of credentialCandidatePaths(env)) {
-    const raw = readFile(path);
-    if (!raw) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    accessToken ??= nonEmptyString(parsed?.claudeAiOauth?.accessToken);
-    organizationUuid ??= nonEmptyString(parsed?.oauthAccount?.organizationUuid);
-    if (accessToken && organizationUuid) break;
-  }
-  if (!accessToken || !organizationUuid) return void 0;
-  return { accessToken, organizationUuid };
-}
-function nonEmptyString(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : void 0;
-}
-function connectorsListUrl(organizationUuid, apiBase = DEFAULT_API_BASE) {
-  return `${trimTrailingSlashes(apiBase)}/api/oauth/organizations/${encodeURIComponent(organizationUuid)}/mcp/connectors/list`;
-}
-function trimTrailingSlashes(value) {
-  let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
-  return value.slice(0, end);
-}
-async function listAccountConnectors(deps) {
-  const { credentials, apiBase, signal } = deps;
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const url2 = connectorsListUrl(credentials.organizationUuid, apiBase);
-  const fail = (reason) => ({ ok: false, complete: false, reason: redactSecret(reason, credentials.accessToken) });
-  let response;
-  try {
-    response = await fetchImpl(url2, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${credentials.accessToken}`,
-        "anthropic-beta": OAUTH_BETA_HEADER,
-        "Content-Type": "application/json"
-      },
-      body: "{}",
-      signal
-    });
-  } catch (error51) {
-    return fail(`connector list request failed: ${errorText(error51)}`);
-  }
-  let bodyText;
-  try {
-    bodyText = await response.text();
-  } catch (error51) {
-    return fail(`connector list response unreadable: ${errorText(error51)}`);
-  }
-  if (!response.ok) {
-    return fail(`connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(bodyText);
-  } catch {
-    return fail("connector list returned a non-JSON body");
-  }
-  if (!Array.isArray(parsed?.results)) {
-    return fail("connector list response had no results array");
-  }
-  const connectors = [];
-  for (const raw of parsed.results) {
-    const entry = raw;
-    const name = nonEmptyString(entry?.name);
-    if (!name) {
-      return fail("connector list contained an entry with no name");
-    }
-    connectors.push({
-      name,
-      installedServerId: nonEmptyString(entry?.installedServerId),
-      directoryUuid: nonEmptyString(entry?.directoryUuid),
-      installState: nonEmptyString(entry?.installState),
-      description: nonEmptyString(entry?.description),
-      isAuthless: typeof entry?.isAuthless === "boolean" ? entry.isAuthless : void 0
-    });
-  }
-  return { ok: true, complete: true, connectors };
-}
-function apiErrorSuffix(bodyText) {
-  try {
-    const message = JSON.parse(bodyText)?.error?.message;
-    return typeof message === "string" && message.trim() ? ` (${message.trim()})` : "";
-  } catch {
-    return "";
-  }
-}
-function redactSecret(text, secret) {
-  if (!secret || secret.length < 8) return text;
-  let out = text;
-  for (const form of /* @__PURE__ */ new Set([secret, encodeURIComponent(secret)])) {
-    out = out.split(form).join("[redacted]");
-  }
-  return out;
-}
-function errorText(error51) {
-  return error51 instanceof Error ? error51.message : String(error51);
-}
-
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync6, writeFileSync } from "node:fs";
@@ -43093,300 +43388,6 @@ function __testSetBridgeIntegrityState(state) {
 }
 function __testGetBridgeIntegrityState() {
   return { sharedSession };
-}
-
-// src/connectors.ts
-var DISALLOWED_BUILTIN_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "Glob",
-  "Grep",
-  "Bash",
-  "Agent",
-  "Task",
-  "NotebookEdit",
-  "EnterWorktree",
-  "ExitWorktree",
-  "CronList",
-  "CronCreate",
-  "CronDelete",
-  "TeamCreate",
-  "TeamDelete",
-  "TaskOutput",
-  "TaskStop",
-  "SendMessage",
-  "Skill",
-  "TodoRead",
-  "TodoWrite",
-  "ListMcpResources",
-  "ReadMcpResource",
-  "WebFetch",
-  "WebSearch",
-  "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
-  "ToolSearch",
-  "ScheduleWakeup"
-];
-var CLAUDE_BRIDGE_TOOL_ISOLATION = {
-  tools: [],
-  disallowedTools: DISALLOWED_BUILTIN_TOOLS,
-  allowedTools: [`mcp__${MCP_SERVER_NAME}__*`]
-};
-function connectorsEnabledFromEnv() {
-  const v4 = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
-  return v4 === "1" || v4 === "true" || v4 === "yes" || v4 === "on";
-}
-function connectorsEnabledFor(config2) {
-  return connectorsEnabledFromEnv() || config2?.provider?.enableConnectors === true;
-}
-var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
-  "mcp__claude_ai_Gmail__*",
-  "mcp__claude_ai_Google_Calendar__*",
-  "mcp__claude_ai_Google_Drive__*",
-  "mcp__claude_ai_Slack__*",
-  "mcp__claude_ai_Atlassian__*"
-];
-var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
-var CONNECTOR_NS_PREFIX2 = "mcp__claude_ai_";
-var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX2}Gmail__`;
-var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX2}Google_Calendar__`;
-var CONNECTOR_NS_DRIVE = `${CONNECTOR_NS_PREFIX2}Google_Drive__`;
-var CONNECTOR_NS_SLACK = `${CONNECTOR_NS_PREFIX2}Slack__`;
-var CONNECTOR_NS_ATLASSIAN = `${CONNECTOR_NS_PREFIX2}Atlassian__`;
-var CONNECTOR_READ_VERBS = /* @__PURE__ */ new Set([
-  "list",
-  "search",
-  "get",
-  "read",
-  "fetch",
-  "find",
-  "download",
-  "describe",
-  "query",
-  "count",
-  "view",
-  "lookup",
-  "whoami"
-]);
-var CONNECTOR_MUTATION_WORDS = /* @__PURE__ */ new Set([
-  "create",
-  "update",
-  "delete",
-  "remove",
-  "add",
-  "edit",
-  "send",
-  "post",
-  "write",
-  "upload",
-  "publish",
-  "schedule",
-  "transition",
-  "archive",
-  "move",
-  "copy",
-  "revoke",
-  "assign",
-  "invite",
-  "share",
-  "rename",
-  "replace",
-  "set",
-  "merge",
-  "resolve",
-  "lock",
-  "unlock",
-  "acknowledge",
-  "ack",
-  "book",
-  "start",
-  "stop",
-  "terminate",
-  "restart",
-  "join",
-  "leave",
-  "star",
-  "unstar",
-  "forward",
-  "sync",
-  "approve",
-  "reject",
-  "close",
-  "reopen",
-  "cancel",
-  "enable",
-  "disable",
-  "grant",
-  "trigger",
-  "execute",
-  "apply",
-  "submit",
-  "pin",
-  "unpin",
-  "mute",
-  "unmute",
-  "subscribe",
-  "unsubscribe",
-  "follow",
-  "unfollow",
-  "clear",
-  "purge",
-  "reset",
-  "rotate",
-  "deploy",
-  "install",
-  "uninstall",
-  "save",
-  "store",
-  "put",
-  "patch",
-  "insert",
-  "append",
-  "prepend",
-  "duplicate",
-  "restore",
-  "revert",
-  "import",
-  "export",
-  "upsert",
-  "sign",
-  "complete",
-  "claim",
-  "release",
-  "promote",
-  "demote",
-  "escalate",
-  "resend",
-  "retry",
-  "react",
-  "vote"
-]);
-function connectorNameWords(segment) {
-  return segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((word) => word.toLowerCase());
-}
-var CONNECTOR_WRITE_TOOLS = [
-  `${CONNECTOR_NS_GMAIL}create_draft`,
-  `${CONNECTOR_NS_GMAIL}create_label`,
-  `${CONNECTOR_NS_GMAIL}label_message`,
-  `${CONNECTOR_NS_GMAIL}label_thread`,
-  `${CONNECTOR_NS_GMAIL}unlabel_message`,
-  `${CONNECTOR_NS_GMAIL}unlabel_thread`,
-  `${CONNECTOR_NS_GMAIL}apply_sensitive_label`,
-  `${CONNECTOR_NS_GMAIL}remove_sensitive_label`,
-  `${CONNECTOR_NS_CALENDAR}create_event`,
-  `${CONNECTOR_NS_CALENDAR}update_event`,
-  `${CONNECTOR_NS_CALENDAR}delete_event`,
-  `${CONNECTOR_NS_CALENDAR}respond_to_event`,
-  `${CONNECTOR_NS_DRIVE}create_file`,
-  `${CONNECTOR_NS_DRIVE}copy_file`,
-  // Slack + Atlassian writes, taken from a live enumeration of an account with
-  // both connectors attached. The PreToolUse hook already denies these by verb;
-  // listing them by id also removes them from the model's context in a
-  // read-only session (the CLI matcher needs exact ids). Additive only — an id
-  // missing here is still denied at call time.
-  `${CONNECTOR_NS_SLACK}slack_send_message`,
-  `${CONNECTOR_NS_SLACK}slack_send_message_draft`,
-  `${CONNECTOR_NS_SLACK}slack_schedule_message`,
-  `${CONNECTOR_NS_SLACK}slack_create_canvas`,
-  `${CONNECTOR_NS_SLACK}slack_update_canvas`,
-  `${CONNECTOR_NS_ATLASSIAN}createJiraIssue`,
-  `${CONNECTOR_NS_ATLASSIAN}editJiraIssue`,
-  `${CONNECTOR_NS_ATLASSIAN}transitionJiraIssue`,
-  `${CONNECTOR_NS_ATLASSIAN}addCommentToJiraIssue`,
-  `${CONNECTOR_NS_ATLASSIAN}addWorklogToJiraIssue`,
-  `${CONNECTOR_NS_ATLASSIAN}createIssueLink`,
-  `${CONNECTOR_NS_ATLASSIAN}createConfluencePage`,
-  `${CONNECTOR_NS_ATLASSIAN}updateConfluencePage`,
-  `${CONNECTOR_NS_ATLASSIAN}createConfluenceFooterComment`,
-  `${CONNECTOR_NS_ATLASSIAN}createConfluenceInlineComment`,
-  `${CONNECTOR_NS_ATLASSIAN}createCompassComponent`,
-  `${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
-  `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
-];
-function isChildExecutedTool(name) {
-  return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX2);
-}
-function isConnectorWriteTool(name) {
-  if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
-  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
-  if (sep2 <= CONNECTOR_NS_PREFIX2.length) return true;
-  const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep2);
-  const words = connectorNameWords(name.slice(sep2 + "__".length));
-  const serverWords = connectorNameWords(server);
-  let skipped = 0;
-  while (skipped < serverWords.length && words[skipped] === serverWords[skipped] && !CONNECTOR_MUTATION_WORDS.has(words[skipped])) skipped++;
-  const rest = words.slice(skipped);
-  if (rest.length === 0) return true;
-  if (!CONNECTOR_READ_VERBS.has(rest[0])) return true;
-  return rest.some((word) => CONNECTOR_MUTATION_WORDS.has(word));
-}
-function connectorWriteModeFromEnv() {
-  const v4 = (process.env.CLAUDE_BRIDGE_CONNECTOR_WRITE ?? "").trim().toLowerCase();
-  if (v4 === "allow") return "allow";
-  if (v4 === "deny") return "deny";
-  return void 0;
-}
-function connectorWriteModeFor(config2) {
-  const resolved = connectorWriteModeFromEnv() ?? normalizeConnectorWriteMode(config2?.provider?.connectorWriteMode);
-  return resolved === "allow" ? "allow" : "deny";
-}
-function connectorWriteDenyHook() {
-  return async (input) => {
-    try {
-      if (input.hook_event_name !== "PreToolUse") return { continue: true };
-      if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
-      return connectorWriteDenyOutput(String(input.tool_name));
-    } catch {
-      const toolName = typeof input?.tool_name === "string" ? input.tool_name : "<unknown>";
-      return connectorWriteDenyOutput(toolName);
-    }
-  };
-}
-function connectorWriteDenyOutput(toolName) {
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through the host application's gated approval flow.`
-    }
-  };
-}
-function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
-  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
-  if (!connectorsEnabled || writeMode === "allow") return isolation;
-  return { ...isolation, hooks: { PreToolUse: [{ hooks: [connectorWriteDenyHook()] }] } };
-}
-function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
-  if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
-  const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOLS.includes(t));
-  if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
-  return {
-    disallowedTools,
-    allowedTools: [...CLAUDE_BRIDGE_TOOL_ISOLATION.allowedTools, ...CLAUDE_AI_CONNECTOR_TOOL_PATTERNS]
-  };
-}
-function connectorMcpServers(inventory) {
-  if (!inventory.ok) return {};
-  if (connectorDeclarationsDisabled()) return {};
-  const servers = {};
-  for (const entry of inventory.connectors) {
-    if (entry.installState !== "connected") continue;
-    if (!entry.installedServerId) continue;
-    servers[connectorServerName(entry.name)] = {
-      type: "claudeai-proxy",
-      url: connectorProxyUrl(entry.installedServerId),
-      id: entry.installedServerId,
-      alwaysLoad: true
-    };
-  }
-  return servers;
-}
-function connectorDeclarationsDisabled(env = process.env) {
-  const v4 = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();
-  return v4 === "off" || v4 === "0" || v4 === "false" || v4 === "no";
 }
 
 // node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
@@ -44764,6 +44765,10 @@ function resolveMcpTools(context, excludeToolName) {
   if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
   for (const tool of context.tools) {
     if (tool.name === excludeToolName) continue;
+    if (isChildExecutedTool(tool.name)) {
+      debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
+      continue;
+    }
     const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
     mcpTools.push(tool);
     customToolNameToSdk.set(tool.name, sdkName);
@@ -45587,6 +45592,7 @@ export {
   index_default as default,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
+  isChildExecutedTool,
   isConnectorWriteTool,
   isExtraUsageRequiredMessage,
   listAccountConnectors,
@@ -45602,6 +45608,7 @@ export {
   resolveClaudeExecutable,
   resolveClaudeOAuth,
   resolveConfiguredEffort,
+  resolveMcpTools,
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,

@@ -4,6 +4,7 @@
 import type { Message as PiMessage } from "@earendil-works/pi-ai";
 import type { ContentBlock, Message as SessionMessage } from "cc-session-io";
 import { pascalCase } from "change-case";
+import { isChildExecutedTool } from "./connectors.js";
 
 export const PROVIDER_ID = "claude-bridge";
 
@@ -21,6 +22,19 @@ export function sanitizeToolId(id: string, cache: Map<string, string>): string {
 
 export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<string, string>): string {
 	if (!name) return "";
+	// A claude.ai connector name is ALREADY the child's own tool id — the child
+	// owns that namespace natively. PascalCasing it invented an alias
+	// (`mcp__claude_ai_Slack__slack_search_channels` →
+	// `McpClaudeAiSlackSlackSearchChannels`) that appeared in the child's
+	// projected history, so the model imitated it on the next turn and got a
+	// real `Tool ... not found` from the MCP dispatcher before retrying the
+	// canonical name — one wasted round-trip per affected call (memsira#320).
+	//
+	// Connector names stopped reaching this function at all once they stopped
+	// being mirrored as Pi tool calls (isChildExecutedTool), so this is the
+	// belt to that braces: LEGACY Pi history recorded before that fix still
+	// carries them, and a rebuild would still project the alias.
+	if (isChildExecutedTool(name)) return name;
 	const normalized = name.toLowerCase();
 	if (customToolNameToSdk) {
 		const mapped = customToolNameToSdk.get(name) ?? customToolNameToSdk.get(normalized);

@@ -40,7 +40,7 @@ export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, write
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
-import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
+import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
@@ -53,7 +53,7 @@ import { ensureTurnStarted, finalizeCurrentStream, noteChildExecutedToolResults,
 // bundle/index.js.
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
-export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
+export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -247,7 +247,7 @@ async function* wrapPromptStream(blocks: ContentBlockParam[]): AsyncIterable<SDK
 // them without activating the extension. `ctx()`, `pushContext()`, `popContext()`
 // are imported at the top of this file.
 
-function resolveMcpTools(context: Context, excludeToolName?: string): {
+export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	mcpTools: Tool[];
 	customToolNameToSdk: Map<string, string>;
 	customToolNameToPi: Map<string, string>;
@@ -260,6 +260,18 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 
 	for (const tool of context.tools) {
 		if (tool.name === excludeToolName) continue;
+		// Never re-offer a tool the child owns natively. The claude.ai connector
+		// namespace belongs to the child's own MCP servers, so a Pi tool sitting
+		// on it would be advertised a SECOND time under our prefix — two names
+		// for one capability, and the model picking the wrong one gets a real
+		// `Tool ... not found` from the dispatcher (memsira#320). It would also
+		// be uncallable in any case: a `tool_use` under that namespace is treated
+		// as child-executed and never handed to Pi (isChildExecutedTool), so
+		// filtering here is what makes the two halves agree end to end.
+		if (isChildExecutedTool(tool.name)) {
+			debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
+			continue;
+		}
 		const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
 		mcpTools.push(tool);
 		customToolNameToSdk.set(tool.name, sdkName);
