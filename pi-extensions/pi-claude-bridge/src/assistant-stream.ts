@@ -475,16 +475,30 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 		}
 		return;
 	}
-	reapStaleQueuedResults(c);
-	c.resetToolTracking();
+	// The SDK yields the SAME assistant message more than once (per-block
+	// partial copies and the completed message share one id). With stream
+	// events, the streamed path already renders content and the duplicates are
+	// naturally ignored; on this no-stream-events path each yield used to be
+	// re-rendered wholesale — a rate-limited turn printed "You've hit your
+	// weekly limit" twice. Same-message yields keep the turn's tracking (a
+	// reset mid-message would wipe live tool-claim state) and render only
+	// blocks not already rendered.
+	const sameMessage = typeof assistantMsg.id === "string" && assistantMsg.id.length > 0 && assistantMsg.id === c.currentMessageId;
+	if (!sameMessage) {
+		reapStaleQueuedResults(c);
+		c.resetToolTracking();
+	}
 	// The no-stream-events path also sees a message boundary. It is keyed on the
 	// message ID rather than trusted blindly, because this branch is ALSO reached
 	// for a message whose `message_start` already streamed — any message that
 	// produced no content blocks, since `turnSawStreamEvent` only tracks those.
 	c.beginChildMessage(assistantMsg.id);
-	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
+	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
+	const alreadyRendered = (type: string, content: string): boolean =>
+		sameMessage && c.turnBlocks.some((b: any) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
+			if (alreadyRendered("text", block.text)) continue;
 			ensureTurnStarted();
 			c.turnBlocks.push({ type: "text", text: block.text });
 			const idx = c.turnBlocks.length - 1;
@@ -492,6 +506,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			c.currentPiStream?.push({ type: "text_delta", contentIndex: idx, delta: block.text, partial: c.turnOutput });
 			c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
 		} else if (block.type === "thinking") {
+			if (alreadyRendered("thinking", block.thinking ?? "")) continue;
 			ensureTurnStarted();
 			c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
 			const idx = c.turnBlocks.length - 1;
@@ -511,6 +526,17 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			const mappedName = mapToolName(block.name, customToolNameToPi);
 			const mappedArgs = mapToolArgs(mappedName, block.input);
 			c.recordToolCall(block.id, mappedName, mappedArgs);
+			// A same-message re-yield of an already-mirrored call refreshes its
+			// arguments in place — a second toolCall block would make pi dispatch
+			// the tool twice.
+			const existingIdx = c.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === block.id);
+			if (existingIdx >= 0) {
+				const existing = c.turnBlocks[existingIdx] as any;
+				existing.name = mappedName;
+				existing.arguments = mappedArgs;
+				c.updateToolCallArgs(block.id, mappedArgs);
+				continue;
+			}
 			c.turnBlocks.push({
 				type: "toolCall", id: block.id,
 				name: mappedName,

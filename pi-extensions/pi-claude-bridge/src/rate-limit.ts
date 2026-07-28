@@ -24,9 +24,22 @@ export function uniqueNonEmptyLines(values: unknown[]): string[] {
 	return out;
 }
 
+/** Epoch milliseconds from an SDK reset timestamp, or undefined.
+ *  `SDKRateLimitInfo.resetsAt` is a bare number in epoch SECONDS (measured:
+ *  treating it as ms rendered "resets Jan 21, 1970" for a Jul 2026 reset).
+ *  The unit is undocumented, so detect by magnitude — epoch seconds stay below
+ *  1e12 until the year 33658, epoch ms passed 1e12 in 2001 — and accept ISO
+ *  strings for older payloads. */
+export function resetTimestampMs(value: unknown): number | undefined {
+	let parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
+	if (!Number.isFinite(parsed)) return undefined;
+	if (typeof value === "number" && Math.abs(parsed) < 1e12) parsed *= 1000;
+	return parsed;
+}
+
 export function formatResetTimestamp(value: unknown): string {
-	const parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
-	if (!Number.isFinite(parsed)) return "unknown";
+	const parsed = resetTimestampMs(value);
+	if (parsed === undefined) return "unknown";
 	return new Date(parsed).toLocaleString(undefined, {
 		day: "numeric",
 		hour: "numeric",

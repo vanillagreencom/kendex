@@ -44432,9 +44432,15 @@ function uniqueNonEmptyLines(values) {
   }
   return out;
 }
+function resetTimestampMs(value) {
+  let parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) return void 0;
+  if (typeof value === "number" && Math.abs(parsed) < 1e12) parsed *= 1e3;
+  return parsed;
+}
 function formatResetTimestamp(value) {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
-  if (!Number.isFinite(parsed)) return "unknown";
+  const parsed = resetTimestampMs(value);
+  if (parsed === void 0) return "unknown";
   return new Date(parsed).toLocaleString(void 0, {
     day: "numeric",
     hour: "numeric",
@@ -44823,12 +44829,17 @@ function processAssistantMessage(message, model, customToolNameToPi) {
     }
     return;
   }
-  reapStaleQueuedResults(c);
-  c.resetToolTracking();
+  const sameMessage = typeof assistantMsg.id === "string" && assistantMsg.id.length > 0 && assistantMsg.id === c.currentMessageId;
+  if (!sameMessage) {
+    reapStaleQueuedResults(c);
+    c.resetToolTracking();
+  }
   c.beginChildMessage(assistantMsg.id);
-  debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}`);
+  debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
+  const alreadyRendered = (type, content) => sameMessage && c.turnBlocks.some((b) => b.type === type && (type === "text" ? b.text : b.thinking) === content);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
+      if (alreadyRendered("text", block.text)) continue;
       ensureTurnStarted();
       c.turnBlocks.push({ type: "text", text: block.text });
       const idx = c.turnBlocks.length - 1;
@@ -44836,6 +44847,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       c.currentPiStream?.push({ type: "text_delta", contentIndex: idx, delta: block.text, partial: c.turnOutput });
       c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
     } else if (block.type === "thinking") {
+      if (alreadyRendered("thinking", block.thinking ?? "")) continue;
       ensureTurnStarted();
       c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
       const idx = c.turnBlocks.length - 1;
@@ -44853,6 +44865,14 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       const mappedName = mapToolName(block.name, customToolNameToPi);
       const mappedArgs = mapToolArgs(mappedName, block.input);
       c.recordToolCall(block.id, mappedName, mappedArgs);
+      const existingIdx = c.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === block.id);
+      if (existingIdx >= 0) {
+        const existing = c.turnBlocks[existingIdx];
+        existing.name = mappedName;
+        existing.arguments = mappedArgs;
+        c.updateToolCallArgs(block.id, mappedArgs);
+        continue;
+      }
       c.turnBlocks.push({
         type: "toolCall",
         id: block.id,
@@ -45167,7 +45187,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
         debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
         if (info?.status === "rejected") {
           const resetsAt = formatResetTimestamp(info.resetsAt);
-          const resetAtMs = typeof info.resetsAt === "string" ? Date.parse(info.resetsAt) : void 0;
+          const resetAtMs = resetTimestampMs(info.resetsAt);
           const reason = `${info.rateLimitType ?? "unknown"} rate limit`;
           const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
           emitRateLimitEvent({
@@ -45851,6 +45871,7 @@ export {
   reapStaleQueuedResults,
   recordConnectorCallResult,
   reportToolResultMismatch,
+  resetTimestampMs,
   resolveClaudeExecutable,
   resolveClaudeOAuth,
   resolveConfiguredEffort,

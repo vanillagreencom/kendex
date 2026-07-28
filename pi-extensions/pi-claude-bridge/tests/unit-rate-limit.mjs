@@ -9,9 +9,35 @@ import {
 	buildStreamIdleTimeoutErrorMessage,
 	createStreamIdleWatchdog,
 	formatAllowedRateLimitWarning,
+	formatResetTimestamp,
 	normalizeRateLimitUtilization,
+	resetTimestampMs,
 	streamIdleTimeoutMsFromEnv,
 } from "../src/index.ts";
+
+describe("rate-limit reset timestamps", () => {
+	// SDKRateLimitInfo.resetsAt is a bare number in epoch SECONDS. Treating it
+	// as milliseconds rendered "resets Jan 21, 1970" for a Jul 2026 reset.
+	const JUL_30_2026_SECONDS = 1785412800; // 2026-07-30T04:00:00-07:00
+
+	it("treats a bare numeric resetsAt as epoch seconds", () => {
+		assert.equal(resetTimestampMs(JUL_30_2026_SECONDS), JUL_30_2026_SECONDS * 1000);
+		assert.match(formatResetTimestamp(JUL_30_2026_SECONDS), /2026/);
+		assert.doesNotMatch(formatResetTimestamp(JUL_30_2026_SECONDS), /1970/);
+	});
+
+	it("passes epoch milliseconds through unchanged", () => {
+		assert.equal(resetTimestampMs(JUL_30_2026_SECONDS * 1000), JUL_30_2026_SECONDS * 1000);
+		assert.match(formatResetTimestamp(JUL_30_2026_SECONDS * 1000), /2026/);
+	});
+
+	it("parses ISO strings and rejects garbage", () => {
+		assert.equal(resetTimestampMs("2026-07-30T11:00:00Z"), Date.parse("2026-07-30T11:00:00Z"));
+		assert.equal(resetTimestampMs("not a date"), undefined);
+		assert.equal(resetTimestampMs(undefined), undefined);
+		assert.equal(formatResetTimestamp(undefined), "unknown");
+	});
+});
 
 describe("rate_limit_event allowed_warning", () => {
 	it("suppresses low fractional utilization for seven_day warnings", () => {
