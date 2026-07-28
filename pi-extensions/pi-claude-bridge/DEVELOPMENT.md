@@ -5,9 +5,13 @@ Implementation details for contributors. End-user setup, settings, and troublesh
 ## Stream and tool-result handling
 
 - The bridge runs Claude Code through the Claude Agent SDK while Pi remains the owner of the visible TUI and tool execution.
-- If the SDK stream yields a completed assistant tool-use message before `message_stop`, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately, and the matching tool results are delivered back before the turn continues.
+- A tool-use turn ends at the stream's `message_stop`, not at the first early signal. The SDK yields the completed assistant message AND invokes the MCP tool handlers before `message_delta` arrives — and `message_delta` is what carries the message's real output-token count, so ending the pi stream at either early signal froze pi's per-turn output figures at the `message_start` placeholders (1–7 tokens; 2026-07-28 token test). The early signals now only arm a ~1.5s grace timer (`scheduleToolUseTurnEnd`) that force-finalizes the turn if the terminal events never arrive (the pi 0.80 steer-draining case), so the MCP handlers can never deadlock waiting on a stream pi will not end.
+- An MCP handler claims its tool-call id by tool name + arguments; when no exact match exists but exactly ONE unclaimed call of that tool type does, it is claimed anyway (`argsMismatch` diag) — the handler receives the schema-VALIDATED input while the record holds the raw streamed input, and a stripped key must not strand the call. Nested schema objects also validate permissively (`.passthrough()`) unless the schema says `additionalProperties: false`, matching JSON Schema's default.
 - Tool results whose IDs were never registered in the active assistant tool-use turn are refused instead of being queued against another pending call. Remaining handlers receive an internal-error result so the turn cannot report false success.
+- Queued results that can no longer be consumed (their handler already gave up) are reaped at the next child message boundary with a `stale_queued_tool_results_dropped` diagnostic, instead of poisoning every later mismatch report for the query.
 - If a query tears down while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn.
+- Integrity events (mismatch, synthetic-result repair, stale-result reap, unmatched handler) are also appended to the pi session as `claude-bridge-integrity` custom entries — compact metadata only — so a post-mortem works from the session file alone.
+- Unpaired tool_uses in a session rebuild are paired with an explicit `is_error` result telling the model the output was lost and to re-run the tool if needed, instead of cc-session-io's bare `[no tool result recorded]` placeholder that models read as real output.
 
 ## Child-executed tools (claude.ai connectors)
 

@@ -106,6 +106,45 @@ describe("QueryContext class", () => {
 		assert.equal(claim.ambiguous, false);
 	});
 
+	it("claimToolCall claims the sole same-name call even when recorded args diverge", () => {
+		// Recorded args = raw streamed input; handler args = zod-validated copy.
+		// A stripped/extra key must not strand the only call this handler can be.
+		ctx().recordToolCall("edit-1", "edit", { path: "a.ts", edits: [{ oldText: "x", newText: "y", stray: true }] });
+
+		const claim = ctx().claimToolCall("edit", { path: "a.ts", edits: [{ oldText: "x", newText: "y" }] });
+
+		assert.equal(claim.toolCallId, "edit-1");
+		assert.equal(claim.match, "tool-name");
+		assert.equal(claim.argsMismatch, true);
+		assert.equal(ctx().claimedToolCallIds.has("edit-1"), true);
+	});
+
+	it("claimToolCall still refuses when several same-name calls all mismatch", () => {
+		ctx().recordToolCall("edit-a", "edit", { path: "a.ts", edits: [] });
+		ctx().recordToolCall("edit-b", "edit", { path: "b.ts", edits: [] });
+
+		const claim = ctx().claimToolCall("edit", { path: "c.ts", edits: [] });
+
+		assert.equal(claim.toolCallId, undefined);
+		assert.equal(claim.match, "none");
+		assert.equal(claim.available, 2);
+	});
+
+	it("takeStaleQueuedResults drains the queue and names tools across message resets", () => {
+		ctx().recordToolCall("bash-lost", "bash", { command: "echo hi", timeout: 120 });
+		ctx().pendingResults.set("bash-lost", { content: [{ type: "text", text: "hi" }] });
+		ctx().resetToolTracking(); // new child message: per-message records cleared
+
+		const progress = ctx().toolResultProgress();
+		assert.equal(progress.queuedCount, 1);
+		assert.deepEqual(progress.toolNames, [{ name: "bash", count: 1 }], "query-scoped names survive the reset");
+
+		const stale = ctx().takeStaleQueuedResults();
+		assert.deepEqual(stale, [{ id: "bash-lost", toolName: "bash" }]);
+		assert.equal(ctx().pendingResults.size, 0);
+		assert.deepEqual(ctx().takeStaleQueuedResults(), [], "second drain is empty");
+	});
+
 	it("toolResultProgress reports teardown mismatch counts", () => {
 		ctx().recordToolCall("t0", "read", { path: "a" });
 		ctx().recordToolCall("t1", "grep", { pattern: "x" });

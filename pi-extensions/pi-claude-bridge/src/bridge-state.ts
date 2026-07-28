@@ -56,6 +56,33 @@ export function safeToolCallSummary(calls: Array<{ id: string; toolName: string;
 	return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
 }
 
+export const INTEGRITY_CUSTOM_TYPE = "claude-bridge-integrity";
+
+/**
+ * Persist a bridge integrity event into the pi session transcript.
+ *
+ * The diag log and a piUI toast both die with the machine or the render cycle:
+ * the 2026-07-28 post-mortem found `Error: Claude bridge: …` messages that were
+ * SHOWN but existed nowhere in the pi session file, making analysis from the
+ * session alone impossible. A `CustomEntry` closes that gap the same way the
+ * connector-call audit does — persisted, never part of built context, never
+ * dispatchable by pi's agent loop. Payloads must stay compact metadata (ids,
+ * counts, tool names), never tool output.
+ *
+ * Never throws; returns whether the entry was appended (false outside a pi
+ * session — tests, embedded hosts without extensionApi).
+ */
+export function appendIntegrityEntry(label: string, data: Record<string, unknown>): boolean {
+	try {
+		if (!extensionApi) return false;
+		extensionApi.appendEntry(INTEGRITY_CUSTOM_TYPE, { label, at: new Date().toISOString(), ...data });
+		return true;
+	} catch (error) {
+		debug("appendIntegrityEntry failed:", error);
+		return false;
+	}
+}
+
 function compactToolNameSummary(names: Array<{ name: string; count: number }>, limit = 12): string[] {
 	const shown = names.slice(0, limit).map(({ name, count }) => count > 1 ? `${name}×${count}` : name);
 	if (names.length > limit) shown.push(`+${names.length - limit} more`);
@@ -75,8 +102,13 @@ export function reportSyntheticToolResultRepair(missing: MissingToolResult[], co
 			missing: missing.slice(0, 50),
 			...context,
 		});
+		appendIntegrityEntry("repair_tool_pairing_synthetic_results", {
+			count: missing.length,
+			toolNames,
+			sampledToolCallIds: sampledToolCallIds.slice(0, 12),
+		});
 		safeNotify(
-			`Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"` +
+			`Claude bridge: ${missing.length} missing tool result(s) repaired with an explicit error placeholder` +
 			`${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. ` +
 			`Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
 			"error",
@@ -110,6 +142,16 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 				needsRebuild: sharedSession.needsRebuild === true,
 				forceRotate: sharedSession.forceRotate === true,
 			} : null,
+		});
+		appendIntegrityEntry("tool_result_delivery_mismatch", {
+			reason,
+			toolNames: progress.toolNames,
+			expectedCount: progress.expectedCount,
+			deliveredCount: progress.deliveredCount,
+			resolvedCount: progress.resolvedCount,
+			waitingIds: progress.waitingIds,
+			queuedIds: progress.queuedIds,
+			unmatchedResultIds: progress.unmatchedResultIds,
 		});
 		safeNotify(
 			`Claude bridge: tool result delivery interrupted during ${reason}; ` +

@@ -27906,6 +27906,16 @@ var QueryContext = class {
   pendingResults = /* @__PURE__ */ new Map();
   turnToolCallIds = [];
   turnToolCalls = [];
+  /**
+   * id → Pi tool name for every tool call this QUERY recorded, across all child
+   * messages. Deliberately NOT cleared by resetToolTracking: per-message tracking
+   * resets at every message boundary, but `pendingResults` is query-scoped, so a
+   * result stranded there outlives the message that named it. Without this map a
+   * teardown report can only say "1 queued" with empty toolNames and 0/0
+   * counters — which is exactly the unactionable record the 2026-07-28 diag log
+   * showed. Bounded by the number of tool calls in one query.
+   */
+  queryToolNames = /* @__PURE__ */ new Map();
   claimedToolCallIds = /* @__PURE__ */ new Set();
   deliveredToolResultIds = /* @__PURE__ */ new Set();
   resolvedToolResultIds = /* @__PURE__ */ new Set();
@@ -27913,6 +27923,12 @@ var QueryContext = class {
   reportedToolResultMismatch = false;
   deferredUserMessages = [];
   handledTerminalError = false;
+  /** Armed grace timer for ending a tool_use turn whose terminal stream events
+   *  (message_delta/message_stop) never arrive. The normal path ends the turn at
+   *  message_stop, AFTER message_delta delivered the real output-token count;
+   *  this is the deadlock backstop for streams that go silent instead. Managed
+   *  by schedule/cancelToolUseTurnEnd in assistant-stream.ts. */
+  scheduledToolUseEnd = null;
   // Tool calls the CHILD executes itself (claude.ai connectors — see
   // isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
   // those track calls Pi owes a result for, and Pi owes nothing here. Kept only
@@ -28012,6 +28028,10 @@ var QueryContext = class {
     this.turnSawStreamEvent = false;
     this.turnSawToolCall = false;
     this.handledTerminalError = false;
+    if (this.scheduledToolUseEnd) {
+      clearTimeout(this.scheduledToolUseEnd.timer);
+      this.scheduledToolUseEnd = null;
+    }
     this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     this.currentMessageId = void 0;
@@ -28044,6 +28064,7 @@ var QueryContext = class {
   }
   recordToolCall(id, toolName, args = {}) {
     if (!id) return;
+    this.queryToolNames.set(id, toolName);
     if (!this.turnToolCallIds.includes(id)) this.turnToolCallIds.push(id);
     const existing = this.turnToolCalls.find((call) => call.id === id);
     if (existing) {
@@ -28068,17 +28089,40 @@ var QueryContext = class {
     let chosen;
     let match = "none";
     let ambiguous = false;
+    let argsMismatch = false;
     if (exact.length > 0) {
       chosen = exact[0];
       match = "tool-args";
       ambiguous = exact.length > 1;
-    } else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
+    } else if (byName.length === 1) {
       chosen = byName[0];
       match = "tool-name";
+      argsMismatch = hasRecordedArgs(byName[0].arguments);
     }
     if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
     this.claimedToolCallIds.add(chosen.id);
-    return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length };
+    return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length, ...argsMismatch ? { argsMismatch } : {} };
+  }
+  /**
+   * Drain results still queued in `pendingResults` and report what was dropped.
+   *
+   * Called at a child MESSAGE boundary (message_start / the no-stream-events
+   * assistant fallback): by then the child has necessarily received every tool
+   * result for the previous message — a handler that matched resolved its result
+   * directly or from this queue, and one that never matched already returned an
+   * error. Whatever is still queued therefore belongs to a call whose handler
+   * gave up, and no consumer will ever come for it. Left in place, each entry
+   * poisons every later mismatch report for the whole query (queued>0 with 0/0
+   * counters and no tool names) and forces a session rebuild per turn.
+   */
+  takeStaleQueuedResults() {
+    if (this.pendingResults.size === 0) return [];
+    const stale = [...this.pendingResults.keys()].map((id) => ({
+      id,
+      toolName: this.queryToolNames.get(id) ?? "unknown"
+    }));
+    this.pendingResults.clear();
+    return stale;
   }
   markToolResultDelivered(id) {
     if (id) this.deliveredToolResultIds.add(id);
@@ -28103,9 +28147,15 @@ var QueryContext = class {
     const unresolvedIds = expectedIds.filter((id) => !this.resolvedToolResultIds.has(id));
     const affectedIds = /* @__PURE__ */ new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds, ...unmatchedResultIds]);
     const counts = /* @__PURE__ */ new Map();
-    for (const call of this.turnToolCalls) {
-      if (affectedIds.size > 0 && !affectedIds.has(call.id)) continue;
-      counts.set(call.toolName, (counts.get(call.toolName) ?? 0) + 1);
+    if (affectedIds.size > 0) {
+      for (const id of affectedIds) {
+        const name = this.queryToolNames.get(id) ?? this.turnToolCalls.find((call) => call.id === id)?.toolName ?? "unknown";
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+      }
+    } else {
+      for (const call of this.turnToolCalls) {
+        counts.set(call.toolName, (counts.get(call.toolName) ?? 0) + 1);
+      }
     }
     return {
       expectedIds,
@@ -42901,9 +42951,8 @@ function jsonSchemaPropertyToZod(prop) {
     }
     case "object": {
       if (prop.properties && typeof prop.properties === "object" && !Array.isArray(prop.properties)) {
-        base = external_exports.object(jsonSchemaToZodShape(prop));
-        if (prop.additionalProperties === false) base = base.strict();
-        else if (prop.additionalProperties === true) base = base.passthrough();
+        const obj = external_exports.object(jsonSchemaToZodShape(prop));
+        base = prop.additionalProperties === false ? obj.strict() : obj.passthrough();
       } else {
         base = external_exports.record(external_exports.string(), external_exports.unknown());
       }
@@ -43313,6 +43362,28 @@ function findUnpairedToolUses(messages) {
   }
   return missing;
 }
+var LOST_TOOL_RESULT_TEXT = "Claude bridge: the result of this tool call was lost before the session was rebuilt (the turn was interrupted). Treat the call as failed \u2014 it may or may not have executed. Re-run the tool if its output is still needed.";
+function insertLostToolResultPlaceholders(messages, missing) {
+  const block = (id) => ({ type: "tool_result", tool_use_id: id, content: LOST_TOOL_RESULT_TEXT, is_error: true });
+  const byAssistant = /* @__PURE__ */ new Map();
+  for (const item of missing) {
+    const group = byAssistant.get(item.assistantIndex) ?? [];
+    group.push(item);
+    byAssistant.set(item.assistantIndex, group);
+  }
+  for (const assistantIndex of [...byAssistant.keys()].sort((a, b) => b - a)) {
+    const group = byAssistant.get(assistantIndex);
+    const blocks = group.map((item) => block(item.id));
+    const userIndex = group[0].userIndex;
+    if (userIndex != null && messages[userIndex]?.role === "user") {
+      const user = messages[userIndex];
+      const existing = typeof user.content === "string" ? user.content ? [{ type: "text", text: user.content }] : [] : Array.isArray(user.content) ? user.content : [];
+      user.content = [...blocks, ...existing];
+    } else {
+      messages.splice(assistantIndex + 1, 0, { role: "user", content: blocks });
+    }
+  }
+}
 function summarizeMissingToolNames(missing) {
   const counts = /* @__PURE__ */ new Map();
   for (const item of missing) counts.set(item.toolName, (counts.get(item.toolName) ?? 0) + 1);
@@ -43345,6 +43416,17 @@ function argKeys(args) {
 function safeToolCallSummary(calls) {
   return calls.map((call) => ({ id: call.id, toolName: call.toolName, argKeys: argKeys(call.arguments) }));
 }
+var INTEGRITY_CUSTOM_TYPE = "claude-bridge-integrity";
+function appendIntegrityEntry(label, data) {
+  try {
+    if (!extensionApi) return false;
+    extensionApi.appendEntry(INTEGRITY_CUSTOM_TYPE, { label, at: (/* @__PURE__ */ new Date()).toISOString(), ...data });
+    return true;
+  } catch (error51) {
+    debug("appendIntegrityEntry failed:", error51);
+    return false;
+  }
+}
 function compactToolNameSummary(names, limit = 12) {
   const shown = names.slice(0, limit).map(({ name, count }) => count > 1 ? `${name}\xD7${count}` : name);
   if (names.length > limit) shown.push(`+${names.length - limit} more`);
@@ -43363,8 +43445,13 @@ function reportSyntheticToolResultRepair(missing, context) {
       missing: missing.slice(0, 50),
       ...context
     });
+    appendIntegrityEntry("repair_tool_pairing_synthetic_results", {
+      count: missing.length,
+      toolNames,
+      sampledToolCallIds: sampledToolCallIds.slice(0, 12)
+    });
     safeNotify(
-      `Claude bridge: ${missing.length} missing tool result(s) repaired with "[no tool result recorded]"${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+      `Claude bridge: ${missing.length} missing tool result(s) repaired with an explicit error placeholder${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
       "error"
     );
   } catch (error51) {
@@ -43393,6 +43480,16 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
         needsRebuild: sharedSession.needsRebuild === true,
         forceRotate: sharedSession.forceRotate === true
       } : null
+    });
+    appendIntegrityEntry("tool_result_delivery_mismatch", {
+      reason,
+      toolNames: progress.toolNames,
+      expectedCount: progress.expectedCount,
+      deliveredCount: progress.deliveredCount,
+      resolvedCount: progress.resolvedCount,
+      waitingIds: progress.waitingIds,
+      queuedIds: progress.queuedIds,
+      unmatchedResultIds: progress.unmatchedResultIds
     });
     safeNotify(
       `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
@@ -44122,6 +44219,7 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
     );
   }
   const missingToolResults = findUnpairedToolUses(anthropicMessages);
+  if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
   const repaired = repairToolPairing(anthropicMessages);
   if (missingToolResults.length > 0) {
     reportSyntheticToolResultRepair(missingToolResults, {
@@ -44464,12 +44562,75 @@ function finalizeCurrentStream(stopReason) {
   ctx().currentPiStream.end();
   ctx().currentPiStream = null;
 }
+var TOOL_USE_END_GRACE_MS = 1500;
+function endToolUseTurn(c) {
+  if (!c.currentPiStream || !c.turnOutput) return;
+  cancelScheduledToolUseEnd(c);
+  c.turnOutput.stopReason = "toolUse";
+  c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
+  c.currentPiStream.end();
+  c.currentPiStream = null;
+}
+function cancelScheduledToolUseEnd(c) {
+  if (!c.scheduledToolUseEnd) return;
+  clearTimeout(c.scheduledToolUseEnd.timer);
+  c.scheduledToolUseEnd = null;
+}
+function scheduleToolUseTurnEnd(c, action, source) {
+  if (!c.currentPiStream || !c.turnOutput) return;
+  if (c.scheduledToolUseEnd?.stream === c.currentPiStream) return;
+  cancelScheduledToolUseEnd(c);
+  const stream = c.currentPiStream;
+  const timer = setTimeout(() => {
+    if (c.currentPiStream !== stream) return;
+    debug(`scheduleToolUseTurnEnd: no terminal stream event within ${TOOL_USE_END_GRACE_MS}ms (${source}) \u2014 force-ending tool_use turn`);
+    c.scheduledToolUseEnd = null;
+    action();
+  }, TOOL_USE_END_GRACE_MS);
+  timer.unref?.();
+  c.scheduledToolUseEnd = { stream, timer };
+}
+function reapStaleQueuedResults(c) {
+  const stale = c.takeStaleQueuedResults();
+  if (stale.length === 0) return;
+  const names = stale.map((entry) => entry.toolName);
+  debug(`reapStaleQueuedResults: dropping ${stale.length} queued tool result(s) with no possible consumer:`, names.join(", "));
+  diagDump("stale_queued_tool_results_dropped", { count: stale.length, stale });
+  appendIntegrityEntry("stale_queued_tool_results_dropped", { count: stale.length, stale });
+  safeNotify(
+    `Claude bridge: dropped ${stale.length} tool result(s) whose handler never matched (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", \u2026" : ""}). The model saw an error for these calls and may retry them.`,
+    "warning"
+  );
+}
 function updateTurnOutputModel(modelId) {
   const c = ctx();
   if (typeof modelId !== "string" || !modelId || !c.turnOutput) return;
   if (c.turnOutput.model === modelId) return;
   debug(`provider: active Claude model changed ${c.turnOutput.model} -> ${modelId}`);
   c.turnOutput.model = modelId;
+}
+function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
+  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+  let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
+  if (idx >= 0) {
+    const block = queryCtx.turnBlocks[idx];
+    if ("partialJson" in block) {
+      block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
+      queryCtx.updateToolCallArgs(block.id, block.arguments);
+      delete block.partialJson;
+      delete block.index;
+      queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+    }
+  } else {
+    queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
+    idx = queryCtx.turnBlocks.length - 1;
+    const block = queryCtx.turnBlocks[idx];
+    queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
+    queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+  }
+  queryCtx.turnSawToolCall = true;
+  debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 terminal stream events never arrived`);
+  endToolUseTurn(queryCtx);
 }
 function processStreamEvent(message, customToolNameToPi, model) {
   const c = ctx();
@@ -44481,6 +44642,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
     return;
   }
   if (event?.type === "message_start") {
+    reapStaleQueuedResults(c);
     c.resetToolTracking();
     c.beginChildMessage(event.message?.id);
     updateTurnOutputModel(event.message?.model);
@@ -44584,10 +44746,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
     return;
   }
   if (event?.type === "message_stop" && c.turnSawToolCall) {
-    c.turnOutput.stopReason = "toolUse";
-    c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
-    c.currentPiStream.end();
-    c.currentPiStream = null;
+    endToolUseTurn(c);
     return;
   }
   if (event?.type !== "message_stop" && event?.type !== "ping") {
@@ -44634,7 +44793,7 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
     c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
     c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
   }
-  if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
+  if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model);
   return sawToolUse;
 }
 function noteChildExecutedToolResults(message) {
@@ -44660,16 +44819,11 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   if (c.turnSawStreamEvent) {
     if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
       c.turnSawToolCall = true;
-      if (c.currentPiStream && c.turnOutput) {
-        c.turnOutput.stopReason = "toolUse";
-        c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
-        c.currentPiStream.end();
-        c.currentPiStream = null;
-        debug("processAssistantMessage boundary: ended streamed tool_use turn from assistant message");
-      }
+      scheduleToolUseTurnEnd(c, () => endToolUseTurn(c), "assistant-boundary");
     }
     return;
   }
+  reapStaleQueuedResults(c);
   c.resetToolTracking();
   c.beginChildMessage(assistantMsg.id);
   debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b) => b.type).join(",")}`);
@@ -44717,10 +44871,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   }
   if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
   if (c.turnSawToolCall && c.currentPiStream && c.turnOutput) {
-    c.turnOutput.stopReason = "toolUse";
-    c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
-    c.currentPiStream.end();
-    c.currentPiStream = null;
+    endToolUseTurn(c);
   }
 }
 
@@ -44868,32 +45019,6 @@ function resolveMcpTools(context, excludeToolName) {
   }
   return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
-function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
-  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-  let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
-  if (idx >= 0) {
-    const block = queryCtx.turnBlocks[idx];
-    if ("partialJson" in block) {
-      block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
-      queryCtx.updateToolCallArgs(block.id, block.arguments);
-      delete block.partialJson;
-      delete block.index;
-      queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-    }
-  } else {
-    queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
-    idx = queryCtx.turnBlocks.length - 1;
-    const block = queryCtx.turnBlocks[idx];
-    queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
-    queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-  }
-  queryCtx.turnSawToolCall = true;
-  queryCtx.turnOutput.stopReason = "toolUse";
-  debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 SDK invoked the tool before message_stop/assistant message`);
-  queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-  queryCtx.currentPiStream.end();
-  queryCtx.currentPiStream = null;
-}
 function buildMcpServers(tools, queryCtx) {
   if (!tools.length) return void 0;
   const mcpTools = tools.map((tool) => ({
@@ -44913,9 +45038,23 @@ function buildMcpServers(tools, queryCtx) {
           turnToolCallIds: queryCtx.turnToolCallIds,
           turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
         });
+        appendIntegrityEntry("tool_handler_unmatched", {
+          toolName: tool.name,
+          argKeys: argKeys(mappedArgs),
+          available: claim.available,
+          turnToolCallIds: queryCtx.turnToolCallIds
+        });
         return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
       }
-      if (claim.match !== "tool-args" || claim.ambiguous) {
+      if (claim.argsMismatch) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed sole same-name call despite args mismatch`);
+        diagDump("tool_claim_args_mismatch", {
+          toolName: tool.name,
+          toolCallId,
+          handlerArgKeys: argKeys(mappedArgs),
+          recordedArgKeys: argKeys(queryCtx.turnToolCalls.find((call) => call.id === toolCallId)?.arguments)
+        });
+      } else if (claim.match !== "tool-args" || claim.ambiguous) {
         debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
       }
       if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
@@ -44926,7 +45065,11 @@ function buildMcpServers(tools, queryCtx) {
         return result;
       }
       debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
-      finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+      scheduleToolUseTurnEnd(
+        queryCtx,
+        () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
+        `mcp-invocation:${tool.name}`
+      );
       return new Promise((resolve5) => {
         queryCtx.pendingToolCalls.set(toolCallId, {
           toolName: tool.name,
@@ -45661,11 +45804,14 @@ export {
   CONNECTOR_WRITE_TOOLS,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
+  INTEGRITY_CUSTOM_TYPE,
   STREAM_IDLE_BACKOFF_HINT_MS,
   STREAM_IDLE_TIMEOUT_ENV,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
+  appendIntegrityEntry,
   buildStreamIdleTimeoutErrorMessage,
+  cancelScheduledToolUseEnd,
   classifyClaudeExecutableBytes,
   connectorCachePath,
   connectorCacheScopeKey,
@@ -45685,6 +45831,8 @@ export {
   createStreamIdleWatchdog,
   credentialCandidatePaths,
   index_default as default,
+  endToolUseTurn,
+  finalizeToolUseTurnFromMcpInvocation,
   flushConnectorCallAudit,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
@@ -45700,6 +45848,7 @@ export {
   processAssistantMessage,
   processStreamEvent,
   readCachedConnectors,
+  reapStaleQueuedResults,
   recordConnectorCallResult,
   reportToolResultMismatch,
   resolveClaudeExecutable,
@@ -45707,6 +45856,7 @@ export {
   resolveConfiguredEffort,
   resolveMcpTools,
   restoreSharedSessionFromPi,
+  scheduleToolUseTurnEnd,
   setConnectorCallAuditSink,
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,

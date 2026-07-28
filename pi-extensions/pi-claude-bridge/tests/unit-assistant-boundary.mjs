@@ -23,7 +23,7 @@ function installFakeStream() {
 describe("assistant tool-use boundary fallback", () => {
 	beforeEach(() => resetStack());
 
-	it("ends a streamed tool-use turn when the SDK assistant message arrives before message_stop", () => {
+	it("defers the streamed tool-use turn end to message_stop so message_delta usage lands", () => {
 		const c = ctx();
 		c.resetTurnState(model);
 		const events = installFakeStream();
@@ -51,14 +51,29 @@ describe("assistant tool-use boundary fallback", () => {
 			},
 		}, model, new Map([["mcp__custom-tools__bash", "bash"]]));
 
-		assert.equal(c.currentPiStream, null);
-		assert.equal(c.turnOutput.stopReason, "toolUse");
+		// Boundary arms the deferred end instead of closing the stream: the SDK
+		// yields this assistant message BEFORE message_delta, and message_delta is
+		// what carries the message's real output-token count.
+		assert.ok(c.currentPiStream, "boundary must not end the stream directly");
+		assert.ok(c.scheduledToolUseEnd, "boundary arms the grace timer");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_1"]);
 		assert.equal(c.turnBlocks.length, 1, "must not duplicate streamed tool call block");
 		assert.equal(c.turnBlocks[0].arguments.command, "echo hi");
 		assert.ok(!("partialJson" in c.turnBlocks[0]), "partial JSON should be finalized");
+
+		// message_delta then message_stop — the normal terminal events.
+		processStreamEvent({ type: "stream_event", event: {
+			type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 187 },
+		} }, new Map(), model);
+		processStreamEvent({ type: "stream_event", event: { type: "message_stop" } }, new Map(), model);
+
+		assert.equal(c.currentPiStream, null);
+		assert.equal(c.scheduledToolUseEnd, null, "grace timer disarmed at turn end");
+		assert.equal(c.turnOutput.stopReason, "toolUse");
+		assert.equal(c.turnOutput.usage.output, 187, "message_delta usage must reach the delivered message");
 		assert.equal(events.at(-2).type, "done");
 		assert.equal(events.at(-2).reason, "toolUse");
+		assert.equal(events.at(-2).message.usage.output, 187, "done event carries the real output count");
 		assert.equal(events.at(-1).type, "stream_end");
 	});
 
@@ -80,12 +95,46 @@ describe("assistant tool-use boundary fallback", () => {
 			},
 		}, model, new Map([["mcp__custom-tools__read", "read"]]));
 
-		assert.equal(c.currentPiStream, null);
+		assert.ok(c.currentPiStream, "boundary defers the end to message_stop");
+		assert.ok(c.scheduledToolUseEnd, "boundary arms the grace timer");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_missing"]);
 		assert.equal(c.turnBlocks.length, 1);
 		assert.equal(c.turnBlocks[0].name, "read");
 		assert.equal(c.turnBlocks[0].arguments.path, "README.md");
+		processStreamEvent({ type: "stream_event", event: { type: "message_stop" } }, new Map([["mcp__custom-tools__read", "read"]]), model);
+		assert.equal(c.currentPiStream, null);
 		assert.deepEqual(events.map((event) => event.type), ["start", "toolcall_start", "toolcall_end", "done", "stream_end"]);
+	});
+
+	it("grace timer force-ends the tool-use turn when terminal events never arrive", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		c.turnSawStreamEvent = true;
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{
+					type: "tool_use",
+					id: "toolu_silent",
+					name: "mcp__custom-tools__bash",
+					input: { command: "echo hi" },
+				}],
+			},
+		}, model, new Map([["mcp__custom-tools__bash", "bash"]]));
+
+		assert.ok(c.currentPiStream, "turn stays open awaiting message_stop");
+		assert.ok(c.scheduledToolUseEnd, "grace timer armed");
+
+		t.mock.timers.tick(1500);
+
+		assert.equal(c.currentPiStream, null, "grace elapsed — turn force-ended");
+		assert.equal(c.scheduledToolUseEnd, null);
+		assert.equal(events.at(-2).type, "done");
+		assert.equal(events.at(-2).reason, "toolUse");
+		assert.equal(events.at(-1).type, "stream_end");
 	});
 
 	it("records assistant tool-use ids even after the stream already ended", () => {

@@ -28,9 +28,15 @@ export function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTyp
 		}
 		case "object": {
 			if (prop.properties && typeof prop.properties === "object" && !Array.isArray(prop.properties)) {
-				base = z.object(jsonSchemaToZodShape(prop));
-				if (prop.additionalProperties === false) base = (base as z.ZodObject<Record<string, z.ZodTypeAny>>).strict();
-				else if (prop.additionalProperties === true) base = (base as z.ZodObject<Record<string, z.ZodTypeAny>>).passthrough();
+				const obj = z.object(jsonSchemaToZodShape(prop));
+				// JSON Schema's default is PERMISSIVE (additionalProperties omitted
+				// means allowed); zod's default is to silently STRIP unknown keys.
+				// Stripping matters here: the MCP handler compares its validated
+				// input against the raw streamed tool_use input to claim a call id,
+				// so a silently dropped key made the two diverge and the claim fail
+				// (stranding the call — see claimToolCall). Only an explicit
+				// additionalProperties:false may reject/strip.
+				base = prop.additionalProperties === false ? obj.strict() : obj.passthrough();
 			} else {
 				base = z.record(z.string(), z.unknown());
 			}

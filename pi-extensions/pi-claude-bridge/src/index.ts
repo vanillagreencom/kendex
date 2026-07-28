@@ -39,7 +39,7 @@ export {
 export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
-import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
+import { appendIntegrityEntry, argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
 import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { flushConnectorCallAudit } from "./connector-audit.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
@@ -47,20 +47,20 @@ import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSes
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
-import { ensureTurnStarted, finalizeCurrentStream, noteChildExecutedToolResults, parsePartialJson, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
+import { ensureTurnStarted, finalizeCurrentStream, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, scheduleToolUseTurnEnd, updateTurnOutputModel } from "./assistant-stream.js";
 
 // Re-exports: the module decomposition must not change the bundle entry's
 // public surface — unit tests and downstream consumers import these from
 // bundle/index.js.
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
-export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
+export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reportToolResultMismatch } from "./bridge-state.js";
 export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
-export { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "./assistant-stream.js";
+export { cancelScheduledToolUseEnd, endToolUseTurn, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, reapStaleQueuedResults, scheduleToolUseTurnEnd } from "./assistant-stream.js";
 
 // Compat (#2): use factory if available (pi-ai ≥0.66), else fall back to constructor (gsd-pi etc.)
 const _piAi = piAi as any;
@@ -285,54 +285,12 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 
-/** Finalizes the current pi turn when the SDK invokes an MCP tool handler
- *  before emitting `message_stop` or the completed assistant message.
- *
- *  Observed with Claude Code under pi 0.80's steer draining (tool result and
- *  drained steer arrive in one provider call): the NEXT tool turn's tool_use
- *  streams in, the SDK invokes the MCP handler — and neither terminal event
- *  ever arrives. The invocation itself proves the assistant turn is committed,
- *  so end the pi stream here exactly like the `message_stop` path; otherwise
- *  the handler blocks on a result pi will never deliver (deadlock). No-op when
- *  the turn already ended (stream null) or the tool call isn't part of the
- *  currently streamed turn. */
-function finalizeToolUseTurnFromMcpInvocation(
-	queryCtx: QueryContext,
-	toolCallId: string,
-	toolName: string,
-	mappedArgs: Record<string, unknown>,
-): void {
-	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-	let idx = queryCtx.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === toolCallId);
-	if (idx >= 0) {
-		const block = queryCtx.turnBlocks[idx] as any;
-		if ("partialJson" in block) {
-			// Stream ended before content_block_stop — settle the args from the
-			// partial JSON the same way content_block_stop would have.
-			block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
-			queryCtx.updateToolCallArgs(block.id, block.arguments);
-			delete block.partialJson;
-			delete block.index;
-			queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-		}
-	} else {
-		// The invocation can arrive before the tool_use is streamed at all
-		// (observed after a tool-result+steer provider call reset the turn):
-		// synthesize the toolCall from the claim — the MCP call carries the
-		// authoritative id, name, and arguments.
-		queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
-		idx = queryCtx.turnBlocks.length - 1;
-		const block = queryCtx.turnBlocks[idx] as any;
-		queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
-		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-	}
-	queryCtx.turnSawToolCall = true;
-	queryCtx.turnOutput.stopReason = "toolUse";
-	debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) — SDK invoked the tool before message_stop/assistant message`);
-	queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-	queryCtx.currentPiStream.end();
-	queryCtx.currentPiStream = null;
-}
+// finalizeToolUseTurnFromMcpInvocation moved to assistant-stream.ts: it is now
+// the grace-timer ACTION armed by scheduleToolUseTurnEnd rather than an
+// immediate end. The CLI invokes MCP handlers before message_delta arrives on
+// every tool-use turn, and message_delta is what carries the real output-token
+// count — ending the pi stream at handler invocation is what froze pi's
+// per-turn output figures at the message_start placeholders (1–7 tokens).
 
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
 // blocks on a Promise until pi delivers the tool result via streamSimple.
@@ -359,9 +317,25 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 					turnToolCallIds: queryCtx.turnToolCallIds,
 					turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls),
 				});
+				appendIntegrityEntry("tool_handler_unmatched", {
+					toolName: tool.name,
+					argKeys: argKeys(mappedArgs),
+					available: claim.available,
+					turnToolCallIds: queryCtx.turnToolCallIds,
+				});
 				return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true } satisfies McpResult;
 			}
-			if (claim.match !== "tool-args" || claim.ambiguous) {
+			if (claim.argsMismatch) {
+				// Claimed anyway (sole same-name candidate) — record the divergence so
+				// a schema/validator drift stays visible without stranding the call.
+				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed sole same-name call despite args mismatch`);
+				diagDump("tool_claim_args_mismatch", {
+					toolName: tool.name,
+					toolCallId,
+					handlerArgKeys: argKeys(mappedArgs),
+					recordedArgKeys: argKeys(queryCtx.turnToolCalls.find((call) => call.id === toolCallId)?.arguments),
+				});
+			} else if (claim.match !== "tool-args" || claim.ambiguous) {
 				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
 			}
 			if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
@@ -372,7 +346,14 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 				return result;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
-			finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
+			// Don't end the pi turn here — message_delta (real output tokens) and
+			// message_stop are normally milliseconds behind this invocation. Arm the
+			// grace timer instead; it force-finalizes only if they never arrive.
+			scheduleToolUseTurnEnd(
+				queryCtx,
+				() => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
+				`mcp-invocation:${tool.name}`,
+			);
 			return new Promise<McpResult>((resolve) => {
 				queryCtx.pendingToolCalls.set(toolCallId, {
 					toolName: tool.name,

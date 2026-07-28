@@ -7,7 +7,7 @@ import { extensionApi, piUI, reportSyntheticToolResultRepair, setSharedSession, 
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
-import { findUnpairedToolUses } from "./tool-pairing-audit.js";
+import { findUnpairedToolUses, insertLostToolResultPlaceholders } from "./tool-pairing-audit.js";
 
 // --- Session persistence ---
 
@@ -167,8 +167,13 @@ function convertAndImportMessages(
 		debug(`convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
-	// Pre-repair for debug logging; importMessages also repairs internally (idempotent).
+	// Pre-repair: pair every orphaned tool_use with an EXPLICIT bridge-authored
+	// error result before cc-session-io's repairToolPairing can backfill its bare
+	// "[no tool result recorded]" placeholder — which the model reads as tool
+	// output and silently reasons on. Ours is is_error and says what to do.
+	// repairToolPairing still runs after (idempotent; finds nothing left).
 	const missingToolResults = findUnpairedToolUses(anthropicMessages);
+	if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
 	const repaired = repairToolPairing(anthropicMessages);
 	if (missingToolResults.length > 0) {
 		reportSyntheticToolResultRepair(missingToolResults, {

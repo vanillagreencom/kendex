@@ -79,6 +79,12 @@ export interface ClaimedToolCall {
 	match: "tool-args" | "tool-name" | "none";
 	ambiguous: boolean;
 	available: number;
+	/** True when the claim went through the sole-same-name fallback even though
+	 *  the recorded call had (different) arguments. Recorded args come from the
+	 *  raw streamed input while the handler receives the MCP server's
+	 *  schema-validated copy, so a benign divergence (stripped unknown key,
+	 *  applied default) must not strand the call — but it is worth a diagnostic. */
+	argsMismatch?: boolean;
 }
 
 export interface ToolResultProgress {
@@ -144,6 +150,16 @@ export class QueryContext {
 	pendingResults = new Map<string, McpResult>();
 	turnToolCallIds: string[] = [];
 	turnToolCalls: TurnToolCallRecord[] = [];
+	/**
+	 * id → Pi tool name for every tool call this QUERY recorded, across all child
+	 * messages. Deliberately NOT cleared by resetToolTracking: per-message tracking
+	 * resets at every message boundary, but `pendingResults` is query-scoped, so a
+	 * result stranded there outlives the message that named it. Without this map a
+	 * teardown report can only say "1 queued" with empty toolNames and 0/0
+	 * counters — which is exactly the unactionable record the 2026-07-28 diag log
+	 * showed. Bounded by the number of tool calls in one query.
+	 */
+	queryToolNames = new Map<string, string>();
 	claimedToolCallIds = new Set<string>();
 	deliveredToolResultIds = new Set<string>();
 	resolvedToolResultIds = new Set<string>();
@@ -151,6 +167,12 @@ export class QueryContext {
 	reportedToolResultMismatch = false;
 	deferredUserMessages: string[] = [];
 	handledTerminalError = false;
+	/** Armed grace timer for ending a tool_use turn whose terminal stream events
+	 *  (message_delta/message_stop) never arrive. The normal path ends the turn at
+	 *  message_stop, AFTER message_delta delivered the real output-token count;
+	 *  this is the deadlock backstop for streams that go silent instead. Managed
+	 *  by schedule/cancelToolUseTurnEnd in assistant-stream.ts. */
+	scheduledToolUseEnd: { stream: unknown; timer: ReturnType<typeof setTimeout> } | null = null;
 
 	// Tool calls the CHILD executes itself (claude.ai connectors — see
 	// isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
@@ -246,6 +268,12 @@ export class QueryContext {
 		this.turnSawStreamEvent = false;
 		this.turnSawToolCall = false;
 		this.handledTerminalError = false;
+		// A new pi message means the previous turn's stream is done with; an armed
+		// end-timer for it must not fire into the new turn's state.
+		if (this.scheduledToolUseEnd) {
+			clearTimeout(this.scheduledToolUseEnd.timer);
+			this.scheduledToolUseEnd = null;
+		}
 		// Usage accounting IS per-Pi-message, so it resets with the message it
 		// describes — unlike tool-call tracking below.
 		this.turnUsageCarry = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -289,6 +317,7 @@ export class QueryContext {
 
 	recordToolCall(id: string | undefined, toolName: string, args: Record<string, unknown> = {}): void {
 		if (!id) return;
+		this.queryToolNames.set(id, toolName);
 		if (!this.turnToolCallIds.includes(id)) this.turnToolCallIds.push(id);
 		const existing = this.turnToolCalls.find((call) => call.id === id);
 		if (existing) {
@@ -317,22 +346,57 @@ export class QueryContext {
 		let match: ClaimedToolCall["match"] = "none";
 		let ambiguous = false;
 
+		let argsMismatch = false;
 		if (exact.length > 0) {
 			chosen = exact[0];
 			match = "tool-args";
 			ambiguous = exact.length > 1;
-		} else if (byName.length === 1 && !hasRecordedArgs(byName[0].arguments)) {
-			// The SDK can invoke the MCP handler after content_block_start but
-			// before input_json_delta/content_block_stop finalizes arguments.
-			// Falling back to the sole same-name, argument-less call preserves that
-			// race without ever claiming a different tool type.
+		} else if (byName.length === 1) {
+			// A single unclaimed call of this tool type is the only call this
+			// handler can possibly belong to, so claim it even when the recorded
+			// arguments differ. Two known benign sources of divergence:
+			//   - the SDK can invoke the handler after content_block_start but
+			//     before input_json_delta/content_block_stop finalizes arguments,
+			//     so the record still holds a partial parse;
+			//   - the handler receives the MCP server's schema-VALIDATED copy of
+			//     the input (zod may strip unknown keys or apply defaults) while
+			//     the record holds the raw streamed input.
+			// Refusing here stranded the call outright: the handler errored into
+			// the child while pi's real result sat queued forever (diag log
+			// 2026-07-28, `edit` with argKeys [edits, path] on both sides). A
+			// same-type sole-candidate claim is strictly safer than that. With
+			// SEVERAL same-name candidates and no exact match we still refuse —
+			// cross-pairing two live calls is the one outcome worse than failing.
 			chosen = byName[0];
 			match = "tool-name";
+			argsMismatch = hasRecordedArgs(byName[0].arguments);
 		}
 
 		if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
 		this.claimedToolCallIds.add(chosen.id);
-		return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length };
+		return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length, ...(argsMismatch ? { argsMismatch } : {}) };
+	}
+
+	/**
+	 * Drain results still queued in `pendingResults` and report what was dropped.
+	 *
+	 * Called at a child MESSAGE boundary (message_start / the no-stream-events
+	 * assistant fallback): by then the child has necessarily received every tool
+	 * result for the previous message — a handler that matched resolved its result
+	 * directly or from this queue, and one that never matched already returned an
+	 * error. Whatever is still queued therefore belongs to a call whose handler
+	 * gave up, and no consumer will ever come for it. Left in place, each entry
+	 * poisons every later mismatch report for the whole query (queued>0 with 0/0
+	 * counters and no tool names) and forces a session rebuild per turn.
+	 */
+	takeStaleQueuedResults(): Array<{ id: string; toolName: string }> {
+		if (this.pendingResults.size === 0) return [];
+		const stale = [...this.pendingResults.keys()].map((id) => ({
+			id,
+			toolName: this.queryToolNames.get(id) ?? "unknown",
+		}));
+		this.pendingResults.clear();
+		return stale;
 	}
 
 	markToolResultDelivered(id: string | undefined): void {
@@ -361,9 +425,21 @@ export class QueryContext {
 		const unresolvedIds = expectedIds.filter((id) => !this.resolvedToolResultIds.has(id));
 		const affectedIds = new Set([...missingDeliveredIds, ...unresolvedIds, ...waitingIds, ...queuedIds, ...unmatchedResultIds]);
 		const counts = new Map<string, number>();
-		for (const call of this.turnToolCalls) {
-			if (affectedIds.size > 0 && !affectedIds.has(call.id)) continue;
-			counts.set(call.toolName, (counts.get(call.toolName) ?? 0) + 1);
+		if (affectedIds.size > 0) {
+			// Name the affected ids from the query-scoped map, not just this
+			// message's records: a queued straggler from an earlier child message is
+			// exactly the case a mismatch report exists for, and this message's
+			// turnToolCalls no longer knows it.
+			for (const id of affectedIds) {
+				const name = this.queryToolNames.get(id)
+					?? this.turnToolCalls.find((call) => call.id === id)?.toolName
+					?? "unknown";
+				counts.set(name, (counts.get(name) ?? 0) + 1);
+			}
+		} else {
+			for (const call of this.turnToolCalls) {
+				counts.set(call.toolName, (counts.get(call.toolName) ?? 0) + 1);
+			}
 		}
 		return {
 			expectedIds,

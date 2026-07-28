@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { QueryContext } from "../src/query-state.js";
-import { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "../src/index.js";
+import { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reapStaleQueuedResults, reportToolResultMismatch } from "../src/index.js";
+import { setExtensionApi } from "../src/bridge-state.js";
 
 let dir;
 let diagPath;
@@ -83,5 +84,76 @@ describe("tool-result integrity reporting", () => {
 		assert.doesNotThrow(() => reportToolResultMismatch(makeMismatchContext(), "query teardown", "/repo"));
 		assert.equal(readDiagEntries().length, 1);
 		assert.equal(__testGetBridgeIntegrityState().sharedSession.needsRebuild, true);
+	});
+});
+
+describe("integrity entries persisted to the pi session", () => {
+	let sessionEntries;
+
+	beforeEach(() => {
+		dir = mkdtempSync("/tmp/claude-bridge-integrity-");
+		diagPath = join(dir, "diag.log");
+		process.env.CLAUDE_BRIDGE_DIAG_PATH = diagPath;
+		notifications = [];
+		sessionEntries = [];
+		__testSetBridgeIntegrityState({
+			ui: { notify: (message, level) => notifications.push({ message, level }) },
+			sharedSession: { sessionId: "session-12345678", cursor: 4, cwd: "/repo" },
+		});
+		setExtensionApi({ appendEntry: (customType, data) => sessionEntries.push({ customType, data }) });
+	});
+
+	afterEach(() => {
+		setExtensionApi(undefined);
+		__testSetBridgeIntegrityState({ ui: null, sharedSession: null });
+		delete process.env.CLAUDE_BRIDGE_DIAG_PATH;
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("a mismatch report is persisted as a claude-bridge-integrity entry", () => {
+		reportToolResultMismatch(makeMismatchContext(), "query teardown", "/repo");
+
+		assert.equal(sessionEntries.length, 1);
+		assert.equal(sessionEntries[0].customType, INTEGRITY_CUSTOM_TYPE);
+		assert.equal(sessionEntries[0].data.label, "tool_result_delivery_mismatch");
+		assert.deepEqual(sessionEntries[0].data.queuedIds, ["t1"]);
+		assert.deepEqual(sessionEntries[0].data.toolNames, [{ name: "bash", count: 1 }]);
+		assert.equal(JSON.stringify(sessionEntries[0]).includes("should-not-leak"), false, "never tool arguments or output");
+	});
+
+	it("appendIntegrityEntry reports false when no pi session exists and never throws", () => {
+		setExtensionApi(undefined);
+		assert.equal(appendIntegrityEntry("anything", { count: 1 }), false);
+		setExtensionApi({ appendEntry: () => { throw new Error("append failed"); } });
+		assert.doesNotThrow(() => appendIntegrityEntry("anything", { count: 1 }));
+		assert.equal(appendIntegrityEntry("anything", { count: 1 }), false);
+	});
+
+	it("reaping stale queued results drops them, diags, notifies, and persists", () => {
+		const queryCtx = new QueryContext();
+		queryCtx.recordToolCall("bash-lost", "bash", { command: "echo should-not-leak" });
+		queryCtx.pendingResults.set("bash-lost", { toolCallId: "bash-lost", content: [{ type: "text", text: "should-not-leak" }] });
+		queryCtx.resetToolTracking();
+
+		reapStaleQueuedResults(queryCtx);
+
+		assert.equal(queryCtx.pendingResults.size, 0);
+		const diag = readDiagEntries();
+		assert.equal(diag.length, 1);
+		assert.equal(diag[0].label, "stale_queued_tool_results_dropped");
+		assert.deepEqual(diag[0].stale, [{ id: "bash-lost", toolName: "bash" }]);
+		assert.equal(sessionEntries.length, 1);
+		assert.equal(sessionEntries[0].data.label, "stale_queued_tool_results_dropped");
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "warning");
+		assert.match(notifications[0].message, /bash/);
+		assert.equal(JSON.stringify(diag).includes("should-not-leak"), false, "diag never carries tool output");
+		assert.equal(JSON.stringify(sessionEntries).includes("should-not-leak"), false, "session entry never carries tool output");
+	});
+
+	it("reaping nothing appends nothing", () => {
+		reapStaleQueuedResults(new QueryContext());
+		assert.equal(sessionEntries.length, 0);
+		assert.equal(notifications.length, 0);
 	});
 });

@@ -179,7 +179,13 @@ describe("child-executed tools are never mirrored as Pi tool calls", () => {
 		assert.equal(c.turnBlocks.length, 1, "only the Pi tool call is mirrored");
 		assert.equal(c.turnBlocks[0].name, "read");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_pi"]);
-		assert.equal(c.currentPiStream, null, "a real Pi tool call still ends the turn");
+		// The boundary no longer ends the turn directly — it arms the grace timer
+		// and lets message_stop end it, so message_delta's usage can land first.
+		assert.equal(c.turnSawToolCall, true);
+		assert.ok(c.scheduledToolUseEnd, "a real Pi tool call arms the deferred turn end");
+		processStreamEvent(streamEvent({ type: "message_stop" }), new Map(), model);
+		assert.equal(c.currentPiStream, null, "message_stop ends the tool-use turn");
+		assert.equal(c.scheduledToolUseEnd, null, "grace timer disarmed at turn end");
 	});
 });
 
