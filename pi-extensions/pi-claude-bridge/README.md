@@ -112,6 +112,16 @@ Connector tools run inside Claude Code rather than in Pi, so Pi shows the model'
 
 Each of those lookups is still recorded in the session file as a `claude-bridge-connector-call` entry — the tool name, whether it succeeded, and how many bytes came back, never the contents. So "did it really look that up?" has an answer even though nothing is drawn in the transcript.
 
+That entry needs a pi session to be written into. A host that embeds the bridge **without** one — loading it through a bare resource loader, so `extensionApi` is undefined — gets no record at all, and nothing in the bridge can tell. Such a host can install its own destination:
+
+```ts
+import { setConnectorCallAuditSink } from "@vanillagreen/pi-claude-bridge";
+
+setConnectorCallAuditSink((record) => myOwnAuditTrail(record));  // pass undefined to clear
+```
+
+The sink **adds** a destination; it never replaces the session entry. A session-backed host that installs one gets both, so turning it on can never cost you the record you already had. Same payload-free shape as the entry (`name`, `toolUseId`, `outcome`, and where known `byteSize` / `childSessionId` / `reason`), and the same never-fails-a-turn rule: a sink that throws is caught and dropped. It is process-global, like the bridge's other host handles, so a host running several conversations in one process must route by `childSessionId` itself.
+
 Extension-manager settings use flat package-scoped keys:
 
 ```json

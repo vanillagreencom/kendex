@@ -43424,15 +43424,29 @@ function connectorResultByteSize(content) {
     return void 0;
   }
 }
+var auditSink;
+function setConnectorCallAuditSink(sink) {
+  auditSink = sink;
+}
 function appendConnectorCallAudit(data) {
-  if (!extensionApi) return false;
-  try {
-    extensionApi.appendEntry(CONNECTOR_CALL_CUSTOM_TYPE, data);
-    return true;
-  } catch (error51) {
-    debug("appendConnectorCallAudit failed:", error51);
-    return false;
+  let delivered = false;
+  if (extensionApi) {
+    try {
+      extensionApi.appendEntry(CONNECTOR_CALL_CUSTOM_TYPE, data);
+      delivered = true;
+    } catch (error51) {
+      debug("appendConnectorCallAudit failed:", error51);
+    }
   }
+  if (auditSink) {
+    try {
+      auditSink({ ...data });
+      delivered = true;
+    } catch (error51) {
+      debug("connector call audit sink failed:", error51);
+    }
+  }
+  return delivered;
 }
 function recordConnectorCallResult(queryCtx, toolUseId, name, isError, byteSize) {
   const pending = queryCtx.connectorCallAudit.get(toolUseId);
@@ -45693,6 +45707,7 @@ export {
   resolveConfiguredEffort,
   resolveMcpTools,
   restoreSharedSessionFromPi,
+  setConnectorCallAuditSink,
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,
   streamIdleTimeoutMsFromEnv,

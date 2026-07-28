@@ -77,21 +77,77 @@ export function connectorResultByteSize(content: unknown): number | undefined {
 }
 
 /**
- * Append one audit entry. Returns whether it was actually persisted, so a caller
- * can log the truth rather than assume — the extension API is absent whenever the
- * bridge runs outside a pi session (tests, the connector-inventory entry point).
+ * An ADDITIONAL destination for connector-call records, for a host that embeds
+ * the bridge with no pi session to append to.
  *
- * Never throws: an audit record must not be able to fail a turn.
+ * Never throws is the contract on OUR side; a sink that throws anyway is caught
+ * and dropped, because an audit record must not be able to fail a turn.
+ */
+export type ConnectorCallAuditSink = (data: ConnectorCallAuditData) => void;
+
+let auditSink: ConnectorCallAuditSink | undefined;
+
+/**
+ * Install (or clear, with `undefined`) a host sink for connector-call records.
+ *
+ * **The sink ADDS a destination, it never replaces `appendEntry`.** A host that
+ * drives real `AgentSession`s gets the transcript-local entries for free, and a
+ * replacing sink would take those away and reopen the very audit gap this
+ * feature closes (memsira, 2026-07-28 — their `apps/sidecar/src/runtime.ts` is
+ * session-backed, and 122 of their app-chat session files carry the bridge's
+ * `claude-bridge-session` markers). A host with both a session and a sink has
+ * asked for both and gets both.
+ *
+ * It exists because the OTHER embedding shape gets nothing at all: drovr loads
+ * the bundle through a throwaway resource loader over
+ * `createAgentSessionServices` with no session, so `extensionApi` is undefined
+ * and every record it appended went nowhere (drovr #317, measured live). The
+ * sink is the seam such a host can reach without one.
+ *
+ * A callback rather than another `Symbol.for` global on purpose: the bundle
+ * already has one (`claude-bridge:activeStreamSimple`) and hosts document that
+ * coupling as a re-vendor hazard, so a second would be the wrong direction.
+ *
+ * Process-global, matching `setExtensionApi`: one bundle instance serves one
+ * host. A host that runs several conversations in ONE process must therefore
+ * route by `childSessionId` itself, or embed per conversation as drovr does.
+ */
+export function setConnectorCallAuditSink(sink: ConnectorCallAuditSink | undefined): void {
+	auditSink = sink;
+}
+
+/**
+ * Append one audit entry to every destination the host installed. Returns
+ * whether it reached AT LEAST ONE of them, so a caller can log the truth rather
+ * than assume — both are absent whenever the bridge runs outside a pi session
+ * and outside a sink-installing host (tests, the connector-inventory entry
+ * point).
+ *
+ * The two destinations are independent: one throwing must not cost the other
+ * its record. Never throws — an audit record must not be able to fail a turn.
  */
 export function appendConnectorCallAudit(data: ConnectorCallAuditData): boolean {
-	if (!extensionApi) return false;
-	try {
-		extensionApi.appendEntry(CONNECTOR_CALL_CUSTOM_TYPE, data);
-		return true;
-	} catch (error) {
-		debug("appendConnectorCallAudit failed:", error);
-		return false;
+	let delivered = false;
+	if (extensionApi) {
+		try {
+			extensionApi.appendEntry(CONNECTOR_CALL_CUSTOM_TYPE, data);
+			delivered = true;
+		} catch (error) {
+			debug("appendConnectorCallAudit failed:", error);
+		}
 	}
+	if (auditSink) {
+		try {
+			// A COPY, because the sink is host code and `appendEntry` above holds a
+			// reference to the same object: a sink that mutated the record would be
+			// editing what the session already recorded.
+			auditSink({ ...data });
+			delivered = true;
+		} catch (error) {
+			debug("connector call audit sink failed:", error);
+		}
+	}
+	return delivered;
 }
 
 /**
