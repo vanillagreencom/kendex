@@ -109,7 +109,11 @@ insert/delete stats, and `risk_flags`. Rust-specific flags
 (`unsafe_code_added`, `repr_c_struct_changed`, `extern_c_changed`,
 `atomics_modified`) scan added lines from `.rs` diffs only, so scripts,
 docs, and other non-Rust files can discuss those tokens without triggering a
-Rust risk route.
+Rust risk route. Panic patterns (`panic!`/`unwrap()`) added in production
+source emit `panic_path_added`; the same patterns whose enclosing context is
+a test surface (`#[cfg(test)]` modules, `tests/` dirs, `*_tests.rs`) emit
+the distinct informational `test_panic_path_added` flag instead, which
+`refix-route` treats as non-risk (vstack#944).
 
 ### PR Merge Outcomes
 

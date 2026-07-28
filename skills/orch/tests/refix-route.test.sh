@@ -49,6 +49,8 @@ PROD="$(summary prod     '{"files_changed":2,"insertions":10,"deletions":1,"scop
 RISK="$(summary risk     '{"files_changed":1,"insertions":3,"deletions":0,"scope":"support","domains":{},"risk_flags":["migration"]}')"
 EDGE="$(summary edge     '{"files_changed":3,"insertions":200,"deletions":0,"scope":"support","domains":{},"risk_flags":[]}')"
 OVER="$(summary over     '{"files_changed":3,"insertions":201,"deletions":0,"scope":"support","domains":{},"risk_flags":[]}')"
+TESTPANIC="$(summary testpanic '{"files_changed":1,"insertions":20,"deletions":2,"scope":"support","domains":{},"risk_flags":["test_panic_path_added"]}')"
+MIXPANIC="$(summary mixpanic  '{"files_changed":2,"insertions":20,"deletions":2,"scope":"support","domains":{},"risk_flags":["panic_path_added","test_panic_path_added"]}')"
 
 echo "=== the reported regression: a blocker-clearing support round ==="
 
@@ -93,6 +95,22 @@ assert_field "$OUT" class    "risk" "…classified as risk"
 # first thing that made the change risky.
 OUT="$(route "$RISK" 5)"
 assert_field "$OUT" class "risk" "risk flags outrank blockers in the reported reason"
+
+echo "=== test-context panic flags are informational, not risk (vstack#944) ==="
+
+OUT="$(route "$TESTPANIC" 0)"
+assert_field "$OUT" decision "skip"  "test_panic_path_added alone does not force re-review"
+assert_field "$OUT" class    "small" "…it falls through to small handling"
+assert_field "$OUT" risk_flags[0] "test_panic_path_added" "…but stays visible in risk_flags"
+
+OUT="$(route "$TESTPANIC" 2)"
+assert_field "$OUT" decision "rereview" "blocker pressure still re-reviews a test-panic round"
+assert_field "$OUT" class    "blockers" "…classified as blockers, not risk"
+
+OUT="$(route "$MIXPANIC" 0)"
+assert_field "$OUT" decision "rereview" "a production panic path still re-reviews"
+assert_field "$OUT" class    "risk"     "…classified as risk"
+assert_field "$OUT" reason "risk flags present: panic_path_added" "…and the reason names only the risk-relevant flag"
 
 echo "=== a genuinely small, blocker-free support round still skips ==="
 
