@@ -7,7 +7,8 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, popContext, toolCallDrainCause } from "./query-state.js";
+import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, toolCallDrainCause } from "./query-state.js";
+import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, normalizeEffortLevel, recordProjectTrust, type Config } from "./config.js";
 import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
 import { extractAgentsAppend } from "./agents-md.js";
@@ -41,11 +42,10 @@ import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
 import { appendIntegrityEntry, argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
 import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
-import { flushConnectorCallAudit } from "./connector-audit.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
-import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
+import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
 import { ensureTurnStarted, finalizeCurrentStream, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, scheduleToolUseTurnEnd, updateTurnOutputModel } from "./assistant-stream.js";
 
@@ -58,7 +58,7 @@ export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCall
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
-export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
+export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
 export { cancelScheduledToolUseEnd, endToolUseTurn, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, reapStaleQueuedResults, scheduleToolUseTurnEnd } from "./assistant-stream.js";
 
@@ -115,6 +115,35 @@ function emitRateLimitEvent(payload: Record<string, unknown>): void {
 
 function extraUsageAllowed(config: Config): boolean {
 	return config.provider?.allowExtraUsage === true;
+}
+
+// The fastMode setting silently no-ops when Claude Code declines fast mode.
+// Surface the typed fast_mode_disabled_reason (SDK 0.3.219+) once per distinct
+// reason so an enabled-but-inert setting explains itself instead of looking
+// broken. Module-level dedup: the same reason repeats on every init message.
+let lastFastModeDisabledNoticeReason: string | null = null;
+
+const FAST_MODE_DISABLED_REASON_TEXT: Record<string, string> = {
+	disabled_by_env: "disabled by an environment variable",
+	extra_usage_disabled: "extra usage is disabled for this account",
+	free: "not available on the free plan",
+	model_not_allowed: "not available for this model",
+	network_error: "the eligibility check hit a network error",
+	not_first_party: "not available for this account type",
+	preference: "disabled by a Claude Code preference",
+	sdk_opt_in_required: "the SDK opt-in is missing",
+	unknown: "unavailable for an unknown reason",
+};
+
+function noteFastModeDisabledReason(message: unknown, bridgeConfig: Config): void {
+	if (bridgeConfig.provider?.fastMode !== true) return;
+	const reason = (message as { fast_mode_disabled_reason?: unknown }).fast_mode_disabled_reason;
+	// "pending" means the CLI is still deciding — not a verdict worth announcing.
+	if (typeof reason !== "string" || reason === "pending") return;
+	if (reason === lastFastModeDisabledNoticeReason) return;
+	lastFastModeDisabledNoticeReason = reason;
+	const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
+	safeNotify(`Claude bridge: fast mode is enabled in settings but Claude Code declined it — ${text}.`, "warning");
 }
 
 function sdkTextFromMessage(message: SDKMessage): string | undefined {
@@ -276,8 +305,15 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 		}
 		const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
 		mcpTools.push(tool);
+		// Case-insensitive aliases mean two tools differing only by case would
+		// silently overwrite each other's mapping — surface it if it ever happens.
+		const lowerName = tool.name.toLowerCase();
+		const collision = customToolNameToSdk.get(lowerName);
+		if (collision !== undefined && collision !== sdkName) {
+			debug(`WARNING: resolveMcpTools lowercase alias collision: ${tool.name} overwrites mapping previously held by ${collision}`);
+		}
 		customToolNameToSdk.set(tool.name, sdkName);
-		customToolNameToSdk.set(tool.name.toLowerCase(), sdkName);
+		customToolNameToSdk.set(lowerName, sdkName);
 		customToolNameToPi.set(sdkName, tool.name);
 		customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
 	}
@@ -456,13 +492,24 @@ async function consumeQuery(
 					ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });
 					ctx().currentPiStream?.push({ type: "text_delta", contentIndex: idx, delta: text, partial: ctx().turnOutput });
 					ctx().currentPiStream?.push({ type: "text_end", contentIndex: idx, content: text, partial: ctx().turnOutput });
-				} else if (message.subtype !== "success" && isExtraUsageRequiredMessage(message)) {
+				} else if (message.subtype !== "success" && (isExtraUsageRequiredMessage(message) || isUsageLimitMessage(message))) {
+					// isUsageLimitMessage matches the CLI's own usage-limit copy (SDK
+					// USAGE_LIMIT_ERROR_PREFIXES) — e.g. a plain "You've hit your weekly
+					// limit" that the extra-usage regex never matched, so those turns
+					// used to end as a silent empty success. The /extra-usage helper and
+					// its hints stay gated on the narrow extra-usage test.
 					const errorLines = Array.isArray((message as any).errors) ? uniqueNonEmptyLines((message as any).errors) : [];
 					const errors = errorLines.length > 0 ? errorLines.join("\n") : String(message.subtype ?? "Claude Code rate limit");
-					const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
+					const extraUsage = isExtraUsageRequiredMessage(message);
+					const openedExtraUsage = extraUsage && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
 					ctx().handledTerminalError = true;
 					ctx().turnOutput.stopReason = "error";
-					ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
+					const extraUsageHint = openedExtraUsage
+						? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt."
+						: extraUsage
+							? "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."
+							: "";
+					ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
 					ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
 					ctx().currentPiStream?.end();
 					ctx().currentPiStream = null;
@@ -475,6 +522,7 @@ async function consumeQuery(
 					// trail can name the child session that executed a call — including
 					// from the teardown flush, which runs outside this function's scope.
 					queryCtx.childSessionId = capturedSessionId;
+					noteFastModeDisabledReason(message, bridgeConfig);
 				} else if ((message as any).subtype === "model_refusal_fallback") {
 					const originalModel = (message as any).original_model;
 					const fallbackModel = (message as any).fallback_model;
@@ -840,9 +888,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
 
 	const extraArgs: Record<string, string | null> = {};
-	if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
 	// Opus 4.7 defaults thinking.display to "omitted" (empty thinking text in stream).
 	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
+	// Deliberately the raw flag, NOT the typed `thinking` option: every non-disabled
+	// ThinkingConfig also emits `--thinking adaptive` or `--max-thinking-tokens`
+	// (verified in sdk.mjs flag mapping), so the typed form cannot set display
+	// without overriding the model's thinking mode alongside our `--effort`.
 	if (effort) extraArgs["thinking-display"] = "summarized";
 	const fallbackModel = fallbackModelForPrimaryModel(model.id);
 
@@ -873,6 +924,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			append: systemPromptAppend ? systemPromptAppend : undefined,
 		},
 		extraArgs,
+		...(strictMcpConfigEnabled ? { strictMcpConfig: true } : {}),
 		...(effort ? { effort } : {}),
 		...(settingSources ? { settingSources } : {}),
 		...(mcpServers || Object.keys(connectorServers).length > 0
@@ -973,10 +1025,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		else options.signal.addEventListener("abort", onAbort, { once: true });
 	}
 
-	// Background consumer — runs until query ends
+	// Background consumer — runs until query ends.
+	// The handlers below use the CAPTURED abortCtx, never the live ctx(): the two
+	// only differ while a reentrant (subagent) context is pushed, and a parent
+	// query CAN end in that window (abort, child process death throwing out of
+	// the generator). Live-ctx handlers there mutated the subagent's turn state
+	// and stream and skipped the parent's own teardown entirely.
 	consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted)
 		.then(async ({ capturedSessionId }) => {
-			debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, error=${ctx().turnOutput?.errorMessage}, aborted=${wasAborted}`);
+			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, error=${abortCtx.turnOutput?.errorMessage}, aborted=${wasAborted}`);
 			if (streamIdleTimedOut) {
 				abortCtx.deferredUserMessages = [];
 				debug("provider: stream idle timeout already surfaced; skipping normal completion");
@@ -986,22 +1043,22 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			// --- Abort detection in normal completion path ---
 			if (wasAborted || options?.signal?.aborted) {
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
-				ctx().deferredUserMessages = [];
+				abortCtx.deferredUserMessages = [];
 				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
-				if (ctx().turnOutput) {
-					ctx().turnOutput.stopReason = "aborted";
-					ctx().turnOutput.errorMessage = "Operation aborted";
+				if (abortCtx.turnOutput) {
+					abortCtx.turnOutput.stopReason = "aborted";
+					abortCtx.turnOutput.errorMessage = "Operation aborted";
 				}
-				ctx().currentPiStream?.push({ type: "error", reason: "aborted", error: ctx().turnOutput! });
-				ctx().currentPiStream?.end();
-				ctx().currentPiStream = null;
+				abortCtx.currentPiStream?.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput! });
+				abortCtx.currentPiStream?.end();
+				abortCtx.currentPiStream = null;
 				return;
 			}
 
 			// --- Capture session ID ---
 			const sessionId = capturedSessionId ?? sharedSession?.sessionId;
 			if (sessionId) {
-				const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
+				const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
 				debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}`);
 				setSharedSession({ sessionId, cursor, cwd });
 			}
@@ -1010,11 +1067,11 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			// Only for outermost queries — reentrant (subagent) queries leave
 			// deferred messages for the parent to handle after it finishes.
 			try {
-				while (ctx().deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
-					const steerPrompt = ctx().deferredUserMessages.shift()!;
+				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
+					const steerPrompt = abortCtx.deferredUserMessages.shift()!;
 					debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
-					ctx().resetTurnState(model);
-					ctx().resetToolTracking();
+					abortCtx.resetTurnState(model);
+					abortCtx.resetToolTracking();
 
 					const resumeId = sharedSession?.sessionId;
 					if (!resumeId) {
@@ -1024,7 +1081,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 					const contQuery = query({ prompt: steerPrompt, options: contOptions });
-					ctx().activeQuery = contQuery;
+					abortCtx.activeQuery = contQuery;
 
 					debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, prompt=${steerPrompt.slice(0, 60)}`);
 
@@ -1043,58 +1100,39 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 				}
 			} finally {
 				// Guarantees restoration even if contQuery() throws synchronously
-				ctx().activeQuery = sdkQuery;
+				abortCtx.activeQuery = sdkQuery;
 			}
 
-			finalizeCurrentStream(ctx().turnOutput?.stopReason);
+			finalizeCurrentStream(abortCtx.turnOutput?.stopReason, abortCtx);
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
-			const suppressDuplicateError = ctx().handledTerminalError || streamIdleTimedOut;
+			const suppressDuplicateError = abortCtx.handledTerminalError || streamIdleTimedOut;
 			const openedExtraUsage = !suppressDuplicateError && isExtraUsageRequiredMessage(error) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
 				setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 			} else {
 				setSharedSession(null);
 			}
-			ctx().deferredUserMessages = [];
+			abortCtx.deferredUserMessages = [];
 			if (suppressDuplicateError) {
 				debug("provider: suppressing duplicate query error after terminal error was already emitted");
 				return;
 			}
-			if (ctx().turnOutput) {
-				ctx().turnOutput.stopReason = options?.signal?.aborted ? "aborted" : "error";
-				ctx().turnOutput.errorMessage = `${error instanceof Error ? error.message : String(error)}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
+			if (abortCtx.turnOutput) {
+				abortCtx.turnOutput.stopReason = options?.signal?.aborted ? "aborted" : "error";
+				abortCtx.turnOutput.errorMessage = `${error instanceof Error ? error.message : String(error)}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
 			}
-			ctx().currentPiStream?.push({ type: "error", reason: (ctx().turnOutput?.stopReason ?? "error") as "aborted" | "error", error: ctx().turnOutput! });
-			ctx().currentPiStream?.end();
-			ctx().currentPiStream = null;
+			abortCtx.currentPiStream?.push({ type: "error", reason: (abortCtx.turnOutput?.stopReason ?? "error") as "aborted" | "error", error: abortCtx.turnOutput! });
+			abortCtx.currentPiStream?.end();
+			abortCtx.currentPiStream = null;
 		})
 		.finally(() => {
 			streamIdleWatchdog?.dispose();
 			activeStreamIdleWatchdogs.delete(abortCtx);
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
-			if (ctx().activeQuery === sdkQuery) {
-				const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-				reportToolResultMismatch(ctx(), "query teardown", cwd, { forceRotate: cause !== "query-end" });
-				// Drain pending handlers for this query as errors naming the cause —
-				// their results are never coming.
-				const drained = drainPendingToolCalls(ctx(), cause);
-				if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
-				ctx().pendingResults.clear();
-
-				// Same idea for calls the CHILD owned: one whose result never came back
-				// is recorded as unobserved rather than left silent, so an answer in the
-				// transcript is never the only evidence a connector call was made.
-				const unobserved = flushConnectorCallAudit(ctx(), cause);
-				if (unobserved > 0) debug(`provider: query teardown recorded ${unobserved} connector call(s) with no observed result (cause=${cause})`);
-
-				if (isReentrant) {
-					popContext();  // merges deferred messages and restores parent
-				} else {
-					ctx().activeQuery = null;
-				}
-			}
+			const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+			teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
 			sdkQuery.close();
 		});
 

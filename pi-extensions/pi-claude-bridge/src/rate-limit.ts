@@ -1,15 +1,34 @@
+import { USAGE_LIMIT_ERROR_PREFIXES } from "@anthropic-ai/claude-agent-sdk";
+
 export const RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
 export const RATE_LIMIT_TOKEN = "\x1b[31m[rate-limit]\x1b[39m";
 
+// The SDK export is @alpha — degrade to "no match" (pre-0.3.220 behavior) if a
+// future release drops it, instead of crashing message classification.
+const USAGE_LIMIT_PREFIXES: readonly string[] = Array.isArray(USAGE_LIMIT_ERROR_PREFIXES as unknown)
+	? USAGE_LIMIT_ERROR_PREFIXES
+	: [];
+
+function coerceMessageText(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (value instanceof Error) return value.message;
+	try { return JSON.stringify(value ?? ""); }
+	catch { return String(value); }
+}
+
+/** Narrow test: this message is about EXTRA usage specifically — the paid
+ *  beyond-plan pool the /extra-usage helper flow can enable. */
 export function isExtraUsageRequiredMessage(value: unknown): boolean {
-	let text: string;
-	if (typeof value === "string") text = value;
-	else if (value instanceof Error) text = value.message;
-	else {
-		try { text = JSON.stringify(value ?? ""); }
-		catch { text = String(value); }
-	}
-	return /extra[-\s]?usage|overage|extra usage billing|extra usage credits|1M context/i.test(text);
+	return /extra[-\s]?usage|overage|extra usage billing|extra usage credits|1M context/i.test(coerceMessageText(value));
+}
+
+/** Broad test: any "a usage limit was genuinely reached" message, matched
+ *  against the CLI's own copy (SDK `USAGE_LIMIT_ERROR_PREFIXES`, e.g. "You've
+ *  hit your weekly limit…"). Substring rather than prefix match because the
+ *  text usually arrives embedded in a result payload's errors array. */
+export function isUsageLimitMessage(value: unknown): boolean {
+	const text = coerceMessageText(value);
+	return USAGE_LIMIT_PREFIXES.some((prefix) => text.includes(prefix));
 }
 
 export function uniqueNonEmptyLines(values: unknown[]): string[] {

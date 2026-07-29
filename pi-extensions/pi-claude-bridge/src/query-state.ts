@@ -483,6 +483,30 @@ export function popContext(): void {
 	_ctx = contextStack.pop()!;
 }
 
+/** Pop the context that belongs to ONE specific query, wherever it sits.
+ *
+ *  The common case is `target === ctx()` and this is exactly popContext(). The
+ *  reason this exists: a reentrant parent query can end ABNORMALLY (abort, child
+ *  process death) while its own subagent's context is still pushed above it. A
+ *  bare popContext() there would discard the live grandchild's context and
+ *  merge the wrong deferred messages. Instead, splice `target` out of the stack
+ *  and hand its deferred messages to its own parent (the element below it), so
+ *  the still-live contexts above keep their positions and later pops restore
+ *  the correct lineage. Returns false when `target` is nowhere in the state —
+ *  already popped — so callers can treat that as "someone else tore this down". */
+export function popContextFor(target: QueryContext): boolean {
+	if (_ctx === target) {
+		popContext();
+		return true;
+	}
+	const idx = contextStack.indexOf(target);
+	if (idx < 0) return false;
+	const parent = idx > 0 ? contextStack[idx - 1] : undefined;
+	parent?.deferredUserMessages.push(...target.deferredUserMessages);
+	contextStack.splice(idx, 1);
+	return true;
+}
+
 // Test-only: drop all state so test files can start from a clean module.
 // Not called from production.
 export function resetStack(): void {

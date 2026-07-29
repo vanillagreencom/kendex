@@ -47,21 +47,24 @@ export function parsePartialJson(input: string, fallback: Record<string, unknown
 	try { return JSON.parse(input); } catch { return fallback; }
 }
 
-export function ensureTurnStarted(): void {
-	if (!ctx().turnStarted && ctx().currentPiStream && ctx().turnOutput) {
-		ctx().currentPiStream!.push({ type: "start", partial: ctx().turnOutput });
-		ctx().turnStarted = true;
+// Both take the query context explicitly (defaulting to the live one) so the
+// completion/teardown closures in index.ts can finalize the stream of the query
+// they were created for — under reentrancy the live ctx() is the subagent's.
+export function ensureTurnStarted(c: QueryContext = ctx()): void {
+	if (!c.turnStarted && c.currentPiStream && c.turnOutput) {
+		c.currentPiStream.push({ type: "start", partial: c.turnOutput });
+		c.turnStarted = true;
 	}
 }
 
-export function finalizeCurrentStream(stopReason?: string): void {
-	if (!ctx().currentPiStream || !ctx().turnOutput) return;
-	debug(`provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({stopReason: ctx().turnOutput!.stopReason, error: ctx().turnOutput!.errorMessage})}`);
-	if (!ctx().turnStarted) ensureTurnStarted();
+export function finalizeCurrentStream(stopReason?: string, c: QueryContext = ctx()): void {
+	if (!c.currentPiStream || !c.turnOutput) return;
+	debug(`provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({stopReason: c.turnOutput.stopReason, error: c.turnOutput.errorMessage})}`);
+	if (!c.turnStarted) ensureTurnStarted(c);
 	const reason = stopReason === "length" ? "length" : "stop";
-	ctx().currentPiStream!.push({ type: "done", reason, message: ctx().turnOutput });
-	ctx().currentPiStream!.end();
-	ctx().currentPiStream = null;
+	c.currentPiStream.push({ type: "done", reason, message: c.turnOutput });
+	c.currentPiStream.end();
+	c.currentPiStream = null;
 }
 
 // --- Tool-use turn end: deferred to the stream's terminal events ---
