@@ -1,10 +1,10 @@
 # Dev Return (Completion Artifact) Schema
 
-The durable on-disk record a dev/QA agent writes at the end of an implement or fix
-delegation. It is the deterministic completion signal orch reads to accept a
-dev/QA completion **independently of the live return message**, which is routinely
-absent when a long `tools/validate`-class command outlasts the agent's turn
-(vstack#770, vstack#818).
+The durable on-disk record a dev/QA agent writes at the end of an implement, fix,
+or analysis delegation. It is the deterministic completion signal orch reads to
+accept a dev/QA completion **independently of the live return message**, which is
+routinely absent when a long `tools/validate`-class command outlasts the agent's
+turn (vstack#770, vstack#818).
 
 ## Deterministic identity: the round id (vstack#776)
 
@@ -43,6 +43,15 @@ artifact):
   [--bundled] [--no-summary] [--summary-file PATH] [--item N DECISION REASONING]...
 ```
 
+For a **read-only analysis round** (investigate + recommend, explicitly no
+implementation — see § Analysis rounds below):
+
+```bash
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis \
+  --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --branch [BRANCH] \
+  --summary-file [RECOMMENDATION_FILE] [--qa-label LABEL]... [--no-summary]
+```
+
 It is a sanctioned single-command invocation (harness-safe: one command with
 explicit arguments, no shell redirection in the agent's own command). It writes
 the artifact and prints its absolute path. Keep `--item` reasoning plain text (no
@@ -76,15 +85,15 @@ backticks) so the command stays classifier-safe under Codex `approval=never`.
 |-------|----------|-------------|-------------|
 | `schema_version` | Yes | (constant `1`) | Artifact schema version (number) |
 | `round_id` | Yes | `--round-id` | Per-delegation token; must equal the filename token and the expected `dev_round_id` |
-| `kind` | Yes | `--kind` | `"implement"` or `"fix"` |
+| `kind` | Yes | `--kind` | `"implement"`, `"fix"`, or `"analysis"` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key (Parent ID when bundled); grammar `^[A-Za-z0-9._-]+$`, no `..` |
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
-| `commit` | Yes | `--commit` | HEAD SHA after the commit (prior HEAD if no commit was needed) |
-| `validate` | Yes | `--validate` | `"pass"` or `"FAILING: check1,check2"` — strictly enumerated, so it stays machine-checkable |
-| `validate_note` | Optional | `--validate-note TEXT` | Free-text qualifier the enumeration cannot express, or `null`. See below |
+| `commit` | implement/fix only | `--commit` | HEAD SHA after the commit (prior HEAD if no commit was needed). **Forbidden for `analysis`** — the key must be absent |
+| `validate` | implement/fix only | `--validate` | `"pass"` or `"FAILING: check1,check2"` — strictly enumerated, so it stays machine-checkable. **Forbidden for `analysis`** — the key must be absent |
+| `validate_note` | Optional (implement/fix) | `--validate-note TEXT` | Free-text qualifier the enumeration cannot express, or `null`. **Forbidden for `analysis`** — the key must be absent. See below |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none (implement only) |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the § 9.1 summary was posted to a tracker (Linear); GitHub/ad-hoc rounds set `false` |
-| `summary` | Optional | `--summary-file PATH` | The completion-summary CONTENT, or `null`. Carries the summary for GitHub/ad-hoc rounds (returned to the orchestrator, not posted) so a lost return is recoverable |
+| `summary` | Optional (required for `analysis`) | `--summary-file PATH` | The completion-summary CONTENT, or `null`. Carries the summary for GitHub/ad-hoc rounds (returned to the orchestrator, not posted) so a lost return is recoverable. For `analysis` it carries the recommendation/evidence — the round's deliverable — and must be non-empty |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement, else `false` |
 | `items` | Conditional | `--item N DECISION REASONING` (repeatable) | See kind rules |
 
@@ -117,10 +126,34 @@ like a recorded caveat while carrying nothing.
 | `implement`, single (no `--bundled`) | May be empty → `items: []` |
 | `implement`, `--bundled` | Non-empty — one entry per sub-issue result |
 | `fix` | Non-empty — one entry per delegated review item |
+| `analysis` | Always `[]` — `--item` (and `--bundled`) are rejected |
 
 `dev-return-write` **rejects** (exit 2) a `fix` or `--bundled` invocation with no
 `--item`, an empty `--item` REASONING, an out-of-set DECISION, a non-integer `N`,
 or an `--issue`/`--round-id` outside the path-safe grammar.
+
+## Analysis rounds (vstack#952)
+
+`--kind analysis` is the truthful spelling for a **read-only round**: the agent
+was delegated to investigate and recommend (e.g. re-derive an issue's premise and
+propose implement / close-with-reasoning / re-scope), explicitly **not** to
+implement. Such a round legitimately produces no commit and runs no
+`tools/validate`, so:
+
+- `--commit`, `--validate`, and `--validate-note` are **rejected** (exit 2, with
+  an error naming why) — supplying one would assert a validation outcome that did
+  not occur, which is exactly the property this schema exists to make impossible.
+  The written artifact **omits those keys entirely**, and `dev-artifact-check`
+  treats their presence on an analysis artifact as `invalid`.
+- `--item` and `--bundled` are rejected — nothing was applied.
+- `--summary-file` is **required**: the recommendation and its evidence are the
+  round's deliverable, and the artifact must carry them durably (across a lost
+  return message or compaction), not just conversationally.
+- Round-id identity is identical to the other kinds — same filename token, same
+  internal `round_id` binding.
+
+Never force `--kind implement` or `--kind fix` onto an analysis round, and never
+skip the artifact to stay honest — `analysis` is the honest spelling.
 
 ## `items[]` element shape
 
@@ -140,8 +173,8 @@ Orch validates the artifact deterministically with
 | Order | reason | Meaning |
 |-------|--------|---------|
 | 1 | `missing` | No artifact at the resolved round-scoped path |
-| 2 | `invalid` | Internal `round_id` != expected, OR not parseable JSON, OR a required field wrong-typed/empty: `kind` ∈ implement\|fix; `issue`/`branch`/`commit`/`validate` non-empty **strings**; `round_id` non-empty string; `schema_version` a number |
-| 3 | `incomplete` | `items[]` fails the applicable rule (below) |
+| 2 | `invalid` | Internal `round_id` != expected, OR not parseable JSON, OR a required field wrong-typed/empty: `kind` ∈ implement\|fix\|analysis; `issue`/`branch` non-empty **strings**; `round_id` non-empty string; `schema_version` a number. implement/fix additionally require `commit`/`validate` non-empty strings; **analysis requires the inverse** — no `commit`, `validate`, or `validate_note` key present at all |
+| 3 | `incomplete` | `items[]` fails the applicable rule (below), or an `analysis` artifact's `summary` is not a non-empty string |
 | — | `valid` | All gates pass |
 
 **Items rule:**
@@ -155,10 +188,16 @@ Orch validates the artifact deterministically with
   covered by the orchestrator's Linear `validate-completion --include-children-of`
   tracker check (B), not by the artifact.
 - kind `implement` without `bundled` allows `items: []`.
+- kind `analysis` always has `items: []`; its completeness gate is the `summary`
+  (non-empty string — the recommendation), not items.
 
 The mtime/freshness gate is gone — identity is by round id (see above), so there
 is no `stale` reason. A fresh **valid** artifact for the current round lets orch
 accept a completion whose live return message was lost, without re-delegation. The
 artifact proves the agent finished its tail; git/tracker corroboration and
 exact-commit binding (`.commit == git rev-parse HEAD`) stay in the orch acceptance
-decision table (`dev-start.md` § 3 / `dev-fix.md`).
+decision table (`dev-start.md` § 3 / `dev-fix.md`). An `analysis` artifact has no
+`commit`, so its round has no exact-commit binding and no validate gate — the
+orchestrator instead expects `HEAD` unchanged, reads the `summary`
+recommendation, and decides the next step (see the analysis rule in those
+tables).

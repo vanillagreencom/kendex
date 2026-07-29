@@ -108,6 +108,25 @@ out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-b --round-id 9-9
   --branch b --commit c --validate pass --item 3 Blocked "needs API design")"
 assert_eq "$(jq -r '.items[0].decision' "$out")" "Blocked" "fix item Blocked decision accepted"
 
+# --- vstack#952: analysis kind — a read-only round has a truthful spelling ---
+# The artifact must be UNABLE to assert a validation outcome that did not occur:
+# the commit/validate/validate_note keys are omitted entirely, and the
+# recommendation (the round's deliverable) is required via --summary-file.
+printf '## Recommendation\nClose with reasoning: premise invalidated by merge X.\n' > "$worktree/analysis.md"
+out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-952 --round-id 10-10 \
+  --branch issue-952 --summary-file "$worktree/analysis.md" --no-summary)"
+assert_eq "$out" "$worktree/tmp/dev-return-issue-952-10-10.json" "analysis prints the round-scoped artifact path"
+assert_eq "$(jq -r '.kind' "$out")" "analysis" "analysis .kind"
+assert_eq "$(jq -r '.round_id' "$out")" "10-10" "analysis .round_id matches --round-id"
+assert_eq "$(jq -r 'has("commit")' "$out")" "false" "analysis artifact carries NO commit key"
+assert_eq "$(jq -r 'has("validate")' "$out")" "false" "analysis artifact carries NO validate key"
+assert_eq "$(jq -r 'has("validate_note")' "$out")" "false" "analysis artifact carries NO validate_note key"
+assert_eq "$(jq -r '.summary' "$out" | head -1)" "## Recommendation" "analysis embeds the recommendation content"
+assert_eq "$(jq -c '.items' "$out")" "[]" "analysis .items is []"
+assert_eq "$(jq -r '.bundled' "$out")" "false" "analysis .bundled false"
+assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-952 --round-id 10-10 | jq -r '.reason')" "valid" \
+  "analysis round-trips through dev-artifact-check round mode as valid"
+
 # --- atomic write: no leftover temp files in tmp/ after a successful write ---
 tmp_leftovers="$(find "$worktree/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')"
 assert_eq "$tmp_leftovers" "0" "atomic write leaves no temp files behind"
@@ -151,6 +170,31 @@ assert_exit2 "bundled implement with no --item exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --bundled
 assert_exit2 "unknown argument exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --frobnicate
+
+# vstack#952: an analysis round has no commit and runs no validation — supplying
+# either (or an item/bundle claim) must be a loud error, never silently ignored.
+assert_exit2 "analysis with --commit exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit abc
+assert_exit2 "analysis with --validate exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --validate pass
+assert_exit2 "analysis with --validate-note exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --validate-note "caveat"
+assert_exit2 "analysis with --item exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --item 1 Applied "x"
+assert_exit2 "analysis with --bundled exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --bundled
+assert_exit2 "analysis without --summary-file exits 2 (the recommendation is the deliverable)" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b
+assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit ""
+
+# A rejected analysis invocation leaves no artifact behind.
+set +e
+"$WRITE" --worktree "$worktree" --kind analysis --issue issue-anoclaim --round-id "$RID" \
+  --branch b --summary-file "$worktree/analysis.md" --validate pass >/dev/null 2>&1
+set -e
+assert_eq "$([[ -f "$worktree/tmp/dev-return-issue-anoclaim-$RID.json" ]] && echo yes || echo no)" "no" \
+  "rejected analysis (--validate supplied) writes no artifact file"
 
 # A rejected invocation must not leave a partial artifact at the target path.
 set +e

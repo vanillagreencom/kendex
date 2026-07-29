@@ -55,6 +55,9 @@ artifact="$worktree/tmp/dev-return-$issue-$R.json"
 valid_impl='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
 # A complete fix-kind receipt with items[] (n = 1,2).
 valid_fix='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
+# A complete analysis-kind receipt (vstack#952): read-only round, NO commit /
+# validate / validate_note keys, recommendation in summary.
+valid_analysis='{"schema_version":1,"round_id":"1750000000-4242","kind":"analysis","issue":"issue-770","branch":"issue-770","qa_labels":[],"summary_posted":false,"summary":"Recommend: close with reasoning; premise invalidated by merge X.","bundled":false,"items":[]}'
 
 # --- missing: no artifact at the round-scoped path ---
 set +e
@@ -138,6 +141,39 @@ assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "i
 # single implement with items:[] → valid (implement without bundled tolerates empty items)
 printf '%s' "$valid_impl" > "$artifact"
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "valid" "single implement with items:[] stays valid"
+
+# --- vstack#952: analysis kind — complete-without-code, inverse commit/validate rule ---
+printf '%s' "$valid_analysis" > "$artifact"
+out="$("$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R")"
+rc=$?
+assert_eq "$rc" "0" "valid analysis receipt exits 0"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "valid analysis receipt reports reason=valid"
+assert_eq "$(jq -r '.validate' <<<"$out")" "null" "analysis receipt echoes validate=null (no validation ran)"
+# The inverse rule: a commit/validate/validate_note key PRESENT on an analysis
+# artifact is a fabricated claim about a round that ran none → invalid, even
+# when the value looks plausible, and even when it is null.
+printf '%s' "$valid_analysis" | jq -c '.commit="abc123f"' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling a commit reports reason=invalid"
+printf '%s' "$valid_analysis" | jq -c '.validate="pass"' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling validate=pass reports reason=invalid"
+printf '%s' "$valid_analysis" | jq -c '.validate_note="looked fine"' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling a validate_note reports reason=invalid"
+printf '%s' "$valid_analysis" | jq -c '.commit=null' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis with a null commit key still reports reason=invalid (presence, not value)"
+# The recommendation is the round's deliverable: a missing/empty/wrong-typed
+# summary proves the round ended, not what it concluded → incomplete.
+printf '%s' "$valid_analysis" | jq -c 'del(.summary)' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with no summary reports reason=incomplete"
+printf '%s' "$valid_analysis" | jq -c '.summary=null' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with null summary reports reason=incomplete"
+printf '%s' "$valid_analysis" | jq -c '.summary=""' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with empty summary reports reason=incomplete"
+# Round-id identity applies to analysis exactly as to the other kinds.
+printf '%s' "$valid_analysis" | jq -c '.round_id="OTHER-1"' > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis with internal round_id mismatch reports reason=invalid"
+# An analysis artifact can never satisfy a delegated item set.
+printf '%s' "$valid_analysis" > "$artifact"
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "incomplete" "analysis cannot satisfy --expect-items → incomplete"
 
 # --- gate ordering: invalid (scalars/round) beats incomplete (items) ---
 printf '%s' "$valid_fix" | jq -c 'del(.commit) | .items=[]' > "$artifact"
@@ -226,6 +262,9 @@ assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 5-6)" "valid" "writer implement output round-trips as valid"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2)" "valid" "writer fix output round-trips with matching --expect-items"
+printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
+"$WRITE" --worktree "$rt_wt" --kind analysis --issue issue-9 --round-id 9-10 --branch b --summary-file "$rt_wt/analysis.md" --no-summary >/dev/null
+assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid" "writer analysis output round-trips as valid (vstack#952)"
 
 # --- doc wiring: ALL FOUR dev/QA paths mint a fresh round id + accept via round mode ---
 # dev-start / orch dev-fix / review-pr-comments / ci-fix each mint dev_round_id
@@ -312,6 +351,16 @@ assert_file_contains "$dev_implement" "dev-return-write --worktree [WORKTREE_PAT
 dev_fix="$REPO_ROOT/skills/dev/workflows/dev-fix.md"
 assert_file_contains "$dev_fix" "dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID]" "dev-fix § 6 keys the artifact to [ARTIFACT_KEY]"
 
+# --- vstack#952 doc wiring: analysis rounds have a truthful spelling everywhere ---
+# The dev workflows must offer --kind analysis for read-only rounds (never a
+# forced implement/fix, never a skipped artifact), and the orch decision tables
+# must say what acceptance of an analysis artifact means (read the
+# recommendation and decide; no commit/validate gate for the round).
+assert_file_contains "$dev_implement" "--kind analysis" "dev-implement § 10 offers --kind analysis for read-only rounds"
+assert_file_contains "$dev_fix" "--kind analysis" "dev-fix § 6 offers --kind analysis for read-only rounds"
+assert_file_contains "$dev_start" "Analysis round (read-only delegation)" "dev-start § 3 carries the analysis acceptance rule"
+assert_file_contains "$orch_dev_fix" "Analysis round (read-only delegation)" "orch dev-fix § 2 carries the analysis acceptance rule"
+
 # --- schema docs carry the round-id / dev_round_id contract ---
 dev_return_schema="$REPO_ROOT/skills/orch/schemas/dev-return.md"
 assert_file_contains "$dev_return_schema" "dev-return-write" "dev-return schema references the writer"
@@ -361,6 +410,7 @@ assert_eq "$(jq -r '.validate' <<<"$out")" "null" "a missing artifact reports va
 assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "a missing artifact reports validate_note=null"
 
 assert_file_contains "$dev_return_schema" "validate_note" "dev-return schema documents validate_note"
+assert_file_contains "$dev_return_schema" "Analysis rounds" "dev-return schema documents analysis rounds (vstack#952)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

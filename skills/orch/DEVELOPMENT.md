@@ -127,7 +127,7 @@ Always-on CI (everything on `pull_request`) needs no change — § 5 just verifi
 
 ## Dev Completion Artifact (round-id identity)
 
-Dev/QA implement-or-fix completions are accepted from an on-disk artifact so a missing
+Dev/QA implement, fix, and analysis completions are accepted from an on-disk artifact so a missing
 return message — routine when a long validation outlasts the agent's turn
 (vstack#770, vstack#818) — never forces re-delegation. `dev-return-write` writes it;
 `dev-artifact-check` validates it. The canonical schema is
@@ -150,23 +150,25 @@ remains, now solely as the stall watchdog deadline.
 
 ### `dev-return-write` — deterministic, atomic
 
-- Required: `--worktree --kind implement|fix --issue --round-id --branch --commit --validate`.
+- Required: `--worktree --kind implement|fix|analysis --issue --round-id --branch`, plus `--commit --validate` for implement/fix.
 - `--issue`/`--round-id` must match `^[A-Za-z0-9._-]+$` with no `..` (they form the filename — path-safe grammar); `--validate` is `pass` or begins with `FAILING:`.
 - `--kind fix` OR `--bundled` requires ≥1 `--item N DECISION REASONING` — `DECISION ∈ {Applied,Skipped,Blocked}`, `N` a non-negative integer, `REASONING` non-empty. `implement` without `--bundled` may have zero items (`items: []`).
+- `--kind analysis` (vstack#952 — a read-only investigate-and-recommend round): requires `--summary-file` (the recommendation/evidence) and rejects `--commit`, `--validate`, `--validate-note`, `--item`, and `--bundled` with an error naming why; the artifact omits the `commit`/`validate`/`validate_note` keys entirely, so a validation outcome that did not occur is unrepresentable.
 - Optional: `--qa-label` (repeatable), `--bundled`, `--no-summary` (sets `summary_posted:false`), `--summary-file PATH` (embeds file content as `summary` — for GitHub/ad-hoc rounds whose summary isn't posted to a tracker, so a lost return is recoverable).
 - Writes `round_id` and `schema_version: 1`; builds the JSON with `jq` (never string concat) to a same-dir temp file and `mv`s it over the target (atomic — a concurrent checker never sees a partial artifact, and a failed generation leaves any prior receipt intact).
-- Any usage/validation error → stderr + exit 2 (bad `--kind`, missing required arg, malformed `--validate`, path-unsafe `--issue`/`--round-id`, bad `--item` DECISION, empty REASONING, non-integer `N`, a missing `--summary-file`, or a `fix`/`--bundled` invocation with no `--item`); on success prints the artifact's absolute path.
+- Any usage/validation error → stderr + exit 2 (bad `--kind`, missing required arg, malformed `--validate`, path-unsafe `--issue`/`--round-id`, bad `--item` DECISION, empty REASONING, non-integer `N`, a missing `--summary-file`, a `fix`/`--bundled` invocation with no `--item`, or an analysis invocation carrying a rejected flag); on success prints the artifact's absolute path.
 
 ### `dev-artifact-check` — gates, ordered
 
 `{ok, path, reason}`, first failing gate wins: **missing → invalid → incomplete → valid**.
 
 - `missing` — no file at the resolved path.
-- `invalid` — internal `round_id` != expected; OR not parseable JSON; OR a required field wrong-typed/empty: `.kind ∈ {implement,fix}`; `.issue`/`.branch`/`.commit`/`.validate` non-empty **strings** (arrays/objects/bools/numbers fail, not just `""`); `.round_id` a non-empty string; `.schema_version` a number.
+- `invalid` — internal `round_id` != expected; OR not parseable JSON; OR a required field wrong-typed/empty: `.kind ∈ {implement,fix,analysis}`; `.issue`/`.branch` non-empty **strings** (arrays/objects/bools/numbers fail, not just `""`); `.round_id` a non-empty string; `.schema_version` a number. implement/fix additionally require `.commit`/`.validate` non-empty strings; kind `analysis` requires the **inverse** — no `.commit`, `.validate`, or `.validate_note` key present at all (an analysis round runs no validation, so their presence is a fabricated claim — vstack#952).
 - `incomplete` — items rule fails:
   - with `--expect-items N,N,...` (fix rounds — the orchestrator passes the delegated item numbers): `items[]` must cover **exactly** that set (each expected `n` once, no unknown/duplicate, `decision ∈ {Applied,Skipped,Blocked}`, `reasoning` non-empty). A 1-item artifact cannot satisfy a 10-item delegation.
   - without `--expect-items` (kind `fix` OR `bundled: true`): a non-empty, well-formed `items[]`. Bundled sub-issue *completeness* is covered by the orchestrator's Linear `validate-completion --include-children-of` (the git/tracker "B" check), not the artifact.
   - kind `implement` without `bundled` allows `items: []`.
+  - kind `analysis` is complete-without-code: its gate is `.summary` being a non-empty string (the recommendation/evidence — the round's deliverable), not items.
 
 Modes: round mode `--worktree WT --issue ISSUE --round-id RID [--expect-items ...]`
 (the production path) and `--file <path> [--round-id RID] [--expect-items ...]` (a
