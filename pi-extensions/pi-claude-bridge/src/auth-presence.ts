@@ -6,10 +6,12 @@
 // "not-used"` as "configured" and the provider would look connected while every
 // request fails at spawn time.
 //
-// This module answers two pure questions used to gate registration:
-//   1. hasClaudeCredentials() — are real credentials present RIGHT NOW?
-//   2. decideRegistration()   — given credential presence + the primary-instance
-//      / stream-guard tokens, should we register / unregister / do nothing?
+// This module answers one pure question: hasClaudeCredentials() — are real
+// credentials present RIGHT NOW? Since 2.0 it feeds the native provider's
+// auth check/resolve (native-provider.ts) and the pre-spawn fail-fast, rather
+// than gating register/unregister transitions (the 1.x decideRegistration
+// state machine is gone — registration is unconditional and pi hides
+// unconfigured providers' models itself).
 //
 // SECURITY: this module only ever checks for the EXISTENCE of credentials — a
 // file's presence, an env var being non-empty, a settings key being a non-empty
@@ -110,49 +112,3 @@ export function hasClaudeCredentials(
 	return false;
 }
 
-/**
- * Snapshot of the inputs to a registration decision.
- *
- * The bridge keeps two process-global tokens (Symbol.for): a PRIMARY-instance
- * token, claimed unconditionally by the first-loaded module instance, and the
- * stream-guard token holding the registered instance's streamSimple. ONLY the
- * primary instance may ever register/unregister or claim the stream guard — this
- * prevents a subagent module reload (a fresh, non-primary instance) from
- * stealing ownership and registering ITS streamSimple, which would split-brain
- * the shared session/ctx and break tool-result delivery.
- */
-export interface RegistrationState {
-	/** Does the machine have Claude credentials right now? */
-	credentialed: boolean;
-	/** Is THIS module instance the primary (first-loaded) instance? */
-	isPrimary: boolean;
-	/** Has this instance already registered (owns the stream guard)? */
-	registered: boolean;
-}
-
-export type RegistrationDecision = "register" | "unregister" | "noop";
-
-/**
- * Pure decision for extension load, every session_start re-check, and the
- * pre-spawn fail-fast path.
- *
- * Rules:
- *   - Not the primary instance                    → NOOP (never touch registration).
- *   - Primary + credentialed + not registered     → REGISTER (claim guard + register).
- *   - Primary + credentialed + already registered → NOOP.
- *   - Primary + uncredentialed                    → UNREGISTER (defensive).
- *
- * The uncredentialed primary always returns UNREGISTER rather than NOOP:
- * pi.unregisterProvider is idempotent ("Has no effect if the provider was never
- * registered"), and a defensive call is the ONLY way to retract a registration
- * that survived a /reload — the ModelRegistry's registeredProviders is a
- * process-lifetime Map and module reload does NOT clear it. (At extension-load
- * time this defensive unregister only filters the pending-registration queue and
- * cannot mutate the persistent registry; the authoritative retraction happens on
- * the post-load session_start re-check — see applyProviderRegistration.)
- */
-export function decideRegistration(state: RegistrationState): RegistrationDecision {
-	if (!state.isPrimary) return "noop";
-	if (state.credentialed) return state.registered ? "noop" : "register";
-	return "unregister";
-}

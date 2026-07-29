@@ -48,34 +48,35 @@ The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that
 
 Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
-## Provider registration and the pi ≥0.81 native provider API (evaluated 2026-07-28, not adopted)
+## Provider registration — native pi ≥0.81 provider API (adopted in 2.0)
 
-The bridge registers via the legacy `registerProvider(name, config)` overload, gated by real
-credential presence (`auth-presence.ts` `decideRegistration`) and two process-global symbol tokens
-(`PRIMARY_INSTANCE_KEY`, `ACTIVE_STREAM_SIMPLE_KEY`). pi 0.81 added a first-class
-`registerProvider(provider: Provider)` form whose `auth.apiKey.resolve()`/`check()` report
-configured-ness so pi's availability snapshot hides unconfigured providers, which looks like a
-replacement for the credential-gated register/unregister machinery. It was evaluated against
-pi-coding-agent 0.82.1 sources and rejected for now:
+Since 2.0 the bridge registers a native `Provider` object (`native-provider.ts`) via
+`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary), and the provider's
+own `auth.apiKey.check()/resolve()` report configured-ness from the same existence-only credential
+probes as before (`auth-presence.ts`), so pi itself hides claude-bridge models while no Claude
+account is connected and shows them when one appears. The 1.x credential-gated
+register/unregister state machine (`decideRegistration`) is gone. **Hosts must embed pi ≥0.81**
+(peer range `>=0.81.0`); on an older host the extension declines loudly once
+(`NATIVE_PROVIDER_UNSUPPORTED_MESSAGE`) instead of registering wrongly through the legacy overload.
 
-- **The symbol guards are not removable.** `registerNativeProvider` (model-runtime.js) is
-  upsert-by-id that *replaces* the stored provider object — a subagent module reload re-registering
-  the same id would swap in ITS `streamSimple` closure, exactly the split-brain the tokens exist to
-  prevent. The largest piece of the machinery survives the migration untouched.
-- **The legacy path is not removable either.** memsira/drovr embed pi 0.80.x with peer range `*`,
-  so the native form would have to be feature-detected and the legacy path kept indefinitely — two
-  parallel registration state machines instead of one, both needing tests.
-- **Mid-session credential changes would regress.** Today an external `claude login`/logout is
-  reflected deterministically at every session_start and at pre-spawn fail-fast. The native path
-  hands that to pi's availability-snapshot refresh cadence (`snapshot.configuredProviders`), which
-  the bridge does not control.
-- The subscription-billing constraint is NOT the blocker: under the native form `streamSimple`
-  would remain the bridge's own CC-subprocess router. Registration plumbing is simply not improved
-  by the migration while pre-0.81 hosts must be supported.
+This was first evaluated on 2026-07-28 and NOT adopted, then adopted the same day after the owner
+lifted the pre-0.81 host-compat constraint (memsira/drovr upgrade their embedded pi in lockstep —
+they are the only consumers). What the original evaluation flagged, and how each point resolved:
 
-Revisit when the minimum supported embedded host is pi ≥0.81 AND pi offers owner-aware provider
-dedupe (so the guards could go too); then the native form becomes a true replacement rather than a
-duplicate path.
+- **The symbol guards stay — by design, not oversight.** pi's `registerNativeProvider` is
+  upsert-by-id that *replaces* the stored provider object; an unguarded subagent module reload
+  re-registering the same id would swap in ITS `streamSimple` closure and split-brain the shared
+  session. `PRIMARY_INSTANCE_KEY`/`ACTIVE_STREAM_SIMPLE_KEY` therefore survive into 2.x. If pi
+  ever grows owner-aware provider dedupe, the guards can go.
+- **The two-parallel-paths objection dissolved** with the host floor at 0.81: there is exactly one
+  registration path in 2.x.
+- **Mid-session credential timing is kept deterministic** rather than left to pi's refresh
+  cadence: session_start and pre-spawn re-UPSERT the same provider object, which triggers pi's
+  model-snapshot/availability recompute at exactly the boundaries 1.x re-checked — and the
+  pre-spawn `hasClaudeCredentials()` fail-fast in `streamSimple` remains, so a logout is a clear
+  actionable error at first use even if a picker snapshot is stale.
+- The subscription-billing constraint is untouched: BOTH native stream entry points
+  (`stream`/`streamSimple`) are the same Claude Code subprocess router — there is no raw-API path.
 
 ## Connector write enforcement
 

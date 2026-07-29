@@ -23,6 +23,10 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 ## Install
 
+Requires pi ≥ 0.81 (bridge 2.x registers through pi's native provider API, so pi shows the
+Claude models only while a Claude account is actually connected). On older pi, install
+`@vanillagreen/pi-claude-bridge@1.x` instead.
+
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-claude-bridge):
 
 ```bash

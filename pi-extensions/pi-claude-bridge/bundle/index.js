@@ -28610,10 +28610,42 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
   if (platform === "darwin") return true;
   return false;
 }
-function decideRegistration(state) {
-  if (!state.isPrimary) return "noop";
-  if (state.credentialed) return state.registered ? "noop" : "register";
-  return "unregister";
+
+// src/native-provider.ts
+var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 2.x requires pi >= 0.81 (native provider API). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@1.x.";
+function supportsNativeProvider(piAi2) {
+  return typeof piAi2?.createProvider === "function";
+}
+function claudeAuthSourceLabel(env = process.env) {
+  if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return "CLAUDE_CODE_OAUTH_TOKEN";
+  if (env.ANTHROPIC_API_KEY?.trim()) return "ANTHROPIC_API_KEY";
+  if (env.ANTHROPIC_AUTH_TOKEN?.trim()) return "ANTHROPIC_AUTH_TOKEN";
+  return "Claude Code login";
+}
+function buildNativeProvider(piAi2, models, streamSimple, env = process.env) {
+  if (!supportsNativeProvider(piAi2)) throw new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE);
+  const stamped = models.map((model) => ({ api: "claude-bridge", baseUrl: "claude-bridge", provider: PROVIDER_ID, ...model }));
+  const streams = {
+    stream: streamSimple,
+    streamSimple
+  };
+  return piAi2.createProvider({
+    id: PROVIDER_ID,
+    name: "Claude (Claude Code)",
+    baseUrl: "claude-bridge",
+    auth: {
+      apiKey: {
+        name: "Claude Code credentials",
+        // check() exists so pi's availability pass never has to call
+        // resolve(): both are existence-only, but check is the documented
+        // side-effect-free probe.
+        check: async () => hasClaudeCredentials(env) ? { type: "api_key", source: claudeAuthSourceLabel(env) } : void 0,
+        resolve: async () => hasClaudeCredentials(env) ? { auth: { apiKey: "not-used" }, source: claudeAuthSourceLabel(env) } : void 0
+      }
+    },
+    models: stamped,
+    api: streams
+  });
 }
 
 // src/agents-md.ts
@@ -45324,6 +45356,8 @@ function releaseProviderTokens(event) {
     g[PRIMARY_INSTANCE_KEY] = void 0;
   }
 }
+var nativeProviderInstance;
+var notifiedNativeUnsupported = false;
 function applyProviderRegistration(trigger) {
   const pi = extensionApi;
   if (!pi) {
@@ -45332,33 +45366,28 @@ function applyProviderRegistration(trigger) {
   }
   const g = globalThis;
   const isPrimary = claimPrimaryInstance();
+  if (!isPrimary) {
+    debug(`${trigger}: registration noop \u2014 non-primary instance (module=${moduleInstanceId})`);
+    return;
+  }
+  if (!supportsNativeProvider(_piAi)) {
+    debug(`${trigger}: host pi-ai lacks createProvider; refusing to register (module=${moduleInstanceId})`);
+    if (!notifiedNativeUnsupported) {
+      notifiedNativeUnsupported = true;
+      safeNotify(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, "error");
+    }
+    return;
+  }
   const credentialed = hasClaudeCredentials();
-  const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
-  const decision = decideRegistration({ credentialed, isPrimary, registered });
-  debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
-  if (decision === "register") {
-    if (connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
-    g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-    try {
-      pi.registerProvider(PROVIDER_ID, {
-        baseUrl: "claude-bridge",
-        apiKey: "not-used",
-        api: "claude-bridge",
-        models: MODELS,
-        // Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-        streamSimple: streamClaudeAgentSdk
-      });
-    } catch (err) {
-      if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
-      debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
-    }
-  } else if (decision === "unregister") {
-    try {
-      pi.unregisterProvider(PROVIDER_ID);
-    } catch (err) {
-      debug(`${trigger}: unregisterProvider threw (ignored):`, err);
-    }
+  debug(`${trigger}: native registration upsert, credentialed=${credentialed} (module=${moduleInstanceId})`);
+  if (credentialed && connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
+  g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+  try {
+    nativeProviderInstance ??= buildNativeProvider(_piAi, MODELS, streamClaudeAgentSdk);
+    pi.registerProvider(nativeProviderInstance);
+  } catch (err) {
     if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
+    debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
   }
 }
 function streamClaudeAgentSdk(model, context, options) {
@@ -45905,14 +45934,17 @@ export {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
   INTEGRITY_CUSTOM_TYPE,
+  NATIVE_PROVIDER_UNSUPPORTED_MESSAGE,
   STREAM_IDLE_BACKOFF_HINT_MS,
   STREAM_IDLE_TIMEOUT_ENV,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
   appendIntegrityEntry,
+  buildNativeProvider,
   buildStreamIdleTimeoutErrorMessage,
   cancelScheduledToolUseEnd,
   classifyClaudeExecutableBytes,
+  claudeAuthSourceLabel,
   connectorCachePath,
   connectorCacheScopeKey,
   connectorDeclarationsDisabled,
@@ -45963,6 +45995,7 @@ export {
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,
   streamIdleTimeoutMsFromEnv,
+  supportsNativeProvider,
   toolIsolationForQuery,
   uniqueNonEmptyLines,
   wrapClaudeSpawnErrorForSdk,

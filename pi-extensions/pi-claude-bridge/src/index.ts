@@ -10,7 +10,8 @@ import { extractAllToolResults as _extractAllToolResults, type McpResult } from 
 import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, toolCallDrainCause } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, normalizeEffortLevel, recordProjectTrust, type Config } from "./config.js";
-import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
+import { hasClaudeCredentials } from "./auth-presence.js";
+import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
@@ -57,6 +58,7 @@ export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY
 export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
+export { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, claudeAuthSourceLabel, supportsNativeProvider } from "./native-provider.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
@@ -95,7 +97,7 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 //
 // Both are released on session_shutdown (incl. /reload) by releaseProviderTokens
 // so the next module load starts clean. See applyProviderRegistration for the
-// state machine and auth-presence.ts/decideRegistration for the pure decision.
+// native (pi >=0.81) upsert flow.
 const PRIMARY_INSTANCE_KEY = Symbol.for("claude-bridge:primaryInstance");
 const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 const COMMANDS_REGISTERED_KEY = Symbol.for("claude-bridge:commandsRegistered");
@@ -594,10 +596,10 @@ function claimPrimaryInstance(): boolean {
 
 // Release both process-global tokens this instance owns. Called on
 // session_shutdown (incl. /reload) so the freshly loaded instance starts clean.
-// NOTE: this does NOT unregister the provider — the ModelRegistry's
-// registeredProviders is a process-lifetime Map that survives module reload, so
-// retraction on logout is handled by applyProviderRegistration's defensive
-// unregister on the next load/session_start, not here.
+// NOTE: this does NOT unregister the provider — pi's provider registry is
+// process-lifetime state that survives module reload; the next loaded instance
+// simply upserts its own provider object over ours (registerNativeProvider is
+// replace-by-id), and logout-hiding is the provider's own auth check.
 function releaseProviderTokens(event: string): void {
 	const g = globalThis as Record<symbol, any>;
 	if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
@@ -610,66 +612,66 @@ function releaseProviderTokens(event: string): void {
 	}
 }
 
-// Conditional (un)registration driven by real credential presence + instance
-// primacy. Run at extension load, on every session_start, and at pre-spawn
-// (fail-fast) so a `claude login` / logout is reflected without a /reload.
+// Native (pi >=0.81) provider registration. Run at extension load, on every
+// session_start, and at pre-spawn.
 //
-// decideRegistration encodes the pure state machine; this wrapper performs the
-// matching token mutations so tokens and registration never diverge:
-//   - register:   claim the stream guard, THEN registerProvider. If register
-//     throws/queue-fails, release the stream guard (but keep primacy) so a
-//     later re-check can retry cleanly (self-healing); errors are swallowed so
-//     a session_start handler can't crash the dispatch.
-//   - unregister: pi.unregisterProvider (idempotent), THEN release the stream
-//     guard if we own it. Defensive even when we never registered — this is the
-//     only retraction path for a stale registration surviving /reload. At LOAD
-//     the SDK's unregister only filters the pending-registration queue and can't
-//     mutate the persistent registry (loader.js), so the effective retraction
-//     lands on the post-load session_start re-check; the load-time call is a
-//     harmless idempotent no-op that also cancels any same-pass queued register.
-// Non-primary instances (subagents) always decide noop and touch nothing.
+// 2.x registers UNCONDITIONALLY (once primary): credential-driven availability
+// is the provider's own auth.check/resolve reporting configured-ness, so pi
+// hides/shows claude-bridge models itself — the 1.x register/unregister state
+// machine (decideRegistration) is gone. What each trigger does now:
+//   - load: build + register the provider (queued by the loader until bindCore).
+//   - session_start: re-upsert the SAME provider object. registerNativeProvider
+//     is upsert-by-id and kicks pi's model-snapshot/availability refresh, so a
+//     `claude login`/logout since the last session boundary is reflected
+//     deterministically — the same guarantee the 1.x re-check gave — without
+//     depending on pi's own refresh cadence.
+//   - pre-spawn: same re-upsert, from the fail-fast path, so a mid-session
+//     logout also flips availability at first use.
+// Non-primary instances (subagents) never touch registration: pi's native
+// registry REPLACES by id, so an unguarded subagent re-register would swap in
+// its own streamSimple — the exact split-brain the tokens exist to prevent.
+// On a pre-0.81 host the extension declines loudly (once) instead of
+// registering wrongly through the legacy overload.
+let nativeProviderInstance: unknown;
+let notifiedNativeUnsupported = false;
+
 function applyProviderRegistration(trigger: string): void {
 	const pi = extensionApi;
 	if (!pi) { debug(`${trigger}: applyProviderRegistration skipped — no extensionApi`); return; }
 	const g = globalThis as Record<symbol, any>;
 	const isPrimary = claimPrimaryInstance();
+	if (!isPrimary) {
+		debug(`${trigger}: registration noop — non-primary instance (module=${moduleInstanceId})`);
+		return;
+	}
+	if (!supportsNativeProvider(_piAi)) {
+		debug(`${trigger}: host pi-ai lacks createProvider; refusing to register (module=${moduleInstanceId})`);
+		if (!notifiedNativeUnsupported) {
+			notifiedNativeUnsupported = true;
+			safeNotify(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, "error");
+		}
+		return;
+	}
 	const credentialed = hasClaudeCredentials();
-	const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
-	const decision = decideRegistration({ credentialed, isPrimary, registered });
-	debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
-	if (decision === "register") {
-		// Start the connector inventory now, not on the first turn: the query path
-		// can only read a synchronous snapshot, so priming here is what gets the
-		// declarations in place before turn 1 (vstack#832). Fire and forget —
-		// registration must not wait on the network.
-		if (connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
-		// Claim ordering: stream guard BEFORE registerProvider so a concurrent
-		// subagent can never observe a registered provider without an owner.
-		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-		try {
-			pi.registerProvider(PROVIDER_ID, {
-				baseUrl: "claude-bridge",
-				apiKey: "not-used",
-				api: "claude-bridge",
-				models: MODELS,
-				// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-				streamSimple: streamClaudeAgentSdk as any,
-			});
-		} catch (err) {
-			// Self-heal: release ONLY the stream guard we just claimed so a later
-			// re-check (primary + credentialed + not-registered → register) retries.
-			// Keep PRIMARY_INSTANCE_KEY: releasing it would reopen the subagent
-			// ownership-steal window, and retry does not need it released.
-			if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
-			debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
-		}
-	} else if (decision === "unregister") {
-		try {
-			pi.unregisterProvider(PROVIDER_ID);
-		} catch (err) {
-			debug(`${trigger}: unregisterProvider threw (ignored):`, err);
-		}
+	debug(`${trigger}: native registration upsert, credentialed=${credentialed} (module=${moduleInstanceId})`);
+	// Start the connector inventory now, not on the first turn: the query path
+	// can only read a synchronous snapshot, so priming here is what gets the
+	// declarations in place before turn 1 (vstack#832). Fire and forget —
+	// registration must not wait on the network. Only worth it when a Claude
+	// account is actually connected.
+	if (credentialed && connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
+	// Claim ordering: stream guard BEFORE registerProvider so a concurrent
+	// subagent can never observe a registered provider without an owner.
+	g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+	try {
+		nativeProviderInstance ??= buildNativeProvider(_piAi, MODELS, streamClaudeAgentSdk as (...args: unknown[]) => unknown);
+		(pi.registerProvider as (provider: unknown) => void)(nativeProviderInstance);
+	} catch (err) {
+		// Self-heal: release ONLY the stream guard we just claimed so a later
+		// re-check retries cleanly. Keep PRIMARY_INSTANCE_KEY: releasing it would
+		// reopen the subagent ownership-steal window.
 		if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
+		debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
 	}
 }
 
@@ -775,12 +777,12 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// Fail-fast credential re-check (only for a fresh query — NEVER for
 	// tool-result delivery of an in-flight query, handled above, where creds were
 	// valid at start and failing mid-turn would break tool pairing). This bounds
-	// the retraction-latency window from "next session boundary" to "first use":
-	// if credentials vanished since the last session_start, (a) trigger the same
-	// re-evaluation applyProviderRegistration does (primary-only; retracts the
-	// stale registration), and (b) fail this request with a clear, actionable
-	// message instead of letting the SDK spawn die with a generic error. The
-	// check is cheap (existsSync + env reads only, no credential contents).
+	// the logout-visibility window from "next session boundary" to "first use":
+	// if credentials vanished since the last session_start, (a) re-upsert the
+	// provider (primary-only) so pi's availability recompute hides the models,
+	// and (b) fail this request with a clear, actionable message instead of
+	// letting the SDK spawn die with a generic error. The check is cheap
+	// (existsSync + env reads only, no credential contents).
 	if (!hasClaudeCredentials()) {
 		try { applyProviderRegistration("pre-spawn"); } catch { /* best effort */ }
 		const message = "Claude account not connected — connect an account (or run `claude login`) and retry.";
@@ -1394,10 +1396,11 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Provider ---
 	//
-	// Register the provider ONLY when real Claude credentials are present, so
-	// claude-bridge models are never advertised as available/selectable when a
-	// request would fail at spawn time (pi's ModelRegistry.hasConfiguredAuth()
-	// treats the dummy apiKey as "configured", so the gate must live here).
+	// Native registration (pi >=0.81): register unconditionally; the provider's
+	// own auth check/resolve report whether Claude credentials exist, so pi
+	// hides claude-bridge models while no account is connected and shows them
+	// when one appears. session_start and pre-spawn re-upsert the provider to
+	// force pi's availability recompute at those boundaries.
 	//
 	// applyProviderRegistration also claims the primary-instance token (first
 	// load wins) and enforces the multi-instance guard: a non-primary subagent

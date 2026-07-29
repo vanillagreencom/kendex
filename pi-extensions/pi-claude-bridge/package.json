@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-claude-bridge",
-  "version": "1.11.0",
+  "version": "2.0.0",
   "description": "Pi provider bridge that runs Claude Code through the Claude Agent SDK, with opt-in forwarding for Pi prompt context.",
   "type": "module",
   "keywords": [
@@ -148,8 +148,8 @@
     "change-case": "^5.4.4"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-ai": ">=0.81.0",
+    "@earendil-works/pi-coding-agent": ">=0.81.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.82.1",
