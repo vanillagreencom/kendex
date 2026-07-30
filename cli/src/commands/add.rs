@@ -778,6 +778,57 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn add_reports_invalid_pi_extension_catalog_path() {
+        let root = tmpdir("custom-catalog-bad-pi");
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[catalog]\nagents = [\"agents\"]\npi_extensions = [\"*/pi-packages\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("agents/rust.md"),
+            "---\nname: rust\ndescription: Rust\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+        )
+        .unwrap();
+
+        let err = crate::test_util::with_home_and_config(&home, &config_home, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    Some(vec!["rust".into()]),
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        assert!(
+            err.to_string()
+                .contains("catalog glob is only supported on the last path segment"),
+            "unexpected error: {err:#}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn same_path_matches_symlinked_project_root_to_canonical_source() {
@@ -1376,8 +1427,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         let all_agents = crate::catalog::discover_agents(&source_dir)?;
         let all_skills = crate::catalog::discover_skills(&source_dir)?;
         let all_hooks = crate::catalog::discover_hooks(&source_dir)?;
-        let all_pi_extensions =
-            crate::catalog::discover_pi_extensions(&source_dir).unwrap_or_default();
+        let all_pi_extensions = crate::catalog::discover_pi_extensions(&source_dir)?;
         let extras = crate::catalog::discover_extras(&source_dir)?;
         let dep_graph = skill::build_dependency_graph(&all_skills);
 

@@ -122,7 +122,8 @@ On install vstack copies the package into `<scope>/packages/<name>` and adds `./
 ```toml
 [catalog]
 # Each omitted key keeps its default root. Paths are source-root-relative.
-# A path can be a container dir, one specific item dir/file, or use `*` on the final segment only.
+# Packaged items use item dirs; agents/hooks may also name one `.md`/`.sh` file.
+# A path can use `*` on the final segment only.
 agents = ["agents"]
 skills = ["skills", "packages/skills/*", "one-offs/specific-skill"]
 hooks = ["hooks"]

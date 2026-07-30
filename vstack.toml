@@ -12,8 +12,9 @@ is_source_catalog = true
 #
 # Source item discovery defaults to agents/, skills/, hooks/, pi-extensions/,
 # and extras/. Repos with a different package layout can opt in per kind; any
-# omitted key keeps its default. Paths are repo-root-relative, can name a
-# container dir or one specific item, and support `*` on the final segment only.
+# omitted key keeps its default. Paths are repo-root-relative; packaged items
+# use item dirs, while agents/hooks may also name one `.md`/`.sh` file. `*` is
+# supported on the final segment only.
 #
 # [catalog]
 # agents = ["agents"]

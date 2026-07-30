@@ -120,33 +120,38 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<Vec<PathBuf>> {
 }
 
 fn wildcard_match(pattern: &str, candidate: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
+    let pattern = pattern.as_bytes();
+    let candidate = candidate.as_bytes();
+    let mut pattern_index = 0;
+    let mut candidate_index = 0;
+    let mut star_index = None;
+    let mut star_match_index = 0;
 
-    let parts: Vec<&str> = pattern.split('*').collect();
-    let mut remainder = candidate;
-    for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if index == 0 && !pattern.starts_with('*') {
-            let Some(stripped) = remainder.strip_prefix(part) else {
-                return false;
-            };
-            remainder = stripped;
-            continue;
-        }
-        let Some(pos) = remainder.find(part) else {
+    while candidate_index < candidate.len() {
+        if pattern_index < pattern.len()
+            && pattern[pattern_index] != b'*'
+            && pattern[pattern_index] == candidate[candidate_index]
+        {
+            pattern_index += 1;
+            candidate_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            pattern_index += 1;
+            star_match_index = candidate_index;
+        } else if let Some(index) = star_index {
+            pattern_index = index + 1;
+            star_match_index += 1;
+            candidate_index = star_match_index;
+        } else {
             return false;
-        };
-        remainder = &remainder[pos + part.len()..];
+        }
     }
 
-    pattern.ends_with('*')
-        || parts
-            .last()
-            .is_none_or(|last| remainder.is_empty() || last.is_empty())
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern.len()
 }
 
 fn normalize_lexical(path: &Path) -> PathBuf {
@@ -463,5 +468,13 @@ extras = ["theme-packs"]
                 .contains("only supported on the last path segment")
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wildcard_match_backtracks_to_later_suffix() {
+        assert!(wildcard_match("*a", "aa"));
+        assert!(wildcard_match("a*a", "ababa"));
+        assert!(wildcard_match("pi-*-hooks", "pi-hooks-hooks"));
+        assert!(!wildcard_match("a*b", "a"));
     }
 }

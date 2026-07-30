@@ -81,7 +81,7 @@ pi_extensions = ["pkgs/plugins/pi-*", "pkgs/plugins/a-specific-extension"]
 extras = ["theme-packs"]
 ```
 
-Each path is relative to the source repo. A path may point at a container directory or one specific item directory/file; `*` is supported on the final path segment only. Omitted keys keep the default directory for that item kind.
+Each path is relative to the source repo. A path may point at a container directory; skills, Pi extensions, and extras may name one specific item directory, while agents and hooks may also name one specific `.md` or `.sh` file. `*` is supported on the final path segment only. Omitted keys keep the default directory for that item kind.
 
 ### Customizing With `vstack.toml`
 
