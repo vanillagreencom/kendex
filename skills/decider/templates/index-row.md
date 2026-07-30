@@ -13,20 +13,20 @@ Template for adding rows to the project decision documents `INDEX.md` table.
 | Field | Format | Example |
 |-------|--------|---------|
 | `DATE` | `YYYY-MM-DD` | `2026-03-24` |
-| `DECISION_ID` | `DXXX` (zero-padded) | `D034` |
+| `DECISION_ID` | Project's sequential ID with numeric suffix | `D034` or `ADR-0034` |
 | `RESEARCH_REF` | `[ID](path)` or `—` | `[PROJ-189](../research/PROJ-189/findings.md)` |
 | `DECISION_SUMMARY` | 5-15 word summary of choice | `Use Redis for session caching` |
 | `RATIONALE_SUMMARY` | Key reason in 5-15 words | `Redis proven, cluster-ready` |
 | `REVISIT_WHEN` | Trigger condition, 5-15 words | `Session count exceeds Redis capacity` |
 | `STATUS` | Status value | `Active` |
-| `LINK` | `[Full](DXXX-descriptor.md)` | `Full -> D034-feature-name.md` |
+| `LINK` | `[Full](DECISION_ID-descriptor.md)` | `Full -> D034-feature-name.md` |
 
 ## Status Values
 
 - `Active` — Current decision in effect
-- `Superseded by DXXX` — Replaced by newer decision
+- `Superseded by [DECISION_ID]` — Replaced by newer decision
 - `Revisited` — Re-evaluated, with outcome noted
-- `Active ([COMPONENTS] → DXXX)` — Partially superseded (specific components replaced)
+- `Active ([COMPONENTS] -> [DECISION_ID])` — Partially superseded (specific components replaced)
 
 ## Example Rows
 

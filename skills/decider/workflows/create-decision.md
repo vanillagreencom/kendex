@@ -22,7 +22,7 @@ Create a new decision entry: assign ID, write decision file, add INDEX.md row, u
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-**If `.agents/skills/decider/scripts/decisions` not configured**: Read `[project decision documents]/INDEX.md`, find last `DXXX` row, increment by 1. Zero-pad to 3 digits.
+**If `.agents/skills/decider/scripts/decisions` is unavailable**: Read `[project decision documents]/INDEX.md`, inspect only the ID column, infer the numeric-suffix scheme from the last populated ID, then increment the highest number with that same prefix. If no ID exists, use the project's documented default or `D001`.
 
 ### 1.2 Generate Descriptor
 
@@ -33,7 +33,7 @@ Examples:
 - "Test file organization patterns" → `test-file-organization`
 - "Auth/Cloud Storage Stack" → `auth-cloud-storage`
 
-Store as `[DECISION_ID]` (e.g., `D034`) and `[DESCRIPTOR]` (e.g., `auth-cloud-storage`).
+Store as `[DECISION_ID]` (e.g., `D034` or `ADR-0034`) and `[DESCRIPTOR]` (e.g., `auth-cloud-storage`).
 
 ---
 
@@ -66,8 +66,8 @@ Based on scope of the decision, select the appropriate template from `templates/
    **Keep tight** — reference research for details. Decision documents summarize; research documents contain the full analysis.
 
 3. **Add cross-references** if decision relates to existing decisions:
-   - Link to related decisions: `[DXXX](DXXX-descriptor.md)`
-   - Note if decision refines prior work: `**Refines**: [DXXX](DXXX-descriptor.md)`
+   - Link to related decisions: `[DECISION_ID](DECISION_ID-descriptor.md)`
+   - Note if decision refines prior work: `**Refines**: [DECISION_ID](DECISION_ID-descriptor.md)`
 
 ---
 
@@ -93,7 +93,7 @@ If the new decision's context references other active decisions as partially aff
 
 1. **Read** referenced decision file
 2. **If** new decision replaces specific components but not the whole:
-   - Update status to `Active ([COMPONENTS] → [DECISION_ID])` in both the decision file and INDEX.md row
+   - Update status to `Active ([COMPONENTS] -> [DECISION_ID])` in both the decision file and INDEX.md row
 3. **If** new decision fully replaces:
    - Update status to `Superseded by [DECISION_ID]` in both locations
 

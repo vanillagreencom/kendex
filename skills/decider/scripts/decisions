@@ -7,12 +7,14 @@
 #   decisions search --issue PROJ-189            Find decisions linked to an issue
 #   decisions search "seqlock|mmap"             Regex OR (pipe = regex mode)
 #   decisions list                              List all active decisions (compact)
-#   decisions next-id                           Get next available DXXX
+#   decisions next-id                           Get next available decision ID
 #   decisions get D017                          Get decision details
 #
 # Environment:
-#   DECISIONS_DIR    Path to decision documents directory (required)
-#                    Example: docs/decisions
+#   DECISIONS_DIR        Path to decision documents directory (required)
+#                        Example: docs/decisions
+#   DECISION_ID_PREFIX   Optional ID prefix for next-id (default: inferred)
+#   DECISION_ID_WIDTH    Optional zero-padding width for next-id (default: inferred)
 #
 # Missing directory:
 #   Read-only lookups (search, list) treat an absent decisions directory as
@@ -26,7 +28,7 @@
 # Output:
 #   search:   JSON array [{id, decision, path}] (keyword adds score field)
 #   list:     JSON array [{id, decision, path}] of active decisions
-#   next-id:  Single line "DXXX"
+#   next-id:  Single line decision ID
 #   get:      JSON {id, decision, status, date, path}
 #
 set -euo pipefail
@@ -204,8 +206,8 @@ Actions:
                        explicit linkage lookup and does not scan bodies.
   search --issue ID    Find decisions linked to a specific issue
   list                 List all active decisions (compact)
-  next-id              Get next available DXXX
-  get <DXXX>           Get decision details (status, date, path)
+  next-id              Get next available decision ID
+  get <DECISION_ID>    Get decision details (status, date, path)
 
 Options:
   --limit N            Max results (default: 5)
@@ -233,7 +235,7 @@ Examples:
   decisions search "seqlock|mmap"          # Regex OR (pipe = regex mode)
   decisions search "FFI" --limit 3         # Limit results
   decisions list                           # All active decisions
-  decisions next-id                        # Next available DXXX
+  decisions next-id                        # Next available decision ID
   decisions get D017                       # Details for D017
 EOF
 }
@@ -376,17 +378,70 @@ list_decisions() {
 }
 
 cmd_next_id() {
+  local all
+  all=$(parse_index)
+
+  local prefix="D"
+  local width=3
+  local prefix_configured=0
+  local width_configured=0
+
+  if [[ "${DECISION_ID_PREFIX+x}" == "x" ]]; then
+    prefix="$DECISION_ID_PREFIX"
+    prefix_configured=1
+  fi
+
+  if [[ "${DECISION_ID_WIDTH+x}" == "x" ]]; then
+    if [[ ! "$DECISION_ID_WIDTH" =~ ^[1-9][0-9]*$ ]]; then
+      echo "Error: DECISION_ID_WIDTH must be a positive integer" >&2
+      return 1
+    fi
+    width="$DECISION_ID_WIDTH"
+    width_configured=1
+  fi
+
+  local id
+  local parsed_prefix
+  local parsed_num
+
+  if [[ "$prefix_configured" -eq 0 ]]; then
+    # Infer the ID format from the last INDEX ID column with a numeric suffix.
+    # This keeps next-id scheme-agnostic while ignoring prose in other columns.
+    while IFS= read -r id; do
+      if [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        if [[ "$width_configured" -eq 0 ]]; then
+          width="${#BASH_REMATCH[2]}"
+        fi
+      fi
+    done < <(echo "$all" | jq -r '.[] | .id // empty')
+  elif [[ "$width_configured" -eq 0 ]]; then
+    # A configured prefix selects the scheme; infer padding from matching rows.
+    while IFS= read -r id; do
+      if [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]]; then
+        parsed_prefix="${BASH_REMATCH[1]}"
+        if [[ "$parsed_prefix" == "$prefix" ]]; then
+          width="${#BASH_REMATCH[2]}"
+        fi
+      fi
+    done < <(echo "$all" | jq -r '.[] | .id // empty')
+  fi
+
   local max_num=0
 
-  while IFS= read -r num; do
+  while IFS= read -r id; do
+    [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]] || continue
+    parsed_prefix="${BASH_REMATCH[1]}"
+    parsed_num="${BASH_REMATCH[2]}"
+    [[ "$parsed_prefix" == "$prefix" ]] || continue
     # Force base-10 interpretation (strip leading zeros that bash treats as octal)
-    local decimal=$((10#$num))
+    local decimal=$((10#$parsed_num))
     if [[ "$decimal" -gt "$max_num" ]]; then
       max_num="$decimal"
     fi
-  done < <("$PCRE_GREP" -oP 'D(\d+)' "$INDEX_FILE" | "$PCRE_GREP" -oP '\d+' | sort -n || true)
+  done < <(echo "$all" | jq -r '.[] | .id // empty')
 
-  printf "D%03d\n" $((max_num + 1))
+  printf "%s%0*d\n" "$prefix" "$width" $((max_num + 1))
 }
 
 cmd_get() {

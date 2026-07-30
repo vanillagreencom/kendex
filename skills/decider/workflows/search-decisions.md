@@ -10,7 +10,7 @@ Search and retrieve decision documents by issue reference, keywords, or ID.
 | `.agents/skills/decider/scripts/decisions search "[KEYWORDS]"` | Ranked keyword search (AND, scored) | JSON `[{id, decision, path, score}]` |
 | `.agents/skills/decider/scripts/decisions search "term1\|term2"` | Regex OR search | JSON `[{id, decision, path}]` |
 | `.agents/skills/decider/scripts/decisions list` | List all active decisions | JSON `[{id, decision, path}]` |
-| `.agents/skills/decider/scripts/decisions next-id` | Get next available DXXX | Single line `DXXX` |
+| `.agents/skills/decider/scripts/decisions next-id` | Get next available decision ID from the INDEX ID column | Single decision ID line |
 | `.agents/skills/decider/scripts/decisions get [DECISION_ID]` | Get decision details | JSON `{id, decision, status, date, path}` |
 
 Options: `--limit N` (default: 5) for search results.
@@ -63,7 +63,7 @@ Contains `|`, `()`, or `\` → regex mode (no scoring, direct pattern match).
 .agents/skills/decider/scripts/decisions list
 ```
 
-Returns all decisions with status starting with `Active` (includes partially superseded entries like `Active (X → DXXX)`).
+Returns all decisions with status starting with `Active` (includes partially superseded entries like `Active (X -> [DECISION_ID])`).
 
 ---
 
@@ -73,9 +73,9 @@ Returns all decisions with status starting with `Active` (includes partially sup
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-Reads INDEX.md, finds the highest DXXX number, returns `D{N+1}` (zero-padded).
+Reads `INDEX.md`, inspects only the ID column, infers the numeric-suffix scheme from the last populated ID, and returns the next number with that same prefix and padding. Set `DECISION_ID_PREFIX` and `DECISION_ID_WIDTH` to override the inferred scheme, especially for an empty index.
 
-**Output**: `D034`
+**Output**: `D034` or `ADR-0034`
 
 ---
 

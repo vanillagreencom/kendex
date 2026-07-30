@@ -2,13 +2,13 @@
 
 Defines the canonical structure and constraints for decision documents and the decision index.
 
-## Decision Document (`DXXX-descriptor.md`)
+## Decision Document (`[DECISION_ID]-descriptor.md`)
 
 ### Required Elements
 
 | Element | Format | Constraint |
 |---------|--------|------------|
-| Title | `# DXXX: Title` | H1, uppercase D, zero-padded 3-digit number |
+| Title | `# [DECISION_ID]: Title` | H1 using the project decision ID scheme |
 | Index back-link | `[← Decision Index](INDEX.md)` | Immediately after title |
 | Date | `**Date**: YYYY-MM-DD` | ISO 8601 date |
 | Status | `**Status**: [VALUE]` | See Status Values below |
@@ -34,11 +34,11 @@ Defines the canonical structure and constraints for decision documents and the d
 
 ### File Naming
 
-Pattern: `DXXX-kebab-case-descriptor.md`
+Pattern: `[DECISION_ID]-kebab-case-descriptor.md`
 
-- `DXXX`: Zero-padded sequential ID (D001, D010, D034)
+- `DECISION_ID`: Sequential ID with a numeric suffix. The default scheme is `D001`, `D010`, `D034`; projects may consistently use another scheme such as `ADR-0001`.
 - `descriptor`: Kebab-case summary of the decision topic (2-5 words)
-- Examples: `D001-session-caching.md`, `D010-test-organization.md`
+- Examples: `D001-session-caching.md`, `D010-test-organization.md`, `ADR-0001-runtime-choice.md`
 
 ## INDEX.md Structure
 
@@ -74,11 +74,11 @@ Pattern: `DXXX-kebab-case-descriptor.md`
 
 ### Status Values
 - **Active**: Current decision in effect
-- **Superseded by DXXX**: Replaced by newer decision
+- **Superseded by [DECISION_ID]**: Replaced by newer decision
 - **Revisited**: Re-evaluated, with outcome noted
 
 ### Code Comments
-Use `// REVISIT(DXXX):` in code to mark implementation points tied to decisions.
+Use `// REVISIT([DECISION_ID]):` in code to mark implementation points tied to decisions.
 ```
 
 ## Status Values
@@ -86,19 +86,19 @@ Use `// REVISIT(DXXX):` in code to mark implementation points tied to decisions.
 | Value | Meaning | When |
 |-------|---------|------|
 | `Active` | Decision is in effect | Default for new decisions |
-| `Superseded by DXXX` | Fully replaced by another decision | New decision covers entire scope |
+| `Superseded by [DECISION_ID]` | Fully replaced by another decision | New decision covers entire scope |
 | `Revisited` | Re-evaluated with outcome noted | Conditions changed, decision re-assessed |
-| `Active ([COMPONENTS] → DXXX)` | Partially superseded | New decision replaces specific components only |
+| `Active ([COMPONENTS] -> [DECISION_ID])` | Partially superseded | New decision replaces specific components only |
 
 ## Cross-Reference Conventions
 
 | Reference Type | Format |
 |----------------|--------|
-| Decision-to-decision | `[DXXX](DXXX-descriptor.md)` |
+| Decision-to-decision | `[DECISION_ID](DECISION_ID-descriptor.md)` |
 | Decision-to-research | `[RESEARCH-ID](../research/RESEARCH-ID/findings.md)` |
 | Decision-to-code | `` `path/to/file.rs` `` or `[file](../../path/to/file.rs)` |
-| Code-to-decision | `// REVISIT(DXXX): [reason]` |
-| Issue-to-decision | `**Decision [DXXX]**: [path/to/DXXX-descriptor.md]` |
+| Code-to-decision | `// REVISIT([DECISION_ID]): [reason]` |
+| Issue-to-decision | `**Decision [DECISION_ID]**: [path/to/DECISION_ID-descriptor.md]` |
 
 ## Content Guidelines
 

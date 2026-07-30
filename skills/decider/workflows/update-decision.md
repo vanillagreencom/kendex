@@ -6,7 +6,7 @@ Update the status or content of existing decision entries — supersession, part
 
 | Input | Source | Required |
 |-------|--------|----------|
-| `decision_id` | Caller (DXXX to update) | Yes |
+| `decision_id` | Caller (decision ID to update) | Yes |
 | `update_type` | Caller | Yes |
 | `new_decision_id` | Caller (for supersession) | Conditional |
 | `components` | Caller (for partial supersession) | Conditional |
@@ -19,7 +19,7 @@ Update the status or content of existing decision entries — supersession, part
 | Type | When | Status Change |
 |------|------|---------------|
 | `supersede` | New decision fully replaces this one | `Superseded by [NEW_DECISION_ID]` |
-| `partial_supersede` | New decision replaces specific components | `Active ([COMPONENTS] → [NEW_DECISION_ID])` |
+| `partial_supersede` | New decision replaces specific components | `Active ([COMPONENTS] -> [NEW_DECISION_ID])` |
 | `revisit` | Conditions changed, decision re-assessed | `Revisited` (append outcome) |
 
 ---
@@ -37,7 +37,7 @@ Update the status or content of existing decision entries — supersession, part
 
    **Partial supersession:**
    ```markdown
-   **Status**: Active ([COMPONENTS] → [NEW_DECISION_ID])
+   **Status**: Active ([COMPONENTS] -> [NEW_DECISION_ID])
    ```
 
    **Revisitation:**
@@ -80,5 +80,5 @@ For `supersede` or `partial_supersede`:
 ## 5. Return
 
 ```
-Updated: [DECISION_ID] → [STATUS]
+Updated: [DECISION_ID] -> [STATUS]
 ```
