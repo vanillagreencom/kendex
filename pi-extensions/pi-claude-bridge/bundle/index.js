@@ -26941,8 +26941,9 @@ function splitPrefixSuffix(input, options = {}) {
 // src/config.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { homedir } from "os";
-import { dirname, join as join2, resolve as resolve2 } from "path";
+import { dirname, join as join2, resolve as resolve2, sep as sep2 } from "path";
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
+var EXTERNAL_CONFIG_RESOLVER_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.extension-config-resolver");
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
 function expandHome(input) {
   if (input === "~") return homedir();
@@ -27127,19 +27128,85 @@ function managerToConfig(raw) {
     ...Object.keys(promptContext).length ? { promptContext } : {}
   };
 }
-function loadConfig(cwd) {
-  const global2 = tryParseJson(join2(piUserDir(), "claude-bridge.json"));
-  const isolated = isolatedFromEnv();
-  const projectSettings = isolated ? void 0 : projectSettingsPath(cwd);
-  const trustedProject = projectSettings !== void 0 && projectSettingsTrusted(projectSettings);
-  const project = trustedProject ? tryParseJson(join2(dirname(projectSettings), "claude-bridge.json")) : {};
-  const manager = isolated ? {} : managerToConfig(readManagerConfig(cwd));
-  const provider = normalizeProviderConfig({ ...global2.provider, ...project.provider, ...manager.provider });
+function legacyFileConfig(path) {
+  const raw = asRecord(tryParseJson(path)) ?? {};
+  const flat = managerToConfig(raw);
+  const provider = { ...flat.provider, ...asRecord(raw.provider) };
+  const promptContext = { ...flat.promptContext, ...asRecord(raw.promptContext) };
   return {
-    enabled: manager.enabled ?? project.enabled ?? global2.enabled ?? true,
-    provider,
-    promptContext: { ...global2.promptContext, ...project.promptContext, ...manager.promptContext }
+    ...flat.enabled !== void 0 ? { enabled: flat.enabled } : {},
+    ...Object.keys(provider ?? {}).length ? { provider } : {},
+    ...Object.keys(promptContext ?? {}).length ? { promptContext } : {}
   };
+}
+function legacyLayers(cwd) {
+  const globalPath = join2(piUserDir(), "claude-bridge.json");
+  const layers = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
+  if (isolatedFromEnv()) return layers;
+  const projectSettings = projectSettingsPath(cwd);
+  if (!projectSettingsTrusted(projectSettings)) return layers;
+  const projectPath = join2(dirname(projectSettings), "claude-bridge.json");
+  return [...layers, { path: projectPath, config: legacyFileConfig(projectPath) }];
+}
+function mergeLayers(layers) {
+  const merged = { provider: {}, promptContext: {} };
+  for (const layer of layers) {
+    if (layer.config.enabled !== void 0) merged.enabled = layer.config.enabled;
+    merged.provider = { ...merged.provider, ...layer.config.provider };
+    merged.promptContext = { ...merged.promptContext, ...layer.config.promptContext };
+  }
+  return merged;
+}
+function loadConfig(cwd) {
+  const legacy = mergeLayers(legacyLayers(cwd));
+  const manager = isolatedFromEnv() ? {} : managerToConfig(readManagerConfig(cwd));
+  const provider = normalizeProviderConfig({ ...legacy.provider, ...manager.provider });
+  return {
+    enabled: manager.enabled ?? legacy.enabled ?? true,
+    provider,
+    promptContext: { ...legacy.promptContext, ...manager.promptContext }
+  };
+}
+var PROVIDER_KEYS = /* @__PURE__ */ new Set([
+  "allowExtraUsage",
+  "appendSystemPrompt",
+  "connectorWriteMode",
+  "enableConnectors",
+  "fastMode",
+  "forceEffort",
+  "modelEffortOverrides",
+  "pathToClaudeCodeExecutable",
+  "strictMcpConfig"
+]);
+var PROMPT_CONTEXT_KEYS = /* @__PURE__ */ new Set([
+  "includeAppendSystemPromptMd",
+  "includeCavemanHook",
+  "includeProjectAgentsHook",
+  "includeTaskPanelHook"
+]);
+function configValueForKey(config2, key) {
+  if (key === "enabled") return config2.enabled;
+  if (PROVIDER_KEYS.has(key)) return normalizeProviderConfig(config2.provider)?.[key];
+  if (PROMPT_CONTEXT_KEYS.has(key)) return config2.promptContext?.[key];
+  return void 0;
+}
+function displayPath(path) {
+  const home = homedir();
+  return home && path.startsWith(home + sep2) ? `~${path.slice(home.length)}` : path;
+}
+function resolveExternalConfigValue(key, cwd) {
+  const layers = legacyLayers(cwd);
+  const value = configValueForKey(mergeLayers(layers), key);
+  if (value === void 0) return { explicit: false, value: void 0 };
+  const source = [...layers].reverse().find((layer) => configValueForKey(layer.config, key) !== void 0)?.path;
+  return { explicit: true, value, ...source ? { source: displayPath(source) } : {} };
+}
+function registerExternalConfigResolver() {
+  const host = globalThis;
+  const existing = asRecord(host[EXTERNAL_CONFIG_RESOLVER_SYMBOL]);
+  const registry2 = existing ?? {};
+  if (!existing) host[EXTERNAL_CONFIG_RESOLVER_SYMBOL] = registry2;
+  registry2[PACKAGE_ID] = (key, cwd) => resolveExternalConfigValue(key, cwd);
 }
 
 // src/skills.ts
@@ -27517,10 +27584,10 @@ function isChildExecutedTool(name) {
 }
 function isConnectorWriteTool(name) {
   if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
-  const sep2 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
-  if (sep2 <= CONNECTOR_NS_PREFIX2.length) return true;
-  const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep2);
-  const words = connectorNameWords(name.slice(sep2 + "__".length));
+  const sep3 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
+  if (sep3 <= CONNECTOR_NS_PREFIX2.length) return true;
+  const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep3);
+  const words = connectorNameWords(name.slice(sep3 + "__".length));
   const serverWords = connectorNameWords(server);
   let skipped = 0;
   while (skipped < serverWords.length && words[skipped] === serverWords[skipped] && !CONNECTOR_MUTATION_WORDS.has(words[skipped])) skipped++;
@@ -45885,6 +45952,7 @@ function index_default(pi) {
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   const config2 = loadConfig(process.cwd());
   debug("loadConfig:", JSON.stringify(config2));
+  registerExternalConfigResolver();
   registerBridgeCommands(pi);
   if (config2.enabled === false) {
     debug("provider: disabled by configuration");

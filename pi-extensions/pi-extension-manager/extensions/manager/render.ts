@@ -27,10 +27,10 @@ export function wrapLine(line: string, width: number): string[] {
 	return wrapped.map((part) => truncateToWidth(part, safeWidth, ""));
 }
 
-export function wrapDescription(text: string, width: number, theme: Theme, indent = ""): string[] {
+export function wrapDescription(text: string, width: number, theme: Theme, indent = "", tone: "muted" | "dim" = "muted"): string[] {
 	const indentWidth = visibleWidth(indent);
 	const contentWidth = Math.max(1, width - indentWidth);
-	return wrapLine(text, contentWidth).map((line) => `${indent}${theme.fg("muted", line)}`);
+	return wrapLine(text, contentWidth).map((line) => `${indent}${theme.fg(tone, line)}`);
 }
 
 export function countBy<T>(items: T[], key: (item: T) => string): Record<string, number> {

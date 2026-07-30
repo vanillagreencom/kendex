@@ -54,6 +54,8 @@ Open `/extensions:settings`; settings appear under the **Claude Bridge** tab.
 
 Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, vstack Pi extensions read user/global settings only.
 
+The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, and `.pi/claude-bridge.json` in a trusted project). Settings the bridge takes from one of those files are shown with the file that supplies them, so the editor reports the value the bridge resolves rather than the default. Changing the setting in the editor writes Pi settings, which take precedence over `claude-bridge.json`.
+
 ### General
 
 | Setting | What it does |
@@ -143,7 +145,7 @@ Extension-manager settings use flat package-scoped keys:
 }
 ```
 
-Legacy `.pi/claude-bridge.json` configuration keeps these options nested under `provider`. Environment variables work with either format. Connectors remain off by default so Pi owns tool execution.
+Legacy `claude-bridge.json` configuration nests these options under `provider` (prompt-context flags under `promptContext`); the flat keys above are accepted there too. Environment variables work with either format. Connectors remain off by default so Pi owns tool execution.
 
 | Extension-manager key | Env var | Values | Default | What it does |
 | --- | --- | --- | --- | --- |

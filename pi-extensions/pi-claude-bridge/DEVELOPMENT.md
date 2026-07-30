@@ -78,6 +78,14 @@ they are the only consumers). What the original evaluation flagged, and how each
 - The subscription-billing constraint is untouched: BOTH native stream entry points
   (`stream`/`streamSimple`) are the same Claude Code subprocess router — there is no raw-API path.
 
+## Config channels
+
+`loadConfig` layers three sources, lowest precedence first: `<piUserDir>/claude-bridge.json`, a trusted project's `.pi/claude-bridge.json`, then extension-manager config in `settings.json`. Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`) keeps only the first.
+
+Each `claude-bridge.json` is read by `legacyFileConfig`, which accepts both the nested legacy shape (`provider.*`, `promptContext.*`) and the manager's flat manifest keys; nested wins when a file carries both for one key. Provider values are normalized once over the merged result, so an invalid `forceEffort` in a higher layer still clears a valid one below it.
+
+`resolveExternalConfigValue(key, cwd)` reports what those files — and only those files — resolve for one manifest key, plus the concrete file that supplied it. It shares `legacyLayers`/`mergeLayers` with `loadConfig` and applies the same normalization, so the two cannot drift. `registerExternalConfigResolver` publishes it under `Symbol.for("vstack.pi.extension-config-resolver")` keyed by `PACKAGE_ID`; the vstack extension manager calls it when neither of its own scopes holds a key, and renders the value with its source file. Registration happens before the `config.enabled === false` early return, because a bridge disabled by `claude-bridge.json` is precisely the case the settings editor has to explain. The contract itself is documented in [`pi-extension-manager/DEVELOPMENT.md`](../pi-extension-manager/DEVELOPMENT.md).
+
 ## Connector write enforcement
 
 Write denial with `connectorWriteMode: "deny"` is two-layered:

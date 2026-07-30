@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { stringifyError } from "./format.js";
 import { findProjectPiDir, userPiDir } from "./paths.js";
 import {
+	EXTERNAL_CONFIG_RESOLVER_SYMBOL,
 	LIST_ROWS,
 	MANAGER_ID,
 	MANAGER_INNER_ROWS,
@@ -13,6 +14,9 @@ import {
 	QUICK_SETTINGS_ROWS,
 	VSTACK_MODAL_LOCK_SYMBOL,
 	type ConfigValue,
+	type ExternalConfigResolution,
+	type ExternalConfigResolver,
+	type ExternalConfigResolverRegistry,
 	type Inventory,
 	type InventoryItem,
 	type ManagerState,
@@ -136,6 +140,50 @@ export function defaultWriteScope(item: InventoryItem | undefined, files: Settin
 	return projectSettingsWritable(files) ? "project" : "user";
 }
 
+export function externalConfigResolvers(): ExternalConfigResolverRegistry {
+	const host = globalThis as unknown as Record<PropertyKey, unknown>;
+	const existing = asRecord(host[EXTERNAL_CONFIG_RESOLVER_SYMBOL]);
+	if (existing) return existing as ExternalConfigResolverRegistry;
+	const created: ExternalConfigResolverRegistry = {};
+	host[EXTERNAL_CONFIG_RESOLVER_SYMBOL] = created;
+	return created;
+}
+
+/**
+ * Ask the owning extension for the value it resolves from its own config files.
+ * A missing, malformed, or throwing resolver is indistinguishable from "nothing
+ * external is set" — the modal must never fail to render because of one.
+ */
+function externalConfigValue(extensionId: string, key: string, cwd: string): ExternalConfigResolution | undefined {
+	const resolver = externalConfigResolvers()[extensionId] as ExternalConfigResolver | undefined;
+	if (typeof resolver !== "function") return undefined;
+	try {
+		const resolved = resolver(key, cwd);
+		return resolved && typeof resolved === "object" && resolved.explicit === true ? resolved : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+// External lookups touch the filesystem, and the settings popup re-reads every
+// visible row on each keystroke. One resolver call per (extension, key) per
+// inventory keeps that cost off the render path; the inventory is rebuilt each
+// time the popup opens, so edits to the external file still show up.
+const externalConfigCache = new WeakMap<Inventory, Map<string, ExternalConfigResolution | undefined>>();
+
+function cachedExternalConfigValue(inventory: Inventory, extensionId: string, key: string): ExternalConfigResolution | undefined {
+	let cache = externalConfigCache.get(inventory);
+	if (!cache) {
+		cache = new Map();
+		externalConfigCache.set(inventory, cache);
+	}
+	const cacheKey = `${extensionId}::${key}`;
+	if (cache.has(cacheKey)) return cache.get(cacheKey);
+	const resolved = externalConfigValue(extensionId, key, inventory.cwd);
+	cache.set(cacheKey, resolved);
+	return resolved;
+}
+
 export function getConfigValue(inventory: Inventory, extensionId: string, schema: SettingsSchema): ConfigValue {
 	const project = managerStateFrom(inventory.settingsFiles.find((file) => file.scope === "project")?.json ?? {});
 	const user = managerStateFrom(inventory.settingsFiles.find((file) => file.scope === "user")?.json ?? {});
@@ -145,6 +193,10 @@ export function getConfigValue(inventory: Inventory, extensionId: string, schema
 	if (Object.prototype.hasOwnProperty.call(user.config[extensionId] ?? {}, schema.key)) {
 		return { explicit: true, scope: "user", value: user.config[extensionId]![schema.key] };
 	}
+	// Manager config outranks the extension's own files, matching how extensions
+	// layer the two, so this runs only when neither manager scope holds the key.
+	const external = cachedExternalConfigValue(inventory, extensionId, schema.key);
+	if (external) return { explicit: true, scope: "external", value: external.value, source: external.source };
 	return { explicit: false, scope: "default", value: schema.default };
 }
 

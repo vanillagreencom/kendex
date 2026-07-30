@@ -15,6 +15,7 @@ export const MANAGER_INNER_ROWS = 32;
 export const QUICK_SETTINGS_INNER_ROWS = 30;
 export const QUICK_SETTINGS_ROWS = 18;
 export const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
+export const EXTERNAL_CONFIG_RESOLVER_SYMBOL = Symbol.for("vstack.pi.extension-config-resolver");
 export const VSTACK_OPEN_QUICK_SETTINGS_SYMBOL = Symbol.for("vstack.pi.extension-manager.open-quick-settings");
 export const NPM_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const TAB_ALL = "all";
@@ -75,9 +76,27 @@ export interface ManagerState {
 
 export interface ConfigValue {
 	value: unknown;
-	scope: Scope | "default";
+	/** `external` — the effective value comes from a config file the manager does not own. */
+	scope: Scope | "default" | "external";
 	explicit: boolean;
+	/** Display path of the file behind an `external` value. */
+	source?: string;
 }
+
+export interface ExternalConfigResolution {
+	explicit: boolean;
+	value: unknown;
+	source?: string;
+}
+
+/**
+ * An extension that reads settings from channels beyond manager config publishes
+ * one of these under EXTERNAL_CONFIG_RESOLVER_SYMBOL, keyed by package name, so
+ * the settings editor can show the value the extension actually resolves.
+ */
+export type ExternalConfigResolver = (key: string, cwd: string) => ExternalConfigResolution | undefined;
+
+export type ExternalConfigResolverRegistry = Record<string, ExternalConfigResolver>;
 
 export interface PopupLayout {
 	bodyRows: number;
@@ -142,6 +161,7 @@ export interface Inventory {
 	settingsFiles: SettingsFile[];
 	managerState: ManagerState;
 	auditLines: string[];
+	cwd: string;
 }
 
 export interface ManagerTab {

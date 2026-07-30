@@ -9,7 +9,7 @@ import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.j
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, toolCallDrainCause } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
-import { loadConfig, normalizeEffortLevel, recordProjectTrust, type Config } from "./config.js";
+import { loadConfig, normalizeEffortLevel, recordProjectTrust, registerExternalConfigResolver, type Config } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
 import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
 import { extractAgentsAppend } from "./agents-md.js";
@@ -1336,6 +1336,10 @@ export default function (pi: ExtensionAPI) {
 
 	const config = loadConfig(process.cwd());
 	debug("loadConfig:", JSON.stringify(config));
+	// Registered before the disabled early return: a bridge switched off by
+	// claude-bridge.json is exactly when the settings editor has to show where
+	// that value came from.
+	registerExternalConfigResolver();
 	registerBridgeCommands(pi);
 	if (config.enabled === false) {
 		debug("provider: disabled by configuration");

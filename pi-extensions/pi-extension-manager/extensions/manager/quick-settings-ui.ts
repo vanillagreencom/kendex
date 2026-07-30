@@ -36,6 +36,7 @@ import {
 	setConfigValue,
 } from "./settings.js";
 import {
+	type ConfigValue,
 	type Inventory,
 	type InventoryItem,
 	type ManagerTab,
@@ -50,6 +51,16 @@ import {
 	SETTINGS_EVENT,
 	TAB_ALL,
 } from "./types.js";
+
+const EXTERNAL_SOURCE_FALLBACK = "the extension's own config file";
+
+function externalSource(config: ConfigValue): string {
+	return config.source ?? EXTERNAL_SOURCE_FALLBACK;
+}
+
+function externalSourceNote(config: ConfigValue): string {
+	return `Value comes from ${externalSource(config)}. Editing it here writes Pi settings, which override that file.`;
+}
 
 function settingPackages(inventory: Inventory): InventoryItem[] {
 	return inventory.packages.filter((item) => item.packageName && item.settingsSchema?.length && item.state !== "shadowed");
@@ -119,26 +130,49 @@ function saveQuickSetting(pi: ExtensionAPI, ctx: ExtensionCommandContext | Exten
 	if (apply !== "live") ctx.ui.notify(applyMessage(row.schema), apply === "restart" ? "warning" : "info");
 }
 
+// resetConfigKeys only deletes from settings.json, so a value owned by another
+// config file survives the reset. Report that instead of a reset that did not
+// happen.
+function isManagerOwned(config: ConfigValue): boolean {
+	return config.scope === "project" || config.scope === "user";
+}
+
 function resetQuickSetting(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, row: QuickSettingRow): void {
-	if (!getConfigValue(inventory, row.extensionId, row.schema).explicit) {
-		ctx.ui.notify(`${row.schema.label ?? row.schema.key} is already using its default.`, "info");
+	const config = getConfigValue(inventory, row.extensionId, row.schema);
+	const label = row.schema.label ?? row.schema.key;
+	if (!config.explicit) {
+		ctx.ui.notify(`${label} is already using its default.`, "info");
+		return;
+	}
+	if (!isManagerOwned(config)) {
+		ctx.ui.notify(`${label} is set by ${externalSource(config)} and cannot be reset from here. Edit that file, or press enter to override it in Pi settings.`, "warning");
 		return;
 	}
 	resetConfigKeys(inventory, row.extensionId, [row.schema.key]);
 	pi.events.emit(SETTINGS_EVENT, { extensionId: row.extensionId, key: row.schema.key, value: row.schema.default });
-	notifyReset(ctx, row.schema.label ?? row.schema.key, [row.schema]);
+	notifyReset(ctx, label, [row.schema]);
 }
 
 function resetQuickSettingsForExtension(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, rows: QuickSettingRow[], extensionId: string, label: string): void {
-	const scoped = rows.filter((row) => row.extensionId === extensionId);
-	const explicit = scoped.filter((row) => getConfigValue(inventory, row.extensionId, row.schema).explicit);
-	if (explicit.length === 0) {
+	const scoped = rows.filter((row) => row.extensionId === extensionId).map((row) => ({ config: getConfigValue(inventory, row.extensionId, row.schema), row }));
+	const managed = scoped.filter((entry) => isManagerOwned(entry.config));
+	const external = scoped.filter((entry) => entry.config.explicit && !isManagerOwned(entry.config));
+	if (managed.length === 0) {
+		if (external.length > 0) {
+			const sources = [...new Set(external.map((entry) => externalSource(entry.config)))].join(", ");
+			ctx.ui.notify(`${label} has no settings stored in Pi settings; ${external.length === 1 ? "1 value comes" : `${external.length} values come`} from ${sources}.`, "warning");
+			return;
+		}
 		ctx.ui.notify(`${label} settings are already using defaults.`, "info");
 		return;
 	}
-	resetConfigKeys(inventory, extensionId, explicit.map((row) => row.schema.key));
-	for (const row of explicit) pi.events.emit(SETTINGS_EVENT, { extensionId, key: row.schema.key, value: row.schema.default });
-	notifyReset(ctx, `${label} settings`, explicit.map((row) => row.schema));
+	resetConfigKeys(inventory, extensionId, managed.map((entry) => entry.row.schema.key));
+	for (const entry of managed) pi.events.emit(SETTINGS_EVENT, { extensionId, key: entry.row.schema.key, value: entry.row.schema.default });
+	notifyReset(ctx, `${label} settings`, managed.map((entry) => entry.row.schema));
+	if (external.length > 0) {
+		const sources = [...new Set(external.map((entry) => externalSource(entry.config)))].join(", ");
+		ctx.ui.notify(`${external.length} ${label} value${external.length === 1 ? " is" : "s are"} still set by ${sources}.`, "warning");
+	}
 }
 
 function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, ui: QuickSettingsUiState, theme: Theme, requestRender: () => void, getLayout: () => PopupLayout, done: (action: QuickSettingsAction) => void) {
@@ -330,6 +364,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			const rowText = truncateToWidth(`${itemPad}${label}${" ".repeat(Math.max(1, 36 - visibleWidth(labelText)))}${valueText}`, bodyWidth, "…");
 			lines.push(selected ? managerSelectedLine(theme, rowText, bodyWidth) : rowText);
 			if (selected && !isEditing && row.schema.description) lines.push(...wrapDescription(row.schema.description, bodyWidth, theme, "    "));
+			if (selected && !isEditing && config.scope === "external") lines.push(...wrapDescription(externalSourceNote(config), bodyWidth, theme, "    ", "dim"));
 		}
 		const moreBefore = ui.scroll > 0 ? `↑ ${ui.scroll}` : "";
 		const moreAfter = ui.scroll + layout.listRows < filtered().length ? `↓ ${filtered().length - ui.scroll - layout.listRows}` : "";
