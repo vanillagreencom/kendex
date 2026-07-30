@@ -138,5 +138,5 @@ Manual review checks (need judgment; `validate` cannot perform them):
 
 - Template: `templates/findings.md`
 - Format checklist: `templates/findings-report-format.md` (this is a Markdown format guide, not a machine-readable schema)
-- Required report sections: `Executive Summary`, `Key Findings`, `Evidence and Sources`, `Tradeoffs / Alternatives`, `Recommendation / Decision Criteria`, `Risks / Unknowns`, `Revisit Conditions`, and `Research Metadata`.
+- Required report sections: `Research Question`, `Executive Summary`, `Key Findings`, `Evidence and Sources`, `Tradeoffs / Alternatives`, `Recommendation / Decision Criteria`, `Risks / Unknowns`, `Revisit Conditions`, and `Research Metadata`.
 - Do not embed raw Exa JSON in `findings.md`. Store provider payloads in the sidecar JSON (`findings.raw.json` by default, or the explicit `--raw-output`/`rawOutputPath`).
