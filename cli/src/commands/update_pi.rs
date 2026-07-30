@@ -3,9 +3,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::pi_extension::{
-    self, PiExtension, SourceIndex, discover_pi_extensions, install_pi_extension,
-    is_pi_extension_installed, list_installed_vstack_packages, list_npm_packages,
-    read_source_index,
+    self, PiExtension, SourceIndex, install_pi_extension, is_pi_extension_installed,
+    list_installed_vstack_packages, list_npm_packages, read_source_index,
 };
 
 /// What kind of source a package was installed from.
@@ -440,7 +439,7 @@ fn execute(plan: &[PlanItem]) -> Result<()> {
 
     for ((global, repo), names) in &vstack_groups {
         let scope_label = if *global { "global" } else { "project" };
-        let extensions = match discover_pi_extensions(&repo.join("pi-extensions")) {
+        let extensions = match crate::catalog::discover_pi_extensions(repo) {
             Ok(list) => list,
             Err(e) => {
                 eprintln!("  ✗ failed to scan {} ({scope_label}): {e}", repo.display());
@@ -453,7 +452,7 @@ fn execute(plan: &[PlanItem]) -> Result<()> {
         for name in names {
             let Some(ext) = extensions.iter().find(|e| &e.name == name) else {
                 eprintln!(
-                    "  ✗ {name} ({scope_label}): not found in {}/pi-extensions",
+                    "  ✗ {name} ({scope_label}): not found in source catalog at {}",
                     repo.display()
                 );
                 failed.push(format!("{name} ({scope_label})"));

@@ -1,9 +1,6 @@
-use crate::agent;
 use crate::agent::Agent;
 use crate::config::{self, InstallMethod, LockFile};
-use crate::extra;
 use crate::harness::Harness;
-use crate::hook;
 use crate::hook::Hook;
 use crate::installer;
 use crate::pi_extension::PiExtension;
@@ -720,6 +717,67 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn add_discovers_agent_and_auto_skill_from_custom_catalog() {
+        let root = tmpdir("custom-catalog-add");
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        std::fs::create_dir_all(source.join("pkgs/agents")).unwrap();
+        std::fs::create_dir_all(source.join("pkgs/skills/demo")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[catalog]\nagents = [\"pkgs/agents\"]\nskills = [\"pkgs/skills\"]\n\n[agent-skills]\nrust = [\"demo\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("pkgs/agents/rust.md"),
+            "---\nname: rust\ndescription: Rust\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("pkgs/skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config_home, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    Some(vec!["rust".into()]),
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap();
+            })
+        });
+
+        assert!(project.join(".codex/agents/rust.toml").exists());
+        assert!(project.join(".agents/skills/demo/SKILL.md").exists());
+        let lock = config::LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+        assert!(lock.entries.contains_key("rust"));
+        assert!(lock.entries.contains_key("demo"));
+        assert!(
+            !lock.entries.get("demo").unwrap().source_hash.is_empty(),
+            "custom catalog skill should get a source hash"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn same_path_matches_symlinked_project_root_to_canonical_source() {
@@ -1315,17 +1373,12 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             registry.save(&config::source_registry_path())?;
         }
         let source_dir = resolved.dir.clone();
-        let agents_dir = source_dir.join("agents");
-        let skills_dir = source_dir.join("skills");
-        let hooks_dir = source_dir.join("hooks");
-        let pi_ext_dir = source_dir.join("pi-extensions");
-
-        let all_agents = agent::discover_agents(&agents_dir)?;
-        let all_skills = skill::discover_skills(&skills_dir)?;
-        let all_hooks = hook::discover_hooks(&hooks_dir)?;
+        let all_agents = crate::catalog::discover_agents(&source_dir)?;
+        let all_skills = crate::catalog::discover_skills(&source_dir)?;
+        let all_hooks = crate::catalog::discover_hooks(&source_dir)?;
         let all_pi_extensions =
-            crate::pi_extension::discover_pi_extensions(&pi_ext_dir).unwrap_or_default();
-        let extras = extra::discover_extras(&source_dir)?;
+            crate::catalog::discover_pi_extensions(&source_dir).unwrap_or_default();
+        let extras = crate::catalog::discover_extras(&source_dir)?;
         let dep_graph = skill::build_dependency_graph(&all_skills);
 
         // Filter semantics: passing any item filter restricts the install to
@@ -1524,8 +1577,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // (agent-skills + role-skills + prefix matches) plus transitive
     // dependencies and add any missing canonical skills.
     if !no_auto_skills && !selected_agents.is_empty() {
-        let skills_source_dir = source_dir.join("skills");
-        let all_skills = skill::discover_skills(&skills_source_dir).unwrap_or_default();
+        let all_skills = crate::catalog::discover_skills(&source_dir).unwrap_or_default();
         let added = auto_include_agent_skills(
             &selected_agents,
             &mapping,
@@ -2133,7 +2185,7 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
 
     if !crate::resolve::is_vstack_source(&repo_dir) {
         anyhow::bail!(
-            "Cloned repo doesn't look like a vstack repo (no agents/, skills/, or hooks/ found)"
+            "Cloned repo doesn't look like a vstack repo (no catalog table or source item directories found)"
         );
     }
 
@@ -2172,13 +2224,9 @@ fn reconcile_agents(
     }
 
     // Discover source agents and skills for descriptions
-    let agents_dir = source_dir.join("agents");
-    let skills_dir = source_dir.join("skills");
-    let hooks_dir = source_dir.join("hooks");
-
-    let source_agents = crate::agent::discover_agents(&agents_dir).unwrap_or_default();
-    let source_skills = crate::skill::discover_skills(&skills_dir).unwrap_or_default();
-    let source_hooks = crate::hook::discover_hooks(&hooks_dir).unwrap_or_default();
+    let source_agents = crate::catalog::discover_agents(source_dir).unwrap_or_default();
+    let source_skills = crate::catalog::discover_skills(source_dir).unwrap_or_default();
+    let source_hooks = crate::catalog::discover_hooks(source_dir).unwrap_or_default();
     let mut regenerated_codex_agents: Vec<crate::agent::Agent> = Vec::new();
     let mut regenerated_codex_agent_names = std::collections::HashSet::new();
 

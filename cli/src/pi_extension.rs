@@ -555,15 +555,16 @@ fn install_pi_extension_inner(
 }
 
 /// Walk up from a package's source dir to find the vstack repo root.
-/// Identified by presence of a top-level `pi-extensions/` sibling and a
-/// `Cargo.toml` or `.git` marker. Returns None if not found.
+/// Catalog-aware sources are accepted, while the legacy `pi-extensions/`
+/// marker remains for older partial package roots.
 fn find_vstack_repo_root(source_dir: &Path) -> Option<PathBuf> {
     let mut dir = source_dir.to_path_buf();
     while dir.pop() {
-        if dir.join("pi-extensions").is_dir()
-            && (dir.join("Cargo.toml").exists()
-                || dir.join(".git").exists()
-                || dir.join("vstack.toml").exists())
+        if crate::resolve::is_vstack_source(&dir)
+            || (dir.join("pi-extensions").is_dir()
+                && (dir.join("Cargo.toml").exists()
+                    || dir.join(".git").exists()
+                    || dir.join("vstack.toml").exists()))
         {
             return Some(dir);
         }

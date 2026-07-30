@@ -32,13 +32,10 @@ impl RefreshSource {
             aliases: record.aliases.clone(),
             source_repo: record.source_repo.clone(),
             mapping: MappingConfig::load(&record.root),
-            agents: crate::agent::discover_agents(&record.root.join("agents")).unwrap_or_default(),
-            skills: crate::skill::discover_skills(&record.root.join("skills")).unwrap_or_default(),
-            hooks: crate::hook::discover_hooks(&record.root.join("hooks")).unwrap_or_default(),
-            pi_extensions: crate::pi_extension::discover_pi_extensions(
-                &record.root.join("pi-extensions"),
-            )
-            .unwrap_or_default(),
+            agents: crate::catalog::discover_agents(&record.root).unwrap_or_default(),
+            skills: crate::catalog::discover_skills(&record.root).unwrap_or_default(),
+            hooks: crate::catalog::discover_hooks(&record.root).unwrap_or_default(),
+            pi_extensions: crate::catalog::discover_pi_extensions(&record.root).unwrap_or_default(),
         }
     }
 

@@ -11,7 +11,8 @@ cli/src/
 ├── pi_extension.rs      Pi extension discovery, install/remove, settings.json merge
 ├── config.rs            Lock file (JSON), project root detection, staleness/mtime helpers
 ├── scope.rs             Scope enum (project | global | all); uniform `--scope`/`-g` parsing
-├── mapping.rs           Source vstack.toml — MappingConfig (agent-skills, role-skills, hook-events)
+├── catalog.rs           Source catalog discovery from default dirs or vstack.toml `[catalog]`
+├── mapping.rs           Source vstack.toml — MappingConfig (catalog, agent-skills, role-skills, hook-events)
 ├── project_config.rs    Project vstack.toml — ProjectConfig, ensure/write/update
 ├── resolve.rs           Shared helpers — skill-pair resolution, hook source attribution/matching, read_existing_extras, is_vstack_source
 ├── installer.rs         Symlink/copy logic, install/remove orchestration
@@ -27,17 +28,17 @@ cli/src/
 
 (agent.rs, skill.rs, hook.rs, frontmatter.rs are simple parsers — names match their job.)
 
-vstack.toml              Skill/hook-to-agent mapping (read at install)
-agents/                  Canonical agents — `role` field drives per-harness access control
-skills/                  Skill packages — each has SKILL.md with optional dependencies
-hooks/                   Safety hooks — bash scripts with YAML comment headers
-pi-extensions/           Pi extension packages (npm-shaped). package.json has `pi.extensions`
+vstack.toml              Source catalog + skill/hook-to-agent mapping (read at install)
+agents/                  Default canonical agents dir — `role` field drives per-harness access control
+skills/                  Default skill packages dir — each has SKILL.md with optional dependencies
+hooks/                   Default safety hooks dir — bash scripts with YAML comment headers
+pi-extensions/           Default Pi extension packages dir (npm-shaped). package.json has `pi.extensions`
 skill-templates/         Templates for new skills
 ```
 
 ## Key Design Decisions
 
-- **Discovered dynamically.** CLI scans `agents/`, `skills/`, `hooks/`, `pi-extensions/` at runtime. No hardcoded lists.
+- **Discovered dynamically.** CLI scans source catalog roots at runtime. Default roots are `agents/`, `skills/`, `hooks/`, `pi-extensions/`, and `extras/`; a source `vstack.toml` `[catalog]` table can override each item kind's roots.
 - **Canonical source is harness-agnostic.** Translation happens in `cli/src/harness/`.
 - **Agent `role` drives access control.** `analyst` → planning/research/recon artifacts. `reviewer` → report-only/subagent (may write reports, not product code). `engineer` → full access/primary. `manager` → analysis/report artifacts.
 - **Skill dependencies and ownership use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md. Shipped VStack skills also declare `metadata.source`, `metadata.repository`, and `metadata.bugs` so agents can route upstream failures to the owning project.
@@ -119,6 +120,15 @@ On install vstack copies the package into `<scope>/packages/<name>` and adds `./
 
 ### Mapping config (`vstack.toml`)
 ```toml
+[catalog]
+# Each omitted key keeps its default root. Paths are source-root-relative.
+# A path can be a container dir, one specific item dir/file, or use `*` on the final segment only.
+agents = ["agents"]
+skills = ["skills", "packages/skills/*", "one-offs/specific-skill"]
+hooks = ["hooks"]
+pi_extensions = ["pi-extensions", "pkgs/plugins/pi-*"]
+extras = ["extras"]
+
 [agent-skills]
 rust = ["github", "worktree", ...]
 iced = ["iced-rs", "iced-shadcn", ...]

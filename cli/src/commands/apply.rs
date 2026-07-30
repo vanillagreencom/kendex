@@ -964,7 +964,9 @@ fn resolve_apply_source_root() -> Result<PathBuf> {
 
     for source in candidates {
         if let Some(path) = config::resolve_source_path(&source)
-            && path.join("extras").is_dir()
+            && !crate::catalog::discover_extras(&path)
+                .unwrap_or_default()
+                .is_empty()
         {
             return Ok(path);
         }
@@ -979,7 +981,10 @@ fn resolve_apply_source_root() -> Result<PathBuf> {
 fn find_source_root_with_extras_from_cwd() -> Result<Option<PathBuf>> {
     let mut dir = std::env::current_dir()?;
     loop {
-        if dir.join("extras").is_dir() {
+        if !crate::catalog::discover_extras(&dir)
+            .unwrap_or_default()
+            .is_empty()
+        {
             return Ok(Some(dir));
         }
         if !dir.pop() {
@@ -1007,7 +1012,7 @@ fn build_plan_for_source(
     request: &ApplyRequest,
     env: &ApplyEnvironment,
 ) -> Result<ApplyPlan> {
-    let extras = crate::extra::discover_extras(source_root)?;
+    let extras = crate::catalog::discover_extras(source_root)?;
     let extra = extras
         .iter()
         .find(|extra| extra.name() == request.extra_name)

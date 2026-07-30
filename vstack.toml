@@ -10,6 +10,18 @@
 # behave normally.
 is_source_catalog = true
 #
+# Source item discovery defaults to agents/, skills/, hooks/, pi-extensions/,
+# and extras/. Repos with a different package layout can opt in per kind; any
+# omitted key keeps its default. Paths are repo-root-relative, can name a
+# container dir or one specific item, and support `*` on the final segment only.
+#
+# [catalog]
+# agents = ["agents"]
+# skills = ["skills", "packages/skills/*", "one-offs/specific-skill"]
+# hooks = ["hooks"]
+# pi_extensions = ["pi-extensions", "pkgs/plugins/pi-*"]
+# extras = ["extras"]
+#
 # [agent-skills] is the single source of truth for which skills appear in each
 # agent's frontmatter.  When an agent has an explicit entry here, prefix matching
 # is skipped — only the listed skills plus role-skills are attached.
