@@ -88,7 +88,7 @@ Use `// REVISIT([DECISION_ID]):` in code to mark implementation points tied to d
 | `Active` | Decision is in effect | Default for new decisions |
 | `Superseded by [DECISION_ID]` | Fully replaced by another decision | New decision covers entire scope |
 | `Revisited` | Re-evaluated with outcome noted | Conditions changed, decision re-assessed |
-| `Active ([COMPONENTS] -> [DECISION_ID])` | Partially superseded | New decision replaces specific components only |
+| `Active ([COMPONENTS] → [DECISION_ID])` | Partially superseded | New decision replaces specific components only |
 
 ## Cross-Reference Conventions
 

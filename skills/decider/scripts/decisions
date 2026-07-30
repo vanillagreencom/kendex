@@ -156,6 +156,23 @@ fi
 
 trim() { echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 
+PARSED_ID_PREFIX=""
+PARSED_ID_NUM=""
+
+split_decision_id() {
+  local value="$1"
+  PARSED_ID_PREFIX=""
+  PARSED_ID_NUM=""
+
+  if [[ "$value" =~ ^(.*[^0-9])?([0-9]+)$ ]]; then
+    PARSED_ID_PREFIX="${BASH_REMATCH[1]}"
+    PARSED_ID_NUM="${BASH_REMATCH[2]}"
+    return 0
+  fi
+
+  return 1
+}
+
 # Parse the INDEX.md table into JSON
 parse_index() {
   if [[ ! -f "$INDEX_FILE" ]]; then
@@ -401,27 +418,36 @@ cmd_next_id() {
   fi
 
   local id
+  local last_id=""
   local parsed_prefix
   local parsed_num
 
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    last_id="$id"
+  done < <(echo "$all" | jq -r '.[] | .id // empty')
+
   if [[ "$prefix_configured" -eq 0 ]]; then
-    # Infer the ID format from the last INDEX ID column with a numeric suffix.
-    # This keeps next-id scheme-agnostic while ignoring prose in other columns.
-    while IFS= read -r id; do
-      if [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]]; then
-        prefix="${BASH_REMATCH[1]}"
-        if [[ "$width_configured" -eq 0 ]]; then
-          width="${#BASH_REMATCH[2]}"
-        fi
+    # Infer the ID format from the actual last populated INDEX ID column. If it
+    # is not incrementable, fail loudly instead of falling back to an older row
+    # and returning a plausible but wrong ID.
+    if [[ -n "$last_id" ]]; then
+      if ! split_decision_id "$last_id"; then
+        echo "Error: Last decision ID '$last_id' in INDEX.md has no numeric suffix. Set DECISION_ID_PREFIX and DECISION_ID_WIDTH to select a scheme explicitly." >&2
+        return 1
       fi
-    done < <(echo "$all" | jq -r '.[] | .id // empty')
+      prefix="$PARSED_ID_PREFIX"
+      if [[ "$width_configured" -eq 0 ]]; then
+        width="${#PARSED_ID_NUM}"
+      fi
+    fi
   elif [[ "$width_configured" -eq 0 ]]; then
     # A configured prefix selects the scheme; infer padding from matching rows.
     while IFS= read -r id; do
-      if [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]]; then
-        parsed_prefix="${BASH_REMATCH[1]}"
+      if split_decision_id "$id"; then
+        parsed_prefix="$PARSED_ID_PREFIX"
         if [[ "$parsed_prefix" == "$prefix" ]]; then
-          width="${#BASH_REMATCH[2]}"
+          width="${#PARSED_ID_NUM}"
         fi
       fi
     done < <(echo "$all" | jq -r '.[] | .id // empty')
@@ -430,9 +456,9 @@ cmd_next_id() {
   local max_num=0
 
   while IFS= read -r id; do
-    [[ "$id" =~ ^(.*[^0-9])?([0-9]+)$ ]] || continue
-    parsed_prefix="${BASH_REMATCH[1]}"
-    parsed_num="${BASH_REMATCH[2]}"
+    split_decision_id "$id" || continue
+    parsed_prefix="$PARSED_ID_PREFIX"
+    parsed_num="$PARSED_ID_NUM"
     [[ "$parsed_prefix" == "$prefix" ]] || continue
     # Force base-10 interpretation (strip leading zeros that bash treats as octal)
     local decimal=$((10#$parsed_num))

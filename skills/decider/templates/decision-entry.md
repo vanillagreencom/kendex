@@ -164,7 +164,7 @@ For large architectural decisions spanning multiple concerns (design, API, schem
 1. **Title**: `# [DECISION_ID]: [TITLE]` — H1 using the project's decision ID scheme
 2. **Back-link**: Always include `[← Decision Index](INDEX.md)` after title
 3. **Metadata bold labels**: `**Date**:`, `**Status**:`, `**Research**:` — bold key, colon, space, value
-4. **Status values**: `Active`, `Superseded by [DECISION_ID]`, `Revisited`, `Active ([COMPONENTS] -> [DECISION_ID])`
+4. **Status values**: `Active`, `Superseded by [DECISION_ID]`, `Revisited`, `Active ([COMPONENTS] → [DECISION_ID])`
 5. **Research refs**: `[RESEARCH-ID](../research/RESEARCH-ID/findings.md)` or `—` if no research
 6. **H2 for sections** (`##`), H3 for subsections (`###`), H4 for sub-subsections (`####`)
 7. **Tables**: Standard markdown pipe-and-dash format

@@ -26,7 +26,7 @@ Template for adding rows to the project decision documents `INDEX.md` table.
 - `Active` — Current decision in effect
 - `Superseded by [DECISION_ID]` — Replaced by newer decision
 - `Revisited` — Re-evaluated, with outcome noted
-- `Active ([COMPONENTS] -> [DECISION_ID])` — Partially superseded (specific components replaced)
+- `Active ([COMPONENTS] → [DECISION_ID])` — Partially superseded (specific components replaced)
 
 ## Example Rows
 

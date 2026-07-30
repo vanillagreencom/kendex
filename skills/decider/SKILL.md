@@ -62,7 +62,7 @@ Project-level configuration:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `$DECISIONS_DIR` | Path to decision documents directory | Auto-discovers `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` with `INDEX.md` |
-| `$DECISION_ID_PREFIX` | Optional prefix used by `next-id` | Inferred from the last ID-column value with a numeric suffix, or `D` |
+| `$DECISION_ID_PREFIX` | Optional prefix used by `next-id` | Inferred from the last populated ID-column value, or `D` |
 | `$DECISION_ID_WIDTH` | Optional zero-padding width used by `next-id` | Inferred from the selected ID-column scheme, or `3` |
 
 Set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` when it is shared project policy. `.env.local` remains supported for local overrides.

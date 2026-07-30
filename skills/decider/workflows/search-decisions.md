@@ -63,7 +63,7 @@ Contains `|`, `()`, or `\` → regex mode (no scoring, direct pattern match).
 .agents/skills/decider/scripts/decisions list
 ```
 
-Returns all decisions with status starting with `Active` (includes partially superseded entries like `Active (X -> [DECISION_ID])`).
+Returns all decisions with status starting with `Active` (includes partially superseded entries like `Active (X → [DECISION_ID])`).
 
 ---
 
@@ -73,7 +73,7 @@ Returns all decisions with status starting with `Active` (includes partially sup
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-Reads `INDEX.md`, inspects only the ID column, infers the numeric-suffix scheme from the last populated ID, and returns the next number with that same prefix and padding. Set `DECISION_ID_PREFIX` and `DECISION_ID_WIDTH` to override the inferred scheme, especially for an empty index.
+Reads `INDEX.md`, inspects only the ID column, infers the numeric-suffix scheme from the last populated ID, and returns the next number with that same prefix and padding. If the last populated ID has no numeric suffix, `next-id` fails instead of falling back to an older row. Set `DECISION_ID_PREFIX` and `DECISION_ID_WIDTH` to override the inferred scheme, especially for an empty index or an intentional scheme switch.
 
 **Output**: `D034` or `ADR-0034`
 

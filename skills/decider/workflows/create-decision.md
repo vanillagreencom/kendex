@@ -22,7 +22,7 @@ Create a new decision entry: assign ID, write decision file, add INDEX.md row, u
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-**If `.agents/skills/decider/scripts/decisions` is unavailable**: Read `[project decision documents]/INDEX.md`, inspect only the ID column, infer the numeric-suffix scheme from the last populated ID, then increment the highest number with that same prefix. If no ID exists, use the project's documented default or `D001`.
+**If `.agents/skills/decider/scripts/decisions` is unavailable**: Read `[project decision documents]/INDEX.md`, inspect only the ID column, infer the numeric-suffix scheme from the last populated ID, then increment the highest number with that same prefix. If the last populated ID has no numeric suffix, stop and ask for the project's explicit ID scheme. If no ID exists, use the project's documented default or `D001`.
 
 ### 1.2 Generate Descriptor
 
@@ -93,7 +93,7 @@ If the new decision's context references other active decisions as partially aff
 
 1. **Read** referenced decision file
 2. **If** new decision replaces specific components but not the whole:
-   - Update status to `Active ([COMPONENTS] -> [DECISION_ID])` in both the decision file and INDEX.md row
+   - Update status to `Active ([COMPONENTS] → [DECISION_ID])` in both the decision file and INDEX.md row
 3. **If** new decision fully replaces:
    - Update status to `Superseded by [DECISION_ID]` in both locations
 

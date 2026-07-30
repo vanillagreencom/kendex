@@ -101,6 +101,28 @@ run_next_id "$MIXED_REPO" DECISIONS_DIR=docs/decisions DECISION_ID_PREFIX=D
 assert_eq "$rc" "0" "configured prefix next-id exits 0"
 assert_eq "$out" "D009" "configured prefix scans only matching ID-column rows"
 
+BAD_LAST_REPO="$TMP_ROOT/bad-last-repo"
+mkdir -p "$BAD_LAST_REPO/docs/decisions"
+cat >"$BAD_LAST_REPO/docs/decisions/INDEX.md" <<'EOF'
+# Architectural Decision Log
+
+| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
+|------|----|----------|----------|-----------|--------------|--------|------|
+| 2026-01-10 | D008 | PROJ-100 | Legacy decision | Existing D-prefixed row | Never | Active | [Full](D008-legacy.md) |
+| 2026-01-11 | ADR-0035 | PROJ-101 | Latest numeric decision | Existing ADR-prefixed row | Never | Active | [Full](ADR-0035-latest.md) |
+| 2026-01-12 | ADR-current | PROJ-102 | Unparseable final ID | Current row has no numeric suffix | Never | Active | [Full](ADR-current.md) |
+EOF
+
+run_next_id "$BAD_LAST_REPO" DECISIONS_DIR=docs/decisions
+assert_eq "$rc" "1" "unparseable final ID exits nonzero"
+assert_eq "$out" "" "unparseable final ID emits no stdout"
+assert_contains "$err" "ADR-current" "unparseable final ID names the bad ID"
+assert_contains "$err" "DECISION_ID_PREFIX" "unparseable final ID points at explicit scheme configuration"
+
+run_next_id "$BAD_LAST_REPO" DECISIONS_DIR=docs/decisions DECISION_ID_PREFIX=ADR-
+assert_eq "$rc" "0" "configured prefix bypasses unparseable final-ID inference"
+assert_eq "$out" "ADR-0036" "configured prefix still scans matching numeric rows"
+
 EMPTY_REPO="$TMP_ROOT/empty-repo"
 mkdir -p "$EMPTY_REPO/docs/decisions"
 cat >"$EMPTY_REPO/docs/decisions/INDEX.md" <<'EOF'
