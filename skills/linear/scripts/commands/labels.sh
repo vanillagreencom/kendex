@@ -275,6 +275,9 @@ delete_label() {
 action="${1:-help}"
 shift || true
 
+# Fail closed: a write needs a resolved team target before any API call.
+linear_guard_write_action "$action" "create update delete" "$@" || exit 1
+
 case "$action" in
     list)
         list_labels "$@"

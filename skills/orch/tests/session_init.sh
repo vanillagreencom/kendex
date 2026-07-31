@@ -7,7 +7,8 @@ set -euo pipefail
 
 # The invoking shell's real auth env must not reach the cases below — token
 # and 1Password-resolution cases assert on exactly what each case injects.
-unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN LINEAR_API_KEY
+# LINEAR_TEAM included: the target-reporting cases assert on an unset team.
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN LINEAR_API_KEY LINEAR_TEAM
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -56,6 +57,14 @@ echo 'fake op failure' >&2
 exit 1
 SH
 chmod +x "$STUB_BIN/op"
+
+# Cases using a plain key reach the API; op:// cases fail before any request.
+cat >"$STUB_BIN/curl" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '%s' '{"data":{"viewer":{"id":"viewer-uuid"}}}___HTTP_CODE___200'
+SH
+chmod +x "$STUB_BIN/curl"
 
 cat >"$STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
@@ -157,6 +166,53 @@ gh_available="$(jq -r '.gh_auth.available // false' <<<"$out")"
 gh_active="$(jq -r '.gh_auth.active_account // empty' <<<"$out")"
 assert_eq "$gh_available" "true" "dashboard GitHub auth accepts selected GITHUB_TOKEN"
 assert_eq "$gh_active" "test-user" "dashboard GitHub auth reports selected token account"
+
+echo "=== session-init Linear write-target reporting ==="
+
+# A reachable key with no configured team is the cross-workspace hazard: the
+# dashboard has to say so, and `writes_enabled: false` must survive the JSON
+# path (jq's `//` would swallow a literal false).
+WT_NO_TEAM="$(make_worktree wt-no-team yes)"
+printf 'LINEAR_API_KEY=lin_api_test\n' >"$WT_NO_TEAM/.env.local"
+out="$(
+  cd "$WT_NO_TEAM"
+  TEST_PROJECT_ROOT="$WT_NO_TEAM" PATH="$STUB_BIN:$PATH" "$SCRIPT" --json
+)"
+assert_eq "$(jq -r '.linear_auth.ok // false' <<<"$out")" "true" "reachable key reports ok=true"
+assert_eq "$(jq -r '.linear_auth.writes_enabled' <<<"$out")" "false" "no configured team reports writes_enabled=false"
+assert_eq "$(jq -r '.linear_auth.team_source' <<<"$out")" "unset" "no configured team reports team_source=unset"
+
+text_out="$(
+  cd "$WT_NO_TEAM"
+  TEST_PROJECT_ROOT="$WT_NO_TEAM" PATH="$STUB_BIN:$PATH" "$SCRIPT"
+)"
+if grep -q 'No Linear team configured' <<<"$text_out"; then
+  warned="true"
+else
+  warned="false"
+fi
+assert_eq "$warned" "true" "dashboard warns that Linear writes are refused"
+
+WT_TEAM="$(make_worktree wt-team yes)"
+printf 'LINEAR_API_KEY=lin_api_test\n' >"$WT_TEAM/.env.local"
+printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$WT_TEAM/vstack.settings.toml"
+out="$(
+  cd "$WT_TEAM"
+  TEST_PROJECT_ROOT="$WT_TEAM" PATH="$STUB_BIN:$PATH" "$SCRIPT" --json
+)"
+assert_eq "$(jq -r '.linear_auth.team' <<<"$out")" "Configured" "configured team is reported"
+assert_eq "$(jq -r '.linear_auth.writes_enabled' <<<"$out")" "true" "configured team enables writes"
+
+text_out="$(
+  cd "$WT_TEAM"
+  TEST_PROJECT_ROOT="$WT_TEAM" PATH="$STUB_BIN:$PATH" "$SCRIPT"
+)"
+if grep -q 'No Linear team configured' <<<"$text_out"; then
+  warned="true"
+else
+  warned="false"
+fi
+assert_eq "$warned" "false" "dashboard stays quiet when a team is configured"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

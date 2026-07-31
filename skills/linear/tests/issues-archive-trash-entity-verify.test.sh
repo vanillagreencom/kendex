@@ -29,6 +29,9 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Cache lives under the project root — make the tmp root a git repo
 git -C "$TMP_ROOT" init -q
 
+# Writes require a configured Linear team, as in any real project
+printf '[env]\nLINEAR_TEAM = "Fixture"\n' >"$TMP_ROOT/vstack.settings.toml"
+
 UUID="aaaaaaaa-bbbb-cccc-dddd-000000000042"
 URL="https://linear.app/test/issue/PROJ-42"
 

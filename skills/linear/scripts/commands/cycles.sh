@@ -19,13 +19,13 @@ Actions:
   update  Update a cycle (name, dates)
 
 List Options:
-  --team <name>         Team name (default: from project config)
+  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
   --type <type>         Filter: current, previous, next, or all (default: all)
   --limit <n>           Max results (default: 50)
 
 Create Options:
   --name <text>         Cycle name (optional, defaults to "Cycle N")
-  --team <name>         Team name (default: from project config)
+  --team <name>         Team name (default: $LINEAR_TEAM; required when unset)
   --start <date>        Start date (YYYY-MM-DD, required)
   --end <date>          End date (YYYY-MM-DD, required)
 
@@ -72,33 +72,42 @@ list_cycles() {
         esac
     done
 
-    team=$(apply_team_default "$team")
+    linear_set_team_target "$team"
+    team="$LINEAR_TEAM_TARGET"
 
-    # Get team ID
-    local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local team_result
-    team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
-    local team_id
-    team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-    if [ -z "$team_id" ]; then
-        echo "{\"error\": \"Team not found: $team\"}" >&2
-        return 1
+    # No configured team means no team filter, never a guessed one.
+    local filter_parts=()
+    if [ -n "$team" ]; then
+        # Get team ID
+        local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+        local team_result
+        team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+        local team_id
+        team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
+        if [ -z "$team_id" ]; then
+            echo "{\"error\": \"Team not found: $team\"}" >&2
+            return 1
+        fi
+        filter_parts+=("\"team\": {\"id\": {\"eq\": \"$team_id\"}}")
     fi
-
-    local filter_json="{\"team\": {\"id\": {\"eq\": \"$team_id\"}}}"
 
     # Add cycle type filter
     case "$cycle_type" in
         current)
-            filter_json="{\"team\": {\"id\": {\"eq\": \"$team_id\"}}, \"isActive\": {\"eq\": true}}"
+            filter_parts+=("\"isActive\": {\"eq\": true}")
             ;;
         previous)
-            filter_json="{\"team\": {\"id\": {\"eq\": \"$team_id\"}}, \"isPast\": {\"eq\": true}}"
+            filter_parts+=("\"isPast\": {\"eq\": true}")
             ;;
         next)
-            filter_json="{\"team\": {\"id\": {\"eq\": \"$team_id\"}}, \"isNext\": {\"eq\": true}}"
+            filter_parts+=("\"isNext\": {\"eq\": true}")
             ;;
     esac
+
+    local filter_json="{}"
+    if [ ${#filter_parts[@]} -gt 0 ]; then
+        filter_json=$(IFS=,; echo "{${filter_parts[*]}}")
+    fi
 
     local query='
     query ListCycles($filter: CycleFilter, $first: Int) {
@@ -162,8 +171,10 @@ create_cycle() {
         esac
     done
 
-    # Apply team default and validate required fields
-    team=$(apply_team_default "$team")
+    # Resolve the team target and validate required fields
+    linear_set_team_target "$team"
+    linear_require_team_target || return 1
+    team="$LINEAR_TEAM_TARGET"
     if [ -z "$start_date" ]; then
         echo '{"error": "Required: --start (YYYY-MM-DD)"}' >&2
         return 1
@@ -306,6 +317,9 @@ update_cycle() {
 # Main routing
 action="${1:-help}"
 shift || true
+
+# Fail closed: a write needs a resolved team target before any API call.
+linear_guard_write_action "$action" "create update" "$@" || exit 1
 
 case "$action" in
     list)

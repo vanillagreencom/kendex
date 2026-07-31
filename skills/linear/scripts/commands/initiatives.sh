@@ -436,6 +436,9 @@ remove_project() {
 action="${1:-help}"
 shift || true
 
+# Fail closed: a write needs a resolved team target before any API call.
+linear_guard_write_action "$action" "create update delete add-project remove-project" "$@" || exit 1
+
 case "$action" in
     list)
         list_initiatives "$@"

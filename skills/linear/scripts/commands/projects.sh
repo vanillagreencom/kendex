@@ -421,8 +421,11 @@ create_project() {
         esac
     done
 
-    # Apply team default if not specified
-    team=$(apply_team_default "$team")
+    # Resolve the team target; creating a project without one is refused here,
+    # before any API call.
+    linear_set_team_target "$team"
+    linear_require_team_target || return 1
+    team="$LINEAR_TEAM_TARGET"
 
     if [ -z "$name" ]; then
         echo '{"error": "Required: --name"}' >&2
@@ -1256,6 +1259,9 @@ set_sort_order() {
 # Main routing
 action="${1:-help}"
 shift || true
+
+# Fail closed: a write needs a resolved team target before any API call.
+linear_guard_write_action "$action" "create update delete add-dependency remove-dependency post-update reorder set-sort-order" "$@" || exit 1
 
 case "$action" in
 list)

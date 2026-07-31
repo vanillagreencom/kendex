@@ -1,0 +1,18 @@
+[env]
+
+# LINEAR — which Linear team this project writes to.
+# Project-scope `vstack add` / `vstack refresh` merge these defaults into
+# <project>/vstack.settings.toml (never overwriting existing keys). Full key
+# reference: linear README.md.
+
+# Used by: linear (every command). The team every write targets.
+# There is no built-in default. A team name resolves inside whatever workspace
+# LINEAR_API_KEY reaches, so an unset value means "no target": writes refuse
+# with an actionable error and reads drop the team filter instead of guessing.
+# Set this to the project's own team name, then confirm the target with
+# `linear.sh auth-check --strict`. An explicit `--team <name>` overrides it for
+# a single command.
+LINEAR_TEAM = ""
+
+# Used by: linear. Issue identifier prefix used in examples (e.g. PROJ-123).
+LINEAR_TEAM_PREFIX = "PROJ"
