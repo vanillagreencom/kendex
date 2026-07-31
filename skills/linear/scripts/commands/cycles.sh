@@ -319,7 +319,7 @@ action="${1:-help}"
 shift || true
 
 # Fail closed: a write needs a resolved team target before any API call.
-linear_guard_write_action "$action" "create update" "$@" || exit 1
+linear_guard_write_action "$action" "update" "$@" || exit 1
 
 case "$action" in
     list)

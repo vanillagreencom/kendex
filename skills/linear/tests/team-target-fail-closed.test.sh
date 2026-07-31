@@ -45,6 +45,15 @@ case "$query" in
 *"commentCreate(input:"*)
   printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-uuid","body":"b","createdAt":"2026-07-30T00:00:00Z","user":{"name":"tester"}}}}}___HTTP_CODE___200'
   ;;
+*"projectCreate(input:"*)
+  printf '%s' '{"data":{"projectCreate":{"success":true,"project":{"id":"project-uuid","name":"P","url":"https://linear.app/x/project/P","state":"planned"}}}}___HTTP_CODE___200'
+  ;;
+*"cycleCreate(input:"*)
+  printf '%s' '{"data":{"cycleCreate":{"success":true,"cycle":{"id":"cycle-uuid","number":1,"name":"C","startsAt":"2026-08-01T00:00:00Z","endsAt":"2026-08-15T00:00:00Z","team":{"name":"Explicit"}}}}}___HTTP_CODE___200'
+  ;;
+*"issueLabelCreate(input:"*)
+  printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"label-uuid","name":"backend","color":"#fff","description":null,"isGroup":false,"team":null,"parent":null,"createdAt":"2026-07-30T00:00:00Z"}}}}___HTTP_CODE___200'
+  ;;
 *"workflowStates(filter:"*)
   printf '%s' '{"data":{"workflowStates":{"nodes":[]}}}___HTTP_CODE___200'
   ;;
@@ -119,6 +128,10 @@ assert_no_guessed_team() {
   local label="$1"
   jq -s -e 'all(.[]; (.variables | tostring | contains("team")) | not)' "$CURL_LOG" >/dev/null ||
     fail "$label sent a team filter with no configured team: $(cat "$CURL_LOG")"
+  # sync builds team scoping into the query document itself, where a variables-
+  # only check cannot see it.
+  jq -s -e 'all(.[]; (.query | test("team[[:space:]]*:")) | not)' "$CURL_LOG" >/dev/null ||
+    fail "$label inlined a team filter into the query document: $(cat "$CURL_LOG")"
   if grep -riq "claude" "$CURL_LOG"; then
     fail "$label carried a guessed team name: $(cat "$CURL_LOG")"
   fi
@@ -130,7 +143,10 @@ assert_refused() {
   grep -q "No Linear team configured" <<<"$ERR" || fail "$label missing refusal message: $ERR"
   grep -q "LINEAR_TEAM" <<<"$ERR" || fail "$label refusal does not name LINEAR_TEAM: $ERR"
   grep -q "vstack.settings.toml" <<<"$ERR" || fail "$label refusal does not name vstack.settings.toml: $ERR"
-  grep -q -- "--team" <<<"$ERR" || fail "$label refusal does not mention --team: $ERR"
+  grep -q -- "--team" <<<"$ERR" || fail "$label refusal does not name the per-call override: $ERR"
+  # The message may only offer --team where a parser actually accepts it.
+  grep -qE 'issues, projects, cycles, labels' <<<"$ERR" ||
+    fail "$label refusal offers --team without naming the actions that take it: $ERR"
   [[ "$(api_calls)" == "0" ]] || fail "$label attempted $(api_calls) API call(s) before refusing"
 }
 
@@ -171,6 +187,35 @@ assert_refused "milestones create"
 run_linear initiatives create --name "Phase 1"
 assert_refused "initiatives create"
 
+echo "=== free text is not a team target ==="
+
+# The guard must not read a team out of unparsed argv: a `--team` token in a
+# comment body or an issue title is ordinary user text, and honoring it would
+# let any write open its own gate.
+clear_settings
+
+run_linear comments create TEAM-1 --body "--team=CC"
+assert_refused "comments create with --team=CC as the body"
+
+run_linear comments create TEAM-1 --body "--team"
+assert_refused "comments create with a bare --team body"
+
+run_linear comments create TEAM-1 --body "see --team CC for context"
+assert_refused "comments create with --team inside prose"
+
+run_linear issues update TEAM-1 --title "--team" --state Done
+assert_refused "issues update with a bare --team title"
+
+run_linear issues update TEAM-1 --title "--team=CC" --state Done
+assert_refused "issues update with --team=CC as the title"
+
+run_linear issues create --title "--team=CC"
+assert_refused "issues create with --team=CC as the title"
+
+run_linear issues comment TEAM-1 --body "--team=CC"
+[[ "$RC" -ne 0 ]] || fail "issues comment redirect exited 0"
+[[ "$(api_calls)" == "0" ]] || fail "issues comment redirect issued $(api_calls) API call(s)"
+
 echo "=== a blank configured value stays unset (seeded template is inert) ==="
 
 set_settings_team ""
@@ -179,9 +224,17 @@ assert_refused "issues create with blank LINEAR_TEAM"
 
 echo "=== help never needs a team target ==="
 
+clear_settings
 run_linear issues create --help
 [[ "$RC" -eq 0 ]] || fail "issues create --help exited $RC: $ERR"
 grep -q "Create Options:" <<<"$OUT" || fail "issues create --help did not print help: $OUT"
+
+# `update` is guarded at the dispatcher, so its help path is the one that needs
+# the exemption.
+run_linear issues update --help
+[[ "$RC" -eq 0 ]] || fail "issues update --help exited $RC: $ERR"
+grep -q "Update Options:" <<<"$OUT" || fail "issues update --help did not print help: $OUT"
+[[ "$(api_calls)" == "0" ]] || fail "issues update --help issued an API call"
 
 echo "=== explicit --team satisfies the requirement ==="
 
@@ -205,6 +258,34 @@ run_linear comments create TEAM-1 --body "hello"
 [[ "$RC" -eq 0 ]] || fail "comments create with configured team exited $RC: $ERR"
 jq -s -e 'any(.[]; .query | contains("commentCreate"))' "$CURL_LOG" >/dev/null ||
   fail "comments create did not reach the API with a configured team"
+
+# Free text stays free text: a configured project still writes the body as-is.
+run_linear comments create TEAM-1 --body "--team=CC"
+[[ "$RC" -eq 0 ]] || fail "comments create with a --team-shaped body exited $RC: $ERR"
+jq -s -e 'any(.[]; (.query | contains("commentCreate")) and (.variables.input.body | startswith("--team=CC")))' "$CURL_LOG" >/dev/null ||
+  fail "comment body was not preserved verbatim: $(cat "$CURL_LOG")"
+
+# Every create action that parses --team resolves its target after parsing.
+clear_settings
+for create_case in "projects create --name P --team Explicit:projectCreate" \
+  "cycles create --start 2026-08-01 --end 2026-08-15 --team Explicit:cycleCreate" \
+  "labels create --name backend --team Explicit:issueLabelCreate"; do
+  args="${create_case%:*}"
+  op="${create_case##*:}"
+  # shellcheck disable=SC2086
+  run_linear $args
+  [[ "$RC" -eq 0 ]] || fail "$args exited $RC: $ERR"
+  jq -s -e --arg op "$op" 'any(.[]; .query | contains($op))' "$CURL_LOG" >/dev/null ||
+    fail "$args did not reach $op: $(cat "$CURL_LOG")"
+done
+
+# labels create takes an optional --team; with none passed it still needs a
+# configured target, and it must not invent a team scope for the label.
+set_settings_team "Configured"
+run_linear labels create --name backend
+[[ "$RC" -eq 0 ]] || fail "labels create with configured team exited $RC: $ERR"
+jq -s -e 'any(.[]; (.query | contains("issueLabelCreate")) and (.variables.input | has("teamId") | not))' "$CURL_LOG" >/dev/null ||
+  fail "labels create scoped the label to a team that was never requested: $(cat "$CURL_LOG")"
 
 echo "=== reads never send a guessed team ==="
 
@@ -313,7 +394,23 @@ run_linear_env_team "EnvTeam" auth-check
 [[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with an exported team: $ERR"
 jq -e '.team == "EnvTeam" and .team_source == "environment" and .writes_enabled == true' <<<"$OUT" >/dev/null ||
   fail "auth-check did not report the exported team: $OUT"
+jq -e '.team_source_file == null' <<<"$OUT" >/dev/null ||
+  fail "auth-check named a project file for an environment-sourced team: $OUT"
 jq -e '[.warnings[] | select(contains("overrides the project value"))] | length > 0' <<<"$OUT" >/dev/null ||
   fail "auth-check did not warn that the environment shadows project config: $OUT"
+
+# An exported-but-empty LINEAR_TEAM wins over the project file (parent env
+# beats project config) and resolves to nothing. Attribution must say so
+# instead of naming a file that supplied nothing.
+run_linear_env_team "" auth-check
+[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with an exported empty team: $ERR"
+jq -e '.team == null and .team_source == "unset" and .team_source_file == null and .writes_enabled == false' <<<"$OUT" >/dev/null ||
+  fail "auth-check attribution is self-contradictory for an exported empty team: $OUT"
+jq -e '[.warnings[] | select(contains("exported as an empty value"))] | length > 0' <<<"$OUT" >/dev/null ||
+  fail "auth-check did not warn that an empty export shadows project config: $OUT"
+
+run_linear_env_team "" issues create --title "Empty export"
+assert_refused "issues create with an exported empty LINEAR_TEAM"
+clear_settings
 
 echo "all pass"

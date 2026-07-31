@@ -10,8 +10,9 @@
 # LINEAR_API_KEY reaches, so an unset value means "no target": writes refuse
 # with an actionable error and reads drop the team filter instead of guessing.
 # Set this to the project's own team name, then confirm the target with
-# `linear.sh auth-check --strict`. An explicit `--team <name>` overrides it for
-# a single command.
+# `linear.sh auth-check --strict`. Only the create actions that take a team
+# (issues, projects, cycles, labels) accept `--team <name>` as a per-call
+# override; every other write needs this key.
 LINEAR_TEAM = ""
 
 # Used by: linear. Issue identifier prefix used in examples (e.g. PROJ-123).

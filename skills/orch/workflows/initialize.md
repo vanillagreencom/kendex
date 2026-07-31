@@ -34,7 +34,9 @@ Set up team, auth, cache, and workflow state for a worktree session.
    - Read `issue_id` from output; if empty, fall back to the sanitized branch name (replace `/` with `-`) for workflow-state and team naming.
    - Resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution).
 
-2. **If `gh_auth` is false** → report error and fix before proceeding. **Linear only**: also require `linear_auth.ok`; GitHub work items do not need Linear auth.
+2. **If `gh_auth` is false** → report error and fix before proceeding. **Linear only**: also require `linear_auth.ok` and `linear_auth.writes_enabled`; GitHub work items do not need Linear auth.
+
+   `writes_enabled: false` means no `LINEAR_TEAM` is configured for this project, so every Linear write in this workflow will refuse — stop here and set it (`vstack.settings.toml` `[env]`, or `.env.local`) rather than syncing and failing at the first state change. Report `linear_auth.warnings` verbatim; they name the resolved target and its source.
 
 3. **Set `WORKTREE_PATH`** to current working directory.
 

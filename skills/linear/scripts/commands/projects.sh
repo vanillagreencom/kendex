@@ -1261,7 +1261,7 @@ action="${1:-help}"
 shift || true
 
 # Fail closed: a write needs a resolved team target before any API call.
-linear_guard_write_action "$action" "create update delete add-dependency remove-dependency post-update reorder set-sort-order" "$@" || exit 1
+linear_guard_write_action "$action" "update delete add-dependency remove-dependency post-update reorder set-sort-order" "$@" || exit 1
 
 case "$action" in
 list)

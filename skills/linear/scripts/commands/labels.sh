@@ -128,6 +128,13 @@ create_label() {
         esac
     done
 
+    # Resolve the team target; creating a label without one is refused here,
+    # before any API call. --team stays optional as a scope selector: it narrows
+    # a workspace label to one team, and the configured target satisfies the
+    # requirement when it is omitted.
+    linear_set_team_target "$team"
+    linear_require_team_target || return 1
+
     if [ -z "$name" ]; then
         echo '{"error": "Required: --name"}' >&2
         return 1
@@ -276,7 +283,7 @@ action="${1:-help}"
 shift || true
 
 # Fail closed: a write needs a resolved team target before any API call.
-linear_guard_write_action "$action" "create update delete" "$@" || exit 1
+linear_guard_write_action "$action" "update delete" "$@" || exit 1
 
 case "$action" in
     list)

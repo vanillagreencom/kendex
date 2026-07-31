@@ -111,7 +111,7 @@ List Options:
   --state <name>        Filter by state (e.g., "Todo", "In Progress,Todo")
   --project <name>      Filter by project name
   --project-id <uuid>   Filter by project ID
-  --team <name>         Filter by team name (default: \$LINEAR_TEAM; unset = all teams)
+  --team <name>         Filter by team name (no default; omit = all teams)
   --assignee <name|me>  Filter by assignee
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd>  Filter by created date
@@ -2661,7 +2661,7 @@ main() {
 
     # Fail closed: a write needs a resolved team target before any API call.
     linear_guard_write_action "$action" \
-        "create update archive trash delete bulk-update add-relation remove-relation activate block unblock complete" \
+        "update archive trash delete bulk-update add-relation remove-relation activate block unblock complete" \
         "$@" || exit 1
 
     case "$action" in

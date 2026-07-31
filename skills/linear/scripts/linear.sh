@@ -61,8 +61,9 @@ Environment:
   Runtime         Bash 4.0 or newer. macOS system Bash 3.2 is unsupported.
   LINEAR_API_KEY  Required. Set in .env.local or export directly.
   LINEAR_TEAM     Required for writes; no default. Set it in vstack.settings.toml
-                  [env] (committed, non-secret) or pass --team <name>. With no
-                  team, writes refuse and reads run without a team filter.
+                  [env] (committed, non-secret). With no team, writes refuse and
+                  reads run without a team filter. Only issues/projects/cycles/
+                  labels create take --team <name> as a per-call override.
 
 For resource-specific help:
   ./linear.sh <resource> --help

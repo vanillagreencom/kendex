@@ -155,9 +155,10 @@ LINEAR_TEAM = ""
 # Used by: linear. The team every write targets - set it to this project's own
 # team. No default: a team name resolves inside whatever workspace
 # LINEAR_API_KEY reaches, so an empty value refuses Linear writes instead of
-# guessing a target (reads just drop the team filter). An explicit
-# `--team <name>` overrides it for one command. Confirm the resolved target
-# with `linear.sh auth-check --strict`.
+# guessing a target (reads just drop the team filter). Only the create actions
+# that take a team (issues, projects, cycles, labels) accept `--team <name>` as
+# a per-call override; every other write needs this key. Confirm the resolved
+# target with `linear.sh auth-check --strict`.
 
 LINEAR_FORMAT = "safe"
 # Used by: linear. Values: safe, table, ids, raw.

@@ -15,9 +15,11 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 
 ## Team Target
 
-`LINEAR_TEAM` has no default. A team name resolves inside whatever workspace `LINEAR_API_KEY` reaches, so with no team configured the CLI has no target of its own: writes (create, update, comment, archive, relation, state change) refuse with an actionable error before any API call, and reads run without a team filter rather than guessing one. Pass `--team <name>` to target a team for a single command.
+`LINEAR_TEAM` has no default. A team name resolves inside whatever workspace `LINEAR_API_KEY` reaches, so with no team configured the CLI has no target of its own: writes (create, update, comment, archive, relation, state change) refuse with an actionable error before any API call, and reads run without a team filter rather than guessing one.
 
-`auth-check` is the preflight. It reports the resolved team, whether it came from the process environment or project config, and `writes_enabled`; it warns when a machine-wide `LINEAR_API_KEY` is paired with no project team, and when an exported `LINEAR_TEAM` shadows the project's own value. `auth-check --strict` exits non-zero when writes would refuse.
+`--team <name>` is a per-call override only where a team is part of the request: `issues create`, `projects create`, `cycles create`, and `labels create` (plus the `issues list`, `cycles list`, and `statuses list/get` read filters). Every other write takes its target from `LINEAR_TEAM` alone, so configure it rather than relying on a flag.
+
+`auth-check` is the preflight. It reports the resolved team, whether it came from the process environment or project config (`team_source_file` names the file only when a project file supplied the resolved value), and `writes_enabled`; it warns when a machine-wide `LINEAR_API_KEY` is paired with no project team, and when an exported `LINEAR_TEAM` — including an exported empty one — shadows the project's own value. `auth-check --strict` exits non-zero when writes would refuse.
 
 ```bash
 ./scripts/linear.sh auth-check --strict
