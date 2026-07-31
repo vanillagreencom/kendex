@@ -7,6 +7,10 @@ export interface SessionState {
 	sessionId: string;
 	cursor: number;
 	cwd: string;
+	// Claude Code session files and resume IDs are credential-profile scoped.
+	// A missing value is the legacy/default Claude profile.
+	accountProfileId?: string;
+	claudeConfigDir?: string;
 	// Force the next syncSharedSession call down the REBUILD path. Set when
 	// pi has mutated its messages array out from under us (compact, tree
 	// navigation) or after an abort left the JSONL in an indeterminate state.

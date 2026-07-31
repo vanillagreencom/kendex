@@ -47,6 +47,21 @@ import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdle
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
 import { ensureTurnStarted, finalizeCurrentStream, parsePartialJson, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
+import {
+	accountSessionScope,
+	classifyClaudeFailure,
+	CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL,
+	rateLimitResetFromInfo,
+	rateLimitResetMs,
+	rateLimitTypeFromInfo,
+	resolveClaudeAccountRouter,
+	RetryEventBuffer,
+	subscriberProfileEnv,
+	type ClaudeAccountFailureKind,
+	type ClaudeAccountRoute,
+	type ClaudeAccountRouterV1,
+	type ClaudeBridgeAccountHostV1,
+} from "./account-router.js";
 
 // Re-exports: the module decomposition must not change the bundle entry's
 // public surface — unit tests and downstream consumers import these from
@@ -59,6 +74,15 @@ export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDL
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
 export { processAssistantMessage, processStreamEvent } from "./assistant-stream.js";
+export {
+	classifyClaudeFailure,
+	commitsVisibleOutput,
+	rateLimitResetFromInfo,
+	rateLimitResetMs,
+	rateLimitTypeFromInfo,
+	RetryEventBuffer,
+	subscriberProfileEnv,
+} from "./account-router.js";
 
 // Compat (#2): use factory if available (pi-ai ≥0.66), else fall back to constructor (gsd-pi etc.)
 const _piAi = piAi as any;
@@ -97,9 +121,28 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 const PRIMARY_INSTANCE_KEY = Symbol.for("claude-bridge:primaryInstance");
 const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 const COMMANDS_REGISTERED_KEY = Symbol.for("claude-bridge:commandsRegistered");
+const ROTATION_STATE_KEY = Symbol("claude-bridge:rotationState");
+
+interface RotationRequestState {
+	excludedProfileIds: Set<string>;
+	attempts: number;
+}
+
+type BridgeStreamOptions = SimpleStreamOptions & {
+	[ROTATION_STATE_KEY]?: RotationRequestState;
+};
 
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
 const MODELS = buildModels(getModels("anthropic"));
+
+type SdkQueryFactory = typeof query;
+let sdkQueryFactory: SdkQueryFactory = query;
+
+/** Test seam for exercising the real bridge retry/session orchestration without
+ *  spending Claude usage. Production never calls this. */
+export function __testSetSdkQueryFactory(factory?: SdkQueryFactory): void {
+	sdkQueryFactory = factory ?? query;
+}
 
 let extraUsageHelperInFlight: Promise<string> | null = null;
 
@@ -128,12 +171,77 @@ function sdkTextFromMessage(message: SDKMessage): string | undefined {
 	return undefined;
 }
 
+async function probeClaudeAccountProfile(input: {
+	profile: ClaudeAccountRoute;
+	cwd: string;
+	signal?: AbortSignal;
+}): Promise<{
+	identity?: { email?: string; organization?: string; subscriptionType?: string; authMethod?: string };
+	usage?: unknown;
+}> {
+	const config = loadConfig(input.cwd);
+	const claudeExecutable = resolveClaudeExecutable(config.provider?.pathToClaudeCodeExecutable);
+	if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, input.cwd);
+	const probe = sdkQueryFactory({
+		prompt: "/usage",
+		options: {
+			cwd: input.cwd,
+			env: {
+				...subscriberProfileEnv(input.profile),
+				ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+				DISABLE_AUTO_COMPACT: "1",
+			},
+			maxTurns: 1,
+			permissionMode: "bypassPermissions",
+			...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+			spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
+			...makeCliDebugOptions("account-probe"),
+		},
+	});
+	const onAbort = () => {
+		void probe.interrupt().catch(() => {});
+		try { probe.close(); } catch {}
+	};
+	if (input.signal?.aborted) onAbort();
+	else input.signal?.addEventListener("abort", onAbort, { once: true });
+	let controls: Promise<{
+		identity?: { email?: string; organization?: string; subscriptionType?: string; authMethod?: string };
+		usage?: unknown;
+	}> | undefined;
+	try {
+		for await (const message of probe) {
+			if (message.type === "system" && (message as any).subtype === "init" && !controls) {
+				controls = Promise.allSettled([
+					probe.accountInfo(),
+					probe.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+				]).then(([identityResult, usageResult]) => ({
+					...(identityResult.status === "fulfilled" ? { identity: {
+						email: identityResult.value.email,
+						organization: identityResult.value.organization,
+						subscriptionType: identityResult.value.subscriptionType,
+					} } : {}),
+					...(usageResult.status === "fulfilled" ? { usage: usageResult.value } : {}),
+				}));
+			}
+		}
+		return controls ? await controls : {};
+	} finally {
+		input.signal?.removeEventListener("abort", onAbort);
+		probe.close();
+	}
+}
+
+const BRIDGE_ACCOUNT_HOST: ClaudeBridgeAccountHostV1 = {
+	version: 1,
+	probeProfile: probeClaudeAccountProfile,
+};
+
 async function runExtraUsageHelper(cwd: string, config = loadConfig(cwd)): Promise<string> {
 	const providerSettings = config.provider ?? {};
 	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
 	if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
 
-	const helperQuery = query({
+	const helperQuery = sdkQueryFactory({
 		prompt: "/extra-usage",
 		options: {
 			cwd,
@@ -462,6 +570,17 @@ export function resolveConfiguredEffort(
  *  an assistant message (completed blocks). On tool_use, the stream is ended by
  *  whichever path handles it first (processStreamEvent or processAssistantMessage),
  *  and the MCP handler blocks the generator until pi delivers the tool result. */
+interface ClaudeAttemptFailure {
+	kind?: ClaudeAccountFailureKind;
+	message: string;
+	rateLimitInfo?: Record<string, unknown>;
+}
+
+interface ConsumeQueryResult {
+	capturedSessionId?: string;
+	failure?: ClaudeAttemptFailure;
+}
+
 async function consumeQuery(
 	sdkQuery: ReturnType<typeof query>,
 	customToolNameToPi: Map<string, string>,
@@ -469,13 +588,27 @@ async function consumeQuery(
 	cwd: string,
 	bridgeConfig: Config,
 	wasAborted: () => boolean,
-): Promise<{ capturedSessionId?: string }> {
+	account?: ClaudeAccountRoute,
+	router?: ClaudeAccountRouterV1,
+): Promise<ConsumeQueryResult> {
 	let capturedSessionId: string | undefined;
+	let failure: ClaudeAttemptFailure | undefined;
+	let accountProbe: Promise<void> | undefined;
 
 	for await (const message of sdkQuery) {
 		if (wasAborted()) break;
 		const queryCtx = ctx();
 		activeStreamIdleWatchdogs.get(queryCtx)?.noteChunk();
+		if (account) {
+			debug("consumeQuery: managed message", JSON.stringify({
+				type: message.type,
+				subtype: (message as any).subtype,
+				error: (message as any).error,
+				eventType: (message as any).event?.type,
+				deltaType: (message as any).event?.delta?.type,
+				contentType: (message as any).event?.content_block?.type,
+			}));
+		}
 		if (!queryCtx.turnOutput) continue;
 		if (!queryCtx.currentPiStream && !(message.type === "assistant" && queryCtx.turnSawToolCall)) continue;
 
@@ -483,40 +616,71 @@ async function consumeQuery(
 			case "stream_event":
 				processStreamEvent(message, customToolNameToPi, model);
 				break;
-			case "assistant":
+			case "assistant": {
+				const sdkError = (message as any).error;
+				if (sdkError && !failure) {
+					failure = { kind: classifyClaudeFailure(sdkError), message: String(sdkError) };
+				}
+				// Claude Code emits a synthetic assistant text block carrying friendly
+				// rate/auth error copy before the SDK throws. It is not model output:
+				// forwarding it would commit the stream and make safe pre-output
+				// account failover impossible. Real streamed deltas were already
+				// handled above and keep committedOutput=true.
+				if (sdkError && account) break;
 				processAssistantMessage(message, model, customToolNameToPi);
 				break;
+			}
 			case "result":
+				// The SDK can label the synthetic friendly rate-limit carrier as a
+				// successful result immediately before its iterator throws. Once a
+				// managed attempt has a terminal failure signal, that text is still
+				// error metadata, not assistant output.
+				if (account && failure) break;
 				if (!ctx().turnSawStreamEvent && message.subtype === "success") {
 					ensureTurnStarted();
 					const text = message.result || "";
+					if (text) ctx().markOutputCommitted();
 					ctx().turnBlocks.push({ type: "text", text });
 					const idx = ctx().turnBlocks.length - 1;
 					ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });
 					ctx().currentPiStream?.push({ type: "text_delta", contentIndex: idx, delta: text, partial: ctx().turnOutput });
 					ctx().currentPiStream?.push({ type: "text_end", contentIndex: idx, content: text, partial: ctx().turnOutput });
-				} else if (message.subtype !== "success" && isExtraUsageRequiredMessage(message)) {
+				} else if (message.subtype !== "success") {
 					const errorLines = Array.isArray((message as any).errors) ? uniqueNonEmptyLines((message as any).errors) : [];
-					const errors = errorLines.length > 0 ? errorLines.join("\n") : String(message.subtype ?? "Claude Code rate limit");
-					const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
-					ctx().handledTerminalError = true;
-					ctx().turnOutput.stopReason = "error";
-					ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
-					ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
-					ctx().currentPiStream?.end();
-					ctx().currentPiStream = null;
+					const errors = errorLines.length > 0 ? errorLines.join("\n") : String((message as any).result || message.subtype || "Claude Code request failed");
+					if (!failure || !failure.rateLimitInfo) {
+						failure = { kind: classifyClaudeFailure(isExtraUsageRequiredMessage(message) ? `extra usage ${errors}` : errors), message: errors };
+					}
+					if (!account && isExtraUsageRequiredMessage(message)) {
+						const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
+						ctx().handledTerminalError = true;
+						ctx().turnOutput.stopReason = "error";
+						ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
+						ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
+						ctx().currentPiStream?.end();
+						ctx().currentPiStream = null;
+					}
 				}
 				break;
 			case "system":
 				if ((message as any).subtype === "init" && (message as any).session_id) {
 					capturedSessionId = (message as any).session_id;
+					if (account && router && !accountProbe) {
+						accountProbe = Promise.allSettled([
+							sdkQuery.accountInfo().then((info) => router.recordIdentity(account.profileId, {
+								email: info.email,
+								organization: info.organization,
+								subscriptionType: info.subscriptionType,
+							})),
+							sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+								.then((usage) => router.recordUsage(account.profileId, usage)),
+						]).then(() => undefined);
+					}
 				} else if ((message as any).subtype === "model_refusal_fallback") {
 					const originalModel = (message as any).original_model;
 					const fallbackModel = (message as any).fallback_model;
 					updateTurnOutputModel(fallbackModel);
 					debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
-					// Notify only for reroutes we configured, so an unexpected pairing from
-					// Claude Code is still logged above but not announced as one of ours.
 					if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
 						safeNotify(
 							`Claude bridge switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
@@ -526,26 +690,29 @@ async function consumeQuery(
 				}
 				break;
 			case "user":
-				break; // SDK echo of user prompt — not needed
+				break;
 			case "rate_limit_event": {
-				const info = (message as any).rate_limit_info;
+				const info = (message as any).rate_limit_info as Record<string, unknown> | undefined;
 				debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
 				if (info?.status === "rejected") {
-					const resetsAt = formatResetTimestamp(info.resetsAt);
-					const resetAtMs = typeof info.resetsAt === "string" ? Date.parse(info.resetsAt) : undefined;
-					const reason = `${info.rateLimitType ?? "unknown"} rate limit`;
-					const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
-					emitRateLimitEvent({
-						model: model.id,
-						provider: PROVIDER_ID,
-						rateLimitType: info.rateLimitType,
-						reason,
-						resetAt: info.resetsAt,
-						...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
-						source: "claude-bridge",
-						status: "rejected",
-					});
-					piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit — resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
+					const rateLimitType = rateLimitTypeFromInfo(info);
+					const resetAt = rateLimitResetFromInfo(info);
+					const reason = `${rateLimitType ?? "unknown"} rate limit`;
+					failure = { kind: "rate-limit", message: reason, rateLimitInfo: info };
+					if (account && router) {
+						router.recordRateLimit(account.profileId, info, model.id);
+					} else {
+						const resetAtMs = rateLimitResetMs(info);
+						const resetsAt = formatResetTimestamp(resetAtMs ?? resetAt);
+						const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
+						emitRateLimitEvent({
+							model: model.id, provider: PROVIDER_ID, rateLimitType,
+							reason, resetAt,
+							...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
+							source: "claude-bridge", status: "rejected",
+						});
+						piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit — resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
+					}
 				} else if (info?.status === "allowed_warning") {
 					const warning = formatAllowedRateLimitWarning(info);
 					if (warning) piUI?.notify(warning, "warning");
@@ -559,10 +726,14 @@ async function consumeQuery(
 		}
 	}
 
-	// DEBUG: trace when consumeQuery exits
-	debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}`);
-
-	return { capturedSessionId };
+	if (accountProbe) {
+		await Promise.race([
+			accountProbe,
+			new Promise<void>((resolve) => setTimeout(resolve, 1_500)),
+		]);
+	}
+	debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}, failure=${failure?.kind ?? "none"}`);
+	return { capturedSessionId, failure };
 }
 
 // Claim the primary-instance token for this module instance if unclaimed, and
@@ -583,6 +754,9 @@ function claimPrimaryInstance(): boolean {
 // unregister on the next load/session_start, not here.
 function releaseProviderTokens(event: string): void {
 	const g = globalThis as Record<symbol, any>;
+	if (g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
+		g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = undefined;
+	}
 	if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
 		debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
 		g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
@@ -616,7 +790,7 @@ function applyProviderRegistration(trigger: string): void {
 	if (!pi) { debug(`${trigger}: applyProviderRegistration skipped — no extensionApi`); return; }
 	const g = globalThis as Record<symbol, any>;
 	const isPrimary = claimPrimaryInstance();
-	const credentialed = hasClaudeCredentials();
+	const credentialed = hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter());
 	const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
 	const decision = decideRegistration({ credentialed, isPrimary, registered });
 	debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
@@ -658,7 +832,7 @@ function applyProviderRegistration(trigger: string): void {
 
 /** Provider entry point. Pi calls this for each new prompt and each tool result.
  *  Two cases: tool result delivery (active query) or fresh query. */
-function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
+export function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
 	const stream = newAssistantMessageEventStream();
 
 	// DEBUG: trace followUp message triggering
@@ -764,7 +938,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// stale registration), and (b) fail this request with a clear, actionable
 	// message instead of letting the SDK spawn die with a generic error. The
 	// check is cheap (existsSync + env reads only, no credential contents).
-	if (!hasClaudeCredentials()) {
+	if (!hasClaudeCredentials() && !resolveClaudeAccountRouter()) {
 		try { applyProviderRegistration("pre-spawn"); } catch { /* best effort */ }
 		const message = "Claude account not connected — connect an account (or run `claude login`) and retry.";
 		debug(`provider: pre-spawn credential check failed; failing fast: ${message}`);
@@ -797,6 +971,61 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	ctx().resetTurnState(model);
 	ctx().resetToolTracking();
 	ctx().latestCursor = 0;
+	ctx().committedOutput = false;
+
+	const router = resolveClaudeAccountRouter();
+	const rotationOptions = options as BridgeStreamOptions | undefined;
+	const rotationState: RotationRequestState = rotationOptions?.[ROTATION_STATE_KEY] ?? {
+		excludedProfileIds: new Set<string>(),
+		attempts: 0,
+	};
+	let account: ClaudeAccountRoute | undefined;
+	if (router) {
+		try {
+			account = router.acquire({
+				modelId: model.id,
+				sessionId: options?.sessionId,
+				excludedProfileIds: [...rotationState.excludedProfileIds],
+				forceRerank: rotationState.attempts > 0,
+				reason: rotationState.attempts > 0 ? "automatic-failover" : undefined,
+			});
+			rotationState.attempts += 1;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const resetAtMs = Number((error as { resetAtMs?: unknown })?.resetAtMs);
+			const rateLimitType = (error as { rateLimitType?: unknown })?.rateLimitType;
+			if (ctx().turnOutput) {
+				ctx().turnOutput.stopReason = "error";
+				ctx().turnOutput.errorMessage = message;
+				if (Number.isFinite(resetAtMs)) {
+					Object.assign(ctx().turnOutput as AssistantMessage & Record<string, unknown>, { resetAtMs, rateLimitType });
+				}
+			}
+			if (Number.isFinite(resetAtMs)) {
+				emitRateLimitEvent({
+					model: model.id,
+					provider: PROVIDER_ID,
+					rateLimitType: rateLimitType ?? "all_accounts",
+					reason: message,
+					resetAt: new Date(resetAtMs).toISOString(),
+					resetAtMs,
+					source: "claude-bridge",
+					status: "rejected",
+				});
+			}
+			const errorOutput = ctx().turnOutput!;
+			if (isReentrant) popContext();
+			queueMicrotask(() => {
+				stream.push({ type: "error", reason: "error", error: errorOutput });
+				stream.end();
+			});
+			return stream;
+		}
+	}
+	const attemptBuffer = account
+		? new RetryEventBuffer(stream, () => ctx().markOutputCommitted())
+		: undefined;
+	if (attemptBuffer) ctx().currentPiStream = attemptBuffer as unknown as AssistantMessageEventStream;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
 	const promptBlocks = extractUserPromptBlocks(context.messages);
@@ -834,7 +1063,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// Declare the account's connected connectors explicitly so `alwaysLoad` can
 	// hold startup until they attach — otherwise the turn-1 manifest is built
 	// before the CLI has fetched them (vstack#832).
-	const connectorServers = enableCloudMcp ? connectorServersSnapshot() : {};
+	const connectorServers = enableCloudMcp ? connectorServersSnapshot(account?.configDir) : {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
 	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : undefined;
@@ -859,7 +1088,13 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
 	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
 	const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : undefined;
-	const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+	const { sessionId: resumeSessionId } = syncSharedSession(
+		context.messages,
+		cwd,
+		customToolNameToSdk,
+		model.id,
+		accountSessionScope(account),
+	);
 
 	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
@@ -889,7 +1124,11 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// Manual /compact in CC still works (we never invoke it).
 	// When connectors are enabled, allow claude.ai cloud MCP servers so the
 	// authenticated account's Gmail/Calendar/Drive tools load. Default stays "0".
-	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0", DISABLE_AUTO_COMPACT: "1" };
+	const childEnv = {
+		...(account ? subscriberProfileEnv(account) : process.env),
+		ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
+		DISABLE_AUTO_COMPACT: "1",
+	};
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,
 		model: model.id,
@@ -917,7 +1156,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 	debug("provider: fresh query",
 		`model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
-		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
+		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"} account=${account?.label ?? "legacy"}`,
 		`fallback=${fallbackModel ?? "none"}`,
 		`appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
@@ -926,7 +1165,9 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// 3. Start SDK query and claim it for this context
 	let wasAborted = false;
 	let streamIdleTimedOut = false;
-	const sdkQuery = query({ prompt, options: queryOptions });
+	let retryRequested = false;
+	let retryFailure: ClaudeAttemptFailure | undefined;
+	const sdkQuery = sdkQueryFactory({ prompt, options: queryOptions });
 	ctx().activeQuery = sdkQuery;
 
 	// 4. Capture context for abort handling (must be AFTER pushContext)
@@ -953,10 +1194,20 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 				streamIdleTimedOut = true;
 				cancelMcpToolUseFinalization(abortCtx);
 				abortCtx.deferredUserMessages = [];
-				abortCtx.handledTerminalError = true;
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 				const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
 				debug("provider: stream idle timeout", `model=${model.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
+				if (account && router && !abortCtx.committedOutput) {
+					router.recordFailure(account.profileId, "network", model.id);
+					rotationState.excludedProfileIds.add(account.profileId);
+					retryRequested = true;
+					retryFailure = { kind: "network", message: errorMessage };
+					attemptBuffer?.discard();
+					abortCtx.currentPiStream = null;
+					requestAbort();
+					return;
+				}
+				abortCtx.handledTerminalError = true;
 				emitRateLimitEvent({
 					idleMs,
 					model: model.id,
@@ -1009,42 +1260,92 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		else options.signal.addEventListener("abort", onAbort, { once: true });
 	}
 
-	// Background consumer — runs until query ends
-	consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted)
-		.then(async ({ capturedSessionId }) => {
-			debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, error=${ctx().turnOutput?.errorMessage}, aborted=${wasAborted}`);
+	const requestRotation = (failure: ClaudeAttemptFailure): boolean => {
+		const eligible = Boolean(account && router && failure.kind && !abortCtx.committedOutput && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
+		debug("provider: account rotation decision", JSON.stringify({
+			eligible,
+			account: account?.label,
+			kind: failure.kind,
+			committedOutput: abortCtx.committedOutput,
+			wasAborted,
+			signalAborted: options?.signal?.aborted === true,
+			attempts: rotationState.attempts,
+		}));
+		if (!eligible || !account || !router || !failure.kind) return false;
+		if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, model.id);
+		rotationState.excludedProfileIds.add(account.profileId);
+		retryRequested = true;
+		retryFailure = failure;
+		attemptBuffer?.discard();
+		abortCtx.currentPiStream = null;
+		debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
+		return true;
+	};
+
+	const surfaceFailure = (failure: ClaudeAttemptFailure, aborted = false): void => {
+		attemptBuffer?.commit();
+		const launchedExtraUsage = !account && isExtraUsageRequiredMessage(failure.message) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
+		if (failure.rateLimitInfo) {
+			const info = failure.rateLimitInfo;
+			const resetAt = rateLimitResetFromInfo(info);
+			const resetAtMs = rateLimitResetMs(info);
+			emitRateLimitEvent({
+				model: model.id, provider: PROVIDER_ID, rateLimitType: rateLimitTypeFromInfo(info),
+				reason: failure.message, resetAt,
+				...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
+				source: "claude-bridge", status: "rejected",
+			});
+			piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${failure.message} — resets ${formatResetTimestamp(resetAtMs ?? resetAt)}`, "warning");
+		}
+		if (ctx().turnOutput) {
+			ctx().turnOutput.stopReason = aborted ? "aborted" : "error";
+			ctx().turnOutput.errorMessage = `${failure.message}${launchedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
+		}
+		ctx().currentPiStream?.push({ type: "error", reason: aborted ? "aborted" : "error", error: ctx().turnOutput! });
+		ctx().currentPiStream?.end();
+		ctx().currentPiStream = null;
+	};
+
+	// Background consumer — runs until this account attempt ends. Before any
+	// visible output, a classified failure is replayed once on each remaining
+	// profile. After output/tool use, replay is forbidden.
+	consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router)
+		.then(async ({ capturedSessionId, failure }) => {
+			debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
 			if (streamIdleTimedOut) {
 				abortCtx.deferredUserMessages = [];
-				debug("provider: stream idle timeout already surfaced; skipping normal completion");
+				debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}`);
 				return;
 			}
 
-			// --- Abort detection in normal completion path ---
 			if (wasAborted || options?.signal?.aborted) {
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 				ctx().deferredUserMessages = [];
 				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
-				if (ctx().turnOutput) {
-					ctx().turnOutput.stopReason = "aborted";
-					ctx().turnOutput.errorMessage = "Operation aborted";
-				}
-				ctx().currentPiStream?.push({ type: "error", reason: "aborted", error: ctx().turnOutput! });
-				ctx().currentPiStream?.end();
-				ctx().currentPiStream = null;
+				surfaceFailure({ message: "Operation aborted" }, true);
 				return;
 			}
 
-			// --- Capture session ID ---
-			const sessionId = capturedSessionId ?? sharedSession?.sessionId;
-			if (sessionId) {
-				const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
-				debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}`);
-				setSharedSession({ sessionId, cursor, cwd });
+			if (failure) {
+				if (requestRotation(failure)) return;
+				surfaceFailure(failure);
+				return;
 			}
 
-			// --- Replay deferred user messages as continuation queries ---
-			// Only for outermost queries — reentrant (subagent) queries leave
-			// deferred messages for the parent to handle after it finishes.
+			const completedSessionId = capturedSessionId ?? sharedSession?.sessionId;
+			if (completedSessionId) {
+				const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
+				debug(`provider: query done, session=${completedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
+				setSharedSession({
+					...(sharedSession ?? {} as any),
+					sessionId: completedSessionId,
+					cursor,
+					cwd,
+					...accountSessionScope(account),
+				});
+			}
+			if (account && router) router.recordSuccess(account.profileId, options?.sessionId);
+
 			try {
 				while (ctx().deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
 					const steerPrompt = ctx().deferredUserMessages.shift()!;
@@ -1059,26 +1360,27 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					}
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
-					const contQuery = query({ prompt: steerPrompt, options: contOptions });
+					const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
 					ctx().activeQuery = contQuery;
-
-					debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, prompt=${steerPrompt.slice(0, 60)}`);
+					debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
 
 					try {
-						const { capturedSessionId: contSid } = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted);
-						const sid = contSid ?? sharedSession?.sessionId;
-						if (sid) {
-							setSharedSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd });
+						const continuation = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router);
+						if (continuation.failure) {
+							surfaceFailure(continuation.failure);
+							break;
 						}
+						const sid = continuation.capturedSessionId ?? sharedSession?.sessionId;
+						if (sid) setSharedSession({ ...(sharedSession ?? {} as any), sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountSessionScope(account) });
 					} catch (contError) {
 						debug(`provider: continuation query error:`, contError);
+						surfaceFailure({ kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) });
 						break;
 					} finally {
 						contQuery.close();
 					}
 				}
 			} finally {
-				// Guarantees restoration even if contQuery() throws synchronously
 				ctx().activeQuery = sdkQuery;
 			}
 
@@ -1086,25 +1388,22 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
-			const suppressDuplicateError = ctx().handledTerminalError || streamIdleTimedOut;
-			const openedExtraUsage = !suppressDuplicateError && isExtraUsageRequiredMessage(error) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
+			const suppressDuplicateError = ctx().handledTerminalError || (streamIdleTimedOut && !retryRequested);
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
 				setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
-			} else {
-				setSharedSession(null);
 			}
 			ctx().deferredUserMessages = [];
-			if (suppressDuplicateError) {
-				debug("provider: suppressing duplicate query error after terminal error was already emitted");
+			if (suppressDuplicateError || retryRequested) {
+				debug("provider: suppressing duplicate query error after terminal handling");
 				return;
 			}
-			if (ctx().turnOutput) {
-				ctx().turnOutput.stopReason = options?.signal?.aborted ? "aborted" : "error";
-				ctx().turnOutput.errorMessage = `${error instanceof Error ? error.message : String(error)}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
-			}
-			ctx().currentPiStream?.push({ type: "error", reason: (ctx().turnOutput?.stopReason ?? "error") as "aborted" | "error", error: ctx().turnOutput! });
-			ctx().currentPiStream?.end();
-			ctx().currentPiStream = null;
+			const failure: ClaudeAttemptFailure = {
+				kind: classifyClaudeFailure(error),
+				message: error instanceof Error ? error.message : String(error),
+			};
+			if (requestRotation(failure)) return;
+			if (!wasAborted && !options?.signal?.aborted) setSharedSession(null);
+			surfaceFailure(failure, Boolean(options?.signal?.aborted));
 		})
 		.finally(() => {
 			cancelMcpToolUseFinalization(abortCtx);
@@ -1117,19 +1416,35 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					expectedInterruption: cause === "abort",
 					forceRotate: cause !== "query-end",
 				});
-				// Drain pending handlers for this query as errors naming the cause —
-				// their results are never coming.
 				const drained = drainPendingToolCalls(ctx(), cause);
 				if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
 				ctx().pendingResults.clear();
-
-				if (isReentrant) {
-					popContext();  // merges deferred messages and restores parent
-				} else {
-					ctx().activeQuery = null;
-				}
+				if (isReentrant) popContext();
+				else ctx().activeQuery = null;
 			}
 			sdkQuery.close();
+		})
+		.then(async () => {
+			if (!retryRequested || wasAborted || options?.signal?.aborted) return;
+			debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
+			const retryStream = streamClaudeAgentSdk(model, context, {
+				...(options ?? {}),
+				[ROTATION_STATE_KEY]: rotationState,
+			} as BridgeStreamOptions);
+			try {
+				for await (const event of retryStream) stream.push(event);
+			} finally {
+				stream.end();
+			}
+		})
+		.catch((error) => {
+			debug("provider: account retry pipeline failed:", error);
+			if (ctx().turnOutput) {
+				ctx().turnOutput.stopReason = "error";
+				ctx().turnOutput.errorMessage = error instanceof Error ? error.message : String(error);
+			}
+			stream.push({ type: "error", reason: "error", error: ctx().turnOutput! });
+			stream.end();
 		});
 
 	return stream;
@@ -1184,8 +1499,15 @@ function readCredentialFile(path: string): string | undefined {
 const connectorServerCache = new Map<string, Record<string, unknown>>();
 const connectorServerPending = new Set<string>();
 
-function connectorScopeKey(): string {
-	return process.env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+function connectorScopeKey(claudeConfigDir: string | undefined = process.env.CLAUDE_CONFIG_DIR): string {
+	return claudeConfigDir?.trim() || "<default>";
+}
+
+function connectorCredentialEnv(claudeConfigDir: string | undefined = process.env.CLAUDE_CONFIG_DIR): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	if (claudeConfigDir?.trim()) env.CLAUDE_CONFIG_DIR = claudeConfigDir.trim();
+	else delete env.CLAUDE_CONFIG_DIR;
+	return env;
 }
 
 // Kick off the inventory fetch for the current credential scope. Fire and
@@ -1201,13 +1523,13 @@ function connectorScopeKey(): string {
 //
 // FAILS OPEN throughout: no credentials, a failed inventory, or a thrown call
 // all resolve to "declare nothing" rather than breaking the turn.
-export function primeConnectorServers(): void {
-	const key = connectorScopeKey();
+export function primeConnectorServers(claudeConfigDir?: string): void {
+	const key = connectorScopeKey(claudeConfigDir);
 	if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
 	connectorServerPending.add(key);
 	void (async () => {
 		try {
-			const credentials = resolveClaudeOAuth(readCredentialFile);
+			const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
 			if (!credentials) {
 				debug("connectors: no OAuth credentials; declaring none");
 				connectorServerCache.set(key, {});
@@ -1239,13 +1561,13 @@ export function primeConnectorServers(): void {
 }
 
 /** Synchronous snapshot for the query path; `{}` until priming resolves. */
-function connectorServersSnapshot(): Record<string, unknown> {
-	const key = connectorScopeKey();
+function connectorServersSnapshot(claudeConfigDir?: string): Record<string, unknown> {
+	const key = connectorScopeKey(claudeConfigDir);
 	const ready = connectorServerCache.get(key);
 	if (ready) return ready;
 	// Always start (or continue) the live fetch — the cache is a head start, not
 	// a replacement, and the refresh keeps the next process current.
-	primeConnectorServers();
+	primeConnectorServers(claudeConfigDir);
 	// Fall back to the previous run's inventory, read synchronously. This is the
 	// only thing that can populate turn 1 of a cold process, because priming
 	// cannot finish before the first query is built (vstack#870).
@@ -1260,8 +1582,11 @@ function connectorServersSnapshot(): Record<string, unknown> {
 // Deterministic connector enumeration for the host app (vstack#838). Reports the
 // failure reason rather than an empty list, so "no connectors" and "could not
 // check" stay distinguishable.
-async function reportConnectorInventory(ctx: { ui: ExtensionUIContext }): Promise<void> {
-	const credentials = resolveClaudeOAuth(readCredentialFile);
+async function reportConnectorInventory(ctx: { ui: ExtensionUIContext; model?: Model<any>; sessionManager?: { getSessionId?: () => string } }): Promise<void> {
+	const account = ctx.model
+		? resolveClaudeAccountRouter()?.current(ctx.model.id, ctx.sessionManager?.getSessionId?.())
+		: undefined;
+	const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account?.configDir));
 	if (!credentials) {
 		ctx.ui.notify("Claude bridge: no Claude OAuth credentials found — cannot enumerate connectors.", "error");
 		return;
@@ -1334,6 +1659,10 @@ export default function (pi: ExtensionAPI) {
 	if (config.enabled === false) {
 		debug("provider: disabled by configuration");
 		return;
+	}
+	if (claimPrimaryInstance()) {
+		const host = globalThis as Record<symbol, any>;
+		host[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = BRIDGE_ACCOUNT_HOST;
 	}
 
 	// Reset shared (Claude) conversation state on pi session lifecycle events.

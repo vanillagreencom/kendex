@@ -27273,6 +27273,9 @@ var QueryContext = class {
   reportedToolResultMismatch = false;
   deferredUserMessages = [];
   handledTerminalError = false;
+  // Once visible text/thinking or a complete tool call reaches Pi, the request
+  // must never be replayed on another account (duplicate side effects).
+  committedOutput = false;
   // Per-turn (reset together)
   turnOutput = null;
   turnStarted = false;
@@ -27353,6 +27356,10 @@ var QueryContext = class {
   }
   markToolCallEmitted(id) {
     if (id) this.emittedToolCallIds.add(id);
+    this.committedOutput = true;
+  }
+  markOutputCommitted() {
+    this.committedOutput = true;
   }
   wasToolCallEmitted(id) {
     return Boolean(id && this.emittedToolCallIds.has(id));
@@ -43937,9 +43944,9 @@ function latestPersistedBridgeSession(sessionManager) {
   }
   return void 0;
 }
-function claudeSessionExists(sessionId, cwd) {
+function claudeSessionExists(sessionId, cwd, claudeConfigDir) {
   try {
-    const session = openSession({ sessionId, projectPath: cwd, claudeDir: process.env.CLAUDE_CONFIG_DIR });
+    const session = openSession({ sessionId, projectPath: cwd, claudeDir: claudeConfigDir });
     statSync4(session.jsonlPath);
     return true;
   } catch {
@@ -43982,11 +43989,17 @@ function restoreSharedSessionFromPi(ctx2) {
     debug(`restoreSharedSession: fingerprint mismatch for ${persisted.sessionId.slice(0, 8)}`);
     return;
   }
-  if (!claudeSessionExists(persisted.sessionId, persisted.cwd)) {
+  if (!claudeSessionExists(persisted.sessionId, persisted.cwd, persisted.claudeConfigDir)) {
     debug(`restoreSharedSession: Claude session missing for ${persisted.sessionId.slice(0, 8)}`);
     return;
   }
-  setSharedSession({ sessionId: persisted.sessionId, cursor, cwd: persisted.cwd });
+  setSharedSession({
+    sessionId: persisted.sessionId,
+    cursor,
+    cwd: persisted.cwd,
+    ...persisted.accountProfileId ? { accountProfileId: persisted.accountProfileId } : {},
+    ...persisted.claudeConfigDir ? { claudeConfigDir: persisted.claudeConfigDir } : {}
+  });
   debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
 }
 var scheduledPersistenceTimers = /* @__PURE__ */ new Set();
@@ -44058,17 +44071,17 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
   }
   if (repaired.length) session.importMessages(repaired);
 }
-function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount, cwd) {
+function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount, cwd, claudeConfigDir) {
   const warnings = verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
   for (const msg of warnings) {
     debug(`WARNING session verify: ${msg}`);
     piUI?.notify(
       `Session file issue: ${msg}
-cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}
+cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${claudeConfigDir ?? "(unset)"}
 Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
       "warning"
     );
-    diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+    diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: claudeConfigDir ?? null });
   }
 }
 function safeRealpath(p4) {
@@ -44078,7 +44091,7 @@ function safeRealpath(p4) {
     return `<failed: ${e.message}>`;
   }
 }
-function debugSessionPaths(label, cwd, jsonlPath) {
+function debugSessionPaths(label, cwd, jsonlPath, claudeConfigDir) {
   const realCwd = safeRealpath(cwd);
   let fileSize = null;
   let fileExists = false;
@@ -44092,11 +44105,16 @@ function debugSessionPaths(label, cwd, jsonlPath) {
   if (realCwd !== cwd) debug(`${label}: realpath(cwd)=${realCwd} (DIFFERS \u2014 symlink-resolved path is what CC SDK uses)`);
   debug(`${label}: jsonlPath=${jsonlPath}`);
   debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
-  debug(`${label}: env.CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
+  debug(`${label}: selected.CLAUDE_CONFIG_DIR=${claudeConfigDir ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
 }
-function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
+function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account) {
   const priorMessages = messages.slice(0, -1);
-  if (sharedSession && !sharedSession.needsRebuild) {
+  const accountProfileId = account?.accountProfileId;
+  const claudeConfigDir = account?.claudeConfigDir;
+  const sameAccount = Boolean(
+    sharedSession && sharedSession.accountProfileId === accountProfileId && sharedSession.claudeConfigDir === claudeConfigDir
+  );
+  if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
     const missed = priorMessages.slice(sharedSession.cursor);
     const trailingAssistantOnly = missed.length === 1 && missed[0].role === "assistant";
     if (missed.length === 0 || trailingAssistantOnly) {
@@ -44104,41 +44122,50 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
         setSharedSession({ ...sharedSession, cursor: priorMessages.length, cwd });
       }
       debug(`Case 3: ${trailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
-      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor}`);
+      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor} account=${accountProfileId ?? "default"}`);
       return { sessionId: sharedSession.sessionId };
     }
   }
   if (priorMessages.length === 0) {
-    debug(`Case 1: clean start, ${messages.length} total messages`);
+    debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
     debug(`syncResult: path=clean-start`);
     return { sessionId: null };
   }
-  const previousSessionId = sharedSession?.sessionId;
-  const previousCursor = sharedSession?.cursor ?? 0;
+  const replacedSessionId = sharedSession?.sessionId;
+  const previousSessionId = sameAccount ? sharedSession?.sessionId : void 0;
+  const previousCursor = sameAccount ? sharedSession?.cursor ?? 0 : 0;
   const preserveId = previousSessionId !== void 0 && !sharedSession?.forceRotate;
   if (preserveId) {
-    deleteSession(previousSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
+    deleteSession(previousSessionId, cwd, claudeConfigDir);
   }
   const session = createSession({
     projectPath: cwd,
-    claudeDir: process.env.CLAUDE_CONFIG_DIR,
+    claudeDir: claudeConfigDir,
     ...preserveId ? { sessionId: previousSessionId } : {},
     ...modelId ? { model: modelId } : {}
   });
   convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
   session.save();
-  verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd);
-  setSharedSession({ sessionId: session.sessionId, cursor: priorMessages.length, cwd });
-  if (previousSessionId === void 0) {
+  verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd, claudeConfigDir);
+  setSharedSession({
+    sessionId: session.sessionId,
+    cursor: priorMessages.length,
+    cwd,
+    ...accountProfileId ? { accountProfileId } : {},
+    ...claudeConfigDir ? { claudeConfigDir } : {}
+  });
+  if (!replacedSessionId) {
     debug(`Case 2: first turn with ${priorMessages.length} prior messages \u2192 session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
+  } else if (!sameAccount) {
+    debug(`Case 4 account-rotation: ${priorMessages.length} prior messages \u2192 new session ${session.sessionId.slice(0, 8)} for account ${accountProfileId ?? "default"} (replaced ${replacedSessionId.slice(0, 8)})`);
   } else if (preserveId) {
     const missedCount = priorMessages.length - previousCursor;
     debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total \u2192 rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
   } else {
     debug(`Case 4 post-abort: ${priorMessages.length} total \u2192 new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
   }
-  debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
-  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === void 0 ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
+  debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath, claudeConfigDir);
+  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} account=${accountProfileId ?? "default"} ${!replacedSessionId ? "first" : preserveId ? "preserved" : "rotated"}`);
   return { sessionId: session.sessionId };
 }
 
@@ -44437,13 +44464,16 @@ function processStreamEvent(message, customToolNameToPi, model) {
     c.turnSawStreamEvent = true;
     if (event.delta?.type === "text_delta" && block.type === "text") {
       block.text += event.delta.text;
+      if (event.delta.text) c.markOutputCommitted();
       c.currentPiStream.push({ type: "text_delta", contentIndex: index, delta: event.delta.text, partial: c.turnOutput });
     } else if (event.delta?.type === "thinking_delta" && block.type === "thinking") {
       block.thinking += event.delta.thinking;
+      if (event.delta.thinking) c.markOutputCommitted();
       c.currentPiStream.push({ type: "thinking_delta", contentIndex: index, delta: event.delta.thinking, partial: c.turnOutput });
     } else if (event.delta?.type === "input_json_delta" && block.type === "toolCall") {
       block.partialJson += event.delta.partial_json;
       block.arguments = parsePartialJson(block.partialJson, block.arguments);
+      if (event.delta.partial_json) c.markOutputCommitted();
       c.currentPiStream.push({ type: "toolcall_delta", contentIndex: index, delta: event.delta.partial_json, partial: c.turnOutput });
     } else if (event.delta?.type === "signature_delta" && block.type === "thinking") {
       block.thinkingSignature = (block.thinkingSignature ?? "") + event.delta.signature;
@@ -44561,6 +44591,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
       ensureTurnStarted();
+      c.markOutputCommitted();
       c.turnBlocks.push({ type: "text", text: block.text });
       const idx = c.turnBlocks.length - 1;
       c.currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: c.turnOutput });
@@ -44568,6 +44599,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
     } else if (block.type === "thinking") {
       ensureTurnStarted();
+      if (block.thinking) c.markOutputCommitted();
       c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
       const idx = c.turnBlocks.length - 1;
       c.currentPiStream?.push({ type: "thinking_start", contentIndex: idx, partial: c.turnOutput });
@@ -44607,6 +44639,118 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   }
 }
 
+// src/account-router.ts
+var CLAUDE_ACCOUNT_ROUTER_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-account-router.v1");
+var CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.account-host.v1");
+function resolveClaudeAccountRouter() {
+  const host = globalThis;
+  const candidate = host[CLAUDE_ACCOUNT_ROUTER_SYMBOL];
+  return candidate?.version === 1 ? candidate : void 0;
+}
+function subscriberProfileEnv(profile, base = process.env) {
+  const env = { ...base };
+  for (const key of [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "CLAUDE_CODE_USE_MANTLE"
+  ]) delete env[key];
+  if (profile.configDir) env.CLAUDE_CONFIG_DIR = profile.configDir;
+  else delete env.CLAUDE_CONFIG_DIR;
+  return env;
+}
+function accountSessionScope(profile) {
+  return profile ? {
+    accountProfileId: profile.profileId,
+    ...profile.configDir ? { claudeConfigDir: profile.configDir } : {}
+  } : {};
+}
+function commitsVisibleOutput(event) {
+  if (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") {
+    return event.delta.length > 0;
+  }
+  if (event.type === "text_end" || event.type === "thinking_end") return event.content.length > 0;
+  return event.type === "toolcall_end";
+}
+var RetryEventBuffer = class {
+  constructor(target, onCommit) {
+    this.target = target;
+    this.onCommit = onCommit;
+  }
+  target;
+  onCommit;
+  pending = [];
+  committed = false;
+  ended = false;
+  discarded = false;
+  push(event) {
+    if (this.discarded) return;
+    if (this.committed) {
+      this.target.push(event);
+      return;
+    }
+    this.pending.push(event);
+    if (commitsVisibleOutput(event) || event.type === "done" || event.type === "error") this.commit();
+  }
+  end() {
+    if (this.discarded) return;
+    this.ended = true;
+    if (this.committed) this.target.end();
+  }
+  commit() {
+    if (this.discarded || this.committed) return;
+    this.committed = true;
+    this.onCommit?.();
+    for (const event of this.pending) this.target.push(event);
+    this.pending.length = 0;
+    if (this.ended) this.target.end();
+  }
+  discard() {
+    if (this.committed) return;
+    this.discarded = true;
+    this.pending.length = 0;
+  }
+  get hasCommittedOutput() {
+    return this.committed;
+  }
+};
+function rateLimitTypeFromInfo(info) {
+  return info?.rateLimitType ?? info?.rate_limit_type ?? info?.type;
+}
+function rateLimitResetFromInfo(info) {
+  return info?.resetsAt ?? info?.resets_at ?? info?.resetAt ?? info?.reset_at;
+}
+function rateLimitResetMs(info) {
+  const value = rateLimitResetFromInfo(info);
+  if (typeof value === "number" && Number.isFinite(value)) return value < 1e12 ? value * 1e3 : value;
+  if (typeof value !== "string" || !value.trim()) return void 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric < 1e12 ? numeric * 1e3 : numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
+function classifyClaudeFailure(value) {
+  const text = typeof value === "string" ? value : value instanceof Error ? value.message : (() => {
+    try {
+      return JSON.stringify(value ?? "");
+    } catch {
+      return String(value);
+    }
+  })();
+  const normalized = text.toLowerCase().replace(/[_-]+/g, " ");
+  if (/authentication failed|oauth org not allowed|unauthorized|invalid token|login required/.test(normalized)) return "auth";
+  if (/billing error|payment|required.*billing|extra usage|overage/.test(normalized)) return "billing";
+  if (/rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
+  if (/overloaded|capacity/.test(normalized)) return "overloaded";
+  if (/server error|internal server|\b5\d\d\b/.test(normalized)) return "server";
+  if (/network|timeout|timed out|socket|econn|connection closed|fetch failed|unexpected end|\beof\b/.test(normalized)) return "network";
+  return void 0;
+}
+
 // src/index.ts
 var _piAi = piAi;
 var getModels = await resolveGetModels(_piAi);
@@ -44614,7 +44758,12 @@ var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStr
 var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
+var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
 var MODELS = buildModels(getModels("anthropic"));
+var sdkQueryFactory = tAt;
+function __testSetSdkQueryFactory(factory) {
+  sdkQueryFactory = factory ?? tAt;
+}
 var extraUsageHelperInFlight = null;
 function emitRateLimitEvent(payload) {
   try {
@@ -44634,11 +44783,68 @@ function sdkTextFromMessage(message) {
   }
   return void 0;
 }
+async function probeClaudeAccountProfile(input) {
+  const config2 = loadConfig(input.cwd);
+  const claudeExecutable = resolveClaudeExecutable(config2.provider?.pathToClaudeCodeExecutable);
+  if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, input.cwd);
+  const probe = sdkQueryFactory({
+    prompt: "/usage",
+    options: {
+      cwd: input.cwd,
+      env: {
+        ...subscriberProfileEnv(input.profile),
+        ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+        DISABLE_AUTO_COMPACT: "1"
+      },
+      maxTurns: 1,
+      permissionMode: "bypassPermissions",
+      ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+      spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
+      ...makeCliDebugOptions("account-probe")
+    }
+  });
+  const onAbort = () => {
+    void probe.interrupt().catch(() => {
+    });
+    try {
+      probe.close();
+    } catch {
+    }
+  };
+  if (input.signal?.aborted) onAbort();
+  else input.signal?.addEventListener("abort", onAbort, { once: true });
+  let controls;
+  try {
+    for await (const message of probe) {
+      if (message.type === "system" && message.subtype === "init" && !controls) {
+        controls = Promise.allSettled([
+          probe.accountInfo(),
+          probe.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+        ]).then(([identityResult, usageResult]) => ({
+          ...identityResult.status === "fulfilled" ? { identity: {
+            email: identityResult.value.email,
+            organization: identityResult.value.organization,
+            subscriptionType: identityResult.value.subscriptionType
+          } } : {},
+          ...usageResult.status === "fulfilled" ? { usage: usageResult.value } : {}
+        }));
+      }
+    }
+    return controls ? await controls : {};
+  } finally {
+    input.signal?.removeEventListener("abort", onAbort);
+    probe.close();
+  }
+}
+var BRIDGE_ACCOUNT_HOST = {
+  version: 1,
+  probeProfile: probeClaudeAccountProfile
+};
 async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd)) {
   const providerSettings = config2.provider ?? {};
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
-  const helperQuery = tAt({
+  const helperQuery = sdkQueryFactory({
     prompt: "/extra-usage",
     options: {
       cwd,
@@ -44865,45 +45071,80 @@ function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   }
   return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
-async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, wasAborted) {
+async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, wasAborted, account, router) {
   let capturedSessionId;
+  let failure;
+  let accountProbe;
   for await (const message of sdkQuery) {
     if (wasAborted()) break;
     const queryCtx = ctx();
     activeStreamIdleWatchdogs.get(queryCtx)?.noteChunk();
+    if (account) {
+      debug("consumeQuery: managed message", JSON.stringify({
+        type: message.type,
+        subtype: message.subtype,
+        error: message.error,
+        eventType: message.event?.type,
+        deltaType: message.event?.delta?.type,
+        contentType: message.event?.content_block?.type
+      }));
+    }
     if (!queryCtx.turnOutput) continue;
     if (!queryCtx.currentPiStream && !(message.type === "assistant" && queryCtx.turnSawToolCall)) continue;
     switch (message.type) {
       case "stream_event":
         processStreamEvent(message, customToolNameToPi, model);
         break;
-      case "assistant":
+      case "assistant": {
+        const sdkError = message.error;
+        if (sdkError && !failure) {
+          failure = { kind: classifyClaudeFailure(sdkError), message: String(sdkError) };
+        }
+        if (sdkError && account) break;
         processAssistantMessage(message, model, customToolNameToPi);
         break;
+      }
       case "result":
+        if (account && failure) break;
         if (!ctx().turnSawStreamEvent && message.subtype === "success") {
           ensureTurnStarted();
           const text = message.result || "";
+          if (text) ctx().markOutputCommitted();
           ctx().turnBlocks.push({ type: "text", text });
           const idx = ctx().turnBlocks.length - 1;
           ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });
           ctx().currentPiStream?.push({ type: "text_delta", contentIndex: idx, delta: text, partial: ctx().turnOutput });
           ctx().currentPiStream?.push({ type: "text_end", contentIndex: idx, content: text, partial: ctx().turnOutput });
-        } else if (message.subtype !== "success" && isExtraUsageRequiredMessage(message)) {
+        } else if (message.subtype !== "success") {
           const errorLines = Array.isArray(message.errors) ? uniqueNonEmptyLines(message.errors) : [];
-          const errors = errorLines.length > 0 ? errorLines.join("\n") : String(message.subtype ?? "Claude Code rate limit");
-          const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
-          ctx().handledTerminalError = true;
-          ctx().turnOutput.stopReason = "error";
-          ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
-          ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
-          ctx().currentPiStream?.end();
-          ctx().currentPiStream = null;
+          const errors = errorLines.length > 0 ? errorLines.join("\n") : String(message.result || message.subtype || "Claude Code request failed");
+          if (!failure || !failure.rateLimitInfo) {
+            failure = { kind: classifyClaudeFailure(isExtraUsageRequiredMessage(message) ? `extra usage ${errors}` : errors), message: errors };
+          }
+          if (!account && isExtraUsageRequiredMessage(message)) {
+            const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
+            ctx().handledTerminalError = true;
+            ctx().turnOutput.stopReason = "error";
+            ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
+            ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
+            ctx().currentPiStream?.end();
+            ctx().currentPiStream = null;
+          }
         }
         break;
       case "system":
         if (message.subtype === "init" && message.session_id) {
           capturedSessionId = message.session_id;
+          if (account && router && !accountProbe) {
+            accountProbe = Promise.allSettled([
+              sdkQuery.accountInfo().then((info) => router.recordIdentity(account.profileId, {
+                email: info.email,
+                organization: info.organization,
+                subscriptionType: info.subscriptionType
+              })),
+              sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET().then((usage) => router.recordUsage(account.profileId, usage))
+            ]).then(() => void 0);
+          }
         } else if (message.subtype === "model_refusal_fallback") {
           const originalModel = message.original_model;
           const fallbackModel = message.fallback_model;
@@ -44919,26 +45160,32 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
         break;
       case "user":
         break;
-      // SDK echo of user prompt — not needed
       case "rate_limit_event": {
         const info = message.rate_limit_info;
         debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
         if (info?.status === "rejected") {
-          const resetsAt = formatResetTimestamp(info.resetsAt);
-          const resetAtMs = typeof info.resetsAt === "string" ? Date.parse(info.resetsAt) : void 0;
-          const reason = `${info.rateLimitType ?? "unknown"} rate limit`;
-          const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
-          emitRateLimitEvent({
-            model: model.id,
-            provider: PROVIDER_ID,
-            rateLimitType: info.rateLimitType,
-            reason,
-            resetAt: info.resetsAt,
-            ...Number.isFinite(resetAtMs) ? { resetAtMs } : {},
-            source: "claude-bridge",
-            status: "rejected"
-          });
-          piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit \u2014 resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
+          const rateLimitType = rateLimitTypeFromInfo(info);
+          const resetAt = rateLimitResetFromInfo(info);
+          const reason = `${rateLimitType ?? "unknown"} rate limit`;
+          failure = { kind: "rate-limit", message: reason, rateLimitInfo: info };
+          if (account && router) {
+            router.recordRateLimit(account.profileId, info, model.id);
+          } else {
+            const resetAtMs = rateLimitResetMs(info);
+            const resetsAt = formatResetTimestamp(resetAtMs ?? resetAt);
+            const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
+            emitRateLimitEvent({
+              model: model.id,
+              provider: PROVIDER_ID,
+              rateLimitType,
+              reason,
+              resetAt,
+              ...Number.isFinite(resetAtMs) ? { resetAtMs } : {},
+              source: "claude-bridge",
+              status: "rejected"
+            });
+            piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit \u2014 resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
+          }
         } else if (info?.status === "allowed_warning") {
           const warning = formatAllowedRateLimitWarning(info);
           if (warning) piUI?.notify(warning, "warning");
@@ -44951,8 +45198,14 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
         break;
     }
   }
-  debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}`);
-  return { capturedSessionId };
+  if (accountProbe) {
+    await Promise.race([
+      accountProbe,
+      new Promise((resolve5) => setTimeout(resolve5, 1500))
+    ]);
+  }
+  debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}, failure=${failure?.kind ?? "none"}`);
+  return { capturedSessionId, failure };
 }
 function claimPrimaryInstance() {
   const g = globalThis;
@@ -44961,6 +45214,9 @@ function claimPrimaryInstance() {
 }
 function releaseProviderTokens(event) {
   const g = globalThis;
+  if (g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
+    g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = void 0;
+  }
   if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
     debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
     g[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
@@ -44978,7 +45234,7 @@ function applyProviderRegistration(trigger) {
   }
   const g = globalThis;
   const isPrimary = claimPrimaryInstance();
-  const credentialed = hasClaudeCredentials();
+  const credentialed = hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter());
   const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
   const decision = decideRegistration({ credentialed, isPrimary, registered });
   debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
@@ -45080,7 +45336,7 @@ function streamClaudeAgentSdk(model, context, options) {
     });
     return stream;
   }
-  if (!hasClaudeCredentials()) {
+  if (!hasClaudeCredentials() && !resolveClaudeAccountRouter()) {
     try {
       applyProviderRegistration("pre-spawn");
     } catch {
@@ -45121,6 +45377,58 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().resetTurnState(model);
   ctx().resetToolTracking();
   ctx().latestCursor = 0;
+  ctx().committedOutput = false;
+  const router = resolveClaudeAccountRouter();
+  const rotationOptions = options;
+  const rotationState = rotationOptions?.[ROTATION_STATE_KEY] ?? {
+    excludedProfileIds: /* @__PURE__ */ new Set(),
+    attempts: 0
+  };
+  let account;
+  if (router) {
+    try {
+      account = router.acquire({
+        modelId: model.id,
+        sessionId: options?.sessionId,
+        excludedProfileIds: [...rotationState.excludedProfileIds],
+        forceRerank: rotationState.attempts > 0,
+        reason: rotationState.attempts > 0 ? "automatic-failover" : void 0
+      });
+      rotationState.attempts += 1;
+    } catch (error51) {
+      const message = error51 instanceof Error ? error51.message : String(error51);
+      const resetAtMs = Number(error51?.resetAtMs);
+      const rateLimitType = error51?.rateLimitType;
+      if (ctx().turnOutput) {
+        ctx().turnOutput.stopReason = "error";
+        ctx().turnOutput.errorMessage = message;
+        if (Number.isFinite(resetAtMs)) {
+          Object.assign(ctx().turnOutput, { resetAtMs, rateLimitType });
+        }
+      }
+      if (Number.isFinite(resetAtMs)) {
+        emitRateLimitEvent({
+          model: model.id,
+          provider: PROVIDER_ID,
+          rateLimitType: rateLimitType ?? "all_accounts",
+          reason: message,
+          resetAt: new Date(resetAtMs).toISOString(),
+          resetAtMs,
+          source: "claude-bridge",
+          status: "rejected"
+        });
+      }
+      const errorOutput = ctx().turnOutput;
+      if (isReentrant) popContext();
+      queueMicrotask(() => {
+        stream.push({ type: "error", reason: "error", error: errorOutput });
+        stream.end();
+      });
+      return stream;
+    }
+  }
+  const attemptBuffer = account ? new RetryEventBuffer(stream, () => ctx().markOutputCommitted()) : void 0;
+  if (attemptBuffer) ctx().currentPiStream = attemptBuffer;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
   const promptBlocks = extractUserPromptBlocks(context.messages);
   let promptText = extractUserPrompt(context.messages) ?? "";
@@ -45142,7 +45450,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const providerSettings = bridgeConfig.provider ?? {};
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
   const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
-  const connectorServers = enableCloudMcp ? connectorServersSnapshot() : {};
+  const connectorServers = enableCloudMcp ? connectorServersSnapshot(account?.configDir) : {};
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
   const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
   const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : void 0;
@@ -45153,14 +45461,24 @@ function streamClaudeAgentSdk(model, context, options) {
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
-  const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+  const { sessionId: resumeSessionId } = syncSharedSession(
+    context.messages,
+    cwd,
+    customToolNameToSdk,
+    model.id,
+    accountSessionScope(account)
+  );
   const requestedEffort = options?.reasoning ? model.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
   const extraArgs = {};
   if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
   if (effort) extraArgs["thinking-display"] = "summarized";
   const fallbackModel = fallbackModelForPrimaryModel(model.id);
-  const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0", DISABLE_AUTO_COMPACT: "1" };
+  const childEnv = {
+    ...account ? subscriberProfileEnv(account) : process.env,
+    ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
+    DISABLE_AUTO_COMPACT: "1"
+  };
   const queryOptions = {
     cwd,
     model: model.id,
@@ -45187,7 +45505,7 @@ function streamClaudeAgentSdk(model, context, options) {
   debug(
     "provider: fresh query",
     `model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
-    `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
+    `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"} account=${account?.label ?? "legacy"}`,
     `fallback=${fallbackModel ?? "none"}`,
     `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
@@ -45195,7 +45513,9 @@ function streamClaudeAgentSdk(model, context, options) {
   );
   let wasAborted = false;
   let streamIdleTimedOut = false;
-  const sdkQuery = tAt({ prompt, options: queryOptions });
+  let retryRequested = false;
+  let retryFailure;
+  const sdkQuery = sdkQueryFactory({ prompt, options: queryOptions });
   ctx().activeQuery = sdkQuery;
   const abortCtx = ctx();
   const requestAbort = () => {
@@ -45220,10 +45540,20 @@ function streamClaudeAgentSdk(model, context, options) {
       streamIdleTimedOut = true;
       cancelMcpToolUseFinalization(abortCtx);
       abortCtx.deferredUserMessages = [];
-      abortCtx.handledTerminalError = true;
       if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
       debug("provider: stream idle timeout", `model=${model.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
+      if (account && router && !abortCtx.committedOutput) {
+        router.recordFailure(account.profileId, "network", model.id);
+        rotationState.excludedProfileIds.add(account.profileId);
+        retryRequested = true;
+        retryFailure = { kind: "network", message: errorMessage };
+        attemptBuffer?.discard();
+        abortCtx.currentPiStream = null;
+        requestAbort();
+        return;
+      }
+      abortCtx.handledTerminalError = true;
       emitRateLimitEvent({
         idleMs,
         model: model.id,
@@ -45273,32 +45603,86 @@ function streamClaudeAgentSdk(model, context, options) {
     if (options.signal.aborted) onAbort();
     else options.signal.addEventListener("abort", onAbort, { once: true });
   }
-  consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted).then(async ({ capturedSessionId }) => {
-    debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, error=${ctx().turnOutput?.errorMessage}, aborted=${wasAborted}`);
+  const requestRotation = (failure) => {
+    const eligible = Boolean(account && router && failure.kind && !abortCtx.committedOutput && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
+    debug("provider: account rotation decision", JSON.stringify({
+      eligible,
+      account: account?.label,
+      kind: failure.kind,
+      committedOutput: abortCtx.committedOutput,
+      wasAborted,
+      signalAborted: options?.signal?.aborted === true,
+      attempts: rotationState.attempts
+    }));
+    if (!eligible || !account || !router || !failure.kind) return false;
+    if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, model.id);
+    rotationState.excludedProfileIds.add(account.profileId);
+    retryRequested = true;
+    retryFailure = failure;
+    attemptBuffer?.discard();
+    abortCtx.currentPiStream = null;
+    debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
+    return true;
+  };
+  const surfaceFailure = (failure, aborted2 = false) => {
+    attemptBuffer?.commit();
+    const launchedExtraUsage = !account && isExtraUsageRequiredMessage(failure.message) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
+    if (failure.rateLimitInfo) {
+      const info = failure.rateLimitInfo;
+      const resetAt = rateLimitResetFromInfo(info);
+      const resetAtMs = rateLimitResetMs(info);
+      emitRateLimitEvent({
+        model: model.id,
+        provider: PROVIDER_ID,
+        rateLimitType: rateLimitTypeFromInfo(info),
+        reason: failure.message,
+        resetAt,
+        ...Number.isFinite(resetAtMs) ? { resetAtMs } : {},
+        source: "claude-bridge",
+        status: "rejected"
+      });
+      piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${failure.message} \u2014 resets ${formatResetTimestamp(resetAtMs ?? resetAt)}`, "warning");
+    }
+    if (ctx().turnOutput) {
+      ctx().turnOutput.stopReason = aborted2 ? "aborted" : "error";
+      ctx().turnOutput.errorMessage = `${failure.message}${launchedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
+    }
+    ctx().currentPiStream?.push({ type: "error", reason: aborted2 ? "aborted" : "error", error: ctx().turnOutput });
+    ctx().currentPiStream?.end();
+    ctx().currentPiStream = null;
+  };
+  consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router).then(async ({ capturedSessionId, failure }) => {
+    debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
     if (streamIdleTimedOut) {
       abortCtx.deferredUserMessages = [];
-      debug("provider: stream idle timeout already surfaced; skipping normal completion");
+      debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}`);
       return;
     }
     if (wasAborted || options?.signal?.aborted) {
       if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       ctx().deferredUserMessages = [];
       debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
-      if (ctx().turnOutput) {
-        ctx().turnOutput.stopReason = "aborted";
-        ctx().turnOutput.errorMessage = "Operation aborted";
-      }
-      ctx().currentPiStream?.push({ type: "error", reason: "aborted", error: ctx().turnOutput });
-      ctx().currentPiStream?.end();
-      ctx().currentPiStream = null;
+      surfaceFailure({ message: "Operation aborted" }, true);
       return;
     }
-    const sessionId = capturedSessionId ?? sharedSession?.sessionId;
-    if (sessionId) {
-      const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
-      debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}`);
-      setSharedSession({ sessionId, cursor, cwd });
+    if (failure) {
+      if (requestRotation(failure)) return;
+      surfaceFailure(failure);
+      return;
     }
+    const completedSessionId = capturedSessionId ?? sharedSession?.sessionId;
+    if (completedSessionId) {
+      const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
+      debug(`provider: query done, session=${completedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
+      setSharedSession({
+        ...sharedSession ?? {},
+        sessionId: completedSessionId,
+        cursor,
+        cwd,
+        ...accountSessionScope(account)
+      });
+    }
+    if (account && router) router.recordSuccess(account.profileId, options?.sessionId);
     try {
       while (ctx().deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
         const steerPrompt = ctx().deferredUserMessages.shift();
@@ -45311,17 +45695,20 @@ function streamClaudeAgentSdk(model, context, options) {
           break;
         }
         const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
-        const contQuery = tAt({ prompt: steerPrompt, options: contOptions });
+        const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
         ctx().activeQuery = contQuery;
-        debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, prompt=${steerPrompt.slice(0, 60)}`);
+        debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
         try {
-          const { capturedSessionId: contSid } = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted);
-          const sid = contSid ?? sharedSession?.sessionId;
-          if (sid) {
-            setSharedSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd });
+          const continuation = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router);
+          if (continuation.failure) {
+            surfaceFailure(continuation.failure);
+            break;
           }
+          const sid = continuation.capturedSessionId ?? sharedSession?.sessionId;
+          if (sid) setSharedSession({ ...sharedSession ?? {}, sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountSessionScope(account) });
         } catch (contError) {
           debug(`provider: continuation query error:`, contError);
+          surfaceFailure({ kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) });
           break;
         } finally {
           contQuery.close();
@@ -45333,25 +45720,22 @@ function streamClaudeAgentSdk(model, context, options) {
     finalizeCurrentStream(ctx().turnOutput?.stopReason);
   }).catch((error51) => {
     debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error51);
-    const suppressDuplicateError = ctx().handledTerminalError || streamIdleTimedOut;
-    const openedExtraUsage = !suppressDuplicateError && isExtraUsageRequiredMessage(error51) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "query error");
+    const suppressDuplicateError = ctx().handledTerminalError || streamIdleTimedOut && !retryRequested;
     if ((wasAborted || options?.signal?.aborted) && sharedSession) {
       setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
-    } else {
-      setSharedSession(null);
     }
     ctx().deferredUserMessages = [];
-    if (suppressDuplicateError) {
-      debug("provider: suppressing duplicate query error after terminal error was already emitted");
+    if (suppressDuplicateError || retryRequested) {
+      debug("provider: suppressing duplicate query error after terminal handling");
       return;
     }
-    if (ctx().turnOutput) {
-      ctx().turnOutput.stopReason = options?.signal?.aborted ? "aborted" : "error";
-      ctx().turnOutput.errorMessage = `${error51 instanceof Error ? error51.message : String(error51)}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
-    }
-    ctx().currentPiStream?.push({ type: "error", reason: ctx().turnOutput?.stopReason ?? "error", error: ctx().turnOutput });
-    ctx().currentPiStream?.end();
-    ctx().currentPiStream = null;
+    const failure = {
+      kind: classifyClaudeFailure(error51),
+      message: error51 instanceof Error ? error51.message : String(error51)
+    };
+    if (requestRotation(failure)) return;
+    if (!wasAborted && !options?.signal?.aborted) setSharedSession(null);
+    surfaceFailure(failure, Boolean(options?.signal?.aborted));
   }).finally(() => {
     cancelMcpToolUseFinalization(abortCtx);
     streamIdleWatchdog?.dispose();
@@ -45366,13 +45750,30 @@ function streamClaudeAgentSdk(model, context, options) {
       const drained = drainPendingToolCalls(ctx(), cause);
       if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
       ctx().pendingResults.clear();
-      if (isReentrant) {
-        popContext();
-      } else {
-        ctx().activeQuery = null;
-      }
+      if (isReentrant) popContext();
+      else ctx().activeQuery = null;
     }
     sdkQuery.close();
+  }).then(async () => {
+    if (!retryRequested || wasAborted || options?.signal?.aborted) return;
+    debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
+    const retryStream = streamClaudeAgentSdk(model, context, {
+      ...options ?? {},
+      [ROTATION_STATE_KEY]: rotationState
+    });
+    try {
+      for await (const event of retryStream) stream.push(event);
+    } finally {
+      stream.end();
+    }
+  }).catch((error51) => {
+    debug("provider: account retry pipeline failed:", error51);
+    if (ctx().turnOutput) {
+      ctx().turnOutput.stopReason = "error";
+      ctx().turnOutput.errorMessage = error51 instanceof Error ? error51.message : String(error51);
+    }
+    stream.push({ type: "error", reason: "error", error: ctx().turnOutput });
+    stream.end();
   });
   return stream;
 }
@@ -45408,16 +45809,22 @@ function readCredentialFile(path) {
 }
 var connectorServerCache = /* @__PURE__ */ new Map();
 var connectorServerPending = /* @__PURE__ */ new Set();
-function connectorScopeKey() {
-  return process.env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+function connectorScopeKey(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
+  return claudeConfigDir?.trim() || "<default>";
 }
-function primeConnectorServers() {
-  const key = connectorScopeKey();
+function connectorCredentialEnv(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
+  const env = { ...process.env };
+  if (claudeConfigDir?.trim()) env.CLAUDE_CONFIG_DIR = claudeConfigDir.trim();
+  else delete env.CLAUDE_CONFIG_DIR;
+  return env;
+}
+function primeConnectorServers(claudeConfigDir) {
+  const key = connectorScopeKey(claudeConfigDir);
   if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
   connectorServerPending.add(key);
   void (async () => {
     try {
-      const credentials = resolveClaudeOAuth(readCredentialFile);
+      const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
       if (!credentials) {
         debug("connectors: no OAuth credentials; declaring none");
         connectorServerCache.set(key, {});
@@ -45446,11 +45853,11 @@ function primeConnectorServers() {
     }
   })();
 }
-function connectorServersSnapshot() {
-  const key = connectorScopeKey();
+function connectorServersSnapshot(claudeConfigDir) {
+  const key = connectorScopeKey(claudeConfigDir);
   const ready = connectorServerCache.get(key);
   if (ready) return ready;
-  primeConnectorServers();
+  primeConnectorServers(claudeConfigDir);
   const cached2 = readCachedConnectors(key);
   if (!cached2) return {};
   const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached2 });
@@ -45459,7 +45866,8 @@ function connectorServersSnapshot() {
   return servers;
 }
 async function reportConnectorInventory(ctx2) {
-  const credentials = resolveClaudeOAuth(readCredentialFile);
+  const account = ctx2.model ? resolveClaudeAccountRouter()?.current(ctx2.model.id, ctx2.sessionManager?.getSessionId?.()) : void 0;
+  const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account?.configDir));
   if (!credentials) {
     ctx2.ui.notify("Claude bridge: no Claude OAuth credentials found \u2014 cannot enumerate connectors.", "error");
     return;
@@ -45526,6 +45934,10 @@ function index_default(pi) {
     debug("provider: disabled by configuration");
     return;
   }
+  if (claimPrimaryInstance()) {
+    const host = globalThis;
+    host[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = BRIDGE_ACCOUNT_HOST;
+  }
   const clearSession = (event) => {
     debug(`${event}: clearing session ${sharedSession?.sessionId?.slice(0, 8) ?? "none"}`);
     setSharedSession(null);
@@ -45570,14 +45982,18 @@ export {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   DISALLOWED_BUILTIN_TOOLS,
   MCP_TOOL_USE_FINALIZE_GRACE_MS,
+  RetryEventBuffer,
   STREAM_IDLE_BACKOFF_HINT_MS,
   STREAM_IDLE_TIMEOUT_ENV,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
+  __testSetSdkQueryFactory,
   buildStreamIdleTimeoutErrorMessage,
   cancelMcpToolUseFinalization,
   cancelScheduledSessionPersistence,
   classifyClaudeExecutableBytes,
+  classifyClaudeFailure,
+  commitsVisibleOutput,
   connectorCachePath,
   connectorCacheScopeKey,
   connectorDeclarationsDisabled,
@@ -45607,6 +46023,9 @@ export {
   primeConnectorServers,
   processAssistantMessage,
   processStreamEvent,
+  rateLimitResetFromInfo,
+  rateLimitResetMs,
+  rateLimitTypeFromInfo,
   readCachedConnectors,
   reportToolResultMismatch,
   resolveClaudeExecutable,
@@ -45615,7 +46034,9 @@ export {
   restoreSharedSessionFromPi,
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,
+  streamClaudeAgentSdk,
   streamIdleTimeoutMsFromEnv,
+  subscriberProfileEnv,
   toolIsolationForQuery,
   uniqueNonEmptyLines,
   wrapClaudeSpawnErrorForSdk,

@@ -136,6 +136,9 @@ export class QueryContext {
 	reportedToolResultMismatch = false;
 	deferredUserMessages: string[] = [];
 	handledTerminalError = false;
+	// Once visible text/thinking or a complete tool call reaches Pi, the request
+	// must never be replayed on another account (duplicate side effects).
+	committedOutput = false;
 
 	// Per-turn (reset together)
 	turnOutput: AssistantMessage | null = null;
@@ -218,6 +221,11 @@ export class QueryContext {
 
 	markToolCallEmitted(id: string | undefined): void {
 		if (id) this.emittedToolCallIds.add(id);
+		this.committedOutput = true;
+	}
+
+	markOutputCommitted(): void {
+		this.committedOutput = true;
 	}
 
 	wasToolCallEmitted(id: string | undefined): boolean {

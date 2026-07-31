@@ -14,7 +14,8 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 - `claude-bridge/claude-fable-5`, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku in `/model`. `/model opus` selects Opus 5; older Opus releases stay selectable by full ID.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
 - Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
-- Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
+- Session continuity across normal turns, `/compact`, tree navigation, abort recovery, and account-profile changes.
+- Optional `pi-claude` companion integration for usage-aware subscription account rotation without copying the bridge engine.
 - Thinking-level forwarding with summarized Opus thinking display.
 - Optional Claude effort overrides (`xhigh` → `max` for Opus 4.8).
 - MCP isolation and Claude cloud-MCP suppression to keep tokens lean.
@@ -173,6 +174,16 @@ import { listAccountConnectors } from "@vanillagreen/pi-claude-bridge";
 ```
 
 It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
+
+## Multiple subscription profiles
+
+The optional `pi-claude` companion can provide account profiles through the bridge's versioned account-router integration. The provider and model IDs remain `claude-bridge/*`, so existing `/model` and `Ctrl+P` workflows do not change.
+
+For each fresh Claude request, the bridge launches the Agent SDK subprocess with the selected profile's `CLAUDE_CONFIG_DIR`. Claude session files, connector inventory, and resume IDs remain account-scoped. When an account reports a rejected rate limit, the bridge can rebuild the Claude session from Pi history under the next profile and retry the prompt.
+
+Retries are deliberately limited to failures before visible output. Once text, thinking, or a complete tool call has reached Pi, the bridge never replays that request on another account, preventing duplicate tool side effects. Managed subscription subprocesses also drop inherited Anthropic API credentials and third-party provider flags so the selected Claude CLI profile remains the request's billing identity.
+
+`pi-claude` owns `/claude-auth`, profile metadata, utilization ranking, and cooldown persistence. The bridge remains the SDK/stream/session engine and can continue updating independently through the small versioned adapter.
 
 ## Extra usage and rate limits
 

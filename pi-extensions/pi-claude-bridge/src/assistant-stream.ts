@@ -117,13 +117,16 @@ export function processStreamEvent(
 		c.turnSawStreamEvent = true;
 		if (event.delta?.type === "text_delta" && block.type === "text") {
 			block.text += event.delta.text;
+			if (event.delta.text) c.markOutputCommitted();
 			c.currentPiStream!.push({ type: "text_delta", contentIndex: index, delta: event.delta.text, partial: c.turnOutput });
 		} else if (event.delta?.type === "thinking_delta" && block.type === "thinking") {
 			block.thinking += event.delta.thinking;
+			if (event.delta.thinking) c.markOutputCommitted();
 			c.currentPiStream!.push({ type: "thinking_delta", contentIndex: index, delta: event.delta.thinking, partial: c.turnOutput });
 		} else if (event.delta?.type === "input_json_delta" && block.type === "toolCall") {
 			block.partialJson += event.delta.partial_json;
 			block.arguments = parsePartialJson(block.partialJson, block.arguments);
+			if (event.delta.partial_json) c.markOutputCommitted();
 			c.currentPiStream!.push({ type: "toolcall_delta", contentIndex: index, delta: event.delta.partial_json, partial: c.turnOutput });
 		} else if (event.delta?.type === "signature_delta" && block.type === "thinking") {
 			block.thinkingSignature = (block.thinkingSignature ?? "") + event.delta.signature;
@@ -269,6 +272,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
 			ensureTurnStarted();
+			c.markOutputCommitted();
 			c.turnBlocks.push({ type: "text", text: block.text });
 			const idx = c.turnBlocks.length - 1;
 			c.currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: c.turnOutput });
@@ -276,6 +280,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
 		} else if (block.type === "thinking") {
 			ensureTurnStarted();
+			if (block.thinking) c.markOutputCommitted();
 			c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
 			const idx = c.turnBlocks.length - 1;
 			c.currentPiStream?.push({ type: "thinking_start", contentIndex: idx, partial: c.turnOutput });

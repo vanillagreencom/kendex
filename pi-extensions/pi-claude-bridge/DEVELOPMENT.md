@@ -13,6 +13,22 @@ Implementation details for contributors. End-user setup, settings, and troublesh
 - A steer can split one parallel Claude batch into multiple visible Pi tool turns. Session rebuild collects the real later sibling results back into the original batch before generic pairing repair, avoiding false `[no tool result recorded]` placeholders.
 - If a query tears down unexpectedly while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn. An explicit Pi abort still rebuilds safely but is treated as an expected interruption rather than an integrity error.
 
+## Optional account-router contract
+
+The bridge remains usable by itself. A companion may publish `vstack.pi.claude-account-router.v1` on `globalThis` to supply a subscription profile for each fresh request. The bridge passes only an opaque profile id, display label, and optional `CLAUDE_CONFIG_DIR`; credentials remain owned by the official Claude CLI.
+
+Account selection affects every account-scoped surface together:
+
+- the Agent SDK child environment;
+- `cc-session-io` create/open/delete paths and persisted bridge-session markers;
+- Claude session resume IDs;
+- connector inventory/cache scope;
+- structured `accountInfo()` and experimental `/usage` feedback.
+
+A failed pre-output attempt is buffered so protocol setup frames do not leak into Pi, then retried with the failed profile excluded. Text/thinking deltas and completed tool calls commit the request permanently; failures after that point are surfaced and never replayed. `rate_limit_event` reset timestamps are sent back to the router before reranking.
+
+The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
+
 ## Connector write enforcement
 
 Write denial with `connectorWriteMode: "deny"` is two-layered:
