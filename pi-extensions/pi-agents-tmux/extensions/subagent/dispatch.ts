@@ -352,6 +352,9 @@ export async function runParallelDispatch(
 			agent: parallelTasks[i].agent,
 			agentSource: "unknown",
 			task: parallelTasks[i].task,
+			// Lane is known from frontmatter before the worker starts, so in-flight
+			// rows carry the right badge instead of defaulting to bg.
+			kind: flow.agents.find((agent) => agent.name === parallelTasks[i].agent)?.pane ? "pane" : "oneshot",
 			exitCode: -1,
 			messages: [],
 			stderr: "",

@@ -1,6 +1,7 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { discoverAgents, type AgentScope } from "./agents.js";
+import { dashboardKindLabel } from "./dashboard.js";
 import {
 	addArtifactPathSection,
 	addSectionHeading,
@@ -92,12 +93,17 @@ export const subagentToolRenderers = {
 					? theme.fg("warning", `Full output unavailable: ${r.fullOutputError}`)
 					: "";
 		const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
-		const resultKind = (r: SingleResult) => (r.taskId && r.paneId ? "pane" : "oneshot");
+		// The lane a result was dispatched into. `taskId` only records whether a
+		// task was queued, so a pane dispatch refused before queueing (no taskId)
+		// still belongs to the pane lane. Results predating `kind` fall back to the
+		// old inference.
+		const resultKind = (r: SingleResult) => r.kind ?? (r.taskId && r.paneId ? "pane" : "oneshot");
+		const laneBadge = (r: SingleResult) => theme.fg("dim", ` · ${dashboardKindLabel(resultKind(r))}`);
 		const resultSessionMode = (r: SingleResult) => r.sessionMode ?? paneSessionModeToRecordMode(r.paneSessionMode);
 		const resultSessionChip = (r: SingleResult) => sessionModeChipSuffix(theme, { kind: resultKind(r), sessionMode: resultSessionMode(r), sessionKey: r.sessionKeyExplicit ? r.sessionKey : undefined });
 		const queuedPaneLine = (r: SingleResult, _dashboard = false) => {
 			if (!r.taskId || !r.paneId) return "";
-			const suffix = `${theme.fg("dim", " · pane")}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`;
+			const suffix = `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`;
 			return agentStatusLine(theme, r.agent, "Queued task", "warning", suffix);
 		};
 		const queuedTaskPreviewComponent = (r: SingleResult, dashboard = false) => ({
@@ -185,6 +191,11 @@ export const subagentToolRenderers = {
 			const isRunning = r.exitCode === -1;
 			const needsCompletion = r.status === "needs_completion";
 			const isError = !needsCompletion && !isRunning && (r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted");
+			// A refused dispatch never started an agent: no queued task, no process,
+			// no usage. It is reported as its own state so the row does not read as a
+			// run that blew up.
+			const isRefused = !isRunning && Boolean(r.refused);
+			const refusalReason = r.errorMessage ?? r.stderr;
 			const isQueued = !needsCompletion && !isError && !isRunning && Boolean(r.taskId && r.paneId);
 			const displayItems = getDisplayItems(r.messages);
 			const finalOutput = getFinalOutput(r.messages);
@@ -194,18 +205,32 @@ export const subagentToolRenderers = {
 			if (expanded) {
 				if (isQueued) return expandedQueuedTaskComponent(r);
 				const container = new Container();
-				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : isError ? "failed" : "completed";
-				const statusTone = isQueued || isRunning || needsCompletion ? "warning" : isError ? "error" : "success";
-				let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, `${theme.fg("dim", ` · ${isQueued ? "pane" : "bg"}`)}${resultSessionChip(r)}`);
-				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : isRefused ? "refused" : isError ? "failed" : "completed";
+				const statusTone = isQueued || isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
+				let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, `${laneBadge(r)}${resultSessionChip(r)}`);
+				if (isRefused && r.stopReason) header += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
+				else if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (needsCompletion && r.needsCompletionReason) header += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 				header += truncationBadge(r);
 				container.addChild(wrappedText(header));
-				if (isError && r.errorMessage) container.addChild(wrappedText(theme.fg("error", `Error: ${r.errorMessage}`)));
+				// The refusal message already names the guard and the recovery step;
+				// an "Error:" prefix would reassert the failed-run framing.
+				if (isRefused && refusalReason) container.addChild(wrappedText(theme.fg("warning", refusalReason)));
+				else if (isError && r.errorMessage) container.addChild(wrappedText(theme.fg("error", `Error: ${r.errorMessage}`)));
 				if (needsCompletion && r.errorMessage) container.addChild(wrappedText(theme.fg("warning", r.errorMessage)));
 				container.addChild(new Spacer(1));
 				container.addChild(wrappedText(theme.fg("muted", "─── Task ───")));
 				container.addChild(wrappedText(theme.fg("dim", r.task)));
+				// Nothing ran, so there are no tools, no final response, and no usage
+				// to report. Showing those sections empty implies the agent worked.
+				if (isRefused) {
+					const refusedTranscript = transcriptLine(r);
+					if (refusedTranscript) {
+						container.addChild(new Spacer(1));
+						container.addChild(wrappedText(refusedTranscript));
+					}
+					return container;
+				}
 				container.addChild(new Spacer(1));
 				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
 				container.addChild(wrappedText(theme.fg("muted", "─── Tools used ───")));
@@ -248,7 +273,7 @@ export const subagentToolRenderers = {
 				// reader can't tell whether the body is what was asked or what
 				// came back).
 				const previewIsTask = !(finalOutput && !finalOutputLooksLikeToolEcho(finalOutput, toolCalls));
-				let text = `${agentStatusLine(theme, r.agent, "completed", "success", `${theme.fg("dim", " · bg")}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`)}${truncationBadge(r)}`;
+				let text = `${agentStatusLine(theme, r.agent, "completed", "success", `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`)}${truncationBadge(r)}`;
 				if (preview) {
 					const body = previewIsTask
 						? `${theme.fg("dim", "Task: ")}${theme.fg("toolOutput", preview)}`
@@ -260,13 +285,15 @@ export const subagentToolRenderers = {
 				return wrappedText(text);
 			}
 
-			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : isError ? "failed" : "completed";
-			const compactStatusTone = isRunning || needsCompletion ? "warning" : isError ? "error" : "success";
-			let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${theme.fg("dim", " · bg")}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`);
-			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : isRefused ? "refused" : isError ? "failed" : "completed";
+			const compactStatusTone = isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
+			let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`);
+			if (isRefused && r.stopReason) text += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
+			else if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 			if (needsCompletion && r.needsCompletionReason) text += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 			text += truncationBadge(r);
 			if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? `Task: ${oneLinePreview(r.task, 120)}` : "queued task")}`;
+			else if (isRefused && refusalReason) text += `\n${theme.fg("warning", refusalReason)}`;
 			else if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 			else if (needsCompletion && r.errorMessage) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("warning", r.errorMessage)}`;
 			else if (displayItems.length === 0) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? `Task: ${oneLinePreview(r.task, 120)}` : "(no output)")}`;
@@ -336,7 +363,7 @@ export const subagentToolRenderers = {
 					container.addChild(new Spacer(1));
 					container.addChild(
 						wrappedText(
-							`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}${theme.fg("dim", ` · ${resultKind(r) === "pane" ? "pane" : "bg"}`)}${resultSessionChip(r)}${truncationBadge(r)}`,
+							`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}${laneBadge(r)}${resultSessionChip(r)}${truncationBadge(r)}`,
 						),
 					);
 					container.addChild(wrappedText(theme.fg("muted", "Task: ") + theme.fg("dim", r.task)));
@@ -378,7 +405,7 @@ export const subagentToolRenderers = {
 			for (const r of details.results) {
 				const rIcon = chainStepIcon(r);
 				const displayItems = getDisplayItems(r.messages);
-				text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}${theme.fg("dim", ` · ${resultKind(r) === "pane" ? "pane" : "bg"}`)}${resultSessionChip(r)}${truncationBadge(r)}`;
+				text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}${laneBadge(r)}${resultSessionChip(r)}${truncationBadge(r)}`;
 				if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				const outputPath = fullOutputLine(r);
@@ -433,7 +460,7 @@ export const subagentToolRenderers = {
 				.map((r, index) => {
 					const prefix = index === details.results.length - 1 ? "└" : "├";
 					const name = ((text: string, width: number) => `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`)(ansiMagenta(theme.bold(r.agent)), nameWidth);
-					return `${subagentBranch(theme, prefix, cwd)}${name}${theme.fg("dim", resultKind(r) === "pane" ? " · pane" : " · bg")}${resultSessionChip(r)}${rowTaskPreview(r, 100)}${truncationBadge(r)}`;
+					return `${subagentBranch(theme, prefix, cwd)}${name}${laneBadge(r)}${resultSessionChip(r)}${rowTaskPreview(r, 100)}${truncationBadge(r)}`;
 				})
 				.join("\n");
 
