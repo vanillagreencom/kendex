@@ -30,6 +30,7 @@ describe("subscriberProfileEnv", () => {
 				CLAUDE_CONFIG_DIR: "/profiles/old",
 				ANTHROPIC_API_KEY: "secret",
 				ANTHROPIC_AUTH_TOKEN: "secret",
+				ANTHROPIC_OAUTH_TOKEN: "secret",
 				CLAUDE_CODE_OAUTH_TOKEN: "secret",
 				CLAUDE_CODE_USE_BEDROCK: "1",
 			},
@@ -38,6 +39,7 @@ describe("subscriberProfileEnv", () => {
 		assert.equal(env.CLAUDE_CONFIG_DIR, "/profiles/max");
 		assert.equal(env.ANTHROPIC_API_KEY, undefined);
 		assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
+		assert.equal(env.ANTHROPIC_OAUTH_TOKEN, undefined);
 		assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
 		assert.equal(env.CLAUDE_CODE_USE_BEDROCK, undefined);
 	});
