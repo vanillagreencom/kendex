@@ -55,7 +55,7 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 | `documents` | list, get |
 | `sync` | Sync Linear data to local cache |
 | `cache` | Query local cache (issues, projects, cycles, initiatives, comments, labels, attachments) |
-| `auth-check` | Validate API key |
+| `auth-check` | Validate API key and report the resolved team target (`--strict` also fails when no team is configured) |
 
 Compatibility aliases: `issues relations` maps to `issues list-relations`, and `projects dependencies` maps to `projects list-dependencies`. Prefer the explicit action names in new workflows.
 
@@ -111,11 +111,13 @@ Cache and attachment files live under `.cache/linear` in the physical git worktr
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `LINEAR_API_KEY` | API key (required for live API commands and sync; not required for cache reads) | — |
-| `LINEAR_TEAM` | Default team name | `Claude` |
+| `LINEAR_TEAM` | Team every write targets | — (unset refuses writes) |
 | `LINEAR_FORMAT` | Default output format | `safe` |
-| `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `CC` |
+| `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 
 Put `LINEAR_API_KEY` in `.env.local`. Put non-secret defaults in committed `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+
+`LINEAR_TEAM` has no default. A team name resolves inside whatever workspace the API key reaches, so an unset team means no target: every write (create, update, comment, archive, relation, state change) refuses with an actionable error before any API call, and reads run without a team filter. `--team <name>` overrides it per call only on the actions that take a team — `issues create`, `projects create`, `cycles create`, `labels create`; every other write requires the configured value. `linear.sh auth-check` reports the resolved team, where it came from, and `writes_enabled`; `linear.sh auth-check --strict` exits non-zero when writes would refuse — run it before the first mutation in a project.
 
 ## Safe Format Field Mapping
 

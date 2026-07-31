@@ -36,4 +36,6 @@ It is the merge-pr § 3.2 queue watch as one command — which is what makes it 
 
 ## `session-init` Linear auth
 
-`session-init --json` reports worktree Linear auth as the structured `linear_auth` object from `linear auth-check`. `linear_auth.error = "not installed"` is reserved for a missing Linear skill command; API key, 1Password, and API failures keep their original auth-check diagnostic.
+`session-init --json` reports worktree Linear auth as the structured `linear_auth` object from `linear auth-check`: `{ok, error?, team, team_source, team_source_file, api_key_source, writes_enabled, warnings}`. `linear_auth.error = "not installed"` is reserved for a missing Linear skill command; API key, 1Password, and API failures keep their original auth-check diagnostic.
+
+`ok` covers reachability only. `writes_enabled` is the write gate: it is `false` when no `LINEAR_TEAM` resolves, which the skill refuses to guess, so every Linear mutation fails until it is set. Read it with `has("writes_enabled")` rather than `//` — the alternative operator swallows a literal `false`. Linear-tracker workflows must check it up front, not discover it at the first write mid-run; `team_source` (`environment` | `project-config` | `unset`) and `warnings` say where the target came from and flag a machine-wide `LINEAR_API_KEY` paired with no project team.

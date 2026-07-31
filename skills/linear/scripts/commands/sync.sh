@@ -247,28 +247,43 @@ sync_projects() {
 }
 
 sync_cycles() {
-    local team_name
-    team_name=$(apply_team_default "")
-    local query='
-    query SyncCycles($after: String, $teamName: String!) {
-        cycles(filter: {team: {name: {eq: $teamName}}}, first: 50, after: $after) {
+    local team_name="$LINEAR_TEAM_TARGET"
+    local cycle_fields='
             pageInfo { hasNextPage endCursor }
             nodes {
                 id number name startsAt endsAt progress
                 issueCountHistory completedIssueCountHistory
                 scopeHistory completedScopeHistory
                 team { name }
-            }
+            }'
+
+    # No configured team means no team filter, never a guessed one.
+    local query
+    if [ -n "$team_name" ]; then
+        query="
+    query SyncCycles(\$after: String, \$teamName: String!) {
+        cycles(filter: {team: {name: {eq: \$teamName}}}, first: 50, after: \$after) {$cycle_fields
         }
-    }'
+    }"
+    else
+        query="
+    query SyncCycles(\$after: String) {
+        cycles(first: 50, after: \$after) {$cycle_fields
+        }
+    }"
+    fi
 
     local all_nodes="[]"
     local cursor="null"
     local page=0
 
     while true; do
+        local variables="{\"after\": $cursor}"
+        if [ -n "$team_name" ]; then
+            variables="{\"after\": $cursor, \"teamName\": \"$team_name\"}"
+        fi
         local result
-        result=$(graphql_query "$query" "{\"after\": $cursor, \"teamName\": \"$team_name\"}")
+        result=$(graphql_query "$query" "$variables")
         local nodes
         nodes=$(echo "$result" | jq '.cycles.nodes')
         all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')

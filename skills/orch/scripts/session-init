@@ -246,6 +246,9 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
   WT_LINEAR=$(linear_auth_check 2>/dev/null || true)
   WT_LINEAR_OK=$(echo "$WT_LINEAR" | jq -r '.ok // false')
   WT_LINEAR_ERR=$(echo "$WT_LINEAR" | jq -r '.error // empty')
+  # Absent field (older/unavailable auth-check) must not raise a false alarm.
+  # `//` would also swallow a literal false, so test for the key instead.
+  WT_LINEAR_WRITES=$(echo "$WT_LINEAR" | jq -r 'if has("writes_enabled") then (.writes_enabled | tostring) else "true" end')
 
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     jq -n \
@@ -271,6 +274,7 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
     echo "GitHub: $GH_ICON · Linear: $LINEAR_ICON"
     [[ "$WT_GH_OK" != "true" ]] && echo "🔴 GitHub auth failed — run: gh auth login"
     [[ "$WT_LINEAR_OK" != "true" ]] && echo "🔴 Linear auth failed${WT_LINEAR_ERR:+ — $WT_LINEAR_ERR}"
+    [[ "$WT_LINEAR_OK" == "true" && "$WT_LINEAR_WRITES" != "true" ]] && echo "🟡 No Linear team configured — Linear writes refused. Set LINEAR_TEAM in vstack.settings.toml [env]"
   fi
   exit 0
 fi

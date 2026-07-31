@@ -25,7 +25,7 @@ Get:
 
 Examples:
   teams.sh list
-  teams.sh get claude
+  teams.sh get "<team-name>"
 EOF
 }
 

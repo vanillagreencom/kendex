@@ -200,6 +200,14 @@ export interface SingleResult {
 	sessionKeyExplicit?: boolean;
 	sessionPath?: string;
 	ephemeralSession?: boolean;
+	// Lane the agent was dispatched into, recorded at dispatch. The lane badge
+	// renders from this; `taskId` only records whether a task was queued, so a
+	// pane dispatch that fails before queueing still reports the pane lane.
+	kind?: DashboardKind;
+	// The dispatch was refused before anything ran: no child process, no queued
+	// task, no usage. Rendered as "refused" rather than "failed", which would
+	// claim the agent ran and blew up.
+	refused?: boolean;
 	taskId?: string;
 	paneId?: string;
 	queuedTaskFile?: string;

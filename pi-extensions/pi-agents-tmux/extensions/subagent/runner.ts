@@ -408,6 +408,8 @@ export async function runSingleAgent(
 			agent: agentName,
 			agentSource: "unknown",
 			task,
+			kind: "oneshot",
+			refused: true,
 			exitCode: 1,
 			messages: [],
 			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
@@ -431,6 +433,8 @@ export async function runSingleAgent(
 			agent: agentName,
 			agentSource: agent.source,
 			task,
+			kind: "oneshot",
+			refused: true,
 			exitCode: 1,
 			messages: [],
 			stderr: errorMessage,
@@ -574,6 +578,7 @@ async function runSingleAgentAttempt(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
+		kind: "oneshot",
 		sessionMode: session.explicit ? "resumed" : "fresh",
 		// -1 = still running. Real exit code is set after proc.close; streaming
 		// partials must not look completed to callers that key on exitCode.

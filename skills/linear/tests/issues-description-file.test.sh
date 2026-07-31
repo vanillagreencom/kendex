@@ -58,7 +58,7 @@ MD
 # --- create with --description-file --------------------------------------------
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
-create_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token CURL_PAYLOAD_LOG="$create_log" \
+create_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
   bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file")"
 
 if ! jq -e '.success == true and .identifier == "PROJ-1"' >/dev/null <<<"$create_out"; then
@@ -82,7 +82,7 @@ fi
 # --- update with --description-file --------------------------------------------
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
-update_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token CURL_PAYLOAD_LOG="$update_log" \
+update_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
   bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file")"
 
 if ! jq -e '.success == true' >/dev/null <<<"$update_out"; then
@@ -108,7 +108,7 @@ assert_fails() {
   local err_file="$TMP_ROOT/err.txt"
   local rc
   set +e
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam \
     bash "$LINEAR" "$@" >"$TMP_ROOT/out.txt" 2>"$err_file"
   rc=$?
   set -e

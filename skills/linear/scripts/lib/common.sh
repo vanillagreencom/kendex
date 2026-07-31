@@ -35,6 +35,14 @@ unset PROJECT_ROOT_RAW
 _CALLER_LINEAR_API_KEY_SET="${LINEAR_API_KEY+x}"
 _CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
 
+# Captured before project files load so auth-check can tell a box-global export
+# (which reaches whatever workspace the key owns) from project configuration.
+# An exported-but-empty value is tracked separately: the env snapshot in
+# vstack-env.sh makes it win over the project files, so it silently blocks a
+# configured team rather than being absent.
+_CALLER_LINEAR_TEAM_SET="${LINEAR_TEAM+x}"
+_CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
+
 # Load public config and local secrets before deriving defaults.
 # shellcheck source=vstack-env.sh
 source "$_LIB_DIR/vstack-env.sh"
@@ -44,12 +52,49 @@ if [[ -n "$_CALLER_LINEAR_API_KEY_SET" ]]; then
     LINEAR_API_KEY="$_CALLER_LINEAR_API_KEY"
     export LINEAR_API_KEY
 fi
-unset _CALLER_LINEAR_API_KEY_SET _CALLER_LINEAR_API_KEY
+
+# Where each target-selecting value came from: environment (process env, e.g. a
+# box-global export), project-config (.env / vstack.settings.toml / .env.local),
+# or unset. auth-check reports these; a global key with no project team is the
+# combination that writes into another project's workspace.
+if [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
+    LINEAR_API_KEY_SOURCE="environment"
+elif [[ -n "${LINEAR_API_KEY:-}" ]]; then
+    LINEAR_API_KEY_SOURCE="project-config"
+else
+    LINEAR_API_KEY_SOURCE="unset"
+fi
+
+if [[ -n "$_CALLER_LINEAR_TEAM" ]]; then
+    LINEAR_TEAM_SOURCE="environment"
+elif [[ -n "${LINEAR_TEAM:-}" ]]; then
+    LINEAR_TEAM_SOURCE="project-config"
+else
+    LINEAR_TEAM_SOURCE="unset"
+fi
+
+# 1 when the process environment exported LINEAR_TEAM as an empty value, which
+# resolves to no target while shadowing anything the project files declare.
+if [[ -n "$_CALLER_LINEAR_TEAM_SET" && -z "$_CALLER_LINEAR_TEAM" ]]; then
+    LINEAR_TEAM_ENV_BLANK=1
+else
+    LINEAR_TEAM_ENV_BLANK=0
+fi
+
+unset _CALLER_LINEAR_API_KEY_SET _CALLER_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
 
 # Default values can be overridden by vstack.settings.toml [env] or .env.local.
-DEFAULT_TEAM="${LINEAR_TEAM:-Claude}"
+# LINEAR_TEAM has no built-in fallback on purpose: a team name resolves inside
+# whatever workspace the API key reaches, so a guessed default silently targets
+# another project's tracker. Unset means "no team" — reads drop the team filter,
+# writes refuse (see linear_require_team_target).
+DEFAULT_TEAM="${LINEAR_TEAM:-}"
 DEFAULT_FORMAT="${LINEAR_FORMAT:-safe}"    # safe, raw, ids, table
 DEFAULT_PREFIX="${LINEAR_TEAM_PREFIX:-PROJ}" # Issue identifier prefix (e.g., PROJ-123)
+
+# Team target for this invocation. An explicit --team registers over the
+# configured value through linear_set_team_target.
+LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
 
 # Source formatters
 source "$_LIB_DIR/formatters.sh"
@@ -133,6 +178,18 @@ validate_length() {
     return 0
 }
 
+# A GraphQL document is a write when its first token is `mutation`.
+linear_query_is_mutation() {
+    local query="${1:-}"
+    local leading="${query%%[![:space:]]*}"
+    query="${query#"$leading"}"
+
+    case "$query" in
+    mutation | mutation[!A-Za-z0-9_]*) return 0 ;;
+    esac
+    return 1
+}
+
 # Make GraphQL request with error handling and retry
 # Usage: graphql_query "query string" '{"var": "value"}'
 graphql_query() {
@@ -144,6 +201,12 @@ graphql_query() {
     local max_retries=3
     local retry_delay=1
     local attempt=1
+
+    # Single choke point for writes: no mutation leaves this process without a
+    # resolved team target, whatever path built it.
+    if linear_query_is_mutation "$query"; then
+        linear_require_team_target || return 1
+    fi
 
     check_api_key
 
@@ -435,11 +498,64 @@ parse_format_arg() {
     echo "${remaining_args[@]:-}"
 }
 
-# Apply team default if not specified
-# Usage: team=$(apply_team_default "$team")
-apply_team_default() {
-    local team="${1:-}"
-    echo "${team:-${DEFAULT_TEAM}}"
+# Team targeting
+# -----------------------------------------------------------------------------
+# Nothing below invents a team name. The API key alone decides which workspace a
+# name resolves in, so a substituted default writes into whichever tracker that
+# key reaches.
+
+# Set the team target for this invocation: explicit --team wins, otherwise the
+# configured LINEAR_TEAM (which may be empty).
+# Usage: linear_set_team_target "$team"; team="$LINEAR_TEAM_TARGET"
+linear_set_team_target() {
+    local explicit="${1:-}"
+    if [ -n "$explicit" ]; then
+        LINEAR_TEAM_TARGET="$explicit"
+    else
+        LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
+    fi
+}
+
+linear_team_target_error() {
+    echo '{"error": "No Linear team configured for this project - refusing to write. A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so writing without one can land in another project tracker. Fix: set LINEAR_TEAM in this project vstack.settings.toml [env] (committed, non-secret) or .env.local. The create actions that take a team (issues, projects, cycles, labels) also accept --team <name> for one call. Verify with: linear.sh auth-check --strict"}' >&2
+}
+
+# Fail-closed gate for every Linear write.
+linear_require_team_target() {
+    if [ -n "${LINEAR_TEAM_TARGET:-}" ]; then
+        return 0
+    fi
+    linear_team_target_error
+    return 1
+}
+
+# Dispatcher guard: refuse a write action before any API call when no team target
+# resolves. It never searches argv for a team - a `--team` token in unparsed
+# arguments is just as likely to be free text (a comment body, an issue title),
+# and honoring it would let user content open the gate. Only the first remaining
+# argument is read, and only to let `<action> --help` through. The action list
+# therefore holds only the write actions with no --team parser of their own;
+# actions that do parse it call linear_set_team_target + linear_require_team_target
+# after their parse loop, before any API call. graphql_query enforces the same
+# rule at the wire, so a missing entry degrades to a later refusal, never to a
+# write.
+# Usage: linear_guard_write_action "$action" "update delete" "$@" || exit 1
+linear_guard_write_action() {
+    local action="${1:-}"
+    local write_actions="${2:-}"
+    local first_arg="${3:-}"
+
+    case " $write_actions " in
+    *" $action "*) ;;
+    *) return 0 ;;
+    esac
+
+    # `<action> --help` prints usage and writes nothing.
+    case "$first_arg" in
+    --help | -h) return 0 ;;
+    esac
+
+    linear_require_team_target
 }
 
 # Resolve project name or UUID to UUID
@@ -471,7 +587,7 @@ resolve_project_id() {
 }
 
 # Resolve team name to UUID
-# Usage: resolve_team_id "claude"
+# Usage: resolve_team_id "$LINEAR_TEAM_TARGET"
 resolve_team_id() {
     local team_ref="$1"
 

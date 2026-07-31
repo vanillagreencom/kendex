@@ -111,7 +111,7 @@ List Options:
   --state <name>        Filter by state (e.g., "Todo", "In Progress,Todo")
   --project <name>      Filter by project name
   --project-id <uuid>   Filter by project ID
-  --team <name>         Filter by team name (default: \$LINEAR_TEAM from project config)
+  --team <name>         Filter by team name (no default; omit = all teams)
   --assignee <name|me>  Filter by assignee
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd>  Filter by created date
@@ -135,7 +135,7 @@ Bulk Update:
 
 Create Options:
   --title <text>        Issue title (required)
-  --team <name>         Team name (default: $LINEAR_TEAM from project config)
+  --team <name>         Team name (default: $LINEAR_TEAM; required when unset)
   --description <text>  Issue description
   --description-file <path>  Read description from file (preferred for markdown)
   --label(s) <a,b,c>    Comma-separated label names
@@ -922,8 +922,11 @@ create_issue() {
         read_description_file "$description_file"
     fi
 
-    # Apply team default if not specified
-    team=$(apply_team_default "$team")
+    # Resolve the team target; creating an issue without one is refused here,
+    # before any API call.
+    linear_set_team_target "$team"
+    linear_require_team_target || return 1
+    team="$LINEAR_TEAM_TARGET"
 
     if [ -z "$title" ]; then
         echo '{"error": "Required: --title"}' >&2
@@ -2655,6 +2658,11 @@ main() {
     # Main routing
     action="${1:-help}"
     shift || true
+
+    # Fail closed: a write needs a resolved team target before any API call.
+    linear_guard_write_action "$action" \
+        "update archive trash delete bulk-update add-relation remove-relation activate block unblock complete" \
+        "$@" || exit 1
 
     case "$action" in
     list)

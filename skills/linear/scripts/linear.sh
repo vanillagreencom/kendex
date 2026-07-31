@@ -29,7 +29,7 @@ Resources:
   statuses        Workflow state operations (list, get)
   documents       Document operations (list, get)
   session-status  Aggregated session status for /start workflow
-  auth-check      Lightweight API key validation (exit 0 = ok)
+  auth-check      API key + team target preflight (--strict fails with no team)
   sync            Sync Linear data to local cache
   cache           Query local cache (issues, projects, cycles, initiatives, comments, labels)
 
@@ -60,7 +60,10 @@ Examples:
 Environment:
   Runtime         Bash 4.0 or newer. macOS system Bash 3.2 is unsupported.
   LINEAR_API_KEY  Required. Set in .env.local or export directly.
-                  Non-secret defaults such as LINEAR_TEAM can be set in vstack.settings.toml.
+  LINEAR_TEAM     Required for writes; no default. Set it in vstack.settings.toml
+                  [env] (committed, non-secret). With no team, writes refuse and
+                  reads run without a team filter. Only issues/projects/cycles/
+                  labels create take --team <name> as a per-call override.
 
 For resource-specific help:
   ./linear.sh <resource> --help

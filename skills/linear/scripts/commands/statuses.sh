@@ -18,10 +18,10 @@ Actions:
   get     Get a single state by name
 
 List Options:
-  --team <name>         Team name (default: from project config)
+  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
 
 Get Options:
-  --team <name>         Team name (default: from project config)
+  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
   --name <name>         State name (required)
 
 Examples:
@@ -48,9 +48,14 @@ list_statuses() {
         esac
     done
 
-    team=$(apply_team_default "$team")
+    linear_set_team_target "$team"
+    team="$LINEAR_TEAM_TARGET"
 
-    local filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}}"
+    # No configured team means no team filter, never a guessed one.
+    local filter_json="{}"
+    if [ -n "$team" ]; then
+        filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}}"
+    fi
 
     local query='
     query ListStates($filter: WorkflowStateFilter) {
@@ -104,14 +109,18 @@ get_status() {
         esac
     done
 
-    team=$(apply_team_default "$team")
+    linear_set_team_target "$team"
+    team="$LINEAR_TEAM_TARGET"
 
     if [ -z "$name" ]; then
         echo '{"error": "Required: --name"}' >&2
         return 1
     fi
 
-    local filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}, \"name\": {\"eq\": \"$name\"}}"
+    local filter_json="{\"name\": {\"eq\": \"$name\"}}"
+    if [ -n "$team" ]; then
+        filter_json="{\"team\": {\"name\": {\"eq\": \"$team\"}}, \"name\": {\"eq\": \"$name\"}}"
+    fi
 
     local query='
     query GetState($filter: WorkflowStateFilter) {
